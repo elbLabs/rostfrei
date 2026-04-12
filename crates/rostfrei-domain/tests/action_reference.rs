@@ -1,4 +1,4 @@
-use rostfrei_domain::{
+use domain::{
     ActionId, ActionOwnerId, ActionOwnerType, ActionReference, AggregateId, BoundedContext,
     BoundedContextId, DomainService, DomainServiceType, domain_actions,
 };

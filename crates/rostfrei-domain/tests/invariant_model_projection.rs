@@ -1,7 +1,7 @@
 #![allow(dead_code, non_snake_case)]
 
-use rostfrei_domain::__private::DomainModelBuilder;
-use rostfrei_domain::{
+use domain::__private::DomainModelBuilder;
+use domain::{
     Aggregate, BoundedContext, BoundedContextId, DomainIdentity, Entity, InvariantDescriptor,
     InvariantId, InvariantOwnerId, InvariantOwnerType, InvariantViolation, ValueObject,
     ValueObjectDescriptor, ValueObjectId, ValueObjectOwnerId, ValueObjectShapeDescriptor,

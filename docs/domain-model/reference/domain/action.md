@@ -37,7 +37,7 @@ attached to their owner:
 
 ```rust
 mod contracts {
-    use rostfrei_domain::domain_actions;
+    use domain::domain_actions;
 
     #[domain_actions(aggregate)]
     pub trait MailboxActions {
@@ -133,7 +133,7 @@ contracts and extensions.
 ### Trusted descriptor extensions
 
 Generated code or descriptor adapters may provide additional trusted metadata by
-implementing `rostfrei_domain::extension::ActionGroupType` and listing the type
+implementing `domain::extension::ActionGroupType` and listing the type
 in the optional `domain_model!` `action_extensions` inventory. Extensions append
 in inventory order, preserving descriptor order, after all automatically
 attached actions.

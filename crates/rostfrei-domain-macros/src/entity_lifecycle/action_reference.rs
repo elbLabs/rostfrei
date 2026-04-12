@@ -28,9 +28,9 @@ pub fn assemble_id(reference: &ActionReferencePath, owner: &syn::TypePath) -> To
     let span = reference.span;
     quote_spanned! {span=>
         {
-            let _: &'static [::rostfrei_domain::ActionDescriptor] =
+            let _: &'static [::domain::ActionDescriptor] =
                 <#owner as #trait_path>::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE;
-            let reference: ::rostfrei_domain::ActionReference<#owner> =
+            let reference: ::domain::ActionReference<#owner> =
                 <#owner as #trait_path>::#hidden;
             reference.id()
         }

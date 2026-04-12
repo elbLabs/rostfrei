@@ -12,7 +12,7 @@ pub fn assemble(name: &Ident, attributes: &Attributes) -> TokenStream {
         const _: () = {
             fn assert_lifecycle<L>()
             where
-                L: ::rostfrei_domain::EntityLifecycleType<Owner = #name>,
+                L: ::domain::EntityLifecycleType<Owner = #name>,
             {
             }
             let _ = assert_lifecycle::<#lifecycle>;

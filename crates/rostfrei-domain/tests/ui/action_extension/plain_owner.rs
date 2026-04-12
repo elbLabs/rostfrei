@@ -1,4 +1,4 @@
-use rostfrei_domain::{ActionDescriptor, extension::ActionGroupType};
+use domain::{ActionDescriptor, extension::ActionGroupType};
 
 struct PlainOwner;
 struct PlainOwnerActions;

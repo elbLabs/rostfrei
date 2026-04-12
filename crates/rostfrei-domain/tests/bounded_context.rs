@@ -1,6 +1,4 @@
-use rostfrei_domain::{
-    BoundedContext, BoundedContextDescriptor, BoundedContextId, BoundedContextType,
-};
+use domain::{BoundedContext, BoundedContextDescriptor, BoundedContextId, BoundedContextType};
 
 #[derive(BoundedContext)]
 #[domain(id = "customer-support", label = "Customer Support")]

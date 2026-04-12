@@ -2,7 +2,7 @@
 
 use std::{collections::HashSet, fmt::Debug, hash::Hash};
 
-use rostfrei_domain::{
+use domain::{
     ActionId, ActionOwnerId, ActionReference, Aggregate, AggregateId, BoundedContext,
     BoundedContextId, DomainIdentity, Entity, EntityLifecycleDescriptor, EntityLifecycleId,
     EntityLifecycleStateDescriptor, EntityLifecycleStateId, EntityLifecycleTransitionDescriptor,
@@ -14,7 +14,7 @@ const AGGREGATE_ID: AggregateId = AggregateId {
     context: CONTEXT_ID,
     local: "task-list",
 };
-const ENTITY_ID: rostfrei_domain::EntityId = rostfrei_domain::EntityId {
+const ENTITY_ID: domain::EntityId = domain::EntityId {
     aggregate: AGGREGATE_ID,
     local: "task",
 };

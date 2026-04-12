@@ -1,4 +1,4 @@
-use rostfrei_domain::domain_actions;
+use domain::domain_actions;
 
 #[domain_actions(domain_service)]
 pub trait Actions {

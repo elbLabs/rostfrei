@@ -8,10 +8,10 @@ pub fn assemble(lifecycle: &Lifecycle) -> TokenStream {
     let owner = &lifecycle.owner;
     let descriptor = assemble_descriptor(lifecycle);
     quote! {
-        impl ::rostfrei_domain::EntityLifecycleType for #name {
+        impl ::domain::EntityLifecycleType for #name {
             type Owner = #owner;
 
-            const DESCRIPTOR: ::rostfrei_domain::EntityLifecycleDescriptor = #descriptor;
+            const DESCRIPTOR: ::domain::EntityLifecycleDescriptor = #descriptor;
         }
     }
 }
@@ -36,7 +36,7 @@ fn assemble_descriptor(lifecycle: &Lifecycle) -> TokenStream {
             .map(move |transition| assemble_transition(lifecycle, state, transition))
     });
     quote! {
-        ::rostfrei_domain::EntityLifecycleDescriptor {
+        ::domain::EntityLifecycleDescriptor {
             id: #id,
             label: #label,
             states: &[#(#states),*],
@@ -50,7 +50,7 @@ fn assemble_state(lifecycle: &Lifecycle, state: &State) -> TokenStream {
     let id = state_id(lifecycle, state);
     let label = &state.label;
     quote! {
-        ::rostfrei_domain::EntityLifecycleStateDescriptor {
+        ::domain::EntityLifecycleStateDescriptor {
             id: #id,
             label: #label,
         }
@@ -71,7 +71,7 @@ fn assemble_transition(
     let target = state_id(lifecycle, target);
     let action = super::action_reference::assemble_id(&transition.action, &lifecycle.owner);
     quote! {
-        ::rostfrei_domain::EntityLifecycleTransitionDescriptor {
+        ::domain::EntityLifecycleTransitionDescriptor {
             source: #source,
             action: #action,
             target: #target,
@@ -83,8 +83,8 @@ fn lifecycle_id(lifecycle: &Lifecycle) -> TokenStream {
     let owner = &lifecycle.owner;
     let id = &lifecycle.id;
     quote! {
-        ::rostfrei_domain::EntityLifecycleId {
-            owner: <#owner as ::rostfrei_domain::EntityType>::DESCRIPTOR.id,
+        ::domain::EntityLifecycleId {
+            owner: <#owner as ::domain::EntityType>::DESCRIPTOR.id,
             local: #id,
         }
     }
@@ -94,7 +94,7 @@ fn state_id(lifecycle: &Lifecycle, state: &State) -> TokenStream {
     let lifecycle_id = lifecycle_id(lifecycle);
     let id = &state.id;
     quote! {
-        ::rostfrei_domain::EntityLifecycleStateId {
+        ::domain::EntityLifecycleStateId {
             lifecycle: #lifecycle_id,
             local: #id,
         }

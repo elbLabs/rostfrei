@@ -14,7 +14,7 @@ help: the trait `DomainIdentityType` is implemented for `ValidId`
    |
 22 | #[derive(DomainIdentity)]
    |          ^^^^^^^^^^^^^^
-note: required by a bound in `rostfrei_domain::EntityType::Identity`
+note: required by a bound in `domain::EntityType::Identity`
   --> src/entity/domain_type.rs
    |
    |     type Identity: DomainIdentityType<Owner = Self>;
@@ -37,7 +37,7 @@ help: the trait `AggregateType` is implemented for `PlainIdAggregate`
    |
 16 | #[derive(Aggregate)]
    |          ^^^^^^^^^
-note: required by a bound in `rostfrei_domain::EntityType::Owner`
+note: required by a bound in `domain::EntityType::Owner`
   --> src/entity/domain_type.rs
    |
    |     type Owner: AggregateType;

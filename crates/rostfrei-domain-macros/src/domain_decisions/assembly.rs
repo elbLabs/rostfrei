@@ -22,14 +22,14 @@ pub fn assemble(
 fn owner_supertrait(owner_kind: OwnerKind) -> TypeParamBound {
     match owner_kind {
         OwnerKind::Aggregate => {
-            syn::parse_quote!(::rostfrei_domain::AggregateDecisionOwnerType)
+            syn::parse_quote!(::domain::AggregateDecisionOwnerType)
         }
         OwnerKind::DomainService => {
-            syn::parse_quote!(::rostfrei_domain::DomainServiceDecisionOwnerType)
+            syn::parse_quote!(::domain::DomainServiceDecisionOwnerType)
         }
-        OwnerKind::Entity => syn::parse_quote!(::rostfrei_domain::EntityDecisionOwnerType),
+        OwnerKind::Entity => syn::parse_quote!(::domain::EntityDecisionOwnerType),
         OwnerKind::ValueObject => {
-            syn::parse_quote!(::rostfrei_domain::ValueObjectDecisionOwnerType)
+            syn::parse_quote!(::domain::ValueObjectDecisionOwnerType)
         }
     }
 }
@@ -41,16 +41,8 @@ fn add_supertraits(item: &mut ItemTrait, owner_supertrait: TypeParamBound) {
 
 fn add_type_predicates(item: &mut ItemTrait, decisions: &[Decision]) -> syn::Result<()> {
     for decision in decisions {
-        add_type_predicate(
-            item,
-            &decision.input,
-            quote!(::rostfrei_domain::DecisionInputType),
-        )?;
-        add_type_predicate(
-            item,
-            &decision.output,
-            quote!(::rostfrei_domain::DecisionOutputType),
-        )?;
+        add_type_predicate(item, &decision.input, quote!(::domain::DecisionInputType))?;
+        add_type_predicate(item, &decision.output, quote!(::domain::DecisionOutputType))?;
     }
     Ok(())
 }
@@ -66,7 +58,7 @@ fn add_descriptors(item: &mut ItemTrait, decisions: &[Decision]) -> syn::Result<
     let span = item.ident.span();
     let constant: TraitItem = syn::parse2(quote_spanned! {span=>
         #[doc(hidden)]
-        const __DOMAIN_DECISIONS: &'static [::rostfrei_domain::DecisionDescriptor] = &[
+        const __DOMAIN_DECISIONS: &'static [::domain::DecisionDescriptor] = &[
             #(#descriptors),*
         ];
     })?;
@@ -81,15 +73,15 @@ fn assemble_descriptor(decision: &Decision) -> TokenStream {
     let output = &decision.output;
 
     quote! {
-        ::rostfrei_domain::DecisionDescriptor {
-            id: ::rostfrei_domain::DecisionId {
-                owner: <Self as ::rostfrei_domain::DecisionOwnerType>::DECISION_OWNER_ID,
+        ::domain::DecisionDescriptor {
+            id: ::domain::DecisionId {
+                owner: <Self as ::domain::DecisionOwnerType>::DECISION_OWNER_ID,
                 local: #id,
             },
             label: #label,
-            input: <#input as ::rostfrei_domain::DecisionInputType>::DESCRIPTOR,
-            output: <#output as ::rostfrei_domain::DecisionOutputType>::DESCRIPTOR,
-            implementation: ::rostfrei_domain::DecisionImplementationDescriptor::Rust,
+            input: <#input as ::domain::DecisionInputType>::DESCRIPTOR,
+            output: <#output as ::domain::DecisionOutputType>::DESCRIPTOR,
+            implementation: ::domain::DecisionImplementationDescriptor::Rust,
         }
     }
 }
@@ -99,7 +91,7 @@ fn add_attribute_requirement(item: &mut ItemTrait) -> syn::Result<()> {
     let constant: TraitItem = syn::parse2(quote_spanned! {span=>
         #[doc(hidden)]
         const __DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE: &'static [
-            ::rostfrei_domain::DecisionDescriptor
+            ::domain::DecisionDescriptor
         ] = Self::__DOMAIN_DECISIONS;
     })?;
     item.items.push(constant);

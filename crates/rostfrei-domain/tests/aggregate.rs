@@ -1,4 +1,4 @@
-use rostfrei_domain::{
+use domain::{
     Aggregate, AggregateDescriptor, AggregateId, AggregateType, BoundedContext, BoundedContextId,
     DomainIdentity, Entity, EntityId,
 };

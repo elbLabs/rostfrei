@@ -9,7 +9,7 @@ help: the trait `BoundedContextType` is not implemented for `Inbox`
    |
  3 | struct Inbox;
    | ^^^^^^^^^^^^
-note: required by a bound in `rostfrei_domain::AggregateType::Context`
+note: required by a bound in `domain::AggregateType::Context`
   --> src/aggregate/domain_type.rs
    |
    |     type Context: BoundedContextType;

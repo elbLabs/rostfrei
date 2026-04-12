@@ -16,14 +16,14 @@ pub fn assemble(name: &Ident, attributes: &Attributes, fields: &[Field]) -> Toke
     let fields = crate::field::assemble_descriptors(fields);
 
     quote! {
-        impl ::rostfrei_domain::DomainErrorType for #name {
+        impl ::domain::DomainErrorType for #name {
             type Owner = #owner;
 
             const LOCAL_ID: &'static str = #id;
-            const DESCRIPTOR: ::rostfrei_domain::DomainErrorDescriptor =
-                ::rostfrei_domain::DomainErrorDescriptor {
-                    id: ::rostfrei_domain::DomainErrorId {
-                        owner: <#owner as ::rostfrei_domain::DomainErrorOwnerType>::DOMAIN_ERROR_OWNER_ID,
+            const DESCRIPTOR: ::domain::DomainErrorDescriptor =
+                ::domain::DomainErrorDescriptor {
+                    id: ::domain::DomainErrorId {
+                        owner: <#owner as ::domain::DomainErrorOwnerType>::DOMAIN_ERROR_OWNER_ID,
                         local: Self::LOCAL_ID,
                     },
                     label: #label,

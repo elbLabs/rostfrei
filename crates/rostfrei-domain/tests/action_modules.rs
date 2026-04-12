@@ -1,5 +1,5 @@
 mod domain {
-    use rostfrei_domain::{Aggregate, BoundedContext, DomainIdentity, Entity};
+    use domain::{Aggregate, BoundedContext, DomainIdentity, Entity};
 
     #[derive(BoundedContext)]
     #[domain(id = "catalog", label = "Catalog")]
@@ -32,7 +32,7 @@ mod domain {
     pub(crate) struct ServiceTaxonomy;
 
     pub(crate) mod publication {
-        use rostfrei_domain::domain_actions;
+        use domain::domain_actions;
 
         #[domain_actions(aggregate)]
         pub trait CategoryPublicationActions {
@@ -42,7 +42,7 @@ mod domain {
     }
 
     pub(crate) mod deprecation {
-        use rostfrei_domain::domain_actions;
+        use domain::domain_actions;
 
         #[domain_actions(aggregate)]
         pub trait CategoryDeprecationActions {
@@ -65,7 +65,7 @@ mod domain {
 }
 
 mod model {
-    use rostfrei_domain::domain_model;
+    use domain::domain_model;
 
     use super::domain::{Catalog, ServiceTaxonomy, TaxonomyId, TaxonomyRoot};
 

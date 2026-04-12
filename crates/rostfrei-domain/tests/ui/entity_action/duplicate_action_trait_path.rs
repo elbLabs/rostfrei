@@ -1,4 +1,4 @@
-use rostfrei_domain::Entity;
+use domain::Entity;
 
 struct Id;
 trait Actions {}

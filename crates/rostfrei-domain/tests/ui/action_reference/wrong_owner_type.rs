@@ -1,4 +1,4 @@
-use rostfrei_domain::{ActionOwnerType, ActionReference, domain_actions};
+use domain::{ActionOwnerType, ActionReference, domain_actions};
 
 #[domain_actions(entity)]
 trait Actions {

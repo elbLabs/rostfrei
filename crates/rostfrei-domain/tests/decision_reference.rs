@@ -1,6 +1,6 @@
 #![allow(dead_code, private_bounds, private_interfaces, clippy::clone_on_copy)]
 
-use rostfrei_domain::{
+use domain::{
     AggregateId, BoundedContext, BoundedContextId, DecisionId, DecisionOwnerId, DecisionOwnerType,
     DecisionReference, DomainService, DomainServiceType, ValueObject, domain_decisions,
 };

@@ -21,11 +21,11 @@ pub fn assemble(
 fn owner_supertrait(owner_kind: OwnerKind) -> TypeParamBound {
     match owner_kind {
         OwnerKind::Aggregate => {
-            syn::parse_quote!(::rostfrei_domain::AggregateInvariantOwnerType)
+            syn::parse_quote!(::domain::AggregateInvariantOwnerType)
         }
-        OwnerKind::Entity => syn::parse_quote!(::rostfrei_domain::EntityInvariantOwnerType),
+        OwnerKind::Entity => syn::parse_quote!(::domain::EntityInvariantOwnerType),
         OwnerKind::ValueObject => {
-            syn::parse_quote!(::rostfrei_domain::ValueObjectInvariantOwnerType)
+            syn::parse_quote!(::domain::ValueObjectInvariantOwnerType)
         }
     }
 }
@@ -41,7 +41,7 @@ fn add_descriptors(item: &mut ItemTrait, invariants: &[Invariant]) -> syn::Resul
     let span = item.ident.span();
     let constant: TraitItem = syn::parse2(quote_spanned! {span=>
         #[doc(hidden)]
-        const __DOMAIN_INVARIANTS: &'static [::rostfrei_domain::InvariantDescriptor] = &[
+        const __DOMAIN_INVARIANTS: &'static [::domain::InvariantDescriptor] = &[
             #(#descriptors),*
         ];
     })?;
@@ -54,9 +54,9 @@ fn assemble_descriptor(invariant: &Invariant) -> TokenStream {
     let label = &invariant.label;
 
     quote! {
-        ::rostfrei_domain::InvariantDescriptor {
-            id: ::rostfrei_domain::InvariantId {
-                owner: <Self as ::rostfrei_domain::InvariantOwnerType>::INVARIANT_OWNER_ID,
+        ::domain::InvariantDescriptor {
+            id: ::domain::InvariantId {
+                owner: <Self as ::domain::InvariantOwnerType>::INVARIANT_OWNER_ID,
                 local: #id,
             },
             label: #label,
@@ -69,7 +69,7 @@ fn add_attribute_requirement(item: &mut ItemTrait) -> syn::Result<()> {
     let constant: TraitItem = syn::parse2(quote_spanned! {span=>
         #[doc(hidden)]
         const __DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE: &'static [
-            ::rostfrei_domain::InvariantDescriptor
+            ::domain::InvariantDescriptor
         ] = Self::__DOMAIN_INVARIANTS;
     })?;
     item.items.push(constant);
@@ -92,8 +92,8 @@ fn add_append_violations(item: &mut ItemTrait, invariants: &[Invariant]) -> syn:
     let method: TraitItem = syn::parse2(quote_spanned! {span=>
         #[doc(hidden)]
         fn __DOMAIN_INVARIANTS_APPEND_VIOLATIONS(
-            candidate: &<Self as ::rostfrei_domain::InvariantOwnerType>::Candidate,
-            violations: &mut ::std::vec::Vec<::rostfrei_domain::InvariantViolation>,
+            candidate: &<Self as ::domain::InvariantOwnerType>::Candidate,
+            violations: &mut ::std::vec::Vec<::domain::InvariantViolation>,
         ) {
             #(#checks)*
         }

@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use rostfrei_domain::{
+use domain::{
     BoundedContext, InvariantOwnerType, InvariantViolation, ValueObject, domain_invariants,
 };
 

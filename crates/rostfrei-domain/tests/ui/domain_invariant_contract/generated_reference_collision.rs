@@ -1,6 +1,6 @@
 #![allow(non_snake_case, unused_imports)]
 
-use rostfrei_domain::{InvariantOwnerType, InvariantViolation, domain_invariants};
+use domain::{InvariantOwnerType, InvariantViolation, domain_invariants};
 
 #[domain_invariants(entity)]
 trait Invariants {

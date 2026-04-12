@@ -18,10 +18,10 @@ fn assemble_bounded_context(name: &Ident, attributes: &Attributes) -> TokenStrea
     let label = &attributes.label;
 
     quote! {
-        impl ::rostfrei_domain::BoundedContextType for #name {
-            const DESCRIPTOR: ::rostfrei_domain::BoundedContextDescriptor =
-                ::rostfrei_domain::BoundedContextDescriptor {
-                    id: ::rostfrei_domain::BoundedContextId(#id),
+        impl ::domain::BoundedContextType for #name {
+            const DESCRIPTOR: ::domain::BoundedContextDescriptor =
+                ::domain::BoundedContextDescriptor {
+                    id: ::domain::BoundedContextId(#id),
                     label: #label,
                 };
         }
@@ -30,10 +30,10 @@ fn assemble_bounded_context(name: &Ident, attributes: &Attributes) -> TokenStrea
 
 fn assemble_value_object_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::ValueObjectOwnerType for #name {
-            const VALUE_OBJECT_OWNER_ID: ::rostfrei_domain::ValueObjectOwnerId =
-                ::rostfrei_domain::ValueObjectOwnerId::BoundedContext(
-                    <Self as ::rostfrei_domain::BoundedContextType>::DESCRIPTOR.id,
+        impl ::domain::ValueObjectOwnerType for #name {
+            const VALUE_OBJECT_OWNER_ID: ::domain::ValueObjectOwnerId =
+                ::domain::ValueObjectOwnerId::BoundedContext(
+                    <Self as ::domain::BoundedContextType>::DESCRIPTOR.id,
                 );
         }
     }

@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::__private::DomainModelBuilder;
-use rostfrei_domain::extension::ActionGroupType;
-use rostfrei_domain::{
+use domain::__private::DomainModelBuilder;
+use domain::extension::ActionGroupType;
+use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, Aggregate, AggregateId, BoundedContext,
     BoundedContextId, DomainIdentity, Entity, EntityId, domain_actions,
 };
@@ -212,7 +212,7 @@ fn rejects_duplicate_action_id_against_an_attached_contract() {
 #[test]
 #[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_across_entity_attached_traits_during_model_registration() {
-    let _ = rostfrei_domain::domain_model! {
+    let _ = domain::domain_model! {
         contexts: [],
         aggregates: [],
         entities: [DuplicateTraitEntity],

@@ -1,8 +1,8 @@
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rostfrei_domain::__private::DomainModelBuilder;
-use rostfrei_domain::{
+use domain::__private::DomainModelBuilder;
+use domain::{
     ActionId, ActionOwnerId, AggregateDescriptor, AggregateId, AggregateType,
     BoundedContextDescriptor, BoundedContextId, BoundedContextType, DomainIdentityDescriptor,
     DomainIdentityId, DomainIdentityType, EntityDescriptor, EntityId, EntityLifecycleDescriptor,

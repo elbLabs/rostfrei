@@ -1,4 +1,4 @@
-use rostfrei_domain::domain_lifecycle_test;
+use domain::domain_lifecycle_test;
 
 struct NotALifecycle;
 

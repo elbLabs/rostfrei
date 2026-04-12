@@ -9,7 +9,7 @@ help: the trait `BoundedContextType` is not implemented for `PlainContext`
   |
 3 | struct PlainContext;
   | ^^^^^^^^^^^^^^^^^^^
-note: required by a bound in `rostfrei_domain::DomainServiceType::Context`
+note: required by a bound in `domain::DomainServiceType::Context`
  --> src/domain_service/domain_type.rs
   |
   |     type Context: BoundedContextType;

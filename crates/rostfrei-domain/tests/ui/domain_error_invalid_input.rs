@@ -1,4 +1,4 @@
-use rostfrei_domain::DomainError;
+use domain::DomainError;
 
 #[derive(DomainError)]
 #[domain(id = "choice", label = "Choice", owner = Owner, code = "CHOICE", message = "Choice.")]

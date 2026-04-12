@@ -1,3 +1,3 @@
-use rostfrei_domain::ActionGroupType;
+use domain::ActionGroupType;
 
 fn main() {}

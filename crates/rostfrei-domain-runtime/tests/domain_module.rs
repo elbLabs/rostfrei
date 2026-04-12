@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 
-use rostfrei_core::{Aggregate as RuntimeAggregate, CommandHandler, DecisionContext};
-use rostfrei_domain::{
+use domain::{
     Aggregate as DomainAggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandType,
     DomainIdentity, Entity,
 };
+use rostfrei_core::{Aggregate as RuntimeAggregate, CommandHandler, DecisionContext};
 use rostfrei_domain_runtime::{domain_module, AggregateRuntime};
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 

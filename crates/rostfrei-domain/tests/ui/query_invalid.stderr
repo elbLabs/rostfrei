@@ -74,7 +74,7 @@ help: the trait `AggregateType` is implemented for `Model`
    |
 15 | #[derive(Aggregate)]
    |          ^^^^^^^^^
-note: required by a bound in `rostfrei_domain::QueryGroupType::Owner`
+note: required by a bound in `domain::QueryGroupType::Owner`
   --> src/domain_query/group_type.rs
    |
    |     type Owner: AggregateType;

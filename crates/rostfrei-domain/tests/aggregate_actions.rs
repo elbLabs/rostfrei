@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::extension::ActionGroupType;
-use rostfrei_domain::{
+use domain::extension::ActionGroupType;
+use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
     Aggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandType, DomainError,
     DomainErrorType, DomainEvent, DomainEventType, DomainIdentity, Entity, domain_actions,
@@ -73,7 +73,7 @@ pub struct AccountChanged;
 pub struct AccountDenied;
 
 mod contracts {
-    use rostfrei_domain::domain_actions;
+    use domain::domain_actions;
 
     #[domain_actions(aggregate)]
     pub trait AccountLifecycle {

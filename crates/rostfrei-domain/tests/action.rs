@@ -1,4 +1,4 @@
-use rostfrei_domain::{
+use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, ActionOwnerType, Aggregate, AggregateType,
     BoundedContext, BoundedContextId, DomainError, DomainIdentity, DomainService, DomainServiceId,
     DomainServiceType, Entity, EntityId, EntityType, ValueObject, ValueObjectId,
@@ -40,7 +40,7 @@ struct Mailbox;
 struct MailboxDenied;
 
 mod contracts {
-    use rostfrei_domain::domain_actions;
+    use domain::domain_actions;
 
     #[domain_actions(aggregate)]
     pub trait MailboxManagementActions {
@@ -233,15 +233,15 @@ fn preserves_descriptor_shape_and_source_order() {
         mailbox_contracts[0][0],
         ActionDescriptor {
             id: ActionId {
-                owner: ActionOwnerId::Aggregate(rostfrei_domain::AggregateId {
+                owner: ActionOwnerId::Aggregate(domain::AggregateId {
                     context: BoundedContextId("inbox"),
                     local: "mailbox",
                 }),
                 local: "rename",
             },
             label: "Rename mailbox",
-            input: Some(rostfrei_domain::ActionInputDescriptor::Scalar(
-                rostfrei_domain::ScalarType::String,
+            input: Some(domain::ActionInputDescriptor::Scalar(
+                domain::ScalarType::String,
             )),
             output: None,
             error: None,

@@ -1,4 +1,4 @@
-use rostfrei_domain::DomainService;
+use domain::DomainService;
 
 struct Context;
 trait Decisions {}

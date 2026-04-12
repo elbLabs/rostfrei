@@ -31,8 +31,8 @@ impl DomainTestSubjectInput {
         match self {
             Self::Typed(subject) => subject.assemble(kind),
             Self::Lifecycle(lifecycle) => quote_spanned! {lifecycle.path.span()=>
-                ::rostfrei_domain::DomainTestSubject::Lifecycle(
-                    <#lifecycle as ::rostfrei_domain::EntityLifecycleType>::DESCRIPTOR.id
+                ::domain::DomainTestSubject::Lifecycle(
+                    <#lifecycle as ::domain::EntityLifecycleType>::DESCRIPTOR.id
                 )
             },
         }
@@ -69,11 +69,11 @@ impl TypedSubject {
 
         quote_spanned! {span=>
             {
-                let _: &'static [::rostfrei_domain::#descriptor] =
+                let _: &'static [::domain::#descriptor] =
                     <#owner as #trait_path>::#marker;
-                let reference: ::rostfrei_domain::#reference<#owner> =
+                let reference: ::domain::#reference<#owner> =
                     <#owner as #trait_path>::#hidden_reference;
-                ::rostfrei_domain::DomainTestSubject::#variant(reference.id())
+                ::domain::DomainTestSubject::#variant(reference.id())
             }
         }
     }

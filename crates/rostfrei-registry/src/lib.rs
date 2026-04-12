@@ -35,7 +35,7 @@ pub struct CommandDescriptor {
     pub aggregate_type: &'static str,
     pub rust_command_type: &'static str,
     pub rust_aggregate_type: &'static str,
-    pub domain_command: Option<rostfrei_domain::DomainCommandDescriptor>,
+    pub domain_command: Option<domain::DomainCommandDescriptor>,
 }
 
 impl CommandDescriptor {
@@ -46,7 +46,7 @@ impl CommandDescriptor {
         }
     }
 
-    pub const fn domain_command(&self) -> Option<&rostfrei_domain::DomainCommandDescriptor> {
+    pub const fn domain_command(&self) -> Option<&domain::DomainCommandDescriptor> {
         self.domain_command.as_ref()
     }
 }

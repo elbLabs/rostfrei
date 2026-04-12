@@ -19,7 +19,7 @@ invariants because it owns no state.
 Invariant checkers are declared on owner-kind contract traits:
 
 ```rust
-use rostfrei_domain::{
+use domain::{
     Aggregate, InvariantOwnerType, InvariantViolation, domain_invariants,
 };
 

@@ -1,14 +1,14 @@
 #![allow(unused, non_snake_case)]
 
-#[derive(rostfrei_domain::BoundedContext)]
+#[derive(domain::BoundedContext)]
 #[domain(id = "context", label = "Context")]
 struct Context;
 
-#[derive(rostfrei_domain::DomainIdentity)]
+#[derive(domain::DomainIdentity)]
 #[domain(owner = Root)]
 struct RootId(u8);
 
-#[derive(rostfrei_domain::Entity)]
+#[derive(domain::Entity)]
 #[domain(id = "root", label = "Root", owner = shadowed::Owner)]
 struct Root {
     #[domain(identity)]
@@ -24,15 +24,15 @@ mod shadowed {
     struct Ok;
     struct Err;
 
-    #[rostfrei_domain::domain_invariants(aggregate)]
+    #[domain::domain_invariants(aggregate)]
     pub(crate) trait Invariants {
         #[invariant(id = "valid", label = "Valid")]
         fn valid(
-            candidate: &<Self as rostfrei_domain::InvariantOwnerType>::Candidate,
-        ) -> ::core::option::Option<rostfrei_domain::InvariantViolation>;
+            candidate: &<Self as domain::InvariantOwnerType>::Candidate,
+        ) -> ::core::option::Option<domain::InvariantViolation>;
     }
 
-    #[derive(rostfrei_domain::Aggregate)]
+    #[derive(domain::Aggregate)]
     #[domain(
         id = "owner",
         label = "Owner",
@@ -44,8 +44,8 @@ mod shadowed {
 
     impl Invariants for Owner {
         fn valid(
-            candidate: &<Self as rostfrei_domain::InvariantOwnerType>::Candidate,
-        ) -> ::core::option::Option<rostfrei_domain::InvariantViolation> {
+            candidate: &<Self as domain::InvariantOwnerType>::Candidate,
+        ) -> ::core::option::Option<domain::InvariantViolation> {
             let _ = candidate;
             ::core::option::Option::None
         }
@@ -53,7 +53,7 @@ mod shadowed {
 
     pub(crate) fn validate(candidate: &Root) {
         let validation =
-            <Owner as rostfrei_domain::InvariantOwnerType>::validate_invariants(candidate);
+            <Owner as domain::InvariantOwnerType>::validate_invariants(candidate);
         match validation {
             ::core::result::Result::Ok(()) => {}
             ::core::result::Result::Err(_) => {}

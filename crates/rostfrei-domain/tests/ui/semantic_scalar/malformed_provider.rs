@@ -1,4 +1,4 @@
-use rostfrei_domain::{DomainIdentity, ValueObject};
+use domain::{DomainIdentity, ValueObject};
 
 struct Custom;
 

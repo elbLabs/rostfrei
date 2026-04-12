@@ -1,4 +1,4 @@
-use rostfrei_domain::{Aggregate, DomainIdentity, Entity};
+use domain::{Aggregate, DomainIdentity, Entity};
 
 struct Inbox;
 

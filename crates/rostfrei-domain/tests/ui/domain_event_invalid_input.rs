@@ -1,4 +1,4 @@
-use rostfrei_domain::DomainEvent;
+use domain::DomainEvent;
 
 #[derive(DomainEvent)]
 #[domain(id = "choice", label = "Choice", owner = Owner)]

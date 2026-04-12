@@ -1,4 +1,4 @@
-use rostfrei_domain::{ActionId, ActionReference, domain_actions};
+use domain::{ActionId, ActionReference, domain_actions};
 
 #[domain_actions(domain_service)]
 pub trait Actions {

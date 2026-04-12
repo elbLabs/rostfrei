@@ -52,18 +52,18 @@ fn assemble_assertions(name: &Ident, shape: &Shape) -> TokenStream {
 fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStream {
     let invariants = &attributes.invariants;
     quote! {
-        impl ::rostfrei_domain::InvariantOwnerType for #name {
+        impl ::domain::InvariantOwnerType for #name {
             type Candidate = Self;
-            const INVARIANT_OWNER_ID: ::rostfrei_domain::InvariantOwnerId =
-                ::rostfrei_domain::InvariantOwnerId::ValueObject(
-                    <Self as ::rostfrei_domain::ValueObjectType>::DESCRIPTOR.id,
+            const INVARIANT_OWNER_ID: ::domain::InvariantOwnerId =
+                ::domain::InvariantOwnerId::ValueObject(
+                    <Self as ::domain::ValueObjectType>::DESCRIPTOR.id,
                 );
 
             fn validate_invariants(
                 candidate: &Self::Candidate,
             ) -> ::core::result::Result<
                 (),
-                ::std::vec::Vec<::rostfrei_domain::InvariantViolation>,
+                ::std::vec::Vec<::domain::InvariantViolation>,
             > {
                 let mut violations = ::std::vec::Vec::new();
                 #(<Self as #invariants>::__DOMAIN_INVARIANTS_APPEND_VIOLATIONS(
@@ -78,38 +78,38 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
             }
         }
 
-        impl ::rostfrei_domain::ValueObjectInvariantOwnerType for #name {}
+        impl ::domain::ValueObjectInvariantOwnerType for #name {}
     }
 }
 
 fn assemble_action_contracts(name: &Ident) -> TokenStream {
     quote! {
-        impl<Owner> ::rostfrei_domain::ActionInputType<Owner> for #name {
-            const DESCRIPTOR: ::rostfrei_domain::ActionInputDescriptor =
-                ::rostfrei_domain::ActionInputDescriptor::ValueObject(
-                    <Self as ::rostfrei_domain::ValueObjectType>::DESCRIPTOR.id,
+        impl<Owner> ::domain::ActionInputType<Owner> for #name {
+            const DESCRIPTOR: ::domain::ActionInputDescriptor =
+                ::domain::ActionInputDescriptor::ValueObject(
+                    <Self as ::domain::ValueObjectType>::DESCRIPTOR.id,
                 );
         }
 
-        impl<Contract> ::rostfrei_domain::ActionOutputType<Contract> for #name {
-            const DESCRIPTOR: Option<::rostfrei_domain::ActionOutputDescriptor> = Some(
-                ::rostfrei_domain::ActionOutputDescriptor::ValueObject(
-                    <Self as ::rostfrei_domain::ValueObjectType>::DESCRIPTOR.id,
+        impl<Contract> ::domain::ActionOutputType<Contract> for #name {
+            const DESCRIPTOR: Option<::domain::ActionOutputDescriptor> = Some(
+                ::domain::ActionOutputDescriptor::ValueObject(
+                    <Self as ::domain::ValueObjectType>::DESCRIPTOR.id,
                 ),
             );
         }
 
-        impl<Aggregate> ::rostfrei_domain::QueryInputType<Aggregate> for #name {
-            const DESCRIPTOR: ::rostfrei_domain::QueryInputDescriptor =
-                ::rostfrei_domain::QueryInputDescriptor::ValueObject(
-                    <Self as ::rostfrei_domain::ValueObjectType>::DESCRIPTOR.id,
+        impl<Aggregate> ::domain::QueryInputType<Aggregate> for #name {
+            const DESCRIPTOR: ::domain::QueryInputDescriptor =
+                ::domain::QueryInputDescriptor::ValueObject(
+                    <Self as ::domain::ValueObjectType>::DESCRIPTOR.id,
                 );
         }
 
-        impl<Aggregate> ::rostfrei_domain::QueryOutputType<Aggregate> for #name {
-            const DESCRIPTOR: ::rostfrei_domain::QueryOutputDescriptor =
-                ::rostfrei_domain::QueryOutputDescriptor::ValueObject(
-                    <Self as ::rostfrei_domain::ValueObjectType>::DESCRIPTOR.id,
+        impl<Aggregate> ::domain::QueryOutputType<Aggregate> for #name {
+            const DESCRIPTOR: ::domain::QueryOutputDescriptor =
+                ::domain::QueryOutputDescriptor::ValueObject(
+                    <Self as ::domain::ValueObjectType>::DESCRIPTOR.id,
                 );
         }
     }
@@ -117,17 +117,17 @@ fn assemble_action_contracts(name: &Ident) -> TokenStream {
 
 fn assemble_decision_contracts(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::DecisionInputType for #name {
-            const DESCRIPTOR: ::rostfrei_domain::DecisionInputDescriptor =
-                ::rostfrei_domain::DecisionInputDescriptor::ValueObject(
-                    <Self as ::rostfrei_domain::ValueObjectType>::DESCRIPTOR.id,
+        impl ::domain::DecisionInputType for #name {
+            const DESCRIPTOR: ::domain::DecisionInputDescriptor =
+                ::domain::DecisionInputDescriptor::ValueObject(
+                    <Self as ::domain::ValueObjectType>::DESCRIPTOR.id,
                 );
         }
 
-        impl ::rostfrei_domain::DecisionOutputType for #name {
-            const DESCRIPTOR: ::rostfrei_domain::DecisionOutputDescriptor =
-                ::rostfrei_domain::DecisionOutputDescriptor::ValueObject(
-                    <Self as ::rostfrei_domain::ValueObjectType>::DESCRIPTOR.id,
+        impl ::domain::DecisionOutputType for #name {
+            const DESCRIPTOR: ::domain::DecisionOutputDescriptor =
+                ::domain::DecisionOutputDescriptor::ValueObject(
+                    <Self as ::domain::ValueObjectType>::DESCRIPTOR.id,
                 );
         }
     }
@@ -135,16 +135,16 @@ fn assemble_decision_contracts(name: &Ident) -> TokenStream {
 
 fn assemble_value_object_action_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::ValueObjectActionOwnerType for #name {}
+        impl ::domain::ValueObjectActionOwnerType for #name {}
     }
 }
 
 fn assemble_action_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::ActionOwnerType for #name {
-            const ACTION_OWNER_ID: ::rostfrei_domain::ActionOwnerId =
-                ::rostfrei_domain::ActionOwnerId::ValueObject(
-                    <Self as ::rostfrei_domain::ValueObjectType>::DESCRIPTOR.id,
+        impl ::domain::ActionOwnerType for #name {
+            const ACTION_OWNER_ID: ::domain::ActionOwnerId =
+                ::domain::ActionOwnerId::ValueObject(
+                    <Self as ::domain::ValueObjectType>::DESCRIPTOR.id,
                 );
         }
     }
@@ -152,16 +152,16 @@ fn assemble_action_owner(name: &Ident) -> TokenStream {
 
 fn assemble_value_object_decision_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::ValueObjectDecisionOwnerType for #name {}
+        impl ::domain::ValueObjectDecisionOwnerType for #name {}
     }
 }
 
 fn assemble_decision_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::DecisionOwnerType for #name {
-            const DECISION_OWNER_ID: ::rostfrei_domain::DecisionOwnerId =
-                ::rostfrei_domain::DecisionOwnerId::ValueObject(
-                    <Self as ::rostfrei_domain::ValueObjectType>::DESCRIPTOR.id,
+        impl ::domain::DecisionOwnerType for #name {
+            const DECISION_OWNER_ID: ::domain::DecisionOwnerId =
+                ::domain::DecisionOwnerId::ValueObject(
+                    <Self as ::domain::ValueObjectType>::DESCRIPTOR.id,
                 );
         }
     }
@@ -169,16 +169,16 @@ fn assemble_decision_owner(name: &Ident) -> TokenStream {
 
 fn assemble_internal_action_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::InternalActionOwnerType for #name {}
+        impl ::domain::InternalActionOwnerType for #name {}
     }
 }
 
 fn assemble_domain_error_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::DomainErrorOwnerType for #name {
-            const DOMAIN_ERROR_OWNER_ID: ::rostfrei_domain::DomainErrorOwnerId =
-                ::rostfrei_domain::DomainErrorOwnerId::ValueObject(
-                    <Self as ::rostfrei_domain::ValueObjectType>::DESCRIPTOR.id,
+        impl ::domain::DomainErrorOwnerType for #name {
+            const DOMAIN_ERROR_OWNER_ID: ::domain::DomainErrorOwnerId =
+                ::domain::DomainErrorOwnerId::ValueObject(
+                    <Self as ::domain::ValueObjectType>::DESCRIPTOR.id,
                 );
         }
     }

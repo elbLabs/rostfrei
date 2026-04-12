@@ -1,4 +1,4 @@
-use rostfrei_domain::{
+use domain::{
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainEvent, DomainEventDescriptor,
     DomainEventId, DomainEventType, DomainIdentity, Entity,
 };
@@ -60,7 +60,7 @@ fn describes_event_fields() {
     assert_eq!(MailboxRenamed::DESCRIPTOR.fields[0].name, "name");
     assert_eq!(
         MailboxRenamed::DESCRIPTOR.fields[0].value.kind,
-        rostfrei_domain::FieldKind::Scalar(rostfrei_domain::ScalarType::String)
+        domain::FieldKind::Scalar(domain::ScalarType::String)
     );
 }
 

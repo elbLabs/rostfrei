@@ -1,4 +1,4 @@
-extern crate self as rostfrei_domain;
+extern crate self as domain;
 
 mod action;
 mod aggregate;

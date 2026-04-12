@@ -1,4 +1,4 @@
-use rostfrei_domain::DomainEvent;
+use domain::DomainEvent;
 
 struct Owner;
 

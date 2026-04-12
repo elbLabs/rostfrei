@@ -1,6 +1,6 @@
 #![allow(unused, non_snake_case)]
 
-use rostfrei_domain::domain_model;
+use domain::domain_model;
 
 fn main() {
     let _ = domain_model! {

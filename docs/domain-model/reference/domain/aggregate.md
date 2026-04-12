@@ -56,7 +56,7 @@ attached to the Aggregate through `actions = [TraitPath, ...]`:
 
 ```rust
 mod contracts {
-    use rostfrei_domain::domain_actions;
+    use domain::domain_actions;
 
     #[domain_actions(aggregate)]
     pub trait TodoActions {

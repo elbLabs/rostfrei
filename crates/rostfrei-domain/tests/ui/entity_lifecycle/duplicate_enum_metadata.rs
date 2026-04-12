@@ -1,4 +1,4 @@
-use rostfrei_domain::EntityLifecycle;
+use domain::EntityLifecycle;
 
 #[derive(EntityLifecycle)]
 #[domain(id = "workflow", id = "other", label = "Workflow", owner = Todo, initial = Draft)]

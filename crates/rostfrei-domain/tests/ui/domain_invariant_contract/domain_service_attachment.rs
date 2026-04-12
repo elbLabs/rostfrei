@@ -1,6 +1,6 @@
 #![allow(unused, non_snake_case)]
 
-use rostfrei_domain::DomainService;
+use domain::DomainService;
 
 struct Context;
 trait Invariants {}

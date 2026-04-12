@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::extension::ActionGroupType;
-use rostfrei_domain::{
+use domain::extension::ActionGroupType;
+use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
     Aggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandOwnerId,
     DomainCommandType, DomainError, DomainErrorOwnerId, DomainErrorType, DomainEvent,
@@ -105,7 +105,7 @@ pub struct CoordinateWork;
 pub struct CoordinationFailed;
 
 mod contracts {
-    use rostfrei_domain::domain_actions;
+    use domain::domain_actions;
 
     #[domain_actions(domain_service)]
     pub trait Coordination {
