@@ -15,5 +15,12 @@ The initial workspace contains four crates:
 
 Zeitstrahl does not provision infrastructure during service startup. Operators
 use the explicit provisioning APIs with deployment-owned stream policies.
+Authoritative NATS event storage requires NATS Server 2.12.0 or newer for atomic
+multi-event publishing.
 
-The architectural decisions for the first release are in [`docs/adr`](docs/adr).
+The current implementation status, agreed direction, delivery order, and
+architecture decision map are in
+[`docs/project-status-and-direction.md`](docs/project-status-and-direction.md).
+The canonical project terminology is in
+[`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual decisions are
+recorded in [`docs/adr`](docs/adr).
