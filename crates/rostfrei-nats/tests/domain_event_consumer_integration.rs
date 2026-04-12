@@ -172,12 +172,10 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
     let event_store_config = NatsEventStoreConfig::new(
         format!("DOMAIN_EVENT_CONSUMER_{suffix}").to_ascii_uppercase(),
         format!("private.domain-event-consumer.{suffix}"),
-        64 * 1024 * 1024,
-        2 * 1024 * 1024,
-        1,
-        Duration::from_secs(5),
     )
-    .expect("event-store config");
+    .expect("event-store config")
+    .with_storage_limits(64 * 1024 * 1024, 2 * 1024 * 1024)
+    .expect("event-store storage limits");
     provision_event_store(&context, &event_store_config)
         .await
         .expect("event-store provisioning");
