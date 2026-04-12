@@ -12,10 +12,11 @@ receives a typed event together with its existing `RecordedEvent` metadata. It
 runs after aggregate commit, never participates in aggregate decisions, and
 never changes or appends to the originating aggregate stream.
 
-Applications explicitly register an aggregate codec, private event type, and
-handler. Unregistered aggregate/event pairs are intentionally irrelevant and are
-acknowledged without invoking a side effect. Registered events are decoded
-through the aggregate's `EventCodec`; unsupported schemas, malformed payloads,
+Applications register a private event type and handler. The derived JSON event
+codec is selected automatically; registration accepts an explicit codec only as
+an override. Unregistered aggregate/event pairs are intentionally irrelevant and
+are acknowledged without invoking a side effect. Registered events are decoded
+through the aggregate's codec; unsupported schemas, malformed payloads,
 permanently unsupported events, and operator-blocking failures stop the durable
 consumer without skipping the event. Retryable failures are negatively
 acknowledged for redelivery.
