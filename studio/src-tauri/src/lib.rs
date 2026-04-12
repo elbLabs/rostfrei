@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn detects_the_rust_compiler_toolchain() {
-        let status = cargo_status().expect("cargo should be installed for Rostfrei Studio");
+        let status = cargo_status().expect("cargo should be installed for rostfrei Studio");
 
         assert!(status.available);
         assert!(status.version.starts_with("cargo "));

@@ -1,6 +1,6 @@
 # Ubiquitous Language
 
-This is the canonical language for Rostfrei's event-sourcing model. Framework
+This is the canonical language for rostfrei's event-sourcing model. Framework
 APIs, architecture decisions, documentation, Studio, and AI tooling use these
 terms with the same meanings. ADR 0001 makes this language an architectural
 constraint.
@@ -74,7 +74,7 @@ constraint.
   **integration event** for a public message contract.
 - **Stream** is ambiguous. Use **aggregate stream** for one aggregate's logical
   history and **JetStream stream** for NATS infrastructure containing subjects.
-- **Publish** is ambiguous. Rostfrei **appends** domain events through the
+- **Publish** is ambiguous. rostfrei **appends** domain events through the
   EventStore even though the NATS adapter uses broker publication internally;
   application messaging **publishes** commands and integration events.
 - **Batch** is an implementation term. Use **commit** for the atomic business

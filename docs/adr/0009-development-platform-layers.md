@@ -6,7 +6,7 @@ Accepted.
 
 ## Decision
 
-Rostfrei will evolve from its event-sourcing and messaging foundation into an
+rostfrei will evolve from its event-sourcing and messaging foundation into an
 event-sourced development platform. The platform may provide domain metadata,
 handler registration, simulation, inspection, Studio, documentation, and AI
 interfaces, but these capabilities are layered around the existing explicit

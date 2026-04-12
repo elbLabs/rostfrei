@@ -1,10 +1,10 @@
-# Rostfrei cofounder project summary
+# rostfrei cofounder project summary
 
 Status as of 2026-08-26.
 
 ## Executive summary
 
-Rostfrei is an event-sourced development platform for building, testing,
+rostfrei is an event-sourced development platform for building, testing,
 operating, and understanding business systems whose decisions must remain
 traceable over time.
 
@@ -16,7 +16,7 @@ contracts.
 
 The accepted product direction adds a machine-readable domain registry,
 automatically generated registration, aggregate inspection, safe command
-simulation, Rostfrei Studio, and AI-facing tools. All of these remain optional
+simulation, rostfrei Studio, and AI-facing tools. All of these remain optional
 layers around the explicit kernel.
 
 The product thesis is:
@@ -41,7 +41,7 @@ Source-code assistants have the same limitation. Reading code does not provide
 an authoritative description of linked handlers, deployed capabilities,
 historical state, command outcomes, or runtime schemas.
 
-Rostfrei addresses both problems by making decisions explicit, histories
+rostfrei addresses both problems by making decisions explicit, histories
 permanent, execution deterministic, and domain metadata machine-readable.
 
 ## Current maturity
@@ -103,7 +103,7 @@ This vocabulary prevents several dangerous ambiguities:
   infrastructure that can contain many aggregate subjects.
 - A commit is a business atomicity boundary, not an arbitrary message batch.
 - Aggregate state is reconstructed from domain events and is not stored in NATS
-  KV by Rostfrei.
+  KV by rostfrei.
 - A rejection is a business outcome, not a codec, storage, or broker failure.
 
 ## Implemented architecture
@@ -278,7 +278,7 @@ JetStream. Application metadata cannot override broker control headers.
 ## Truthful legacy import
 
 ADR 0007 requires existing state to enter a new aggregate stream through an
-honest import domain event. Rostfrei does not fabricate a sequence of business
+honest import domain event. rostfrei does not fabricate a sequence of business
 events from a current-state row and does not hide imported state in a snapshot.
 
 An import is a normal `NoStream` commit and can include domain-selected
@@ -313,7 +313,7 @@ flowchart TB
         Runtime[Runtime command dispatch]
         Simulation[Inspection and simulation]
         ControlPlane[Secured control plane]
-        Studio[Rostfrei Studio]
+        Studio[rostfrei Studio]
         AI[AI and MCP adapters]
         Documentation[Generated documentation]
     end
@@ -340,7 +340,7 @@ will consume the same registry.
 
 Annotated aggregates and handlers will automatically contribute generated
 registrations through a compile-time or link-time registry. At startup,
-Rostfrei will collect, sort, and validate the linked registrations. Duplicate
+rostfrei will collect, sort, and validate the linked registrations. Duplicate
 names, ambiguous handlers, or incompatible descriptors will fail startup or,
 where possible, compilation.
 
@@ -395,7 +395,7 @@ It will expose:
 - Scenario generation and execution.
 - Explicitly authorized live dispatch.
 
-Rostfrei Studio and AI adapters use the same validation, redaction,
+rostfrei Studio and AI adapters use the same validation, redaction,
 authorization, environment capabilities, and audit trail. AI does not receive a
 privileged route around production safety.
 
@@ -458,14 +458,14 @@ should be added only when real use cases establish their required semantics.
 
 ## Strategic position
 
-Rostfrei combines capabilities normally separated across an event-sourcing
+rostfrei combines capabilities normally separated across an event-sourcing
 framework, message-bus abstraction, EventStore, aggregate testing library,
 domain debugger, operational inspection tool, and AI development interface.
 
 The advantage is not the number of features. It is that every layer shares the
 same vocabulary, descriptors, execution model, and historical truth.
 
-Rostfrei is therefore not simply an attempt to reproduce another framework in
+rostfrei is therefore not simply an attempt to reproduce another framework in
 Rust. Its intended differentiator is:
 
 > Every important business decision should be reproducible, explainable,

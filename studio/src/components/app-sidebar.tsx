@@ -61,7 +61,7 @@ export function AppSidebar({
                 <Braces className="size-4" strokeWidth={2.5} />
               </div>
               <span className="grid min-w-0 flex-1 text-left leading-tight">
-                <span className="truncate text-sm font-semibold">Rostfrei Studio</span>
+                <span className="truncate text-sm font-semibold">rostfrei Studio</span>
                 <span className="truncate text-[10px] uppercase tracking-[0.16em] text-sidebar-foreground/45">{workspaceName}</span>
               </span>
             </SidebarMenuButton>

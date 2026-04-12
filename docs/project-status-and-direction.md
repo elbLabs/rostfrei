@@ -1,10 +1,10 @@
-# Rostfrei project status and direction
+# rostfrei project status and direction
 
 Status as of 2026-08-26.
 
 ## Summary
 
-Rostfrei is a Rust event-sourcing and messaging framework built around strict
+rostfrei is a Rust event-sourcing and messaging framework built around strict
 domain boundaries and NATS JetStream. Its working foundation provides typed
 aggregate execution, deterministic replay, optimistic concurrency, exact retry,
 atomic event commits, transport-neutral messaging, and NATS adapters.
@@ -24,7 +24,7 @@ The workspace currently contains nine crates:
 | `rostfrei-core` | Aggregates, execution, event-store contracts, and the in-memory reference store |
 | `rostfrei-domain` | Rich domain IDs, descriptors, ownership, model validation and projection, and domain-test metadata |
 | `rostfrei-domain-macros` | Derives and attributes for contexts, aggregates, entities, identities, value objects, services, commands, events, errors, actions, decisions, invariants, queries, lifecycles, and domain tests |
-| `rostfrei-domain-runtime` | Compile-time checked bindings from model-owned commands to executable Rostfrei aggregate handlers |
+| `rostfrei-domain-runtime` | Compile-time checked bindings from model-owned commands to executable rostfrei aggregate handlers |
 | `rostfrei-registry` | Stable command descriptors, explicit domain modules, and deterministic validated registration |
 | `rostfrei-macros` | Derives that implement command and module metadata contracts |
 | `rostfrei-messaging-core` | Transport-neutral commands, integration events, queries, envelopes, and delivery contracts |
@@ -37,20 +37,20 @@ handling, event encoding, append, exact retry detection, and bounded conflict
 retry. Aggregate state does not depend on Serde, NATS, clocks, IDs, or storage
 handles.
 
-The domain-model layer is now part of Rostfrei. It compiles annotated Rust
+The domain-model layer is now part of rostfrei. It compiles annotated Rust
 types into structured metadata for bounded contexts, aggregates, entities,
 identities, value objects, services, commands, events, errors, actions,
 decisions, invariants, queries, and entity lifecycles. Explicit `domain_model!`
 inventories validate cross-references and project the model for tooling.
 
-The runtime bridge maps a descriptive aggregate marker to a Rostfrei runtime
+The runtime bridge maps a descriptive aggregate marker to a rostfrei runtime
 aggregate. Its `domain_module!` macro derives command ownership and structural
 metadata from `DomainCommandType`, requires a runtime wire name and schema
 version, and preserves the rich command descriptor in `DomainRegistry`. The
 existing standalone `Command` and `Module` derives remain available for kernel
 users that do not adopt the compiled domain model.
 
-Rostfrei Studio is implemented as a read-only compiled-model browser and Cargo
+rostfrei Studio is implemented as a read-only compiled-model browser and Cargo
 diagnostic client. It does not yet provide event timelines, aggregate state
 inspection, simulation, runtime command dispatch, or AI APIs. Runtime command
 deserialization, erased invocation, automatic discovery, and generated wire
@@ -60,7 +60,7 @@ The NATS event store writes one JetStream message per domain event. Multi-event
 commits use the NATS ADR-50 atomic batch protocol, with one shared batch identity
 and the commit header on the final event. This requires NATS Server 2.12.0 or
 newer and supports at most 1,000 events in one commit. Retry correctness is a
-persisted Rostfrei semantic and does not rely on the finite JetStream message
+persisted rostfrei semantic and does not rely on the finite JetStream message
 deduplication window.
 
 Messaging supports typed commands, integration events, and queries; bounded
@@ -71,12 +71,12 @@ service-startup side effect.
 
 ## Nexus integration
 
-Nexus currently adopts Rostfrei as its messaging foundation through a thin
-`nexus-messaging` policy facade. an integrating application uses Rostfrei publishing,
+Nexus currently adopts rostfrei as its messaging foundation through a thin
+`nexus-messaging` policy facade. an integrating application uses rostfrei publishing,
 consumption, retry, quarantine, and topology validation while retaining its
 application-owned addresses and deployment defaults.
 
-The integration does not yet run a Nexus aggregate through Rostfrei's
+The integration does not yet run a Nexus aggregate through rostfrei's
 `Executor`, `EventStore`, or `NatsEventStore`. No production aggregate is being
 converted solely to demonstrate the framework. The existing an integrating application path
 remains command to command to a NATS KV entitlement snapshot.
@@ -89,15 +89,15 @@ boundary, atomic capacity-failure tests, exact replay contracts, focused Nexus
 tests, Nexus architecture tests, and destructive an integrating application NATS tests including
 quarantine behavior.
 
-The work is not released. Rostfrei has no configured Git remote, recent
+The work is not released. rostfrei has no configured Git remote, recent
 changes remain local, and Nexus still uses temporary local path dependencies.
 The Nexus release requires an operator-provided Git URL and a pin to one full
-Rostfrei commit SHA. Database-backed Nexus SQLx tests also require
+rostfrei commit SHA. Database-backed Nexus SQLx tests also require
 `DATABASE_URL`.
 
 ## Agreed direction
 
-Rostfrei will grow in layers around the stable kernel:
+rostfrei will grow in layers around the stable kernel:
 
 1. The implemented domain compiler describes domain structure and behavior
    contracts independently of execution, persistence, and transport.
@@ -112,7 +112,7 @@ Rostfrei will grow in layers around the stable kernel:
    aggregate state a persisted Serde contract.
 6. A simulation runtime will replay real history into an isolated branch and
    execute commands without appending or publishing.
-7. Rostfrei Studio will visualize event timelines, state at any version,
+7. rostfrei Studio will visualize event timelines, state at any version,
    state differences, operation metadata, command outcomes, and rejections.
 8. A protocol-independent control plane will serve both Studio and AI tools with
    the same authorization, redaction, and audit boundaries.
@@ -127,7 +127,7 @@ The three operational modes are deliberately distinct:
 
 ## Delivery order
 
-1. Complete the standalone Rostfrei release and replace Nexus path
+1. Complete the standalone rostfrei release and replace Nexus path
    dependencies with a pinned Git revision.
 2. Consolidate the absorbed domain model and runtime registry around one typed,
    versioned model contract.
@@ -137,7 +137,7 @@ The three operational modes are deliberately distinct:
    contracts without introducing transport concerns.
 5. Add aggregate inspection and redaction.
 6. Generate command, event, rejection, and inspection schemas.
-7. Build the first event timeline and command laboratory in Rostfrei Studio.
+7. Build the first event timeline and command laboratory in rostfrei Studio.
 8. Expose the control plane through MCP and other AI-facing protocols.
 9. Add projection management, schema evolution, snapshots, process managers,
    and external-effect journaling only as concrete use cases require them.
@@ -159,9 +159,9 @@ The three operational modes are deliberately distinct:
 | [0011](adr/0011-inspection-simulation-and-dispatch.md) | Separate inspection, simulation, and live dispatch capabilities |
 | [0012](adr/0012-studio-and-ai-control-plane.md) | One secured control plane for Studio and AI tooling |
 | [0013](adr/0013-domain-event-handlers.md) | Typed post-commit domain-event handlers and durable NATS dispatch |
-| [0014](adr/0014-compiled-domain-model.md) | Absorb the domain compiler as Rostfrei's canonical optional platform model |
+| [0014](adr/0014-compiled-domain-model.md) | Absorb the domain compiler as rostfrei's canonical optional platform model |
 
 The product direction can be summarized as follows:
 
-> Rostfrei makes a domain model executable, replayable, inspectable, testable,
+> rostfrei makes a domain model executable, replayable, inspectable, testable,
 > visualizable, and understandable by both developers and AI.

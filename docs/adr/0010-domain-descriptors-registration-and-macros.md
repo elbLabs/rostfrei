@@ -6,7 +6,7 @@ Accepted.
 
 ## Decision
 
-Rostfrei will define an explicit, machine-readable descriptor model for
+rostfrei will define an explicit, machine-readable descriptor model for
 aggregate types, commands, events, schema versions, aggregate targets,
 rejections, handlers, codecs, and inspection views. One runtime registry will
 make these descriptors available to command dispatch, tests, Studio,
@@ -38,7 +38,7 @@ module before mutation, and does not use `inventory`, linker-time collection,
 global mutable state, or runtime reflection.
 
 ADR 0014 subsequently absorbed the richer compiled domain model and Studio into
-Rostfrei. Model-backed commands now retain their structural domain descriptor
+rostfrei. Model-backed commands now retain their structural domain descriptor
 when registered through `rostfrei-domain-runtime`. The runtime still does not
 deserialize or route commands, erase or invoke handlers, subscribe to a bus, or
 discover modules automatically. Automatic linked registration in the broader
