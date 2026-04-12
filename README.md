@@ -5,16 +5,18 @@ keeps domain aggregates independent from persistence, serialization, and brokers
 while providing a compiled domain model, strict execution, developer tooling,
 and NATS JetStream adapters at the application edge.
 
-The workspace contains nine crates:
+The workspace contains ten crates:
 
+- `rostfrei`: application facade for the compiled domain model,
+  event-sourcing runtime, registry, and public macros.
 - `rostfrei-core`: aggregate execution, event-store contracts, and the
   in-memory reference store.
 - `rostfrei-domain` (imported as `domain`): the compiled domain model,
   descriptors, ownership rules, model projection, and domain-test metadata.
 - `rostfrei-domain-macros`: derives and attributes for domain types and
   behavior contracts.
-- `rostfrei-domain-runtime`: bindings from compiled domain commands to
-  executable rostfrei aggregates and runtime registration.
+- `rostfrei-domain-runtime`: stream-aware aggregate initialization, event
+  application, and runtime registration for compiled domain types.
 - `rostfrei-registry`: explicit command metadata, domain modules, and
   deterministic runtime registration.
 - `rostfrei-macros`: derives for command definitions and domain modules.

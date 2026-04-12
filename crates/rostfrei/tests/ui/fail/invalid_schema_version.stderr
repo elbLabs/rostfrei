@@ -1,0 +1,5 @@
+error: domain event schema version must be greater than zero
+ --> tests/ui/fail/invalid_schema_version.rs:2:60
+  |
+2 | #[rostfrei(id = "event", label = "Event", schema_version = 0)]
+  |                                                            ^

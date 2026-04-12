@@ -1,0 +1,16 @@
+error[E0277]: the trait bound `Root: Apply<Event>` is not satisfied
+  --> tests/ui/fail/apply_wrong_root.rs:30:12
+   |
+30 |     root = Root,
+   |            ^^^^ unsatisfied trait bound
+   |
+help: the trait `Apply<Event>` is not implemented for `Root`
+  --> tests/ui/fail/apply_wrong_root.rs:14:1
+   |
+14 | struct Root {
+   | ^^^^^^^^^^^
+help: the trait `Apply<Event>` is implemented for `WrongRoot`
+  --> tests/ui/fail/apply_wrong_root.rs:39:1
+   |
+39 | impl Apply<Event> for WrongRoot {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
