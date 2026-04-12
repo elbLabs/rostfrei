@@ -10,5 +10,8 @@ rostfrei-core = { path = "../rostfrei-core" }
 rostfrei-domain = { path = "../rostfrei-domain" }
 rostfrei-registry = { path = "../rostfrei-registry" }
 
+[dev-dependencies]
+serde.workspace = true
+
 [lints]
 workspace = true

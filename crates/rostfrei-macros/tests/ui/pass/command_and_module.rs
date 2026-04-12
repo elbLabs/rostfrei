@@ -1,20 +1,21 @@
 use std::marker::PhantomData;
 
 use rostfrei_macros::{Command, Module};
-use zs_core::{Aggregate, CommandHandler, DecisionContext};
+use zs_core::{Aggregate, CommandHandler, DecisionContext, StreamId};
 
 struct Account<T: Send + Sync + 'static>(PhantomData<T>);
 
 impl<T: Send + Sync + 'static> Aggregate for Account<T> {
+    type State = Self;
     type Event = ();
 
     const AGGREGATE_TYPE: &'static str = "account";
 
-    fn initial() -> Self {
+    fn initial(_stream_id: &StreamId) -> Self::State {
         Self(PhantomData)
     }
 
-    fn apply(&mut self, (): &Self::Event) {}
+    fn apply(_state: &mut Self::State, (): &Self::Event) {}
 }
 
 #[derive(Command)]

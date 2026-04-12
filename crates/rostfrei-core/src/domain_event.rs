@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::{
-    Aggregate, AggregateType, EventCodec, EventCodecErrorKind, RecordedEvent, MAX_EVENT_TYPE_LEN,
+    Aggregate, AggregateType, Event, EventCodec, EventCodecErrorKind, EventVariant, JsonEventCodec,
+    RecordedEvent, MAX_EVENT_TYPE_LEN,
 };
 
 pub struct CommittedDomainEvent<'a, E> {
@@ -104,22 +105,23 @@ trait ErasedDomainEventHandler: Send + Sync {
     ) -> Result<DomainEventDispatchOutcome, DomainEventHandlerError>;
 }
 
-struct TypedDomainEventHandler<A, C, H>
+struct TypedDomainEventHandler<A, E, C, H>
 where
     A: Aggregate,
 {
     codec: Arc<C>,
     handler: Arc<H>,
-    marker: std::marker::PhantomData<A>,
+    marker: std::marker::PhantomData<(A, E)>,
 }
 
 #[async_trait]
-impl<A, C, H> ErasedDomainEventHandler for TypedDomainEventHandler<A, C, H>
+impl<A, E, C, H> ErasedDomainEventHandler for TypedDomainEventHandler<A, E, C, H>
 where
     A: Aggregate + Send + Sync + 'static,
-    A::Event: Send + Sync + 'static,
+    A::Event: EventVariant<E> + Send + Sync + 'static,
+    E: Send + Sync + 'static,
     C: EventCodec<A> + 'static,
-    H: DomainEventHandler<A::Event> + 'static,
+    H: DomainEventHandler<E> + 'static,
 {
     async fn handle(
         &self,
@@ -139,8 +141,14 @@ where
             };
             DomainEventHandlerError::new(classification, error.to_string())
         })?;
+        let concrete = decoded.into_event().ok_or_else(|| {
+            DomainEventHandlerError::new(
+                DomainEventHandlerErrorKind::InvalidCommittedEvent,
+                "event codec decoded a different event variant than the registered handler",
+            )
+        })?;
         self.handler
-            .handle(&CommittedDomainEvent::new(event, decoded))
+            .handle(&CommittedDomainEvent::new(event, concrete))
             .await?;
         Ok(DomainEventDispatchOutcome::Handled)
     }
@@ -157,7 +165,25 @@ impl DomainEventDispatcher {
         Self::default()
     }
 
-    pub fn register<A, C, H>(
+    pub fn register<A, E, H>(
+        &mut self,
+        event_type: impl Into<String>,
+        handler: Arc<H>,
+    ) -> Result<(), DomainEventRegistrationError>
+    where
+        A: Aggregate + Send + Sync + 'static,
+        A::Event: Event + EventVariant<E> + Send + Sync + 'static,
+        E: Send + Sync + 'static,
+        H: DomainEventHandler<E> + 'static,
+    {
+        self.register_with_codec::<A, E, JsonEventCodec, H>(
+            event_type,
+            Arc::new(JsonEventCodec),
+            handler,
+        )
+    }
+
+    pub fn register_with_codec<A, E, C, H>(
         &mut self,
         event_type: impl Into<String>,
         codec: Arc<C>,
@@ -165,9 +191,10 @@ impl DomainEventDispatcher {
     ) -> Result<(), DomainEventRegistrationError>
     where
         A: Aggregate + Send + Sync + 'static,
-        A::Event: Send + Sync + 'static,
+        A::Event: EventVariant<E> + Send + Sync + 'static,
+        E: Send + Sync + 'static,
         C: EventCodec<A> + 'static,
-        H: DomainEventHandler<A::Event> + 'static,
+        H: DomainEventHandler<E> + 'static,
     {
         AggregateType::new(A::AGGREGATE_TYPE)
             .map_err(|_| DomainEventRegistrationError::InvalidAggregateType)?;
@@ -203,7 +230,7 @@ impl DomainEventDispatcher {
             .insert(key.aggregate_type.clone(), aggregate_registration);
         self.handlers.insert(
             key,
-            Arc::new(TypedDomainEventHandler::<A, C, H> {
+            Arc::new(TypedDomainEventHandler::<A, E, C, H> {
                 codec,
                 handler,
                 marker: std::marker::PhantomData,

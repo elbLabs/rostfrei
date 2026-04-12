@@ -7,14 +7,12 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
-
-[dev-dependencies]
-serde.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

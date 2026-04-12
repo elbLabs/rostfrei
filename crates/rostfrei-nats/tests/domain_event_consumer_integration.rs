@@ -35,15 +35,16 @@ struct TestEvent(String);
 struct TestAggregate;
 
 impl Aggregate for TestAggregate {
+    type State = Self;
     type Event = TestEvent;
 
     const AGGREGATE_TYPE: &'static str = "DomainEventConsumerAggregate";
 
-    fn initial() -> Self {
+    fn initial(_stream_id: &StreamId) -> Self::State {
         Self
     }
 
-    fn apply(&mut self, _event: &Self::Event) {}
+    fn apply(_state: &mut Self::State, _event: &Self::Event) {}
 }
 
 #[derive(Serialize, Deserialize)]
@@ -442,7 +443,11 @@ async fn connect_consumer(
 ) -> NatsDomainEventConsumer {
     let mut dispatcher = DomainEventDispatcher::new();
     dispatcher
-        .register::<TestAggregate, _, _>("test-event", Arc::new(TestCodec), handler)
+        .register_with_codec::<TestAggregate, TestEvent, _, _>(
+            "test-event",
+            Arc::new(TestCodec),
+            handler,
+        )
         .expect("domain-event registration");
     NatsDomainEventConsumer::connect(context, event_store, config, Arc::new(dispatcher))
         .await

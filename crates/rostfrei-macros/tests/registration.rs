@@ -1,5 +1,5 @@
 use rostfrei_macros::{Command, Module};
-use zs_core::{Aggregate, CommandHandler, DecisionContext};
+use zs_core::{Aggregate, CommandHandler, DecisionContext, StreamId};
 use zs_registry::{CommandDefinition, DomainRegistry};
 
 struct Account {
@@ -11,17 +11,18 @@ enum AccountEvent {
 }
 
 impl Aggregate for Account {
+    type State = Self;
     type Event = AccountEvent;
 
     const AGGREGATE_TYPE: &'static str = "account";
 
-    fn initial() -> Self {
+    fn initial(_stream_id: &StreamId) -> Self::State {
         Self { balance: 0 }
     }
 
-    fn apply(&mut self, event: &Self::Event) {
+    fn apply(state: &mut Self::State, event: &Self::Event) {
         let AccountEvent::Deposited(amount) = event;
-        self.balance += amount;
+        state.balance += amount;
     }
 }
 

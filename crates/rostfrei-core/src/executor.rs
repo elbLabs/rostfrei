@@ -6,19 +6,25 @@ use crate::identity::{derive_commit_id, derive_event_id};
 use crate::{
     Aggregate, AppendOutcome, CommandHandler, DecisionContext, EventBatch, EventCodec,
     EventCodecError, EventStore, EventStoreError, EventStoreErrorKind, ExecutionMetadata,
-    ExpectedVersion, RecordedEvent, StreamId, StreamVersion,
+    ExpectedVersion, JsonEventCodec, RecordedEvent, StreamId, StreamVersion,
 };
 
 const DEFAULT_MAX_CONFLICT_RETRIES: usize = 3;
 
-pub struct Executor<S, C> {
+pub struct Executor<S, C = JsonEventCodec> {
     store: S,
     codec: C,
     maximum_conflict_retries: usize,
 }
 
+impl<S> Executor<S, JsonEventCodec> {
+    pub fn new(store: S) -> Self {
+        Self::with_codec(store, JsonEventCodec)
+    }
+}
+
 impl<S, C> Executor<S, C> {
-    pub fn new(store: S, codec: C) -> Self {
+    pub fn with_codec(store: S, codec: C) -> Self {
         Self {
             store,
             codec,
@@ -96,10 +102,10 @@ where
             let history = self.store.load(metadata.stream_id()).await?;
             validate_history(metadata.stream_id(), &history)?;
 
-            let mut aggregate = A::initial();
+            let mut aggregate = A::initial(metadata.stream_id());
             for event in &history {
                 let decoded = self.codec.decode(event)?;
-                aggregate.apply(&decoded);
+                A::apply(&mut aggregate, &decoded);
             }
 
             let prior_operation: Vec<_> = history
