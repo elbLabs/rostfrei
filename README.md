@@ -40,3 +40,9 @@ The ADR-derived product overview is in
 The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual decisions are
 recorded in [`docs/adr`](docs/adr).
+
+## License
+
+Copyright (c) 2026 elbtech.dev.
+
+Licensed under the [European Union Public Licence 1.2](LICENSE).
