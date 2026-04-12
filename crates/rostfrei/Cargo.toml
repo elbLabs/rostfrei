@@ -6,10 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-rostfrei-core = { path = "../rostfrei-core" }
-rostfrei-domain = { path = "../rostfrei-domain" }
-rostfrei-domain-runtime = { path = "../rostfrei-domain-runtime" }
-rostfrei-registry = { path = "../rostfrei-registry" }
+rostfrei-core = { path = "../rostfrei-core", version = "0.1.0" }
+rostfrei-domain = { path = "../rostfrei-domain", version = "0.1.0" }
+rostfrei-domain-runtime = { path = "../rostfrei-domain-runtime", version = "0.1.0" }
+rostfrei-registry = { path = "../rostfrei-registry", version = "0.1.0" }
 
 [dev-dependencies]
 async-trait.workspace = true

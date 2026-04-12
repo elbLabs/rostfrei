@@ -140,6 +140,13 @@ pub fn assemble(
             const AGGREGATE_TYPE: &'static str =
                 <Self as #domain_path::AggregateType>::DESCRIPTOR.id.local;
 
+            fn aggregate_type() -> ::std::borrow::Cow<'static, str> {
+                let id = <Self as #domain_path::AggregateType>::DESCRIPTOR.id;
+                ::std::borrow::Cow::Owned(
+                    ::std::format!("{}/{}", id.context.0, id.local),
+                )
+            }
+
             fn initial(
                 stream_id: &#runtime_path::__private::core::StreamId,
             ) -> Self::State {

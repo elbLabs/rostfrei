@@ -7,7 +7,7 @@ use rostfrei::{
     DomainEventHandlerError, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind,
     EventStore, EventVariant, ExecutionError, ExecutionMetadata, Executor, ExpectedVersion,
     InMemoryEventStore, Initialize, NewEvent, OperationId, RecordedEvent, StreamAggregateId,
-    StreamAggregateType, StreamId,
+    StreamId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -178,7 +178,10 @@ impl EventCodec<AccountAggregate> for TextEventCodec {
 
 fn stream(id: &str) -> StreamId {
     StreamId::new(
-        StreamAggregateType::new("account").expect("valid aggregate type"),
+        rostfrei::StreamAggregateType::new(
+            <AccountAggregate as RuntimeAggregate>::aggregate_type(),
+        )
+        .expect("valid compiled aggregate type"),
         StreamAggregateId::new(id).expect("valid aggregate id"),
     )
 }
@@ -244,6 +247,14 @@ async fn compiled_aggregate_records_applies_stores_and_replays_concrete_events()
             .expect("deposit handler lock")
             .as_slice(),
         &[MoneyDeposited { amount: 7 }]
+    );
+}
+
+#[test]
+fn compiled_aggregate_stream_type_includes_its_bounded_context() {
+    assert_eq!(
+        <AccountAggregate as RuntimeAggregate>::aggregate_type().as_ref(),
+        "banking/account"
     );
 }
 

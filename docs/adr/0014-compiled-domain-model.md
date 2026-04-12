@@ -22,7 +22,9 @@ through the `rostfrei` facade. The canonical compiled `Aggregate` declaration is
 also the executable aggregate definition. Its root is the runtime state, and an
 explicit `Initialize<Aggregate>` implementation constructs that root from the
 stream identity before replay. There is no separately declared runtime
-aggregate.
+aggregate. Its stream aggregate type is the context-scoped domain identity
+`<bounded-context-id>/<aggregate-id>`, so equal local aggregate IDs in different
+contexts cannot share streams or handler registrations.
 
 `DomainEvent` describes owner-independent event metadata: local ID, label,
 schema version, fields, and the default JSON payload contract. An aggregate's

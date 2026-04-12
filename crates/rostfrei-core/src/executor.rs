@@ -90,10 +90,11 @@ where
         A: Aggregate + CommandHandler<Command>,
         C: EventCodec<A>,
     {
-        if metadata.stream_id().aggregate_type().as_str() != A::AGGREGATE_TYPE {
+        let aggregate_type = A::aggregate_type();
+        if metadata.stream_id().aggregate_type().as_str() != aggregate_type.as_ref() {
             return Err(invalid_request(format!(
                 "aggregate type {} cannot execute stream type {}",
-                A::AGGREGATE_TYPE,
+                aggregate_type,
                 metadata.stream_id().aggregate_type()
             ))
             .into());

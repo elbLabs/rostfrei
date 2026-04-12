@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use thiserror::Error;
 
 use crate::{EventId, NewEvent, RecordedEvent, StreamId};
@@ -7,6 +9,10 @@ pub trait Aggregate: Sized {
     type Event;
 
     const AGGREGATE_TYPE: &'static str;
+
+    fn aggregate_type() -> Cow<'static, str> {
+        Cow::Borrowed(Self::AGGREGATE_TYPE)
+    }
 
     fn initial(stream_id: &StreamId) -> Self::State;
 

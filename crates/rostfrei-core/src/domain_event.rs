@@ -196,7 +196,8 @@ impl DomainEventDispatcher {
         C: EventCodec<A> + 'static,
         H: DomainEventHandler<E> + 'static,
     {
-        AggregateType::new(A::AGGREGATE_TYPE)
+        let aggregate_type = A::aggregate_type();
+        AggregateType::new(aggregate_type.as_ref())
             .map_err(|_| DomainEventRegistrationError::InvalidAggregateType)?;
         let event_type = event_type.into();
         if event_type.is_empty()
@@ -207,7 +208,7 @@ impl DomainEventDispatcher {
             return Err(DomainEventRegistrationError::InvalidEventType);
         }
         let key = RegistrationKey {
-            aggregate_type: A::AGGREGATE_TYPE.to_owned(),
+            aggregate_type: aggregate_type.into_owned(),
             event_type,
         };
         if self.handlers.contains_key(&key) {
