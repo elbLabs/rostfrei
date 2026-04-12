@@ -1,0 +1,10 @@
+[package]
+name = "bike-rental"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rostfrei-domain = { path = "../../crates/rostfrei-domain" }
+serde_json.workspace = true

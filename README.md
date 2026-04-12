@@ -27,6 +27,10 @@ The workspace contains nine crates:
 compiled models and Cargo diagnostics. The domain language reference and
 handbook are in [`docs/domain-model`](docs/domain-model).
 
+[`examples/bike-rental`](examples/bike-rental) is a self-contained public
+example with an aggregate action, a decision, a query, a domain event, and a
+domain error.
+
 rostfrei does not provision infrastructure during service startup. Operators
 use the explicit provisioning APIs with deployment-owned stream policies.
 Authoritative NATS event storage requires NATS Server 2.12.0 or newer for atomic
