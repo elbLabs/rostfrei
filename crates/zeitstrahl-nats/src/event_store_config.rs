@@ -8,7 +8,7 @@ use zeitstrahl_core::{EventStoreError, EventStoreErrorKind};
 const MAX_STREAM_NAME_LEN: usize = 255;
 const MAX_SUBJECT_PREFIX_LEN: usize = 512;
 const MAX_SUBJECT_TOKEN_LEN: usize = 256;
-const MAX_COMMIT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_EVENT_BYTES: usize = 64 * 1024 * 1024;
 const DUPLICATE_WINDOW: Duration = Duration::from_secs(2 * 60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,7 +16,7 @@ pub struct NatsEventStoreConfig {
     stream_name: String,
     subject_prefix: String,
     max_stream_bytes: i64,
-    max_commit_bytes: usize,
+    max_event_bytes: usize,
     replicas: usize,
     puback_timeout: Duration,
 }
@@ -26,7 +26,7 @@ impl NatsEventStoreConfig {
         stream_name: impl Into<String>,
         subject_prefix: impl Into<String>,
         max_stream_bytes: i64,
-        max_commit_bytes: usize,
+        max_event_bytes: usize,
         replicas: usize,
         puback_timeout: Duration,
     ) -> Result<Self, EventStoreError> {
@@ -34,7 +34,7 @@ impl NatsEventStoreConfig {
             stream_name: stream_name.into(),
             subject_prefix: subject_prefix.into(),
             max_stream_bytes,
-            max_commit_bytes,
+            max_event_bytes,
             replicas,
             puback_timeout,
         };
@@ -54,8 +54,8 @@ impl NatsEventStoreConfig {
         self.max_stream_bytes
     }
 
-    pub const fn max_commit_bytes(&self) -> usize {
-        self.max_commit_bytes
+    pub const fn max_event_bytes(&self) -> usize {
+        self.max_event_bytes
     }
 
     pub const fn replicas(&self) -> usize {
@@ -86,8 +86,8 @@ impl NatsEventStoreConfig {
             max_messages: -1,
             max_messages_per_subject: -1,
             max_bytes: self.max_stream_bytes,
-            max_message_size: i32::try_from(self.max_commit_bytes)
-                .expect("validated commit size fits in i32"),
+            max_message_size: i32::try_from(self.max_event_bytes)
+                .expect("validated event size fits in i32"),
             max_consumers: -1,
             no_ack: false,
             duplicate_window: DUPLICATE_WINDOW,
@@ -95,6 +95,7 @@ impl NatsEventStoreConfig {
             deny_delete: true,
             deny_purge: true,
             allow_rollup: false,
+            allow_atomic_publish: true,
             ..Default::default()
         }
     }
@@ -109,16 +110,16 @@ impl NatsEventStoreConfig {
         if self.max_stream_bytes <= 0 {
             return Err(invalid("maximum stream bytes must be finite and positive"));
         }
-        if self.max_commit_bytes == 0 || self.max_commit_bytes > MAX_COMMIT_BYTES {
+        if self.max_event_bytes == 0 || self.max_event_bytes > MAX_EVENT_BYTES {
             return Err(invalid(format!(
-                "maximum commit bytes must be between 1 and {MAX_COMMIT_BYTES}"
+                "maximum event bytes must be between 1 and {MAX_EVENT_BYTES}"
             )));
         }
         if self.max_stream_bytes
-            < i64::try_from(self.max_commit_bytes).expect("maximum commit size fits in i64")
+            < i64::try_from(self.max_event_bytes).expect("maximum event size fits in i64")
         {
             return Err(invalid(
-                "maximum stream bytes must be at least maximum commit bytes",
+                "maximum stream bytes must be at least maximum event bytes",
             ));
         }
         if !(1..=5).contains(&self.replicas) {
@@ -201,6 +202,7 @@ mod tests {
         assert!(config.deny_delete);
         assert!(config.deny_purge);
         assert!(!config.allow_rollup);
+        assert!(config.allow_atomic_publish);
         assert_eq!(config.num_replicas, 3);
     }
 

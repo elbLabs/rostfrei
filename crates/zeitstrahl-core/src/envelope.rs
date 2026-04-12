@@ -7,7 +7,7 @@ use crate::{CommitId, ContentFingerprint, EventId, OperationId, StreamId};
 pub const MAX_EVENT_TYPE_LEN: usize = 128;
 pub const MAX_EVENT_PAYLOAD_LEN: usize = 1024 * 1024;
 pub const MAX_BATCH_PAYLOAD_LEN: usize = 1024 * 1024;
-pub const MAX_EVENTS_PER_BATCH: usize = 1024;
+pub const MAX_EVENTS_PER_BATCH: usize = 1000;
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StreamVersion(u64);

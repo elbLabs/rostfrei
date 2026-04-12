@@ -56,6 +56,56 @@ async fn real_nats_event_store_contract_and_operator_policy() {
 
     event_store_contract::run(|| store.clone()).await;
 
+    let concurrent_stream = stream("concurrent-atomic-batches");
+    let (first_result, second_result) = tokio::join!(
+        store.append(
+            &concurrent_stream,
+            ExpectedVersion::NoStream,
+            batch(
+                &concurrent_stream,
+                "concurrent-atomic-a",
+                "concurrent-a",
+                &[b"a-1", b"a-2", b"a-3"],
+            ),
+        ),
+        store.append(
+            &concurrent_stream,
+            ExpectedVersion::NoStream,
+            batch(
+                &concurrent_stream,
+                "concurrent-atomic-b",
+                "concurrent-b",
+                &[b"b-1", b"b-2", b"b-3"],
+            ),
+        ),
+    );
+    let concurrent_results = [first_result, second_result];
+    assert_eq!(
+        concurrent_results
+            .iter()
+            .filter(|result| result.is_ok())
+            .count(),
+        1
+    );
+    assert_eq!(
+        concurrent_results
+            .iter()
+            .filter(|result| matches!(
+                result,
+                Err(error) if error.kind() == EventStoreErrorKind::Conflict
+            ))
+            .count(),
+        1
+    );
+    let concurrent_history = store
+        .load(&concurrent_stream)
+        .await
+        .expect("winning atomic batch should load");
+    assert_eq!(concurrent_history.len(), 3);
+    assert!(concurrent_history
+        .windows(2)
+        .all(|events| events[0].commit_id() == events[1].commit_id()));
+
     let restart_stream = stream("restart-retry");
     let retried_batch = batch(
         &restart_stream,
@@ -127,23 +177,101 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         .messages;
     assert_eq!(
         messages_after,
-        messages_before + 1,
-        "one aggregate batch must use one JetStream message"
+        messages_before + 3,
+        "each domain event must use one JetStream message"
     );
     let atomic_subject = config.aggregate_subject(
         atomic_stream.aggregate_type().as_str(),
         atomic_stream.aggregate_id().as_str(),
     );
-    let atomic_commit = stream_info
-        .get_last_raw_message_by_subject(&atomic_subject)
-        .await
-        .expect("stored atomic commit");
-    assert_eq!(
-        atomic_commit
+    let mut next_sequence = 1_u64;
+    let mut batch_id = None;
+    for (index, expected_payload) in [b"one".as_slice(), b"two", b"three"].iter().enumerate() {
+        let expected_batch_sequence = (index + 1).to_string();
+        let expected_payload_base64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, expected_payload);
+        let stored_event = stream_info
+            .get_first_raw_message_by_subject(&atomic_subject, next_sequence)
+            .await
+            .expect("stored atomic event");
+        next_sequence = stored_event.sequence + 1;
+        assert_eq!(
+            stored_event
+                .headers
+                .get("Content-Type")
+                .map(async_nats::HeaderValue::as_str),
+            Some("application/json")
+        );
+        assert_eq!(
+            stored_event
+                .headers
+                .get("Nats-Batch-Sequence")
+                .map(async_nats::HeaderValue::as_str),
+            Some(expected_batch_sequence.as_str())
+        );
+        assert_eq!(
+            stored_event
+                .headers
+                .get("Nats-Expected-Stream")
+                .map(async_nats::HeaderValue::as_str),
+            (index == 0).then_some(config.stream_name())
+        );
+        assert_eq!(
+            stored_event
+                .headers
+                .get("Nats-Expected-Last-Subject-Sequence")
+                .map(async_nats::HeaderValue::as_str),
+            (index == 0).then_some("0")
+        );
+        let stored_batch_id = stored_event
             .headers
-            .get("Content-Type")
-            .map(async_nats::HeaderValue::as_str),
-        Some("application/json")
+            .get("Nats-Batch-Id")
+            .expect("stored event has a batch identity")
+            .as_str();
+        if let Some(batch_id) = &batch_id {
+            assert_eq!(stored_batch_id, batch_id);
+        } else {
+            batch_id = Some(stored_batch_id.to_owned());
+        }
+        assert_eq!(
+            stored_event
+                .headers
+                .get("Nats-Batch-Commit")
+                .map(async_nats::HeaderValue::as_str),
+            (index == 2).then_some("1")
+        );
+        let wire: serde_json::Value =
+            serde_json::from_slice(&stored_event.payload).expect("stored event should be JSON");
+        assert!(wire.get("events").is_none());
+        assert_eq!(
+            wire.pointer("/event/payloadBase64")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_payload_base64.as_str())
+        );
+    }
+
+    let boundary_stream = stream("maximum-atomic-batch");
+    let boundary_outcome = store
+        .append(
+            &boundary_stream,
+            ExpectedVersion::NoStream,
+            repeated_batch(
+                &boundary_stream,
+                "maximum-batch-operation",
+                "maximum-batch-content",
+                1_000,
+            ),
+        )
+        .await
+        .expect("the ADR-50 maximum event count should append atomically");
+    assert_eq!(boundary_outcome.events().len(), 1_000);
+    assert_eq!(
+        store
+            .load(&boundary_stream)
+            .await
+            .expect("maximum atomic batch should load")
+            .len(),
+        1_000
     );
 
     let incompatible_stream = stream("incompatible-wire");
@@ -172,7 +300,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         config.stream_name(),
         config.subject_prefix(),
         config.max_stream_bytes() + 1,
-        config.max_commit_bytes(),
+        config.max_event_bytes(),
         config.replicas(),
         config.puback_timeout(),
     )
@@ -204,42 +332,52 @@ async fn capacity_is_reported_distinctly(context: &async_nats::jetstream::Contex
         .await
         .expect("capacity stream should connect");
     let capacity_stream = stream("capacity");
-    let mut version = StreamVersion::ZERO;
-    let mut appended = 0_usize;
-
-    for ordinal in 0..16_u64 {
-        let operation = format!("capacity-operation-{ordinal}");
-        let fingerprint_seed = format!("capacity-content-{ordinal}");
-        let expected = if version == StreamVersion::ZERO {
-            ExpectedVersion::NoStream
-        } else {
-            ExpectedVersion::Exact(version)
-        };
-        match store
-            .append(
+    store
+        .append(
+            &capacity_stream,
+            ExpectedVersion::NoStream,
+            owned_payload_batch(
                 &capacity_stream,
-                expected,
-                owned_payload_batch(
-                    &capacity_stream,
-                    &operation,
-                    &fingerprint_seed,
-                    vec![u8::try_from(ordinal).expect("small ordinal"); 700],
-                ),
-            )
+                "capacity-first-operation",
+                "capacity-first-content",
+                vec![1; 700],
+            ),
+        )
+        .await
+        .expect("capacity stream should accept an initial event");
+    let before = store
+        .load(&capacity_stream)
+        .await
+        .expect("initial capacity history");
+    let large_payload = vec![2; 700];
+    let result = store
+        .append(
+            &capacity_stream,
+            ExpectedVersion::Exact(StreamVersion::new(1)),
+            batch(
+                &capacity_stream,
+                "capacity-atomic-operation",
+                "capacity-atomic-content",
+                &[
+                    large_payload.as_slice(),
+                    large_payload.as_slice(),
+                    large_payload.as_slice(),
+                ],
+            ),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(ref error) if error.kind() == EventStoreErrorKind::CapacityExhausted
+    ));
+    assert_eq!(
+        store
+            .load(&capacity_stream)
             .await
-        {
-            Ok(AppendOutcome::Appended(events)) => {
-                version = events.last().expect("append has an event").stream_version();
-                appended += 1;
-            }
-            Err(error) if error.kind() == EventStoreErrorKind::CapacityExhausted => {
-                assert!(appended > 0, "capacity stream should accept a commit first");
-                return;
-            }
-            result => panic!("expected configured capacity exhaustion, got {result:?}"),
-        }
-    }
-    panic!("small DiscardNew stream did not exhaust its configured capacity");
+            .expect("capacity failure history"),
+        before,
+        "capacity failure must not store an event prefix"
+    );
 }
 
 async fn connect_context(url: &str) -> async_nats::jetstream::Context {
@@ -321,6 +459,37 @@ fn owned_payload_batch(
             NewEvent::new(metadata.event_id(0), "integration-event", 1, payload)
                 .expect("valid integration event"),
         ],
+    )
+    .expect("non-empty integration batch")
+}
+
+fn repeated_batch(
+    stream: &StreamId,
+    operation_id: &str,
+    fingerprint_content: &str,
+    event_count: u32,
+) -> EventBatch {
+    let metadata = ExecutionMetadata::new(
+        stream.clone(),
+        OperationId::new(operation_id).expect("valid operation id"),
+        ContentFingerprint::digest(fingerprint_content),
+    );
+    let events = (0..event_count)
+        .map(|ordinal| {
+            NewEvent::new(
+                metadata.event_id(ordinal),
+                "integration-event",
+                1,
+                vec![u8::try_from(ordinal % 251).expect("bounded event byte")],
+            )
+            .expect("valid integration event")
+        })
+        .collect();
+    EventBatch::new(
+        metadata.commit_id().clone(),
+        metadata.operation_id().clone(),
+        metadata.operation_fingerprint(),
+        events,
     )
     .expect("non-empty integration batch")
 }
