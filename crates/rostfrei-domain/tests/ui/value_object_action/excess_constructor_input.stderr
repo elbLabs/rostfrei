@@ -1,0 +1,5 @@
+error: value object constructor actions accept at most one business input; group multiple values into one type
+ --> tests/ui/value_object_action/excess_constructor_input.rs:6:27
+  |
+6 |     fn new(input: String, extra: String) -> Self;
+  |                           ^^^^^^^^^^^^^

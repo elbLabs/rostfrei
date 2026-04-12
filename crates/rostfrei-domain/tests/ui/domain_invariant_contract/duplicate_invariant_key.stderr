@@ -1,0 +1,5 @@
+error: duplicate id
+ --> tests/ui/domain_invariant_contract/duplicate_invariant_key.rs:7:31
+  |
+7 |     #[invariant(id = "first", id = "second", label = "Valid")]
+  |                               ^^

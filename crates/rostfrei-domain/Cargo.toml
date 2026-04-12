@@ -1,0 +1,12 @@
+[package]
+name = "rostfrei-domain"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+
+[dependencies]
+rostfrei-domain-macros = { path = "../rostfrei-domain-macros" }
+serde_json.workspace = true
+
+[dev-dependencies]
+trybuild.workspace = true

@@ -1,0 +1,5 @@
+error: domain decision contract traits accept exactly one kind
+ --> tests/ui/domain_decision_contract/multiple_macro_kinds.rs:3:29
+  |
+3 | #[domain_decisions(aggregate, entity)]
+  |                             ^

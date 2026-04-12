@@ -1,0 +1,5 @@
+error: duplicate invariant attribute
+ --> tests/ui/domain_invariant_contract/duplicate_invariant_attribute.rs:8:5
+  |
+8 |     #[invariant(id = "second", label = "Second")]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: unknown lifecycle transition target `Missing`
+ --> tests/ui/entity_lifecycle/unknown_target.rs:7:51
+  |
+7 |     #[transition(action = Actions::ACTIVATE, to = Missing)]
+  |                                                   ^^^^^^^

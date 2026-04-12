@@ -1,0 +1,11 @@
+error: id must be nonempty lowercase kebab-case using ASCII letters and digits
+ --> tests/ui/malformed_ids.rs:4:15
+  |
+4 | #[domain(id = "Customer--Support", label = "Customer Support")]
+  |               ^^^^^^^^^^^^^^^^^^^
+
+error: id must be nonempty lowercase kebab-case using ASCII letters and digits
+ --> tests/ui/malformed_ids.rs:8:15
+  |
+8 | #[domain(id = "", label = "Mailbox", context = CustomerSupport, root = MailboxRoot)]
+  |               ^^

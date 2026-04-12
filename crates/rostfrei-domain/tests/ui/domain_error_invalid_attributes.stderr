@@ -1,0 +1,55 @@
+error: missing domain attribute
+ --> tests/ui/domain_error_invalid_attributes.rs:5:10
+  |
+5 | #[derive(DomainError)]
+  |          ^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `DomainError` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: missing id
+ --> tests/ui/domain_error_invalid_attributes.rs:9:1
+  |
+9 | #[domain(label = "Missing id", owner = Owner, code = "MISSING_ID", message = "Missing id.")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: missing code
+  --> tests/ui/domain_error_invalid_attributes.rs:13:1
+   |
+13 | #[domain(id = "missing-code", label = "Missing code", owner = Owner, message = "Missing code.")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: missing message
+  --> tests/ui/domain_error_invalid_attributes.rs:17:1
+   |
+17 | #[domain(id = "missing-message", label = "Missing message", owner = Owner, code = "MISSING_MESSAGE")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: duplicate code
+  --> tests/ui/domain_error_invalid_attributes.rs:21:84
+   |
+21 | #[domain(id = "duplicate", label = "Duplicate", owner = Owner, code = "DUPLICATE", code = "OTHER", message = "Duplicate.")]
+   |                                                                                    ^^^^
+
+error: duplicate message
+  --> tests/ui/domain_error_invalid_attributes.rs:25:132
+   |
+25 | ...= Owner, code = "DUPLICATE_MESSAGE", message = "Duplicate.", message = "Other.")]
+   |                                                                 ^^^^^^^
+
+error: unsupported domain attribute
+  --> tests/ui/domain_error_invalid_attributes.rs:29:116
+   |
+29 | #[domain(id = "unsupported", label = "Unsupported", owner = Owner, code = "UNSUPPORTED", message = "Unsupported.", schema = 1)]
+   |                                                                                                                    ^^^^^^
+
+error: code must be SCREAMING_SNAKE_CASE and begin with an ASCII uppercase letter
+  --> tests/ui/domain_error_invalid_attributes.rs:33:69
+   |
+33 | #[domain(id = "bad-code", label = "Bad code", owner = Owner, code = "1_BAD-code", message = "Bad code.")]
+   |                                                                     ^^^^^^^^^^^^
+
+error: message must not be empty
+  --> tests/ui/domain_error_invalid_attributes.rs:37:106
+   |
+37 | #[domain(id = "blank-message", label = "Blank message", owner = Owner, code = "BLANK_MESSAGE", message = " ")]
+   |                                                                                                          ^^^

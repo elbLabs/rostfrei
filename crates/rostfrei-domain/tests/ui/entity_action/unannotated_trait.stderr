@@ -1,0 +1,10 @@
+error[E0576]: cannot find method or associated constant `__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE` in trait `Actions`
+  --> tests/ui/entity_action/unannotated_trait.rs:15:10
+   |
+ 8 |     fn rename(&self);
+   |     ----------------- associated function `rename` defined here
+...
+15 | #[derive(Entity)]
+   |          ^^^^^^ not found in `Actions`
+   |
+   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)

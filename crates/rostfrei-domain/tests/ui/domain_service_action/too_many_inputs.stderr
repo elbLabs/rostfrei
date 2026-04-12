@@ -1,0 +1,5 @@
+error: domain service actions accept at most one business input; group multiple values into one type
+ --> tests/ui/domain_service_action/too_many_inputs.rs:6:27
+  |
+6 |     fn execute(input: u8, other: u8);
+  |                           ^^^^^^^^^

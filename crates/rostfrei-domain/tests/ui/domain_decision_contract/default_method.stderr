@@ -1,0 +1,8 @@
+error: domain decision contract methods cannot have default bodies
+  --> tests/ui/domain_decision_contract/default_method.rs:9:39
+   |
+ 9 |       fn decide(input: Input) -> Output {
+   |  _______________________________________^
+10 | |         Output
+11 | |     }
+   | |_____^

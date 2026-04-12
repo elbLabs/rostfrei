@@ -1,0 +1,5 @@
+error: unknown `rostfrei` attribute; expected `name`, `version`, or `aggregate`
+ --> tests/ui/fail/command_unknown_attribute.rs:6:69
+  |
+6 | #[rostfrei(name = "account.open", version = 1, aggregate = Account, unexpected = true)]
+  |                                                                     ^^^^^^^^^^

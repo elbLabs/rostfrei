@@ -1,0 +1,5 @@
+error: decisions cannot be unsafe
+ --> tests/ui/domain_decision_contract/unsafe_method.rs:9:5
+  |
+9 |     unsafe fn decide(input: Input) -> Output;
+  |     ^^^^^^

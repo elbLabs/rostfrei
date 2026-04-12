@@ -1,0 +1,10 @@
+error[E0277]: the trait bound `Owner: Actions` is not satisfied
+  --> tests/ui/action_reference/missing_implementation.rs:10:38
+   |
+10 |     let _: ActionReference<Owner> = <Owner as Actions>::__DOMAIN_ACTION_REFERENCE_INSPECT;
+   |                                      ^^^^^ the trait `Actions` is not implemented for `Owner`
+   |
+help: consider further restricting type parameter `Owner` with trait `Actions`
+   |
+ 9 | fn missing_implementation<Owner: EntityActionOwnerType + Actions>() {
+   |                                                        +++++++++

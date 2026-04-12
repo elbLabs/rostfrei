@@ -6,13 +6,13 @@ Accepted.
 
 ## Decision
 
-Zeitstrahl will evolve from its event-sourcing and messaging foundation into an
+Rostfrei will evolve from its event-sourcing and messaging foundation into an
 event-sourced development platform. The platform may provide domain metadata,
 handler registration, simulation, inspection, Studio, documentation, and AI
 interfaces, but these capabilities are layered around the existing explicit
 kernel.
 
-`zeitstrahl-core` remains responsible for deterministic aggregate execution and
+`rostfrei-core` remains responsible for deterministic aggregate execution and
 EventStore contracts. Messaging contracts remain broker-neutral. Infrastructure
 adapters remain replaceable. Schema, registry, macro, simulation, Studio, and AI
 crates may depend on the kernel, but the kernel does not depend on them.

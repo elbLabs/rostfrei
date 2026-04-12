@@ -1,0 +1,20 @@
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ScalarType {
+    Bool,
+    String,
+    Char,
+    F32,
+    F64,
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    Isize,
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+    Usize,
+}

@@ -1,0 +1,5 @@
+error: domain invariant contract traits cannot have unrestricted public visibility
+ --> tests/ui/domain_invariant_contract/unrestricted_public_trait.rs:6:1
+  |
+6 | pub trait Invariants {
+  | ^^^

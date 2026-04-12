@@ -1,0 +1,5 @@
+error: label must not be empty
+ --> tests/ui/entity_lifecycle/blank_state_label.rs:6:36
+  |
+6 |     #[domain(id = "draft", label = "   ")]
+  |                                    ^^^^^

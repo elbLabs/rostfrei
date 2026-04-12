@@ -1,0 +1,43 @@
+error: missing domain attribute
+ --> tests/ui/value_object_invalid_attributes.rs:5:10
+  |
+5 | #[derive(ValueObject)]
+  |          ^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `ValueObject` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: missing id
+ --> tests/ui/value_object_invalid_attributes.rs:9:1
+  |
+9 | #[domain(label = "Missing id", owner = Owner)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: duplicate id
+  --> tests/ui/value_object_invalid_attributes.rs:13:28
+   |
+13 | #[domain(id = "duplicate", id = "other", label = "Duplicate", owner = Owner)]
+   |                            ^^
+
+error: unsupported domain attribute
+  --> tests/ui/value_object_invalid_attributes.rs:17:68
+   |
+17 | #[domain(id = "unsupported", label = "Unsupported", owner = Owner, schema = 1)]
+   |                                                                    ^^^^^^
+
+error: id must be nonempty lowercase kebab-case using ASCII letters and digits
+  --> tests/ui/value_object_invalid_attributes.rs:21:15
+   |
+21 | #[domain(id = "Bad--Id", label = "Malformed", owner = Owner)]
+   |               ^^^^^^^^^
+
+error: label must not be empty
+  --> tests/ui/value_object_invalid_attributes.rs:25:38
+   |
+25 | #[domain(id = "blank-label", label = "  ", owner = Owner)]
+   |                                      ^^^^
+
+error: expected identifier
+  --> tests/ui/value_object_invalid_attributes.rs:29:69
+   |
+29 | #[domain(id = "malformed-owner", label = "Malformed owner", owner = "Owner")]
+   |                                                                     ^^^^^^^

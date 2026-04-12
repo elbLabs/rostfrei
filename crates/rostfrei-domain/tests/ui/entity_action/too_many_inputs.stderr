@@ -1,0 +1,5 @@
+error: entity actions accept at most one business input; group multiple values into one type
+ --> tests/ui/entity_action/too_many_inputs.rs:6:33
+  |
+6 |     fn change(&self, input: u8, other: u8);
+  |                                 ^^^^^^^^^

@@ -1,0 +1,7 @@
+error: aggregate action contract traits require unrestricted public visibility
+ --> tests/ui/aggregate_action/non_public_trait.rs:5:1
+  |
+5 | #[domain_actions(aggregate)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

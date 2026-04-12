@@ -1,0 +1,15 @@
+error[E0432]: unresolved import `rostfrei_domain::ActionGroupType`
+ --> tests/ui/action_extension/root_action_group_type.rs:1:5
+  |
+1 | use rostfrei_domain::ActionGroupType;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `ActionGroupType` in the root
+  |
+help: a similar name exists in the module
+  |
+1 - use rostfrei_domain::ActionGroupType;
+1 + use rostfrei_domain::ActionInputType;
+  |
+help: consider importing this trait instead
+  |
+1 | use rostfrei_domain::extension::ActionGroupType;
+  |                      +++++++++++

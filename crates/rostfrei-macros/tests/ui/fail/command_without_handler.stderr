@@ -1,0 +1,16 @@
+error[E0277]: the trait bound `Account: CommandHandler<OpenAccount>` is not satisfied
+  --> tests/ui/fail/command_without_handler.rs:19:60
+   |
+19 | #[rostfrei(name = "account.open", version = 1, aggregate = Account)]
+   |                                                            ^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `CommandHandler<OpenAccount>` is not implemented for `Account`
+  --> tests/ui/fail/command_without_handler.rs:4:1
+   |
+ 4 | struct Account;
+   | ^^^^^^^^^^^^^^
+note: required by a bound in `rostfrei_registry::CommandDefinition::Aggregate`
+  --> $WORKSPACE/crates/rostfrei-registry/src/lib.rs
+   |
+   |     type Aggregate: Aggregate + CommandHandler<Self>;
+   |                                 ^^^^^^^^^^^^^^^^^^^^ required by this bound in `CommandDefinition::Aggregate`

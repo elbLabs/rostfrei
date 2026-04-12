@@ -1,0 +1,5 @@
+error: domain invariant contract traits cannot be generic
+ --> tests/ui/domain_invariant_contract/trait_generics.rs:6:18
+  |
+6 | trait Invariants<T> {
+  |                  ^

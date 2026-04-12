@@ -1,0 +1,6 @@
+error: domain invariant checker methods require exactly one candidate parameter
+  --> tests/ui/domain_invariant_contract/multiple_candidates.rs:9:9
+   |
+ 9 | /         candidate: &<Self as InvariantOwnerType>::Candidate,
+10 | |         other: &<Self as InvariantOwnerType>::Candidate,
+   | |________________________________________________________^

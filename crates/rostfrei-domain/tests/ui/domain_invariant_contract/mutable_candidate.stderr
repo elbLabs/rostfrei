@@ -1,0 +1,5 @@
+error: invariant candidate must be an immutable reference to `<Self as InvariantOwnerType>::Candidate` without an explicit lifetime
+ --> tests/ui/domain_invariant_contract/mutable_candidate.rs:8:25
+  |
+8 |     fn valid(candidate: &mut <Self as InvariantOwnerType>::Candidate)
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

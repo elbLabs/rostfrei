@@ -1,0 +1,5 @@
+error: command name must not be empty
+ --> tests/ui/fail/command_empty_name.rs:6:19
+  |
+6 | #[rostfrei(name = "", version = 1, aggregate = Account)]
+  |                   ^^

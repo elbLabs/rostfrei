@@ -1,0 +1,5 @@
+error: decisions cannot be variadic
+ --> tests/ui/domain_decision_contract/variadic_method.rs:9:31
+  |
+9 |     fn variadic(input: Input, _: ...) -> Output;
+  |                               ^^^^^^

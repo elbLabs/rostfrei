@@ -1,0 +1,5 @@
+error: lifecycle tests cannot have generics
+ --> tests/ui/domain_test/invalid_signature.rs:6:21
+  |
+6 | fn invalid_signature<T>() {}
+  |                     ^^^

@@ -1,0 +1,7 @@
+error: domain invariant checker methods require exactly one candidate parameter
+ --> tests/ui/domain_invariant_contract/zero_candidates.rs:5:1
+  |
+5 | #[domain_invariants(entity)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `domain_invariants` (in Nightly builds, run with -Z macro-backtrace for more info)

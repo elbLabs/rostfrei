@@ -1,0 +1,5 @@
+error: duplicate decisions
+  --> tests/ui/domain_decision_contract/duplicate_decisions_key.rs:12:5
+   |
+12 |     decisions = [Decisions]
+   |     ^^^^^^^^^

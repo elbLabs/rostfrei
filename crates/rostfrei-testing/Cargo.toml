@@ -1,0 +1,16 @@
+[package]
+name = "rostfrei-testing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+rostfrei-core = { path = "../rostfrei-core" }
+rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
+
+[lints]
+workspace = true

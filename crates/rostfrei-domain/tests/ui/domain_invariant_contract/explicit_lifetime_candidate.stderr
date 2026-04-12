@@ -1,0 +1,5 @@
+error: invariant candidate must be an immutable reference to `<Self as InvariantOwnerType>::Candidate` without an explicit lifetime
+ --> tests/ui/domain_invariant_contract/explicit_lifetime_candidate.rs:9:20
+  |
+9 |         candidate: &'static <Self as InvariantOwnerType>::Candidate,
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

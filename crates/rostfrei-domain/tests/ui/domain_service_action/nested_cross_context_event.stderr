@@ -1,0 +1,61 @@
+error[E0271]: type mismatch resolving `<Service as DomainServiceType>::Context == Orders`
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:42:6
+   |
+42 | impl Actions for Service {
+   |      ^^^^^^^ type mismatch resolving `<Service as DomainServiceType>::Context == Orders`
+   |
+note: expected this to be `Orders`
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:39:55
+   |
+39 | #[domain(id = "service", label = "Service", context = Services, actions = [Actions])]
+   |                                                       ^^^^^^^^
+note: required for `Placed` to implement `ActionOutputType<DomainServiceActionOutput<Service>>`
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:28:10
+   |
+28 | #[derive(DomainEvent)]
+   |          ^^^^^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+29 | #[domain(id = "placed", label = "Placed", owner = Order)]
+30 | pub struct Placed;
+   |            ^^^^^^
+   = note: associated types for the current `impl` cannot be restricted in `where` clauses
+   = note: 1 redundant requirement hidden
+   = note: required for `Option<Placed>` to implement `ActionOutputType<DomainServiceActionOutput<Service>>`
+note: required by a bound in `Actions`
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:32:1
+   |
+32 | #[domain_actions(domain_service)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
+33 | pub trait Actions {
+   |           ------- required by a bound in this trait
+   = note: this error originates in the derive macro `DomainEvent` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0271]: type mismatch resolving `<Service as DomainServiceType>::Context == Orders`
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:38:10
+   |
+38 | #[derive(DomainService)]
+   |          ^^^^^^^^^^^^^ type mismatch resolving `<Service as DomainServiceType>::Context == Orders`
+   |
+note: expected this to be `Orders`
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:39:55
+   |
+39 | #[domain(id = "service", label = "Service", context = Services, actions = [Actions])]
+   |                                                       ^^^^^^^^
+note: required for `Placed` to implement `ActionOutputType<DomainServiceActionOutput<Service>>`
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:28:10
+   |
+28 | #[derive(DomainEvent)]
+   |          ^^^^^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+29 | #[domain(id = "placed", label = "Placed", owner = Order)]
+30 | pub struct Placed;
+   |            ^^^^^^
+   = note: associated types for the current `impl` cannot be restricted in `where` clauses
+   = note: 1 redundant requirement hidden
+   = note: required for `Option<Placed>` to implement `ActionOutputType<DomainServiceActionOutput<Service>>`
+note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:32:1
+   |
+32 | #[domain_actions(domain_service)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
+33 | pub trait Actions {
+   |           ------- required by a bound in this associated constant
+   = note: this error originates in the derive macro `DomainService` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

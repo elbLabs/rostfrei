@@ -1,10 +1,16 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
-    "crates/zeitstrahl-core",
-    "crates/zeitstrahl-messaging-core",
-    "crates/zeitstrahl-nats",
-    "crates/zeitstrahl-testing",
+    "crates/rostfrei-core",
+    "crates/rostfrei-domain",
+    "crates/rostfrei-domain-macros",
+    "crates/rostfrei-domain-runtime",
+    "crates/rostfrei-macros",
+    "crates/rostfrei-messaging-core",
+    "crates/rostfrei-nats",
+    "crates/rostfrei-registry",
+    "crates/rostfrei-testing",
+    "examples/bike-rental",
 ]
 
 [workspace.package]
@@ -17,12 +23,17 @@ async-nats = { version = "=0.50.0", default-features = false, features = ["jetst
 async-trait = "0.1"
 base64 = "0.22"
 futures-util = "0.3"
+proc-macro-crate = "3"
+proc-macro2 = "1"
+quote = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+syn = { version = "2", features = ["full"] }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
+trybuild = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

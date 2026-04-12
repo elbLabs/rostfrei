@@ -1,0 +1,9 @@
+error: domain invariant checker methods cannot have default bodies
+  --> tests/ui/domain_invariant_contract/default_method.rs:8:97
+   |
+ 8 |       fn valid(candidate: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation> {
+   |  _________________________________________________________________________________________________^
+ 9 | |         let _ = candidate;
+10 | |         None
+11 | |     }
+   | |_____^

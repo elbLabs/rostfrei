@@ -1,0 +1,5 @@
+error: domain decision contract methods must be associated functions without a receiver
+ --> tests/ui/domain_decision_contract/receiver.rs:9:15
+  |
+9 |     fn decide(&self, input: Input) -> Output;
+  |               ^^^^^

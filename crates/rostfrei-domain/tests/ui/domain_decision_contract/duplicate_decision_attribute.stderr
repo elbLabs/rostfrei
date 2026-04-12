@@ -1,0 +1,5 @@
+error: duplicate decision attribute
+ --> tests/ui/domain_decision_contract/duplicate_decision_attribute.rs:9:5
+  |
+9 |     #[decision(id = "second", label = "Second")]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

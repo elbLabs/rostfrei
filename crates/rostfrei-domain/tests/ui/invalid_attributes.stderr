@@ -1,0 +1,17 @@
+error: duplicate id
+ --> tests/ui/invalid_attributes.rs:4:24
+  |
+4 | #[domain(id = "inbox", id = "other", label = "Inbox")]
+  |                        ^^
+
+error: unsupported domain attribute
+ --> tests/ui/invalid_attributes.rs:8:45
+  |
+8 | #[domain(id = "support", label = "Support", schema = 1)]
+  |                                             ^^^^^^
+
+error: duplicate domain attribute
+  --> tests/ui/invalid_attributes.rs:13:1
+   |
+13 | #[domain(id = "other", label = "Other")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

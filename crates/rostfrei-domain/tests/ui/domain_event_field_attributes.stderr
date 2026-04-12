@@ -1,0 +1,5 @@
+error: unsupported field domain attribute
+ --> tests/ui/domain_event_field_attributes.rs:6:14
+  |
+6 |     #[domain(field)]
+  |              ^^^^^

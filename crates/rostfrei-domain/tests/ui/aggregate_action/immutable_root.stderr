@@ -1,0 +1,5 @@
+error: aggregate root must be mutable with type &mut RootType
+ --> tests/ui/aggregate_action/immutable_root.rs:8:21
+  |
+8 |     fn change(root: &Root);
+  |                     ^^^^^

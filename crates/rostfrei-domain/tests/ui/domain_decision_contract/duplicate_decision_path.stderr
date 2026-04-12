@@ -1,0 +1,5 @@
+error: duplicate decision path
+  --> tests/ui/domain_decision_contract/duplicate_decision_path.rs:11:29
+   |
+11 |     decisions = [Decisions, Decisions]
+   |                             ^^^^^^^^^

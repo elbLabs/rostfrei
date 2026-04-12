@@ -1,0 +1,13 @@
+[package]
+name = "rostfrei-registry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+rostfrei-core = { path = "../rostfrei-core" }
+rostfrei-domain = { path = "../rostfrei-domain" }
+
+[lints]
+workspace = true

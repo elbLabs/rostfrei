@@ -1,0 +1,17 @@
+error: field supports at most one domain role
+ --> tests/ui/semantic_scalar/duplicate_conflicting_roles.rs:7:46
+  |
+7 | struct Duplicate(#[domain(scalar = Provider, scalar = Provider)] Custom);
+  |                                              ^^^^^^^^^^^^^^^^^
+
+error: field supports at most one domain role
+  --> tests/ui/semantic_scalar/duplicate_conflicting_roles.rs:11:48
+   |
+11 | struct Conflicting(#[domain(scalar = Provider, value_object)] Custom);
+   |                                                ^^^^^^^^^^^^
+
+error: duplicate scalar
+  --> tests/ui/semantic_scalar/duplicate_conflicting_roles.rs:14:45
+   |
+14 | #[domain(owner = Entity, scalar = Provider, scalar = Provider)]
+   |                                             ^^^^^^

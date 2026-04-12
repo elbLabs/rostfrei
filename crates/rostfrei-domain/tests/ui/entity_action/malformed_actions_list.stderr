@@ -1,0 +1,5 @@
+error: expected square brackets
+ --> tests/ui/entity_action/malformed_actions_list.rs:7:64
+  |
+7 | #[domain(id = "item", label = "Item", owner = Owner, actions = Actions)]
+  |                                                                ^^^^^^^

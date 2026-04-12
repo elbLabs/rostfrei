@@ -1,0 +1,5 @@
+error: duplicate action path
+ --> tests/ui/entity_action/duplicate_action_trait_path.rs:7:74
+  |
+7 | #[domain(id = "item", label = "Item", owner = Owner, actions = [Actions, Actions])]
+  |                                                                          ^^^^^^^

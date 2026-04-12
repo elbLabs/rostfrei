@@ -1,0 +1,17 @@
+error: DomainError only supports non-generic structs
+ --> tests/ui/domain_error_invalid_input.rs:5:6
+  |
+5 | enum Choice {
+  |      ^^^^^^
+
+error: DomainError only supports non-generic structs
+  --> tests/ui/domain_error_invalid_input.rs:11:7
+   |
+11 | union Storage {
+   |       ^^^^^^^
+
+error: DomainError only supports non-generic structs
+  --> tests/ui/domain_error_invalid_input.rs:18:15
+   |
+18 | struct Generic<T>(T);
+   |               ^^^

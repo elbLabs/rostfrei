@@ -1,0 +1,5 @@
+error: domain decision contract methods require exactly one owned input parameter
+ --> tests/ui/domain_decision_contract/multiple_inputs.rs:9:15
+  |
+9 |     fn decide(input: Input, other: Input) -> Output;
+  |               ^^^^^^^^^^^^^^^^^^^^^^^^^^

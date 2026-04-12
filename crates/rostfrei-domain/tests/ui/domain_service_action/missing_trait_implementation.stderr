@@ -1,0 +1,20 @@
+error[E0277]: the trait bound `Service: Actions` is not satisfied
+  --> tests/ui/domain_service_action/missing_trait_implementation.rs:13:10
+   |
+13 | #[derive(DomainService)]
+   |          ^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `Actions` is not implemented for `Service`
+  --> tests/ui/domain_service_action/missing_trait_implementation.rs:15:1
+   |
+15 | struct Service;
+   | ^^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+  --> tests/ui/domain_service_action/missing_trait_implementation.rs:8:1
+   |
+ 8 | / pub trait Actions {
+ 9 | |     #[action(id = "execute", label = "Execute")]
+10 | |     fn execute();
+11 | | }
+   | |_^
+   = note: this error originates in the derive macro `DomainService` (in Nightly builds, run with -Z macro-backtrace for more info)

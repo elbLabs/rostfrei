@@ -1,0 +1,6 @@
+error: decisions cannot have method-level where clauses
+  --> tests/ui/domain_decision_contract/method_where_clause.rs:10:5
+   |
+10 | /     where
+11 | |         Input: Sized;
+   | |____________________^

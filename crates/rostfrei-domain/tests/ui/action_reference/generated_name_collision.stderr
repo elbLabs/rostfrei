@@ -1,0 +1,11 @@
+error: generated action reference constant `__DOMAIN_ACTION_REFERENCE_INSPECT` conflicts with trait item `r#__DOMAIN_ACTION_REFERENCE_INSPECT`
+ --> tests/ui/action_reference/generated_name_collision.rs:5:19
+  |
+5 |     #[action(id = "inspect", label = "Inspect")]
+  |                   ^^^^^^^^^
+
+error: trait item `r#__DOMAIN_ACTION_REFERENCE_INSPECT` is declared here
+ --> tests/ui/action_reference/generated_name_collision.rs:6:8
+  |
+6 |     fn r#__DOMAIN_ACTION_REFERENCE_INSPECT(&self);
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: lifecycle tests own the `#[test]` attribute; remove the authored `#[test]`
+ --> tests/ui/domain_test/existing_test.rs:6:1
+  |
+6 | #[test]
+  | ^^^^^^^

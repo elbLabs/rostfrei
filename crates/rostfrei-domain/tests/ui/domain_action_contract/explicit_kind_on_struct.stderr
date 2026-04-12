@@ -1,0 +1,5 @@
+error: domain_actions may only be applied to a trait
+ --> tests/ui/domain_action_contract/explicit_kind_on_struct.rs:4:1
+  |
+4 | struct Actions;
+  | ^^^^^^^^^^^^^^^

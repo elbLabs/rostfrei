@@ -1,0 +1,5 @@
+error: lifecycle tests may only be applied to a function
+ --> tests/ui/domain_test/non_function.rs:6:1
+  |
+6 | struct NotAFunction;
+  | ^^^^^^^^^^^^^^^^^^^^

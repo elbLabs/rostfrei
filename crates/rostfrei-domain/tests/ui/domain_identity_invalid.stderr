@@ -1,0 +1,23 @@
+error: DomainIdentity only supports non-generic tuple structs with exactly one field
+ --> tests/ui/domain_identity_invalid.rs:4:8
+  |
+4 | struct Named { value: u64 }
+  |        ^^^^^
+
+error: DomainIdentity only supports non-generic tuple structs with exactly one field
+ --> tests/ui/domain_identity_invalid.rs:7:13
+  |
+7 | struct Empty();
+  |             ^^
+
+error: DomainIdentity only supports non-generic tuple structs with exactly one field
+  --> tests/ui/domain_identity_invalid.rs:10:16
+   |
+10 | struct Multiple(u64, u64);
+   |                ^^^^^^^^^^
+
+error: DomainIdentity only supports non-generic tuple structs with exactly one field
+  --> tests/ui/domain_identity_invalid.rs:13:15
+   |
+13 | struct Generic<T>(T);
+   |               ^^^

@@ -1,0 +1,13 @@
+[package]
+name = "rostfrei-domain-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rostfrei-core = { path = "../rostfrei-core" }
+rostfrei-domain = { path = "../rostfrei-domain" }
+rostfrei-registry = { path = "../rostfrei-registry" }
+
+[lints]
+workspace = true

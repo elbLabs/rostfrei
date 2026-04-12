@@ -1,0 +1,5 @@
+error: invariant checkers cannot be variadic
+  --> tests/ui/domain_invariant_contract/variadic_method.rs:10:9
+   |
+10 |         _: ...
+   |         ^^^^^^

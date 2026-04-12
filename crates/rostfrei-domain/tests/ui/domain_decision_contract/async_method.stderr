@@ -1,0 +1,5 @@
+error: decisions cannot be async
+ --> tests/ui/domain_decision_contract/async_method.rs:9:5
+  |
+9 |     async fn decide(input: Input) -> Output;
+  |     ^^^^^

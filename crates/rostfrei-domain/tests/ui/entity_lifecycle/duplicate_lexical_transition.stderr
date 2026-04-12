@@ -1,0 +1,11 @@
+error: duplicate transition for state `draft` and action `Actions::ACTIVATE`
+ --> tests/ui/entity_lifecycle/duplicate_lexical_transition.rs:8:36
+  |
+8 |     #[transition(action = Actions::ACTIVATE, to = Draft)]
+  |                                    ^^^^^^^^
+
+error: the first transition for this state and action is declared here
+ --> tests/ui/entity_lifecycle/duplicate_lexical_transition.rs:7:36
+  |
+7 |     #[transition(action = Actions::ACTIVATE, to = Active)]
+  |                                    ^^^^^^^^

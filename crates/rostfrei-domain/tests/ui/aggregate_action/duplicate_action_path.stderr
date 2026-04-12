@@ -1,0 +1,5 @@
+error: duplicate action path
+  --> tests/ui/aggregate_action/duplicate_action_path.rs:13:25
+   |
+13 |     actions = [Actions, Actions]
+   |                         ^^^^^^^

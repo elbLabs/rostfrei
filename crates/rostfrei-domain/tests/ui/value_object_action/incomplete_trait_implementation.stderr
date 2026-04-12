@@ -1,0 +1,8 @@
+error[E0046]: not all trait items implemented, missing: `normalize`
+  --> tests/ui/value_object_action/incomplete_trait_implementation.rs:20:1
+   |
+13 |     fn normalize(self) -> Self;
+   |     --------------------------- `normalize` from trait
+...
+20 | impl Actions for Name {
+   | ^^^^^^^^^^^^^^^^^^^^^ missing `normalize` in implementation
