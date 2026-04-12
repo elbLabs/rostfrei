@@ -33,7 +33,8 @@ pub struct MailboxRoot {
     label = "Mailbox",
     context = Operations,
     root = MailboxRoot,
-    actions = [MailboxOutputActions]
+    actions = [MailboxOutputActions],
+    events = [MailboxOpened]
 )]
 pub struct Mailbox;
 
@@ -49,7 +50,13 @@ pub struct DeliveryRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "delivery", label = "Delivery", context = Operations, root = DeliveryRoot)]
+#[domain(
+    id = "delivery",
+    label = "Delivery",
+    context = Operations,
+    root = DeliveryRoot,
+    events = [DeliveryStarted]
+)]
 pub struct Delivery;
 
 #[derive(ValueObject)]
@@ -62,11 +69,11 @@ pub struct Delivery;
 pub struct Receipt(String);
 
 #[derive(DomainEvent)]
-#[domain(id = "mailbox-opened", label = "Mailbox opened", owner = Mailbox)]
+#[domain(id = "mailbox-opened", label = "Mailbox opened")]
 pub struct MailboxOpened;
 
 #[derive(DomainEvent)]
-#[domain(id = "delivery-started", label = "Delivery started", owner = Delivery)]
+#[domain(id = "delivery-started", label = "Delivery started")]
 pub struct DeliveryStarted;
 
 #[derive(DomainError)]
@@ -339,7 +346,6 @@ fn preserves_event_output_json() {
         value_objects: [Receipt],
         services: [Coordinator],
         commands: [],
-        events: [MailboxOpened, DeliveryStarted],
         errors: [MailboxDenied, CoordinationDenied],
 
         query_groups: [],

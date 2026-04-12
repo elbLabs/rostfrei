@@ -13,7 +13,7 @@ struct FirstId(u64);
 struct FirstRoot { #[domain(identity)] id: FirstId }
 
 #[derive(Aggregate)]
-#[domain(id = "first", label = "First", context = Catalog, root = FirstRoot)]
+#[domain(id = "first", label = "First", context = Catalog, root = FirstRoot, events = [Event])]
 struct First;
 
 #[derive(DomainIdentity)]
@@ -33,7 +33,7 @@ struct Second;
 struct Command;
 
 #[derive(DomainEvent)]
-#[domain(id = "event", label = "Event", owner = First)]
+#[domain(id = "event", label = "Event")]
 struct Event;
 
 #[derive(DomainError)]

@@ -78,7 +78,6 @@ mod model {
             value_objects: [],
             services: [],
             commands: [],
-            events: [],
             errors: [],
             action_extensions: [],
             query_groups: [],

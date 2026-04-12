@@ -2,9 +2,9 @@
 
 use domain::{
     Aggregate, BoundedContext, DomainCommand, DomainCommandType, DomainError, DomainErrorType,
-    DomainEvent, DomainEventType, DomainIdentity, DomainIdentityDescriptor, DomainIdentityId,
-    DomainIdentityType, Entity, EntityType, FieldKind, FieldWrapper, ScalarType, SemanticScalar,
-    SemanticScalarDescriptor, ValueObject, ValueObjectType, domain_model,
+    DomainEvent, DomainEventDefinitionType, DomainIdentity, DomainIdentityDescriptor,
+    DomainIdentityId, DomainIdentityType, Entity, EntityType, FieldKind, FieldWrapper, ScalarType,
+    SemanticScalar, SemanticScalarDescriptor, ValueObject, ValueObjectType, domain_model,
 };
 use serde_json::json;
 
@@ -61,7 +61,8 @@ struct Revision {
     id = "documents",
     label = "Documents",
     context = SemanticScalars,
-    root = DocumentRoot
+    root = DocumentRoot,
+    events = [DocumentCorrelated]
 )]
 struct Documents;
 
@@ -80,7 +81,7 @@ struct CorrelateDocument {
 }
 
 #[derive(DomainEvent)]
-#[domain(id = "document-correlated", label = "Document correlated", owner = Documents)]
+#[domain(id = "document-correlated", label = "Document correlated")]
 struct DocumentCorrelated {
     #[domain(scalar = UuidScalar)]
     correlation_id: foreign::Uuid,
@@ -160,7 +161,7 @@ fn describes_semantic_fields_and_nested_wrappers() {
             _ => panic!(),
         },
         CorrelateDocument::DESCRIPTOR.fields[0].value.kind,
-        DocumentCorrelated::DESCRIPTOR.fields[0].value.kind,
+        DocumentCorrelated::DEFINITION.fields[0].value.kind,
         DocumentCorrelationRejected::DESCRIPTOR.fields[0].value.kind,
     ];
     assert!(
@@ -189,7 +190,6 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
         value_objects: [ExternalReference],
         services: [],
         commands: [CorrelateDocument],
-        events: [DocumentCorrelated],
         errors: [DocumentCorrelationRejected],
         query_groups: [],
     };
@@ -309,7 +309,6 @@ fn rejects_contradictory_manual_identity_scalar_metadata() {
         value_objects: [],
         services: [],
         commands: [],
-        events: [],
         errors: [],
         query_groups: [],
     };

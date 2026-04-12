@@ -10,9 +10,9 @@ use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainCommand, DomainCommandId,
     DomainCommandOwnerId, DomainCommandType, DomainError, DomainErrorId, DomainErrorOwnerId,
-    DomainErrorType, DomainEvent, DomainEventId, DomainEventType, DomainIdentity, DomainService,
-    DomainServiceId, Entity, EntityId, ValueObject, ValueObjectId, ValueObjectOwnerId,
-    ValueObjectType, domain_actions,
+    DomainErrorType, DomainEvent, DomainEventId, DomainIdentity, DomainService, DomainServiceId,
+    Entity, EntityId, ValueObject, ValueObjectId, ValueObjectOwnerId, ValueObjectType,
+    domain_actions,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("action-inventory");
@@ -116,7 +116,8 @@ pub trait AggregateActions {
     label = "Inventory aggregate",
     context = InventoryContext,
     root = InventoryEntity,
-    actions = [AggregateActions]
+    actions = [AggregateActions],
+    events = [InventoryEvent]
 )]
 pub struct InventoryAggregate;
 
@@ -162,11 +163,7 @@ impl EntityActions for InventoryEntity {
 pub struct AggregateCommand;
 
 #[derive(DomainEvent)]
-#[domain(
-    id = "inventory-event",
-    label = "Inventory event",
-    owner = InventoryAggregate
-)]
+#[domain(id = "inventory-event", label = "Inventory event")]
 pub struct InventoryEvent;
 
 #[derive(DomainError)]
@@ -440,7 +437,6 @@ fn accepts_references_added_after_all_owner_actions_are_registered() {
 
     builder.add_domain_command(AggregateCommand::DESCRIPTOR);
     builder.add_domain_command(ServiceCommand::DESCRIPTOR);
-    builder.add_domain_event(InventoryEvent::DESCRIPTOR);
     builder.add_domain_error(AggregateError::DESCRIPTOR);
     builder.add_domain_error(ServiceError::DESCRIPTOR);
     builder.add_domain_error(EntityError::DESCRIPTOR);
@@ -618,6 +614,7 @@ fn reports_descriptor_failures_in_input_output_error_order() {
         builder.add_domain_event(domain::DomainEventDescriptor {
             id: MISSING_EVENT_ID,
             label: "Missing event",
+            schema_version: 1,
             fields: &[],
         });
         builder.finish();

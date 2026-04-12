@@ -220,7 +220,6 @@ fn rejects_duplicate_action_id_across_entity_attached_traits_during_model_regist
         value_objects: [],
         services: [],
         commands: [],
-        events: [],
         errors: [],
 
         query_groups: [],

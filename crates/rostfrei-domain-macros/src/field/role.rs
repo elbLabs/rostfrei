@@ -6,7 +6,7 @@ pub fn parse(attributes: &[Attribute]) -> Result<Option<Role>> {
     let mut role = None;
     for attribute in attributes
         .iter()
-        .filter(|attribute| attribute.path().is_ident("domain"))
+        .filter(|attribute| crate::helper::domain_attribute::is_helper(attribute))
     {
         attribute.parse_nested_meta(|meta| {
             let has_arguments = meta.input.peek(Token![=]) || meta.input.peek(token::Paren);

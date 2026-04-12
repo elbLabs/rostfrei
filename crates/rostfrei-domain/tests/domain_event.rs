@@ -1,6 +1,7 @@
 use domain::{
-    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainEvent, DomainEventDescriptor,
-    DomainEventId, DomainEventType, DomainIdentity, Entity,
+    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainEvent,
+    DomainEventDefinitionType, DomainEventDescriptor, DomainEventId, DomainEventType,
+    DomainIdentity, Entity,
 };
 
 #[derive(BoundedContext)]
@@ -19,19 +20,29 @@ struct MailboxRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "mailbox", label = "Mailbox", context = Inbox, root = MailboxRoot)]
+#[domain(
+    id = "mailbox",
+    label = "Mailbox",
+    context = Inbox,
+    root = MailboxRoot,
+    events = [MailboxCreated, MessageReceived, MailboxRenamed]
+)]
 struct Mailbox;
 
 #[derive(DomainEvent)]
-#[domain(id = "mailbox-created", label = "Mailbox created", owner = Mailbox)]
+#[domain(id = "mailbox-created", label = "Mailbox created")]
 struct MailboxCreated;
 
 #[derive(DomainEvent)]
-#[domain(id = "message-received", label = "Message received", owner = Mailbox)]
+#[domain(
+    id = "message-received",
+    label = "Message received",
+    schema_version = 2
+)]
 struct MessageReceived(String);
 
 #[derive(DomainEvent)]
-#[domain(id = "mailbox-renamed", label = "Mailbox renamed", owner = Mailbox)]
+#[domain(id = "mailbox-renamed", label = "Mailbox renamed")]
 struct MailboxRenamed {
     name: String,
 }
@@ -49,17 +60,20 @@ fn derives_domain_event_descriptor() {
                 local: "mailbox-created",
             },
             label: "Mailbox created",
+            schema_version: 1,
             fields: &[],
         }
     );
     assert_eq!(MailboxCreated::LOCAL_ID, "mailbox-created");
+    assert_eq!(MailboxCreated::SCHEMA_VERSION, 1);
+    assert_eq!(MessageReceived::SCHEMA_VERSION, 2);
 }
 
 #[test]
 fn describes_event_fields() {
-    assert_eq!(MailboxRenamed::DESCRIPTOR.fields[0].name, "name");
+    assert_eq!(MailboxRenamed::DEFINITION.fields[0].name, "name");
     assert_eq!(
-        MailboxRenamed::DESCRIPTOR.fields[0].value.kind,
+        MailboxRenamed::DEFINITION.fields[0].value.kind,
         domain::FieldKind::Scalar(domain::ScalarType::String)
     );
 }

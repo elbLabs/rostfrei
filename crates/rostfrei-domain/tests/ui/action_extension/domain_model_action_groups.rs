@@ -9,7 +9,6 @@ fn main() {
         value_objects: [],
         services: [],
         commands: [],
-        events: [],
         errors: [],
         action_groups: [],
         query_groups: [],

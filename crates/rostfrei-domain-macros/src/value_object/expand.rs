@@ -8,5 +8,11 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let attributes = Attributes::parse(&input.attrs)?;
     let shape = input::normalize(validated_input)?;
     validation::validate(&attributes, &shape)?;
-    Ok(assembly::assemble(&input.ident, &attributes, &shape))
+    let domain_path = crate::helper::domain_api_path::resolve()?;
+    Ok(assembly::assemble(
+        &domain_path,
+        &input.ident,
+        &attributes,
+        &shape,
+    ))
 }

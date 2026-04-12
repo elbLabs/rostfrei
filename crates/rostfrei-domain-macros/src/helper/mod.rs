@@ -1,9 +1,12 @@
 pub(crate) mod action_paths;
 pub(crate) mod action_reference;
 pub(crate) mod decision_paths;
+pub(crate) mod domain_api_path;
 pub(crate) mod domain_attribute;
 pub(crate) mod error_code;
+pub(crate) mod event_paths;
 pub(crate) mod id;
 pub(crate) mod invariant_paths;
 pub(crate) mod label;
 pub(crate) mod message;
+pub(crate) mod runtime_api_path;

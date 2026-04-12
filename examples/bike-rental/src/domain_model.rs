@@ -2,8 +2,8 @@ use domain::domain_model;
 
 use crate::rental::{
     Bicycle, BicycleAvailability, BicycleAvailabilityQueries, BicycleCondition, BicycleId,
-    BicycleRented, BicycleStatus, BicycleUnavailable, BikeRental, FleetId, RentBicycle,
-    RentalEligibility, RentalEligibilityInput, RentalFleet, RentalFleetAggregate,
+    BicycleStatus, BicycleUnavailable, BikeRental, FleetId, RentBicycle, RentalEligibility,
+    RentalEligibilityInput, RentalFleet, RentalFleetAggregate,
 };
 
 pub fn domain_model() -> serde_json::Value {
@@ -21,7 +21,6 @@ pub fn domain_model() -> serde_json::Value {
         ],
         services: [],
         commands: [RentBicycle],
-        events: [BicycleRented],
         errors: [BicycleUnavailable],
         query_groups: [BicycleAvailabilityQueries],
     }

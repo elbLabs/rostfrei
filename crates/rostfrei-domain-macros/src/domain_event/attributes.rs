@@ -1,9 +1,10 @@
-use syn::{Attribute, LitStr, Result, TypePath};
+use proc_macro2::Span;
+use syn::{Attribute, LitInt, LitStr, Result};
 
 pub struct Attributes {
     pub id: LitStr,
     pub label: LitStr,
-    pub owner: TypePath,
+    pub schema_version: LitInt,
 }
 
 impl Attributes {
@@ -11,7 +12,7 @@ impl Attributes {
         let domain = crate::helper::domain_attribute::locate(attributes)?;
         let mut id = None;
         let mut label = None;
-        let mut owner = None;
+        let mut schema_version = None;
         domain.parse_nested_meta(|meta| {
             if meta.path.is_ident("id") {
                 if id.is_some() {
@@ -27,18 +28,22 @@ impl Attributes {
                 label = Some(meta.value()?.parse::<LitStr>()?);
                 return Ok(());
             }
-            if meta.path.is_ident("owner") {
-                if owner.is_some() {
-                    return Err(meta.error("duplicate owner"));
+            if meta.path.is_ident("schema_version") {
+                if schema_version.is_some() {
+                    return Err(meta.error("duplicate schema_version"));
                 }
-                owner = Some(meta.value()?.parse::<TypePath>()?);
+                schema_version = Some(meta.value()?.parse::<LitInt>()?);
                 return Ok(());
             }
             Err(meta.error("unsupported domain attribute"))
         })?;
         let id = id.ok_or_else(|| syn::Error::new_spanned(domain, "missing id"))?;
         let label = label.ok_or_else(|| syn::Error::new_spanned(domain, "missing label"))?;
-        let owner = owner.ok_or_else(|| syn::Error::new_spanned(domain, "missing owner"))?;
-        Ok(Self { id, label, owner })
+        let schema_version = schema_version.unwrap_or_else(|| LitInt::new("1", Span::call_site()));
+        Ok(Self {
+            id,
+            label,
+            schema_version,
+        })
     }
 }

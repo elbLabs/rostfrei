@@ -1,10 +1,10 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::Ident;
+use syn::{Ident, Path};
 
 use super::attributes::Attributes;
 
-pub fn assemble(name: &Ident, attributes: &Attributes) -> TokenStream {
+pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> TokenStream {
     let id = &attributes.id;
     let label = &attributes.label;
     let context = &attributes.context;
@@ -12,21 +12,21 @@ pub fn assemble(name: &Ident, attributes: &Attributes) -> TokenStream {
     let decisions = &attributes.decisions;
 
     quote! {
-        impl ::domain::DomainServiceType for #name {
+        impl #domain_path::DomainServiceType for #name {
             type Context = #context;
 
-            const DESCRIPTOR: ::domain::DomainServiceDescriptor =
-                ::domain::DomainServiceDescriptor {
-                    id: ::domain::DomainServiceId {
-                        context: <#context as ::domain::BoundedContextType>::DESCRIPTOR.id,
+            const DESCRIPTOR: #domain_path::DomainServiceDescriptor =
+                #domain_path::DomainServiceDescriptor {
+                    id: #domain_path::DomainServiceId {
+                        context: <#context as #domain_path::BoundedContextType>::DESCRIPTOR.id,
                         local: #id,
                     },
                     label: #label,
                 };
-            const ACTION_CONTRACTS: &'static [&'static [::domain::ActionDescriptor]] = &[
+            const ACTION_CONTRACTS: &'static [&'static [#domain_path::ActionDescriptor]] = &[
                 #(<Self as #actions>::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE,)*
             ];
-            const DECISION_CONTRACTS: &'static [&'static [::domain::DecisionDescriptor]] = &[
+            const DECISION_CONTRACTS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
                 #(<Self as #decisions>::__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE,)*
             ];
         }

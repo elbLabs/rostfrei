@@ -1,7 +1,7 @@
 use domain::DomainEvent;
 
 #[derive(DomainEvent)]
-#[domain(id = "created", label = "Created", owner = Owner)]
+#[domain(id = "created", label = "Created")]
 struct Created {
     #[domain(field)]
     value: String,

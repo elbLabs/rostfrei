@@ -22,7 +22,7 @@ struct Owner;
 struct Child;
 
 #[derive(DomainEvent)]
-#[domain(id = "invalid-event", label = "Invalid event", owner = Owner)]
+#[domain(id = "invalid-event", label = "Invalid event")]
 struct InvalidEvent {
     #[domain(entity)]
     child: Child,

@@ -1,21 +1,21 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::Ident;
+use syn::{Ident, Path};
 
 use super::{aggregate_type, attributes::Attributes};
 
-pub fn assemble(name: &Ident, attributes: &Attributes) -> TokenStream {
-    let aggregate_type = aggregate_type::assemble(name, attributes);
-    let action_owner = assemble_action_owner(name);
-    let public_action_owner = assemble_public_action_owner(name);
-    let aggregate_action_owner = assemble_aggregate_action_owner(name);
-    let decision_owner = assemble_decision_owner(name);
-    let aggregate_decision_owner = assemble_aggregate_decision_owner(name);
-    let value_object_owner = assemble_value_object_owner(name);
-    let domain_error_owner = assemble_domain_error_owner(name);
-    let domain_command_owner = assemble_domain_command_owner(name);
-    let invariant_owner = assemble_invariant_owner(name, attributes);
-    let aggregate_invariant_owner = assemble_aggregate_invariant_owner(name);
+pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> TokenStream {
+    let aggregate_type = aggregate_type::assemble(domain_path, name, attributes);
+    let action_owner = assemble_action_owner(domain_path, name);
+    let public_action_owner = assemble_public_action_owner(domain_path, name);
+    let aggregate_action_owner = assemble_aggregate_action_owner(domain_path, name);
+    let decision_owner = assemble_decision_owner(domain_path, name);
+    let aggregate_decision_owner = assemble_aggregate_decision_owner(domain_path, name);
+    let value_object_owner = assemble_value_object_owner(domain_path, name);
+    let domain_error_owner = assemble_domain_error_owner(domain_path, name);
+    let domain_command_owner = assemble_domain_command_owner(domain_path, name);
+    let invariant_owner = assemble_invariant_owner(domain_path, name, attributes);
+    let aggregate_invariant_owner = assemble_aggregate_invariant_owner(domain_path, name);
     quote! {
         #aggregate_type
         #action_owner
@@ -31,7 +31,11 @@ pub fn assemble(name: &Ident, attributes: &Attributes) -> TokenStream {
     }
 }
 
-fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStream {
+fn assemble_invariant_owner(
+    domain_path: &Path,
+    name: &Ident,
+    attributes: &Attributes,
+) -> TokenStream {
     let invariants = &attributes.invariants;
     let validate_invariants = if invariants.is_empty() {
         quote! {
@@ -39,7 +43,7 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
                 _candidate: &Self::Candidate,
             ) -> ::core::result::Result<
                 (),
-                ::std::vec::Vec<::domain::InvariantViolation>,
+                ::std::vec::Vec<#domain_path::InvariantViolation>,
             > {
                 ::core::result::Result::Ok(())
             }
@@ -50,7 +54,7 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
                 candidate: &Self::Candidate,
             ) -> ::core::result::Result<
                 (),
-                ::std::vec::Vec<::domain::InvariantViolation>,
+                ::std::vec::Vec<#domain_path::InvariantViolation>,
             > {
                 let mut violations = ::std::vec::Vec::new();
                 #(
@@ -69,11 +73,11 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
     };
 
     quote! {
-        impl ::domain::InvariantOwnerType for #name {
-            type Candidate = <Self as ::domain::AggregateType>::Root;
-            const INVARIANT_OWNER_ID: ::domain::InvariantOwnerId =
-                ::domain::InvariantOwnerId::Aggregate(
-                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
+        impl #domain_path::InvariantOwnerType for #name {
+            type Candidate = <Self as #domain_path::AggregateType>::Root;
+            const INVARIANT_OWNER_ID: #domain_path::InvariantOwnerId =
+                #domain_path::InvariantOwnerId::Aggregate(
+                    <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
                 );
 
             #validate_invariants
@@ -81,80 +85,80 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
     }
 }
 
-fn assemble_aggregate_invariant_owner(name: &Ident) -> TokenStream {
+fn assemble_aggregate_invariant_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
-        impl ::domain::AggregateInvariantOwnerType for #name {}
+        impl #domain_path::AggregateInvariantOwnerType for #name {}
     }
 }
 
-fn assemble_domain_command_owner(name: &Ident) -> TokenStream {
+fn assemble_domain_command_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
-        impl ::domain::DomainCommandOwnerType for #name {
-            const DOMAIN_COMMAND_OWNER_ID: ::domain::DomainCommandOwnerId =
-                ::domain::DomainCommandOwnerId::Aggregate(
-                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
+        impl #domain_path::DomainCommandOwnerType for #name {
+            const DOMAIN_COMMAND_OWNER_ID: #domain_path::DomainCommandOwnerId =
+                #domain_path::DomainCommandOwnerId::Aggregate(
+                    <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
                 );
         }
     }
 }
 
-fn assemble_aggregate_action_owner(name: &Ident) -> TokenStream {
+fn assemble_aggregate_action_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
-        impl ::domain::AggregateActionOwnerType for #name {}
+        impl #domain_path::AggregateActionOwnerType for #name {}
     }
 }
 
-fn assemble_action_owner(name: &Ident) -> TokenStream {
+fn assemble_action_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
-        impl ::domain::ActionOwnerType for #name {
-            const ACTION_OWNER_ID: ::domain::ActionOwnerId =
-                ::domain::ActionOwnerId::Aggregate(
-                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
+        impl #domain_path::ActionOwnerType for #name {
+            const ACTION_OWNER_ID: #domain_path::ActionOwnerId =
+                #domain_path::ActionOwnerId::Aggregate(
+                    <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
                 );
         }
     }
 }
 
-fn assemble_aggregate_decision_owner(name: &Ident) -> TokenStream {
+fn assemble_aggregate_decision_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
-        impl ::domain::AggregateDecisionOwnerType for #name {}
+        impl #domain_path::AggregateDecisionOwnerType for #name {}
     }
 }
 
-fn assemble_decision_owner(name: &Ident) -> TokenStream {
+fn assemble_decision_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
-        impl ::domain::DecisionOwnerType for #name {
-            const DECISION_OWNER_ID: ::domain::DecisionOwnerId =
-                ::domain::DecisionOwnerId::Aggregate(
-                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
+        impl #domain_path::DecisionOwnerType for #name {
+            const DECISION_OWNER_ID: #domain_path::DecisionOwnerId =
+                #domain_path::DecisionOwnerId::Aggregate(
+                    <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
                 );
         }
     }
 }
 
-fn assemble_public_action_owner(name: &Ident) -> TokenStream {
+fn assemble_public_action_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
-        impl ::domain::PublicActionOwnerType for #name {}
+        impl #domain_path::PublicActionOwnerType for #name {}
     }
 }
 
-fn assemble_domain_error_owner(name: &Ident) -> TokenStream {
+fn assemble_domain_error_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
-        impl ::domain::DomainErrorOwnerType for #name {
-            const DOMAIN_ERROR_OWNER_ID: ::domain::DomainErrorOwnerId =
-                ::domain::DomainErrorOwnerId::Aggregate(
-                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
+        impl #domain_path::DomainErrorOwnerType for #name {
+            const DOMAIN_ERROR_OWNER_ID: #domain_path::DomainErrorOwnerId =
+                #domain_path::DomainErrorOwnerId::Aggregate(
+                    <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
                 );
         }
     }
 }
 
-fn assemble_value_object_owner(name: &Ident) -> TokenStream {
+fn assemble_value_object_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
-        impl ::domain::ValueObjectOwnerType for #name {
-            const VALUE_OBJECT_OWNER_ID: ::domain::ValueObjectOwnerId =
-                ::domain::ValueObjectOwnerId::Aggregate(
-                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
+        impl #domain_path::ValueObjectOwnerType for #name {
+            const VALUE_OBJECT_OWNER_ID: #domain_path::ValueObjectOwnerId =
+                #domain_path::ValueObjectOwnerId::Aggregate(
+                    <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
                 );
         }
     }

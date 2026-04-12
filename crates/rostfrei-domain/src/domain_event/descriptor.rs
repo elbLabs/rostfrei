@@ -5,5 +5,6 @@ use crate::FieldDescriptor;
 pub struct DomainEventDescriptor {
     pub id: DomainEventId,
     pub label: &'static str,
+    pub schema_version: u32,
     pub fields: &'static [FieldDescriptor],
 }

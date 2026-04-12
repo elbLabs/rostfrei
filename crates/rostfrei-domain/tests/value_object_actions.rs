@@ -338,7 +338,6 @@ fn model_orders_attached_then_extension_actions_and_omits_unlisted_contracts() {
         value_objects: [Money, OmittedActionsValue, EmptyActionsValue],
         services: [],
         commands: [],
-        events: [],
         errors: [MoneyOverflow],
         action_extensions: [LedgerExtensionActions],
         query_groups: [],
@@ -398,7 +397,6 @@ fn rejects_duplicate_action_id_across_attached_value_object_contracts() {
         value_objects: [DuplicateValue],
         services: [],
         commands: [],
-        events: [],
         errors: [],
         query_groups: [],
     };
@@ -415,7 +413,6 @@ fn rejects_duplicate_action_id_between_attached_and_extension_value_object_group
         value_objects: [Money],
         services: [],
         commands: [],
-        events: [],
         errors: [],
         action_extensions: [DuplicateMoneyExtensionActions],
         query_groups: [],

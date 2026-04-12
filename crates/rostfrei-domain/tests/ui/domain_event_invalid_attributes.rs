@@ -6,7 +6,7 @@ struct Owner;
 struct MissingDomain;
 
 #[derive(DomainEvent)]
-#[domain(label = "Missing id", owner = Owner)]
+#[domain(label = "Missing id")]
 struct MissingId;
 
 #[derive(DomainEvent)]
@@ -14,23 +14,23 @@ struct MissingId;
 struct MissingOwner;
 
 #[derive(DomainEvent)]
-#[domain(id = "duplicate", id = "other", label = "Duplicate", owner = Owner)]
+#[domain(id = "duplicate", id = "other", label = "Duplicate")]
 struct Duplicate;
 
 #[derive(DomainEvent)]
-#[domain(id = "unsupported", label = "Unsupported", owner = Owner, schema = 1)]
+#[domain(id = "unsupported", label = "Unsupported", schema = 1)]
 struct Unsupported;
 
 #[derive(DomainEvent)]
-#[domain(id = "Bad--Id", label = "Malformed", owner = Owner)]
+#[domain(id = "Bad--Id", label = "Malformed")]
 struct MalformedId;
 
 #[derive(DomainEvent)]
-#[domain(id = "blank-label", label = " ", owner = Owner)]
+#[domain(id = "blank-label", label = " ")]
 struct BlankLabel;
 
 #[derive(DomainEvent)]
-#[domain(id = "malformed-owner", label = "Malformed owner", owner = "Owner")]
-struct MalformedOwner;
+#[domain(id = "unsupported-owner", label = "Unsupported owner", owner = Owner)]
+struct UnsupportedOwner;
 
 fn main() {}

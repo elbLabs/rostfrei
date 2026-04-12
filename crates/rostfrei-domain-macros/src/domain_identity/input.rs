@@ -39,7 +39,7 @@ fn extract_newtype(input: &DeriveInput) -> Result<TypePath> {
     if let Some(attribute) = field
         .attrs
         .iter()
-        .find(|attribute| attribute.path().is_ident("domain"))
+        .find(|attribute| crate::helper::domain_attribute::is_helper(attribute))
     {
         return Err(syn::Error::new_spanned(
             attribute,

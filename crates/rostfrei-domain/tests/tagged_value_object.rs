@@ -168,7 +168,6 @@ fn projects_tagged_enum_variant_shapes_exactly() {
         value_objects: [NestedValue, MixedValue],
         services: [],
         commands: [],
-        events: [],
         errors: [],
         query_groups: [],
     };

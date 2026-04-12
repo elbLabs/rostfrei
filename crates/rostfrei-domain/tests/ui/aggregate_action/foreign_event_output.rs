@@ -29,11 +29,11 @@ struct OtherRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "other", label = "Other", context = Context, root = OtherRoot)]
+#[domain(id = "other", label = "Other", context = Context, root = OtherRoot, events = [Changed])]
 struct Other;
 
 #[derive(DomainEvent)]
-#[domain(id = "changed", label = "Changed", owner = Other)]
+#[domain(id = "changed", label = "Changed")]
 pub struct Changed;
 
 #[domain_actions(aggregate)]

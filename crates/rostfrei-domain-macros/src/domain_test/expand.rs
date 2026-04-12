@@ -23,6 +23,7 @@ pub fn expand(
     };
     validation::validate_function(&function, kind)?;
     let companion_attributes = validation::companion_attributes(&function)?;
+    let domain_path = crate::helper::domain_api_path::resolve()?;
     let function_name = function.sig.ident.clone();
     let companion_name = format_ident!(
         "__domain_test_metadata_{}_{}",
@@ -36,7 +37,7 @@ pub fn expand(
         function_name.unraw(),
         span = function_name.span()
     );
-    let subject = subject.assemble(kind);
+    let subject = subject.assemble(&domain_path, kind);
     let file = quote_spanned!(function_name.span()=> file!());
     let line = quote_spanned!(function_name.span()=> line!());
     let column = quote_spanned!(function_name.span()=> column!());
@@ -47,13 +48,13 @@ pub fn expand(
 
         #(#companion_attributes)*
         #[allow(non_upper_case_globals)]
-        const #subject_name: ::domain::DomainTestSubject = #subject;
+        const #subject_name: #domain_path::DomainTestSubject = #subject;
 
         #(#companion_attributes)*
         #[test]
         #[ignore]
         fn #companion_name() {
-            let descriptor = ::domain::DomainTestDescriptor {
+            let descriptor = #domain_path::DomainTestDescriptor {
                 package: env!("CARGO_PKG_NAME"),
                 target: env!("CARGO_CRATE_NAME"),
                 test: concat!(module_path!(), "::", stringify!(#function_name)),
@@ -62,7 +63,7 @@ pub fn expand(
                 column: #column,
                 subject: #subject_name,
             };
-            ::domain::__private::emit_domain_test_descriptor(descriptor)
+            #domain_path::__private::emit_domain_test_descriptor(descriptor)
                 .expect("failed to emit domain test metadata");
         }
     })

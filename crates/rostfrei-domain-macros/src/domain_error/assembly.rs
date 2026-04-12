@@ -1,29 +1,34 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::Ident;
+use syn::{Ident, Path};
 
 use crate::field::Field;
 
 use super::attributes::Attributes;
 
-pub fn assemble(name: &Ident, attributes: &Attributes, fields: &[Field]) -> TokenStream {
+pub fn assemble(
+    domain_path: &Path,
+    name: &Ident,
+    attributes: &Attributes,
+    fields: &[Field],
+) -> TokenStream {
     let id = &attributes.id;
     let label = &attributes.label;
     let owner = &attributes.owner;
     let code = &attributes.code;
     let message = &attributes.message;
-    let assertions = crate::field::assemble_assertions(name, None, fields);
-    let fields = crate::field::assemble_descriptors(fields);
+    let assertions = crate::field::assemble_assertions_with_path(domain_path, name, None, fields);
+    let fields = crate::field::assemble_descriptors_with_path(domain_path, fields);
 
     quote! {
-        impl ::domain::DomainErrorType for #name {
+        impl #domain_path::DomainErrorType for #name {
             type Owner = #owner;
 
             const LOCAL_ID: &'static str = #id;
-            const DESCRIPTOR: ::domain::DomainErrorDescriptor =
-                ::domain::DomainErrorDescriptor {
-                    id: ::domain::DomainErrorId {
-                        owner: <#owner as ::domain::DomainErrorOwnerType>::DOMAIN_ERROR_OWNER_ID,
+            const DESCRIPTOR: #domain_path::DomainErrorDescriptor =
+                #domain_path::DomainErrorDescriptor {
+                    id: #domain_path::DomainErrorId {
+                        owner: <#owner as #domain_path::DomainErrorOwnerType>::DOMAIN_ERROR_OWNER_ID,
                         local: Self::LOCAL_ID,
                     },
                     label: #label,

@@ -1,41 +1,5 @@
-error[E0277]: the trait bound `Inbox: AggregateType` is not satisfied
- --> tests/ui/domain_event_invalid_owner.rs:8:53
+error: unsupported domain attribute
+ --> tests/ui/domain_event_invalid_owner.rs:6:45
   |
-8 | #[domain(id = "created", label = "Created", owner = Inbox)]
-  |                                                     ^^^^^ unsatisfied trait bound
-  |
-help: the trait `AggregateType` is not implemented for `Inbox`
- --> tests/ui/domain_event_invalid_owner.rs:5:1
-  |
-5 | struct Inbox;
-  | ^^^^^^^^^^^^
-note: required by a bound in `domain::DomainEventType::Owner`
- --> src/domain_event/domain_type.rs
-  |
-  |     type Owner: AggregateType;
-  |                 ^^^^^^^^^^^^^ required by this bound in `DomainEventType::Owner`
-
-error[E0277]: the trait bound `Inbox: AggregateType` is not satisfied
- --> tests/ui/domain_event_invalid_owner.rs:7:10
-  |
-7 | #[derive(DomainEvent)]
-  |          ^^^^^^^^^^^ unsatisfied trait bound
-  |
-help: the trait `AggregateType` is not implemented for `Inbox`
- --> tests/ui/domain_event_invalid_owner.rs:5:1
-  |
-5 | struct Inbox;
-  | ^^^^^^^^^^^^
-  = note: this error originates in the derive macro `DomainEvent` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0277]: the trait bound `Inbox: AggregateType` is not satisfied
- --> tests/ui/domain_event_invalid_owner.rs:8:53
-  |
-8 | #[domain(id = "created", label = "Created", owner = Inbox)]
-  |                                                     ^^^^^ unsatisfied trait bound
-  |
-help: the trait `AggregateType` is not implemented for `Inbox`
- --> tests/ui/domain_event_invalid_owner.rs:5:1
-  |
-5 | struct Inbox;
-  | ^^^^^^^^^^^^
+6 | #[domain(id = "created", label = "Created", owner = Owner)]
+  |                                             ^^^^^

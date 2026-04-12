@@ -10,10 +10,10 @@ help: the trait `ActionOutputType<AggregateActionOutput<Owner>>` is not implemen
 37 | pub struct Changed;
    | ^^^^^^^^^^^^^^^^^^
 help: the following other types implement trait `ActionOutputType<Contract>`
-  --> tests/ui/aggregate_action/foreign_event_output.rs:35:10
+  --> tests/ui/aggregate_action/foreign_event_output.rs:31:10
    |
-35 | #[derive(DomainEvent)]
-   |          ^^^^^^^^^^^
+31 | #[derive(Aggregate)]
+   |          ^^^^^^^^^
    |          |
    |          `Changed` implements `ActionOutputType<AggregateActionOutput<Other>>`
    |          `Changed` implements `ActionOutputType<DomainServiceActionOutput<Service>>`
@@ -24,7 +24,7 @@ note: required by a bound in `Actions`
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
 40 | pub trait Actions {
    |           ------- required by a bound in this trait
-   = note: this error originates in the derive macro `DomainEvent` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the derive macro `Aggregate` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Changed: ActionOutputType<AggregateActionOutput<Owner>>` is not satisfied
   --> tests/ui/aggregate_action/foreign_event_output.rs:45:10
@@ -38,10 +38,10 @@ help: the trait `ActionOutputType<AggregateActionOutput<Owner>>` is not implemen
 37 | pub struct Changed;
    | ^^^^^^^^^^^^^^^^^^
 help: the following other types implement trait `ActionOutputType<Contract>`
-  --> tests/ui/aggregate_action/foreign_event_output.rs:35:10
+  --> tests/ui/aggregate_action/foreign_event_output.rs:31:10
    |
-35 | #[derive(DomainEvent)]
-   |          ^^^^^^^^^^^
+31 | #[derive(Aggregate)]
+   |          ^^^^^^^^^
    |          |
    |          `Changed` implements `ActionOutputType<AggregateActionOutput<Other>>`
    |          `Changed` implements `ActionOutputType<DomainServiceActionOutput<Service>>`

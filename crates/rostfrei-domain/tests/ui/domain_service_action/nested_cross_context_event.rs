@@ -22,11 +22,11 @@ struct OrderRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "order", label = "Order", context = Orders, root = OrderRoot)]
+#[domain(id = "order", label = "Order", context = Orders, root = OrderRoot, events = [Placed])]
 struct Order;
 
 #[derive(DomainEvent)]
-#[domain(id = "placed", label = "Placed", owner = Order)]
+#[domain(id = "placed", label = "Placed")]
 pub struct Placed;
 
 #[domain_actions(domain_service)]

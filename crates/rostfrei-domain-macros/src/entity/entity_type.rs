@@ -1,12 +1,13 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::Ident;
+use syn::{Ident, Path};
 
 use crate::field::Field;
 
 use super::attributes::Attributes;
 
 pub fn assemble(
+    domain_path: &Path,
     name: &Ident,
     attributes: &Attributes,
     fields: &[Field],
@@ -20,41 +21,41 @@ pub fn assemble(
     let invariants = &attributes.invariants;
     let lifecycle = attributes.lifecycle.as_ref().map(|lifecycle| {
         quote! {
-            const LIFECYCLE: Option<::domain::EntityLifecycleDescriptor> = Some(
-                <#lifecycle as ::domain::EntityLifecycleType>::DESCRIPTOR,
+            const LIFECYCLE: Option<#domain_path::EntityLifecycleDescriptor> = Some(
+                <#lifecycle as #domain_path::EntityLifecycleType>::DESCRIPTOR,
             );
         }
     });
     let identity_name = &fields[identity].name;
     let identity_type = &fields[identity].base;
-    let fields = crate::field::assemble_descriptors(fields);
+    let fields = crate::field::assemble_descriptors_with_path(domain_path, fields);
     quote! {
-        impl ::domain::EntityType for #name {
+        impl #domain_path::EntityType for #name {
             type Owner = #owner;
             type Identity = #identity_type;
 
             const LOCAL_ID: &'static str = #id;
-            const DESCRIPTOR: ::domain::EntityDescriptor =
-                ::domain::EntityDescriptor {
-                    id: ::domain::EntityId {
-                        aggregate: <#owner as ::domain::AggregateType>::DESCRIPTOR.id,
+            const DESCRIPTOR: #domain_path::EntityDescriptor =
+                #domain_path::EntityDescriptor {
+                    id: #domain_path::EntityId {
+                        aggregate: <#owner as #domain_path::AggregateType>::DESCRIPTOR.id,
                         local: #id,
                     },
                     label: #label,
-                    identity: ::domain::IdentityDescriptor {
+                    identity: #domain_path::IdentityDescriptor {
                         field: #identity_name,
-                        identity: <#identity_type as ::domain::DomainIdentityType>::DESCRIPTOR.id,
+                        identity: <#identity_type as #domain_path::DomainIdentityType>::DESCRIPTOR.id,
                     },
                     fields: #fields,
                 };
             #lifecycle
-            const ACTION_CONTRACTS: &'static [&'static [::domain::ActionDescriptor]] = &[
+            const ACTION_CONTRACTS: &'static [&'static [#domain_path::ActionDescriptor]] = &[
                 #(<Self as #actions>::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE,)*
             ];
-            const DECISION_CONTRACTS: &'static [&'static [::domain::DecisionDescriptor]] = &[
+            const DECISION_CONTRACTS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
                 #(<Self as #decisions>::__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE,)*
             ];
-            const INVARIANT_CONTRACTS: &'static [&'static [::domain::InvariantDescriptor]] = &[
+            const INVARIANT_CONTRACTS: &'static [&'static [#domain_path::InvariantDescriptor]] = &[
                 #(<Self as #invariants>::__DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE,)*
             ];
         }

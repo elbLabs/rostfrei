@@ -8,6 +8,7 @@ pub struct Attributes {
     pub actions: Vec<Path>,
     pub decisions: Vec<Path>,
     pub invariants: Vec<Path>,
+    pub events: Option<Vec<Path>>,
 }
 
 impl Attributes {
@@ -20,6 +21,7 @@ impl Attributes {
         let mut actions = None;
         let mut decisions = None;
         let mut invariants = None;
+        let mut events = None;
 
         domain.parse_nested_meta(|meta| {
             if meta.path.is_ident("id") {
@@ -71,6 +73,13 @@ impl Attributes {
                 invariants = Some(crate::helper::invariant_paths::parse(meta.value()?)?);
                 return Ok(());
             }
+            if meta.path.is_ident("events") {
+                if events.is_some() {
+                    return Err(meta.error("duplicate events"));
+                }
+                events = Some(crate::helper::event_paths::parse(meta.value()?)?);
+                return Ok(());
+            }
             Err(meta.error("unsupported domain attribute"))
         })?;
 
@@ -86,6 +95,7 @@ impl Attributes {
             actions: actions.unwrap_or_default(),
             decisions: decisions.unwrap_or_default(),
             invariants: invariants.unwrap_or_default(),
+            events,
         })
     }
 }

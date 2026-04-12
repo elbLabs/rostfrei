@@ -157,7 +157,6 @@ fn derives_attaches_and_projects_the_entity_lifecycle_contract() {
         value_objects: [],
         services: [],
         commands: [],
-        events: [],
         errors: [],
         query_groups: [],
     };
