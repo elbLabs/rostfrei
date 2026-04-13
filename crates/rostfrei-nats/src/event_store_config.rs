@@ -3,11 +3,10 @@ use std::time::Duration;
 
 use async_nats::jetstream::stream::{Config, DiscardPolicy, RetentionPolicy, StorageType};
 use rostfrei_core::{EventStoreError, EventStoreErrorKind};
+use rostfrei_messaging_core::{ApplicationName, BoundedContext, BoundedContextName};
 use sha2::{Digest, Sha256};
 
 const MAX_STREAM_NAME_LEN: usize = 255;
-const MAX_SUBJECT_PREFIX_LEN: usize = 512;
-const MAX_SUBJECT_TOKEN_LEN: usize = 256;
 const MAX_EVENT_BYTES: usize = 64 * 1024 * 1024;
 const DUPLICATE_WINDOW: Duration = Duration::from_secs(2 * 60);
 pub const DEFAULT_EVENT_STORE_MAX_STREAM_BYTES: i64 = 10 * 1024 * 1024 * 1024;
@@ -17,6 +16,8 @@ pub const DEFAULT_EVENT_STORE_PUBACK_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NatsEventStoreConfig {
+    application: ApplicationName,
+    bounded_context: BoundedContextName,
     stream_name: String,
     subject_prefix: String,
     max_stream_bytes: i64,
@@ -26,13 +27,28 @@ pub struct NatsEventStoreConfig {
 }
 
 impl NatsEventStoreConfig {
+    pub fn for_bounded_context(context: &BoundedContext) -> Result<Self, EventStoreError> {
+        let stream_name = domain_event_stream_name(context);
+        Self::new(
+            context,
+            stream_name,
+        )
+    }
+
     pub fn new(
+        context: &BoundedContext,
         stream_name: impl Into<String>,
-        subject_prefix: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
+        let subject_prefix = format!(
+            "{}.domain.{}",
+            context.application().as_str(),
+            context.name().as_str()
+        );
         let config = Self {
+            application: context.application().clone(),
+            bounded_context: context.name().clone(),
             stream_name: stream_name.into(),
-            subject_prefix: subject_prefix.into(),
+            subject_prefix,
             max_stream_bytes: DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
             max_event_bytes: DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
             replicas: DEFAULT_EVENT_STORE_REPLICAS,
@@ -40,6 +56,14 @@ impl NatsEventStoreConfig {
         };
         config.validate()?;
         Ok(config)
+    }
+
+    pub const fn application(&self) -> &ApplicationName {
+        &self.application
+    }
+
+    pub const fn bounded_context(&self) -> &BoundedContextName {
+        &self.bounded_context
     }
 
     pub fn with_storage_limits(
@@ -135,9 +159,6 @@ impl NatsEventStoreConfig {
         if !valid_stream_name(&self.stream_name) {
             return Err(invalid("invalid JetStream stream name"));
         }
-        if !valid_subject_prefix(&self.subject_prefix) {
-            return Err(invalid("subject prefix must contain literal NATS tokens"));
-        }
         if self.max_stream_bytes <= 0 {
             return Err(invalid("maximum stream bytes must be finite and positive"));
         }
@@ -163,6 +184,25 @@ impl NatsEventStoreConfig {
     }
 }
 
+fn domain_event_stream_name(context: &BoundedContext) -> String {
+    format!(
+        "{}__{}_DOMAIN_EVENTS",
+        stream_token(context.application().as_str()),
+        stream_token(context.name().as_str())
+    )
+}
+
+fn stream_token(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'-' => b'_',
+            _ => byte.to_ascii_uppercase(),
+        })
+        .map(char::from)
+        .collect()
+}
+
 fn valid_stream_name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_STREAM_NAME_LEN
@@ -170,20 +210,6 @@ fn valid_stream_name(value: &str) -> bool {
             !byte.is_ascii_whitespace()
                 && !byte.is_ascii_control()
                 && !matches!(byte, b'.' | b'*' | b'>')
-        })
-}
-
-fn valid_subject_prefix(value: &str) -> bool {
-    value.len() <= MAX_SUBJECT_PREFIX_LEN
-        && !value.is_empty()
-        && value.split('.').all(valid_subject_token)
-}
-
-fn valid_subject_token(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_SUBJECT_TOKEN_LEN
-        && value.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
         })
 }
 
@@ -208,9 +234,53 @@ fn invalid(message: impl Into<String>) -> EventStoreError {
 mod tests {
     use super::*;
 
+    fn context() -> BoundedContext {
+        ApplicationName::new("fast-inbox")
+            .unwrap()
+            .bounded_context("commercial-access")
+            .unwrap()
+    }
+
+    #[test]
+    fn bounded_context_derives_event_store_identity_and_policy() {
+        let config = NatsEventStoreConfig::for_bounded_context(&context()).unwrap();
+
+        assert_eq!(config.application().as_str(), "fast-inbox");
+        assert_eq!(config.bounded_context().as_str(), "commercial-access");
+        assert_eq!(
+            config.stream_name(),
+            "FAST_INBOX__COMMERCIAL_ACCESS_DOMAIN_EVENTS"
+        );
+        assert_eq!(
+            config.subject_prefix(),
+            "fast-inbox.domain.commercial-access"
+        );
+        assert_eq!(
+            config.subject_filter(),
+            "fast-inbox.domain.commercial-access.>"
+        );
+    }
+
+    #[test]
+    fn domain_event_stream_names_have_an_unambiguous_scope_boundary() {
+        let first = ApplicationName::new("foo-bar")
+            .unwrap()
+            .bounded_context("baz")
+            .unwrap();
+        let second = ApplicationName::new("foo")
+            .unwrap()
+            .bounded_context("bar-baz")
+            .unwrap();
+
+        assert_ne!(
+            domain_event_stream_name(&first),
+            domain_event_stream_name(&second)
+        );
+    }
+
     #[test]
     fn authoritative_stream_config_is_append_only_and_finite() {
-        let config = NatsEventStoreConfig::new("EVENT_STORE_TEST", "private.event-store-test")
+        let config = NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST")
             .expect("valid config")
             .with_storage_limits(8 * 1024 * 1024, 1024 * 1024)
             .expect("valid storage limits")
@@ -238,8 +308,7 @@ mod tests {
 
     #[test]
     fn event_store_defaults_are_bounded_and_single_node_compatible() {
-        let config = NatsEventStoreConfig::new("EVENT_STORE_TEST", "private.event-store-test")
-            .expect("valid config");
+        let config = NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST").expect("valid config");
 
         assert_eq!(
             config.max_stream_bytes(),
@@ -255,7 +324,7 @@ mod tests {
 
     #[test]
     fn aggregate_subject_is_deterministic_and_opaque() {
-        let config = NatsEventStoreConfig::new("EVENT_STORE_TEST", "private.event-store-test")
+        let config = NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST")
             .expect("valid config");
         let subject = config.aggregate_subject("Account", "account-123");
         assert_eq!(subject, config.aggregate_subject("Account", "account-123"));

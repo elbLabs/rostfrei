@@ -2,11 +2,11 @@ use std::{fmt, str::FromStr};
 
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{ContractError, ContractErrorKind};
+use crate::{scope::validate_scope_segment, ContractError, ContractErrorKind};
 
-pub const COMMAND_ADDRESS_CONVENTION: &str = "command.<owner>.<context>.<name>";
-pub const INTEGRATION_EVENT_ADDRESS_CONVENTION: &str = "integration.<owner>.<context>.<name>";
-pub const QUERY_ADDRESS_CONVENTION: &str = "query.<owner>.<context>.<name>";
+pub const COMMAND_ADDRESS_CONVENTION: &str = "<application>.command.<context>.<name>";
+pub const INTEGRATION_EVENT_ADDRESS_CONVENTION: &str = "<application>.integration.<context>.<name>";
+pub const QUERY_ADDRESS_CONVENTION: &str = "<application>.query.<context>.<name>";
 pub const MAX_ADDRESS_BYTES: usize = 256;
 pub const MAX_ADDRESS_SEGMENT_BYTES: usize = 64;
 
@@ -18,7 +18,7 @@ pub enum AddressKind {
 }
 
 impl AddressKind {
-    pub const fn prefix(self) -> &'static str {
+    pub const fn segment(self) -> &'static str {
         match self {
             Self::Command => "command",
             Self::IntegrationEvent => "integration",
@@ -31,8 +31,8 @@ impl AddressKind {
 pub struct CommandAddress(String);
 
 impl CommandAddress {
-    pub fn new(owner: &str, context: &str, name: &str) -> Result<Self, ContractError> {
-        build_address(AddressKind::Command, owner, context, name).map(Self)
+    pub fn new(application: &str, context: &str, name: &str) -> Result<Self, ContractError> {
+        build_address(AddressKind::Command, application, context, name).map(Self)
     }
 
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
@@ -43,8 +43,8 @@ impl CommandAddress {
         &self.0
     }
 
-    pub fn owner(&self) -> &str {
-        segment(&self.0, 1)
+    pub fn application(&self) -> &str {
+        segment(&self.0, 0)
     }
 
     pub fn context(&self) -> &str {
@@ -60,8 +60,8 @@ impl CommandAddress {
 pub struct IntegrationEventAddress(String);
 
 impl IntegrationEventAddress {
-    pub fn new(owner: &str, context: &str, name: &str) -> Result<Self, ContractError> {
-        build_address(AddressKind::IntegrationEvent, owner, context, name).map(Self)
+    pub fn new(application: &str, context: &str, name: &str) -> Result<Self, ContractError> {
+        build_address(AddressKind::IntegrationEvent, application, context, name).map(Self)
     }
 
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
@@ -72,8 +72,8 @@ impl IntegrationEventAddress {
         &self.0
     }
 
-    pub fn owner(&self) -> &str {
-        segment(&self.0, 1)
+    pub fn application(&self) -> &str {
+        segment(&self.0, 0)
     }
 
     pub fn context(&self) -> &str {
@@ -89,8 +89,8 @@ impl IntegrationEventAddress {
 pub struct QueryAddress(String);
 
 impl QueryAddress {
-    pub fn new(owner: &str, context: &str, name: &str) -> Result<Self, ContractError> {
-        build_address(AddressKind::Query, owner, context, name).map(Self)
+    pub fn new(application: &str, context: &str, name: &str) -> Result<Self, ContractError> {
+        build_address(AddressKind::Query, application, context, name).map(Self)
     }
 
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
@@ -101,8 +101,8 @@ impl QueryAddress {
         &self.0
     }
 
-    pub fn owner(&self) -> &str {
-        segment(&self.0, 1)
+    pub fn application(&self) -> &str {
+        segment(&self.0, 0)
     }
 
     pub fn context(&self) -> &str {
@@ -144,8 +144,8 @@ impl MessageAddress {
                 "address",
             ));
         }
-        let prefix = value.split('.').next().unwrap_or_default();
-        match prefix {
+        let kind = value.split('.').nth(1).unwrap_or_default();
+        match kind {
             "command" => CommandAddress::parse(value).map(Self::Command),
             "integration" => IntegrationEventAddress::parse(value).map(Self::IntegrationEvent),
             "query" => QueryAddress::parse(value).map(Self::Query),
@@ -171,6 +171,22 @@ impl MessageAddress {
             Self::Query(address) => address.as_str(),
         }
     }
+
+    pub fn application(&self) -> &str {
+        match self {
+            Self::Command(address) => address.application(),
+            Self::IntegrationEvent(address) => address.application(),
+            Self::Query(address) => address.application(),
+        }
+    }
+
+    pub fn context(&self) -> &str {
+        match self {
+            Self::Command(address) => address.context(),
+            Self::IntegrationEvent(address) => address.context(),
+            Self::Query(address) => address.context(),
+        }
+    }
 }
 
 mod private {
@@ -181,6 +197,8 @@ pub trait PublishableAddress:
     private::Sealed + Clone + fmt::Debug + Eq + Send + Sync + 'static
 {
     fn as_str(&self) -> &str;
+    fn application(&self) -> &str;
+    fn context(&self) -> &str;
     fn kind(&self) -> AddressKind;
 }
 
@@ -190,6 +208,14 @@ impl private::Sealed for IntegrationEventAddress {}
 impl PublishableAddress for CommandAddress {
     fn as_str(&self) -> &str {
         self.as_str()
+    }
+
+    fn application(&self) -> &str {
+        self.application()
+    }
+
+    fn context(&self) -> &str {
+        self.context()
     }
 
     fn kind(&self) -> AddressKind {
@@ -202,6 +228,14 @@ impl PublishableAddress for IntegrationEventAddress {
         self.as_str()
     }
 
+    fn application(&self) -> &str {
+        self.application()
+    }
+
+    fn context(&self) -> &str {
+        self.context()
+    }
+
     fn kind(&self) -> AddressKind {
         AddressKind::IntegrationEvent
     }
@@ -209,18 +243,14 @@ impl PublishableAddress for IntegrationEventAddress {
 
 fn build_address(
     kind: AddressKind,
-    owner: &str,
+    application: &str,
     context: &str,
     name: &str,
 ) -> Result<String, ContractError> {
-    for (field, value) in [
-        ("address owner", owner),
-        ("address context", context),
-        ("address name", name),
-    ] {
-        validate_segment(value, field)?;
-    }
-    let value = format!("{}.{}.{}.{}", kind.prefix(), owner, context, name);
+    validate_scope_segment(application, "address application")?;
+    validate_scope_segment(context, "address context")?;
+    validate_address_name(name)?;
+    let value = format!("{application}.{}.{context}.{name}", kind.segment());
     if value.len() > MAX_ADDRESS_BYTES {
         return Err(ContractError::bounded(
             ContractErrorKind::TooLong,
@@ -255,29 +285,30 @@ fn parse_address(value: String, expected: AddressKind) -> Result<String, Contrac
     }
 
     let mut segments = value.split('.');
-    let prefix = segments.next();
-    let owner = segments.next();
+    let application = segments.next();
+    let kind = segments.next();
     let context = segments.next();
     let name = segments.next();
-    if segments.next().is_some() || owner.is_none() || context.is_none() || name.is_none() {
+    if segments.next().is_some() || application.is_none() || context.is_none() || name.is_none() {
         return Err(ContractError::new(
             ContractErrorKind::InvalidFormat,
             "address",
         ));
     }
-    if prefix != Some(expected.prefix()) {
+    if kind != Some(expected.segment()) {
         return Err(ContractError::new(
             ContractErrorKind::WrongAddressKind,
             "address",
         ));
     }
-    validate_segment(owner.unwrap_or_default(), "address owner")?;
-    validate_segment(context.unwrap_or_default(), "address context")?;
-    validate_segment(name.unwrap_or_default(), "address name")?;
+    validate_scope_segment(application.unwrap_or_default(), "address application")?;
+    validate_scope_segment(context.unwrap_or_default(), "address context")?;
+    validate_address_name(name.unwrap_or_default())?;
     Ok(value)
 }
 
-pub(crate) fn validate_segment(value: &str, field: &'static str) -> Result<(), ContractError> {
+fn validate_address_name(value: &str) -> Result<(), ContractError> {
+    let field = "address name";
     if value.is_empty() {
         return Err(ContractError::new(ContractErrorKind::Empty, field));
     }
@@ -471,10 +502,10 @@ mod tests {
         let event = IntegrationEventAddress::new("acme", "orders", "order-placed").unwrap();
         let query = QueryAddress::new("acme", "orders", "find-order").unwrap();
 
-        assert_eq!(command.as_str(), "command.acme.orders.place-order");
-        assert_eq!(event.as_str(), "integration.acme.orders.order-placed");
-        assert_eq!(query.as_str(), "query.acme.orders.find-order");
-        assert_eq!(query.owner(), "acme");
+        assert_eq!(command.as_str(), "acme.command.orders.place-order");
+        assert_eq!(event.as_str(), "acme.integration.orders.order-placed");
+        assert_eq!(query.as_str(), "acme.query.orders.find-order");
+        assert_eq!(query.application(), "acme");
         assert_eq!(query.context(), "orders");
         assert_eq!(query.name(), "find-order");
     }
@@ -482,26 +513,26 @@ mod tests {
     #[test]
     fn public_parsing_rejects_kinds_wildcards_controls_and_bad_segments() {
         assert_eq!(
-            MessageAddress::parse("query.acme.orders.find-order")
+            MessageAddress::parse("acme.query.orders.find-order")
                 .unwrap()
                 .kind(),
             AddressKind::Query
         );
         assert_eq!(
-            CommandAddress::parse("query.acme.orders.find-order")
+            CommandAddress::parse("acme.query.orders.find-order")
                 .unwrap_err()
                 .kind(),
             ContractErrorKind::WrongAddressKind
         );
 
         for invalid in [
-            "command.acme.orders.*",
-            "command.acme.orders.>",
-            "command.acme.orders.bad\nname",
-            "command.acme.orders",
-            "command.acme.orders.too.many",
-            "command.Acme.orders.place-order",
-            "command.acme.orders.-place-order",
+            "acme.command.orders.*",
+            "acme.command.orders.>",
+            "acme.command.orders.bad\nname",
+            "acme.command.orders",
+            "acme.command.orders.too.many",
+            "Acme.command.orders.place-order",
+            "acme.command.orders.-place-order",
         ] {
             assert!(MessageAddress::parse(invalid).is_err(), "{invalid}");
         }
@@ -510,8 +541,8 @@ mod tests {
     #[test]
     fn address_deserialization_revalidates_input() {
         let parsed: QueryAddress =
-            serde_json::from_str("\"query.acme.orders.find-order\"").unwrap();
+            serde_json::from_str("\"acme.query.orders.find-order\"").unwrap();
         assert_eq!(parsed.name(), "find-order");
-        assert!(serde_json::from_str::<QueryAddress>("\"query.acme.orders.*\"").is_err());
+        assert!(serde_json::from_str::<QueryAddress>("\"acme.query.orders.*\"").is_err());
     }
 }

@@ -9,11 +9,11 @@ use async_nats::{
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use rostfrei_messaging_core::{
-    ApplicationErrorCode, CallerMetadata, CorrelationId, MessageId, MessageTimestamp, QueryAddress,
-    QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryOptions, QueryRequest,
-    QueryRequestError, QueryRequestErrorKind, QueryRequester, QueryResponse, QueryServer,
-    QueryServerError, QueryServerErrorKind, SchemaVersion, TraceContext, MAX_CONCURRENCY,
-    MAX_ENVELOPE_BYTES, MAX_PROCESSING_TIMEOUT,
+    ApplicationErrorCode, ApplicationName, CallerMetadata, CorrelationId, MessageId,
+    MessageTimestamp, QueryAddress, QueryErrorClassification, QueryErrorPayload, QueryHandler,
+    QueryOptions, QueryRequest, QueryRequestError, QueryRequestErrorKind, QueryRequester,
+    QueryResponse, QueryServer, QueryServerError, QueryServerErrorKind, SchemaVersion,
+    TraceContext, MAX_CONCURRENCY, MAX_ENVELOPE_BYTES, MAX_PROCESSING_TIMEOUT,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::time::timeout;
@@ -32,11 +32,15 @@ pub const DEFAULT_QUERY_SERVER_CONCURRENCY: usize = 64;
 #[derive(Clone)]
 pub struct NatsQueryRequester {
     client: Client,
+    application: ApplicationName,
 }
 
 impl NatsQueryRequester {
-    pub const fn new(client: Client) -> Self {
-        Self { client }
+    pub const fn new(client: Client, application: ApplicationName) -> Self {
+        Self {
+            client,
+            application,
+        }
     }
 }
 
@@ -52,6 +56,9 @@ where
         request: QueryRequest<Request>,
         options: QueryOptions,
     ) -> Result<QueryResponse<Response>, QueryRequestError> {
+        if address.application() != self.application.as_str() {
+            return Err(QueryRequestError::new(QueryRequestErrorKind::Rejected));
+        }
         let request_id = request.message_id().clone();
         let correlation_id = request.correlation_id().clone();
         let payload = serde_json::to_vec(&request)
@@ -176,13 +183,22 @@ impl NatsQueryServerConfig {
 #[derive(Clone)]
 pub struct NatsQueryServer {
     client: Client,
+    application: ApplicationName,
     config: NatsQueryServerConfig,
 }
 
 impl NatsQueryServer {
-    pub fn new(client: Client, config: NatsQueryServerConfig) -> Result<Self, NatsError> {
+    pub fn new(
+        client: Client,
+        application: ApplicationName,
+        config: NatsQueryServerConfig,
+    ) -> Result<Self, NatsError> {
         config.validate()?;
-        Ok(Self { client, config })
+        Ok(Self {
+            client,
+            application,
+            config,
+        })
     }
 }
 
@@ -197,6 +213,11 @@ where
         address: QueryAddress,
         handler: Arc<dyn QueryHandler<Request, Response>>,
     ) -> Result<(), QueryServerError> {
+        if address.application() != self.application.as_str() {
+            return Err(QueryServerError::new(
+                QueryServerErrorKind::InvalidConfiguration,
+            ));
+        }
         let mut subscriber = if let Some(queue_group) = self.config.queue_group() {
             self.client
                 .queue_subscribe(address.as_str().to_owned(), queue_group.as_str().to_owned())

@@ -13,7 +13,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use futures_util::TryStreamExt;
 use rostfrei_messaging_core::{
     CallerMetadata, CommandAddress, ConsumeError, ConsumeErrorKind, ConsumerConfig,
-    DeliveryDisposition, DeliveryInfo, IntegrationEventAddress, MessageConsumer,
+    DeliveryDisposition, DeliveryInfo, IntegrationEventAddress, MessageAddress, MessageConsumer,
     MessageConsumerFactory, MessageDelivery, MessageHandler, MessageId, PublishableAddress,
     TraceContext,
 };
@@ -118,6 +118,9 @@ impl NatsConsumerFactory {
     where
         A: ConsumableAddress,
     {
+        if config.address().application() != self.topology.application().as_str() {
+            return Err(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration));
+        }
         i64::try_from(config.concurrency())
             .map_err(|_| ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
         let source_stream = self
@@ -560,7 +563,7 @@ async fn publish_quarantine(
         });
     }
     let message_id = quarantine_message_id(record);
-    let subject = format!("quarantine.{}", record.address);
+    let subject = quarantine_subject(&record.address)?;
     let headers = safe_headers(&CallerMetadata::new(), record.trace_context.as_ref());
     publish_confirmed(
         context,
@@ -573,6 +576,16 @@ async fn publish_quarantine(
     )
     .await
     .map(|_| ())
+}
+
+fn quarantine_subject(address: &str) -> Result<String, NatsError> {
+    let address =
+        MessageAddress::parse(address.to_owned()).map_err(|_| NatsError::InvalidMessage)?;
+    let (_, routed) = address
+        .as_str()
+        .split_once('.')
+        .ok_or(NatsError::InvalidMessage)?;
+    Ok(format!("{}.quarantine.{routed}", address.application()))
 }
 
 fn quarantine_message_id(record: &QuarantineRecord) -> String {
@@ -595,4 +608,18 @@ async fn apply_ack(message: &jetstream::Message, kind: AckKind) -> Result<(), Co
         .double_ack_with(kind)
         .await
         .map_err(|_| ConsumeError::new(ConsumeErrorKind::Disposition))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quarantine_subject_stays_inside_the_application_namespace() {
+        assert_eq!(
+            quarantine_subject("fast-inbox.command.commercial-access.evaluate").unwrap(),
+            "fast-inbox.quarantine.command.commercial-access.evaluate"
+        );
+        assert!(quarantine_subject("invalid").is_err());
+    }
 }

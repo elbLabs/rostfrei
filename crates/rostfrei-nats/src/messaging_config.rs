@@ -1,6 +1,6 @@
 use std::{fmt, time::Duration};
 
-use rostfrei_messaging_core::AddressKind;
+use rostfrei_messaging_core::{AddressKind, ApplicationName};
 
 use crate::error::NatsError;
 
@@ -137,6 +137,7 @@ impl fmt::Display for QueueGroup {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessagingTopology {
+    application: ApplicationName,
     command: StreamName,
     integration_event: StreamName,
     quarantine: StreamName,
@@ -144,15 +145,31 @@ pub struct MessagingTopology {
 
 impl MessagingTopology {
     pub const fn new(
+        application: ApplicationName,
         command_stream: StreamName,
         integration_event_stream: StreamName,
         quarantine_stream: StreamName,
     ) -> Self {
         Self {
+            application,
             command: command_stream,
             integration_event: integration_event_stream,
             quarantine: quarantine_stream,
         }
+    }
+
+    pub fn for_application(application: &ApplicationName) -> Result<Self, NatsError> {
+        let prefix = application_stream_token(application);
+        Ok(Self::new(
+            application.clone(),
+            StreamName::new(format!("{prefix}_COMMANDS"))?,
+            StreamName::new(format!("{prefix}_INTEGRATION_EVENTS"))?,
+            StreamName::new(format!("{prefix}_QUARANTINE"))?,
+        ))
+    }
+
+    pub const fn application(&self) -> &ApplicationName {
+        &self.application
     }
 
     pub const fn command_stream(&self) -> &StreamName {
@@ -174,6 +191,18 @@ impl MessagingTopology {
             AddressKind::Query => None,
         }
     }
+}
+
+pub(crate) fn application_stream_token(application: &ApplicationName) -> String {
+    application
+        .as_str()
+        .bytes()
+        .map(|byte| match byte {
+            b'-' => b'_',
+            _ => byte.to_ascii_uppercase(),
+        })
+        .map(char::from)
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

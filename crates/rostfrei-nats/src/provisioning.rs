@@ -5,7 +5,7 @@ use async_nats::jetstream::{
     consumer::{self, AckPolicy, DeliverPolicy},
     stream::{self, DiscardPolicy, RetentionPolicy, StorageType},
 };
-use rostfrei_messaging_core::{ConsumerConfig, PublishableAddress};
+use rostfrei_messaging_core::{ApplicationName, ConsumerConfig, PublishableAddress};
 
 use crate::{
     error::NatsError,
@@ -134,6 +134,10 @@ impl StreamProvisioningConfig {
         &self.subjects
     }
 
+    pub const fn retention(&self) -> StreamRetention {
+        self.retention
+    }
+
     fn as_nats_config(&self) -> Result<stream::Config, NatsError> {
         self.validate()?;
         Ok(stream::Config {
@@ -154,15 +158,107 @@ impl StreamProvisioningConfig {
                 StreamStorage::Memory => StorageType::Memory,
             },
             discard: DiscardPolicy::New,
+            max_messages: -1,
+            max_messages_per_subject: -1,
             max_bytes: self.max_bytes,
             max_age: self.max_age,
             max_message_size: self.maximum_message_bytes,
+            max_consumers: -1,
             duplicate_window: self.duplicate_window,
             num_replicas: self.replicas,
             no_ack: false,
             ..Default::default()
         })
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationMessagingConfig {
+    topology: MessagingTopology,
+    commands: StreamProvisioningConfig,
+    integration_events: StreamProvisioningConfig,
+    quarantine: StreamProvisioningConfig,
+}
+
+impl ApplicationMessagingConfig {
+    pub fn new(application: &ApplicationName) -> Result<Self, NatsError> {
+        let topology = MessagingTopology::for_application(application)?;
+        let commands = StreamProvisioningConfig::new(
+            topology.command_stream().clone(),
+            vec![application_subject_filter(application, "command")?],
+            StreamRetention::WorkQueue,
+        )?
+        .with_description(format!("{} commands", application.as_str()));
+        let integration_events = StreamProvisioningConfig::new(
+            topology.integration_event_stream().clone(),
+            vec![application_subject_filter(application, "integration")?],
+            StreamRetention::Limits,
+        )?
+        .with_description(format!("{} integration events", application.as_str()));
+        let quarantine = StreamProvisioningConfig::new(
+            topology.quarantine_stream().clone(),
+            vec![application_subject_filter(application, "quarantine")?],
+            StreamRetention::Limits,
+        )?
+        .with_description(format!("{} quarantined messages", application.as_str()));
+        Ok(Self {
+            topology,
+            commands,
+            integration_events,
+            quarantine,
+        })
+    }
+
+    pub fn with_replicas(mut self, replicas: usize) -> Result<Self, NatsError> {
+        self.commands = self.commands.with_replicas(replicas);
+        self.integration_events = self.integration_events.with_replicas(replicas);
+        self.quarantine = self.quarantine.with_replicas(replicas);
+        for stream in self.streams() {
+            stream.validate()?;
+        }
+        Ok(self)
+    }
+
+    pub fn with_max_bytes(mut self, max_bytes: i64) -> Result<Self, NatsError> {
+        self.commands = self.commands.with_max_bytes(max_bytes);
+        self.integration_events = self.integration_events.with_max_bytes(max_bytes);
+        self.quarantine = self.quarantine.with_max_bytes(max_bytes);
+        for stream in self.streams() {
+            stream.validate()?;
+        }
+        Ok(self)
+    }
+
+    pub const fn application(&self) -> &ApplicationName {
+        self.topology.application()
+    }
+
+    pub const fn topology(&self) -> &MessagingTopology {
+        &self.topology
+    }
+
+    pub const fn commands(&self) -> &StreamProvisioningConfig {
+        &self.commands
+    }
+
+    pub const fn integration_events(&self) -> &StreamProvisioningConfig {
+        &self.integration_events
+    }
+
+    pub const fn quarantine(&self) -> &StreamProvisioningConfig {
+        &self.quarantine
+    }
+
+    pub fn streams(&self) -> [&StreamProvisioningConfig; 3] {
+        [&self.commands, &self.integration_events, &self.quarantine]
+    }
+}
+
+fn application_subject_filter(
+    application: &ApplicationName,
+    kind: &str,
+) -> Result<SubjectFilter, NatsError> {
+    SubjectFilter::new(format!("{}.{kind}.>", application.as_str()))
 }
 
 pub async fn provision_stream(
@@ -173,6 +269,54 @@ pub async fn provision_stream(
         .create_or_update_stream(config.as_nats_config()?)
         .await
         .map_err(|_| NatsError::Provisioning)
+}
+
+pub async fn provision_application_messaging(
+    context: &jetstream::Context,
+    config: &ApplicationMessagingConfig,
+) -> Result<(), NatsError> {
+    for stream in config.streams() {
+        provision_stream(context, stream).await?;
+    }
+    Ok(())
+}
+
+pub async fn verify_application_messaging(
+    context: &jetstream::Context,
+    config: &ApplicationMessagingConfig,
+) -> Result<(), NatsError> {
+    for expected in config.streams() {
+        let stream = context
+            .get_stream(expected.name().as_str())
+            .await
+            .map_err(|_| NatsError::StreamNotFound)?;
+        let expected = expected.as_nats_config()?;
+        let actual = &stream.cached_info().config;
+        if actual.name != expected.name
+            || actual.subjects != expected.subjects
+            || actual.description != expected.description
+            || actual.retention != expected.retention
+            || actual.storage != expected.storage
+            || actual.discard != expected.discard
+            || actual.max_bytes != expected.max_bytes
+            || actual.max_age != expected.max_age
+            || actual.max_message_size != expected.max_message_size
+            || actual.duplicate_window != expected.duplicate_window
+            || actual.num_replicas != expected.num_replicas
+            || actual.no_ack != expected.no_ack
+            || actual.max_messages != expected.max_messages
+            || actual.max_messages_per_subject != expected.max_messages_per_subject
+            || actual.max_consumers != expected.max_consumers
+            || actual.discard_new_per_subject != expected.discard_new_per_subject
+            || actual.republish.is_some()
+            || actual.mirror.is_some()
+            || actual.sources.is_some()
+            || actual.subject_transform.is_some()
+        {
+            return Err(NatsError::Configuration);
+        }
+    }
+    Ok(())
 }
 
 pub async fn verify_stream(
@@ -218,6 +362,9 @@ pub async fn provision_durable_consumer<A>(
 where
     A: PublishableAddress,
 {
+    if config.address().application() != topology.application().as_str() {
+        return Err(NatsError::Configuration);
+    }
     let stream_name = topology
         .stream_for(config.address().kind())
         .ok_or(NatsError::Configuration)?;
@@ -226,4 +373,77 @@ where
         .await
         .map_err(|_| NatsError::Provisioning)?;
     Ok(consumer.cached_info().clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn application_config_derives_disjoint_streams_and_subjects() {
+        let application = ApplicationName::new("fast-inbox").unwrap();
+        let config = ApplicationMessagingConfig::new(&application)
+            .unwrap()
+            .with_replicas(3)
+            .unwrap();
+
+        assert_eq!(config.application().as_str(), "fast-inbox");
+        assert_eq!(config.commands.name().as_str(), "FAST_INBOX_COMMANDS");
+        assert_eq!(
+            config.integration_events.name().as_str(),
+            "FAST_INBOX_INTEGRATION_EVENTS"
+        );
+        assert_eq!(config.quarantine.name().as_str(), "FAST_INBOX_QUARANTINE");
+        assert_eq!(
+            config.commands.subjects()[0].as_str(),
+            "fast-inbox.command.>"
+        );
+        assert_eq!(
+            config.integration_events.subjects()[0].as_str(),
+            "fast-inbox.integration.>"
+        );
+        assert_eq!(
+            config.quarantine.subjects()[0].as_str(),
+            "fast-inbox.quarantine.>"
+        );
+        assert_eq!(config.commands.retention(), StreamRetention::WorkQueue);
+        assert_eq!(
+            config.integration_events.retention(),
+            StreamRetention::Limits
+        );
+        assert_eq!(config.quarantine.retention(), StreamRetention::Limits);
+        assert!(config.streams().iter().all(|stream| stream.replicas == 3));
+    }
+
+    #[test]
+    fn application_config_rejects_invalid_replica_counts() {
+        let application = ApplicationName::new("fast-inbox").unwrap();
+
+        assert!(ApplicationMessagingConfig::new(&application)
+            .unwrap()
+            .with_replicas(0)
+            .is_err());
+        assert!(ApplicationMessagingConfig::new(&application)
+            .unwrap()
+            .with_replicas(6)
+            .is_err());
+    }
+
+    #[test]
+    fn application_config_validates_capacity_overrides() {
+        let application = ApplicationName::new("fast-inbox").unwrap();
+
+        assert!(ApplicationMessagingConfig::new(&application)
+            .unwrap()
+            .with_max_bytes(i64::from(DEFAULT_STREAM_MAX_MESSAGE_BYTES) - 1)
+            .is_err());
+        let config = ApplicationMessagingConfig::new(&application)
+            .unwrap()
+            .with_max_bytes(64 * 1024 * 1024)
+            .unwrap();
+        assert!(config
+            .streams()
+            .iter()
+            .all(|stream| stream.max_bytes == 64 * 1024 * 1024));
+    }
 }

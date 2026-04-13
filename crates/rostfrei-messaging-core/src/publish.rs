@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(message.metadata().get("x-tenant"), Some("acme"));
         assert_eq!(
             message.address().as_str(),
-            "integration.acme.orders.order-placed"
+            "acme.integration.orders.order-placed"
         );
     }
 

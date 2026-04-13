@@ -27,7 +27,8 @@ use sha2::{Digest, Sha256};
 use crate::event_store_config::NatsEventStoreConfig;
 
 const LEGACY_EVENT_SCHEMA_VERSION: u16 = 1;
-const EVENT_SCHEMA_VERSION: u16 = 2;
+const CORRELATION_EVENT_SCHEMA_VERSION: u16 = 2;
+const EVENT_SCHEMA_VERSION: u16 = 3;
 const ATOMIC_BATCH_API_LEVEL: &str = "2";
 const MINIMUM_ATOMIC_BATCH_SERVER_VERSION: (i64, i64, i64) = (2, 12, 0);
 
@@ -391,6 +392,10 @@ struct StoredEventWire {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StoredEventContentWire {
     event_store_stream: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    application: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bounded_context: Option<String>,
     stream: StreamIdentityWire,
     stream_version: u64,
     commit_id: String,
@@ -441,6 +446,8 @@ fn encode_events(
                 .map_err(|_| invalid("event batch ordinal cannot be represented"))?;
             let content = StoredEventContentWire {
                 event_store_stream: config.stream_name().to_owned(),
+                application: Some(config.application().as_str().to_owned()),
+                bounded_context: Some(config.bounded_context().as_str().to_owned()),
                 stream: StreamIdentityWire {
                     aggregate_type: stream_id.aggregate_type().as_str().to_owned(),
                     aggregate_id: stream_id.aggregate_id().as_str().to_owned(),
@@ -519,7 +526,7 @@ fn decode_event_inner(
         .map_err(|error| corrupt(format!("stored event is not valid wire JSON: {error}")))?;
     if !matches!(
         wire.schema_version,
-        LEGACY_EVENT_SCHEMA_VERSION | EVENT_SCHEMA_VERSION
+        LEGACY_EVENT_SCHEMA_VERSION | CORRELATION_EVENT_SCHEMA_VERSION | EVENT_SCHEMA_VERSION
     ) {
         return Err(corrupt("stored event has an unsupported schema version"));
     }
@@ -530,6 +537,13 @@ fn decode_event_inner(
             "legacy stored events cannot contain correlation or causation metadata",
         ));
     }
+    if wire.schema_version < EVENT_SCHEMA_VERSION
+        && (wire.event.application.is_some() || wire.event.bounded_context.is_some())
+    {
+        return Err(corrupt(
+            "legacy stored events cannot contain application scope metadata",
+        ));
+    }
     let expected_checksum = event_checksum(wire.schema_version, &wire.event)
         .map_err(|error| corrupt(format!("stored event cannot be checksummed: {error}")))?;
     if wire.checksum != expected_checksum {
@@ -538,6 +552,14 @@ fn decode_event_inner(
     if wire.event.event_store_stream != config.stream_name() {
         return Err(corrupt(
             "stored event belongs to a different event-store stream",
+        ));
+    }
+    if wire.schema_version == EVENT_SCHEMA_VERSION
+        && (wire.event.application.as_deref() != Some(config.application().as_str())
+            || wire.event.bounded_context.as_deref() != Some(config.bounded_context().as_str()))
+    {
+        return Err(corrupt(
+            "stored event belongs to a different application or bounded context",
         ));
     }
 
@@ -1219,6 +1241,8 @@ mod tests {
         assert_eq!(wire.schema_version, LEGACY_EVENT_SCHEMA_VERSION);
         assert_eq!(wire.event.correlation_id, None);
         assert_eq!(wire.event.causation_id, None);
+        assert_eq!(wire.event.application, None);
+        assert_eq!(wire.event.bounded_context, None);
         assert_eq!(
             event_checksum(wire.schema_version, &wire.event).expect("legacy checksum"),
             wire.checksum
@@ -1226,5 +1250,7 @@ mod tests {
         let reencoded = serde_json::to_value(&wire.event).expect("legacy event content");
         assert!(reencoded.get("correlationId").is_none());
         assert!(reencoded.get("causationId").is_none());
+        assert!(reencoded.get("application").is_none());
+        assert!(reencoded.get("boundedContext").is_none());
     }
 }

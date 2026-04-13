@@ -29,8 +29,9 @@ pub use messaging_config::{
     MINIMUM_NATS_SERVER_VERSION,
 };
 pub use provisioning::{
-    provision_durable_consumer, provision_stream, verify_stream, StreamProvisioningConfig,
-    StreamRetention, StreamStorage,
+    provision_application_messaging, provision_durable_consumer, provision_stream,
+    verify_application_messaging, verify_stream, ApplicationMessagingConfig,
+    StreamProvisioningConfig, StreamRetention, StreamStorage,
 };
 pub use publish::{NatsPublishAck, NatsPublisher};
 pub use query::{NatsQueryRequester, NatsQueryServer, NatsQueryServerConfig};

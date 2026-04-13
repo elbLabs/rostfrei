@@ -1,13 +1,14 @@
 use std::time::Duration;
 
 use async_nats::{jetstream, Client, ConnectOptions, Event};
+use rostfrei_messaging_core::ApplicationName;
 use tokio::{sync::watch, time::timeout};
 
 use crate::{
     consumer::NatsConsumerFactory,
     error::NatsError,
     messaging_config::{MessagingTopology, NatsConnectionConfig},
-    provisioning::verify_stream,
+    provisioning::{verify_application_messaging, verify_stream, ApplicationMessagingConfig},
     publish::NatsPublisher,
     query::{NatsQueryRequester, NatsQueryServer, NatsQueryServerConfig},
 };
@@ -46,15 +47,16 @@ impl NatsConnection {
         NatsConsumerFactory::new(self.jetstream.clone(), topology)
     }
 
-    pub fn query_requester(&self) -> NatsQueryRequester {
-        NatsQueryRequester::new(self.client.clone())
+    pub fn query_requester(&self, application: &ApplicationName) -> NatsQueryRequester {
+        NatsQueryRequester::new(self.client.clone(), application.clone())
     }
 
     pub fn query_server(
         &self,
+        application: &ApplicationName,
         config: NatsQueryServerConfig,
     ) -> Result<NatsQueryServer, NatsError> {
-        NatsQueryServer::new(self.client.clone(), config)
+        NatsQueryServer::new(self.client.clone(), application.clone(), config)
     }
 
     pub fn health(&self) -> ConnectionHealth {
@@ -83,6 +85,13 @@ impl NatsConnection {
         verify_stream(&self.jetstream, topology.command_stream()).await?;
         verify_stream(&self.jetstream, topology.integration_event_stream()).await?;
         verify_stream(&self.jetstream, topology.quarantine_stream()).await
+    }
+
+    pub async fn verify_application_messaging(
+        &self,
+        config: &ApplicationMessagingConfig,
+    ) -> Result<(), NatsError> {
+        verify_application_messaging(&self.jetstream, config).await
     }
 
     pub async fn flush(&self) -> Result<(), NatsError> {

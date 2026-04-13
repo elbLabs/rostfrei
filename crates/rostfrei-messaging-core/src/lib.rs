@@ -5,6 +5,7 @@ mod error;
 mod metadata;
 mod publish;
 mod query;
+mod scope;
 mod value;
 
 pub use address::{
@@ -39,6 +40,7 @@ pub use query::{
     QueryOutcome, QueryRequest, QueryRequester, QueryResponse, QueryServer,
     MAX_APPLICATION_ERROR_CODE_BYTES, MAX_QUERY_ERROR_MESSAGE_BYTES, MAX_QUERY_TIMEOUT,
 };
+pub use scope::{ApplicationName, BoundedContext, BoundedContextName, MAX_SCOPE_NAME_BYTES};
 pub use value::{
     CausationId, CorrelationId, MessageId, MessageTimestamp, OperationId, SchemaVersion,
     MAX_IDENTIFIER_BYTES, MAX_UNIX_TIMESTAMP_MILLISECONDS,

@@ -18,6 +18,14 @@ constraint.
 | **Domain event** | A private, meaningful fact that occurred in one aggregate and forms part of its authoritative history. | Message, notification, integration event |
 | **Query** | A request to read state that never appends to an aggregate stream. | Read command, lookup command |
 
+## Operational scope
+
+| Term | Definition | Aliases to avoid |
+| --- | --- | --- |
+| **Application** | The top-level runtime and messaging namespace supplied once by an adopter. Its validated name is the first token in every NATS subject. | Owner, product prefix |
+| **Bounded context** | A named domain language and ownership boundary inside one application. It scopes business addresses and authoritative domain-event storage. | Module, namespace, service |
+| **Application messaging** | The derived command, integration-event, query, and quarantine conventions for one application. | Custom topology, message bus setup |
+
 ## History and execution
 
 | Term | Definition | Aliases to avoid |
@@ -40,6 +48,8 @@ constraint.
 ## Relationships
 
 - One **aggregate identity** identifies exactly one **aggregate stream**.
+- One **application** contains one or more **bounded contexts**.
+- Every business message address identifies one **application** and one **bounded context**.
 - A **command** asks one **aggregate** to make a **decision**.
 - A **rejection** produces no **commit**.
 - An accepted **operation** that produces domain events creates exactly one **commit**.
@@ -86,3 +96,5 @@ constraint.
   business outcome; storage, codec, and broker failures remain errors.
 - **Aggregate state** is reconstructed state, not a NATS KV value or the
   authoritative persistence record.
+- **Application name** is not a JetStream stream name. rostfrei derives stream
+  names and subject filters from it.

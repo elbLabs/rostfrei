@@ -4,12 +4,13 @@ use async_trait::async_trait;
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    address::validate_segment, CallerMetadata, ConsumeError, ContractError, ContractErrorKind,
-    MessageBuildError, MessageId, PublishableAddress, TraceContext, MAX_MESSAGE_PAYLOAD_BYTES,
+    scope::validate_scope_segment, AddressKind, CallerMetadata, ConsumeError, ContractError,
+    ContractErrorKind, MessageBuildError, MessageId, PublishableAddress, TraceContext,
+    MAX_MESSAGE_PAYLOAD_BYTES,
 };
 
-pub const CONSUMER_NAME_CONVENTION: &str = "<owner>--<context>--<purpose>--v<major>";
-pub const DURABLE_NAME_CONVENTION: &str = "<owner>--<context>--<purpose>--v<major>";
+pub const CONSUMER_NAME_CONVENTION: &str = "<application>--<context>--<purpose>--v<major>";
+pub const DURABLE_NAME_CONVENTION: &str = "<application>--<context>--<purpose>--v<major>";
 pub const MAX_CONSUMER_NAME_BYTES: usize = 256;
 pub const MAX_CONCURRENCY: usize = 1024;
 pub const MAX_DELIVERY_ATTEMPTS: u32 = 1000;
@@ -22,12 +23,19 @@ pub struct ConsumerName(String);
 
 impl ConsumerName {
     pub fn new(
-        owner: &str,
+        application: &str,
         context: &str,
         purpose: &str,
         major_version: u32,
     ) -> Result<Self, ContractError> {
-        build_delivery_name(owner, context, purpose, major_version, "consumer name").map(Self)
+        build_delivery_name(
+            application,
+            context,
+            purpose,
+            major_version,
+            "consumer name",
+        )
+        .map(Self)
     }
 
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
@@ -36,6 +44,14 @@ impl ConsumerName {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn application(&self) -> &str {
+        delivery_name_segment(&self.0, 0)
+    }
+
+    pub fn context(&self) -> &str {
+        delivery_name_segment(&self.0, 1)
     }
 }
 
@@ -68,12 +84,12 @@ pub struct DurableName(String);
 
 impl DurableName {
     pub fn new(
-        owner: &str,
+        application: &str,
         context: &str,
         purpose: &str,
         major_version: u32,
     ) -> Result<Self, ContractError> {
-        build_delivery_name(owner, context, purpose, major_version, "durable name").map(Self)
+        build_delivery_name(application, context, purpose, major_version, "durable name").map(Self)
     }
 
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
@@ -82,6 +98,14 @@ impl DurableName {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn application(&self) -> &str {
+        delivery_name_segment(&self.0, 0)
+    }
+
+    pub fn context(&self) -> &str {
+        delivery_name_segment(&self.0, 1)
     }
 }
 
@@ -134,6 +158,22 @@ where
         concurrency: usize,
         maximum_delivery_attempts: u32,
     ) -> Result<Self, ContractError> {
+        if name.application() != address.application()
+            || durable_name.application() != address.application()
+        {
+            return Err(ContractError::new(
+                ContractErrorKind::InvalidFormat,
+                "consumer application scope",
+            ));
+        }
+        if name.context() != durable_name.context()
+            || (address.kind() == AddressKind::Command && name.context() != address.context())
+        {
+            return Err(ContractError::new(
+                ContractErrorKind::InvalidFormat,
+                "consumer bounded-context scope",
+            ));
+        }
         if processing_timeout.is_zero() || processing_timeout > MAX_PROCESSING_TIMEOUT {
             return Err(ContractError::new(
                 ContractErrorKind::OutOfRange,
@@ -421,16 +461,16 @@ where
 }
 
 fn build_delivery_name(
-    owner: &str,
+    application: &str,
     context: &str,
     purpose: &str,
     major_version: u32,
     field: &'static str,
 ) -> Result<String, ContractError> {
-    validate_segment(owner, field)?;
-    validate_segment(context, field)?;
-    validate_segment(purpose, field)?;
-    let value = format!("{owner}--{context}--{purpose}--v{major_version}");
+    validate_scope_segment(application, field)?;
+    validate_scope_segment(context, field)?;
+    validate_scope_segment(purpose, field)?;
+    let value = format!("{application}--{context}--{purpose}--v{major_version}");
     if value.len() > MAX_CONSUMER_NAME_BYTES {
         return Err(ContractError::bounded(
             ContractErrorKind::TooLong,
@@ -477,6 +517,10 @@ fn parse_delivery_name(value: String, field: &'static str) -> Result<String, Con
     Ok(value)
 }
 
+fn delivery_name_segment(value: &str, index: usize) -> &str {
+    value.split("--").nth(index).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,6 +532,10 @@ mod tests {
         let durable = DurableName::parse("acme--orders--fulfillment--v1").unwrap();
         assert_eq!(consumer.as_str(), "acme--orders--fulfillment--v1");
         assert_eq!(durable.as_str(), consumer.as_str());
+        assert_eq!(consumer.application(), "acme");
+        assert_eq!(consumer.context(), "orders");
+        assert_eq!(durable.application(), "acme");
+        assert_eq!(durable.context(), "orders");
         assert!(ConsumerName::parse("acme--orders--fulfillment--v01").is_err());
         assert!(DurableName::new("Acme", "orders", "fulfillment", 1).is_err());
     }
@@ -510,6 +558,54 @@ mod tests {
             ConsumerConfig::new(consumer, durable, address, Duration::from_secs(30), 1, 0,)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn consumer_config_rejects_cross_application_names() {
+        let address = CommandAddress::new("acme", "orders", "place-order").unwrap();
+
+        let error = ConsumerConfig::new(
+            ConsumerName::new("other", "orders", "fulfillment", 1).unwrap(),
+            DurableName::new("acme", "orders", "fulfillment", 1).unwrap(),
+            address,
+            Duration::from_secs(30),
+            1,
+            5,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ContractErrorKind::InvalidFormat);
+        assert_eq!(error.field(), "consumer application scope");
+    }
+
+    #[test]
+    fn command_consumers_stay_in_context_but_integration_consumers_can_cross_contexts() {
+        let command = CommandAddress::new("acme", "orders", "place-order").unwrap();
+        let name = ConsumerName::new("acme", "fulfillment", "orders", 1).unwrap();
+        let durable = DurableName::new("acme", "fulfillment", "orders", 1).unwrap();
+
+        let error = ConsumerConfig::new(
+            name.clone(),
+            durable.clone(),
+            command,
+            Duration::from_secs(30),
+            1,
+            5,
+        )
+        .unwrap_err();
+        assert_eq!(error.field(), "consumer bounded-context scope");
+
+        let integration_event =
+            crate::IntegrationEventAddress::new("acme", "orders", "order-placed").unwrap();
+        assert!(ConsumerConfig::new(
+            name,
+            durable,
+            integration_event,
+            Duration::from_secs(30),
+            1,
+            5,
+        )
+        .is_ok());
     }
 
     #[test]

@@ -14,6 +14,7 @@ use rostfrei_core::{
     EventStoreErrorKind, ExecutionMetadata, ExpectedVersion, NewEvent, OperationId, StreamId,
     StreamVersion,
 };
+use rostfrei_messaging_core::{ApplicationName, BoundedContext};
 use rostfrei_testing::event_store_contract;
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -27,8 +28,8 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         return;
     };
     let context = connect_context(&url).await;
-    let (stream_name, subject_prefix) = unique_names("contract");
-    let config = NatsEventStoreConfig::new(stream_name, subject_prefix)
+    let (bounded_context, stream_name) = unique_names("contract");
+    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)
         .expect("valid integration config")
         .with_storage_limits(64 * 1024 * 1024, 2 * 1024 * 1024)
         .expect("valid integration storage limits");
@@ -239,6 +240,16 @@ async fn real_nats_event_store_contract_and_operator_policy() {
             serde_json::from_slice(&stored_event.payload).expect("stored event should be JSON");
         assert!(wire.get("events").is_none());
         assert_eq!(
+            wire.pointer("/event/application")
+                .and_then(serde_json::Value::as_str),
+            Some(config.application().as_str())
+        );
+        assert_eq!(
+            wire.pointer("/event/boundedContext")
+                .and_then(serde_json::Value::as_str),
+            Some(config.bounded_context().as_str())
+        );
+        assert_eq!(
             wire.pointer("/event/payloadBase64")
                 .and_then(serde_json::Value::as_str),
             Some(expected_payload_base64.as_str())
@@ -291,7 +302,13 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory
     ));
 
-    let mismatch = NatsEventStoreConfig::new(config.stream_name(), config.subject_prefix())
+    let mismatch = NatsEventStoreConfig::new(
+        &BoundedContext::new(
+            config.application().clone(),
+            config.bounded_context().clone(),
+        ),
+        config.stream_name(),
+    )
         .expect("valid mismatching config")
         .with_storage_limits(config.max_stream_bytes() + 1, config.max_event_bytes())
         .expect("valid mismatching storage limits")
@@ -309,8 +326,8 @@ async fn real_nats_event_store_contract_and_operator_policy() {
 }
 
 async fn capacity_is_reported_distinctly(context: &async_nats::jetstream::Context) {
-    let (stream_name, subject_prefix) = unique_names("capacity");
-    let config = NatsEventStoreConfig::new(stream_name, subject_prefix)
+    let (bounded_context, stream_name) = unique_names("capacity");
+    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)
         .expect("valid capacity config")
         .with_storage_limits(4096, 2048)
         .expect("valid capacity limits");
@@ -376,7 +393,7 @@ async fn connect_context(url: &str) -> async_nats::jetstream::Context {
     async_nats::jetstream::new(client)
 }
 
-fn unique_names(label: &str) -> (String, String) {
+fn unique_names(label: &str) -> (BoundedContext, String) {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock should follow the Unix epoch")
@@ -384,8 +401,11 @@ fn unique_names(label: &str) -> (String, String) {
     let counter = UNIQUE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let process = std::process::id();
     (
+        ApplicationName::new(format!("rostfrei-test-{process}-{counter}"))
+            .expect("application name")
+            .bounded_context(label)
+            .expect("bounded context"),
         format!("EVENT_STORE_{label}_{process}_{nanos}_{counter}").to_ascii_uppercase(),
-        format!("private.event-store-test.{label}.{process}.{nanos}.{counter}"),
     )
 }
 

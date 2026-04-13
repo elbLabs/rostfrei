@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Accepted; deployment naming policy partially superseded by ADR 0015.
 
 ## Decision
 

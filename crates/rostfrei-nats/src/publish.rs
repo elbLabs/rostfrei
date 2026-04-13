@@ -107,6 +107,9 @@ impl NatsPublisher {
     where
         A: PublishableAddress,
     {
+        if message.address().application() != self.topology.application().as_str() {
+            return Err(NatsError::InvalidMessage);
+        }
         let headers = safe_headers(message.metadata(), message.trace_context());
         publish_confirmed(
             &self.context,

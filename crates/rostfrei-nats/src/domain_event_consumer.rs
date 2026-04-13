@@ -428,6 +428,15 @@ fn durable_domain_event_consumer_config(
     event_store: &NatsEventStoreConfig,
     config: &NatsDomainEventConsumerConfig,
 ) -> Result<consumer::pull::Config, DomainEventConsumerError> {
+    if config.name().application() != event_store.application().as_str()
+        || config.durable_name().application() != event_store.application().as_str()
+        || config.name().context() != event_store.bounded_context().as_str()
+        || config.durable_name().context() != event_store.bounded_context().as_str()
+    {
+        return Err(invalid_configuration(
+            "domain-event consumer belongs to a different application or bounded context",
+        ));
+    }
     let max_pending = i64::try_from(MAX_EVENTS_PER_BATCH)
         .map_err(|_| invalid_configuration("maximum commit size cannot be represented"))?;
     Ok(consumer::pull::Config {
@@ -621,4 +630,50 @@ fn unavailable(message: impl Into<String>) -> DomainEventConsumerError {
 
 fn invalid_committed_event(message: impl Into<String>) -> DomainEventConsumerError {
     DomainEventConsumerError::new(DomainEventConsumerErrorKind::InvalidCommittedEvent, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use rostfrei_messaging_core::{ApplicationName, ConsumerName, DurableName};
+
+    use super::*;
+
+    #[test]
+    fn domain_event_consumer_rejects_cross_scope_names() {
+        let context = ApplicationName::new("acme")
+            .unwrap()
+            .bounded_context("orders")
+            .unwrap();
+        let event_store = NatsEventStoreConfig::for_bounded_context(&context).unwrap();
+        let consumer = NatsDomainEventConsumerConfig::new(
+            ConsumerName::new("other", "orders", "projection", 1).unwrap(),
+            DurableName::new("acme", "orders", "projection", 1).unwrap(),
+            Duration::from_secs(5),
+            Duration::from_secs(2),
+            RetryDelay::new(Duration::from_millis(100)).unwrap(),
+        )
+        .unwrap();
+
+        let error = durable_domain_event_consumer_config(&event_store, &consumer).unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            DomainEventConsumerErrorKind::InvalidConfiguration
+        );
+
+        let other_context_consumer = NatsDomainEventConsumerConfig::new(
+            ConsumerName::new("acme", "billing", "projection", 1).unwrap(),
+            DurableName::new("acme", "billing", "projection", 1).unwrap(),
+            Duration::from_secs(5),
+            Duration::from_secs(2),
+            RetryDelay::new(Duration::from_millis(100)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            durable_domain_event_consumer_config(&event_store, &other_context_consumer)
+                .unwrap_err()
+                .kind(),
+            DomainEventConsumerErrorKind::InvalidConfiguration
+        );
+    }
 }
