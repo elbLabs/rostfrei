@@ -55,7 +55,8 @@ permanent, execution deterministic, and domain metadata machine-readable.
 | Retry, durable consumption, and quarantine | Implemented |
 | Aggregate scenarios and EventStore conformance tests | Implemented |
 | Compiled domain model and explicit runtime registration | Implemented; automatic discovery remains deferred |
-| Aggregate inspection and simulation | Accepted direction, not implemented |
+| Headless command simulation API | First local slice implemented with operation status and resumable SSE traces |
+| Aggregate inspection and state differences | Accepted direction, not implemented |
 | Studio model browser | Implemented as a read-only browser and Cargo diagnostic client |
 | Runtime Studio and AI control plane | Accepted direction, not implemented |
 | Projection orchestration, workflows, snapshots, and execution journals | Deliberately deferred |

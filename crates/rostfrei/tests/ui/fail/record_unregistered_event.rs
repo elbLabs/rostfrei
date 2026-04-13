@@ -1,4 +1,4 @@
-use rostfrei::{Apply, CommandHandler, DecisionContext, Initialize};
+use rostfrei::{AggregateInstance, Apply, CommandHandler, Initialize};
 use serde::{Deserialize, Serialize};
 
 #[derive(rostfrei::BoundedContext)]
@@ -47,8 +47,8 @@ struct Command;
 impl CommandHandler<Command> for Aggregate {
     type Rejection = ();
 
-    fn handle(_: &Command, context: &mut DecisionContext<'_, Self>) -> Result<(), ()> {
-        context.record(Unregistered);
+    fn handle(_: &Command, aggregate: &mut AggregateInstance<Self>) -> Result<(), ()> {
+        aggregate.raise(Unregistered);
         Ok(())
     }
 }

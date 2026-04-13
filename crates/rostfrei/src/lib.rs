@@ -2,14 +2,14 @@ extern crate self as rostfrei;
 
 pub use domain::*;
 pub use rostfrei_core::{
-    Aggregate, AggregateId as StreamAggregateId, AggregateType as StreamAggregateType,
-    AppendOutcome, CommandHandler, CommittedDomainEvent, ContentFingerprint, DecisionContext,
-    DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, DomainEventRegistrationError, EventBatch, EventCodec,
-    EventCodecError, EventCodecErrorKind, EventId, EventStore, EventStoreError,
-    EventStoreErrorKind, EventVariant, ExecutionError, ExecutionMetadata, ExecutionOutcome,
-    Executor, ExpectedVersion, InMemoryEventStore, NewEvent, OperationId, RecordedEvent, StreamId,
-    StreamVersion,
+    Aggregate, AggregateId as StreamAggregateId, AggregateInstance,
+    AggregateType as StreamAggregateType, AppendOutcome, CommandHandler, CommittedDomainEvent,
+    ContentFingerprint, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
+    DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError, EventBatch,
+    EventCodec, EventCodecError, EventCodecErrorKind, EventHistory, EventId, EventStore,
+    EventStoreError, EventStoreErrorKind, EventVariant, ExecutionError, ExecutionMetadata,
+    ExecutionOutcome, Executor, ExpectedVersion, InMemoryEventStore, NewEvent, OperationId,
+    RecordedEvent, SimulationDecision, SimulationError, SimulationOutcome, StreamId, StreamVersion,
 };
 pub use rostfrei_domain_runtime::{domain_module, AggregateRuntime, Apply, Initialize};
 pub use rostfrei_registry::{

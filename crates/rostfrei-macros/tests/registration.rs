@@ -1,5 +1,5 @@
 use rostfrei_macros::{Command, Module};
-use zs_core::{Aggregate, CommandHandler, DecisionContext, StreamId};
+use zs_core::{Aggregate, AggregateInstance, CommandHandler, StreamId};
 use zs_registry::{CommandDefinition, DomainRegistry};
 
 struct Account {
@@ -37,9 +37,9 @@ impl CommandHandler<Deposit> for Account {
 
     fn handle(
         command: &Deposit,
-        context: &mut DecisionContext<'_, Self>,
+        aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        context.record(AccountEvent::Deposited(command.amount));
+        aggregate.raise(AccountEvent::Deposited(command.amount));
         Ok(())
     }
 }

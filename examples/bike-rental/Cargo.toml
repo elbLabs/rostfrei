@@ -1,10 +1,20 @@
 [package]
 name = "bike-rental"
+default-run = "bike-rental"
 version.workspace = true
 edition = "2024"
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-rostfrei-domain = { path = "../../crates/rostfrei-domain" }
+axum.workspace = true
+rostfrei = { path = "../../crates/rostfrei" }
+rostfrei-control-plane = { path = "../../crates/rostfrei-control-plane", features = ["http"] }
+serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }

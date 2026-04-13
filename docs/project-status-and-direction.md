@@ -17,12 +17,13 @@ generated from inspectable contracts and remain optional.
 
 ## Current implementation
 
-The workspace currently contains ten framework crates plus the bike-rental
+The workspace currently contains eleven framework crates plus the bike-rental
 example Cargo package:
 
 | Crate | Responsibility |
 | --- | --- |
 | `rostfrei` | Application facade for the compiled domain model, event-sourcing runtime, registry, and public macros |
+| `rostfrei-control-plane` | Explicit command simulation bindings, operation status and trace contracts, and an optional HTTP/SSE adapter |
 | `rostfrei-core` | Aggregates, execution, event-store contracts, and the in-memory reference store |
 | `rostfrei-domain` | Rich domain IDs, descriptors, ownership, model validation and projection, and domain-test metadata |
 | `rostfrei-domain-macros` | Derives and attributes for contexts, aggregates, entities, identities, value objects, services, commands, events, errors, actions, decisions, invariants, queries, lifecycles, and domain tests |
@@ -61,10 +62,20 @@ available for direct kernel users.
 
 rostfrei Studio is implemented as a read-only compiled-model browser and Cargo
 diagnostic client. It does not yet provide event timelines, aggregate state
-inspection, simulation, runtime command dispatch, or AI APIs. Runtime command
-deserialization, erased invocation, automatic discovery, and generated command
-wire codecs also remain deferred. Default JSON domain-event codecs are
-implemented by the compiled aggregate contract.
+inspection, simulation, runtime command dispatch, or AI APIs.
+
+The first headless control-plane slice provides explicitly registered command
+deserialization and erased simulation over normal typed aggregate handlers. It
+exposes asynchronous operation resources and resumable SSE traces for replay,
+command acceptance or rejection, predicted domain events, and completion.
+Simulation depends only on read-only event history and never appends or
+publishes. The optional HTTP adapter requires a bearer capability, and trace
+payloads are redacted unless a deployment explicitly supplies another policy.
+The included journal is bounded and in-memory; durable traces, production-grade
+authorization, automatic discovery, generated wire codecs, live dispatch,
+inspection views, and the Studio client remain deferred.
+Default JSON domain-event codecs are implemented by the compiled aggregate
+contract; generated command wire codecs remain deferred.
 
 The NATS event store writes one JetStream message per domain event. Multi-event
 commits use the NATS ADR-50 atomic batch protocol, with one shared batch identity
@@ -100,8 +111,12 @@ converted solely to demonstrate the framework.
 The verification suite includes workspace tests and strict Clippy, concurrent
 append tests, the 1,000-event batch boundary, atomic capacity-failure tests,
 exact replay contracts, and destructive NATS tests including quarantine
-behavior. Real-server tests require `ROSTFREI_NATS_URL`; when it is absent they
-are reported as environment-dependent skips rather than successful NATS runs.
+behavior. The control-plane slice also has end-to-end tests for
+accepted and rejected simulations, idempotency conflicts, resumable SSE traces,
+terminal cursors, bearer authorization, default payload redaction, terminal
+eviction, descriptor matching, request limits, and unchanged aggregate history.
+Real-server tests require `ROSTFREI_NATS_URL`; when it is absent they are
+reported as environment-dependent skips rather than successful NATS runs.
 
 The work is not tagged or released. rostfrei has a configured Git remote; Nexus
 still uses temporary local path dependencies and must pin one reviewed full
@@ -125,8 +140,8 @@ rostfrei will grow in layers around the stable kernel:
    diagnostics; runtime inspection views remain deferred.
 5. An aggregate inspector will expose redacted developer views without making
    aggregate state a persisted Serde contract.
-6. A simulation runtime will replay real history into an isolated branch and
-   execute commands without appending or publishing.
+6. The first simulation runtime slice replays real history into an isolated
+   branch and executes commands without appending or publishing.
 7. rostfrei Studio will visualize event timelines, state at any version,
    state differences, operation metadata, command outcomes, and rejections.
 8. A protocol-independent control plane will serve both Studio and AI tools with
@@ -148,8 +163,9 @@ The three operational modes are deliberately distinct:
    command registration and versioned model compatibility checks.
 3. Replace runtime model-assembly panics and unversioned JSON with structured
    diagnostics and a versioned projection.
-4. Add erased command execution and safe simulation over the registered typed
-   contracts without introducing transport concerns.
+4. Mature the implemented erased simulation slice with durable operation traces,
+   generated wire codecs, and production authorization without introducing
+   transport concerns into the kernel.
 5. Add aggregate inspection and redaction.
 6. Generate command, event, rejection, and inspection schemas.
 7. Build the first event timeline and command laboratory in rostfrei Studio.

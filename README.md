@@ -5,11 +5,13 @@ keeps domain aggregates independent from persistence, serialization, and brokers
 while providing a compiled domain model, strict execution, developer tooling,
 and NATS JetStream adapters at the application edge.
 
-The workspace contains ten framework crates plus the bike-rental example Cargo
-package:
+The workspace contains eleven framework crates plus the bike-rental example
+Cargo package:
 
 - `rostfrei`: application facade for the compiled domain model,
   event-sourcing runtime, registry, and public macros.
+- `rostfrei-control-plane`: explicitly registered command simulation, bounded
+  in-memory operation traces, status resources, and an optional HTTP/SSE adapter.
 - `rostfrei-core`: aggregate execution, event-store contracts, and the
   in-memory reference store.
 - `rostfrei-domain` (imported as `domain`): the compiled domain model,
@@ -39,7 +41,9 @@ and provisioning API.
 
 [`examples/bike-rental`](examples/bike-rental) is a self-contained public
 example with an aggregate action, a decision, a query, a domain event, and a
-domain error.
+domain error. It also contains a runnable local control-plane server that
+replays a seeded fleet, simulates `RentBicycle`, and streams the operation trace
+without appending or publishing.
 
 rostfrei does not provision infrastructure during service startup. Operators
 use the explicit provisioning APIs with bounded, application-scoped defaults

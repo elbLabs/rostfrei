@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use rostfrei::{
-    Aggregate as RuntimeAggregate, Apply, CommandHandler, CommittedDomainEvent, ContentFingerprint,
-    DecisionContext, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
+    Aggregate as RuntimeAggregate, AggregateInstance, Apply, CommandHandler, CommittedDomainEvent,
+    ContentFingerprint, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
     DomainEventHandlerError, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind,
     EventStore, EventVariant, ExecutionError, ExecutionMetadata, Executor, ExpectedVersion,
     InMemoryEventStore, Initialize, NewEvent, OperationId, RecordedEvent, StreamAggregateId,
@@ -82,16 +82,16 @@ impl CommandHandler<DepositAndObserve> for AccountAggregate {
 
     fn handle(
         command: &DepositAndObserve,
-        context: &mut DecisionContext<'_, Self>,
+        aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        if context.state().id.0 != command.account_id {
+        if aggregate.state().id.0 != command.account_id {
             return Err("stream identity was not used to initialize the aggregate");
         }
-        context.record(MoneyDeposited {
+        aggregate.raise(MoneyDeposited {
             amount: command.amount,
         });
-        context.record(BalanceObserved {
-            balance: context.state().balance,
+        aggregate.raise(BalanceObserved {
+            balance: aggregate.state().balance,
         });
         Ok(())
     }

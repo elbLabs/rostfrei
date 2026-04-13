@@ -1,10 +1,10 @@
 error[E0277]: the trait bound `__AggregateEvent: From<Unregistered>` is not satisfied
-  --> tests/ui/fail/record_unregistered_event.rs:51:24
+  --> tests/ui/fail/record_unregistered_event.rs:51:25
    |
-51 |         context.record(Unregistered);
-   |                 ------ ^^^^^^^^^^^^ unsatisfied trait bound
-   |                 |
-   |                 required by a bound introduced by this call
+51 |         aggregate.raise(Unregistered);
+   |                   ----- ^^^^^^^^^^^^ unsatisfied trait bound
+   |                   |
+   |                   required by a bound introduced by this call
    |
 help: the trait `From<Unregistered>` is not implemented for `__AggregateEvent`
       but trait `From<Registered>` is implemented for it
@@ -14,12 +14,12 @@ help: the trait `From<Unregistered>` is not implemented for `__AggregateEvent`
    |          ^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `Registered`, found `Unregistered`
    = note: required for `Unregistered` to implement `Into<__AggregateEvent>`
-note: required by a bound in `DecisionContext::<'a, A>::record`
+note: required by a bound in `AggregateInstance::<A>::raise`
   --> $WORKSPACE/crates/rostfrei-core/src/aggregate.rs
    |
-   |     pub fn record<E>(&mut self, event: E)
-   |            ------ required by a bound in this associated function
+   |     pub fn raise<E>(&mut self, event: E)
+   |            ----- required by a bound in this associated function
    |     where
    |         E: Into<A::Event>,
-   |            ^^^^^^^^^^^^^^ required by this bound in `DecisionContext::<'a, A>::record`
+   |            ^^^^^^^^^^^^^^ required by this bound in `AggregateInstance::<A>::raise`
    = note: this error originates in the derive macro `rostfrei::Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)

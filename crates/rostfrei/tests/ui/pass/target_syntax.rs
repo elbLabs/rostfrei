@@ -1,4 +1,4 @@
-use rostfrei::{Apply, CommandHandler, DecisionContext, Initialize};
+use rostfrei::{AggregateInstance, Apply, CommandHandler, Initialize};
 use serde::{Deserialize, Serialize};
 
 #[derive(rostfrei::BoundedContext)]
@@ -83,9 +83,9 @@ impl CommandHandler<Deposit> for AccountAggregate {
 
     fn handle(
         command: &Deposit,
-        context: &mut DecisionContext<'_, Self>,
+        aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        context.record(MoneyDeposited { amount: command.0 });
+        aggregate.raise(MoneyDeposited { amount: command.0 });
         Ok(())
     }
 }

@@ -16,9 +16,10 @@ use async_nats::{
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use rostfrei_core::{
-    AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint, EventBatch, EventId,
-    EventStore, EventStoreError, EventStoreErrorKind, ExecutionMetadata, ExpectedVersion, NewEvent,
-    OperationId, RecordedEvent, StreamId, StreamVersion, MAX_EVENTS_PER_BATCH,
+    AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint, EventBatch,
+    EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind, ExecutionMetadata,
+    ExpectedVersion, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
+    MAX_EVENTS_PER_BATCH,
 };
 use rostfrei_messaging_core::{CausationId, CorrelationId};
 use serde::{Deserialize, Serialize};
@@ -61,6 +62,10 @@ impl NatsEventStore {
 
     pub fn config(&self) -> &NatsEventStoreConfig {
         &self.config
+    }
+
+    pub async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        <Self as EventHistory>::load(self, stream_id).await
     }
 
     async fn load_history(&self, stream_id: &StreamId) -> Result<History, EventStoreError> {
@@ -239,11 +244,14 @@ impl NatsEventStore {
 }
 
 #[async_trait]
-impl EventStore for NatsEventStore {
+impl EventHistory for NatsEventStore {
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         Ok(self.load_history(stream_id).await?.events)
     }
+}
 
+#[async_trait]
+impl EventStore for NatsEventStore {
     async fn append(
         &self,
         stream_id: &StreamId,

@@ -5,13 +5,13 @@ use std::sync::{
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateType, AppendOutcome, CommandHandler, CommittedDomainEvent,
-    ContentFingerprint, DecisionContext, DomainEventDispatchOutcome, DomainEventHandler,
+    Aggregate, AggregateId, AggregateInstance, AggregateType, AppendOutcome, CommandHandler,
+    CommittedDomainEvent, ContentFingerprint, DomainEventDispatchOutcome, DomainEventHandler,
     DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError,
-    EnvelopeError, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind, EventStore,
-    EventStoreError, EventStoreErrorKind, ExecutionError, ExecutionMetadata, ExecutionOutcome,
-    Executor, ExpectedVersion, InMemoryEventStore, NewEvent, OperationId, RecordedEvent, StreamId,
-    StreamVersion,
+    EnvelopeError, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind, EventHistory,
+    EventStore, EventStoreError, EventStoreErrorKind, ExecutionError, ExecutionMetadata,
+    ExecutionOutcome, Executor, ExpectedVersion, InMemoryEventStore, NewEvent, OperationId,
+    RecordedEvent, SimulationDecision, StreamId, StreamVersion,
 };
 use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_messaging_core::{CausationId, CorrelationId};
@@ -100,30 +100,30 @@ impl CommandHandler<AccountCommand> for Account {
 
     fn handle(
         command: &AccountCommand,
-        context: &mut DecisionContext<'_, Self>,
+        aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
         match command {
             AccountCommand::Import {
                 opening_balance,
                 provenance,
             } => {
-                if context.state().imported {
+                if aggregate.state().imported {
                     return Err(AccountRejection::AlreadyImported);
                 }
-                context.record(AccountEvent::AccountStateImported {
+                aggregate.raise(AccountEvent::AccountStateImported {
                     opening_balance: *opening_balance,
                     provenance: provenance.clone(),
                 });
             }
             AccountCommand::CreditThenObserve { amount } => {
-                context.record(AccountEvent::Credited { amount: *amount });
-                let balance_after_credit = context.state().balance;
-                context.record(AccountEvent::BalanceObserved {
+                aggregate.raise(AccountEvent::Credited { amount: *amount });
+                let balance_after_credit = aggregate.state().balance;
+                aggregate.raise(AccountEvent::BalanceObserved {
                     balance: balance_after_credit,
                 });
             }
             AccountCommand::RecordThenReject => {
-                context.record(AccountEvent::Credited { amount: 100 });
+                aggregate.raise(AccountEvent::Credited { amount: 100 });
                 return Err(AccountRejection::Deliberate);
             }
             AccountCommand::NoOp => {}
@@ -308,9 +308,9 @@ impl CommandHandler<DepositMoney> for AutomaticAccountDefinition {
 
     fn handle(
         command: &DepositMoney,
-        context: &mut DecisionContext<'_, Self>,
+        aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        context.record(MoneyDeposited {
+        aggregate.raise(MoneyDeposited {
             amount: command.amount,
         });
         Ok(())
@@ -391,11 +391,14 @@ impl ForcedConflictStore {
 }
 
 #[async_trait]
-impl EventStore for ForcedConflictStore {
+impl EventHistory for ForcedConflictStore {
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         self.inner.load(stream_id).await
     }
+}
 
+#[async_trait]
+impl EventStore for ForcedConflictStore {
     async fn append(
         &self,
         stream_id: &StreamId,
@@ -416,6 +419,15 @@ impl EventStore for ForcedConflictStore {
             ));
         }
         self.inner.append(stream_id, expected_version, batch).await
+    }
+}
+
+struct EmptyEventHistory;
+
+#[async_trait]
+impl EventHistory for EmptyEventHistory {
+    async fn load(&self, _stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        Ok(Vec::new())
     }
 }
 
@@ -770,6 +782,105 @@ async fn executor_uses_derived_json_events_without_codec_configuration() {
         .await
         .expect("derived JSON events should replay without codec configuration");
     assert_eq!(second.events()[0].payload(), br#"{"amount":3}"#);
+}
+
+#[tokio::test]
+async fn simulation_replays_history_and_returns_encoded_predictions_without_appending() {
+    let stream = stream("simulated-account");
+    let store = InMemoryEventStore::new();
+    let executor = Executor::with_codec(store.clone(), AccountCodec);
+    executor
+        .execute::<Account, _>(
+            metadata(&stream, "simulation-seed", "import-ten"),
+            &AccountCommand::Import {
+                opening_balance: 10,
+                provenance: provenance(),
+            },
+        )
+        .await
+        .expect("simulation history seed should append");
+    let history_before = store.load(&stream).await.expect("load seeded history");
+    let simulation_metadata = metadata(
+        &stream,
+        "simulated-credit",
+        "simulated-credit-five-and-observe",
+    );
+
+    let outcome = executor
+        .simulate::<Account, _>(
+            simulation_metadata.clone(),
+            &AccountCommand::CreditThenObserve { amount: 5 },
+        )
+        .await
+        .expect("simulation should succeed");
+
+    assert_eq!(outcome.base_version(), StreamVersion::new(1));
+    let SimulationDecision::Accepted(events) = outcome.decision() else {
+        panic!("credit simulation should be accepted");
+    };
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].event_id(), &simulation_metadata.event_id(0));
+    assert_eq!(events[1].event_id(), &simulation_metadata.event_id(1));
+    assert_eq!(events[0].event_type(), "account-credited");
+    assert_eq!(events[1].event_type(), "account-balance-observed");
+    let credited: AmountPayload =
+        serde_json::from_slice(events[0].payload()).expect("predicted credit payload");
+    let observed: BalancePayload =
+        serde_json::from_slice(events[1].payload()).expect("predicted observation payload");
+    assert_eq!(credited.amount, 5);
+    assert_eq!(observed.balance, 15);
+    assert_eq!(
+        store.load(&stream).await.expect("load after simulation"),
+        history_before
+    );
+}
+
+#[tokio::test]
+async fn simulation_returns_typed_rejection_and_discards_pending_events_without_appending() {
+    let stream = stream("rejected-simulation");
+    let executor = Executor::with_codec(ForcedConflictStore::new(1), AccountCodec);
+
+    let outcome = executor
+        .simulate::<Account, _>(
+            metadata(&stream, "simulated-rejection", "record-then-reject"),
+            &AccountCommand::RecordThenReject,
+        )
+        .await
+        .expect("a domain rejection is a successful simulation");
+
+    assert_eq!(outcome.base_version(), StreamVersion::ZERO);
+    assert_eq!(
+        outcome.decision(),
+        &SimulationDecision::Rejected(AccountRejection::Deliberate)
+    );
+    assert_eq!(executor.store().append_attempts.load(Ordering::Relaxed), 0);
+    assert!(executor
+        .store()
+        .load(&stream)
+        .await
+        .expect("rejected simulation history")
+        .is_empty());
+}
+
+#[tokio::test]
+async fn simulation_accepts_zero_events_with_read_only_object_safe_history() {
+    let stream = stream("no-op-simulation");
+    let history: Arc<dyn EventHistory> = Arc::new(EmptyEventHistory);
+    let executor = Executor::with_codec(history, AccountCodec);
+
+    let outcome = executor
+        .simulate::<Account, _>(
+            metadata(&stream, "simulated-no-op", "no-op"),
+            &AccountCommand::NoOp,
+        )
+        .await
+        .expect("zero-event simulation should succeed");
+
+    assert_eq!(outcome.base_version(), StreamVersion::ZERO);
+    assert!(matches!(
+        outcome.decision(),
+        SimulationDecision::Accepted(events) if events.is_empty()
+    ));
 }
 
 #[tokio::test]
