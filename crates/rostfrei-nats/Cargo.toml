@@ -20,6 +20,7 @@ rostfrei-core = { path = "../rostfrei-core" }
 rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
 
 [dev-dependencies]
+rostfrei = { path = "../rostfrei" }
 rostfrei-testing = { path = "../rostfrei-testing" }
 
 [lints]

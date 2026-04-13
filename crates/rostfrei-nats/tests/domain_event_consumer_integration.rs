@@ -15,11 +15,12 @@ use async_nats::{
     HeaderMap, Request,
 };
 use async_trait::async_trait;
+use rostfrei::{Aggregate as RuntimeAggregate, Apply, Initialize};
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateType, CommittedDomainEvent, ContentFingerprint,
-    DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind,
-    EventStore, ExecutionMetadata, ExpectedVersion, NewEvent, OperationId, RecordedEvent, StreamId,
+    AggregateId, AggregateType, CommittedDomainEvent, ContentFingerprint, DomainEventDispatcher,
+    DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind, EventBatch,
+    EventCodec, EventStore, ExecutionMetadata, ExpectedVersion, JsonEventCodec, OperationId,
+    StreamId,
 };
 use rostfrei_messaging_core::{ApplicationName, RetryDelay};
 use rostfrei_nats::{
@@ -29,66 +30,48 @@ use rostfrei_nats::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TestEvent(String);
+#[derive(rostfrei::BoundedContext)]
+#[rostfrei(id = "domain-event-consumer", label = "Domain event consumer")]
+struct TestContext;
 
-struct TestAggregate;
+#[derive(rostfrei::DomainIdentity)]
+#[rostfrei(owner = TestRoot)]
+struct TestId(String);
 
-impl Aggregate for TestAggregate {
-    type State = Self;
-    type Event = TestEvent;
-
-    const AGGREGATE_TYPE: &'static str = "DomainEventConsumerAggregate";
-
-    fn initial(_stream_id: &StreamId) -> Self::State {
-        Self
-    }
-
-    fn apply(_state: &mut Self::State, _event: &Self::Event) {}
+#[derive(rostfrei::Entity)]
+#[rostfrei(id = "consumer", label = "Consumer", owner = TestAggregate)]
+struct TestRoot {
+    #[rostfrei(identity)]
+    id: TestId,
 }
 
-#[derive(Serialize, Deserialize)]
-struct TestPayload {
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, rostfrei::DomainEvent)]
+#[rostfrei(id = "test-event", label = "Test event")]
+struct TestEvent {
     value: String,
 }
 
-struct TestCodec;
+#[derive(rostfrei::Aggregate)]
+#[rostfrei(
+    id = "consumer",
+    label = "Consumer",
+    context = TestContext,
+    root = TestRoot,
+    events = [TestEvent]
+)]
+struct TestAggregate;
 
-impl EventCodec<TestAggregate> for TestCodec {
-    fn encode(
-        &self,
-        event: &TestEvent,
-        event_id: rostfrei_core::EventId,
-    ) -> Result<NewEvent, EventCodecError> {
-        let payload = serde_json::to_vec(&TestPayload {
-            value: event.0.clone(),
-        })
-        .map_err(|error| {
-            EventCodecError::new(EventCodecErrorKind::EncodingFailed, error.to_string())
-        })?;
-        NewEvent::new(event_id, "test-event", 1, payload).map_err(|error| {
-            EventCodecError::new(EventCodecErrorKind::InvalidEnvelope, error.to_string())
-        })
+impl Initialize<TestAggregate> for TestRoot {
+    fn initialize(stream_id: &StreamId) -> Self {
+        Self {
+            id: TestId(stream_id.aggregate_id().as_str().to_owned()),
+        }
     }
+}
 
-    fn decode(&self, event: &RecordedEvent) -> Result<TestEvent, EventCodecError> {
-        if event.event_type() != "test-event" {
-            return Err(EventCodecError::new(
-                EventCodecErrorKind::UnknownEventType,
-                "unknown test event",
-            ));
-        }
-        if event.schema_version() != 1 {
-            return Err(EventCodecError::new(
-                EventCodecErrorKind::UnsupportedSchemaVersion,
-                "test events support schema version 1",
-            ));
-        }
-        serde_json::from_slice::<TestPayload>(event.payload())
-            .map(|payload| TestEvent(payload.value))
-            .map_err(|error| {
-                EventCodecError::new(EventCodecErrorKind::MalformedPayload, error.to_string())
-            })
+impl Apply<TestEvent> for TestRoot {
+    fn apply(&mut self, _event: &TestEvent) {
+        let _ = self.id.0.len();
     }
 }
 
@@ -148,7 +131,7 @@ impl DomainEventHandler<TestEvent> for RecordingHandler {
         }
         self.sender
             .send(HandledEvent {
-                value: event.event().0.clone(),
+                value: event.event().value.clone(),
                 event_id: event.recorded().event_id().as_str().to_owned(),
                 stream_id: event.recorded().stream_id().clone(),
                 ordinal: event.recorded().commit_event_ordinal(),
@@ -449,11 +432,7 @@ async fn connect_consumer(
 ) -> NatsDomainEventConsumer {
     let mut dispatcher = DomainEventDispatcher::new();
     dispatcher
-        .register_with_codec::<TestAggregate, TestEvent, _, _>(
-            "test-event",
-            Arc::new(TestCodec),
-            handler,
-        )
+        .register::<TestAggregate, TestEvent, _>("test-event", handler)
         .expect("domain-event registration");
     NatsDomainEventConsumer::connect(context, event_store, config, Arc::new(dispatcher))
         .await
@@ -480,7 +459,8 @@ fn consumer_config(
 
 fn stream(id: &str) -> StreamId {
     StreamId::new(
-        AggregateType::new(TestAggregate::AGGREGATE_TYPE).expect("aggregate type"),
+        AggregateType::new(<TestAggregate as RuntimeAggregate>::aggregate_type().as_ref())
+            .expect("aggregate type"),
         AggregateId::new(id).expect("aggregate ID"),
     )
 }
@@ -495,12 +475,16 @@ fn batch(stream: &StreamId, operation: &str, values: &[&str]) -> EventBatch {
         .iter()
         .enumerate()
         .map(|(ordinal, value)| {
-            TestCodec
-                .encode(
-                    &TestEvent((*value).to_owned()),
-                    metadata.event_id(u32::try_from(ordinal).expect("small test commit")),
-                )
-                .expect("encoded test event")
+            let event: <TestAggregate as RuntimeAggregate>::Event = TestEvent {
+                value: (*value).to_owned(),
+            }
+            .into();
+            <JsonEventCodec as EventCodec<TestAggregate>>::encode(
+                &JsonEventCodec,
+                &event,
+                metadata.event_id(u32::try_from(ordinal).expect("small test commit")),
+            )
+            .expect("encoded test event")
         })
         .collect();
     EventBatch::new(

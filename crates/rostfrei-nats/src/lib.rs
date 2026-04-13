@@ -10,6 +10,7 @@ mod messaging_config;
 mod provisioning;
 mod publish;
 mod query;
+mod stream_policy;
 
 pub use connection::{connect, ConnectionHealth, NatsConnection};
 pub use consumer::{NatsConsumerFactory, QuarantineRecord, MAX_QUARANTINE_RECORD_BYTES};

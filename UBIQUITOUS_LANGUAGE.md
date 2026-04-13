@@ -22,7 +22,7 @@ constraint.
 
 | Term | Definition | Aliases to avoid |
 | --- | --- | --- |
-| **Application** | The top-level runtime and messaging namespace supplied once by an adopter. Its validated name is the first token in every NATS subject. | Owner, product prefix |
+| **Application** | The top-level runtime and messaging namespace supplied once by an adopter. Its validated name is the first token in every rostfrei business, domain-event, and quarantine subject. | Owner, product prefix |
 | **Bounded context** | A named domain language and ownership boundary inside one application. It scopes business addresses and authoritative domain-event storage. | Module, namespace, service |
 | **Application messaging** | The derived command, integration-event, query, and quarantine conventions for one application. | Custom topology, message bus setup |
 

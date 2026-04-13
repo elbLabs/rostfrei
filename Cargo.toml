@@ -21,7 +21,7 @@ rust-version = "1.93"
 license = "EUPL-1.2"
 
 [workspace.dependencies]
-async-nats = { version = "=0.50.0", default-features = false, features = ["jetstream", "ring", "server_2_10", "server_2_12"] }
+async-nats = { version = "=0.50.0", default-features = false, features = ["jetstream", "ring", "server_2_10", "server_2_11", "server_2_12", "server_2_14"] }
 async-trait = "0.1"
 base64 = "0.22"
 futures-util = "0.3"

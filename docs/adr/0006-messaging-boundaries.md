@@ -23,7 +23,8 @@ Core NATS inboxes and never write to JetStream.
 
 ## Consequences
 
-Applications choose business addresses and delivery policy without importing
+Applications choose business message names and delivery policy within
+rostfrei's application-first address conventions without importing
 `async-nats`. Broker-specific acknowledgements and errors remain available from
 the adapter where operational code needs them, while ordinary application ports
 stay transport-neutral.

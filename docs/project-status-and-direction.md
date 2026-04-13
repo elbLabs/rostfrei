@@ -17,7 +17,8 @@ generated from inspectable contracts and remain optional.
 
 ## Current implementation
 
-The workspace currently contains ten crates:
+The workspace currently contains ten framework crates plus the bike-rental
+example Cargo package:
 
 | Crate | Responsibility |
 | --- | --- |
@@ -85,10 +86,10 @@ service-startup side effect.
 ## Nexus integration
 
 An integrating application currently adopts rostfrei as its messaging
-foundation through a thin policy facade. ADR 0015 makes that facade temporary:
-rostfrei now owns normal address conventions and topology defaults, while the
-application supplies its name, business message names, environment variables,
-and operator composition.
+foundation through a thin policy facade. ADR 0015 narrows that facade: rostfrei
+owns normal address conventions and topology defaults, while the application
+supplies its name, business message names, environment variables, deployment
+overrides, and operator composition.
 
 The integration does not yet run a production aggregate through rostfrei's
 `Executor`, `EventStore`, or `NatsEventStore`. No production aggregate is being
@@ -96,17 +97,16 @@ converted solely to demonstrate the framework.
 
 ## Verification
 
-The current local implementation has passed workspace tests and strict clippy,
-real NATS 2.12 event-store tests, concurrent append tests, the 1,000-event batch
-boundary, atomic capacity-failure tests, exact replay contracts, focused Nexus
-tests, integration architecture tests, and destructive NATS tests including
-quarantine behavior.
+The verification suite includes workspace tests and strict Clippy, concurrent
+append tests, the 1,000-event batch boundary, atomic capacity-failure tests,
+exact replay contracts, and destructive NATS tests including quarantine
+behavior. Real-server tests require `ROSTFREI_NATS_URL`; when it is absent they
+are reported as environment-dependent skips rather than successful NATS runs.
 
-The work is not released. rostfrei has no configured Git remote, recent
-changes remain local, and Nexus still uses temporary local path dependencies.
-The Nexus release requires an operator-provided Git URL and a pin to one full
-rostfrei commit SHA. Database-backed Nexus SQLx tests also require
-`DATABASE_URL`.
+The work is not tagged or released. rostfrei has a configured Git remote; Nexus
+still uses temporary local path dependencies and must pin one reviewed full
+rostfrei commit SHA during its integration task. Database-backed Nexus SQLx
+tests also require `DATABASE_URL`.
 
 ## Agreed direction
 

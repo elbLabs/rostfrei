@@ -50,7 +50,7 @@ permanent, execution deterministic, and domain metadata machine-readable.
 | --- | --- |
 | Aggregate and executor kernel | Implemented and tested |
 | In-memory EventStore reference adapter | Implemented and contract-tested |
-| NATS JetStream EventStore | Implemented and tested against NATS 2.12 |
+| NATS JetStream EventStore | Implemented; real-server contract tests require NATS 2.12 and `ROSTFREI_NATS_URL` |
 | Commands, integration events, and queries | Implemented as broker-neutral contracts with NATS adapters |
 | Retry, durable consumption, and quarantine | Implemented |
 | Aggregate scenarios and EventStore conformance tests | Implemented |
@@ -61,8 +61,8 @@ permanent, execution deterministic, and domain metadata machine-readable.
 | Projection orchestration, workflows, snapshots, and execution journals | Deliberately deferred |
 
 The foundation is working and verified locally but has not been released. The
-repository still needs a configured remote, a reviewed release commit, final CI,
-and an initial tagged or pinned revision.
+repository has a configured remote and still needs a reviewed release commit,
+final CI, and an initial tagged or pinned revision.
 
 ## Ubiquitous language
 
@@ -108,10 +108,12 @@ This vocabulary prevents several dangerous ambiguities:
 
 ## Implemented architecture
 
-The current workspace has nine crates with deliberately layered responsibilities.
+The current workspace has ten framework crates plus the bike-rental example
+Cargo package, with deliberately layered responsibilities.
 
 | Crate | Responsibility |
 | --- | --- |
+| `rostfrei` | Application facade for the compiled domain model, generated event runtime, registry, kernel, and public macros |
 | `rostfrei-core` | Aggregates, command execution, replay, identities, event envelopes, and EventStore ports |
 | `rostfrei-domain` | Compiled domain identities, structure, behavior metadata, validation, and model projection |
 | `rostfrei-domain-macros` | Derives and attributes for the compiled domain language |
@@ -127,8 +129,10 @@ flowchart TB
     subgraph Application[Application domain]
         Aggregate[Aggregate]
         Handler[Typed command handlers]
-        Codec[Application event codec]
+        Codec[Generated default event codec]
     end
+
+    Facade[rostfrei facade]
 
     subgraph Kernel[Implemented explicit kernel]
         Core[rostfrei-core]
@@ -141,9 +145,10 @@ flowchart TB
         Testing[rostfrei-testing]
     end
 
-    Aggregate --> Core
-    Handler --> Core
-    Codec --> Core
+    Aggregate --> Facade
+    Handler --> Facade
+    Codec --> Facade
+    Facade --> Core
     Memory --> Core
     Nats --> Core
     Nats --> Messaging
@@ -418,10 +423,14 @@ entirely.
 | [0005](adr/0005-nats-event-store.md) | One JetStream message per domain event with ADR-50 atomic commits | Provides authoritative replayable history without KV storage |
 | [0006](adr/0006-messaging-boundaries.md) | Broker-neutral messaging with broker-owned adapter mechanics | Applications do not couple business policy to `async-nats` |
 | [0007](adr/0007-legacy-import.md) | Existing state enters through truthful import events | Preserves historical honesty and provenance |
+| [0008](adr/0008-nexus-release-strategy.md) | Independent release and thin integration facade | Applications compose rostfrei without duplicating its generic adapters |
 | [0009](adr/0009-development-platform-layers.md) | Optional platform layers around the stable kernel | Higher-level product capabilities do not compromise the foundation |
 | [0010](adr/0010-domain-descriptors-registration-and-macros.md) | Shared descriptors and automatic generated registration | Runtime, tests, UI, documentation, and AI share one declared model |
 | [0011](adr/0011-inspection-simulation-and-dispatch.md) | Inspect, simulate, and dispatch are distinct capabilities | Real histories can be explored safely without accidental mutation |
 | [0012](adr/0012-studio-and-ai-control-plane.md) | Studio and AI share one secured control plane | Humans and AI receive the same behavior and security constraints |
+| [0013](adr/0013-domain-event-handlers.md) | Typed post-commit domain-event handlers and durable NATS dispatch | Side effects consume committed facts without entering aggregate decisions |
+| [0014](adr/0014-compiled-domain-model.md) | The domain compiler is rostfrei's canonical optional platform model | One declaration drives metadata and the generated aggregate runtime |
+| [0015](adr/0015-application-scoped-nats-conventions.md) | Application-first subjects and derived NATS topology | Applications sharing an account retain disjoint messaging and event storage |
 
 ## Known boundaries and deliberate omissions
 
