@@ -1,10 +1,9 @@
 use crate::{
-    ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, DomainCommandId,
-    DomainErrorId, DomainEventId, ValueObjectId,
+    ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, DomainErrorId,
+    DomainEventId, ValueObjectId,
 };
 
 pub(super) struct ActionReferenceInventory {
-    domain_commands: Vec<DomainCommandId>,
     domain_events: Vec<DomainEventId>,
     domain_errors: Vec<DomainErrorId>,
     value_objects: Vec<ValueObjectId>,
@@ -12,13 +11,11 @@ pub(super) struct ActionReferenceInventory {
 
 impl ActionReferenceInventory {
     pub(super) fn new(
-        domain_commands: Vec<DomainCommandId>,
         domain_events: Vec<DomainEventId>,
         domain_errors: Vec<DomainErrorId>,
         value_objects: Vec<ValueObjectId>,
     ) -> Self {
         Self {
-            domain_commands,
             domain_events,
             domain_errors,
             value_objects,
@@ -59,11 +56,6 @@ fn validate_input_reference(
         ActionInputDescriptor::ValueObject(id) => {
             if !inventory.value_objects.contains(&id) {
                 missing_reference(action_id, id, "input", "value_objects");
-            }
-        }
-        ActionInputDescriptor::DomainCommand(id) => {
-            if !inventory.domain_commands.contains(&id) {
-                missing_reference(action_id, id, "input", "commands");
             }
         }
     }

@@ -19,8 +19,8 @@ pub use envelope::{
     MAX_BATCH_PAYLOAD_LEN, MAX_EVENTS_PER_BATCH, MAX_EVENT_PAYLOAD_LEN, MAX_EVENT_TYPE_LEN,
 };
 pub use executor::{
-    ExecutionError, ExecutionOutcome, Executor, SimulationDecision, SimulationError,
-    SimulationOutcome,
+    CommandExecutionError, CommandOutcome, CommandReceipt, CommandResult, Executor,
+    SimulationDecision, SimulationError, SimulationOutcome,
 };
 pub use identity::{
     AggregateId, AggregateType, CommitId, ContentFingerprint, EventId, ExecutionMetadata,

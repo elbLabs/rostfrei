@@ -95,6 +95,14 @@ impl ReceiptActions for Receipt {
 #[domain(id = "coordinate-work", label = "Coordinate work", owner = Coordinator)]
 pub struct CoordinateWork;
 
+#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
+#[domain(
+    id = "coordinate-work-input",
+    label = "Coordinate work input",
+    owner = Operations
+)]
+pub struct CoordinateWorkInput;
+
 #[derive(DomainError, Clone, Copy, Debug, Eq, PartialEq)]
 #[domain(
     id = "coordination-failed",
@@ -115,7 +123,7 @@ mod contracts {
 
         #[action(id = "coordinate", label = "Coordinate work")]
         fn coordinate(
-            input: super::CoordinateWork,
+            input: super::CoordinateWorkInput,
         ) -> Result<super::WorkStarted, super::CoordinationFailed>;
 
         #[action(id = "planned-events", label = "Planned events")]
@@ -149,7 +157,7 @@ impl contracts::Coordination for Coordinator {
         true
     }
 
-    fn coordinate(_input: CoordinateWork) -> Result<WorkStarted, CoordinationFailed> {
+    fn coordinate(_input: CoordinateWorkInput) -> Result<WorkStarted, CoordinationFailed> {
         Ok(WorkStarted)
     }
 
@@ -250,7 +258,7 @@ impl ActionGroupType for DuplicateCoordinatorExtensionActions {
 fn public_domain_service_contracts_are_invocable_with_zero_and_one_input() {
     assert!(<Coordinator as contracts::Coordination>::available());
     assert_eq!(
-        <Coordinator as contracts::Coordination>::coordinate(CoordinateWork),
+        <Coordinator as contracts::Coordination>::coordinate(CoordinateWorkInput),
         Ok(WorkStarted)
     );
     assert_eq!(
@@ -306,8 +314,8 @@ fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() 
     );
     assert_eq!(
         contracts[0][1].input,
-        Some(ActionInputDescriptor::DomainCommand(
-            CoordinateWork::DESCRIPTOR.id
+        Some(ActionInputDescriptor::ValueObject(
+            CoordinateWorkInput::DESCRIPTOR.id
         ))
     );
     assert_eq!(
@@ -354,7 +362,7 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
         aggregates: [Work],
         entities: [WorkRoot],
         identities: [WorkId],
-        value_objects: [Receipt],
+        value_objects: [Receipt, CoordinateWorkInput],
         services: [Coordinator, OmittedActionsService, EmptyActionsService],
         commands: [CoordinateWork],
         errors: [CoordinationFailed],

@@ -228,7 +228,7 @@ impl DomainModule for OtherTestDomainModule {
 fn builder(history: Arc<dyn EventHistory>) -> ControlPlaneBuilder {
     let mut registry = DomainRegistry::new();
     registry.register_module::<TestDomainModule>().unwrap();
-    ControlPlaneBuilder::new(history, registry)
+    ControlPlaneBuilder::with_registry(history, registry)
 }
 
 fn control_plane(maximum_operations: usize) -> ControlPlane {
@@ -425,7 +425,8 @@ async fn runtime_bindings_scope_local_command_names_to_the_aggregate() {
     let mut registry = DomainRegistry::new();
     registry.register_module::<TestDomainModule>().unwrap();
     registry.register_module::<OtherTestDomainModule>().unwrap();
-    let mut builder = ControlPlaneBuilder::new(Arc::new(InMemoryEventStore::new()), registry);
+    let mut builder =
+        ControlPlaneBuilder::with_registry(Arc::new(InMemoryEventStore::new()), registry);
     builder.register::<TestCommand, _>(TestWireCodec).unwrap();
     builder
         .register::<OtherTestCommand, _>(TestWireCodec)
@@ -459,7 +460,8 @@ fn runtime_binding_rejects_a_registry_descriptor_for_a_different_command_contrac
     registry
         .register_module::<MismatchedTestDomainModule>()
         .unwrap();
-    let mut builder = ControlPlaneBuilder::new(Arc::new(InMemoryEventStore::new()), registry);
+    let mut builder =
+        ControlPlaneBuilder::with_registry(Arc::new(InMemoryEventStore::new()), registry);
 
     assert!(matches!(
         builder.register::<TestCommand, _>(TestWireCodec),
@@ -473,15 +475,11 @@ fn runtime_binding_rejects_a_registry_descriptor_for_a_different_command_contrac
 #[test]
 fn runtime_bindings_require_exact_registry_coverage() {
     let history: Arc<dyn EventHistory> = Arc::new(InMemoryEventStore::new());
-    let mut empty_registry_builder =
-        ControlPlaneBuilder::new(Arc::clone(&history), DomainRegistry::new());
-    assert!(matches!(
-        empty_registry_builder.register::<TestCommand, _>(TestWireCodec),
-        Err(RuntimeRegistrationError::MissingDescriptor {
-            command: COMMAND_NAME,
-            schema_version: 1,
-        })
-    ));
+    let mut empty_registry_builder = ControlPlaneBuilder::new(Arc::clone(&history));
+    empty_registry_builder
+        .register::<TestCommand, _>(TestWireCodec)
+        .unwrap();
+    empty_registry_builder.build().unwrap();
 
     let missing_binding = builder(Arc::clone(&history));
     assert!(matches!(

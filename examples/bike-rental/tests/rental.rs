@@ -1,6 +1,6 @@
 use bike_rental::rental::{
     BicycleAvailability, BicycleCondition, BicycleId, BicycleRented, BicycleStatus,
-    BicycleUnavailable, FleetId, ImportedBicycle, RentBicycle, RentalFleetActions,
+    BicycleUnavailable, FleetId, ImportedBicycle, RentBicycleInput, RentalFleetActions,
     RentalFleetAggregate, RentalFleetImported,
 };
 use rostfrei::{AggregateInstance, EventVariant, StreamAggregateId, StreamAggregateType, StreamId};
@@ -33,9 +33,7 @@ fn rents_an_available_serviceable_bicycle() {
     let bicycle_id = BicycleId::new("bike-42").unwrap();
 
     fleet
-        .rent_bicycle(&RentBicycle {
-            bicycle_id: bicycle_id.clone(),
-        })
+        .rent_bicycle(RentBicycleInput::new(bicycle_id.clone()))
         .unwrap();
 
     let event = EventVariant::<BicycleRented>::event(&fleet.uncommitted_events()[0]).unwrap();
@@ -56,9 +54,7 @@ fn rejects_an_unavailable_bicycle_without_changing_it() {
     let bicycle_id = BicycleId::new("bike-42").unwrap();
 
     let error = fleet
-        .rent_bicycle(&RentBicycle {
-            bicycle_id: bicycle_id.clone(),
-        })
+        .rent_bicycle(RentBicycleInput::new(bicycle_id.clone()))
         .unwrap_err();
 
     assert_eq!(error, BicycleUnavailable { bicycle_id });

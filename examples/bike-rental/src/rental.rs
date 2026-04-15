@@ -1,6 +1,6 @@
 use rostfrei::{
-    Aggregate, AggregateInstance, BoundedContext, DomainCommand, DomainError, DomainEvent,
-    DomainIdentity, Entity, ValueObject, domain_actions, domain_decisions, domain_queries,
+    Aggregate, BoundedContext, DomainCommand, DomainError, DomainEvent, DomainIdentity, Entity,
+    ValueObject, domain_actions, domain_decisions, domain_queries,
 };
 use serde::{Deserialize, Serialize};
 
@@ -191,13 +191,27 @@ pub(crate) struct RentalEligibilityInput {
 
 #[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
 #[domain(
-    id = "rental-eligibility",
-    label = "Rental eligibility",
+    id = "rental-denial-reason",
+    label = "Rental denial reason",
     owner = RentalFleetAggregate
 )]
-pub(crate) enum RentalEligibility {
-    Eligible,
-    Ineligible,
+pub(crate) enum RentalDenialReason {
+    AlreadyRented,
+    MaintenanceRequired,
+}
+
+#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
+#[domain(
+    id = "rental-eligibility-decision",
+    label = "Rental eligibility decision",
+    owner = RentalFleetAggregate
+)]
+pub(crate) enum RentalEligibilityDecision {
+    Allowed,
+    Denied {
+        #[domain(value_object)]
+        reason: RentalDenialReason,
+    },
 }
 
 #[derive(DomainCommand, Clone, Debug, Eq, PartialEq)]
@@ -206,11 +220,29 @@ pub(crate) enum RentalEligibility {
     label = "Rent bicycle",
     owner = RentalFleetAggregate,
     rejection = BicycleUnavailable,
-    json
+    json,
+    runtime
 )]
 pub struct RentBicycle {
     #[domain(identity)]
     pub bicycle_id: BicycleId,
+}
+
+#[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
+#[domain(
+    id = "rent-bicycle-input",
+    label = "Rent bicycle input",
+    owner = RentalFleetAggregate
+)]
+pub struct RentBicycleInput {
+    #[domain(identity)]
+    bicycle_id: BicycleId,
+}
+
+impl RentBicycleInput {
+    pub fn new(bicycle_id: BicycleId) -> Self {
+        Self { bicycle_id }
+    }
 }
 
 #[derive(ValueObject, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -226,6 +258,23 @@ pub struct ImportedBicycle {
     pub status: BicycleStatus,
     #[domain(value_object)]
     pub condition: BicycleCondition,
+}
+
+#[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
+#[domain(
+    id = "import-rental-fleet-input",
+    label = "Import rental fleet input",
+    owner = RentalFleetAggregate
+)]
+pub struct ImportRentalFleetInput {
+    #[domain(value_object)]
+    bicycles: Vec<ImportedBicycle>,
+}
+
+impl ImportRentalFleetInput {
+    pub fn new(bicycles: Vec<ImportedBicycle>) -> Self {
+        Self { bicycles }
+    }
 }
 
 #[derive(DomainEvent, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -263,17 +312,21 @@ pub struct BicycleUnavailable {
 #[domain_decisions(aggregate)]
 pub(crate) trait RentalEligibilityDecisions {
     #[decision(id = "assess-rental-eligibility", label = "Assess rental eligibility")]
-    fn assess_rental_eligibility(input: RentalEligibilityInput) -> RentalEligibility;
+    fn assess_rental_eligibility(input: RentalEligibilityInput) -> RentalEligibilityDecision;
 }
 
 impl RentalEligibilityDecisions for RentalFleetAggregate {
-    fn assess_rental_eligibility(input: RentalEligibilityInput) -> RentalEligibility {
-        if input.status == BicycleStatus::Available
-            && input.condition == BicycleCondition::Serviceable
-        {
-            RentalEligibility::Eligible
+    fn assess_rental_eligibility(input: RentalEligibilityInput) -> RentalEligibilityDecision {
+        if input.status == BicycleStatus::Rented {
+            RentalEligibilityDecision::Denied {
+                reason: RentalDenialReason::AlreadyRented,
+            }
+        } else if input.condition == BicycleCondition::MaintenanceRequired {
+            RentalEligibilityDecision::Denied {
+                reason: RentalDenialReason::MaintenanceRequired,
+            }
         } else {
-            RentalEligibility::Ineligible
+            RentalEligibilityDecision::Allowed
         }
     }
 }
@@ -290,62 +343,57 @@ impl BicycleStatusActions for Bicycle {
     }
 }
 
-#[domain_actions(aggregate)]
+#[domain_actions(aggregate(instance = RentalFleetActions))]
 pub trait RentalFleetActionContract {
+    #[action(id = "import-rental-fleet", label = "Import rental fleet")]
+    fn import_rental_fleet(
+        root: &RentalFleet,
+        input: ImportRentalFleetInput,
+    ) -> RentalFleetImported;
+
     #[action(id = "rent-bicycle", label = "Rent bicycle")]
     fn rent_bicycle(
-        root: &mut RentalFleet,
-        input: RentBicycle,
+        root: &RentalFleet,
+        input: RentBicycleInput,
     ) -> Result<BicycleRented, BicycleUnavailable>;
 }
 
 impl RentalFleetActionContract for RentalFleetAggregate {
+    fn import_rental_fleet(
+        root: &RentalFleet,
+        input: ImportRentalFleetInput,
+    ) -> RentalFleetImported {
+        RentalFleetImported {
+            fleet_id: root.fleet_id.clone(),
+            bicycles: input.bicycles,
+        }
+    }
+
     fn rent_bicycle(
-        root: &mut RentalFleet,
-        input: RentBicycle,
+        root: &RentalFleet,
+        input: RentBicycleInput,
     ) -> Result<BicycleRented, BicycleUnavailable> {
-        let event = decide_rental(root, &input)?;
-        Ok(event)
-    }
-}
-
-pub trait RentalFleetActions {
-    fn rent_bicycle(&mut self, input: &RentBicycle) -> Result<(), BicycleUnavailable>;
-}
-
-impl RentalFleetActions for AggregateInstance<RentalFleetAggregate> {
-    fn rent_bicycle(&mut self, input: &RentBicycle) -> Result<(), BicycleUnavailable> {
-        let event = decide_rental(self.state(), input)?;
-        self.raise(event);
-        Ok(())
-    }
-}
-
-pub(crate) fn decide_rental(
-    root: &RentalFleet,
-    input: &RentBicycle,
-) -> Result<BicycleRented, BicycleUnavailable> {
-    let bicycle = root
-        .bicycles
-        .iter()
-        .find(|bicycle| bicycle.bicycle_id == input.bicycle_id)
-        .ok_or_else(|| BicycleUnavailable {
-            bicycle_id: input.bicycle_id.clone(),
-        })?;
-    let eligibility = RentalEligibilityInput {
-        status: bicycle.status,
-        condition: bicycle.condition,
-    };
-    if RentalFleetAggregate::assess_rental_eligibility(eligibility) != RentalEligibility::Eligible {
-        return Err(BicycleUnavailable {
-            bicycle_id: input.bicycle_id.clone(),
+        let bicycle = root
+            .bicycles
+            .iter()
+            .find(|bicycle| bicycle.bicycle_id == input.bicycle_id)
+            .ok_or_else(|| BicycleUnavailable {
+                bicycle_id: input.bicycle_id.clone(),
+            })?;
+        let decision = Self::assess_rental_eligibility(RentalEligibilityInput {
+            status: bicycle.status,
+            condition: bicycle.condition,
         });
+        match decision {
+            RentalEligibilityDecision::Allowed => Ok(BicycleRented {
+                fleet_id: root.fleet_id.clone(),
+                bicycle_id: input.bicycle_id,
+            }),
+            RentalEligibilityDecision::Denied { .. } => Err(BicycleUnavailable {
+                bicycle_id: input.bicycle_id,
+            }),
+        }
     }
-
-    Ok(BicycleRented {
-        fleet_id: root.fleet_id.clone(),
-        bicycle_id: input.bicycle_id.clone(),
-    })
 }
 
 #[domain_queries(group = BicycleAvailabilityQueries)]
@@ -373,4 +421,29 @@ impl RentalFleetAggregate {
 fn non_empty(value: impl Into<String>) -> Option<String> {
     let value = value.into();
     (!value.trim().is_empty() && value.trim() == value).then_some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rental_eligibility_returns_a_typed_denial_reason() {
+        assert_eq!(
+            RentalFleetAggregate::assess_rental_eligibility(RentalEligibilityInput {
+                status: BicycleStatus::Available,
+                condition: BicycleCondition::MaintenanceRequired,
+            }),
+            RentalEligibilityDecision::Denied {
+                reason: RentalDenialReason::MaintenanceRequired,
+            }
+        );
+        assert_eq!(
+            RentalFleetAggregate::assess_rental_eligibility(RentalEligibilityInput {
+                status: BicycleStatus::Available,
+                condition: BicycleCondition::Serviceable,
+            }),
+            RentalEligibilityDecision::Allowed
+        );
+    }
 }

@@ -31,19 +31,20 @@ reflection are not authoritative registration mechanisms.
 ## Implementation staging
 
 The first implemented vertical slice deliberately stops before automatic linked
-registration. It defines command metadata and generated domain modules, and
-production applications explicitly call `DomainRegistry::register_module` for
-each module. Registration uses deterministic storage, validates a complete
-module before mutation, and does not use `inventory`, linker-time collection,
+registration. Domain commands derive their runtime definitions, and registering
+an executable control-plane binding inserts its descriptor directly into the
+registry. Generated domain modules remain available for applications that need
+an explicit grouping, but are not required for command execution. Registration
+uses deterministic storage and does not use `inventory`, linker-time collection,
 global mutable state, or runtime reflection.
 
 ADR 0014 subsequently absorbed the richer compiled domain model and Studio into
 rostfrei. Model-backed commands now retain their structural domain descriptor
-when registered through `rostfrei-domain-runtime`. The runtime still does not
-deserialize or route commands, erase or invoke handlers, subscribe to a bus, or
-discover modules automatically. Automatic linked registration in the broader
-decision remains deferred until its runtime and deployment tradeoffs are
-addressed explicitly.
+when registered through `rostfrei-domain-runtime`. The control plane can
+deserialize and simulate explicitly bound commands, but the runtime still does
+not discover handlers or modules automatically, subscribe to a bus, or enable
+live dispatch. Automatic linked registration in the broader decision remains
+deferred until its runtime and deployment tradeoffs are addressed explicitly.
 
 ## Consequences
 

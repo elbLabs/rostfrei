@@ -312,7 +312,6 @@ impl DomainModelBuilder {
 
     pub fn finish(self) -> Value {
         let inventory = ActionReferenceInventory::new(
-            self.domain_commands.iter().map(|(id, _)| *id).collect(),
             self.domain_events.iter().map(|(id, _)| *id).collect(),
             self.domain_errors.iter().map(|(id, _)| *id).collect(),
             self.value_objects.iter().map(|(id, _)| *id).collect(),

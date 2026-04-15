@@ -24,7 +24,6 @@ async fn fixture() -> (ControlPlane, InMemoryEventStore) {
     seed_demo(&store).await.unwrap();
     let history: Arc<dyn EventHistory> = Arc::new(store.clone());
     let mut builder = control_plane_builder(history)
-        .unwrap()
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder.register_json::<RentBicycle>().unwrap();
     (builder.build().unwrap(), store)

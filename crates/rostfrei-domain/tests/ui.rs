@@ -103,7 +103,7 @@ fn checks_domain_service_action_contracts() {
     cases.compile_fail("tests/ui/domain_service_action/too_many_inputs.rs");
     cases.compile_fail("tests/ui/domain_service_action/bad_input_name.rs");
     cases.compile_fail("tests/ui/domain_service_action/bad_input_pattern.rs");
-    cases.compile_fail("tests/ui/domain_service_action/wrong_command_owner.rs");
+    cases.compile_fail("tests/ui/domain_service_action/command_input.rs");
     cases.compile_fail("tests/ui/domain_service_action/wrong_error_owner.rs");
     cases.compile_fail("tests/ui/domain_service_action/direct_cross_context_event.rs");
     cases.compile_fail("tests/ui/domain_service_action/nested_cross_context_event.rs");

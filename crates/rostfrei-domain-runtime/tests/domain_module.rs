@@ -36,8 +36,21 @@ struct CatalogRoot {
 struct CatalogAggregate;
 
 #[derive(DomainCommand)]
-#[domain(id = "open-catalog", label = "Open catalog", owner = CatalogAggregate)]
+#[domain(
+    id = "open-catalog",
+    label = "Open catalog",
+    owner = CatalogAggregate,
+    runtime
+)]
 struct OpenCatalog;
+
+#[derive(DomainCommand)]
+#[domain(
+    id = "describe-catalog",
+    label = "Describe catalog",
+    owner = CatalogAggregate
+)]
+struct DescribeCatalog;
 
 #[derive(Deserialize, DomainEvent, Serialize)]
 #[domain(id = "catalog-opened", label = "Catalog opened")]
@@ -97,4 +110,25 @@ fn registers_runtime_metadata_from_the_domain_command() {
         "catalog/catalog"
     );
     assert_eq!(CatalogAggregate::DESCRIPTOR.id.local, "catalog");
+}
+
+#[test]
+fn domain_commands_can_register_without_a_runtime_module() {
+    let mut registry = DomainRegistry::new();
+
+    registry.register_command::<OpenCatalog>().unwrap();
+
+    assert_eq!(registry.modules().count(), 0);
+    assert_eq!(
+        registry
+            .command("catalog/catalog", "open-catalog", 1)
+            .unwrap()
+            .domain_command(),
+        Some(&OpenCatalog::DESCRIPTOR)
+    );
+}
+
+#[test]
+fn command_metadata_does_not_require_an_executable_handler() {
+    assert_eq!(DescribeCatalog::DESCRIPTOR.id.local, "describe-catalog");
 }

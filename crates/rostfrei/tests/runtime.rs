@@ -2,12 +2,12 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use rostfrei::{
-    Aggregate as RuntimeAggregate, AggregateInstance, Apply, CommandHandler, CommittedDomainEvent,
-    ContentFingerprint, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
-    DomainEventHandlerError, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind,
-    EventStore, EventVariant, ExecutionError, ExecutionMetadata, Executor, ExpectedVersion,
-    InMemoryEventStore, Initialize, NewEvent, OperationId, RecordedEvent, StreamAggregateId,
-    StreamId,
+    Aggregate as RuntimeAggregate, AggregateInstance, Apply, CommandExecutionError, CommandHandler,
+    CommandOutcome, CommittedDomainEvent, ContentFingerprint, DomainEventDispatchOutcome,
+    DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError, EventBatch, EventCodec,
+    EventCodecError, EventCodecErrorKind, EventStore, EventVariant, ExecutionMetadata, Executor,
+    ExpectedVersion, InMemoryEventStore, Initialize, NewEvent, OperationId, RecordedEvent,
+    StreamAggregateId, StreamId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -209,6 +209,9 @@ async fn compiled_aggregate_records_applies_stores_and_replays_concrete_events()
         )
         .await
         .expect("default JSON execution");
+    let CommandOutcome::Accepted(first) = first else {
+        panic!("deposit should be accepted");
+    };
     assert_eq!(first.events().len(), 2);
     assert_eq!(first.events()[0].event_type(), "money-deposited");
     assert_eq!(first.events()[0].schema_version(), 2);
@@ -226,6 +229,9 @@ async fn compiled_aggregate_records_applies_stores_and_replays_concrete_events()
         )
         .await
         .expect("all registered event types replay");
+    let CommandOutcome::Accepted(second) = second else {
+        panic!("deposit should be accepted");
+    };
     assert_eq!(second.events()[1].payload(), br#"{"balance":10}"#);
 
     let handler = Arc::new(DepositHandler::default());
@@ -288,6 +294,9 @@ async fn custom_codec_remains_an_explicit_override_without_naming_the_generated_
         )
         .await
         .expect("custom codec execution");
+    let CommandOutcome::Accepted(outcome) = outcome else {
+        panic!("deposit should be accepted");
+    };
 
     assert_eq!(outcome.events()[0].payload(), b"deposit:11");
     assert_eq!(outcome.events()[1].payload(), b"observed:11");
@@ -352,7 +361,9 @@ async fn replay_error(
         .await
         .expect_err("invalid history must fail closed");
     match error {
-        ExecutionError::Codec(error) => error.kind(),
-        other => panic!("expected codec error, got {other:?}"),
+        CommandExecutionError::Codec(error) => error.kind(),
+        CommandExecutionError::Store(error) => {
+            panic!("expected codec error, got store error: {error:?}")
+        }
     }
 }

@@ -1,5 +1,6 @@
 mod action;
 mod action_reference;
+mod aggregate_instance_assembly;
 mod aggregate_trait_assembly;
 mod aggregate_trait_validation;
 mod contract_arguments;

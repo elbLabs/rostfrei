@@ -8,6 +8,7 @@ pub struct Attributes {
     pub rejection: Option<Type>,
     pub schema_version: LitInt,
     pub json: bool,
+    pub runtime: bool,
 }
 
 impl Attributes {
@@ -19,6 +20,7 @@ impl Attributes {
         let mut rejection = None;
         let mut schema_version = None;
         let mut json = false;
+        let mut runtime = false;
         domain.parse_nested_meta(|meta| {
             if meta.path.is_ident("id") {
                 if id.is_some() {
@@ -48,6 +50,13 @@ impl Attributes {
                 json = true;
                 return Ok(());
             }
+            if meta.path.is_ident("runtime") {
+                if runtime {
+                    return Err(meta.error("duplicate runtime"));
+                }
+                runtime = true;
+                return Ok(());
+            }
             if meta.path.is_ident("rejection") {
                 if rejection.is_some() {
                     return Err(meta.error("duplicate rejection"));
@@ -71,6 +80,7 @@ impl Attributes {
             rejection,
             schema_version: schema_version.unwrap_or_else(|| LitInt::new("1", Span::call_site())),
             json,
+            runtime,
         })
     }
 }

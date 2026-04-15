@@ -1,40 +1,56 @@
 error[E0277]: the trait bound `Change: ActionInputType<Owner>` is not satisfied
-  --> tests/ui/aggregate_action/wrong_command_owner.rs:55:6
+  --> tests/ui/aggregate_action/command_input.rs:55:6
    |
 55 | impl Actions for Owner {
    |      ^^^^^^^ unsatisfied trait bound
    |
 help: the trait `ActionInputType<Owner>` is not implemented for `Change`
-      but trait `ActionInputType<Other>` is implemented for it
-  --> tests/ui/aggregate_action/wrong_command_owner.rs:35:10
+  --> tests/ui/aggregate_action/command_input.rs:37:1
    |
-35 | #[derive(DomainCommand)]
-   |          ^^^^^^^^^^^^^
-   = help: for that trait implementation, expected `Other`, found `Owner`
+37 | pub struct Change;
+   | ^^^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `ActionInputType<Owner>`:
+             bool
+             char
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+           and $N others
 note: required by a bound in `Actions`
-  --> tests/ui/aggregate_action/wrong_command_owner.rs:39:1
+  --> tests/ui/aggregate_action/command_input.rs:39:1
    |
 39 | #[domain_actions(aggregate)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
 40 | pub trait Actions {
    |           ------- required by a bound in this trait
-   = note: this error originates in the derive macro `DomainCommand` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Change: ActionInputType<Owner>` is not satisfied
-  --> tests/ui/aggregate_action/wrong_command_owner.rs:45:10
+  --> tests/ui/aggregate_action/command_input.rs:45:10
    |
 45 | #[derive(Aggregate)]
    |          ^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `ActionInputType<Owner>` is not implemented for `Change`
-      but trait `ActionInputType<Other>` is implemented for it
-  --> tests/ui/aggregate_action/wrong_command_owner.rs:35:10
+  --> tests/ui/aggregate_action/command_input.rs:37:1
    |
-35 | #[derive(DomainCommand)]
-   |          ^^^^^^^^^^^^^
-   = help: for that trait implementation, expected `Other`, found `Owner`
+37 | pub struct Change;
+   | ^^^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `ActionInputType<Owner>`:
+             bool
+             char
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+           and $N others
 note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
-  --> tests/ui/aggregate_action/wrong_command_owner.rs:39:1
+  --> tests/ui/aggregate_action/command_input.rs:39:1
    |
 39 | #[domain_actions(aggregate)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`

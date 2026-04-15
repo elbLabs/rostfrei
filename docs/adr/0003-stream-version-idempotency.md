@@ -18,12 +18,17 @@ unchanged. Different aggregate streams never share an expected-version gate.
 An operation has a caller-supplied stable operation ID and a content fingerprint.
 The executor derives the commit ID from the stream and operation ID, and event
 IDs from that commit ID plus each event ordinal. A retry with the same identity
-and exactly the same fingerprint and content returns the original append
-outcome, even after later commits. Reusing an operation, commit, or event ID
+and exactly the same fingerprint and content returns an accepted
+`CommandReceipt::ExactReplay` containing the original events, even after later
+commits. Reusing an operation, commit, or event ID
 with different content fails with an identity-conflict classification.
 
 Exact retry is a persisted semantic, not reliance on a broker duplicate window.
-A successful no-event decision has no durable retry receipt in this release.
+An accepted eventful operation returns `CommandReceipt::Appended` when newly
+committed. An accepted no-event decision returns `CommandReceipt::NoEvents`, but
+has no durable retry evidence in this release. Rejections likewise are not
+persisted; retrying a no-event or rejected operation reruns the decision against
+the then-current aggregate state.
 
 ## Consequences
 

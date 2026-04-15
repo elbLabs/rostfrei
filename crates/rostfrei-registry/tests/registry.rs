@@ -1,5 +1,7 @@
+use rostfrei_core::{Aggregate, AggregateInstance, CommandHandler, StreamId};
 use rostfrei_registry::{
-    CommandDescriptor, DomainModule, DomainRegistry, ModuleDescriptor, RegistrationError,
+    CommandDefinition, CommandDescriptor, DomainModule, DomainRegistry, ModuleDescriptor,
+    RegistrationError,
 };
 
 fn command(
@@ -336,4 +338,54 @@ fn assert_registry_is_empty(registry: &DomainRegistry) {
     assert_eq!(registry.modules().count(), 0);
     assert_eq!(registry.commands().count(), 0);
     assert_eq!(registry.aggregates().count(), 0);
+}
+
+struct DirectAggregate;
+
+impl Aggregate for DirectAggregate {
+    type State = ();
+    type Event = ();
+
+    const AGGREGATE_TYPE: &'static str = "direct-aggregate";
+
+    fn initial(_stream_id: &StreamId) -> Self::State {}
+
+    fn apply(_state: &mut Self::State, _event: &Self::Event) {}
+}
+
+struct DirectCommand;
+
+impl CommandHandler<DirectCommand> for DirectAggregate {
+    type Rejection = ();
+
+    fn handle(
+        _command: &DirectCommand,
+        _aggregate: &mut AggregateInstance<Self>,
+    ) -> Result<(), Self::Rejection> {
+        Ok(())
+    }
+}
+
+impl CommandDefinition for DirectCommand {
+    type Aggregate = DirectAggregate;
+
+    const COMMAND_NAME: &'static str = "direct-command";
+    const SCHEMA_VERSION: u32 = 1;
+}
+
+#[test]
+fn commands_can_be_registered_without_a_module() {
+    let mut registry = DomainRegistry::new();
+
+    registry.register_command::<DirectCommand>().unwrap();
+
+    assert_eq!(registry.modules().count(), 0);
+    assert_eq!(
+        registry.aggregates().collect::<Vec<_>>(),
+        ["direct-aggregate"]
+    );
+    assert_eq!(
+        registry.command("direct-aggregate", "direct-command", 1),
+        Some(&DirectCommand::descriptor())
+    );
 }
