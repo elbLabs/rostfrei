@@ -240,7 +240,7 @@ export interface DomainError {
 export type ActionInput =
   | CanonicalScalarReference
   | ValueObjectReference
-  | { kind: 'domainCommand'; id: DomainCommandId }
+  | { kind: 'domainIdentity'; id: DomainIdentityId }
 
 export type ActionOutput =
   | CanonicalScalarReference

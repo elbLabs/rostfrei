@@ -348,7 +348,7 @@ export function buildDomainIndex(model: DomainModel): DomainIndex {
     }
   }
 
-  const commandLabels = uniqueLabels(model.domainCommands, (item) => commandKey(item.id), 'domain command')
+  uniqueLabels(model.domainCommands, (item) => commandKey(item.id), 'domain command')
   const eventLabels = uniqueLabels(model.domainEvents, (item) => eventKey(item.id), 'domain event')
   const errorLabels = uniqueLabels(model.domainErrors, (item) => errorKey(item.id), 'domain error')
 
@@ -362,7 +362,6 @@ export function buildDomainIndex(model: DomainModel): DomainIndex {
       case 'entity': return linked(entityKey(value.id), 'entity')
       case 'valueObject': return linked(valueObjectKey(value.id), 'value object')
       case 'aggregateReference': return linked(aggregateKey(value.aggregate), 'aggregate reference')
-      case 'domainCommand': return named(commandLabels, commandKey(value.id), 'domain command')
       case 'domainEvent': return named(eventLabels, eventKey(value.id), 'domain event')
     }
   }

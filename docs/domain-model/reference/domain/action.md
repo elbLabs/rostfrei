@@ -44,7 +44,7 @@ mod contracts {
         #[action(id = "rename", label = "Rename mailbox")]
         fn rename(
             root: &super::MailboxRoot,
-            input: super::RenameMailboxInput,
+            input: String,
         ) -> Result<super::MailboxRenamed, super::RenameDenied>;
     }
 }
@@ -62,12 +62,12 @@ pub struct Mailbox;
 impl contracts::MailboxActions for Mailbox {
     fn rename(
         root: &MailboxRoot,
-        input: RenameMailboxInput,
+        input: String,
     ) -> Result<MailboxRenamed, RenameDenied> {
-        validate_name(&input.name)?;
+        validate_name(&input)?;
         Ok(MailboxRenamed {
             mailbox_id: root.id.clone(),
-            name: input.name,
+            name: input,
         })
     }
 }
@@ -78,7 +78,7 @@ option. Its method evaluates the authored Action against immutable state and
 raises, applies, and records the returned event only on success:
 
 ```rust
-aggregate.rename(RenameMailboxInput { name })?;
+aggregate.rename(name)?;
 ```
 
 Every contract must name its owner kind explicitly: use
@@ -171,10 +171,11 @@ The Rust signature is the action contract. Action attributes contain only the
 descriptor metadata `id` and `label`; inputs, successful outputs, and errors are
 not repeated in attributes.
 
-Action inputs are canonical scalars or Value Objects. Commands are application
-messages and do not implement `ActionInputType`; a command handler maps their
-fields into one or more Action inputs. There is no one-to-one command-to-Action
-requirement.
+Action inputs are canonical scalars or Value Objects. An Aggregate Action can
+also accept a Domain Identity belonging to an Entity in that Aggregate. Commands
+are application messages and do not implement `ActionInputType`; a command
+handler maps their fields into one or more Action inputs. There is no one-to-one
+command-to-Action requirement.
 A [Custom scalar](custom-scalar.md) may be carried by an annotated derived
 field, but is not yet supported as a raw Action input or output.
 
@@ -307,7 +308,8 @@ ActionDescriptor {
 ```
 
 Compiled JSON uses `input`, `output`, and `error` on every action, with `null`
-for absent contracts. Inputs reference scalar or Value Object contracts.
+for absent contracts. Inputs reference scalar, Value Object, or Domain Identity
+contracts.
 Successful values preserve optional/list wrappers and reference scalar, Value
 Object, or Domain Event contracts by kind. Errors are projected as
 `DomainErrorId` references.

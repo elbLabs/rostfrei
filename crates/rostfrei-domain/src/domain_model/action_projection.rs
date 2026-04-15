@@ -9,7 +9,7 @@ use super::{
     field_projection,
     id_projection::{
         action as action_id, domain_error as domain_error_id, domain_event as domain_event_id,
-        value_object as value_object_id,
+        domain_identity as domain_identity_id, value_object as value_object_id,
     },
 };
 
@@ -146,6 +146,9 @@ fn action_input(descriptor: ActionInputDescriptor) -> Value {
         ActionInputDescriptor::Scalar(scalar) => field_projection::scalar(scalar),
         ActionInputDescriptor::ValueObject(id) => {
             json!({ "kind": "valueObject", "id": value_object_id(id) })
+        }
+        ActionInputDescriptor::DomainIdentity(id) => {
+            json!({ "kind": "domainIdentity", "id": domain_identity_id(id) })
         }
     }
 }
