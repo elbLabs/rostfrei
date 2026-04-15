@@ -30,6 +30,14 @@ The messaging configuration derives:
 | `FAST_INBOX_INTEGRATION_EVENTS` | `fast-inbox.integration.>` | Limits |
 | `FAST_INBOX_QUARANTINE` | `fast-inbox.quarantine.>` | Limits |
 
+Command and integration-event payloads are limited to 1 MiB. Their streams
+reserve an additional 64 KiB for bounded caller metadata, tracing, and adapter
+headers; quarantine records remain limited to 2 MiB. If a malformed source
+message cannot fit after base64 encoding, its quarantine record retains a
+bounded payload prefix together with the original size and SHA-256 digest.
+Existing command and integration-event streams using the former 2 MiB maximum
+must be reprovisioned before upgraded publishers and consumers start.
+
 The bounded-context event store derives:
 
 ```text
@@ -80,6 +88,11 @@ leave meaningful headroom for scheduling and acknowledgement latency, for
 example a 30-second processing timeout with a 45-second ACK wait. Existing
 durables must be reprovisioned with the new ACK wait before upgraded consumers
 start, because runtime startup rejects mismatched durable policy.
+
+Invalid deliveries are quarantined only after a confirmed PubAck. A transient
+quarantine failure is retried up to the consumer's configured delivery limit;
+an exhausted failure stops the consumer with the source message still pending
+for operator recovery rather than redelivering it forever.
 
 ## Overrides
 

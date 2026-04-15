@@ -186,6 +186,8 @@ pub enum ConsumeErrorKind {
     Unavailable,
     #[error("delivery disposition could not be applied")]
     Disposition,
+    #[error("delivery could not be quarantined")]
+    Quarantine,
     #[error("consumer ended unexpectedly")]
     Ended,
 }

@@ -5,7 +5,9 @@ use async_nats::jetstream::{
     consumer::{self, AckPolicy, DeliverPolicy},
     stream::{self, DiscardPolicy, RetentionPolicy, StorageType},
 };
-use rostfrei_messaging_core::{ApplicationName, ConsumerConfig, PublishableAddress};
+use rostfrei_messaging_core::{
+    ApplicationName, ConsumerConfig, PublishableAddress, MAX_MESSAGE_PAYLOAD_BYTES,
+};
 
 use crate::{
     error::NatsError,
@@ -17,6 +19,7 @@ pub const DEFAULT_STREAM_MAX_BYTES: i64 = 10 * 1024 * 1024 * 1024;
 pub const DEFAULT_STREAM_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 pub const DEFAULT_STREAM_MAX_MESSAGE_BYTES: i32 = 2 * 1024 * 1024;
 pub const DEFAULT_DUPLICATE_WINDOW: Duration = Duration::from_secs(2 * 60);
+const SOURCE_STREAM_MESSAGE_OVERHEAD_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StreamRetention {
@@ -192,20 +195,25 @@ pub struct ApplicationMessagingConfig {
 impl ApplicationMessagingConfig {
     pub fn new(application: &ApplicationName) -> Result<Self, NatsError> {
         let topology = MessagingTopology::for_application(application)?;
+        let source_maximum_message_bytes =
+            i32::try_from(MAX_MESSAGE_PAYLOAD_BYTES + SOURCE_STREAM_MESSAGE_OVERHEAD_BYTES)
+                .map_err(|_| NatsError::Configuration)?;
         let commands = StreamProvisioningConfig::new(
             application,
             topology.command_stream().clone(),
             vec![application_subject_filter(application, "command")?],
             StreamRetention::WorkQueue,
         )?
-        .with_description(format!("{} commands", application.as_str()));
+        .with_description(format!("{} commands", application.as_str()))
+        .with_maximum_message_bytes(source_maximum_message_bytes);
         let integration_events = StreamProvisioningConfig::new(
             application,
             topology.integration_event_stream().clone(),
             vec![application_subject_filter(application, "integration")?],
             StreamRetention::Limits,
         )?
-        .with_description(format!("{} integration events", application.as_str()));
+        .with_description(format!("{} integration events", application.as_str()))
+        .with_maximum_message_bytes(source_maximum_message_bytes);
         let quarantine = StreamProvisioningConfig::new(
             application,
             topology.quarantine_stream().clone(),
@@ -437,6 +445,19 @@ mod tests {
             StreamRetention::Limits
         );
         assert_eq!(config.quarantine.retention(), StreamRetention::Limits);
+        assert_eq!(
+            config.commands.maximum_message_bytes,
+            i32::try_from(MAX_MESSAGE_PAYLOAD_BYTES + SOURCE_STREAM_MESSAGE_OVERHEAD_BYTES)
+                .unwrap()
+        );
+        assert_eq!(
+            config.integration_events.maximum_message_bytes,
+            config.commands.maximum_message_bytes
+        );
+        assert_eq!(
+            config.quarantine.maximum_message_bytes,
+            DEFAULT_STREAM_MAX_MESSAGE_BYTES
+        );
         assert!(config.streams().iter().all(|stream| stream.replicas == 3));
     }
 
