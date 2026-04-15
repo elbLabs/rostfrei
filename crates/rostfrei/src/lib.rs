@@ -1,6 +1,12 @@
 extern crate self as rostfrei;
 
+mod integration_event;
+
 pub use domain::*;
+pub use integration_event::{
+    CommandContext, CommandRejection, IntegrationEventHandler, IntegrationEventOutcome,
+    IntegrationEventProcessingError, IntegrationEventProcessor,
+};
 pub use rostfrei_core::{
     Aggregate, AggregateId as StreamAggregateId, AggregateInstance,
     AggregateType as StreamAggregateType, AppendOutcome, CommandExecutionError, CommandHandler,
@@ -15,6 +21,7 @@ pub use rostfrei_core::{
 pub use rostfrei_domain_runtime::{
     domain_command_handler, domain_module, AggregateRuntime, Apply, Initialize,
 };
+pub use rostfrei_messaging_core::{DurableName, IntegrationEventEnvelope};
 pub use rostfrei_registry::{
     CommandDefinition, CommandDescriptor, DomainModule, DomainRegistry, ModuleDescriptor,
     RegistrationError,

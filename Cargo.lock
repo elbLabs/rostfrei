@@ -836,9 +836,11 @@ dependencies = [
  "rostfrei-core",
  "rostfrei-domain",
  "rostfrei-domain-runtime",
+ "rostfrei-messaging-core",
  "rostfrei-registry",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "trybuild",
 ]
