@@ -141,6 +141,7 @@ where
     name: ConsumerName,
     durable_name: DurableName,
     address: A,
+    ack_wait: Duration,
     processing_timeout: Duration,
     concurrency: usize,
     maximum_delivery_attempts: u32,
@@ -154,6 +155,7 @@ where
         name: ConsumerName,
         durable_name: DurableName,
         address: A,
+        ack_wait: Duration,
         processing_timeout: Duration,
         concurrency: usize,
         maximum_delivery_attempts: u32,
@@ -180,6 +182,12 @@ where
                 "processing timeout",
             ));
         }
+        if ack_wait <= processing_timeout || ack_wait > MAX_PROCESSING_TIMEOUT {
+            return Err(ContractError::new(
+                ContractErrorKind::OutOfRange,
+                "ack wait",
+            ));
+        }
         if concurrency == 0 || concurrency > MAX_CONCURRENCY {
             return Err(ContractError::bounded(
                 ContractErrorKind::OutOfRange,
@@ -198,6 +206,7 @@ where
             name,
             durable_name,
             address,
+            ack_wait,
             processing_timeout,
             concurrency,
             maximum_delivery_attempts,
@@ -214,6 +223,10 @@ where
 
     pub const fn address(&self) -> &A {
         &self.address
+    }
+
+    pub const fn ack_wait(&self) -> Duration {
+        self.ack_wait
     }
 
     pub const fn processing_timeout(&self) -> Duration {
@@ -549,15 +562,50 @@ mod tests {
             consumer.clone(),
             durable.clone(),
             address.clone(),
+            Duration::from_secs(30),
             Duration::ZERO,
             1,
             5,
         )
         .is_err());
-        assert!(
-            ConsumerConfig::new(consumer, durable, address, Duration::from_secs(30), 1, 0,)
-                .is_err()
-        );
+        for ack_wait in [
+            Duration::ZERO,
+            Duration::from_secs(29),
+            Duration::from_secs(30),
+        ] {
+            assert!(ConsumerConfig::new(
+                consumer.clone(),
+                durable.clone(),
+                address.clone(),
+                ack_wait,
+                Duration::from_secs(30),
+                1,
+                5,
+            )
+            .is_err());
+        }
+        let config = ConsumerConfig::new(
+            consumer.clone(),
+            durable.clone(),
+            address.clone(),
+            Duration::from_secs(45),
+            Duration::from_secs(30),
+            1,
+            5,
+        )
+        .unwrap();
+        assert_eq!(config.ack_wait(), Duration::from_secs(45));
+        assert_eq!(config.processing_timeout(), Duration::from_secs(30));
+        assert!(ConsumerConfig::new(
+            consumer,
+            durable,
+            address,
+            Duration::from_secs(45),
+            Duration::from_secs(30),
+            1,
+            0,
+        )
+        .is_err());
     }
 
     #[test]
@@ -568,6 +616,7 @@ mod tests {
             ConsumerName::new("other", "orders", "fulfillment", 1).unwrap(),
             DurableName::new("acme", "orders", "fulfillment", 1).unwrap(),
             address,
+            Duration::from_secs(45),
             Duration::from_secs(30),
             1,
             5,
@@ -588,6 +637,7 @@ mod tests {
             name.clone(),
             durable.clone(),
             command,
+            Duration::from_secs(45),
             Duration::from_secs(30),
             1,
             5,
@@ -601,6 +651,7 @@ mod tests {
             name,
             durable,
             integration_event,
+            Duration::from_secs(45),
             Duration::from_secs(30),
             1,
             5,
