@@ -93,56 +93,56 @@ pub fn domain_lifecycle_test(args: TokenStream, input: TokenStream) -> TokenStre
 
 #[proc_macro_derive(BoundedContext, attributes(domain, rostfrei))]
 pub fn derive_bounded_context(input: TokenStream) -> TokenStream {
-    bounded_context::expand(parse_macro_input!(input as DeriveInput))
+    bounded_context::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
 #[proc_macro_derive(Aggregate, attributes(domain, rostfrei))]
 pub fn derive_aggregate(input: TokenStream) -> TokenStream {
-    aggregate::expand(parse_macro_input!(input as DeriveInput))
+    aggregate::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
 #[proc_macro_derive(DomainIdentity, attributes(domain, rostfrei))]
 pub fn derive_domain_identity(input: TokenStream) -> TokenStream {
-    domain_identity::expand(parse_macro_input!(input as DeriveInput))
+    domain_identity::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
 #[proc_macro_derive(DomainEvent, attributes(domain, rostfrei))]
 pub fn derive_domain_event(input: TokenStream) -> TokenStream {
-    domain_event::expand(parse_macro_input!(input as DeriveInput))
+    domain_event::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
 #[proc_macro_derive(DomainCommand, attributes(domain, rostfrei))]
 pub fn derive_domain_command(input: TokenStream) -> TokenStream {
-    domain_command::expand(parse_macro_input!(input as DeriveInput))
+    domain_command::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
 #[proc_macro_derive(DomainError, attributes(domain, rostfrei))]
 pub fn derive_domain_error(input: TokenStream) -> TokenStream {
-    domain_error::expand(parse_macro_input!(input as DeriveInput))
+    domain_error::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
 #[proc_macro_derive(DomainService, attributes(domain, rostfrei))]
 pub fn derive_domain_service(input: TokenStream) -> TokenStream {
-    domain_service::expand(parse_macro_input!(input as DeriveInput))
+    domain_service::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
 #[proc_macro_derive(Entity, attributes(domain, rostfrei))]
 pub fn derive_entity(input: TokenStream) -> TokenStream {
-    entity::expand(parse_macro_input!(input as DeriveInput))
+    entity::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
@@ -156,7 +156,7 @@ pub fn derive_entity_lifecycle(input: TokenStream) -> TokenStream {
 
 #[proc_macro_derive(ValueObject, attributes(domain, rostfrei))]
 pub fn derive_value_object(input: TokenStream) -> TokenStream {
-    value_object::expand(parse_macro_input!(input as DeriveInput))
+    value_object::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

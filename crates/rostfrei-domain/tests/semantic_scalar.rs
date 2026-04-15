@@ -181,6 +181,7 @@ fn describes_semantic_identity_representation_without_changing_identity_descript
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
     let model = domain_model! {
         contexts: [SemanticScalars],

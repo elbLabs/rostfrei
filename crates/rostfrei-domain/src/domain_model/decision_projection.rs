@@ -66,12 +66,12 @@ impl DecisionProjection {
         descriptors: &'static [DecisionDescriptor],
     ) {
         for (index, descriptor) in descriptors.iter().enumerate() {
-            self.validate_owner(expected_owner, descriptor);
+            Self::validate_owner(expected_owner, descriptor);
             self.validate_id(descriptor.id, &descriptors[..index]);
         }
     }
 
-    fn validate_owner(&self, expected_owner: DecisionOwnerId, descriptor: &DecisionDescriptor) {
+    fn validate_owner(expected_owner: DecisionOwnerId, descriptor: &DecisionDescriptor) {
         if descriptor.id.owner != expected_owner {
             panic!("decision descriptor owner mismatch: {:?}", descriptor.id);
         }

@@ -56,12 +56,12 @@ impl InvariantProjection {
         descriptors: &'static [InvariantDescriptor],
     ) {
         for (index, descriptor) in descriptors.iter().enumerate() {
-            self.validate_owner(expected_owner, descriptor);
+            Self::validate_owner(expected_owner, descriptor);
             self.validate_id(descriptor.id, &descriptors[..index]);
         }
     }
 
-    fn validate_owner(&self, expected_owner: InvariantOwnerId, descriptor: &InvariantDescriptor) {
+    fn validate_owner(expected_owner: InvariantOwnerId, descriptor: &InvariantDescriptor) {
         if descriptor.id.owner != expected_owner {
             panic!("invariant descriptor owner mismatch: {:?}", descriptor.id);
         }

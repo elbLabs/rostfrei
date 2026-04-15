@@ -58,6 +58,7 @@ impl RentalFleet {
 }
 
 #[derive(Entity, Debug)]
+#[allow(clippy::struct_field_names)]
 #[domain(
     id = "bicycle",
     label = "Bicycle",

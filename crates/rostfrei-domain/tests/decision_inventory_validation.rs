@@ -76,10 +76,10 @@ fn panic_message(operation: impl FnOnce()) -> String {
 fn panic_payload(payload: Box<dyn Any + Send>) -> String {
     match payload.downcast::<String>() {
         Ok(message) => *message,
-        Err(payload) => match payload.downcast::<&'static str>() {
-            Ok(message) => (*message).to_owned(),
-            Err(_) => panic!("panic payload should be a String or &'static str"),
-        },
+        Err(payload) => payload.downcast::<&'static str>().map_or_else(
+            |_| panic!("panic payload should be a String or &'static str"),
+            |message| (*message).to_owned(),
+        ),
     }
 }
 

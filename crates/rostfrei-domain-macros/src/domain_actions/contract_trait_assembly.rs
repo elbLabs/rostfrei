@@ -56,19 +56,19 @@ fn add_action_predicates(
 ) -> syn::Result<()> {
     let signature = action.signature.as_ref().unwrap();
     if let Some(input) = &signature.input {
-        push_predicate(item, input, quote!(#domain_path::ActionInputType<Self>))?;
+        push_predicate(item, input, &quote!(#domain_path::ActionInputType<Self>))?;
     }
     match output_policy {
         OutputPolicy::Declared(output_owner) => push_predicate(
             item,
             &signature.output,
-            quote!(#domain_path::ActionOutputType<#output_owner<Self>>),
+            &quote!(#domain_path::ActionOutputType<#output_owner<Self>>),
         )?,
         OutputPolicy::OwnerSelf(output_owner) => {
             push_predicate(
                 item,
                 &signature.output,
-                quote!(#domain_path::__private::SameType<Type = Self>),
+                &quote!(#domain_path::__private::SameType<Type = Self>),
             )?;
             let predicate: WherePredicate = syn::parse2(quote! {
                 Self: #domain_path::ActionOutputType<#output_owner<Self>>
@@ -80,13 +80,13 @@ fn add_action_predicates(
         push_predicate(
             item,
             error,
-            quote!(#domain_path::DomainErrorType<Owner = Self>),
+            &quote!(#domain_path::DomainErrorType<Owner = Self>),
         )?;
     }
     Ok(())
 }
 
-fn push_predicate(item: &mut ItemTrait, ty: &Type, bound: TokenStream) -> syn::Result<()> {
+fn push_predicate(item: &mut ItemTrait, ty: &Type, bound: &TokenStream) -> syn::Result<()> {
     let predicate: WherePredicate = syn::parse2(quote_spanned! {ty.span()=> #ty: #bound})?;
     item.generics.make_where_clause().predicates.push(predicate);
     Ok(())
