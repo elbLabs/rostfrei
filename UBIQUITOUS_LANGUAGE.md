@@ -1,9 +1,8 @@
 # Ubiquitous Language
 
 This is the canonical language for rostfrei's event-sourcing model. Framework
-APIs, architecture decisions, documentation, Studio, and AI tooling use these
-terms with the same meanings. ADR 0001 makes this language an architectural
-constraint.
+APIs, architecture decisions, documentation, and AI tooling use these terms with
+the same meanings. ADR 0001 makes this language an architectural constraint.
 
 ## Domain model
 
