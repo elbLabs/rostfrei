@@ -11,7 +11,8 @@ Cargo package:
 - `rostfrei`: application facade for the compiled domain model,
   event-sourcing runtime, registry, and public macros.
 - `rostfrei-control-plane`: explicitly registered command simulation, bounded
-  in-memory operation traces, status resources, and an optional HTTP/SSE adapter.
+  in-memory operation traces, bounded concurrent admission, status resources,
+  and an optional authenticated HTTP/SSE adapter.
 - `rostfrei-core`: aggregate execution, event-store contracts, and the
   in-memory reference store.
 - `rostfrei-domain` (imported as `domain`): the compiled domain model,
@@ -43,7 +44,17 @@ and provisioning API.
 example with an aggregate action, a decision, a query, a domain event, and a
 domain error. It also contains a runnable local control-plane server that
 replays a seeded fleet, simulates `RentBicycle`, and streams the operation trace
-without appending or publishing.
+without appending or publishing. The aggregate identity in the API is qualified
+by its bounded context, and `#[domain(json)]` supplies the example's generated
+command and rejection JSON while aggregate event JSON comes from the compiled
+aggregate codec.
+
+A control-plane instance receives one explicit read-only `EventHistory` and
+exposes only commands with matching executable bindings. When that history is a
+`NatsEventStore`, its configuration fixes the application and bounded-context
+stream scope; the context-qualified HTTP route must address that same history.
+Operation status and traces are retained only in memory, payloads are redacted
+by default, and local deployments must opt in explicitly to expose them.
 
 rostfrei does not provision infrastructure during service startup. Operators
 use the explicit provisioning APIs with bounded, application-scoped defaults

@@ -54,7 +54,7 @@ fn derived_domain_types_register_and_query_without_state_trait_requirements() {
     registry.register_module::<Accounts>().unwrap();
 
     let command = registry
-        .command("account.deposit", 1)
+        .command("account", "account.deposit", 1)
         .expect("derived command should be registered");
 
     assert_eq!(command.command_name, "account.deposit");

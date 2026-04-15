@@ -6,6 +6,7 @@ pub struct Attributes {
     pub owner: TypePath,
     pub code: LitStr,
     pub message: LitStr,
+    pub json: bool,
 }
 
 impl Attributes {
@@ -16,6 +17,7 @@ impl Attributes {
         let mut owner = None;
         let mut code = None;
         let mut message = None;
+        let mut json = false;
         domain.parse_nested_meta(|meta| {
             if meta.path.is_ident("id") {
                 if id.is_some() {
@@ -52,6 +54,13 @@ impl Attributes {
                 message = Some(meta.value()?.parse::<LitStr>()?);
                 return Ok(());
             }
+            if meta.path.is_ident("json") {
+                if json {
+                    return Err(meta.error("duplicate json"));
+                }
+                json = true;
+                return Ok(());
+            }
             Err(meta.error("unsupported domain attribute"))
         })?;
         let id = id.ok_or_else(|| syn::Error::new_spanned(domain, "missing id"))?;
@@ -65,6 +74,7 @@ impl Attributes {
             owner,
             code,
             message,
+            json,
         })
     }
 }

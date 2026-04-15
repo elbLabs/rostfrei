@@ -54,6 +54,12 @@ scalar, [Custom scalar](custom-scalar.md), identity, Value Object, and
 aggregate-reference fields, including nested `Vec` and `Option` wrappers.
 Contained Entity fields are invalid.
 
+The opt-in `json` flag generates the control-plane rejection representation.
+It always contains the descriptor's canonical `code` and `message`, followed by
+the modeled fields. Those two names are therefore reserved for JSON-enabled
+domain errors. Applications can use an explicit command wire codec when they
+need another rejection representation.
+
 An aggregate action translates entity-owned or value-object-owned errors into
 an aggregate-owned error. A domain-service action translates aggregate-owned
 errors into a service-owned error.

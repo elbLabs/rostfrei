@@ -1,10 +1,14 @@
 #![allow(dead_code)]
 
+use std::convert::Infallible;
+
 use domain::{
     Aggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandOwnerId,
     DomainCommandType, DomainIdentity, DomainIdentityType, DomainService, Entity, FieldKind,
-    FieldWrapper, ValueObject, ValueObjectType, domain_actions, domain_model,
+    FieldWrapper, JsonCommandPayload, JsonErrorPayload, ValueObject, ValueObjectType,
+    domain_actions, domain_model,
 };
+use serde_json::{Value, json};
 
 #[derive(BoundedContext)]
 #[domain(id = "catalog", label = "Catalog")]
@@ -56,8 +60,43 @@ pub struct ChangeStatus {
 pub struct CatalogSync;
 
 #[derive(DomainCommand)]
-#[domain(id = "sync-catalog", label = "Sync catalog", owner = CatalogSync)]
+#[domain(
+    id = "sync-catalog",
+    label = "Sync catalog",
+    owner = CatalogSync,
+    schema_version = 2
+)]
 pub struct SyncCatalog;
+
+#[derive(DomainCommand, Debug, Eq, PartialEq)]
+#[domain(
+    id = "json-change",
+    label = "JSON change",
+    owner = CatalogAggregate,
+    json
+)]
+struct JsonChange {
+    value: String,
+    optional: Option<u32>,
+}
+
+#[derive(DomainCommand, Debug, Eq, PartialEq)]
+#[domain(
+    id = "json-tuple",
+    label = "JSON tuple",
+    owner = CatalogAggregate,
+    json
+)]
+struct JsonTuple(String, u32);
+
+#[derive(DomainCommand, Debug, Eq, PartialEq)]
+#[domain(
+    id = "json-unit",
+    label = "JSON unit",
+    owner = CatalogAggregate,
+    json
+)]
+struct JsonUnit;
 
 #[domain_actions(aggregate)]
 pub trait CatalogCommandActions {
@@ -96,6 +135,8 @@ fn describes_structural_command_fields() {
     let fields = descriptor.fields;
     assert_eq!(descriptor.id.local, "change-status");
     assert_eq!(descriptor.label, "Change status");
+    assert_eq!(ChangeStatus::SCHEMA_VERSION, 1);
+    assert_eq!(SyncCatalog::SCHEMA_VERSION, 2);
     assert_eq!(
         descriptor.id.owner,
         DomainCommandOwnerId::Aggregate(CatalogAggregate::DESCRIPTOR.id)
@@ -146,6 +187,39 @@ fn inventories_aggregate_and_domain_service_commands() {
         model["domainCommands"][0]["id"]
     );
     assert_eq!(model["actions"][2]["input"]["kind"], "valueObject");
+}
+
+#[test]
+fn generated_json_commands_enforce_their_exact_struct_shape() {
+    assert_eq!(
+        JsonChange::decode_json(&json!({ "value": "ready" })).unwrap(),
+        JsonChange {
+            value: "ready".to_owned(),
+            optional: None,
+        }
+    );
+    assert!(
+        JsonChange::decode_json(&json!({ "value": "ready", "unknown": true }))
+            .unwrap_err()
+            .contains("unknown command field")
+    );
+    assert!(JsonChange::decode_json(&json!({})).is_err());
+
+    assert_eq!(
+        JsonTuple::decode_json(&json!(["ready", 2])).unwrap(),
+        JsonTuple("ready".to_owned(), 2)
+    );
+    assert!(JsonTuple::decode_json(&json!(["ready", 2, 3])).is_err());
+    assert_eq!(JsonUnit::decode_json(&Value::Null).unwrap(), JsonUnit);
+    assert_eq!(JsonUnit::decode_json(&json!({})).unwrap(), JsonUnit);
+    assert!(JsonUnit::decode_json(&json!({ "unexpected": true })).is_err());
+}
+
+#[test]
+fn generated_json_supports_commands_without_a_rejection() {
+    fn assert_json_error_payload<T: JsonErrorPayload>() {}
+
+    assert_json_error_payload::<Infallible>();
 }
 
 #[test]

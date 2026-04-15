@@ -2,9 +2,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use domain::{JsonCommandPayload, JsonErrorPayload};
 use rostfrei_core::{
     Aggregate, AggregateId, ContentFingerprint, Event, EventCodec, EventHistory, ExecutionMetadata,
-    Executor, JsonEventCodec, NewEvent, OperationId, SimulationDecision, StreamId,
+    Executor, JsonEventCodec, NewEvent, OperationId, SimulationDecision, SimulationError, StreamId,
 };
 use rostfrei_registry::{CommandDefinition, CommandDescriptor, DomainRegistry};
 use serde_json::Value;
@@ -44,6 +45,31 @@ where
     ) -> Result<Value, CommandWireCodecError>;
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DomainJsonWireCodec;
+
+impl<Command> CommandWireCodec<Command> for DomainJsonWireCodec
+where
+    Command: CommandDefinition + JsonCommandPayload,
+    <<Command as CommandDefinition>::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection:
+        JsonErrorPayload,
+{
+    fn decode(&self, payload: &Value) -> Result<Command, CommandWireCodecError> {
+        Command::decode_json(payload).map_err(CommandWireCodecError::new)
+    }
+
+    fn encode_rejection(
+        &self,
+        rejection: &<<Command as CommandDefinition>::Aggregate as rostfrei_core::CommandHandler<
+            Command,
+        >>::Rejection,
+    ) -> Result<Value, CommandWireCodecError> {
+        rejection
+            .encode_json()
+            .map_err(CommandWireCodecError::new)
+    }
+}
+
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum RuntimeRegistrationError {
     #[error("command `{command}` version {schema_version} is not in the domain registry")]
@@ -72,8 +98,8 @@ pub enum RuntimeRegistrationError {
 pub(crate) enum RuntimeSimulationError {
     #[error("invalid command payload: {0}")]
     InvalidPayload(CommandWireCodecError),
-    #[error("simulation failed: {0}")]
-    Simulation(String),
+    #[error(transparent)]
+    Simulation(#[from] SimulationError),
     #[error("rejection encoding failed: {0}")]
     RejectionEncoding(CommandWireCodecError),
     #[error("predicted stream version overflow")]
@@ -93,13 +119,19 @@ pub(crate) enum RuntimeDecision {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct CommandKey {
+    pub aggregate_type: String,
     pub command: String,
     pub schema_version: u32,
 }
 
 impl CommandKey {
-    pub fn new(command: impl Into<String>, schema_version: u32) -> Self {
+    pub fn new(
+        aggregate_type: impl Into<String>,
+        command: impl Into<String>,
+        schema_version: u32,
+    ) -> Self {
         Self {
+            aggregate_type: aggregate_type.into(),
             command: command.into(),
             schema_version,
         }
@@ -158,8 +190,7 @@ where
         let metadata = ExecutionMetadata::new(stream_id, operation_id, fingerprint);
         let outcome = Executor::with_codec(history, self.event_codec.clone())
             .simulate::<Command::Aggregate, Command>(metadata, &command)
-            .await
-            .map_err(|error| RuntimeSimulationError::Simulation(error.to_string()))?;
+            .await?;
         let (base_version, decision) = outcome.into_parts();
         match decision {
             SimulationDecision::Accepted(events) => Ok(RuntimeDecision::Accepted {
@@ -241,21 +272,30 @@ impl RuntimeBindings {
         Codec: EventCodec<Command::Aggregate> + Clone + Send + Sync + 'static,
         Wire: CommandWireCodec<Command> + 'static,
     {
+        let expected_descriptor = Command::descriptor();
         let descriptor = self
             .registry
-            .command(Command::COMMAND_NAME, Command::SCHEMA_VERSION)
+            .command(
+                &expected_descriptor.aggregate_type,
+                Command::COMMAND_NAME,
+                Command::SCHEMA_VERSION,
+            )
             .cloned()
             .ok_or(RuntimeRegistrationError::MissingDescriptor {
                 command: Command::COMMAND_NAME,
                 schema_version: Command::SCHEMA_VERSION,
             })?;
-        if descriptor != Command::descriptor() {
+        if descriptor != expected_descriptor {
             return Err(RuntimeRegistrationError::DescriptorMismatch {
                 command: Command::COMMAND_NAME,
                 schema_version: Command::SCHEMA_VERSION,
             });
         }
-        let key = CommandKey::new(Command::COMMAND_NAME, Command::SCHEMA_VERSION);
+        let key = CommandKey::new(
+            &descriptor.aggregate_type,
+            Command::COMMAND_NAME,
+            Command::SCHEMA_VERSION,
+        );
         if self.simulators.contains_key(&key) {
             return Err(RuntimeRegistrationError::DuplicateBinding {
                 command: Command::COMMAND_NAME,
@@ -276,7 +316,11 @@ impl RuntimeBindings {
 
     pub fn validate(&self) -> Result<(), RuntimeRegistrationError> {
         for descriptor in self.registry.commands() {
-            let key = CommandKey::new(descriptor.command_name, descriptor.schema_version);
+            let key = CommandKey::new(
+                &descriptor.aggregate_type,
+                descriptor.command_name,
+                descriptor.schema_version,
+            );
             if !self.simulators.contains_key(&key) {
                 return Err(RuntimeRegistrationError::MissingBinding {
                     command: descriptor.command_name,

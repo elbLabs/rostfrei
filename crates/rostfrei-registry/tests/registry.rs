@@ -56,7 +56,7 @@ fn registering_one_module_exposes_its_metadata() {
     assert_eq!(registry.commands().count(), 2);
     assert_eq!(registry.aggregates().collect::<Vec<_>>(), ["bank-account"]);
     assert_eq!(
-        registry.command("deposit-money", 1),
+        registry.command("bank-account", "deposit-money", 1),
         Some(&command("deposit-money", 1, "bank-account"))
     );
     assert_eq!(registry.module("banking"), Some(&Banking::descriptor()));
@@ -181,10 +181,45 @@ impl DomainModule for OverlappingModule {
             module_name: Self::MODULE_NAME,
             commands: vec![
                 command("new-command", 1, "new-aggregate"),
-                command("deposit-money", 1, "another-aggregate"),
+                command("deposit-money", 1, "bank-account"),
             ],
         }
     }
+}
+
+struct SameLocalCommandForAnotherAggregate;
+
+impl DomainModule for SameLocalCommandForAnotherAggregate {
+    const MODULE_NAME: &'static str = "another-context";
+
+    fn descriptor() -> ModuleDescriptor {
+        ModuleDescriptor {
+            module_name: Self::MODULE_NAME,
+            commands: vec![command("deposit-money", 1, "another-aggregate")],
+        }
+    }
+}
+
+#[test]
+fn command_identity_is_scoped_to_the_aggregate() {
+    let mut registry = DomainRegistry::new();
+    registry.register_module::<Banking>().unwrap();
+    registry
+        .register_module::<SameLocalCommandForAnotherAggregate>()
+        .unwrap();
+
+    assert_eq!(
+        registry.command("bank-account", "deposit-money", 1),
+        Some(&command("deposit-money", 1, "bank-account"))
+    );
+    assert_eq!(
+        registry.command("another-aggregate", "deposit-money", 1),
+        Some(&command("deposit-money", 1, "another-aggregate"))
+    );
+    assert_ne!(
+        command("deposit-money", 1, "bank-account").identity(),
+        command("deposit-money", 1, "another-aggregate").identity()
+    );
 }
 
 #[test]
@@ -204,7 +239,9 @@ fn duplicate_command_across_modules_fails_atomically() {
         }
     );
     assert!(registry.module("overlapping").is_none());
-    assert!(registry.command("new-command", 1).is_none());
+    assert!(registry
+        .command("new-aggregate", "new-command", 1)
+        .is_none());
     assert_eq!(registry.modules().count(), 1);
     assert_eq!(registry.commands().count(), 2);
     assert_eq!(registry.aggregates().collect::<Vec<_>>(), ["bank-account"]);

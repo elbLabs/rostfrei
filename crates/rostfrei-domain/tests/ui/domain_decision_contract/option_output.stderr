@@ -1,8 +1,8 @@
-error[E0277]: the trait bound `Option<Output>: DecisionOutputType` is not satisfied
+error[E0277]: the trait bound `std::option::Option<Output>: DecisionOutputType` is not satisfied
   --> tests/ui/domain_decision_contract/option_output.rs:15:1
    |
 15 | #[domain_decisions(entity)]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `DecisionOutputType` is not implemented for `Option<Output>`
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `DecisionOutputType` is not implemented for `std::option::Option<Output>`
    |
 help: the following other types implement trait `DecisionOutputType`
   --> tests/ui/domain_decision_contract/option_output.rs:7:10

@@ -1,8 +1,9 @@
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use axum::{
-    extract::{rejection::JsonRejection, DefaultBodyLimit, Path, State},
+    extract::{rejection::JsonRejection, DefaultBodyLimit, Path, Request, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
+    middleware::{self, Next},
     response::{sse::Event, sse::KeepAlive, IntoResponse, Response, Sse},
     routing::{get, post},
     Json, Router,
@@ -43,7 +44,6 @@ pub enum HttpConfigError {
 #[derive(Clone)]
 struct HttpState {
     control_plane: ControlPlane,
-    config: HttpConfig,
 }
 
 pub fn router(control_plane: ControlPlane, config: HttpConfig) -> Router {
@@ -60,10 +60,19 @@ pub fn router(control_plane: ControlPlane, config: HttpConfig) -> Router {
         .layer(DefaultBodyLimit::max(
             MAX_COMMAND_PAYLOAD_LEN + SIMULATION_REQUEST_OVERHEAD,
         ))
-        .with_state(HttpState {
-            control_plane,
-            config,
-        })
+        .layer(middleware::from_fn_with_state(config, authorize_request))
+        .with_state(HttpState { control_plane })
+}
+
+async fn authorize_request(
+    State(config): State<HttpConfig>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if !is_authorized(&config, request.headers()) {
+        return unauthorized();
+    }
+    next.run(request).await
 }
 
 async fn submit_simulation(
@@ -72,9 +81,6 @@ async fn submit_simulation(
     headers: HeaderMap,
     request: Result<Json<SimulationRequest>, JsonRejection>,
 ) -> Response {
-    if !is_authorized(&state.config, &headers) {
-        return unauthorized();
-    }
     let Json(request) = match request {
         Ok(request) => request,
         Err(rejection) => return json_rejection(&rejection),
@@ -111,11 +117,7 @@ async fn submit_simulation(
 async fn get_operation(
     State(state): State<HttpState>,
     Path(operation_id): Path<String>,
-    headers: HeaderMap,
 ) -> Response {
-    if !is_authorized(&state.config, &headers) {
-        return unauthorized();
-    }
     match state.control_plane.operation(&operation_id).await {
         Ok(operation) => Json(operation).into_response(),
         Err(error) => error_response(&error),
@@ -127,9 +129,6 @@ async fn operation_events(
     Path(operation_id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if !is_authorized(&state.config, &headers) {
-        return unauthorized();
-    }
     let after = match optional_header(&headers, LAST_EVENT_ID) {
         Ok(Some(value)) => match value.parse::<u64>() {
             Ok(value) => value,
@@ -236,9 +235,15 @@ fn error_response(error: &SubmissionError) -> Response {
         SubmissionError::CapacityExhausted => {
             (StatusCode::SERVICE_UNAVAILABLE, "capacity-exhausted", true)
         }
-        SubmissionError::InvalidAggregateId(_)
-        | SubmissionError::InvalidOperationId(_)
-        | SubmissionError::InvalidCursor(_) => (StatusCode::BAD_REQUEST, "invalid-request", false),
+        SubmissionError::ConcurrencyExhausted => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "concurrency-exhausted",
+            true,
+        ),
+        SubmissionError::InvalidAggregateId(_) | SubmissionError::InvalidOperationId(_) => {
+            (StatusCode::BAD_REQUEST, "invalid-request", false)
+        }
+        SubmissionError::InvalidCursor(_) => (StatusCode::BAD_REQUEST, "future-cursor", false),
         SubmissionError::PayloadTooLarge { .. } => {
             (StatusCode::PAYLOAD_TOO_LARGE, "payload-too-large", false)
         }

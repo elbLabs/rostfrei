@@ -3,4 +3,5 @@ use crate::PublicActionOwnerType;
 
 pub trait DomainCommandOwnerType: PublicActionOwnerType {
     const DOMAIN_COMMAND_OWNER_ID: DomainCommandOwnerId;
+    const DOMAIN_COMMAND_NAMESPACE: &'static str;
 }

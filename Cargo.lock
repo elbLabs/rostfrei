@@ -853,6 +853,7 @@ dependencies = [
  "futures-util",
  "http-body-util",
  "rostfrei-core",
+ "rostfrei-domain",
  "rostfrei-registry",
  "serde",
  "serde_json",
@@ -879,6 +880,7 @@ name = "rostfrei-domain"
 version = "0.1.0"
 dependencies = [
  "rostfrei-domain-macros",
+ "serde",
  "serde_json",
  "trybuild",
 ]

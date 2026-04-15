@@ -1,6 +1,6 @@
 use rostfrei::{
-    Aggregate, BoundedContext, DomainCommand, DomainError, DomainEvent, DomainIdentity, Entity,
-    ValueObject, domain_actions, domain_decisions, domain_queries,
+    Aggregate, AggregateInstance, BoundedContext, DomainCommand, DomainError, DomainEvent,
+    DomainIdentity, Entity, ValueObject, domain_actions, domain_decisions, domain_queries,
 };
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ pub struct BikeRental;
     label = "Rental fleet",
     context = BikeRental,
     root = RentalFleet,
-    actions = [RentalFleetActions],
+    actions = [RentalFleetActionContract],
     decisions = [RentalEligibilityDecisions],
     events = [RentalFleetImported, BicycleRented]
 )]
@@ -201,7 +201,13 @@ pub(crate) enum RentalEligibility {
 }
 
 #[derive(DomainCommand, Clone, Debug, Eq, PartialEq)]
-#[domain(id = "rent-bicycle", label = "Rent bicycle", owner = RentalFleetAggregate)]
+#[domain(
+    id = "rent-bicycle",
+    label = "Rent bicycle",
+    owner = RentalFleetAggregate,
+    rejection = BicycleUnavailable,
+    json
+)]
 pub struct RentBicycle {
     #[domain(identity)]
     pub bicycle_id: BicycleId,
@@ -246,7 +252,8 @@ pub struct BicycleRented {
     label = "Bicycle unavailable",
     owner = RentalFleetAggregate,
     code = "BICYCLE_UNAVAILABLE",
-    message = "The requested bicycle cannot currently be rented."
+    message = "The requested bicycle cannot currently be rented.",
+    json
 )]
 pub struct BicycleUnavailable {
     #[domain(identity)]
@@ -284,7 +291,7 @@ impl BicycleStatusActions for Bicycle {
 }
 
 #[domain_actions(aggregate)]
-pub trait RentalFleetActions {
+pub trait RentalFleetActionContract {
     #[action(id = "rent-bicycle", label = "Rent bicycle")]
     fn rent_bicycle(
         root: &mut RentalFleet,
@@ -292,14 +299,25 @@ pub trait RentalFleetActions {
     ) -> Result<BicycleRented, BicycleUnavailable>;
 }
 
-impl RentalFleetActions for RentalFleetAggregate {
+impl RentalFleetActionContract for RentalFleetAggregate {
     fn rent_bicycle(
         root: &mut RentalFleet,
         input: RentBicycle,
     ) -> Result<BicycleRented, BicycleUnavailable> {
         let event = decide_rental(root, &input)?;
-        root.apply_rental(&event.bicycle_id);
         Ok(event)
+    }
+}
+
+pub trait RentalFleetActions {
+    fn rent_bicycle(&mut self, input: &RentBicycle) -> Result<(), BicycleUnavailable>;
+}
+
+impl RentalFleetActions for AggregateInstance<RentalFleetAggregate> {
+    fn rent_bicycle(&mut self, input: &RentBicycle) -> Result<(), BicycleUnavailable> {
+        let event = decide_rental(self.state(), input)?;
+        self.raise(event);
+        Ok(())
     }
 }
 

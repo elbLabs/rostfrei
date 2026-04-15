@@ -11,7 +11,9 @@ pub use rostfrei_core::{
     ExecutionOutcome, Executor, ExpectedVersion, InMemoryEventStore, NewEvent, OperationId,
     RecordedEvent, SimulationDecision, SimulationError, SimulationOutcome, StreamId, StreamVersion,
 };
-pub use rostfrei_domain_runtime::{domain_module, AggregateRuntime, Apply, Initialize};
+pub use rostfrei_domain_runtime::{
+    domain_command_handler, domain_module, AggregateRuntime, Apply, Initialize,
+};
 pub use rostfrei_registry::{
     CommandDefinition, CommandDescriptor, DomainModule, DomainRegistry, ModuleDescriptor,
     RegistrationError,
@@ -20,8 +22,8 @@ pub use rostfrei_registry::{
 #[doc(hidden)]
 pub mod __private {
     pub use domain::__private::{
-        emit_domain_test_descriptor, AggregateActionOutput, DomainServiceActionOutput,
-        EntityActionOutput, SameType, ValueObjectActionOutput,
+        emit_domain_test_descriptor, serde, serde_json, AggregateActionOutput,
+        DomainServiceActionOutput, EntityActionOutput, SameType, ValueObjectActionOutput,
     };
     pub use rostfrei_domain_runtime as domain_runtime;
 }

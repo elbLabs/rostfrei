@@ -201,6 +201,9 @@ impl OperationRecord {
             OperationResult::Rejected { .. } => CompletedDecision::Rejected,
         };
         let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() {
+            return;
+        }
         for kind in events {
             push_event(&mut state, kind);
         }
@@ -215,6 +218,9 @@ impl OperationRecord {
 
     pub async fn fail(&self, code: &'static str, message: String) {
         let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() {
+            return;
+        }
         push_event(
             &mut state,
             OperationEventKind::Failed {

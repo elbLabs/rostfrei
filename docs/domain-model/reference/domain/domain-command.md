@@ -15,6 +15,8 @@ A **Domain Command** is the structured request accepted by an Action.
     id = "rent-bicycle",
     label = "Rent bicycle",
     owner = RentalFleetAggregate,
+    rejection = BicycleUnavailable,
+    json,
 )]
 struct RentBicycle {
     #[domain(identity)]
@@ -32,6 +34,14 @@ rejected by the generated trait bounds.
 A command is first-class metadata. `DomainCommandType` exposes its associated
 `Owner`, `LOCAL_ID`, and `DESCRIPTOR`. The descriptor contains a stable
 owner-scoped `DomainCommandId`, label, and fields.
+
+`schema_version = N` changes the default schema version of `1`. An
+aggregate-owned command may declare its modeled rejection with
+`rejection = ErrorType`. The opt-in `json` flag generates a conventional JSON
+decoder used by `ControlPlaneBuilder::register_json`; named command payloads are
+objects with no unknown fields, tuple payloads are exact-length arrays, and unit
+commands accept `null` or an empty object. Applications can instead register an
+explicit command wire codec.
 
 Commands must be inventoried explicitly:
 

@@ -32,6 +32,8 @@ fn assemble_domain_command_owner(domain_path: &Path, name: &Ident) -> TokenStrea
                 #domain_path::DomainCommandOwnerId::DomainService(
                     <Self as #domain_path::DomainServiceType>::DESCRIPTOR.id,
                 );
+            const DOMAIN_COMMAND_NAMESPACE: &'static str =
+                <Self as #domain_path::DomainServiceType>::DESCRIPTOR.id.context.0;
         }
     }
 }

@@ -1,8 +1,9 @@
 use domain::{
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainError, DomainErrorDescriptor,
     DomainErrorId, DomainErrorOwnerId, DomainErrorType, DomainIdentity, DomainService,
-    DomainServiceId, Entity, EntityId, ValueObject, ValueObjectId,
+    DomainServiceId, Entity, EntityId, JsonErrorPayload, ValueObject, ValueObjectId,
 };
+use serde_json::json;
 
 #[derive(BoundedContext)]
 #[domain(id = "inbox", label = "Inbox")]
@@ -44,9 +45,25 @@ struct MailboxClosed(String);
 struct MessageLimit(u64, u64);
 
 #[derive(DomainError)]
-#[domain(id = "subject-blank", label = "Subject blank", owner = Subject, code = "SUBJECT_BLANK", message = "The subject must not be blank.")]
+#[domain(id = "subject-blank", label = "Subject blank", owner = Subject, code = "SUBJECT_BLANK", message = "The subject must not be blank.", json)]
 struct SubjectBlank {
     supplied: String,
+}
+
+#[test]
+fn generated_json_errors_preserve_canonical_code_and_message() {
+    assert_eq!(
+        SubjectBlank {
+            supplied: " ".to_owned(),
+        }
+        .encode_json()
+        .unwrap(),
+        json!({
+            "code": "SUBJECT_BLANK",
+            "message": "The subject must not be blank.",
+            "supplied": " ",
+        })
+    );
 }
 
 fn descriptor(
