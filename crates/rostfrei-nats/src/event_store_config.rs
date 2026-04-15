@@ -114,7 +114,7 @@ impl NatsEventStoreConfig {
     }
 
     pub fn subject_filter(&self) -> String {
-        format!("{}.>", self.subject_prefix)
+        self.aggregate_subject_filter()
     }
 
     pub fn aggregate_subject(&self, aggregate_type: &str, aggregate_id: &str) -> String {
@@ -122,7 +122,6 @@ impl NatsEventStoreConfig {
         format!("{}.aggregate.{digest}", self.subject_prefix)
     }
 
-    #[allow(dead_code)]
     pub fn aggregate_subject_filter(&self) -> String {
         format!("{}.aggregate.*", self.subject_prefix)
     }
@@ -254,8 +253,9 @@ mod tests {
         );
         assert_eq!(
             config.subject_filter(),
-            "fast-inbox.domain.commercial-access.>"
+            "fast-inbox.domain.commercial-access.aggregate.*"
         );
+        assert_eq!(config.subject_filter(), config.aggregate_subject_filter());
     }
 
     #[test]

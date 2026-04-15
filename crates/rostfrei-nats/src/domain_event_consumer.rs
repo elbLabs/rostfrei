@@ -646,6 +646,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn domain_event_stream_and_consumer_share_the_same_subject_filter() {
+        let context = ApplicationName::new("acme")
+            .unwrap()
+            .bounded_context("orders")
+            .unwrap();
+        let event_store = NatsEventStoreConfig::for_bounded_context(&context).unwrap();
+        let consumer = NatsDomainEventConsumerConfig::new(
+            ConsumerName::new("acme", "orders", "projection", 1).unwrap(),
+            DurableName::new("acme", "orders", "projection", 1).unwrap(),
+            Duration::from_secs(5),
+            Duration::from_secs(2),
+            RetryDelay::new(Duration::from_millis(100)).unwrap(),
+        )
+        .unwrap();
+
+        let stream_subjects = event_store.stream_config().subjects;
+        let consumer_subject = durable_domain_event_consumer_config(&event_store, &consumer)
+            .unwrap()
+            .filter_subject;
+
+        assert_eq!(stream_subjects, vec![consumer_subject]);
+    }
+
+    #[test]
     fn domain_event_consumer_rejects_cross_scope_names() {
         let context = ApplicationName::new("acme")
             .unwrap()
