@@ -1,0 +1,10 @@
+error[E0119]: conflicting implementations of trait `domain::__private::DecisionProvider` for type `Owner`
+  --> tests/ui/domain_decision_contract/duplicate_impl.rs:30:1
+   |
+22 | #[domain_decisions(aggregate)]
+   | ------------------------------ first implementation here
+...
+30 | #[domain_decisions(aggregate)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting implementation for `Owner`
+   |
+   = note: this error originates in the attribute macro `domain_decisions` (in Nightly builds, run with -Z macro-backtrace for more info)

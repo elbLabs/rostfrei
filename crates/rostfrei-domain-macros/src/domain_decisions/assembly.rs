@@ -1,118 +1,121 @@
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::spanned::Spanned;
-use syn::{ItemTrait, Path, TraitItem, Type, TypeParamBound, WherePredicate};
+use syn::{ItemImpl, LitStr, Path, TypePath};
 
-use super::arguments::OwnerKind;
-use super::decision::Decision;
+use super::{arguments::OwnerKind, decision::Decision};
 
 pub fn assemble(
     domain_path: &Path,
-    mut item: ItemTrait,
+    item: &ItemImpl,
+    owner: &TypePath,
     decisions: &[Decision],
     owner_kind: OwnerKind,
-) -> syn::Result<TokenStream> {
-    add_supertraits(&mut item, owner_supertrait(domain_path, owner_kind));
-    add_type_predicates(domain_path, &mut item, decisions)?;
-    super::decision_reference::add(domain_path, &mut item, decisions)?;
-    add_descriptors(domain_path, &mut item, decisions)?;
-    add_attribute_requirement(domain_path, &mut item)?;
-    Ok(quote!(#item))
-}
-
-fn owner_supertrait(domain_path: &Path, owner_kind: OwnerKind) -> TypeParamBound {
-    match owner_kind {
-        OwnerKind::Aggregate => {
-            syn::parse_quote!(#domain_path::AggregateDecisionOwnerType)
-        }
-        OwnerKind::DomainService => {
-            syn::parse_quote!(#domain_path::DomainServiceDecisionOwnerType)
-        }
-        OwnerKind::Entity => syn::parse_quote!(#domain_path::EntityDecisionOwnerType),
-        OwnerKind::ValueObject => {
-            syn::parse_quote!(#domain_path::ValueObjectDecisionOwnerType)
-        }
-    }
-}
-
-fn add_supertraits(item: &mut ItemTrait, owner_supertrait: TypeParamBound) {
-    item.supertraits.push(owner_supertrait);
-    item.supertraits.push(syn::parse_quote!(Sized));
-}
-
-fn add_type_predicates(
-    domain_path: &Path,
-    item: &mut ItemTrait,
-    decisions: &[Decision],
-) -> syn::Result<()> {
-    for decision in decisions {
-        add_type_predicate(
-            item,
-            &decision.input,
-            &quote!(#domain_path::DecisionInputType),
-        )?;
-        add_type_predicate(
-            item,
-            &decision.output,
-            &quote!(#domain_path::DecisionOutputType),
-        )?;
-    }
-    Ok(())
-}
-
-fn add_type_predicate(item: &mut ItemTrait, ty: &Type, bound: &TokenStream) -> syn::Result<()> {
-    let predicate: WherePredicate = syn::parse2(quote_spanned! {ty.span()=> #ty: #bound})?;
-    item.generics.make_where_clause().predicates.push(predicate);
-    Ok(())
-}
-
-fn add_descriptors(
-    domain_path: &Path,
-    item: &mut ItemTrait,
-    decisions: &[Decision],
-) -> syn::Result<()> {
+) -> TokenStream {
+    let impl_cfg_attributes = super::cfg_attributes::collect(&item.attrs);
     let descriptors = decisions
         .iter()
-        .map(|decision| assemble_descriptor(domain_path, decision));
-    let span = item.ident.span();
-    let constant: TraitItem = syn::parse2(quote_spanned! {span=>
-        #[doc(hidden)]
-        const __DOMAIN_DECISIONS: &'static [#domain_path::DecisionDescriptor] = &[
-            #(#descriptors),*
-        ];
-    })?;
-    item.items.push(constant);
-    Ok(())
-}
-
-fn assemble_descriptor(domain_path: &Path, decision: &Decision) -> TokenStream {
-    let id = &decision.id;
-    let label = &decision.label;
-    let input = &decision.input;
-    let output = &decision.output;
+        .map(|decision| descriptor(domain_path, owner, decision));
+    let references = decisions
+        .iter()
+        .map(|decision| reference(domain_path, owner, decision));
+    let signature_assertions = decisions
+        .iter()
+        .map(|decision| signature_assertion(owner, decision, &impl_cfg_attributes));
+    let owner_bound = match owner_kind {
+        OwnerKind::Aggregate => quote!(#domain_path::AggregateDecisionOwnerType),
+        OwnerKind::Entity => quote!(#domain_path::EntityDecisionOwnerType),
+    };
 
     quote! {
+        #item
+
+        #(#impl_cfg_attributes)*
+        impl #owner {
+            #(#references)*
+        }
+
+        #(#signature_assertions)*
+
+        #(#impl_cfg_attributes)*
+        impl #domain_path::__private::DecisionProvider for #owner {
+            const DECISIONS: &'static [#domain_path::DecisionDescriptor] = &[
+                #(#descriptors),*
+            ];
+        }
+
+        #(#impl_cfg_attributes)*
+        const _: () = {
+            fn assert_owner<T: #owner_bound>() {}
+            let _ = assert_owner::<#owner>;
+        };
+    }
+}
+
+fn descriptor(domain_path: &Path, owner: &TypePath, decision: &Decision) -> TokenStream {
+    let cfg_attributes = &decision.cfg_attributes;
+    let id = &decision.id;
+    let label = &decision.label;
+    let parameters = decision.parameters.iter().map(|parameter| {
+        let name = LitStr::new(
+            parameter.name.to_string().trim_start_matches("r#"),
+            parameter.name.span(),
+        );
+        let ty = &parameter.ty;
+        quote! {
+            #domain_path::DecisionParameterDescriptor {
+                name: #name,
+                input: <#ty as #domain_path::DecisionInputType>::DESCRIPTOR,
+            }
+        }
+    });
+    let output = &decision.output;
+    let error = &decision.error;
+    quote! {
+        #(#cfg_attributes)*
         #domain_path::DecisionDescriptor {
             id: #domain_path::DecisionId {
-                owner: <Self as #domain_path::DecisionOwnerType>::DECISION_OWNER_ID,
+                owner: <#owner as #domain_path::DecisionOwnerType>::DECISION_OWNER_ID,
                 local: #id,
             },
             label: #label,
-            input: <#input as #domain_path::DecisionInputType>::DESCRIPTOR,
+            parameters: &[#(#parameters),*],
             output: <#output as #domain_path::DecisionOutputType>::DESCRIPTOR,
+            error: <#error as #domain_path::DecisionOutputType>::DESCRIPTOR,
             implementation: #domain_path::DecisionImplementationDescriptor::Rust,
         }
     }
 }
 
-fn add_attribute_requirement(domain_path: &Path, item: &mut ItemTrait) -> syn::Result<()> {
-    let span = item.ident.span();
-    let constant: TraitItem = syn::parse2(quote_spanned! {span=>
+fn reference(domain_path: &Path, owner: &TypePath, decision: &Decision) -> TokenStream {
+    let id = &decision.id;
+    let name = super::decision_reference_name::hidden_from_decision_id(id);
+    let visibility = &decision.visibility;
+    let cfg_attributes = &decision.cfg_attributes;
+    quote_spanned! {id.span()=>
+        #(#cfg_attributes)*
         #[doc(hidden)]
-        const __DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE: &'static [
-            #domain_path::DecisionDescriptor
-        ] = Self::__DOMAIN_DECISIONS;
-    })?;
-    item.items.push(constant);
-    Ok(())
+        #[allow(dead_code)]
+        #visibility const #name: #domain_path::DecisionReference<#owner> =
+            #domain_path::DecisionReference::<#owner>::__from_local(#id);
+    }
+}
+
+fn signature_assertion(
+    owner: &TypePath,
+    decision: &Decision,
+    impl_cfg_attributes: &[syn::Attribute],
+) -> TokenStream {
+    let name = &decision.name;
+    let cfg_attributes = &decision.cfg_attributes;
+    let parameters = decision.parameters.iter().map(|parameter| &parameter.ty);
+    let output = &decision.output;
+    let error = &decision.error;
+    quote_spanned! {name.span()=>
+        #(#impl_cfg_attributes)*
+        #(#cfg_attributes)*
+        const _: () = {
+            let _: fn(#(#parameters),*) -> ::core::result::Result<#output, #error> =
+                #owner::#name;
+        };
+    }
 }

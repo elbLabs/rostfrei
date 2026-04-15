@@ -1,5 +1,5 @@
-error: domain decision contract methods require an explicit output type
+error: decisions must return Result<T, E>
  --> tests/ui/domain_decision_contract/missing_output.rs:8:8
   |
-8 |     fn decide(input: Input);
+8 |     fn decide() {}
   |        ^^^^^^

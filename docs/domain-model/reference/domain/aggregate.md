@@ -121,10 +121,10 @@ for shared contract, ordering, and trusted descriptor-extension rules.
 
 ## Decisions
 
-Aggregate Decision contracts use `#[domain_decisions(aggregate)]`. The Aggregate
-implements each contract attached through `decisions = [TraitPath, ...]`.
-Attachment identifies ownership and projection; it does not limit the Decision
-to Aggregate-owned Actions. See [Decision](decision.md).
+Aggregate Decisions are inherent associated functions declared in a
+`#[domain_decisions(aggregate)]` impl block. The `decisions` marker on the
+Aggregate derive attaches the block for projection. It does not limit the
+Decision to Aggregate-owned Actions. See [Decision](decision.md).
 
 ## Invariants
 

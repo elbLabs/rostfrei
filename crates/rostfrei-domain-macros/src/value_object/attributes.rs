@@ -5,7 +5,6 @@ pub struct Attributes {
     pub label: LitStr,
     pub owner: TypePath,
     pub actions: Vec<Path>,
-    pub decisions: Vec<Path>,
     pub invariants: Vec<Path>,
 }
 
@@ -16,7 +15,6 @@ impl Attributes {
         let mut label = None;
         let mut owner = None;
         let mut actions = None;
-        let mut decisions = None;
         let mut invariants = None;
         domain.parse_nested_meta(|meta| {
             if meta.path.is_ident("id") {
@@ -47,13 +45,6 @@ impl Attributes {
                 actions = Some(crate::helper::action_paths::parse(meta.value()?)?);
                 return Ok(());
             }
-            if meta.path.is_ident("decisions") {
-                if decisions.is_some() {
-                    return Err(meta.error("duplicate decisions"));
-                }
-                decisions = Some(crate::helper::decision_paths::parse(meta.value()?)?);
-                return Ok(());
-            }
             if meta.path.is_ident("invariants") {
                 if invariants.is_some() {
                     return Err(meta.error("duplicate invariants"));
@@ -71,7 +62,6 @@ impl Attributes {
             label,
             owner,
             actions: actions.unwrap_or_default(),
-            decisions: decisions.unwrap_or_default(),
             invariants: invariants.unwrap_or_default(),
         })
     }

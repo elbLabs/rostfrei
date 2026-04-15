@@ -1,15 +1,18 @@
 use domain::domain_decisions;
 
-struct Input;
-struct Output;
+struct Owner;
 
-#[domain_decisions(entity)]
-trait Decisions {
+#[domain_decisions(aggregate)]
+impl Owner {
     #[decision(id = "decide", label = "First")]
-    fn first(input: Input) -> Output;
+    fn first() -> Result<(), ()> {
+        Ok(())
+    }
 
     #[decision(id = "decide", label = "Second")]
-    fn second(input: Input) -> Output;
+    fn second() -> Result<(), ()> {
+        Ok(())
+    }
 }
 
 fn main() {}

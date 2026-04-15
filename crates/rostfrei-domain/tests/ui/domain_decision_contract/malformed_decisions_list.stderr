@@ -1,5 +1,0 @@
-error: expected square brackets
-  --> tests/ui/domain_decision_contract/malformed_decisions_list.rs:11:17
-   |
-11 |     decisions = Decisions
-   |                 ^^^^^^^^^

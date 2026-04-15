@@ -9,7 +9,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     let label = &attributes.label;
     let context = &attributes.context;
     let actions = &attributes.actions;
-    let decisions = &attributes.decisions;
 
     quote! {
         impl #domain_path::DomainServiceType for #name {
@@ -25,9 +24,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
                 };
             const ACTION_CONTRACTS: &'static [&'static [#domain_path::ActionDescriptor]] = &[
                 #(<Self as #actions>::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE,)*
-            ];
-            const DECISION_CONTRACTS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
-                #(<Self as #decisions>::__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE,)*
             ];
         }
     }

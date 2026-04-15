@@ -4,39 +4,33 @@ use syn::{Ident, Token};
 #[derive(Clone, Copy)]
 pub enum OwnerKind {
     Aggregate,
-    DomainService,
     Entity,
-    ValueObject,
 }
 
 impl Parse for OwnerKind {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.is_empty() {
             return Err(input.error(
-                "domain decision contract kind is required; expected `aggregate`, `domain_service`, `entity`, or `value_object`",
+                "domain decision owner kind is required; expected `aggregate` or `entity`",
             ));
         }
-
         let kind: Ident = input.parse()?;
         if input.peek(Token![=]) {
             return Err(syn::Error::new(
                 kind.span(),
-                "domain decision contract kinds must be unkeyed; use `entity`",
+                "domain decision owner kinds must be unkeyed; use `entity`",
             ));
         }
         if !input.is_empty() {
-            return Err(input.error("domain decision contract traits accept exactly one kind"));
+            return Err(input.error("domain decision impl blocks accept exactly one owner kind"));
         }
-
         match kind.to_string().as_str() {
             "aggregate" => Ok(Self::Aggregate),
-            "domain_service" => Ok(Self::DomainService),
             "entity" => Ok(Self::Entity),
-            "value_object" => Ok(Self::ValueObject),
             _ => Err(syn::Error::new(
                 kind.span(),
                 format!(
-                    "unknown domain decision contract kind `{kind}`; expected `aggregate`, `domain_service`, `entity`, or `value_object`"
+                    "unknown domain decision owner kind `{kind}`; expected `aggregate` or `entity`"
                 ),
             )),
         }

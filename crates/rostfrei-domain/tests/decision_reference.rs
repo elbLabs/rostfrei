@@ -1,8 +1,8 @@
-#![allow(dead_code, private_bounds, private_interfaces, clippy::clone_on_copy)]
+#![allow(dead_code, clippy::clone_on_copy)]
 
 use domain::{
-    AggregateId, BoundedContext, BoundedContextId, DecisionId, DecisionOwnerId, DecisionOwnerType,
-    DecisionReference, DomainService, DomainServiceType, ValueObject, domain_decisions,
+    Aggregate, AggregateId, BoundedContext, BoundedContextId, DecisionId, DecisionOwnerId,
+    DecisionOwnerType, DecisionReference, DomainIdentity, Entity, ValueObject, domain_decisions,
 };
 use std::{collections::HashSet, fmt::Debug, hash::Hash, mem::size_of};
 
@@ -10,65 +10,49 @@ use std::{collections::HashSet, fmt::Debug, hash::Hash, mem::size_of};
 #[domain(id = "reference-context", label = "Reference context")]
 struct ReferenceContext;
 
-#[derive(ValueObject)]
-#[domain(id = "reference-input", label = "Reference input", owner = ReferenceContext)]
+#[derive(DomainIdentity)]
+#[domain(owner = ReferenceRoot)]
+struct ReferenceIdentity(u64);
+
+#[derive(Aggregate)]
+#[domain(
+    id = "reference-aggregate",
+    label = "Reference aggregate",
+    context = ReferenceContext,
+    root = ReferenceRoot,
+    decisions
+)]
+struct ReferenceAggregate;
+
+#[derive(Entity)]
+#[domain(id = "reference-root", label = "Reference root", owner = ReferenceAggregate)]
+struct ReferenceRoot {
+    #[domain(identity)]
+    id: ReferenceIdentity,
+}
+
+#[derive(ValueObject, Clone, Copy)]
+#[domain(id = "reference-input", label = "Reference input", owner = ReferenceAggregate)]
 struct ReferenceInput(bool);
 
 #[derive(ValueObject)]
-#[domain(id = "reference-output", label = "Reference output", owner = ReferenceContext)]
+#[domain(id = "reference-output", label = "Reference output", owner = ReferenceAggregate)]
 struct ReferenceOutput(bool);
 
-#[derive(ValueObject)]
-#[domain(
-    id = "alternate-reference-input",
-    label = "Alternate reference input",
-    owner = ReferenceContext
-)]
-struct AlternateReferenceInput(u8);
-
-#[derive(ValueObject)]
-#[domain(
-    id = "alternate-reference-output",
-    label = "Alternate reference output",
-    owner = ReferenceContext
-)]
-struct AlternateReferenceOutput(u8);
-
-#[domain_decisions(domain_service)]
-pub trait GeneratedReferenceDecisions {
+#[domain_decisions(aggregate)]
+impl ReferenceAggregate {
     #[decision(id = "dispatch-request", label = "Dispatch request")]
-    fn decide(input: ReferenceInput) -> ReferenceOutput;
-
-    #[decision(id = "route-request", label = "Route request")]
-    fn route(input: AlternateReferenceInput) -> AlternateReferenceOutput;
-}
-
-#[derive(DomainService)]
-#[domain(
-    id = "reference-service",
-    label = "Reference service",
-    context = ReferenceContext,
-    decisions = [GeneratedReferenceDecisions]
-)]
-struct ReferenceService;
-
-impl GeneratedReferenceDecisions for ReferenceService {
-    fn decide(input: ReferenceInput) -> ReferenceOutput {
-        ReferenceOutput(input.0)
-    }
-
-    fn route(input: AlternateReferenceInput) -> AlternateReferenceOutput {
-        AlternateReferenceOutput(input.0)
+    const fn decide(input: ReferenceInput) -> Result<ReferenceOutput, ReferenceOutput> {
+        if input.0 {
+            Ok(ReferenceOutput(true))
+        } else {
+            Err(ReferenceOutput(false))
+        }
     }
 }
 
-const GENERATED_REFERENCE: DecisionReference<ReferenceService, ReferenceInput, ReferenceOutput> =
-    <ReferenceService as GeneratedReferenceDecisions>::__DOMAIN_DECISION_REFERENCE_DISPATCH_REQUEST;
-const ALTERNATE_GENERATED_REFERENCE: DecisionReference<
-    ReferenceService,
-    AlternateReferenceInput,
-    AlternateReferenceOutput,
-> = <ReferenceService as GeneratedReferenceDecisions>::__DOMAIN_DECISION_REFERENCE_ROUTE_REQUEST;
+const GENERATED_REFERENCE: DecisionReference<ReferenceAggregate> =
+    ReferenceAggregate::__DOMAIN_DECISION_REFERENCE_DISPATCH_REQUEST;
 
 struct PrimaryOwner;
 
@@ -88,24 +72,20 @@ impl DecisionOwnerType for SecondaryOwner {
     });
 }
 
-const PRIMARY_REFERENCE: DecisionReference<PrimaryOwner, ReferenceInput, ReferenceOutput> =
+const PRIMARY_REFERENCE: DecisionReference<PrimaryOwner> =
     DecisionReference::__from_local("publish");
 const PRIMARY_ID: DecisionId = PRIMARY_REFERENCE.id();
 const PRIMARY_LOCAL_ID: &str = PRIMARY_REFERENCE.local_id();
-const SECONDARY_REFERENCE: DecisionReference<SecondaryOwner, ReferenceInput, ReferenceOutput> =
+const SECONDARY_REFERENCE: DecisionReference<SecondaryOwner> =
     DecisionReference::__from_local("publish");
 
 const fn assert_reference_traits<T: Copy + Clone + Debug + Eq + Hash>() {}
 
 #[test]
-fn generated_references_preserve_each_signature_and_match_their_descriptors() {
+fn generated_reference_matches_attached_decision_descriptor() {
     assert_eq!(
         GENERATED_REFERENCE.id(),
-        <ReferenceService as DomainServiceType>::DECISION_CONTRACTS[0][0].id
-    );
-    assert_eq!(
-        ALTERNATE_GENERATED_REFERENCE.id(),
-        <ReferenceService as DomainServiceType>::DECISION_CONTRACTS[0][1].id
+        <ReferenceAggregate as domain::AggregateType>::DECISION_CONTRACTS[0][0].id
     );
 }
 
@@ -123,37 +103,24 @@ fn constructs_and_accesses_references_in_const_context() {
 
 #[test]
 fn preserves_owner_type_and_local_value_behavior() {
-    let duplicate =
-        DecisionReference::<PrimaryOwner, ReferenceInput, ReferenceOutput>::__from_local("publish");
-    let different =
-        DecisionReference::<PrimaryOwner, ReferenceInput, ReferenceOutput>::__from_local("archive");
+    let duplicate = DecisionReference::<PrimaryOwner>::__from_local("publish");
+    let different = DecisionReference::<PrimaryOwner>::__from_local("archive");
 
     assert_eq!(PRIMARY_REFERENCE, duplicate);
     assert_ne!(PRIMARY_REFERENCE, different);
     assert_eq!(PRIMARY_REFERENCE.local_id(), SECONDARY_REFERENCE.local_id());
     assert_ne!(PRIMARY_REFERENCE.id(), SECONDARY_REFERENCE.id());
     assert_eq!(
-        size_of::<DecisionReference<PrimaryOwner, ReferenceInput, ReferenceOutput>>(),
+        size_of::<DecisionReference<PrimaryOwner>>(),
         size_of::<&'static str>()
     );
 }
 
 #[test]
-#[allow(clippy::clone_on_copy)]
 fn implements_value_traits_without_owner_trait_bounds() {
-    assert_reference_traits::<DecisionReference<PrimaryOwner, ReferenceInput, ReferenceOutput>>();
-
-    let copied = PRIMARY_REFERENCE;
-    let cloned = PRIMARY_REFERENCE.clone();
+    assert_reference_traits::<DecisionReference<PrimaryOwner>>();
     let mut references = HashSet::new();
-
     references.insert(PRIMARY_REFERENCE);
-    references.insert(copied);
-    references.insert(cloned);
-
+    references.insert(PRIMARY_REFERENCE.clone());
     assert_eq!(references.len(), 1);
-    assert_eq!(
-        format!("{PRIMARY_REFERENCE:?}"),
-        "DecisionReference { id: DecisionId { owner: Aggregate(AggregateId { context: BoundedContextId(\"references\"), local: \"primary-owner\" }), local: \"publish\" } }"
-    );
 }

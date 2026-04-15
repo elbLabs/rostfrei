@@ -5,7 +5,6 @@ pub struct Attributes {
     pub label: LitStr,
     pub context: TypePath,
     pub actions: Vec<Path>,
-    pub decisions: Vec<Path>,
 }
 
 impl Attributes {
@@ -15,7 +14,6 @@ impl Attributes {
         let mut label = None;
         let mut context = None;
         let mut actions = None;
-        let mut decisions = None;
 
         domain.parse_nested_meta(|meta| {
             if meta.path.is_ident("id") {
@@ -46,13 +44,6 @@ impl Attributes {
                 actions = Some(crate::helper::action_paths::parse(meta.value()?)?);
                 return Ok(());
             }
-            if meta.path.is_ident("decisions") {
-                if decisions.is_some() {
-                    return Err(meta.error("duplicate decisions"));
-                }
-                decisions = Some(crate::helper::decision_paths::parse(meta.value()?)?);
-                return Ok(());
-            }
             Err(meta.error("unsupported domain attribute"))
         })?;
 
@@ -64,7 +55,6 @@ impl Attributes {
             label,
             context,
             actions: actions.unwrap_or_default(),
-            decisions: decisions.unwrap_or_default(),
         })
     }
 }

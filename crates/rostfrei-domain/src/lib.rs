@@ -34,8 +34,8 @@ pub use bounded_context::{BoundedContextDescriptor, BoundedContextId, BoundedCon
 pub use decision::{
     AggregateDecisionOwnerType, DecisionDescriptor, DecisionId, DecisionImplementationDescriptor,
     DecisionInputDescriptor, DecisionInputType, DecisionOutputDescriptor, DecisionOutputType,
-    DecisionOwnerId, DecisionOwnerType, DecisionReference, DomainServiceDecisionOwnerType,
-    EntityDecisionOwnerType, ValueObjectDecisionOwnerType,
+    DecisionOwnerId, DecisionOwnerType, DecisionParameterDescriptor, DecisionReference,
+    EntityDecisionOwnerType,
 };
 pub use domain_command::{
     DomainCommandDescriptor, DomainCommandId, DomainCommandOwnerId, DomainCommandOwnerType,
@@ -89,6 +89,7 @@ pub mod __private {
         AggregateActionOutput, DomainServiceActionOutput, EntityActionOutput, SameType,
         ValueObjectActionOutput,
     };
+    pub use crate::decision::{AttachedDecisionProvider, DecisionProvider};
     pub use crate::domain_model::{DomainModelBuilder, try_build};
     pub use crate::domain_test::emit_domain_test_metadata as emit_domain_test_descriptor;
     pub use serde;

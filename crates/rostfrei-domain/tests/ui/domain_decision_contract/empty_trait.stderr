@@ -1,7 +1,0 @@
-error: domain decision contract traits require at least one method
- --> tests/ui/domain_decision_contract/empty_trait.rs:3:1
-  |
-3 | #[domain_decisions(entity)]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: this error originates in the attribute macro `domain_decisions` (in Nightly builds, run with -Z macro-backtrace for more info)

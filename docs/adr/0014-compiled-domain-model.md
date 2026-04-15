@@ -67,7 +67,8 @@ into one or more Action inputs rather than being passed to Actions directly.
 and schema version. Registering a command runtime binding inserts that descriptor
 into the registry when it is not already present. `domain_module!` remains an
 optional grouping mechanism, not a prerequisite for command registration and
-not a declaration of every modeled domain capability.
+not a declaration of every modeled domain capability. Decision metadata is
+attached to explicit inherent aggregate or entity impl blocks.
 
 ## Consequences
 

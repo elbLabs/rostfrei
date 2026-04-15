@@ -29,8 +29,16 @@ fn validate_references(
     descriptor: DecisionDescriptor,
     inventory: &DecisionReferenceInventory,
 ) -> Result<(), DomainModelError> {
-    validate_input_reference(descriptor.id, descriptor.input, inventory)?;
-    validate_output_reference(descriptor.id, descriptor.output, inventory)
+    for parameter in descriptor.parameters {
+        validate_input_reference(descriptor.id, parameter.input, inventory)?;
+    }
+    if let Some(output) = descriptor.output {
+        validate_output_reference(descriptor.id, output, "output", inventory)?;
+    }
+    if let Some(error) = descriptor.error {
+        validate_output_reference(descriptor.id, error, "error", inventory)?;
+    }
+    Ok(())
 }
 
 fn validate_input_reference(
@@ -39,6 +47,7 @@ fn validate_input_reference(
     inventory: &DecisionReferenceInventory,
 ) -> Result<(), DomainModelError> {
     match input {
+        DecisionInputDescriptor::Scalar(_) => Ok(()),
         DecisionInputDescriptor::ValueObject(id) => {
             validate_value_object_reference(decision_id, id, "input", inventory)
         }
@@ -48,11 +57,13 @@ fn validate_input_reference(
 fn validate_output_reference(
     decision_id: DecisionId,
     output: DecisionOutputDescriptor,
+    location: &'static str,
     inventory: &DecisionReferenceInventory,
 ) -> Result<(), DomainModelError> {
     match output {
+        DecisionOutputDescriptor::Scalar(_) => Ok(()),
         DecisionOutputDescriptor::ValueObject(id) => {
-            validate_value_object_reference(decision_id, id, "output", inventory)
+            validate_value_object_reference(decision_id, id, location, inventory)
         }
     }
 }

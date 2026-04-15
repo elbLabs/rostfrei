@@ -1,8 +1,0 @@
-error[E0046]: not all trait items implemented, missing: `second`
-  --> tests/ui/domain_decision_contract/incomplete_implementation.rs:33:1
-   |
-21 |     fn second(input: Input) -> Output;
-   |     ---------------------------------- `second` from trait
-...
-33 | impl Decisions for Service {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^ missing `second` in implementation

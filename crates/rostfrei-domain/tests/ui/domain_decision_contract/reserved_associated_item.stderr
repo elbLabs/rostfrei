@@ -1,5 +1,0 @@
-error: `__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE` is reserved by domain_decisions
- --> tests/ui/domain_decision_contract/reserved_associated_item.rs:9:8
-  |
-9 |     fn __DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE(input: Input) -> Output;
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

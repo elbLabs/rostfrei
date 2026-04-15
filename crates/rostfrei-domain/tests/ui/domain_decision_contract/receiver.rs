@@ -1,12 +1,13 @@
 use domain::domain_decisions;
 
-struct Input;
-struct Output;
+struct Owner;
 
 #[domain_decisions(entity)]
-trait Decisions {
+impl Owner {
     #[decision(id = "decide", label = "Decide")]
-    fn decide(&self, input: Input) -> Output;
+    fn decide(&self) -> Result<(), ()> {
+        Ok(())
+    }
 }
 
 fn main() {}

@@ -17,8 +17,6 @@ pub fn assemble(
     let action_owner = assemble_action_owner(domain_path, name);
     let internal_action_owner = assemble_internal_action_owner(domain_path, name);
     let value_object_action_owner = assemble_value_object_action_owner(domain_path, name);
-    let decision_owner = assemble_decision_owner(domain_path, name);
-    let value_object_decision_owner = assemble_value_object_decision_owner(domain_path, name);
     let domain_error_owner = assemble_domain_error_owner(domain_path, name);
     let action_contracts = assemble_action_contracts(domain_path, name);
     let decision_contracts = assemble_decision_contracts(domain_path, name);
@@ -29,8 +27,6 @@ pub fn assemble(
         #action_owner
         #internal_action_owner
         #value_object_action_owner
-        #decision_owner
-        #value_object_decision_owner
         #domain_error_owner
         #action_contracts
         #decision_contracts
@@ -138,10 +134,11 @@ fn assemble_decision_contracts(domain_path: &Path, name: &Ident) -> TokenStream 
         }
 
         impl #domain_path::DecisionOutputType for #name {
-            const DESCRIPTOR: #domain_path::DecisionOutputDescriptor =
+            const DESCRIPTOR: Option<#domain_path::DecisionOutputDescriptor> = Some(
                 #domain_path::DecisionOutputDescriptor::ValueObject(
                     <Self as #domain_path::ValueObjectType>::DESCRIPTOR.id,
-                );
+                ),
+            );
         }
     }
 }
@@ -157,23 +154,6 @@ fn assemble_action_owner(domain_path: &Path, name: &Ident) -> TokenStream {
         impl #domain_path::ActionOwnerType for #name {
             const ACTION_OWNER_ID: #domain_path::ActionOwnerId =
                 #domain_path::ActionOwnerId::ValueObject(
-                    <Self as #domain_path::ValueObjectType>::DESCRIPTOR.id,
-                );
-        }
-    }
-}
-
-fn assemble_value_object_decision_owner(domain_path: &Path, name: &Ident) -> TokenStream {
-    quote! {
-        impl #domain_path::ValueObjectDecisionOwnerType for #name {}
-    }
-}
-
-fn assemble_decision_owner(domain_path: &Path, name: &Ident) -> TokenStream {
-    quote! {
-        impl #domain_path::DecisionOwnerType for #name {
-            const DECISION_OWNER_ID: #domain_path::DecisionOwnerId =
-                #domain_path::DecisionOwnerId::ValueObject(
                     <Self as #domain_path::ValueObjectType>::DESCRIPTOR.id,
                 );
         }

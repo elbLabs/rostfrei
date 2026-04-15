@@ -1,5 +1,5 @@
-error: unknown domain decision contract kind `application`; expected `aggregate`, `domain_service`, `entity`, or `value_object`
- --> tests/ui/domain_decision_contract/bad_macro_kind.rs:3:20
+error: unknown domain decision owner kind `domain_service`; expected `aggregate` or `entity`
+ --> tests/ui/domain_decision_contract/bad_macro_kind.rs:5:20
   |
-3 | #[domain_decisions(application)]
-  |                    ^^^^^^^^^^^
+5 | #[domain_decisions(domain_service)]
+  |                    ^^^^^^^^^^^^^^

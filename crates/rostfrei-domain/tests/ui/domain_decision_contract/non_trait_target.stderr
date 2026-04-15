@@ -1,5 +1,5 @@
-error: domain_decisions may only be applied to a trait
+error: expected `impl`
  --> tests/ui/domain_decision_contract/non_trait_target.rs:4:1
   |
-4 | struct Decisions;
-  | ^^^^^^^^^^^^^^^^^
+4 | struct Owner;
+  | ^^^^^^

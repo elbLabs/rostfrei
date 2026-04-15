@@ -11,7 +11,7 @@ use domain::{
 #[domain(id = "testing", label = "Testing")]
 struct Testing;
 
-#[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
+#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
 #[domain(id = "decision-input", label = "Decision input", owner = TestAggregate)]
 struct DecisionInput(bool);
 
@@ -29,12 +29,6 @@ pub trait AggregateActions {
 trait RootActions {
     #[action(id = "activate", label = "Activate")]
     fn activate(&mut self);
-}
-
-#[domain_decisions(aggregate)]
-pub trait AggregateDecisions {
-    #[decision(id = "accept", label = "Accept")]
-    fn accept(input: DecisionInput) -> DecisionOutput;
 }
 
 #[domain_invariants(aggregate)]
@@ -84,10 +78,22 @@ struct TestRoot {
     context = Testing,
     root = TestRoot,
     actions = [AggregateActions],
-    decisions = [AggregateDecisions],
+    decisions,
     invariants = [AggregateInvariants],
 )]
 struct TestAggregate;
+
+#[domain_decisions(aggregate)]
+impl TestAggregate {
+    #[decision(id = "accept", label = "Accept")]
+    const fn accept(input: DecisionInput) -> Result<DecisionOutput, DecisionOutput> {
+        if input.0 {
+            Ok(DecisionOutput(true))
+        } else {
+            Err(DecisionOutput(false))
+        }
+    }
+}
 
 impl AggregateActions for TestAggregate {
     fn mark(root: &mut TestRoot, input: bool) {
@@ -98,12 +104,6 @@ impl AggregateActions for TestAggregate {
 impl RootActions for TestRoot {
     fn activate(&mut self) {
         self.active = true;
-    }
-}
-
-impl AggregateDecisions for TestAggregate {
-    fn accept(input: DecisionInput) -> DecisionOutput {
-        DecisionOutput(input.0)
     }
 }
 
@@ -142,11 +142,11 @@ fn case_distinct_test_name() {}
 #[domain_action_test(<TestAggregate as AggregateActions>::MARK)]
 fn CASE_DISTINCT_TEST_NAME() {}
 
-#[domain_decision_test(<TestAggregate as AggregateDecisions>::ACCEPT)]
+#[domain_decision_test(TestAggregate::ACCEPT)]
 fn decision_tests_keep_the_authored_body() {
     assert_eq!(
         TestAggregate::accept(DecisionInput(true)),
-        DecisionOutput(true)
+        Ok(DecisionOutput(true))
     );
 }
 

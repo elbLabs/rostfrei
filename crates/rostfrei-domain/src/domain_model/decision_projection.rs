@@ -117,14 +117,19 @@ fn decision(descriptor: DecisionDescriptor) -> Value {
             "local": descriptor.id.local,
         },
         "label": descriptor.label,
-        "input": decision_input(descriptor.input),
-        "output": decision_output(descriptor.output),
+        "parameters": descriptor.parameters.iter().map(|parameter| json!({
+            "name": parameter.name,
+            "input": decision_input(parameter.input),
+        })).collect::<Vec<_>>(),
+        "output": descriptor.output.map(decision_output),
+        "error": descriptor.error.map(decision_output),
         "implementation": decision_implementation(descriptor.implementation),
     })
 }
 
 fn decision_input(descriptor: DecisionInputDescriptor) -> Value {
     match descriptor {
+        DecisionInputDescriptor::Scalar(scalar) => super::field_projection::scalar(scalar),
         DecisionInputDescriptor::ValueObject(id) => {
             json!({ "kind": "valueObject", "id": value_object_id(id) })
         }
@@ -133,6 +138,7 @@ fn decision_input(descriptor: DecisionInputDescriptor) -> Value {
 
 fn decision_output(descriptor: DecisionOutputDescriptor) -> Value {
     match descriptor {
+        DecisionOutputDescriptor::Scalar(scalar) => super::field_projection::scalar(scalar),
         DecisionOutputDescriptor::ValueObject(id) => {
             json!({ "kind": "valueObject", "id": value_object_id(id) })
         }

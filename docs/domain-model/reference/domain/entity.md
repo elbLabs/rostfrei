@@ -83,10 +83,10 @@ types, and untagged custom types are unsupported.
 
 ## Decisions
 
-Entity Decision contracts use `#[domain_decisions(entity)]`. The Entity
-implements each contract attached through `decisions = [TraitPath, ...]`.
-Attachment identifies ownership and projection; it does not limit the Decision
-to Entity-owned Actions. See [Decision](decision.md).
+Entity Decisions are inherent associated functions declared in a
+`#[domain_decisions(entity)]` impl block. The `decisions` marker on the Entity
+derive attaches the block for projection. It does not limit the Decision to
+Entity-owned Actions. See [Decision](decision.md).
 
 ## Invariants
 
