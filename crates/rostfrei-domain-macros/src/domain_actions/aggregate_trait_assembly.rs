@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::quote_spanned;
+use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{ItemTrait, Path, WherePredicate};
 
@@ -8,10 +8,28 @@ use super::contract_trait_assembly::{self, Configuration, OutputPolicy};
 
 pub fn assemble(
     domain_path: &Path,
-    item: ItemTrait,
+    runtime_path: Option<&Path>,
+    mut item: ItemTrait,
     actions: &[Action],
+    instance_trait: Option<&syn::Ident>,
 ) -> syn::Result<TokenStream> {
-    contract_trait_assembly::assemble(
+    if instance_trait.is_some() {
+        for action in actions {
+            add_event_predicate(domain_path, &mut item, action)?;
+        }
+    }
+    let instance = match (runtime_path, instance_trait) {
+        (Some(runtime_path), Some(instance_trait)) => super::aggregate_instance_assembly::assemble(
+            domain_path,
+            runtime_path,
+            &item,
+            actions,
+            instance_trait,
+        ),
+        (None, None) => TokenStream::new(),
+        _ => unreachable!("runtime path and instance trait are resolved together"),
+    };
+    let contract = contract_trait_assembly::assemble(
         domain_path,
         item,
         actions,
@@ -22,7 +40,24 @@ pub fn assemble(
             )),
             owner_predicate: Some(add_root_predicate),
         },
-    )
+    )?;
+    Ok(quote! {
+        #contract
+        #instance
+    })
+}
+
+fn add_event_predicate(
+    domain_path: &Path,
+    item: &mut ItemTrait,
+    action: &Action,
+) -> syn::Result<()> {
+    let output = &action.signature.as_ref().unwrap().output;
+    let predicate: WherePredicate = syn::parse2(
+        quote_spanned! {output.span()=> #output: #domain_path::DomainEventType<Owner = Self>},
+    )?;
+    item.generics.make_where_clause().predicates.push(predicate);
+    Ok(())
 }
 
 fn add_root_predicate(

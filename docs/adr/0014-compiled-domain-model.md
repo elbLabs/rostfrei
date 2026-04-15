@@ -32,8 +32,10 @@ schema version, fields, and the default JSON payload contract. An aggregate's
 membership. The aggregate derive generates the owned descriptors, a doc-hidden
 aggregate event representation, concrete event conversions, `Apply<Event>`
 dispatch to the declared root, JSON encoding and fail-closed replay decoding.
-Applications raise concrete events through `AggregateInstance` and never declare
-or use the generated representation.
+Applications declare executable aggregate Actions that return concrete events
+and never declare or use the generated representation. The generated
+`AggregateInstance` adapter raises successful Action results, applies them
+immediately, and records them as uncommitted events.
 
 `domain_model!` projects each aggregate's attached events automatically in
 aggregate and attachment order. It has no flat event inventory, so an event
@@ -53,12 +55,19 @@ Normal applications depend on the `rostfrei` facade and use `rostfrei::Aggregate
 `rostfrei::Executor` with `#[rostfrei(...)]`. Implementation crates and generated
 event representations are not part of normal application syntax.
 
-Executable aggregate actions are extension methods on `AggregateInstance`; they
-validate against current state and raise events rather than mutating the root
-directly. `domain_command_handler!` generates the thin `CommandHandler` adapter
-from a domain command to such a method. The separate action and decision metadata
-contracts remain explicit because Rust procedural macros cannot discover
-independent trait implementations.
+Executable aggregate Actions use an immutable root, domain-specific input, and a
+direct aggregate-owned event result. `domain_actions(aggregate(instance = ...))`
+generates extension methods on `AggregateInstance` from the same contract and
+implementation used for model metadata. The generated adapter raises only a
+successful event result; rejected Actions leave state and uncommitted events
+unchanged. Commands remain an application boundary and map their payloads into
+one or more Action inputs rather than being passed to Actions directly.
+
+`DomainCommand` derives the runtime command definition from its owner, local ID,
+and schema version. Registering a command runtime binding inserts that descriptor
+into the registry when it is not already present. `domain_module!` remains an
+optional grouping mechanism, not a prerequisite for command registration and
+not a declaration of every modeled domain capability.
 
 ## Consequences
 

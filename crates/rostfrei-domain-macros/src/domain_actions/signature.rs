@@ -83,10 +83,22 @@ pub fn parse_value_object(signature: &Signature) -> syn::Result<ParsedSignature>
 }
 
 pub fn parse_aggregate(signature: &Signature) -> syn::Result<ParsedSignature> {
+    parse_aggregate_root(signature, true)
+}
+
+pub fn parse_aggregate_instance(signature: &Signature) -> syn::Result<ParsedSignature> {
+    parse_aggregate_root(signature, false)
+}
+
+fn parse_aggregate_root(signature: &Signature, mutable: bool) -> syn::Result<ParsedSignature> {
     let Some(FnArg::Typed(root)) = signature.inputs.first() else {
         return Err(syn::Error::new_spanned(
             &signature.ident,
-            "aggregate actions require a first `root: &mut RootType` parameter",
+            if mutable {
+                "aggregate actions require a first `root: &mut RootType` parameter"
+            } else {
+                "executable aggregate actions require a first `root: &RootType` parameter"
+            },
         ));
     };
     validate_pattern(&root.pat, "root")?;
@@ -96,10 +108,16 @@ pub fn parse_aggregate(signature: &Signature) -> syn::Result<ParsedSignature> {
             "aggregate root must have type &mut RootType",
         ));
     };
-    if reference.mutability.is_none() {
+    if mutable && reference.mutability.is_none() {
         return Err(syn::Error::new_spanned(
             &root.ty,
             "aggregate root must be mutable with type &mut RootType",
+        ));
+    }
+    if !mutable && reference.mutability.is_some() {
+        return Err(syn::Error::new_spanned(
+            &root.ty,
+            "executable aggregate action roots must be immutable with type &RootType",
         ));
     }
     if reference.lifetime.is_some() {

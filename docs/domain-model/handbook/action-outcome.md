@@ -23,9 +23,11 @@ return type is written. A fallible Action uses direct canonical
 `Result<Output, Error>` syntax. Value Object constructors and transformations
 return the Value Object itself on success.
 
-An allowed [Aggregate](../reference/domain/aggregate.md) Action also returns
-zero or more [Domain Events](../reference/domain/domain-event.md) owned by that
-exact Aggregate. Entity and Value Object Actions do not return Domain Events.
+An executable [Aggregate](../reference/domain/aggregate.md) Action returns one
+direct [Domain Event](../reference/domain/domain-event.md) owned by that exact
+Aggregate. Its generated aggregate-instance adapter records the event. Broader
+metadata-only Aggregate contracts can describe zero or more owned events. Entity
+and Value Object Actions do not return Domain Events.
 
 An allowed [Domain Service](../reference/domain/domain-service.md) Action also
 returns the Domain Events produced by coordinated Aggregate Actions when the

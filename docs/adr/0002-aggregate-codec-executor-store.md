@@ -32,6 +32,13 @@ handling, application of new events, encoding, expected-version append, exact
 retry detection, and a bounded optimistic-concurrency retry loop. Rejected
 commands append nothing.
 
+Execution returns `CommandResult<Rejection>`. A completed business decision is
+either `CommandOutcome::Accepted(CommandReceipt)` or
+`CommandOutcome::Rejected(Rejection)`. Accepted receipts distinguish appended
+events, an exact replay of previously appended events, and an accepted decision
+that produced no events. Only codec and EventStore failures are returned as
+`CommandExecutionError`; a modeled rejection is not an execution error.
+
 The `EventStore` port exposes only aggregate-stream load and atomic append.
 Adapters must implement the same observable behavior as the in-memory reference
 store.
@@ -39,7 +46,7 @@ store.
 ## Consequences
 
 Domain tests can exercise typed behavior without NATS or Serde. Infrastructure
-failures and domain rejections remain distinguishable. A command that performs
+failures and domain rejections remain structurally distinct. A command that performs
 external side effects still needs a future execution-journal seam; the first
 release deliberately does not pretend an event append makes external effects
 atomic.

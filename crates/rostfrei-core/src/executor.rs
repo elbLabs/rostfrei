@@ -48,14 +48,27 @@ impl<S, C> Executor<S, C> {
     }
 }
 
+/// The completed business outcome of command execution or an infrastructure failure.
+pub type CommandResult<Rejection> = Result<CommandOutcome<Rejection>, CommandExecutionError>;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ExecutionOutcome {
+/// A command's accepted or rejected business outcome.
+pub enum CommandOutcome<Rejection> {
+    Accepted(CommandReceipt),
+    Rejected(Rejection),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+/// Evidence returned for an accepted command.
+///
+/// `NoEvents` is not persisted and therefore is not a durable idempotency receipt.
+pub enum CommandReceipt {
     Appended(Vec<RecordedEvent>),
     ExactReplay(Vec<RecordedEvent>),
     NoEvents,
 }
 
-impl ExecutionOutcome {
+impl CommandReceipt {
     pub fn events(&self) -> &[RecordedEvent] {
         match self {
             Self::Appended(events) | Self::ExactReplay(events) => events,
@@ -68,10 +81,9 @@ impl ExecutionOutcome {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum ExecutionError<Rejection> {
-    #[error("command rejected")]
-    Rejected(Rejection),
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+/// A codec or event-store failure that prevented command execution from completing.
+pub enum CommandExecutionError {
     #[error(transparent)]
     Store(#[from] EventStoreError),
     #[error(transparent)]
@@ -132,7 +144,7 @@ pub enum SimulationError {
     Codec(#[from] EventCodecError),
 }
 
-impl<Rejection> From<SimulationError> for ExecutionError<Rejection> {
+impl From<SimulationError> for CommandExecutionError {
     fn from(error: SimulationError) -> Self {
         match error {
             SimulationError::Store(error) => Self::Store(error),
@@ -225,7 +237,7 @@ where
         &self,
         metadata: ExecutionMetadata,
         command: &Command,
-    ) -> Result<ExecutionOutcome, ExecutionError<<A as CommandHandler<Command>>::Rejection>>
+    ) -> CommandResult<<A as CommandHandler<Command>>::Rejection>
     where
         A: Aggregate + CommandHandler<Command>,
         C: EventCodec<A>,
@@ -246,7 +258,9 @@ where
                         && event.causation_id() == metadata.causation_id()
                 });
                 if exact {
-                    return Ok(ExecutionOutcome::ExactReplay(prior_operation));
+                    return Ok(CommandOutcome::Accepted(CommandReceipt::ExactReplay(
+                        prior_operation,
+                    )));
                 }
                 return Err(EventStoreError::new(
                     EventStoreErrorKind::IdentityConflict,
@@ -258,11 +272,11 @@ where
             let events = match self.decide::<A, Command>(&metadata, command, aggregate)? {
                 SimulationDecision::Accepted(events) => events,
                 SimulationDecision::Rejected(rejection) => {
-                    return Err(ExecutionError::Rejected(rejection));
+                    return Ok(CommandOutcome::Rejected(rejection));
                 }
             };
             let Some(batch) = prepare_batch(&metadata, events)? else {
-                return Ok(ExecutionOutcome::NoEvents);
+                return Ok(CommandOutcome::Accepted(CommandReceipt::NoEvents));
             };
             let expected_version = match current_version(&history) {
                 StreamVersion::ZERO => ExpectedVersion::NoStream,
@@ -275,10 +289,12 @@ where
                 .await
             {
                 Ok(AppendOutcome::Appended(events)) => {
-                    return Ok(ExecutionOutcome::Appended(events));
+                    return Ok(CommandOutcome::Accepted(CommandReceipt::Appended(events)));
                 }
                 Ok(AppendOutcome::ExactReplay(events)) => {
-                    return Ok(ExecutionOutcome::ExactReplay(events));
+                    return Ok(CommandOutcome::Accepted(CommandReceipt::ExactReplay(
+                        events,
+                    )));
                 }
                 Err(error)
                     if error.kind() == EventStoreErrorKind::Conflict

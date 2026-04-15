@@ -167,15 +167,15 @@ flowchart TD
     Validate --> Replay[Decode and replay history]
     Replay --> Handle[Run typed command handler]
     Handle --> Outcome{Outcome}
-    Outcome -->|rejected| Rejected[Return business rejection<br/>append nothing]
-    Outcome -->|no events| NoEvents[Return success<br/>append nothing]
+    Outcome -->|rejected| Rejected[Return rejected command outcome<br/>append nothing]
+    Outcome -->|no events| NoEvents[Return accepted NoEvents receipt<br/>append nothing]
     Outcome -->|new events| Encode[Encode pending domain events]
     Encode --> Append[Append at exact expected version]
     Append -->|conflict| Retry[Bounded reload and retry]
     Retry --> Load
-    Append -->|same operation and content| Original[Return original append outcome]
+    Append -->|same operation and content| Original[Return accepted ExactReplay receipt]
     Append -->|identity reused differently| IdentityConflict[Fail with identity conflict]
-    Append -->|committed| Success[Return committed events]
+    Append -->|committed| Success[Return accepted Appended receipt]
 ```
 
 This separation allows typed domain tests to run without NATS or serialization
@@ -437,6 +437,8 @@ distributed-systems concern:
 
 - Successful decisions that produce no events do not yet have a durable retry
   receipt.
+- Rejections are expected command outcomes, but are not durably recorded; a
+  retry reruns the decision against current aggregate state.
 - External side effects are not made atomic by appending domain events.
 - Projection and outbox orchestration are not currently supplied by the
   framework.

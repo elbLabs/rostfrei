@@ -39,10 +39,13 @@ attached to their owner:
 mod contracts {
     use domain::domain_actions;
 
-    #[domain_actions(aggregate)]
+    #[domain_actions(aggregate(instance = MailboxAggregateActions))]
     pub trait MailboxActions {
         #[action(id = "rename", label = "Rename mailbox")]
-        fn rename(root: &mut super::MailboxRoot, input: String);
+        fn rename(
+            root: &super::MailboxRoot,
+            input: String,
+        ) -> Result<super::MailboxRenamed, super::RenameDenied>;
     }
 }
 
@@ -57,10 +60,25 @@ mod contracts {
 pub struct Mailbox;
 
 impl contracts::MailboxActions for Mailbox {
-    fn rename(root: &mut MailboxRoot, input: String) {
-        root.name = input;
+    fn rename(
+        root: &MailboxRoot,
+        input: String,
+    ) -> Result<MailboxRenamed, RenameDenied> {
+        validate_name(&input)?;
+        Ok(MailboxRenamed {
+            mailbox_id: root.id.clone(),
+            name: input,
+        })
     }
 }
+```
+
+The `instance` option generates the executable extension trait named by the
+option. Its method evaluates the authored Action against immutable state and
+raises, applies, and records the returned event only on success:
+
+```rust
+aggregate.rename(name)?;
 ```
 
 Every contract must name its owner kind explicitly: use
@@ -73,11 +91,12 @@ Every contract must name its owner kind explicitly: use
 A contract trait is non-generic, has no existing supertraits, and contains at
 least one method. Every method has exactly one
 `#[action(id = "...", label = "...")]` and no default body; other trait items
-are rejected. Aggregate methods are associated functions beginning with
-`root: &mut RootType`. Entity methods begin with `&self` or `&mut self`. Value
-Object methods are either associated constructors with exactly one `input` or
-transformations taking `self` by value and zero or one `input`. Domain Service
-methods are associated functions with no receiver and zero or one `input`.
+are rejected. Executable Aggregate methods begin with `root: &RootType`.
+Metadata-only Aggregate methods begin with `root: &mut RootType`. Entity methods
+begin with `&self` or `&mut self`. Value Object methods are either associated
+constructors with exactly one `input` or transformations taking `self` by value
+and zero or one `input`. Domain Service methods are associated functions with no
+receiver and zero or one `input`.
 
 Each `actions = [TraitPath, ...]` entry on an Aggregate, Entity, Value Object, or
 Domain Service attaches one contract. Paths cannot contain generic arguments,
@@ -152,14 +171,11 @@ The Rust signature is the action contract. Action attributes contain only the
 descriptor metadata `id` and `label`; inputs, successful outputs, and errors are
 not repeated in attributes.
 
-Custom public business inputs derive `DomainCommand`. Commands have stable
-owner-scoped IDs, labels, fields, and an explicit `commands` model inventory.
-The Rust input type links an action to a command; `#[action(command = ...)]` is
-not supported. The command owner must exactly equal the Aggregate or Domain
-Service action owner; a Domain Service contract therefore accepts only
-service-owned commands.
-Entity and Value Object actions cannot accept commands.
-Canonical scalars and Value Objects remain valid inputs for existing contracts.
+Action inputs are canonical scalars or Value Objects. An Aggregate Action can
+also accept a Domain Identity belonging to an Entity in that Aggregate. Commands
+are application messages and do not implement `ActionInputType`; a command
+handler maps their fields into one or more Action inputs. There is no one-to-one
+command-to-Action requirement.
 A [Custom scalar](custom-scalar.md) may be carried by an annotated derived
 field, but is not yet supported as a raw Action input or output.
 
@@ -173,6 +189,9 @@ Supported signatures are:
 - Aggregate contract trait: associated function whose first parameter is
   `root: &mut RootType`, followed by zero or one `input`. `RootType` must equal
   `<Owner as AggregateType>::Root`.
+- Executable Aggregate contract trait declared with `aggregate(instance = ...)`:
+  associated function whose first parameter is immutable `root: &RootType`,
+  followed by zero or one `input`.
 - Entity contract trait: method with an `&self` or `&mut self` receiver, followed
   by zero or one `input`. Explicit receiver lifetimes and typed receivers are
   unsupported.
@@ -204,6 +223,12 @@ through every `Option` and `Vec` wrapper.
 Derived output types implement these contracts automatically. A manual
 `ActionOutputType<Contract>` implementation is a trusted extension of the
 compiler contract and is responsible for preserving the same ownership rules.
+
+An executable Aggregate Action is intentionally narrower: its successful output
+is one direct Domain Event owned by that Aggregate. The generated instance
+adapter converts that event into the Aggregate's executable event type. Unit,
+scalar, Value Object, `Option`, and `Vec` outputs remain available to descriptive
+Aggregate contracts but cannot be used by the generated event-sourced adapter.
 
 ## Decisions
 
@@ -276,15 +301,15 @@ ActionDescriptor {
         local: "assign-todo",
     },
     label: "Assign todo",
-    input: Some(ActionInputDescriptor::DomainCommand(AssignTodo::DESCRIPTOR.id)),
+    input: Some(ActionInputDescriptor::ValueObject(AssignTodoInput::DESCRIPTOR.id)),
     output: Some(ActionOutputDescriptor::DomainEvent(TodoAssigned::DESCRIPTOR.id)),
     error: Some(TodoAssignmentDenied::DESCRIPTOR.id),
 }
 ```
 
 Compiled JSON uses `input`, `output`, and `error` on every action, with `null`
-for absent contracts. Commands are referenced as `{ "kind": "domainCommand",
-"id": ... }`; their fields are projected once in top-level `domainCommands`.
+for absent contracts. Inputs reference scalar, Value Object, or Domain Identity
+contracts.
 Successful values preserve optional/list wrappers and reference scalar, Value
 Object, or Domain Event contracts by kind. Errors are projected as
 `DomainErrorId` references.

@@ -1,0 +1,59 @@
+error[E0277]: the trait bound `Change: ActionInputType<Owner>` is not satisfied
+  --> tests/ui/aggregate_action/command_input.rs:55:6
+   |
+55 | impl Actions for Owner {
+   |      ^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `ActionInputType<Owner>` is not implemented for `Change`
+  --> tests/ui/aggregate_action/command_input.rs:37:1
+   |
+37 | pub struct Change;
+   | ^^^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `ActionInputType<Owner>`:
+             `Id` implements `ActionInputType<<Root as EntityType>::Owner>`
+             `OtherId` implements `ActionInputType<<OtherRoot as EntityType>::Owner>`
+             `bool` implements `ActionInputType<Owner>`
+             `char` implements `ActionInputType<Owner>`
+             `f32` implements `ActionInputType<Owner>`
+             `f64` implements `ActionInputType<Owner>`
+             `i128` implements `ActionInputType<Owner>`
+             `i16` implements `ActionInputType<Owner>`
+           and $N others
+note: required by a bound in `Actions`
+  --> tests/ui/aggregate_action/command_input.rs:39:1
+   |
+39 | #[domain_actions(aggregate)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
+40 | pub trait Actions {
+   |           ------- required by a bound in this trait
+   = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Change: ActionInputType<Owner>` is not satisfied
+  --> tests/ui/aggregate_action/command_input.rs:45:10
+   |
+45 | #[derive(Aggregate)]
+   |          ^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `ActionInputType<Owner>` is not implemented for `Change`
+  --> tests/ui/aggregate_action/command_input.rs:37:1
+   |
+37 | pub struct Change;
+   | ^^^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `ActionInputType<Owner>`:
+             `Id` implements `ActionInputType<<Root as EntityType>::Owner>`
+             `OtherId` implements `ActionInputType<<OtherRoot as EntityType>::Owner>`
+             `bool` implements `ActionInputType<Owner>`
+             `char` implements `ActionInputType<Owner>`
+             `f32` implements `ActionInputType<Owner>`
+             `f64` implements `ActionInputType<Owner>`
+             `i128` implements `ActionInputType<Owner>`
+             `i16` implements `ActionInputType<Owner>`
+           and $N others
+note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
+  --> tests/ui/aggregate_action/command_input.rs:39:1
+   |
+39 | #[domain_actions(aggregate)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
+40 | pub trait Actions {
+   |           ------- required by a bound in this associated constant
+   = note: this error originates in the derive macro `Aggregate` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
