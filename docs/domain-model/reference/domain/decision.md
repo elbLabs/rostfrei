@@ -74,6 +74,12 @@ Every Decision method has exactly one
 ID, and `label` is its human-readable name. The Rust signature is the complete
 input and output contract; the attribute contains no type or consumer metadata.
 
+The macro preserves that signature on its generated reference as
+`DecisionReference<Owner, Input, Output>`. Framework integrations can therefore
+accept a Decision reference without erasing its owner, input, or output type.
+The type parameters are markers and do not increase the runtime size of the
+reference.
+
 Each method is an associated function with no receiver and no `root` parameter.
 It has exactly one by-value parameter named `input`. That input is one owned
 Value Object visible to the Decision owner. The return type is one direct Value
