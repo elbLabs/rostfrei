@@ -58,10 +58,10 @@ attached to the Aggregate through `actions = [TraitPath, ...]`:
 mod contracts {
     use domain::domain_actions;
 
-    #[domain_actions(aggregate)]
+    #[domain_actions(aggregate(instance = TodoAggregateActions))]
     pub trait TodoActions {
         #[action(id = "rename", label = "Rename todo")]
-        fn rename(root: &mut super::TodoRoot, input: String);
+        fn rename(root: &super::TodoRoot, input: String) -> super::TodoRenamed;
     }
 }
 
@@ -72,30 +72,38 @@ mod contracts {
     context = Planning,
     root = TodoRoot,
     actions = [contracts::TodoActions],
+    events = [TodoRenamed],
 )]
 pub struct Todo;
 
 impl contracts::TodoActions for Todo {
-    fn rename(root: &mut TodoRoot, input: String) {
-        root.title = input;
+    fn rename(root: &TodoRoot, input: String) -> TodoRenamed {
+        TodoRenamed {
+            todo_id: root.id.clone(),
+            title: input,
+        }
     }
 }
 ```
 
 The trait must be `pub`, non-generic, and contain only action methods without
-default bodies. Every method begins with `root: &mut RootType`, where `RootType`
-is the Aggregate's configured root, followed by zero or one business `input`.
-The Aggregate must implement every attached trait.
+default bodies. An executable method begins with immutable `root: &RootType`,
+followed by zero or one business `input`, and returns one Aggregate-owned Domain
+Event. The Aggregate implements the attached contract once; the macro generates
+the event-recording `AggregateInstance` adapter from that implementation.
 
-Calls use ordinary Rust trait semantics. Fully qualified syntax works directly:
+Bring the generated instance trait into scope to call the Action through the
+executable Aggregate:
 
 ```rust
-<Todo as contracts::TodoActions>::rename(&mut root, title);
+use contracts::TodoAggregateActions as _;
+aggregate.rename(title);
 ```
 
-To call `Todo::rename(&mut root, title)`, first bring
-`contracts::TodoActions` into scope, commonly with
-`use contracts::TodoActions as _;`.
+Command handlers map command data into one or more Action inputs and may call
+multiple generated Action methods. Earlier successful calls update the
+AggregateInstance state seen by later calls, while a final command rejection
+causes the executor to discard the complete staged event set.
 
 The Aggregate derive exposes attached descriptors through
 `AggregateType::ACTION_CONTRACTS`. Registering the Aggregate in `domain_model!`

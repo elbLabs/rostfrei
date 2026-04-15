@@ -56,6 +56,7 @@ mod contracts {
     context = Mail,
     root = MailboxRoot,
     actions = [contracts::MailboxActions],
+    events = [MailboxRenamed],
 )]
 pub struct Mailbox;
 
@@ -82,7 +83,9 @@ aggregate.rename(name)?;
 ```
 
 Every contract must name its owner kind explicitly: use
-`#[domain_actions(aggregate)]` for a public Aggregate contract,
+`#[domain_actions(aggregate(instance = TraitName))]` for an executable public
+Aggregate contract, `#[domain_actions(aggregate)]` for a metadata-only Aggregate
+contract,
 `#[domain_actions(entity)]` for an internal Entity contract,
 `#[domain_actions(value_object)]` for an internal Value Object contract, or
 `#[domain_actions(domain_service)]` for a public Domain Service contract. Bare
@@ -104,19 +107,25 @@ use qualified-self syntax, or be repeated. The attached contract kind must match
 the owner, and the owner must implement every attached trait. Implementing a
 trait does not attach it.
 
-Calls follow ordinary Rust trait rules. Fully qualified syntax works without an
-import:
+The authored contract remains directly callable through ordinary Rust trait
+rules. Fully qualified syntax works without an import:
 
 ```rust
-<Mailbox as contracts::MailboxActions>::rename(&mut root, name);
+let event = <Mailbox as contracts::MailboxActions>::rename(&root, name)?;
 ```
 
-For owner-associated or method-call syntax, bring the trait into scope:
+Normal event-sourced execution uses the generated instance trait. Bring that
+trait into scope to call the Action on `AggregateInstance`:
 
 ```rust
-use contracts::MailboxActions as _;
-Mailbox::rename(&mut root, name);
+use contracts::MailboxAggregateActions as _;
+aggregate.rename(name)?;
 ```
+
+One command handler may call multiple generated Action methods. Each successful
+call immediately raises and applies its returned event, so the next Action sees
+the resulting state. If the handler ultimately rejects, the executor discards
+all staged events.
 
 Entity contracts similarly use method-call syntax once their trait is in scope.
 For a Value Object contract, importing the trait enables owner-associated
