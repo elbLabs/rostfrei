@@ -16,13 +16,13 @@ contracts.
 
 The accepted product direction adds a machine-readable domain registry,
 automatically generated registration, aggregate inspection, safe command
-simulation, rostfrei Studio, and AI-facing tools. All of these remain optional
-layers around the explicit kernel.
+simulation, and AI-facing tools. All of these remain optional layers around the
+explicit kernel.
 
 The product thesis is:
 
 > One explicit domain model should power production execution, historical
-> replay, testing, visualization, documentation, and AI-assisted development.
+> replay, testing, inspection, documentation, and AI-assisted development.
 
 ## Problem and opportunity
 
@@ -57,8 +57,6 @@ permanent, execution deterministic, and domain metadata machine-readable.
 | Compiled domain model and explicit runtime registration | Implemented; automatic discovery remains deferred |
 | Headless command simulation API | First local slice implemented with operation status and resumable SSE traces |
 | Aggregate inspection and state differences | Accepted direction, not implemented |
-| Studio model browser | Implemented as a read-only browser and Cargo diagnostic client |
-| Runtime Studio and AI control plane | Accepted direction, not implemented |
 | Projection orchestration, workflows, snapshots, and execution journals | Deliberately deferred |
 
 The foundation is working and verified locally but has not been released. The
@@ -68,7 +66,7 @@ final CI, and an initial tagged or pinned revision.
 ## Ubiquitous language
 
 ADR 0001 establishes a ubiquitous language shared by framework APIs,
-architecture decisions, documentation, Studio, and AI tooling.
+architecture decisions, documentation, and AI tooling.
 
 | Term | Meaning |
 | --- | --- |
@@ -322,7 +320,6 @@ flowchart TB
         Runtime[Runtime command dispatch]
         Simulation[Inspection and simulation]
         ControlPlane[Secured control plane]
-        Studio[rostfrei Studio]
         AI[AI and MCP adapters]
         Documentation[Generated documentation]
     end
@@ -338,14 +335,13 @@ flowchart TB
     Simulation --> Kernel
     Kernel --> Infrastructure
     Runtime --> Messaging
-    Studio --> ControlPlane
     AI --> ControlPlane
 ```
 
 The descriptor model will cover aggregate types, commands, events, schema
 versions, aggregate targets, rejections, handlers, codecs, and inspection views.
-Runtime dispatch, tests, Studio, documentation, compatibility checks, and AI
-will consume the same registry.
+Runtime dispatch, tests, documentation, compatibility checks, and AI will
+consume the same registry.
 
 Annotated aggregates and handlers will automatically contribute generated
 registrations through a compile-time or link-time registry. At startup,
@@ -365,7 +361,7 @@ console.
 
 ```mermaid
 flowchart TD
-    Tool[Studio or AI tool] --> Capability{Authorized capability}
+    Tool[Authorized tool or AI adapter] --> Capability{Authorized capability}
     Capability -->|Inspect| Inspect[Read history and reconstruct state]
     Capability -->|Simulate| Simulate[Replay into isolated in-memory branch]
     Capability -->|Dispatch| Dispatch[Execute or publish a real command]
@@ -388,12 +384,13 @@ future execution-journal seam before they can be represented as safely
 simulatable.
 
 Live dispatch is disabled unless deployment configuration, authorization, and
-auditing explicitly permit it. The UI and API must make simulation and live
-dispatch technically and visually distinct.
+auditing explicitly permit it. The API must keep simulation and live dispatch
+technically distinct.
 
-## Studio and AI control plane
+## AI control plane
 
-ADR 0012 establishes one protocol-independent control plane for humans and AI.
+ADR 0012 establishes one protocol-independent control plane for authorized
+clients, including AI.
 It will expose:
 
 - Domain descriptors and registered handlers.
@@ -404,9 +401,9 @@ It will expose:
 - Scenario generation and execution.
 - Explicitly authorized live dispatch.
 
-rostfrei Studio and AI adapters use the same validation, redaction,
-authorization, environment capabilities, and audit trail. AI does not receive a
-privileged route around production safety.
+AI adapters use the same validation, redaction, authorization, environment
+capabilities, and audit trail as every other control-plane client. AI does not
+receive a privileged route around production safety.
 
 HTTP, WebSocket, MCP, and future protocols are adapters around this control
 plane. None of those protocols become dependencies of the aggregate kernel.
@@ -417,7 +414,7 @@ entirely.
 
 | ADR | Decision | Product significance |
 | --- | --- | --- |
-| [0001](adr/0001-ubiquitous-language-and-scope.md) | Canonical ubiquitous language and framework ownership | Runtime, documentation, Studio, and AI use one vocabulary |
+| [0001](adr/0001-ubiquitous-language-and-scope.md) | Canonical ubiquitous language and framework ownership | Runtime, documentation, and AI use one vocabulary |
 | [0002](adr/0002-aggregate-codec-executor-store.md) | Separate aggregate, codec, executor, and EventStore responsibilities | Domain behavior remains deterministic and infrastructure-independent |
 | [0003](adr/0003-stream-version-idempotency.md) | Exact versions, atomic commits, and persisted retry identities | Prevents lost updates, partial decisions, and ambiguous retries |
 | [0004](adr/0004-private-and-integration-events.md) | Private domain events are separate from public integration events | Internal history and public contracts can evolve independently |
@@ -426,9 +423,9 @@ entirely.
 | [0007](adr/0007-legacy-import.md) | Existing state enters through truthful import events | Preserves historical honesty and provenance |
 | [0008](adr/0008-nexus-release-strategy.md) | Independent release and thin integration facade | Applications compose rostfrei without duplicating its generic adapters |
 | [0009](adr/0009-development-platform-layers.md) | Optional platform layers around the stable kernel | Higher-level product capabilities do not compromise the foundation |
-| [0010](adr/0010-domain-descriptors-registration-and-macros.md) | Shared descriptors and automatic generated registration | Runtime, tests, UI, documentation, and AI share one declared model |
+| [0010](adr/0010-domain-descriptors-registration-and-macros.md) | Shared descriptors and automatic generated registration | Runtime, tests, documentation, and AI share one declared model |
 | [0011](adr/0011-inspection-simulation-and-dispatch.md) | Inspect, simulate, and dispatch are distinct capabilities | Real histories can be explored safely without accidental mutation |
-| [0012](adr/0012-studio-and-ai-control-plane.md) | Studio and AI share one secured control plane | Humans and AI receive the same behavior and security constraints |
+| [0012](adr/0012-ai-control-plane.md) | AI adapters use the secured control plane | AI receives the same behavior and security constraints as other clients |
 | [0013](adr/0013-domain-event-handlers.md) | Typed post-commit domain-event handlers and durable NATS dispatch | Side effects consume committed facts without entering aggregate decisions |
 | [0014](adr/0014-compiled-domain-model.md) | The domain compiler is rostfrei's canonical optional platform model | One declaration drives metadata and the generated aggregate runtime |
 | [0015](adr/0015-application-scoped-nats-conventions.md) | Application-first subjects and derived NATS topology | Applications sharing an account retain disjoint messaging and event storage |
@@ -443,9 +440,8 @@ distributed-systems concern:
 - External side effects are not made atomic by appending domain events.
 - Projection and outbox orchestration are not currently supplied by the
   framework.
-- Procedural domain macros and the read-only Studio model browser are
-  implemented. Handler discovery, generated wire schemas, runtime Studio views,
-  and AI tools remain deferred.
+- Procedural domain macros are implemented. Handler discovery, generated wire
+  schemas, and AI tools remain deferred.
 - Snapshot policy, event upcasting, process managers, and workflows remain
   deferred until concrete use cases establish their contracts.
 - NATS Server 2.12 or newer is required for the authoritative NATS EventStore.
@@ -459,21 +455,20 @@ flowchart LR
     Release[1. Release foundation] --> Registry[2. Descriptor model<br/>and linked registry]
     Registry --> Macros[3. Generated schemas<br/>and automatic registration]
     Macros --> Simulation[4. Inspection, redaction,<br/>and simulation]
-    Simulation --> Studio[5. Event timeline<br/>and command laboratory]
-    Studio --> AI[6. Secured AI and<br/>MCP adapters]
-    AI --> Advanced[7. Projections, upcasting,<br/>snapshots, workflows, journals]
+    Simulation --> AI[5. Secured AI and<br/>MCP adapters]
+    AI --> Advanced[6. Projections, upcasting,<br/>snapshots, workflows, journals]
 ```
 
 The implementation order matters. Descriptor and registry contracts must be
 proved independently before macros automate them. Inspection and simulation
-must be safe before Studio or AI can expose them. Advanced runtime capabilities
+must be safe before AI adapters can expose them. Advanced runtime capabilities
 should be added only when real use cases establish their required semantics.
 
 ## Strategic position
 
 rostfrei combines capabilities normally separated across an event-sourcing
 framework, message-bus abstraction, EventStore, aggregate testing library,
-domain debugger, operational inspection tool, and AI development interface.
+operational inspection APIs, and AI development interface.
 
 The advantage is not the number of features. It is that every layer shares the
 same vocabulary, descriptors, execution model, and historical truth.
@@ -482,4 +477,4 @@ rostfrei is therefore not simply an attempt to reproduce another framework in
 Rust. Its intended differentiator is:
 
 > Every important business decision should be reproducible, explainable,
-> testable, visualizable, and safely accessible to both humans and AI.
+> testable, inspectable, and safely accessible to both humans and AI.
