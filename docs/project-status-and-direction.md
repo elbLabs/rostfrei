@@ -10,8 +10,8 @@ aggregate execution, deterministic replay, optimistic concurrency, exact retry,
 atomic event commits, transport-neutral messaging, and NATS adapters.
 
 The project is evolving toward an event-sourced development platform in which
-the same explicit domain metadata powers runtime dispatch, testing,
-visualization, documentation, and AI-assisted development. The aim is not to
+the same explicit domain metadata powers runtime dispatch, testing, inspection,
+documentation, and AI-assisted development. The aim is not to
 hide the existing kernel behind runtime magic. Higher-level tooling will be
 generated from inspectable contracts and remain optional.
 
@@ -67,10 +67,6 @@ is aggregate type, local command name, and schema version, so different
 aggregates may use the same local name. Standalone `Command` and `Module` derives
 remain available for direct kernel users.
 
-rostfrei Studio is implemented as a read-only compiled-model browser and Cargo
-diagnostic client. It does not yet provide event timelines, aggregate state
-inspection, simulation, runtime command dispatch, or AI APIs.
-
 The first headless control-plane slice provides explicitly registered command
 deserialization and erased simulation over normal typed aggregate handlers. It
 exposes asynchronous operation resources and resumable SSE traces for replay,
@@ -81,8 +77,8 @@ payloads are redacted unless a deployment explicitly supplies another policy.
 The included journal and concurrent simulation admission are bounded and
 in-memory; retention is pressure-based and idempotency lasts only while an
 operation remains retained. Durable traces, production-grade authorization,
-automatic discovery, generated wire schemas, live dispatch, inspection views,
-and the Studio client remain deferred.
+automatic discovery, generated wire schemas, live dispatch, and inspection views
+remain deferred.
 Default JSON domain-event codecs are implemented by the compiled aggregate
 contract. Commands and domain errors can opt into generated conventional JSON
 payloads with `#[domain(json)]`; custom command codecs remain explicit overrides.
@@ -149,16 +145,12 @@ rostfrei will grow in layers around the stable kernel:
 3. The implemented registry accepts explicitly registered domain modules and
    exposes deterministic, validated metadata. Automatic linked discovery
    remains deferred.
-4. The implemented Studio browses compiled domain structure and Cargo
-   diagnostics; runtime inspection views remain deferred.
-5. An aggregate inspector will expose redacted developer views without making
+4. An aggregate inspector will expose redacted developer views without making
    aggregate state a persisted Serde contract.
-6. The first simulation runtime slice replays real history into an isolated
+5. The first simulation runtime slice replays real history into an isolated
    branch and executes commands without appending or publishing.
-7. rostfrei Studio will visualize event timelines, state at any version,
-   state differences, operation metadata, command outcomes, and rejections.
-8. A protocol-independent control plane will serve both Studio and AI tools with
-   the same authorization, redaction, and audit boundaries.
+6. A protocol-independent control plane will serve AI tools with the same
+   authorization, redaction, and audit boundaries.
 
 The three operational modes are deliberately distinct:
 
@@ -181,9 +173,8 @@ The three operational modes are deliberately distinct:
    transport concerns into the kernel.
 5. Add aggregate inspection and redaction.
 6. Generate command, event, rejection, and inspection schemas.
-7. Build the first event timeline and command laboratory in rostfrei Studio.
-8. Expose the control plane through MCP and other AI-facing protocols.
-9. Add projection management, schema evolution, snapshots, process managers,
+7. Expose the control plane through MCP and other AI-facing protocols.
+8. Add projection management, schema evolution, snapshots, process managers,
    and external-effect journaling only as concrete use cases require them.
 
 ## Architecture decision map
@@ -201,7 +192,7 @@ The three operational modes are deliberately distinct:
 | [0009](adr/0009-development-platform-layers.md) | Optional platform layers around a stable explicit kernel |
 | [0010](adr/0010-domain-descriptors-registration-and-macros.md) | Shared descriptors and generated registration; the first slice uses explicit modules |
 | [0011](adr/0011-inspection-simulation-and-dispatch.md) | Separate inspection, simulation, and live dispatch capabilities |
-| [0012](adr/0012-studio-and-ai-control-plane.md) | One secured control plane for Studio and AI tooling |
+| [0012](adr/0012-ai-control-plane.md) | AI adapters use the secured control plane |
 | [0013](adr/0013-domain-event-handlers.md) | Typed post-commit domain-event handlers and durable NATS dispatch |
 | [0014](adr/0014-compiled-domain-model.md) | Absorb the domain compiler as rostfrei's canonical optional platform model |
 | [0015](adr/0015-application-scoped-nats-conventions.md) | Derive application-first subjects, stream topology, and bounded-context event stores |
@@ -209,4 +200,4 @@ The three operational modes are deliberately distinct:
 The product direction can be summarized as follows:
 
 > rostfrei makes a domain model executable, replayable, inspectable, testable,
-> visualizable, and understandable by both developers and AI.
+> explainable, and understandable by both developers and AI.

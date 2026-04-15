@@ -9,7 +9,7 @@ Accepted; application and NATS naming ownership partially superseded by ADR
 
 rostfrei is event-sourced by design. The definitions in this ADR and the
 project's `UBIQUITOUS_LANGUAGE.md` are its ubiquitous language. Framework APIs,
-architecture decisions, documentation, Studio, and AI tooling use these terms
+architecture decisions, documentation, and AI tooling use these terms
 consistently rather than introducing local synonyms.
 
 An **aggregate** is a business consistency boundary identified by its aggregate

@@ -1,5 +1,7 @@
 # rostfrei
 
+<img width="160" height="160" alt="raccoon_smith" src="https://github.com/user-attachments/assets/498043fe-2f24-4ba8-b61e-04c7bb2fbb13" />
+
 rostfrei is a Rust domain-modeling, event-sourcing, and messaging platform. It
 keeps domain aggregates independent from persistence, serialization, and brokers
 while providing a compiled domain model, strict execution, developer tooling,
@@ -28,10 +30,6 @@ Cargo package:
   queries, envelopes, and delivery contracts.
 - `rostfrei-nats`: NATS messaging and authoritative JetStream event storage.
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
-
-[`studio`](studio) contains rostfrei Studio, a Tauri application for browsing
-compiled models and Cargo diagnostics. The domain language reference and
-handbook are in [`docs/domain-model`](docs/domain-model).
 
 Messaging is application-scoped. An application name such as `fast-inbox`
 derives its command, integration-event, and quarantine streams and prefixes all
