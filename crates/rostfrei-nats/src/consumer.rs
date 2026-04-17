@@ -1,4 +1,4 @@
-use std::{fmt::Write as _, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_nats::{
     HeaderMap,
@@ -23,6 +23,7 @@ use tokio::time::{Instant, sleep, timeout};
 
 use crate::{
     error::NatsError,
+    hex::encode_lower_hex,
     messaging_config::{MessagingTopology, StreamName},
     provisioning::durable_consumer_config,
     publish::{
@@ -698,20 +699,11 @@ fn quarantine_message_id(record: &QuarantineRecord) -> String {
     hash.update(record.source_consumer.as_bytes());
     hash.update([0]);
     hash.update(record.source_sequence.to_be_bytes());
-    let mut id = String::with_capacity(75);
-    id.push_str("quarantine-");
-    for byte in hash.finalize() {
-        write!(&mut id, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    id
+    format!("quarantine-{}", encode_lower_hex(hash.finalize()))
 }
 
 fn sha256_hex(payload: &[u8]) -> String {
-    let mut output = String::with_capacity(64);
-    for byte in Sha256::digest(payload) {
-        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    output
+    encode_lower_hex(Sha256::digest(payload))
 }
 
 async fn apply_ack(message: &jetstream::Message, kind: AckKind) -> Result<(), ConsumeError> {

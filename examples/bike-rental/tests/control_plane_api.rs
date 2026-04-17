@@ -9,7 +9,7 @@ use bike_rental::{
     runtime::{control_plane_builder, demo_stream, seed_demo},
 };
 use http_body_util::BodyExt as _;
-use rostfrei::{EventHistory, InMemoryEventStore};
+use rostfrei::{EventHistory, InMemoryEventStore, StreamId};
 use rostfrei_control_plane::{
     ControlPlane, ExposeTracePayloadsForLocalDevelopment,
     http::{self, HttpConfig},
@@ -19,14 +19,16 @@ use tower::ServiceExt as _;
 
 const API_TOKEN: &str = "integration-test-capability";
 
-async fn fixture() -> (ControlPlane, InMemoryEventStore) {
+async fn fixture()
+-> Result<(ControlPlane, InMemoryEventStore, StreamId), Box<dyn std::error::Error>> {
     let store = InMemoryEventStore::new();
-    seed_demo(&store).await.unwrap();
+    seed_demo(&store).await?;
+    let stream = demo_stream()?;
     let history: Arc<dyn EventHistory> = Arc::new(store.clone());
     let mut builder = control_plane_builder(history)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
-    builder.register_json::<RentBicycle>().unwrap();
-    (builder.build().unwrap(), store)
+    builder.register_json::<RentBicycle>()?;
+    Ok((builder.build()?, store, stream))
 }
 
 fn app(control_plane: ControlPlane) -> axum::Router {
@@ -62,8 +64,16 @@ async fn json_body(response: axum::response::Response) -> Value {
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
-    let (control_plane, store) = fixture().await;
-    let history_before = store.load(&demo_stream()).await.unwrap();
+    let fixture = fixture().await;
+    assert!(
+        fixture.is_ok(),
+        "fixture failed: {:?}",
+        fixture.as_ref().err()
+    );
+    let Ok((control_plane, store, demo_stream)) = fixture else {
+        return;
+    };
+    let history_before = store.load(&demo_stream).await.unwrap();
     let app = app(control_plane);
 
     let response = app
@@ -177,13 +187,21 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert_eq!(store.load(&demo_stream()).await.unwrap(), history_before);
+    assert_eq!(store.load(&demo_stream).await.unwrap(), history_before);
 }
 
 #[tokio::test]
 async fn rejection_and_idempotency_have_explicit_http_outcomes() {
-    let (control_plane, store) = fixture().await;
-    let history_before = store.load(&demo_stream()).await.unwrap();
+    let fixture = fixture().await;
+    assert!(
+        fixture.is_ok(),
+        "fixture failed: {:?}",
+        fixture.as_ref().err()
+    );
+    let Ok((control_plane, store, demo_stream)) = fixture else {
+        return;
+    };
+    let history_before = store.load(&demo_stream).await.unwrap();
     let app = app(control_plane);
 
     let first = app
@@ -245,5 +263,5 @@ async fn rejection_and_idempotency_have_explicit_http_outcomes() {
         completed["result"]["rejection"]["code"],
         "BICYCLE_UNAVAILABLE"
     );
-    assert_eq!(store.load(&demo_stream()).await.unwrap(), history_before);
+    assert_eq!(store.load(&demo_stream).await.unwrap(), history_before);
 }

@@ -1,6 +1,8 @@
-use std::any::Any;
 use std::fmt::Debug;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+
+mod support;
+
+use support::{ExpectedPanicError, panic_message};
 
 use domain::__private::DomainModelBuilder;
 use domain::{
@@ -367,21 +369,6 @@ const ERROR_REFERENCE: DomainErrorDescriptor = DomainErrorDescriptor {
     }],
 };
 
-fn panic_message(operation: impl FnOnce()) -> String {
-    let payload = catch_unwind(AssertUnwindSafe(operation)).expect_err("operation should panic");
-    panic_payload(payload)
-}
-
-fn panic_payload(payload: Box<dyn Any + Send>) -> String {
-    match payload.downcast::<String>() {
-        Ok(message) => *message,
-        Err(payload) => payload.downcast::<&'static str>().map_or_else(
-            |_| panic!("panic payload should be a String or &'static str"),
-            |message| (*message).to_owned(),
-        ),
-    }
-}
-
 fn violation(missing_id: impl Debug, location: &str, inventory_key: &str) -> String {
     format!(
         "Field reference inventory violation: field references missing {missing_id:?} at descriptor location `{location}`; add it to domain_model! inventory key `{inventory_key}`"
@@ -408,11 +395,12 @@ fn accepts_forward_references_registered_cycles_wrappers_and_non_reference_scala
 }
 
 #[test]
-fn rejected_duplicate_command_does_not_leave_field_reference_records() {
+fn rejected_duplicate_command_does_not_leave_field_reference_records()
+-> Result<(), ExpectedPanicError> {
     let mut builder = DomainModelBuilder::new();
     builder.add_domain_command(ACCEPTED_COMMAND);
 
-    let message = panic_message(|| builder.add_domain_command(COMMAND_REFERENCE));
+    let message = panic_message(|| builder.add_domain_command(COMMAND_REFERENCE))?;
     assert_eq!(
         message,
         format!("duplicate DomainCommandId: {COMMAND_ID:?}")
@@ -427,19 +415,21 @@ fn rejected_duplicate_command_does_not_leave_field_reference_records() {
             .len(),
         0
     );
+    Ok(())
 }
 
 #[test]
-fn persisted_value_object_keeps_field_references_after_later_contract_rejection() {
+fn persisted_value_object_keeps_field_references_after_later_contract_rejection()
+-> Result<(), ExpectedPanicError> {
     let mut builder = DomainModelBuilder::new();
 
     let registration_message =
-        panic_message(|| builder.add_value_object_type::<ContractRejectedValue>());
+        panic_message(|| builder.add_value_object_type::<ContractRejectedValue>())?;
     assert!(registration_message.starts_with("duplicate ActionId:"));
 
     let finish_message = panic_message(|| {
         builder.finish();
-    });
+    })?;
     let location = format!(
         "value object {CONTRACT_REJECTED_VALUE_ID:?} field {:?}",
         "aggregate"
@@ -448,10 +438,12 @@ fn persisted_value_object_keeps_field_references_after_later_contract_rejection(
         finish_message,
         violation(MISSING_AGGREGATE_ID, &location, "aggregates")
     );
+    Ok(())
 }
 
 #[test]
-fn reports_each_missing_reference_kind_from_struct_value_objects() {
+fn reports_each_missing_reference_kind_from_struct_value_objects() -> Result<(), ExpectedPanicError>
+{
     let cases = [
         (
             STRUCT_IDENTITY_REFERENCE,
@@ -480,7 +472,7 @@ fn reports_each_missing_reference_kind_from_struct_value_objects() {
             let mut builder = DomainModelBuilder::new();
             builder.add_value_object(descriptor);
             builder.finish();
-        });
+        })?;
         let location = value_object_location(descriptor, descriptor.shape_fields()[0].name);
         assert_eq!(
             message,
@@ -489,15 +481,16 @@ fn reports_each_missing_reference_kind_from_struct_value_objects() {
             )
         );
     }
+    Ok(())
 }
 
 #[test]
-fn reports_a_missing_reference_from_a_tagged_tuple_variant() {
+fn reports_a_missing_reference_from_a_tagged_tuple_variant() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_value_object(TAGGED_TUPLE_REFERENCE);
         builder.finish();
-    });
+    })?;
     let location = format!(
         "value object {SOURCE_VALUE_ID:?} variant {:?} field {:?}",
         "Tuple", "0"
@@ -507,15 +500,16 @@ fn reports_a_missing_reference_from_a_tagged_tuple_variant() {
         message,
         violation(MISSING_VALUE_ID, &location, "value_objects")
     );
+    Ok(())
 }
 
 #[test]
-fn reports_a_missing_reference_from_a_tagged_struct_variant() {
+fn reports_a_missing_reference_from_a_tagged_struct_variant() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_value_object(TAGGED_STRUCT_REFERENCE);
         builder.finish();
-    });
+    })?;
     let location = format!(
         "value object {SOURCE_VALUE_ID:?} variant {:?} field {:?}",
         "Struct", "identity"
@@ -525,63 +519,68 @@ fn reports_a_missing_reference_from_a_tagged_struct_variant() {
         message,
         violation(MISSING_IDENTITY_ID, &location, "identities")
     );
+    Ok(())
 }
 
 #[test]
-fn reports_a_missing_reference_from_an_entity_field() {
+fn reports_a_missing_reference_from_an_entity_field() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_entity(ENTITY_REFERENCE);
         builder.finish();
-    });
+    })?;
     let location = format!("entity {ENTITY_SOURCE_ID:?} field {:?}", "related");
 
     assert_eq!(message, violation(MISSING_ENTITY_ID, &location, "entities"));
+    Ok(())
 }
 
 #[test]
-fn reports_a_missing_reference_from_a_command_field() {
+fn reports_a_missing_reference_from_a_command_field() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_command(COMMAND_REFERENCE);
         builder.finish();
-    });
+    })?;
     let location = format!("domain command {COMMAND_ID:?} field {:?}", "aggregate");
 
     assert_eq!(
         message,
         violation(MISSING_AGGREGATE_ID, &location, "aggregates")
     );
+    Ok(())
 }
 
 #[test]
-fn reports_a_missing_reference_from_an_event_field() {
+fn reports_a_missing_reference_from_an_event_field() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_event(EVENT_REFERENCE);
         builder.finish();
-    });
+    })?;
     let location = format!("domain event {EVENT_ID:?} field {:?}", "value");
 
     assert_eq!(
         message,
         violation(MISSING_VALUE_ID, &location, "value_objects")
     );
+    Ok(())
 }
 
 #[test]
-fn reports_a_missing_reference_from_an_error_field() {
+fn reports_a_missing_reference_from_an_error_field() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_error(ERROR_REFERENCE);
         builder.finish();
-    });
+    })?;
     let location = format!("domain error {ERROR_ID:?} field {:?}", "identity");
 
     assert_eq!(
         message,
         violation(MISSING_IDENTITY_ID, &location, "identities")
     );
+    Ok(())
 }
 
 trait StructShapeFields {

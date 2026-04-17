@@ -1,6 +1,7 @@
 use rostfrei::{
     Aggregate, AggregateInstance, BoundedContext, DomainCommand, DomainError, DomainEvent,
-    DomainIdentity, Entity, ValueObject, domain_actions, domain_decisions, domain_queries,
+    DomainIdentity, Entity, StreamAggregateId, ValueObject, domain_actions, domain_decisions,
+    domain_queries,
 };
 use serde::{Deserialize, Serialize};
 
@@ -110,6 +111,12 @@ impl FleetId {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl From<&StreamAggregateId> for FleetId {
+    fn from(value: &StreamAggregateId) -> Self {
+        Self(value.as_str().to_owned())
     }
 }
 

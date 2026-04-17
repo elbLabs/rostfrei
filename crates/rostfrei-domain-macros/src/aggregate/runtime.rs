@@ -1,8 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Ident, Path, Visibility};
-
-use super::attributes::Attributes;
+use syn::{Ident, Path, TypePath, Visibility};
 
 #[allow(
     clippy::too_many_lines,
@@ -13,13 +11,9 @@ pub fn assemble(
     runtime_path: &Path,
     name: &Ident,
     visibility: &Visibility,
-    attributes: &Attributes,
+    root: &TypePath,
+    events: &[Path],
 ) -> TokenStream {
-    let events = attributes
-        .events
-        .as_ref()
-        .expect("runtime assembly requires aggregate events");
-    let root = &attributes.root;
     let event_enum = format_ident!("__{name}Event");
     let variants: Vec<_> = (0..events.len())
         .map(|index| format_ident!("Event{index}"))

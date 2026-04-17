@@ -1,5 +1,6 @@
-use std::any::Any;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+mod support;
+
+use support::{ExpectedPanicError, panic_message as capture_panic_message};
 
 use domain::__private::DomainModelBuilder;
 use domain::{
@@ -351,23 +352,21 @@ impl<const CASE: u8> DomainIdentityType for ValidationIdentity<CASE> {
     };
 }
 
-fn panic_message<const CASE: u8>() -> String {
-    let payload = catch_unwind(AssertUnwindSafe(|| {
+fn panic_message<const CASE: u8>() -> Result<String, ExpectedPanicError> {
+    capture_panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_entity_type::<ValidationEntity<CASE>>();
-    }))
-    .expect_err("registration should panic");
-    panic_payload(payload)
+    })
 }
 
-fn panic_payload(payload: Box<dyn Any + Send>) -> String {
-    match payload.downcast::<String>() {
-        Ok(message) => *message,
-        Err(payload) => payload.downcast::<&'static str>().map_or_else(
-            |_| panic!("panic payload should be a String or &'static str"),
-            |message| (*message).to_owned(),
-        ),
-    }
+fn assert_panic_starts_with<const CASE: u8>(expected: &str) -> Result<(), ExpectedPanicError> {
+    assert!(panic_message::<CASE>()?.starts_with(expected));
+    Ok(())
+}
+
+fn assert_panic_contains<const CASE: u8>(expected: &str) -> Result<(), ExpectedPanicError> {
+    assert!(panic_message::<CASE>()?.contains(expected));
+    Ok(())
 }
 
 #[test]
@@ -377,103 +376,102 @@ fn accepts_a_well_formed_trusted_descriptor() {
 }
 
 #[test]
-fn rejects_a_lifecycle_owned_by_another_entity_before_later_defects() {
-    assert!(panic_message::<1>().starts_with("entity lifecycle descriptor owner mismatch"));
+fn rejects_a_lifecycle_owned_by_another_entity_before_later_defects()
+-> Result<(), ExpectedPanicError> {
+    assert_panic_starts_with::<1>("entity lifecycle descriptor owner mismatch")
 }
 
 #[test]
-fn rejects_an_invalid_lifecycle_local_id_before_its_blank_label() {
-    assert!(
-        panic_message::<13>()
-            .starts_with("entity lifecycle local id must be nonempty lowercase kebab-case")
-    );
+fn rejects_an_invalid_lifecycle_local_id_before_its_blank_label() -> Result<(), ExpectedPanicError>
+{
+    assert_panic_starts_with::<13>(
+        "entity lifecycle local id must be nonempty lowercase kebab-case",
+    )
 }
 
 #[test]
-fn rejects_a_blank_lifecycle_local_id() {
-    assert!(
-        panic_message::<14>()
-            .starts_with("entity lifecycle local id must be nonempty lowercase kebab-case")
-    );
+fn rejects_a_blank_lifecycle_local_id() -> Result<(), ExpectedPanicError> {
+    assert_panic_starts_with::<14>(
+        "entity lifecycle local id must be nonempty lowercase kebab-case",
+    )
 }
 
 #[test]
-fn rejects_a_blank_lifecycle_label_before_state_structure() {
-    assert!(panic_message::<15>().starts_with("entity lifecycle label must not be empty"));
+fn rejects_a_blank_lifecycle_label_before_state_structure() -> Result<(), ExpectedPanicError> {
+    assert_panic_starts_with::<15>("entity lifecycle label must not be empty")
 }
 
 #[test]
-fn rejects_an_empty_state_collection() {
-    assert!(panic_message::<2>().contains("must declare at least one state"));
+fn rejects_an_empty_state_collection() -> Result<(), ExpectedPanicError> {
+    assert_panic_contains::<2>("must declare at least one state")
 }
 
 #[test]
-fn rejects_a_state_owned_by_another_lifecycle() {
-    assert!(panic_message::<3>().contains("state ownership mismatch"));
+fn rejects_a_state_owned_by_another_lifecycle() -> Result<(), ExpectedPanicError> {
+    assert_panic_contains::<3>("state ownership mismatch")
 }
 
 #[test]
-fn rejects_an_invalid_state_local_id() {
-    assert!(
-        panic_message::<16>()
-            .starts_with("entity lifecycle state local id must be nonempty lowercase kebab-case")
-    );
+fn rejects_an_invalid_state_local_id() -> Result<(), ExpectedPanicError> {
+    assert_panic_starts_with::<16>(
+        "entity lifecycle state local id must be nonempty lowercase kebab-case",
+    )
 }
 
 #[test]
-fn rejects_a_blank_state_local_id() {
-    assert!(
-        panic_message::<17>()
-            .starts_with("entity lifecycle state local id must be nonempty lowercase kebab-case")
-    );
+fn rejects_a_blank_state_local_id() -> Result<(), ExpectedPanicError> {
+    assert_panic_starts_with::<17>(
+        "entity lifecycle state local id must be nonempty lowercase kebab-case",
+    )
 }
 
 #[test]
-fn rejects_a_blank_state_label() {
-    assert!(panic_message::<18>().starts_with("entity lifecycle state label must not be empty"));
+fn rejects_a_blank_state_label() -> Result<(), ExpectedPanicError> {
+    assert_panic_starts_with::<18>("entity lifecycle state label must not be empty")
 }
 
 #[test]
-fn rejects_duplicate_state_ids_before_initial_validation() {
-    assert!(panic_message::<4>().starts_with("duplicate EntityLifecycleStateId"));
+fn rejects_duplicate_state_ids_before_initial_validation() -> Result<(), ExpectedPanicError> {
+    assert_panic_starts_with::<4>("duplicate EntityLifecycleStateId")
 }
 
 #[test]
-fn rejects_an_initial_state_owned_by_another_lifecycle() {
-    assert!(panic_message::<5>().contains("initial state ownership mismatch"));
+fn rejects_an_initial_state_owned_by_another_lifecycle() -> Result<(), ExpectedPanicError> {
+    assert_panic_contains::<5>("initial state ownership mismatch")
 }
 
 #[test]
-fn rejects_an_undeclared_initial_state() {
-    assert!(panic_message::<6>().contains("initial state is not declared"));
+fn rejects_an_undeclared_initial_state() -> Result<(), ExpectedPanicError> {
+    assert_panic_contains::<6>("initial state is not declared")
 }
 
 #[test]
-fn rejects_a_transition_source_owned_by_another_lifecycle() {
-    assert!(panic_message::<7>().contains("transition source ownership mismatch"));
+fn rejects_a_transition_source_owned_by_another_lifecycle() -> Result<(), ExpectedPanicError> {
+    assert_panic_contains::<7>("transition source ownership mismatch")
 }
 
 #[test]
-fn rejects_an_undeclared_transition_source() {
-    assert!(panic_message::<8>().contains("transition source is not declared"));
+fn rejects_an_undeclared_transition_source() -> Result<(), ExpectedPanicError> {
+    assert_panic_contains::<8>("transition source is not declared")
 }
 
 #[test]
-fn rejects_a_transition_target_owned_by_another_lifecycle() {
-    assert!(panic_message::<9>().contains("transition target ownership mismatch"));
+fn rejects_a_transition_target_owned_by_another_lifecycle() -> Result<(), ExpectedPanicError> {
+    assert_panic_contains::<9>("transition target ownership mismatch")
 }
 
 #[test]
-fn rejects_an_undeclared_transition_target() {
-    assert!(panic_message::<10>().contains("transition target is not declared"));
+fn rejects_an_undeclared_transition_target() -> Result<(), ExpectedPanicError> {
+    assert_panic_contains::<10>("transition target is not declared")
 }
 
 #[test]
-fn rejects_a_transition_action_not_owned_by_the_exact_entity() {
-    assert!(panic_message::<11>().contains("transition action owner mismatch"));
+fn rejects_a_transition_action_not_owned_by_the_exact_entity() -> Result<(), ExpectedPanicError> {
+    assert_panic_contains::<11>("transition action owner mismatch")
 }
 
 #[test]
-fn rejects_duplicate_semantic_transition_keys_even_with_different_targets() {
-    assert!(panic_message::<12>().starts_with("duplicate entity lifecycle transition key"));
+fn rejects_duplicate_semantic_transition_keys_even_with_different_targets()
+-> Result<(), ExpectedPanicError> {
+    assert_panic_starts_with::<12>("duplicate entity lifecycle transition key")
 }

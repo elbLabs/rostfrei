@@ -1,5 +1,6 @@
-use std::any::Any;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+mod support;
+
+use support::{ExpectedPanicError, panic_message};
 
 use domain::__private::DomainModelBuilder;
 use domain::extension::ActionGroupType;
@@ -254,25 +255,15 @@ impl ActionGroupType for LifecycleExtension {
     const ACTIONS: &'static [ActionDescriptor] = EXTENSION_ACTIONS;
 }
 
-fn finish_panic<const CASE: u8>(configure: impl FnOnce(&mut DomainModelBuilder)) -> String {
-    let payload = catch_unwind(AssertUnwindSafe(|| {
+fn finish_panic<const CASE: u8>(
+    configure: impl FnOnce(&mut DomainModelBuilder),
+) -> Result<String, ExpectedPanicError> {
+    panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_entity_type::<ValidationEntity<CASE>>();
         configure(&mut builder);
         builder.finish();
-    }))
-    .expect_err("finish should panic");
-    panic_payload(payload)
-}
-
-fn panic_payload(payload: Box<dyn Any + Send>) -> String {
-    match payload.downcast::<String>() {
-        Ok(message) => *message,
-        Err(payload) => payload.downcast::<&'static str>().map_or_else(
-            |_| panic!("panic payload should be a String or &'static str"),
-            |message| (*message).to_owned(),
-        ),
-    }
+    })
 }
 
 #[test]
@@ -289,56 +280,64 @@ fn accepts_an_action_from_a_normally_attached_contract() {
 }
 
 #[test]
-fn rejects_an_implemented_but_unattached_action_as_missing() {
+fn rejects_an_implemented_but_unattached_action_as_missing() -> Result<(), ExpectedPanicError> {
     let entity = ValidationEntity::<1>;
     entity.implemented_but_unattached();
 
-    let message = finish_panic::<1>(|_| {});
+    let message = finish_panic::<1>(|_| {})?;
 
     assert!(message.starts_with("Entity lifecycle action inventory violation"));
     assert!(message.contains("implemented-unattached"));
+    Ok(())
 }
 
 #[test]
-fn rejects_a_fabricated_action_as_missing() {
-    let message = finish_panic::<2>(|_| {});
+fn rejects_a_fabricated_action_as_missing() -> Result<(), ExpectedPanicError> {
+    let message = finish_panic::<2>(|_| {})?;
 
     assert!(message.starts_with("Entity lifecycle action inventory violation"));
     assert!(message.contains("fabricated"));
+    Ok(())
 }
 
 #[test]
-fn rejects_an_extension_only_action_with_a_distinct_diagnostic() {
+fn rejects_an_extension_only_action_with_a_distinct_diagnostic() -> Result<(), ExpectedPanicError> {
     let message = finish_panic::<3>(|builder| {
         builder.add_action_extension::<LifecycleExtension>();
-    });
+    })?;
 
     assert!(message.starts_with("Entity lifecycle action eligibility violation"));
     assert!(message.contains("extension-only action"));
     assert!(message.contains("action extensions are not eligible"));
+    Ok(())
 }
 
 #[test]
-fn validates_existing_action_descriptor_references_before_lifecycle_actions() {
-    let message = finish_panic::<4>(|_| {});
+fn validates_existing_action_descriptor_references_before_lifecycle_actions()
+-> Result<(), ExpectedPanicError> {
+    let message = finish_panic::<4>(|_| {})?;
 
     assert!(message.starts_with("Action reference inventory violation"));
     assert!(message.contains("broken-reference"));
     assert!(message.contains("missing-value"));
+    Ok(())
 }
 
 #[test]
-fn validates_lifecycle_actions_before_existing_decision_references() {
-    let message = finish_panic::<5>(|_| {});
+fn validates_lifecycle_actions_before_existing_decision_references()
+-> Result<(), ExpectedPanicError> {
+    let message = finish_panic::<5>(|_| {})?;
 
     assert!(message.starts_with("Entity lifecycle action inventory violation"));
     assert!(message.contains("fabricated"));
+    Ok(())
 }
 
 #[test]
-fn reports_missing_actions_in_transition_order() {
-    let message = finish_panic::<6>(|_| {});
+fn reports_missing_actions_in_transition_order() -> Result<(), ExpectedPanicError> {
+    let message = finish_panic::<6>(|_| {})?;
 
     assert!(message.contains("ordered-first"));
     assert!(!message.contains("ordered-second"));
+    Ok(())
 }

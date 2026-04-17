@@ -48,7 +48,7 @@ pedantic = { level = "deny", priority = -1 }
 nursery = { level = "warn", priority = -2 }
 
 unwrap_used = "warn"
-expect_used = "warn"
+expect_used = "deny"
 indexing_slicing = "deny"
 panic = "warn"
 panic_in_result_fn = "warn"

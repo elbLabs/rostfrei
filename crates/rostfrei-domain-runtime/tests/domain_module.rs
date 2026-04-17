@@ -2,7 +2,7 @@
 
 use domain::{
     Aggregate as DomainAggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandType,
-    DomainEvent, DomainIdentity, Entity,
+    DomainEvent, DomainIdentity, Entity, JsonCommandPayload,
 };
 use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance};
 use rostfrei_domain_runtime::{Apply, Initialize, domain_command_handler, domain_module};
@@ -51,6 +51,17 @@ struct OpenCatalog;
     owner = CatalogAggregate
 )]
 struct DescribeCatalog;
+
+#[derive(Debug, DomainCommand, Eq, PartialEq)]
+#[domain(
+    id = "rename-catalog",
+    label = "Rename catalog",
+    owner = CatalogAggregate,
+    json
+)]
+struct RenameCatalog {
+    r#type: String,
+}
 
 #[derive(Deserialize, DomainEvent, Serialize)]
 #[domain(id = "catalog-opened", label = "Catalog opened")]
@@ -131,4 +142,18 @@ fn domain_commands_can_register_without_a_runtime_module() {
 #[test]
 fn command_metadata_does_not_require_an_executable_handler() {
     assert_eq!(DescribeCatalog::DESCRIPTOR.id.local, "describe-catalog");
+}
+
+fn assert_raw_identifier_command(command: &RenameCatalog) {
+    assert_eq!(command.r#type, "wholesale");
+}
+
+#[test]
+fn json_command_preserves_raw_identifier_wire_names() -> Result<(), String> {
+    let command = RenameCatalog::decode_json(&domain::__private::serde_json::json!({
+        "type": "wholesale",
+    }))?;
+
+    assert_raw_identifier_command(&command);
+    Ok(())
 }

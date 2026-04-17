@@ -1,4 +1,4 @@
-use std::fmt::{self, Write};
+use std::fmt;
 use std::str::FromStr;
 
 use rostfrei_messaging_core::{CausationId, CorrelationId};
@@ -158,11 +158,7 @@ impl ContentFingerprint {
     }
 
     pub fn to_hex(self) -> String {
-        let mut encoded = String::with_capacity(64);
-        for byte in self.0 {
-            write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
-        }
-        encoded
+        encode_lower_hex(self.0)
     }
 }
 
@@ -266,8 +262,7 @@ pub(crate) fn derive_commit_id(stream_id: &StreamId, operation_id: &OperationId)
     hash_part(&mut hasher, stream_id.aggregate_type().as_str().as_bytes());
     hash_part(&mut hasher, stream_id.aggregate_id().as_str().as_bytes());
     hash_part(&mut hasher, operation_id.as_str().as_bytes());
-    CommitId::new(format!("commit:{:x}", hasher.finalize()))
-        .expect("derived commit identities are always valid")
+    CommitId(format!("commit:{:x}", hasher.finalize()))
 }
 
 pub(crate) fn derive_event_id(commit_id: &CommitId, ordinal: u32) -> EventId {
@@ -275,11 +270,30 @@ pub(crate) fn derive_event_id(commit_id: &CommitId, ordinal: u32) -> EventId {
     hash_part(&mut hasher, b"rostfrei:event:v1");
     hash_part(&mut hasher, commit_id.as_str().as_bytes());
     hash_part(&mut hasher, &ordinal.to_be_bytes());
-    EventId::new(format!("event:{:x}", hasher.finalize()))
-        .expect("derived event identities are always valid")
+    EventId(format!("event:{:x}", hasher.finalize()))
 }
 
 fn hash_part(hasher: &mut Sha256, part: &[u8]) {
     hasher.update((part.len() as u64).to_be_bytes());
     hasher.update(part);
+}
+
+fn encode_lower_hex(bytes: impl IntoIterator<Item = u8>) -> String {
+    let bytes = bytes.into_iter();
+    let capacity = bytes.size_hint().0.saturating_mul(2);
+    let mut encoded = String::with_capacity(capacity);
+    for byte in bytes {
+        encoded.push(lower_hex_digit(byte >> 4));
+        encoded.push(lower_hex_digit(byte & 0x0f));
+    }
+    encoded
+}
+
+fn lower_hex_digit(nibble: u8) -> char {
+    let byte = if nibble < 10 {
+        b'0'.saturating_add(nibble)
+    } else {
+        b'a'.saturating_add(nibble.saturating_sub(10))
+    };
+    char::from(byte)
 }
