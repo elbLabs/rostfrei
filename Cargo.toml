@@ -72,7 +72,7 @@ exit = "deny"
 
 manual_assert = "allow"
 
-arithmetic_side_effects = "warn"
+arithmetic_side_effects = "deny"
 as_conversions = "deny"
 
 module_name_repetitions = "allow"

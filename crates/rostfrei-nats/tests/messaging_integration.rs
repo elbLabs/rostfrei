@@ -20,7 +20,7 @@ mod query;
 mod stream_policy;
 
 use std::{
-    collections::HashMap,
+    collections::HashSet,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -50,6 +50,12 @@ use publish::{CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE, NatsPublisher};
 use query::{CORRELATION_ID_HEADER, NatsQueryServerConfig, REQUEST_ID_HEADER};
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+fn checked_add_usize(value: usize, increment: usize, context: &'static str) -> TestResult<usize> {
+    value
+        .checked_add(increment)
+        .ok_or_else(|| format!("{context} exceeds usize").into())
+}
 
 const TEST_NATS_URL_ENV: &str = "ROSTFREI_NATS_URL";
 const TRACE_PARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
@@ -275,7 +281,7 @@ async fn puback_confirms_stream_sequence_duplicate_and_owned_headers() -> TestRe
 }
 
 struct DispositionHandler {
-    deliveries: Mutex<HashMap<String, usize>>,
+    delivered_message_ids: Mutex<HashSet<String>>,
     acknowledged: AtomicUsize,
     retry_delay: RetryDelay,
     quarantine_reason: QuarantineReason,
@@ -284,7 +290,7 @@ struct DispositionHandler {
 impl DispositionHandler {
     fn new() -> TestResult<Self> {
         Ok(Self {
-            deliveries: Mutex::new(HashMap::new()),
+            delivered_message_ids: Mutex::new(HashSet::new()),
             acknowledged: AtomicUsize::new(0),
             retry_delay: RetryDelay::new(Duration::from_millis(100))?,
             quarantine_reason: QuarantineReason::new("test quarantine")?,
@@ -296,20 +302,18 @@ impl DispositionHandler {
 impl MessageHandler<CommandAddress> for DispositionHandler {
     async fn handle(&self, delivery: MessageDelivery<CommandAddress>) -> DeliveryDisposition {
         let id = delivery.message_id().as_str().to_owned();
-        let mut deliveries = match self.deliveries.lock() {
-            Ok(deliveries) => deliveries,
+        let mut delivered_message_ids = match self.delivered_message_ids.lock() {
+            Ok(delivered_message_ids) => delivered_message_ids,
             Err(poisoned) => poisoned.into_inner(),
         };
-        let count = deliveries.entry(id.clone()).or_default();
-        *count += 1;
-        let count = *count;
-        drop(deliveries);
+        let first_delivery = delivered_message_ids.insert(id.clone());
+        drop(delivered_message_ids);
         match id.as_str() {
             value if value.starts_with("ack-") => {
                 self.acknowledged.fetch_add(1, Ordering::Relaxed);
                 DeliveryDisposition::Acknowledge
             }
-            value if value.starts_with("retry-") && count == 1 => {
+            value if value.starts_with("retry-") && first_delivery => {
                 DeliveryDisposition::RetryAfter(self.retry_delay)
             }
             value if value.starts_with("retry-") => {
@@ -641,10 +645,12 @@ async fn query_servers_in_one_queue_group_share_requests() -> TestResult<()> {
             .await
             .expect("queue query response");
     }
-    assert_eq!(
-        first_calls.load(Ordering::Relaxed) + second_calls.load(Ordering::Relaxed),
-        20
-    );
+    let total_calls = checked_add_usize(
+        first_calls.load(Ordering::Relaxed),
+        second_calls.load(Ordering::Relaxed),
+        "combined queue query handler call count",
+    )?;
+    assert_eq!(total_calls, 20);
     assert!(first_calls.load(Ordering::Relaxed) > 0);
     assert!(second_calls.load(Ordering::Relaxed) > 0);
 

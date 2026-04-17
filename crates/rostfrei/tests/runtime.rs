@@ -108,7 +108,7 @@ impl Initialize<AccountAggregate> for Account {
 
 impl Apply<MoneyDeposited> for Account {
     fn apply(&mut self, event: &MoneyDeposited) {
-        self.balance += event.amount;
+        self.balance = self.balance.wrapping_add(event.amount);
     }
 }
 

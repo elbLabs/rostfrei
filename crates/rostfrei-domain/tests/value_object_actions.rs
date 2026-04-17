@@ -123,7 +123,7 @@ impl MoneyConstruction for Money {
 
 impl contracts::MoneyArithmetic for Money {
     fn increase(self, input: u64) -> MoneyAlias {
-        Self(self.0 + input)
+        Self(self.0.saturating_add(input))
     }
 
     fn checked_increase(self, input: u64) -> Result<Self, MoneyOverflow> {

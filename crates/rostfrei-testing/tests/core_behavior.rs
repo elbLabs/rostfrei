@@ -108,7 +108,9 @@ impl Aggregate for Account {
                 state.imported = true;
                 state.balance = *opening_balance;
             }
-            AccountEvent::Credited { amount } => state.balance += amount,
+            AccountEvent::Credited { amount } => {
+                state.balance = state.balance.wrapping_add(*amount);
+            }
             AccountEvent::BalanceObserved { balance } => {
                 state.last_observed_balance = Some(*balance);
             }
@@ -334,7 +336,7 @@ impl Initialize<AutomaticAccountDefinition> for AutomaticAccountRoot {
 
 impl Apply<MoneyDeposited> for AutomaticAccountRoot {
     fn apply(&mut self, event: &MoneyDeposited) {
-        self.balance += event.amount;
+        self.balance = self.balance.wrapping_add(event.amount);
     }
 }
 

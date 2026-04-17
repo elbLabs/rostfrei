@@ -40,7 +40,7 @@ trait AccountRootActions {
 
 impl AccountRootActions for AccountRoot {
     fn touch_root(&mut self) {
-        self.revision += 1;
+        self.revision = self.revision.saturating_add(1);
     }
 }
 
@@ -110,7 +110,7 @@ mod contracts {
 
 impl contracts::AccountLifecycle for Account {
     fn open(root: &mut AccountRoot) -> AccountChanged {
-        root.revision += 1;
+        root.revision = root.revision.saturating_add(1);
         AccountChanged
     }
 
@@ -118,15 +118,16 @@ impl contracts::AccountLifecycle for Account {
         root: &mut AccountRootAlias,
         _input: RenameAccountInput,
     ) -> Result<AccountChanged, AccountDenied> {
+        let revision = root.revision.checked_add(1).ok_or(AccountDenied)?;
         "Renamed".clone_into(&mut root.name);
-        root.revision += 1;
+        root.revision = revision;
         Ok(AccountChanged)
     }
 }
 
 impl contracts::AccountMaintenance for Account {
     fn freeze(root: &mut AccountRoot) {
-        root.revision += 1;
+        root.revision = root.revision.saturating_add(1);
     }
 
     fn revision(root: &mut AccountRootAlias) -> u32 {
@@ -136,7 +137,7 @@ impl contracts::AccountMaintenance for Account {
 
 impl contracts::ImplementedOnly for Account {
     fn implemented_only(root: &mut AccountRoot) {
-        root.revision += 1;
+        root.revision = root.revision.saturating_add(1);
     }
 }
 

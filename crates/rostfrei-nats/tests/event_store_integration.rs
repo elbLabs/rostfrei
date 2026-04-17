@@ -23,6 +23,24 @@ use rostfrei_testing::event_store_contract;
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+fn checked_add_u64(value: u64, increment: u64, context: &'static str) -> TestResult<u64> {
+    value
+        .checked_add(increment)
+        .ok_or_else(|| format!("{context} exceeds u64").into())
+}
+
+fn checked_add_usize(value: usize, increment: usize, context: &'static str) -> TestResult<usize> {
+    value
+        .checked_add(increment)
+        .ok_or_else(|| format!("{context} exceeds usize").into())
+}
+
+fn checked_add_i64(value: i64, increment: i64, context: &'static str) -> TestResult<i64> {
+    value
+        .checked_add(increment)
+        .ok_or_else(|| format!("{context} exceeds i64").into())
+}
+
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test]
@@ -179,9 +197,13 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
         .expect("stream info should refresh")
         .state
         .messages;
+    let expected_messages_after = checked_add_u64(
+        messages_before,
+        3,
+        "expected JetStream message count after atomic append",
+    )?;
     assert_eq!(
-        messages_after,
-        messages_before + 3,
+        messages_after, expected_messages_after,
         "each domain event must use one JetStream message"
     );
     let atomic_subject = config.aggregate_subject(
@@ -191,14 +213,19 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
     let mut next_sequence = 1_u64;
     let mut batch_id = None;
     for (index, expected_payload) in [b"one".as_slice(), b"two", b"three"].iter().enumerate() {
-        let expected_batch_sequence = (index + 1).to_string();
+        let expected_batch_sequence =
+            checked_add_usize(index, 1, "expected one-based batch sequence")?.to_string();
         let expected_payload_base64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, expected_payload);
         let stored_event = stream_info
             .get_first_raw_message_by_subject(&atomic_subject, next_sequence)
             .await
             .expect("stored atomic event");
-        next_sequence = stored_event.sequence + 1;
+        next_sequence = checked_add_u64(
+            stored_event.sequence,
+            1,
+            "next JetStream sequence after stored atomic event",
+        )?;
         assert_eq!(
             stored_event
                 .headers
@@ -323,7 +350,14 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
         config.stream_name(),
     )
     .expect("valid mismatching config")
-    .with_storage_limits(config.max_stream_bytes() + 1, config.max_event_bytes())
+    .with_storage_limits(
+        checked_add_i64(
+            config.max_stream_bytes(),
+            1,
+            "mismatching maximum stream byte limit",
+        )?,
+        config.max_event_bytes(),
+    )
     .expect("valid mismatching storage limits")
     .with_replicas(config.replicas())
     .expect("valid matching replicas")

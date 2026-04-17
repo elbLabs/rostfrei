@@ -99,13 +99,13 @@ impl TaskInspection for Task {
 impl contracts::TaskWorkflow for Task {
     fn rename(&mut self, input: Title) -> Title {
         self.title = input.0;
-        self.revision += 1;
+        self.revision = self.revision.saturating_add(1);
         Title(self.title.clone())
     }
 
     fn complete(&mut self) {
         self.complete = true;
-        self.revision += 1;
+        self.revision = self.revision.saturating_add(1);
     }
 
     fn reject(&mut self) -> Result<(), TaskRejected> {

@@ -126,7 +126,11 @@ impl NatsEventStore {
                 &message.headers,
                 message.payload.as_ref(),
             )?;
-            if decoded.event_ordinal + 1 == decoded.event_count {
+            let next_event_ordinal = decoded
+                .event_ordinal
+                .checked_add(1)
+                .ok_or_else(|| corrupt("stored event has invalid commit coordinates"))?;
+            if next_event_ordinal == decoded.event_count {
                 last_commit_stream_sequence = message.sequence;
             }
             history.push(decoded)?;
@@ -889,11 +893,17 @@ async fn publish_atomic_batch(
 ) -> Result<AtomicPublishAck, AtomicBatchPublishError> {
     let event_count = payloads.len();
     for (index, payload) in payloads.into_iter().enumerate() {
+        let one_based_sequence = index.checked_add(1).ok_or_else(|| {
+            AtomicBatchPublishError::Store(EventStoreError::new(
+                EventStoreErrorKind::CapacityExhausted,
+                "atomic batch sequence space is exhausted",
+            ))
+        })?;
         let mut headers = HeaderMap::new();
         headers.insert("Content-Type", "application/json");
         headers.insert(NATS_REQUIRED_API_LEVEL, ATOMIC_BATCH_API_LEVEL);
         headers.insert(NATS_BATCH_ID, batch_id);
-        headers.insert(NATS_BATCH_SEQUENCE, (index + 1).to_string());
+        headers.insert(NATS_BATCH_SEQUENCE, one_based_sequence.to_string());
         if index == 0 {
             headers.insert(NATS_EXPECTED_STREAM, config.stream_name());
             headers.insert(
@@ -901,7 +911,7 @@ async fn publish_atomic_batch(
                 expected_last_subject_sequence.to_string(),
             );
         }
-        if index + 1 == event_count {
+        if one_based_sequence == event_count {
             headers.insert(NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL);
         }
 
@@ -921,7 +931,7 @@ async fn publish_atomic_batch(
                 )))
             })?;
 
-        if index + 1 != event_count {
+        if one_based_sequence != event_count {
             if message.payload.is_empty() {
                 continue;
             }
@@ -1010,7 +1020,10 @@ fn validate_atomic_headers(
     let batch_sequence = required_single_header(headers, "Nats-Batch-Sequence")?
         .parse::<u32>()
         .map_err(|_| corrupt("stored event has an invalid atomic batch sequence"))?;
-    if batch_sequence != event_ordinal + 1 {
+    let one_based_sequence = event_ordinal
+        .checked_add(1)
+        .ok_or_else(|| corrupt("stored event has an invalid atomic batch sequence"))?;
+    if batch_sequence != one_based_sequence {
         return Err(corrupt(
             "stored event atomic batch sequence does not match its commit ordinal",
         ));
@@ -1036,7 +1049,7 @@ fn validate_atomic_headers(
         ));
     }
     let commit = optional_single_header(headers, "Nats-Batch-Commit")?;
-    if event_ordinal + 1 == event_count {
+    if one_based_sequence == event_count {
         if commit != Some(NATS_BATCH_COMMIT_FINAL) {
             return Err(corrupt("stored commit has no atomic final event"));
         }
