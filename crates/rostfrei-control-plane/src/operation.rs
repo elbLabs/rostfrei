@@ -1,12 +1,12 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

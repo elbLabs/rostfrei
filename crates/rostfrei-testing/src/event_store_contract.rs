@@ -92,9 +92,11 @@ pub async fn atomic_ordered_batch<Store: EventStore>(store: &Store) {
     assert_eq!(loaded[0].payload(), b"first");
     assert_eq!(loaded[1].payload(), b"second");
     assert_eq!(loaded[2].payload(), b"third");
-    assert!(loaded
-        .windows(2)
-        .all(|pair| pair[0].commit_id() == pair[1].commit_id()));
+    assert!(
+        loaded
+            .windows(2)
+            .all(|pair| pair[0].commit_id() == pair[1].commit_id())
+    );
 }
 
 pub async fn stream_isolation<Store: EventStore>(store: &Store) {

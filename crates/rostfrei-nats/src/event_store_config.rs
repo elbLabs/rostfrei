@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 const MAX_STREAM_NAME_LEN: usize = 255;
 const MAX_EVENT_BYTES: usize = 64 * 1024 * 1024;
-const DUPLICATE_WINDOW: Duration = Duration::from_secs(2 * 60);
+const DUPLICATE_WINDOW: Duration = Duration::from_mins(2);
 pub const DEFAULT_EVENT_STORE_MAX_STREAM_BYTES: i64 = 10 * 1024 * 1024 * 1024;
 pub const DEFAULT_EVENT_STORE_MAX_EVENT_BYTES: usize = 2 * 1024 * 1024;
 pub const DEFAULT_EVENT_STORE_REPLICAS: usize = 1;

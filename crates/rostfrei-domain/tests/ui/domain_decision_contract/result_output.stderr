@@ -12,5 +12,4 @@ help: the following other types implement trait `DecisionOutputType`
 ...
 11 | #[derive(ValueObject)]
    |          ^^^^^^^^^^^ `Output`
-   = help: see issue #48214
    = note: this error originates in the attribute macro `domain_decisions` which comes from the expansion of the derive macro `ValueObject` (in Nightly builds, run with -Z macro-backtrace for more info)

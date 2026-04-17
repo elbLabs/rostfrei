@@ -6,7 +6,7 @@ use async_nats::jetstream::{
     stream::{self, DiscardPolicy, RetentionPolicy, StorageType},
 };
 use rostfrei_messaging_core::{
-    ApplicationName, ConsumerConfig, PublishableAddress, MAX_MESSAGE_PAYLOAD_BYTES,
+    ApplicationName, ConsumerConfig, MAX_MESSAGE_PAYLOAD_BYTES, PublishableAddress,
 };
 
 use crate::{
@@ -16,9 +16,9 @@ use crate::{
 };
 
 pub const DEFAULT_STREAM_MAX_BYTES: i64 = 10 * 1024 * 1024 * 1024;
-pub const DEFAULT_STREAM_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+pub const DEFAULT_STREAM_MAX_AGE: Duration = Duration::from_hours(720);
 pub const DEFAULT_STREAM_MAX_MESSAGE_BYTES: i32 = 2 * 1024 * 1024;
-pub const DEFAULT_DUPLICATE_WINDOW: Duration = Duration::from_secs(2 * 60);
+pub const DEFAULT_DUPLICATE_WINDOW: Duration = Duration::from_mins(2);
 const SOURCE_STREAM_MESSAGE_OVERHEAD_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -465,32 +465,40 @@ mod tests {
     fn application_config_rejects_invalid_replica_counts() {
         let application = ApplicationName::new("fast-inbox").unwrap();
 
-        assert!(ApplicationMessagingConfig::new(&application)
-            .unwrap()
-            .with_replicas(0)
-            .is_err());
-        assert!(ApplicationMessagingConfig::new(&application)
-            .unwrap()
-            .with_replicas(6)
-            .is_err());
+        assert!(
+            ApplicationMessagingConfig::new(&application)
+                .unwrap()
+                .with_replicas(0)
+                .is_err()
+        );
+        assert!(
+            ApplicationMessagingConfig::new(&application)
+                .unwrap()
+                .with_replicas(6)
+                .is_err()
+        );
     }
 
     #[test]
     fn application_config_validates_capacity_overrides() {
         let application = ApplicationName::new("fast-inbox").unwrap();
 
-        assert!(ApplicationMessagingConfig::new(&application)
-            .unwrap()
-            .with_max_bytes(i64::from(DEFAULT_STREAM_MAX_MESSAGE_BYTES) - 1)
-            .is_err());
+        assert!(
+            ApplicationMessagingConfig::new(&application)
+                .unwrap()
+                .with_max_bytes(i64::from(DEFAULT_STREAM_MAX_MESSAGE_BYTES) - 1)
+                .is_err()
+        );
         let config = ApplicationMessagingConfig::new(&application)
             .unwrap()
             .with_max_bytes(64 * 1024 * 1024)
             .unwrap();
-        assert!(config
-            .streams()
-            .iter()
-            .all(|stream| stream.max_bytes == 64 * 1024 * 1024));
+        assert!(
+            config
+                .streams()
+                .iter()
+                .all(|stream| stream.max_bytes == 64 * 1024 * 1024)
+        );
     }
 
     #[test]
@@ -517,13 +525,15 @@ mod tests {
         let name = StreamName::new("FAST_INBOX_CUSTOM").unwrap();
 
         for filter in [">", "*.command.>", "other.command.>"] {
-            assert!(StreamProvisioningConfig::new(
-                &application,
-                name.clone(),
-                vec![SubjectFilter::new(filter).unwrap()],
-                StreamRetention::Limits,
-            )
-            .is_err());
+            assert!(
+                StreamProvisioningConfig::new(
+                    &application,
+                    name.clone(),
+                    vec![SubjectFilter::new(filter).unwrap()],
+                    StreamRetention::Limits,
+                )
+                .is_err()
+            );
         }
     }
 

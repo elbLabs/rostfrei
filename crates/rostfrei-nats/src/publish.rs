@@ -1,12 +1,12 @@
 use std::{error::Error as _, time::Duration};
 
 use async_nats::{
+    HeaderMap,
     jetstream::{
         self,
         context::{PublishError as JetStreamPublishError, PublishErrorKind},
         message::PublishMessage,
     },
-    HeaderMap,
 };
 use async_trait::async_trait;
 use rostfrei_messaging_core::{

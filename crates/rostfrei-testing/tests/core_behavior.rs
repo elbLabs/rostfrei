@@ -1,6 +1,6 @@
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
 };
 
 use async_trait::async_trait;
@@ -15,7 +15,7 @@ use rostfrei_core::{
 };
 use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_messaging_core::{CausationId, CorrelationId};
-use rostfrei_testing::{event_store_contract, given, DomainEventHandlerHarness};
+use rostfrei_testing::{DomainEventHandlerHarness, event_store_contract, given};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -815,12 +815,14 @@ async fn executor_returns_an_accepted_no_events_receipt_without_appending() {
         result.expect("no-op execution should complete"),
         CommandOutcome::Accepted(CommandReceipt::NoEvents)
     );
-    assert!(executor
-        .store()
-        .load(&stream)
-        .await
-        .expect("load no-op history")
-        .is_empty());
+    assert!(
+        executor
+            .store()
+            .load(&stream)
+            .await
+            .expect("load no-op history")
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -897,12 +899,14 @@ async fn simulation_returns_typed_rejection_and_discards_pending_events_without_
         &SimulationDecision::Rejected(AccountRejection::Deliberate)
     );
     assert_eq!(executor.store().append_attempts.load(Ordering::Relaxed), 0);
-    assert!(executor
-        .store()
-        .load(&stream)
-        .await
-        .expect("rejected simulation history")
-        .is_empty());
+    assert!(
+        executor
+            .store()
+            .load(&stream)
+            .await
+            .expect("rejected simulation history")
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -1079,11 +1083,13 @@ async fn capacity_failure_is_atomic() {
         .await
         .expect_err("capacity should reject the whole batch");
     assert_eq!(error.kind(), EventStoreErrorKind::CapacityExhausted);
-    assert!(store
-        .load(&stream)
-        .await
-        .expect("load should succeed")
-        .is_empty());
+    assert!(
+        store
+            .load(&stream)
+            .await
+            .expect("load should succeed")
+            .is_empty()
+    );
 }
 
 #[test]

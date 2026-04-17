@@ -1,15 +1,15 @@
 use std::{fmt::Write as _, sync::Arc, time::Duration};
 
 use async_nats::{
+    HeaderMap,
     jetstream::{
         self,
         consumer::{self, AckPolicy, DeliverPolicy},
         message::AckKind,
     },
-    HeaderMap,
 };
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures_util::TryStreamExt;
 use rostfrei_messaging_core::{
     CallerMetadata, CommandAddress, ConsumeError, ConsumeErrorKind, ConsumerConfig,
@@ -19,15 +19,15 @@ use rostfrei_messaging_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::time::{sleep, timeout, Instant};
+use tokio::time::{Instant, sleep, timeout};
 
 use crate::{
     error::NatsError,
     messaging_config::{MessagingTopology, StreamName},
     provisioning::durable_consumer_config,
     publish::{
-        publish_confirmed, safe_headers, CONTENT_TYPE_HEADER, DEFAULT_PUBLISH_TIMEOUT,
-        JSON_CONTENT_TYPE, TRACE_PARENT_HEADER, TRACE_STATE_HEADER,
+        CONTENT_TYPE_HEADER, DEFAULT_PUBLISH_TIMEOUT, JSON_CONTENT_TYPE, TRACE_PARENT_HEADER,
+        TRACE_STATE_HEADER, publish_confirmed, safe_headers,
     },
 };
 

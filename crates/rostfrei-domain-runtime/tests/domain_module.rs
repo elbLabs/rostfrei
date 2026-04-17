@@ -5,7 +5,7 @@ use domain::{
     DomainEvent, DomainIdentity, Entity,
 };
 use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance};
-use rostfrei_domain_runtime::{domain_command_handler, domain_module, Apply, Initialize};
+use rostfrei_domain_runtime::{Apply, Initialize, domain_command_handler, domain_module};
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::{Deserialize, Serialize};
 
