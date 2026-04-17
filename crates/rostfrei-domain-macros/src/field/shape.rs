@@ -1,6 +1,11 @@
-use syn::{GenericArgument, PathArguments, Result, Type, TypePath};
+use syn::{GenericArgument, PathArguments, PathSegment, Result, Type, TypePath};
 
 use super::ir::Wrapper;
+
+struct WrapperPath<'a> {
+    wrapper: Wrapper,
+    segment: &'a PathSegment,
+}
 
 pub fn parse(ty: &Type) -> Result<(Vec<Wrapper>, TypePath)> {
     let mut wrappers = Vec::new();
@@ -19,10 +24,9 @@ pub fn parse(ty: &Type) -> Result<(Vec<Wrapper>, TypePath)> {
             ));
         }
         if let Some(wrapper) = wrapper(path) {
-            let segment = path.path.segments.last().unwrap();
-            let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+            let PathArguments::AngleBracketed(arguments) = &wrapper.segment.arguments else {
                 return Err(syn::Error::new_spanned(
-                    segment,
+                    wrapper.segment,
                     "Vec and Option require exactly one plain type argument",
                 ));
             };
@@ -38,7 +42,7 @@ pub fn parse(ty: &Type) -> Result<(Vec<Wrapper>, TypePath)> {
                     "Vec and Option require exactly one plain type argument",
                 ));
             };
-            wrappers.push(wrapper);
+            wrappers.push(wrapper.wrapper);
             current = inner;
             continue;
         }
@@ -57,15 +61,15 @@ pub fn parse(ty: &Type) -> Result<(Vec<Wrapper>, TypePath)> {
     }
 }
 
-fn wrapper(path: &TypePath) -> Option<Wrapper> {
+fn wrapper(path: &TypePath) -> Option<WrapperPath<'_>> {
     let segments: Vec<_> = path.path.segments.iter().collect();
-    let (name, modules) = segments.split_last()?;
-    let name = name.ident.to_string();
+    let (segment, modules) = segments.split_last()?;
+    let name = segment.ident.to_string();
     let modules: Vec<_> = modules
         .iter()
         .map(|segment| segment.ident.to_string())
         .collect();
-    match (modules.as_slice(), name.as_str()) {
+    let wrapper = match (modules.as_slice(), name.as_str()) {
         ([], "Vec") => Some(Wrapper::List),
         ([root, module], "Vec") if root == "std" && module == "vec" => Some(Wrapper::List),
         ([root, module], "Vec") if root == "alloc" && module == "vec" => Some(Wrapper::List),
@@ -74,5 +78,6 @@ fn wrapper(path: &TypePath) -> Option<Wrapper> {
             Some(Wrapper::Optional)
         }
         _ => None,
-    }
+    }?;
+    Some(WrapperPath { wrapper, segment })
 }

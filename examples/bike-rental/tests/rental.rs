@@ -1,3 +1,5 @@
+use std::io;
+
 use bike_rental::rental::{
     BicycleAvailability, BicycleCondition, BicycleId, BicycleRented, BicycleStatus,
     BicycleUnavailable, FleetId, ImportedBicycle, RentalFleetActions, RentalFleetAggregate,
@@ -5,31 +7,35 @@ use bike_rental::rental::{
 };
 use rostfrei::{AggregateInstance, EventVariant, StreamAggregateId, StreamAggregateType, StreamId};
 
+type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+
 fn fleet(
     status: BicycleStatus,
     condition: BicycleCondition,
-) -> AggregateInstance<RentalFleetAggregate> {
-    let fleet_id = FleetId::new("city-fleet").unwrap();
-    AggregateInstance::rehydrate(
+) -> TestResult<AggregateInstance<RentalFleetAggregate>> {
+    let fleet_id = FleetId::new("city-fleet")
+        .ok_or_else(|| io::Error::other("fixture fleet ID should be non-empty"))?;
+    Ok(AggregateInstance::rehydrate(
         StreamId::new(
-            StreamAggregateType::new("bike-rental/rental-fleet").unwrap(),
-            StreamAggregateId::new(fleet_id.as_str()).unwrap(),
+            StreamAggregateType::new("bike-rental/rental-fleet")?,
+            StreamAggregateId::new(fleet_id.as_str())?,
         ),
         [RentalFleetImported {
             fleet_id,
             bicycles: vec![ImportedBicycle {
-                bicycle_id: BicycleId::new("bike-42").unwrap(),
+                bicycle_id: BicycleId::new("bike-42")
+                    .ok_or_else(|| io::Error::other("fixture bicycle ID should be non-empty"))?,
                 status,
                 condition,
             }],
         }
         .into()],
-    )
+    ))
 }
 
 #[test]
 fn rents_an_available_serviceable_bicycle() {
-    let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable);
+    let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable).unwrap();
     let bicycle_id = BicycleId::new("bike-42").unwrap();
 
     fleet.rent_bicycle(bicycle_id.clone()).unwrap();
@@ -48,7 +54,8 @@ fn rejects_an_unavailable_bicycle_without_changing_it() {
     let mut fleet = fleet(
         BicycleStatus::Available,
         BicycleCondition::MaintenanceRequired,
-    );
+    )
+    .unwrap();
     let bicycle_id = BicycleId::new("bike-42").unwrap();
 
     let error = fleet.rent_bicycle(bicycle_id.clone()).unwrap_err();

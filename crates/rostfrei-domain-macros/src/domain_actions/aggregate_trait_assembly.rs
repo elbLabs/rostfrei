@@ -5,6 +5,7 @@ use syn::{Ident, ItemTrait, Path, WherePredicate};
 
 use super::action::Action;
 use super::contract_trait_assembly::{self, Configuration, OutputPolicy};
+use super::signature::ParsedSignature;
 
 pub fn assemble(
     domain_path: &Path,
@@ -18,15 +19,18 @@ pub fn assemble(
             add_raised_event_predicates(domain_path, &mut item, action)?;
         }
     }
-    let instance = instance.map_or_else(TokenStream::new, |(runtime_path, instance_trait)| {
-        super::aggregate_instance_assembly::assemble(
-            domain_path,
-            &runtime_path,
-            &item,
-            actions,
-            instance_trait,
-        )
-    });
+    let instance = instance.map_or_else(
+        || Ok(TokenStream::new()),
+        |(runtime_path, instance_trait)| {
+            super::aggregate_instance_assembly::assemble(
+                domain_path,
+                &runtime_path,
+                &item,
+                actions,
+                instance_trait,
+            )
+        },
+    )?;
     if has_instance {
         item.items.clear();
     }
@@ -66,8 +70,14 @@ fn add_root_predicate(
     domain_path: &Path,
     item: &mut ItemTrait,
     action: &Action,
+    signature: &ParsedSignature,
 ) -> syn::Result<()> {
-    let root = action.signature.as_ref().unwrap().root.as_ref().unwrap();
+    let Some(root) = signature.root.as_ref() else {
+        return Err(syn::Error::new_spanned(
+            &action.syntax.ident,
+            "aggregate actions require a first `root: &mut RootType` parameter",
+        ));
+    };
     let predicate: WherePredicate = syn::parse2(
         quote_spanned! {root.span()=> Self: #domain_path::AggregateType<Root = #root>},
     )?;

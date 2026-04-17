@@ -2,7 +2,12 @@ use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::{Ident, ItemImpl, Path, TypePath};
 
-use super::attributes::Query;
+use super::{attributes::Query, signature::ParsedSignature};
+
+struct AssemblyQuery<'a> {
+    query: &'a Query,
+    signature: &'a ParsedSignature,
+}
 
 pub fn assemble(
     domain_path: &Path,
@@ -11,6 +16,10 @@ pub fn assemble(
     group: &Ident,
     queries: &[Query],
 ) -> TokenStream {
+    let queries = match validated_queries(queries) {
+        Ok(queries) => queries,
+        Err(error) => return error.into_compile_error(),
+    };
     let descriptors = queries
         .iter()
         .map(|query| descriptor(domain_path, owner, query));
@@ -32,15 +41,29 @@ pub fn assemble(
     }
 }
 
-fn descriptor(domain_path: &Path, owner: &TypePath, query: &Query) -> TokenStream {
-    let id = &query.id;
-    let label = &query.label;
-    let signature = query.signature.as_ref().unwrap();
-    let input = signature.input.as_ref().map_or_else(
+fn validated_queries(queries: &[Query]) -> syn::Result<Vec<AssemblyQuery<'_>>> {
+    queries
+        .iter()
+        .map(|query| {
+            let signature = query.signature.as_ref().ok_or_else(|| {
+                syn::Error::new_spanned(
+                    &query.syntax,
+                    "query signature must be validated before assembly",
+                )
+            })?;
+            Ok(AssemblyQuery { query, signature })
+        })
+        .collect()
+}
+
+fn descriptor(domain_path: &Path, owner: &TypePath, query: &AssemblyQuery<'_>) -> TokenStream {
+    let id = &query.query.id;
+    let label = &query.query.label;
+    let input = query.signature.input.as_ref().map_or_else(
         || quote!(None),
         |input| quote!(Some(<#input as #domain_path::QueryInputType<#owner>>::DESCRIPTOR)),
     );
-    let output = &signature.output;
+    let output = &query.signature.output;
     quote! {
         #domain_path::QueryDescriptor {
             id: #domain_path::QueryId { aggregate: <#owner as #domain_path::AggregateType>::DESCRIPTOR.id, local: #id },
@@ -51,9 +74,9 @@ fn descriptor(domain_path: &Path, owner: &TypePath, query: &Query) -> TokenStrea
     }
 }
 
-fn assertions(domain_path: &Path, owner: &TypePath, query: &Query) -> TokenStream {
-    let root = &query.signature.as_ref().unwrap().root;
-    let span = query.syntax.ident.span();
+fn assertions(domain_path: &Path, owner: &TypePath, query: &AssemblyQuery<'_>) -> TokenStream {
+    let root = &query.signature.root;
+    let span = query.query.syntax.ident.span();
     quote_spanned! {span=>
         const _: () = {
             fn assert_owner<T: #domain_path::AggregateType>() {}
