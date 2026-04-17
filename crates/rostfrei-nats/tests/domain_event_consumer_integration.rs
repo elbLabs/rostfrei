@@ -1,18 +1,18 @@
 use std::{
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_nats::jetstream::consumer;
 use async_nats::{
+    HeaderMap, Request,
     header::{
         NATS_BATCH_ID, NATS_BATCH_SEQUENCE, NATS_EXPECTED_LAST_SUBJECT_SEQUENCE,
         NATS_EXPECTED_STREAM, NATS_REQUIRED_API_LEVEL,
     },
-    HeaderMap, Request,
 };
 use async_trait::async_trait;
 use rostfrei::{Aggregate as RuntimeAggregate, Apply, Initialize};
@@ -24,8 +24,8 @@ use rostfrei_core::{
 };
 use rostfrei_messaging_core::{ApplicationName, RetryDelay};
 use rostfrei_nats::{
-    provision_domain_event_consumer, provision_event_store, NatsDomainEventConsumer,
-    NatsDomainEventConsumerConfig, NatsEventStore, NatsEventStoreConfig,
+    NatsDomainEventConsumer, NatsDomainEventConsumerConfig, NatsEventStore, NatsEventStoreConfig,
+    provision_domain_event_consumer, provision_event_store,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};

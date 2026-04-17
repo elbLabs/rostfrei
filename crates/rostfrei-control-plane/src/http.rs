@@ -1,18 +1,18 @@
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use axum::{
-    extract::{rejection::JsonRejection, DefaultBodyLimit, Path, Request, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
-    middleware::{self, Next},
-    response::{sse::Event, sse::KeepAlive, IntoResponse, Response, Sse},
-    routing::{get, post},
     Json, Router,
+    extract::{DefaultBodyLimit, Path, Request, State, rejection::JsonRejection},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    middleware::{self, Next},
+    response::{IntoResponse, Response, Sse, sse::Event, sse::KeepAlive},
+    routing::{get, post},
 };
 use futures_util::stream;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::{ControlPlane, SimulationRequest, SubmissionError, MAX_COMMAND_PAYLOAD_LEN};
+use crate::{ControlPlane, MAX_COMMAND_PAYLOAD_LEN, SimulationRequest, SubmissionError};
 
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
 const LAST_EVENT_ID: &str = "last-event-id";

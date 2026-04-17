@@ -9,13 +9,14 @@ note: expected this to be `Orders`
    |
 39 | #[domain(id = "service", label = "Service", context = Services, actions = [Actions])]
    |                                                       ^^^^^^^^
-note: required for `Placed` to implement `ActionOutputType<DomainServiceActionOutput<Service>>`
-  --> tests/ui/domain_service_action/direct_cross_context_event.rs:24:10
+note: required for `Placed` to implement `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
+  --> tests/ui/domain_service_action/direct_cross_context_event.rs:25:87
    |
 24 | #[derive(Aggregate)]
-   |          ^^^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+   |          --------- type parameter would need to implement `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
 25 | #[domain(id = "order", label = "Order", context = Orders, root = OrderRoot, events = [Placed])]
    |                                                                                       ^^^^^^
+   = help: consider manually implementing `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>` to avoid undesired bounds
    = note: associated types for the current `impl` cannot be restricted in `where` clauses
 note: required by a bound in `Actions`
   --> tests/ui/domain_service_action/direct_cross_context_event.rs:32:1
@@ -24,7 +25,7 @@ note: required by a bound in `Actions`
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
 33 | pub trait Actions {
    |           ------- required by a bound in this trait
-   = note: this error originates in the derive macro `Aggregate` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0271]: type mismatch resolving `<Service as DomainServiceType>::Context == Orders`
   --> tests/ui/domain_service_action/direct_cross_context_event.rs:38:10
@@ -37,13 +38,14 @@ note: expected this to be `Orders`
    |
 39 | #[domain(id = "service", label = "Service", context = Services, actions = [Actions])]
    |                                                       ^^^^^^^^
-note: required for `Placed` to implement `ActionOutputType<DomainServiceActionOutput<Service>>`
-  --> tests/ui/domain_service_action/direct_cross_context_event.rs:24:10
+note: required for `Placed` to implement `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
+  --> tests/ui/domain_service_action/direct_cross_context_event.rs:25:87
    |
 24 | #[derive(Aggregate)]
-   |          ^^^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+   |          --------- type parameter would need to implement `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
 25 | #[domain(id = "order", label = "Order", context = Orders, root = OrderRoot, events = [Placed])]
    |                                                                                       ^^^^^^
+   = help: consider manually implementing `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>` to avoid undesired bounds
    = note: associated types for the current `impl` cannot be restricted in `where` clauses
 note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
   --> tests/ui/domain_service_action/direct_cross_context_event.rs:32:1

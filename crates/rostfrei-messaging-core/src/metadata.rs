@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{ContractError, ContractErrorKind};
 

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_nats::jetstream::message::PublishMessage;
-use event_store::{provision_event_store, NatsEventStore};
+use event_store::{NatsEventStore, provision_event_store};
 use event_store_config::NatsEventStoreConfig;
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventStore,
@@ -100,9 +100,11 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         .await
         .expect("winning atomic batch should load");
     assert_eq!(concurrent_history.len(), 3);
-    assert!(concurrent_history
-        .windows(2)
-        .all(|events| events[0].commit_id() == events[1].commit_id()));
+    assert!(
+        concurrent_history
+            .windows(2)
+            .all(|events| events[0].commit_id() == events[1].commit_id())
+    );
 
     let restart_stream = stream("restart-retry");
     let retried_batch = batch(

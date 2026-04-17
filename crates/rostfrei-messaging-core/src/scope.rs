@@ -1,10 +1,10 @@
 use std::{fmt, str::FromStr};
 
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{
-    address::{CommandAddress, IntegrationEventAddress, QueryAddress},
     ConsumerName, ContractError, ContractErrorKind, DurableName,
+    address::{CommandAddress, IntegrationEventAddress, QueryAddress},
 };
 
 pub const MAX_SCOPE_NAME_BYTES: usize = 64;

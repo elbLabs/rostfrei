@@ -10,12 +10,12 @@ use rostfrei_core::{
     DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandlerError,
     DomainEventHandlerErrorKind, EventStoreErrorKind, MAX_EVENTS_PER_BATCH,
 };
-use rostfrei_messaging_core::{ConsumerName, DurableName, RetryDelay, MAX_PROCESSING_TIMEOUT};
+use rostfrei_messaging_core::{ConsumerName, DurableName, MAX_PROCESSING_TIMEOUT, RetryDelay};
 use thiserror::Error;
 use tokio::{sync::watch, time::timeout};
 
 use crate::{
-    event_store::{decode_consumed_event, DecodedEvent, NatsEventStore},
+    event_store::{DecodedEvent, NatsEventStore, decode_consumed_event},
     event_store_config::NatsEventStoreConfig,
 };
 

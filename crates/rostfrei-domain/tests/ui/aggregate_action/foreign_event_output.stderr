@@ -1,22 +1,22 @@
-error[E0277]: the trait bound `Changed: ActionOutputType<AggregateActionOutput<Owner>>` is not satisfied
+error[E0277]: the trait bound `Changed: ActionOutputType<domain::__private::AggregateActionOutput<Owner>>` is not satisfied
   --> tests/ui/aggregate_action/foreign_event_output.rs:55:6
    |
 55 | impl Actions for Owner {
    |      ^^^^^^^ unsatisfied trait bound
    |
-help: the trait `ActionOutputType<AggregateActionOutput<Owner>>` is not implemented for `Changed`
+help: the trait `ActionOutputType<domain::__private::AggregateActionOutput<Owner>>` is not implemented for `Changed`
   --> tests/ui/aggregate_action/foreign_event_output.rs:37:1
    |
 37 | pub struct Changed;
    | ^^^^^^^^^^^^^^^^^^
-help: the following other types implement trait `ActionOutputType<Contract>`
+help: `Changed` implements trait `ActionOutputType<Contract>`
   --> tests/ui/aggregate_action/foreign_event_output.rs:31:10
    |
 31 | #[derive(Aggregate)]
    |          ^^^^^^^^^
    |          |
-   |          `Changed` implements `ActionOutputType<AggregateActionOutput<Other>>`
-   |          `Changed` implements `ActionOutputType<DomainServiceActionOutput<Service>>`
+   |          `ActionOutputType<domain::__private::AggregateActionOutput<Other>>`
+   |          `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
 note: required by a bound in `Actions`
   --> tests/ui/aggregate_action/foreign_event_output.rs:39:1
    |
@@ -26,25 +26,25 @@ note: required by a bound in `Actions`
    |           ------- required by a bound in this trait
    = note: this error originates in the derive macro `Aggregate` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: the trait bound `Changed: ActionOutputType<AggregateActionOutput<Owner>>` is not satisfied
+error[E0277]: the trait bound `Changed: ActionOutputType<domain::__private::AggregateActionOutput<Owner>>` is not satisfied
   --> tests/ui/aggregate_action/foreign_event_output.rs:45:10
    |
 45 | #[derive(Aggregate)]
    |          ^^^^^^^^^ unsatisfied trait bound
    |
-help: the trait `ActionOutputType<AggregateActionOutput<Owner>>` is not implemented for `Changed`
+help: the trait `ActionOutputType<domain::__private::AggregateActionOutput<Owner>>` is not implemented for `Changed`
   --> tests/ui/aggregate_action/foreign_event_output.rs:37:1
    |
 37 | pub struct Changed;
    | ^^^^^^^^^^^^^^^^^^
-help: the following other types implement trait `ActionOutputType<Contract>`
+help: `Changed` implements trait `ActionOutputType<Contract>`
   --> tests/ui/aggregate_action/foreign_event_output.rs:31:10
    |
 31 | #[derive(Aggregate)]
    |          ^^^^^^^^^
    |          |
-   |          `Changed` implements `ActionOutputType<AggregateActionOutput<Other>>`
-   |          `Changed` implements `ActionOutputType<DomainServiceActionOutput<Service>>`
+   |          `ActionOutputType<domain::__private::AggregateActionOutput<Other>>`
+   |          `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
 note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
   --> tests/ui/aggregate_action/foreign_event_output.rs:39:1
    |

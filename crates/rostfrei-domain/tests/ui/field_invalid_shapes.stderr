@@ -55,11 +55,9 @@ error[E0107]: enum takes 1 generic argument but 2 generic arguments were supplie
    |            ^^^^^^   ----- help: remove the unnecessary generic argument
    |            |
    |            expected 1 generic argument
-
-error[E0433]: failed to resolve: use of unresolved module or unlinked crate `collections`
-  --> tests/ui/field_invalid_shapes.rs:53:12
    |
-53 |     value: collections::Vec<u8>,
-   |            ^^^^^^^^^^^ use of unresolved module or unlinked crate `collections`
+note: enum defined here, with 1 generic parameter: `T`
+  --> $RUST/core/src/option.rs
    |
-   = help: if you wanted to use a crate named `collections`, use `cargo add collections` to add it to your `Cargo.toml`
+   | pub enum Option<T> {
+   |          ^^^^^^ -

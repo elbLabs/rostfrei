@@ -381,12 +381,14 @@ mod tests {
         let application = ApplicationName::new("fast-inbox").unwrap();
         let shared = StreamName::new("FAST_INBOX_SHARED").unwrap();
 
-        assert!(MessagingTopology::new(
-            application,
-            shared.clone(),
-            shared,
-            StreamName::new("FAST_INBOX_QUARANTINE").unwrap(),
-        )
-        .is_err());
+        assert!(
+            MessagingTopology::new(
+                application,
+                shared.clone(),
+                shared,
+                StreamName::new("FAST_INBOX_QUARANTINE").unwrap(),
+            )
+            .is_err()
+        );
     }
 }
