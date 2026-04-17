@@ -49,18 +49,18 @@ fn add_type_predicates(
         add_type_predicate(
             item,
             &decision.input,
-            quote!(#domain_path::DecisionInputType),
+            &quote!(#domain_path::DecisionInputType),
         )?;
         add_type_predicate(
             item,
             &decision.output,
-            quote!(#domain_path::DecisionOutputType),
+            &quote!(#domain_path::DecisionOutputType),
         )?;
     }
     Ok(())
 }
 
-fn add_type_predicate(item: &mut ItemTrait, ty: &Type, bound: TokenStream) -> syn::Result<()> {
+fn add_type_predicate(item: &mut ItemTrait, ty: &Type, bound: &TokenStream) -> syn::Result<()> {
     let predicate: WherePredicate = syn::parse2(quote_spanned! {ty.span()=> #ty: #bound})?;
     item.generics.make_where_clause().predicates.push(predicate);
     Ok(())

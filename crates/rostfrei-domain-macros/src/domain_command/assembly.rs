@@ -48,6 +48,10 @@ pub fn assemble(
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps command JSON decoder token generation in one auditable block"
+)]
 fn assemble_json_decoder(
     domain_path: &Path,
     name: &Ident,

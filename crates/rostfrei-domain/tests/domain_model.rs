@@ -75,6 +75,7 @@ struct MailboxOpened;
 struct TransferDenied;
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn compiles_explicit_domain_model_to_json() {
     let model = domain_model! {
         contexts: [Inbox],

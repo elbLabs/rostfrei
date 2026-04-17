@@ -277,7 +277,6 @@ const BLANK_STATE_LABEL: EntityLifecycleDescriptor = EntityLifecycleDescriptor {
 
 const fn lifecycle(case: u8) -> EntityLifecycleDescriptor {
     match case {
-        0 => VALID,
         1 => WRONG_OWNER,
         2 => EMPTY_STATES,
         3 => WRONG_STATE_LIFECYCLE,
@@ -364,10 +363,10 @@ fn panic_message<const CASE: u8>() -> String {
 fn panic_payload(payload: Box<dyn Any + Send>) -> String {
     match payload.downcast::<String>() {
         Ok(message) => *message,
-        Err(payload) => match payload.downcast::<&'static str>() {
-            Ok(message) => (*message).to_owned(),
-            Err(_) => panic!("panic payload should be a String or &'static str"),
-        },
+        Err(payload) => payload.downcast::<&'static str>().map_or_else(
+            |_| panic!("panic payload should be a String or &'static str"),
+            |message| (*message).to_owned(),
+        ),
     }
 }
 

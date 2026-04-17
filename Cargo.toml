@@ -45,6 +45,26 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
+nursery = { level = "warn", priority = -2 }
+
+unwrap_used = "warn"
+expect_used = "warn"
+indexing_slicing = "warn"
+panic = "warn"
+panic_in_result_fn = "warn"
+unreachable = "warn"
+
+string_slice = "deny"
+unchecked_time_subtraction = "deny"
+unimplemented = "deny"
+todo = "deny"
+exit = "deny"
+
+manual_assert = "allow"
+
+arithmetic_side_effects = "warn"
+as_conversions = "warn"
+
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"

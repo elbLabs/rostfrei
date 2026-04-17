@@ -22,7 +22,7 @@ fn expand_trait(args: TokenStream, item: ItemTrait) -> syn::Result<TokenStream> 
     let arguments = contract_arguments::parse(args)?;
     match arguments.kind {
         contract_arguments::ContractKind::Aggregate => {
-            expand_aggregate_trait(item, arguments.instance_trait)
+            expand_aggregate_trait(item, arguments.instance_trait.as_ref())
         }
         contract_arguments::ContractKind::Entity => expand_entity_trait(item),
         contract_arguments::ContractKind::ValueObject => expand_value_object_trait(item),
@@ -48,7 +48,7 @@ fn expand_value_object_trait(item: ItemTrait) -> syn::Result<TokenStream> {
 
 fn expand_aggregate_trait(
     item: ItemTrait,
-    instance_trait: Option<syn::Ident>,
+    instance_trait: Option<&syn::Ident>,
 ) -> syn::Result<TokenStream> {
     let mut item = public_trait_input::validate(item, "aggregate")?;
     let mut actions = trait_attributes::extract(&mut item.items)?;
@@ -59,7 +59,6 @@ fn expand_aggregate_trait(
     }
     let domain_path = crate::helper::domain_api_path::resolve()?;
     let runtime_path = instance_trait
-        .as_ref()
         .map(|_| crate::helper::runtime_api_path::resolve())
         .transpose()?;
     aggregate_trait_assembly::assemble(
@@ -67,7 +66,7 @@ fn expand_aggregate_trait(
         runtime_path.as_ref(),
         item,
         &actions,
-        instance_trait.as_ref(),
+        instance_trait,
     )
 }
 

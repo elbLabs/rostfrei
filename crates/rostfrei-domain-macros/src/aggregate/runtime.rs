@@ -4,6 +4,10 @@ use syn::{Ident, Path, Visibility};
 
 use super::attributes::Attributes;
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps aggregate runtime token generation and generated item ordering in one auditable block"
+)]
 pub fn assemble(
     domain_path: &Path,
     runtime_path: &Path,

@@ -154,7 +154,6 @@ const fn lifecycle_with(
 
 const fn lifecycle(case: u8) -> EntityLifecycleDescriptor {
     match case {
-        0 => lifecycle_with(ATTACHED_TRANSITIONS),
         1 => lifecycle_with(IMPLEMENTED_UNATTACHED_TRANSITIONS),
         2 | 4 | 5 => lifecycle_with(FABRICATED_TRANSITIONS),
         3 => lifecycle_with(EXTENSION_TRANSITIONS),
@@ -266,10 +265,10 @@ fn finish_panic<const CASE: u8>(configure: impl FnOnce(&mut DomainModelBuilder))
 fn panic_payload(payload: Box<dyn Any + Send>) -> String {
     match payload.downcast::<String>() {
         Ok(message) => *message,
-        Err(payload) => match payload.downcast::<&'static str>() {
-            Ok(message) => (*message).to_owned(),
-            Err(_) => panic!("panic payload should be a String or &'static str"),
-        },
+        Err(payload) => payload.downcast::<&'static str>().map_or_else(
+            |_| panic!("panic payload should be a String or &'static str"),
+            |message| (*message).to_owned(),
+        ),
     }
 }
 

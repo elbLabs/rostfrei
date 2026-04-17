@@ -159,7 +159,7 @@ fn writer_emits_one_frame_and_surfaces_io_errors() {
         projection::compact(descriptor)
     );
     assert_eq!(output, expected.as_bytes());
-    assert_eq!(output.iter().filter(|byte| **byte == b'\n').count(), 2);
+    assert_eq!(output.split(|byte| *byte == b'\n').count(), 3);
 
     let error = emitter::write_metadata(&mut FailingWriter, descriptor).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);

@@ -52,7 +52,7 @@ pub fn expand(
 
         #(#companion_attributes)*
         #[test]
-        #[ignore]
+        #[ignore = "domain test metadata companion"]
         fn #companion_name() {
             let descriptor = #domain_path::DomainTestDescriptor {
                 package: env!("CARGO_PKG_NAME"),

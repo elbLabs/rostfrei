@@ -6,6 +6,9 @@ edition = "2024"
 rust-version.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 axum.workspace = true
 rostfrei = { path = "../../crates/rostfrei" }
