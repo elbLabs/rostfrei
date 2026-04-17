@@ -242,7 +242,8 @@ where
         A: Aggregate + CommandHandler<Command>,
         C: EventCodec<A>,
     {
-        for attempt in 0..=self.maximum_conflict_retries {
+        let mut remaining_conflict_retries = self.maximum_conflict_retries;
+        loop {
             let (aggregate, history) = self.load_and_replay::<A>(metadata.stream_id()).await?;
 
             let prior_operation: Vec<_> = history
@@ -298,12 +299,13 @@ where
                 }
                 Err(error)
                     if error.kind() == EventStoreErrorKind::Conflict
-                        && attempt < self.maximum_conflict_retries => {}
+                        && remaining_conflict_retries > 0 =>
+                {
+                    remaining_conflict_retries = remaining_conflict_retries.saturating_sub(1);
+                }
                 Err(error) => return Err(error.into()),
             }
         }
-
-        unreachable!("the bounded retry loop always returns on its final attempt")
     }
 }
 

@@ -37,7 +37,7 @@ pub fn expand(
         function_name.unraw(),
         span = function_name.span()
     );
-    let subject = subject.assemble(&domain_path, kind);
+    let subject = subject.assemble(&domain_path);
     let file = quote_spanned!(function_name.span()=> file!());
     let line = quote_spanned!(function_name.span()=> line!());
     let column = quote_spanned!(function_name.span()=> column!());

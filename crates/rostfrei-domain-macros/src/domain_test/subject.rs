@@ -7,8 +7,17 @@ use syn::{ExprPath, Path, PathArguments, Type, TypePath};
 use super::DomainTestKind;
 
 pub(crate) enum DomainTestSubjectInput {
-    Typed(TypedSubject),
+    Action(TypedSubject),
+    Decision(TypedSubject),
+    Invariant(TypedSubject),
     Lifecycle(TypePath),
+}
+
+#[derive(Clone, Copy)]
+enum TypedSubjectKind {
+    Action,
+    Decision,
+    Invariant,
 }
 
 pub(crate) struct TypedSubject {
@@ -20,16 +29,19 @@ pub(crate) struct TypedSubject {
 
 impl DomainTestSubjectInput {
     pub(crate) fn parse(kind: DomainTestKind, args: TokenStream) -> syn::Result<Self> {
-        if kind.accepts_typed_reference() {
-            parse_typed(kind, args).map(Self::Typed)
-        } else {
-            parse_lifecycle(args).map(Self::Lifecycle)
+        match kind {
+            DomainTestKind::Action => parse_typed(kind, args).map(Self::Action),
+            DomainTestKind::Decision => parse_typed(kind, args).map(Self::Decision),
+            DomainTestKind::Invariant => parse_typed(kind, args).map(Self::Invariant),
+            DomainTestKind::Lifecycle => parse_lifecycle(args).map(Self::Lifecycle),
         }
     }
 
-    pub(crate) fn assemble(&self, domain_path: &Path, kind: DomainTestKind) -> TokenStream {
+    pub(crate) fn assemble(&self, domain_path: &Path) -> TokenStream {
         match self {
-            Self::Typed(subject) => subject.assemble(domain_path, kind),
+            Self::Action(subject) => subject.assemble(domain_path, TypedSubjectKind::Action),
+            Self::Decision(subject) => subject.assemble(domain_path, TypedSubjectKind::Decision),
+            Self::Invariant(subject) => subject.assemble(domain_path, TypedSubjectKind::Invariant),
             Self::Lifecycle(lifecycle) => quote_spanned! {lifecycle.path.span()=>
                 #domain_path::DomainTestSubject::Lifecycle(
                     <#lifecycle as #domain_path::EntityLifecycleType>::DESCRIPTOR.id
@@ -40,31 +52,30 @@ impl DomainTestSubjectInput {
 }
 
 impl TypedSubject {
-    fn assemble(&self, domain_path: &Path, kind: DomainTestKind) -> TokenStream {
+    fn assemble(&self, domain_path: &Path, kind: TypedSubjectKind) -> TokenStream {
         let owner = &self.owner;
         let trait_path = &self.trait_path;
         let hidden_reference = hidden_reference(kind, &self.reference);
         let span = self.span;
         let (marker, descriptor, reference, variant) = match kind {
-            DomainTestKind::Action => (
+            TypedSubjectKind::Action => (
                 format_ident!("__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE"),
                 format_ident!("ActionDescriptor"),
                 format_ident!("ActionReference"),
                 format_ident!("Action"),
             ),
-            DomainTestKind::Decision => (
+            TypedSubjectKind::Decision => (
                 format_ident!("__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE"),
                 format_ident!("DecisionDescriptor"),
                 format_ident!("DecisionReference"),
                 format_ident!("Decision"),
             ),
-            DomainTestKind::Invariant => (
+            TypedSubjectKind::Invariant => (
                 format_ident!("__DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE"),
                 format_ident!("InvariantDescriptor"),
                 format_ident!("InvariantReference"),
                 format_ident!("Invariant"),
             ),
-            DomainTestKind::Lifecycle => unreachable!(),
         };
 
         quote_spanned! {span=>
@@ -190,12 +201,11 @@ fn canonical_reference_error(kind: DomainTestKind, reference: &Ident) -> syn::Er
     )
 }
 
-fn hidden_reference(kind: DomainTestKind, reference: &Ident) -> Ident {
+fn hidden_reference(kind: TypedSubjectKind, reference: &Ident) -> Ident {
     let subject = match kind {
-        DomainTestKind::Action => "ACTION",
-        DomainTestKind::Decision => "DECISION",
-        DomainTestKind::Invariant => "INVARIANT",
-        DomainTestKind::Lifecycle => unreachable!(),
+        TypedSubjectKind::Action => "ACTION",
+        TypedSubjectKind::Decision => "DECISION",
+        TypedSubjectKind::Invariant => "INVARIANT",
     };
     Ident::new(
         &format!("__DOMAIN_{}_REFERENCE_{}", subject, reference.unraw()),
