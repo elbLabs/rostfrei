@@ -57,6 +57,8 @@ unreachable = "deny"
 uninhabited_references = "deny"
 use_self = "deny"
 
+significant_drop_in_scrutinee = "deny"
+significant_drop_tightening = "deny"
 string_slice = "deny"
 unchecked_time_subtraction = "deny"
 unimplemented = "deny"

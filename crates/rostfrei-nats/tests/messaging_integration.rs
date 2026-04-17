@@ -302,12 +302,14 @@ impl MessageHandler<CommandAddress> for DispositionHandler {
         };
         let count = deliveries.entry(id.clone()).or_default();
         *count += 1;
+        let count = *count;
+        drop(deliveries);
         match id.as_str() {
             value if value.starts_with("ack-") => {
                 self.acknowledged.fetch_add(1, Ordering::Relaxed);
                 DeliveryDisposition::Acknowledge
             }
-            value if value.starts_with("retry-") && *count == 1 => {
+            value if value.starts_with("retry-") && count == 1 => {
                 DeliveryDisposition::RetryAfter(self.retry_delay)
             }
             value if value.starts_with("retry-") => {

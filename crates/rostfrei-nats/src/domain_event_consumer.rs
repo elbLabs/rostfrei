@@ -198,11 +198,14 @@ impl NatsDomainEventConsumer {
                     }
                     continue;
                 }
-                message = first_delivery.try_next() => match message
-                    .map_err(|error| unavailable(format!("domain-event delivery failed: {error}")))?
-                {
-                    Some(message) => message,
-                    None => continue,
+                message = first_delivery.try_next() => {
+                    let delivery = message.map_err(|error| {
+                        unavailable(format!("domain-event delivery failed: {error}"))
+                    })?;
+                    let Some(message) = delivery else {
+                        continue;
+                    };
+                    message
                 },
             };
             let first = self.buffer_delivery(first)?;
