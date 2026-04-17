@@ -34,13 +34,13 @@ struct Filter(String);
 #[domain_queries(group = CatalogQueries)]
 impl CatalogAggregate {
     #[query(id = "count", label = "Count")]
-    pub fn count(root: &CatalogRoot) -> usize {
+    pub const fn count(root: &CatalogRoot) -> usize {
         root.count
     }
 
     #[query(id = "contains", label = "Contains")]
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn contains(root: &CatalogRoot, input: &u64) -> bool {
+    pub const fn contains(root: &CatalogRoot, input: &u64) -> bool {
         root.count as u64 == *input
     }
 

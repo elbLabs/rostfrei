@@ -20,7 +20,7 @@ pub(super) struct ActionProjection {
 }
 
 impl ActionProjection {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             registered_owners: Vec::new(),
             actions: Vec::new(),

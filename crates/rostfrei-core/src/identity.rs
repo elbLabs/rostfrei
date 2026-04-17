@@ -101,18 +101,18 @@ pub struct StreamId {
 }
 
 impl StreamId {
-    pub fn new(aggregate_type: AggregateType, aggregate_id: AggregateId) -> Self {
+    pub const fn new(aggregate_type: AggregateType, aggregate_id: AggregateId) -> Self {
         Self {
             aggregate_type,
             aggregate_id,
         }
     }
 
-    pub fn aggregate_type(&self) -> &AggregateType {
+    pub const fn aggregate_type(&self) -> &AggregateType {
         &self.aggregate_type
     }
 
-    pub fn aggregate_id(&self) -> &AggregateId {
+    pub const fn aggregate_id(&self) -> &AggregateId {
         &self.aggregate_id
     }
 }
@@ -227,11 +227,11 @@ impl ExecutionMetadata {
         self
     }
 
-    pub fn stream_id(&self) -> &StreamId {
+    pub const fn stream_id(&self) -> &StreamId {
         &self.stream_id
     }
 
-    pub fn operation_id(&self) -> &OperationId {
+    pub const fn operation_id(&self) -> &OperationId {
         &self.operation_id
     }
 
@@ -239,7 +239,7 @@ impl ExecutionMetadata {
         self.operation_fingerprint
     }
 
-    pub fn commit_id(&self) -> &CommitId {
+    pub const fn commit_id(&self) -> &CommitId {
         &self.commit_id
     }
 

@@ -105,11 +105,11 @@ impl EntityLifecycleType for TaskLifecycleMetadata {
     };
 }
 
-fn assert_id_traits<T: Copy + Clone + Debug + Eq + Hash>() {}
+const fn assert_id_traits<T: Copy + Clone + Debug + Eq + Hash>() {}
 
-fn assert_descriptor_traits<T: Copy + Clone + Debug + Eq>() {}
+const fn assert_descriptor_traits<T: Copy + Clone + Debug + Eq>() {}
 
-fn assert_lifecycle_owner<T: EntityLifecycleType<Owner = Task>>() {}
+const fn assert_lifecycle_owner<T: EntityLifecycleType<Owner = Task>>() {}
 
 #[test]
 fn lifecycle_ids_preserve_value_semantics() {

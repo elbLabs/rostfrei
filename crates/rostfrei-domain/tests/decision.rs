@@ -206,7 +206,7 @@ fn evaluated_outcome(
     }
 }
 
-fn eligible_facts() -> UnderwritingFacts {
+const fn eligible_facts() -> UnderwritingFacts {
     UnderwritingFacts {
         annual_income: 120_000,
         monthly_obligations: 2_000,
@@ -216,7 +216,7 @@ fn eligible_facts() -> UnderwritingFacts {
     }
 }
 
-fn unaffordable_facts() -> UnderwritingFacts {
+const fn unaffordable_facts() -> UnderwritingFacts {
     UnderwritingFacts {
         annual_income: 36_000,
         monthly_obligations: 1_500,
@@ -226,7 +226,7 @@ fn unaffordable_facts() -> UnderwritingFacts {
     }
 }
 
-fn application_root() -> ApplicationRoot {
+const fn application_root() -> ApplicationRoot {
     ApplicationRoot {
         id: ApplicationId(41),
         decision_recorded: false,
@@ -239,7 +239,7 @@ fn local_ids(contract: &[DecisionDescriptor]) -> Vec<&'static str> {
     contract.iter().map(|decision| decision.id.local).collect()
 }
 
-fn expected_descriptor(
+const fn expected_descriptor(
     owner: DecisionOwnerId,
     local: &'static str,
     label: &'static str,

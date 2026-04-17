@@ -99,7 +99,7 @@ impl CategoryKindActions for CategoryKind {
     }
 }
 
-fn owner_id<T: ValueObjectOwnerType>() -> ValueObjectOwnerId {
+const fn owner_id<T: ValueObjectOwnerType>() -> ValueObjectOwnerId {
     T::VALUE_OBJECT_OWNER_ID
 }
 

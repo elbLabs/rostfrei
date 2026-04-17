@@ -162,13 +162,13 @@ mod change_inventory_action {
             Ok(())
         }
 
-        fn translate_violations(violations: Vec<InvariantViolation>) -> ChangeInventoryError {
+        const fn translate_violations(violations: Vec<InvariantViolation>) -> ChangeInventoryError {
             ChangeInventoryError::InvalidCandidate(violations)
         }
     }
 }
 
-fn product(stock: i32, reserved: i32) -> ProductRoot {
+const fn product(stock: i32, reserved: i32) -> ProductRoot {
     ProductRoot {
         id: ProductId(1),
         stock,

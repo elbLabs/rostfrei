@@ -10,7 +10,7 @@ pub(super) struct InvariantProjection {
 }
 
 impl InvariantProjection {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             registered_owners: Vec::new(),
             invariants: Vec::new(),

@@ -482,7 +482,7 @@ fn violation(
     )
 }
 
-fn extension_action_id(local: &'static str) -> ActionId {
+const fn extension_action_id(local: &'static str) -> ActionId {
     ActionId {
         owner: ActionOwnerId::DomainService(EXTENSION_SERVICE_ID),
         local,

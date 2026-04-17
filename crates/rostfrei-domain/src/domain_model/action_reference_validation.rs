@@ -11,7 +11,7 @@ pub(super) struct ActionReferenceInventory {
 }
 
 impl ActionReferenceInventory {
-    pub(super) fn new(
+    pub(super) const fn new(
         domain_identities: Vec<DomainIdentityId>,
         domain_events: Vec<DomainEventId>,
         domain_errors: Vec<DomainErrorId>,

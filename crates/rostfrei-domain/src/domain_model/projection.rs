@@ -47,7 +47,7 @@ pub struct DomainModelBuilder {
 }
 
 impl DomainModelBuilder {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             bounded_contexts: Vec::new(),
             aggregates: Vec::new(),

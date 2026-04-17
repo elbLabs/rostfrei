@@ -568,7 +568,7 @@ fn assert_contract_success(result: ContractResult) {
     );
 }
 
-fn single_event<'a, T>(events: &'a [T], context: &'static str) -> ContractResult<&'a T> {
+const fn single_event<'a, T>(events: &'a [T], context: &'static str) -> ContractResult<&'a T> {
     let [event] = events else {
         return Err(unexpected_event_count(context, 1, events.len()));
     };
@@ -587,7 +587,7 @@ const fn unexpected_event_count(
     }
 }
 
-fn store_error(context: &'static str, source: EventStoreError) -> ContractTestError {
+const fn store_error(context: &'static str, source: EventStoreError) -> ContractTestError {
     ContractTestError::Store { context, source }
 }
 

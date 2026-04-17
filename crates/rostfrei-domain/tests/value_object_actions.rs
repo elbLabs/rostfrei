@@ -240,7 +240,7 @@ impl SecondDuplicateActions for DuplicateValue {
     }
 }
 
-fn ledger_root() -> LedgerRoot {
+const fn ledger_root() -> LedgerRoot {
     LedgerRoot {
         id: LedgerId(7),
         active: false,

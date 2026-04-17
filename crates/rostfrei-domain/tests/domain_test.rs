@@ -113,7 +113,7 @@ impl AggregateInvariants for TestAggregate {
     }
 }
 
-fn root() -> TestRoot {
+const fn root() -> TestRoot {
     TestRoot {
         id: TestId(1),
         marked: false,
