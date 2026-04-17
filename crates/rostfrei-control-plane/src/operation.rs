@@ -134,7 +134,7 @@ impl OperationEventKind {
     }
 }
 
-pub(crate) struct NewOperation<'a> {
+pub struct NewOperation<'a> {
     pub operation_id: String,
     pub fingerprint: String,
     pub command: &'a str,
@@ -150,7 +150,7 @@ struct OperationState {
     next_event_id: u64,
 }
 
-pub(crate) struct OperationRecord {
+pub struct OperationRecord {
     state: Mutex<OperationState>,
     changed: watch::Sender<u64>,
     terminal: AtomicBool,
@@ -332,7 +332,7 @@ impl OperationSubscription {
     }
 }
 
-pub(crate) async fn subscribe(
+pub async fn subscribe(
     record: &Arc<OperationRecord>,
     after: u64,
 ) -> Result<OperationSubscription, SubscriptionError> {

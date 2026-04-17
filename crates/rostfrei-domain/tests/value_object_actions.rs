@@ -71,11 +71,11 @@ trait MoneyConstruction {
     fn clear(self) -> Self;
 }
 
-mod contracts {
+pub mod contracts {
     use domain::domain_actions;
 
     #[domain_actions(value_object)]
-    pub(crate) trait MoneyArithmetic {
+    pub(super) trait MoneyArithmetic {
         #[action(id = "increase", label = "Increase money")]
         fn increase(self, input: u64) -> super::MoneyAlias;
 

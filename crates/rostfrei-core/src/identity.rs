@@ -256,7 +256,7 @@ impl ExecutionMetadata {
     }
 }
 
-pub(crate) fn derive_commit_id(stream_id: &StreamId, operation_id: &OperationId) -> CommitId {
+pub fn derive_commit_id(stream_id: &StreamId, operation_id: &OperationId) -> CommitId {
     let mut hasher = Sha256::new();
     hash_part(&mut hasher, b"rostfrei:commit:v1");
     hash_part(&mut hasher, stream_id.aggregate_type().as_str().as_bytes());
@@ -265,7 +265,7 @@ pub(crate) fn derive_commit_id(stream_id: &StreamId, operation_id: &OperationId)
     CommitId(format!("commit:{:x}", hasher.finalize()))
 }
 
-pub(crate) fn derive_event_id(commit_id: &CommitId, ordinal: u32) -> EventId {
+pub fn derive_event_id(commit_id: &CommitId, ordinal: u32) -> EventId {
     let mut hasher = Sha256::new();
     hash_part(&mut hasher, b"rostfrei:event:v1");
     hash_part(&mut hasher, commit_id.as_str().as_bytes());

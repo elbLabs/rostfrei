@@ -3,15 +3,15 @@ mod domain {
 
     #[derive(BoundedContext)]
     #[domain(id = "catalog", label = "Catalog")]
-    pub(crate) struct Catalog;
+    pub struct Catalog;
 
     #[derive(DomainIdentity)]
     #[domain(owner = TaxonomyRoot)]
-    pub(crate) struct TaxonomyId(pub(crate) u64);
+    pub struct TaxonomyId(pub(crate) u64);
 
     #[derive(Entity)]
     #[domain(id = "taxonomy-root", label = "Taxonomy", owner = ServiceTaxonomy)]
-    pub(crate) struct TaxonomyRoot {
+    pub struct TaxonomyRoot {
         #[domain(identity)]
         pub(crate) id: TaxonomyId,
         pub(crate) published: bool,
@@ -29,9 +29,9 @@ mod domain {
             deprecation::CategoryDeprecationActions
         ]
     )]
-    pub(crate) struct ServiceTaxonomy;
+    pub struct ServiceTaxonomy;
 
-    pub(crate) mod publication {
+    pub mod publication {
         use domain::domain_actions;
 
         #[domain_actions(aggregate)]
@@ -41,7 +41,7 @@ mod domain {
         }
     }
 
-    pub(crate) mod deprecation {
+    pub mod deprecation {
         use domain::domain_actions;
 
         #[domain_actions(aggregate)]
@@ -69,7 +69,7 @@ mod model {
 
     use super::domain::{Catalog, ServiceTaxonomy, TaxonomyId, TaxonomyRoot};
 
-    pub(crate) fn registered_owner() -> serde_json::Value {
+    pub fn registered_owner() -> serde_json::Value {
         domain_model! {
             contexts: [Catalog],
             aggregates: [ServiceTaxonomy],
