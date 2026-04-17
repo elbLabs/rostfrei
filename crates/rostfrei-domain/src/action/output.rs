@@ -6,8 +6,8 @@ pub enum ActionOutputDescriptor {
     Scalar(ScalarType),
     ValueObject(ValueObjectId),
     DomainEvent(DomainEventId),
-    Optional(&'static ActionOutputDescriptor),
-    List(&'static ActionOutputDescriptor),
+    Optional(&'static Self),
+    List(&'static Self),
 }
 
 #[doc(hidden)]

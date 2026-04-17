@@ -27,7 +27,7 @@ trait GeneratedReferenceInvariants {
 struct ReferenceValue(bool);
 
 impl GeneratedReferenceInvariants for ReferenceValue {
-    fn validate(candidate: &ReferenceValue) -> Option<InvariantViolation> {
+    fn validate(candidate: &Self) -> Option<InvariantViolation> {
         (!candidate.0).then(|| InvariantViolation::new("value", "must be valid"))
     }
 }

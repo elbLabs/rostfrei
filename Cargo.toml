@@ -54,6 +54,8 @@ missing_const_for_fn = "deny"
 panic = "warn"
 panic_in_result_fn = "warn"
 unreachable = "deny"
+uninhabited_references = "deny"
+use_self = "deny"
 
 string_slice = "deny"
 unchecked_time_subtraction = "deny"

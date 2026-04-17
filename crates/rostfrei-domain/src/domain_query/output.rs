@@ -5,8 +5,8 @@ pub enum QueryOutputDescriptor {
     Scalar(ScalarType),
     ValueObject(ValueObjectId),
     DomainIdentity(DomainIdentityId),
-    Optional(&'static QueryOutputDescriptor),
-    List(&'static QueryOutputDescriptor),
+    Optional(&'static Self),
+    List(&'static Self),
 }
 
 pub trait QueryOutputType<Aggregate>: 'static {

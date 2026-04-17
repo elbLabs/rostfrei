@@ -88,7 +88,7 @@ struct ProjectionEntity {
 }
 
 impl SharedEntityInvariants for ProjectionEntity {
-    fn shared(_candidate: &ProjectionEntity) -> Option<InvariantViolation> {
+    fn shared(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
@@ -109,7 +109,7 @@ trait SharedValueObjectInvariants {
 struct ProjectionValue(u64);
 
 impl SharedValueObjectInvariants for ProjectionValue {
-    fn shared(_candidate: &ProjectionValue) -> Option<InvariantViolation> {
+    fn shared(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
@@ -130,7 +130,7 @@ trait OmittedValueObjectInvariants {
 struct OmittedValue(u64);
 
 impl OmittedValueObjectInvariants for OmittedValue {
-    fn omitted(_candidate: &OmittedValue) -> Option<InvariantViolation> {
+    fn omitted(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
@@ -152,7 +152,7 @@ trait UnattachedValueObjectInvariants {
 struct UnattachedValue(u64);
 
 impl UnattachedValueObjectInvariants for UnattachedValue {
-    fn unattached(_candidate: &UnattachedValue) -> Option<InvariantViolation> {
+    fn unattached(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
@@ -193,13 +193,13 @@ trait SecondDuplicateInvariants {
 struct DuplicateValue(u64);
 
 impl FirstDuplicateInvariants for DuplicateValue {
-    fn first(_candidate: &DuplicateValue) -> Option<InvariantViolation> {
+    fn first(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
 
 impl SecondDuplicateInvariants for DuplicateValue {
-    fn second(_candidate: &DuplicateValue) -> Option<InvariantViolation> {
+    fn second(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
