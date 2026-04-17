@@ -82,7 +82,7 @@ impl TracePayloadPolicy for ExposeTracePayloadsForLocalDevelopment {
     }
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum SubmissionError {
     #[error(
         "unknown command `{command}` version {schema_version} for aggregate `{aggregate_type}`"

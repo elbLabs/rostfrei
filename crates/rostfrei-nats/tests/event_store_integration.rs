@@ -59,7 +59,7 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
     event_store_contract::try_run(|| store.clone()).await?;
 
     let concurrent_stream = stream("concurrent-atomic-batches")?;
-    let (first_result, second_result) = tokio::join!(
+    let concurrent_results: [_; 2] = tokio::join!(
         store.append(
             &concurrent_stream,
             ExpectedVersion::NoStream,
@@ -80,8 +80,8 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
                 &[b"b-1", b"b-2", b"b-3"],
             )?,
         ),
-    );
-    let concurrent_results = [first_result, second_result];
+    )
+    .into();
     assert_eq!(
         concurrent_results
             .iter()
