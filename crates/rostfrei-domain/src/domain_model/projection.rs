@@ -159,10 +159,10 @@ impl DomainModelBuilder {
         {
             panic!("duplicate DomainIdentityId: {:?}", descriptor.id);
         }
-        let scalar = match semantic_scalar {
-            Some(descriptor) => field_projection::semantic_scalar_value(descriptor),
-            None => scalar_value(descriptor.scalar),
-        };
+        let scalar = semantic_scalar.map_or_else(
+            || scalar_value(descriptor.scalar),
+            field_projection::semantic_scalar_value,
+        );
         self.domain_identities.push((
             descriptor.id,
             json!({

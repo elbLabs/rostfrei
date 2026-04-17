@@ -58,6 +58,8 @@ uninhabited_references = "deny"
 use_self = "deny"
 derive_partial_eq_without_eq = "deny"
 tuple_array_conversions = "deny"
+future_not_send = "deny"
+option_if_let_else = "deny"
 
 significant_drop_in_scrutinee = "deny"
 significant_drop_tightening = "deny"
