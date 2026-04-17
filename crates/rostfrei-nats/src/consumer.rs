@@ -506,11 +506,15 @@ fn caller_metadata(headers: &HeaderMap) -> Result<CallerMetadata, NatsError> {
         if is_control_header(&name) {
             continue;
         }
-        if values.len() != 1 {
+        let mut values = values.iter();
+        let Some(value) = values.next() else {
+            return Err(NatsError::InvalidMessage);
+        };
+        if values.next().is_some() {
             return Err(NatsError::InvalidMessage);
         }
         metadata
-            .insert(name, values[0].as_str())
+            .insert(name, value.as_str())
             .map_err(|_| NatsError::InvalidMessage)?;
     }
     Ok(metadata)

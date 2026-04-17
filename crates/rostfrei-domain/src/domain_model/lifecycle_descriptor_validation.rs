@@ -32,8 +32,10 @@ fn validate_states(descriptor: EntityLifecycleDescriptor) {
         validate_state_lifecycle("state", state.id, descriptor);
         lifecycle_lexical_validation::validate_state_id(*state);
         lifecycle_lexical_validation::validate_state_label(*state);
-        if descriptor.states[..index]
+        if descriptor
+            .states
             .iter()
+            .take(index)
             .any(|preceding| preceding.id == state.id)
         {
             panic!("duplicate EntityLifecycleStateId: {:?}", state.id);

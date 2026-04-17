@@ -57,7 +57,7 @@ impl InvariantProjection {
     ) {
         for (index, descriptor) in descriptors.iter().enumerate() {
             Self::validate_owner(expected_owner, descriptor);
-            self.validate_id(descriptor.id, &descriptors[..index]);
+            self.validate_id(descriptor.id, descriptors.iter().take(index));
         }
     }
 
@@ -67,8 +67,12 @@ impl InvariantProjection {
         }
     }
 
-    fn validate_id(&self, id: InvariantId, preceding: &[InvariantDescriptor]) {
-        if self.has_id(id) || preceding.iter().any(|descriptor| descriptor.id == id) {
+    fn validate_id<'a>(
+        &self,
+        id: InvariantId,
+        preceding: impl Iterator<Item = &'a InvariantDescriptor>,
+    ) {
+        if self.has_id(id) || preceding.into_iter().any(|descriptor| descriptor.id == id) {
             panic!("duplicate InvariantId: {id:?}");
         }
     }

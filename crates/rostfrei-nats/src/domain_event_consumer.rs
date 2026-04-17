@@ -272,6 +272,12 @@ impl NatsDomainEventConsumer {
                 }
             }
 
+            let commit_id = commit
+                .first()
+                .ok_or_else(|| invalid_committed_event("committed event batch is empty"))?
+                .decoded
+                .commit_id
+                .clone();
             match timeout(
                 self.config.processing_timeout(),
                 self.handle_commit(&commit),
@@ -282,7 +288,7 @@ impl NatsDomainEventConsumer {
                 Ok(Err(error)) if error.kind() == DomainEventHandlerErrorKind::Retryable => {
                     tracing::warn!(
                         durable = %self.config.durable_name(),
-                        commit_id = %commit[0].decoded.commit_id,
+                        commit_id = %commit_id,
                         error = %error,
                         "domain-event handler requested redelivery"
                     );
@@ -295,7 +301,7 @@ impl NatsDomainEventConsumer {
                 Ok(Err(error)) => {
                     tracing::error!(
                         durable = %self.config.durable_name(),
-                        commit_id = %commit[0].decoded.commit_id,
+                        commit_id = %commit_id,
                         error = %error,
                         "domain-event durable is blocked and requires operator action"
                     );
@@ -304,7 +310,7 @@ impl NatsDomainEventConsumer {
                 Err(_) => {
                     tracing::warn!(
                         durable = %self.config.durable_name(),
-                        commit_id = %commit[0].decoded.commit_id,
+                        commit_id = %commit_id,
                         "domain-event handler timed out and will be redelivered"
                     );
                     let delay = self.config.retry_delay().get();
@@ -507,8 +513,13 @@ fn validate_next_event(
     commit: &[BufferedDomainEvent],
     next: &BufferedDomainEvent,
 ) -> Result<(), DomainEventConsumerError> {
-    let first = &commit[0].decoded;
-    let previous = commit.last().expect("commit has a first event");
+    let first = &commit
+        .first()
+        .ok_or_else(|| invalid_committed_event("committed event batch is empty"))?
+        .decoded;
+    let previous = commit
+        .last()
+        .ok_or_else(|| invalid_committed_event("committed event batch is empty"))?;
     let expected_ordinal = u32::try_from(commit.len())
         .map_err(|_| invalid_committed_event("commit ordinal cannot be represented"))?;
     if next.decoded.event_ordinal != expected_ordinal

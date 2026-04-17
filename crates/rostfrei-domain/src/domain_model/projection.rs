@@ -384,7 +384,7 @@ fn query_output(descriptor: QueryOutputDescriptor) -> Value {
 }
 
 fn scalar_value(scalar: crate::ScalarType) -> Value {
-    field_projection::scalar(scalar)["scalar"].clone()
+    Value::String(field_projection::scalar_name(scalar).to_owned())
 }
 
 impl Default for DomainModelBuilder {

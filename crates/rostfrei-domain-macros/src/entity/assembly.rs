@@ -11,7 +11,7 @@ pub fn assemble(
     name: &Ident,
     attributes: &Attributes,
     fields: &[Field],
-    identity: usize,
+    identity: &Field,
 ) -> TokenStream {
     let entity_type = entity_type::assemble(domain_path, name, attributes, fields, identity);
     let field_assertions = crate::field::assemble_assertions_with_path(

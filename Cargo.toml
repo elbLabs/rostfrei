@@ -49,7 +49,7 @@ nursery = { level = "warn", priority = -2 }
 
 unwrap_used = "warn"
 expect_used = "warn"
-indexing_slicing = "warn"
+indexing_slicing = "deny"
 panic = "warn"
 panic_in_result_fn = "warn"
 unreachable = "warn"

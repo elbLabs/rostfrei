@@ -68,8 +68,11 @@ fn validate_candidate(signature: &Signature) -> syn::Result<()> {
         ));
     }
 
-    let FnArg::Typed(candidate) = signature.inputs.first().unwrap() else {
-        unreachable!()
+    let Some(FnArg::Typed(candidate)) = signature.inputs.first() else {
+        return Err(syn::Error::new_spanned(
+            &signature.inputs,
+            "domain invariant checker methods require exactly one candidate parameter",
+        ));
     };
     validate_candidate_pattern(&candidate.pat)?;
     validate_candidate_type(&candidate.ty)
@@ -129,21 +132,23 @@ fn is_invariant_owner_candidate(ty: &Type) -> bool {
     }
 
     let segments: Vec<_> = type_path.path.segments.iter().collect();
-    if segments.len() < 2 || qself.position + 1 != segments.len() {
+    let Some((candidate, owner_segments)) = segments.split_last() else {
+        return false;
+    };
+    if owner_segments.is_empty() || qself.position != owner_segments.len() {
         return false;
     }
-    let candidate = segments[segments.len() - 1];
     if candidate.ident != "Candidate" || !matches!(candidate.arguments, PathArguments::None) {
         return false;
     }
-    if segments[..qself.position]
+    if owner_segments
         .iter()
         .any(|segment| !matches!(segment.arguments, PathArguments::None))
     {
         return false;
     }
 
-    let owner_path: Vec<_> = segments[..qself.position]
+    let owner_path: Vec<_> = owner_segments
         .iter()
         .map(|segment| segment.ident.to_string())
         .collect();
@@ -155,11 +160,15 @@ fn is_self_type(ty: &Type) -> bool {
     let Type::Path(type_path) = ty else {
         return false;
     };
+    let mut segments = type_path.path.segments.iter();
+    let Some(segment) = segments.next() else {
+        return false;
+    };
     type_path.qself.is_none()
         && type_path.path.leading_colon.is_none()
-        && type_path.path.segments.len() == 1
-        && type_path.path.segments[0].ident == "Self"
-        && matches!(type_path.path.segments[0].arguments, PathArguments::None)
+        && segments.next().is_none()
+        && segment.ident == "Self"
+        && matches!(segment.arguments, PathArguments::None)
 }
 
 fn validate_output(signature: &Signature) -> syn::Result<()> {
@@ -223,13 +232,13 @@ fn path_has_names(path: &Path, allow_last_arguments: bool, expected: &[&str]) ->
     if path.segments.len() != expected.len() {
         return false;
     }
-    let last = path.segments.len() - 1;
     path.segments
         .iter()
-        .zip(expected)
+        .rev()
+        .zip(expected.iter().rev())
         .enumerate()
         .all(|(position, (segment, expected))| {
-            (position == last && allow_last_arguments
+            (position == 0 && allow_last_arguments
                 || matches!(segment.arguments, PathArguments::None))
                 && segment.ident == expected
         })

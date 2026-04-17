@@ -59,8 +59,8 @@ pub fn parse(ty: &Type) -> Result<(Vec<Wrapper>, TypePath)> {
 
 fn wrapper(path: &TypePath) -> Option<Wrapper> {
     let segments: Vec<_> = path.path.segments.iter().collect();
-    let (modules, name) = segments.split_at(segments.len().checked_sub(1)?);
-    let name = name[0].ident.to_string();
+    let (name, modules) = segments.split_last()?;
+    let name = name.ident.to_string();
     let modules: Vec<_> = modules
         .iter()
         .map(|segment| segment.ident.to_string())

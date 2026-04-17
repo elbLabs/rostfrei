@@ -32,8 +32,11 @@ impl EntityProjection {
         lifecycle: Option<EntityLifecycleDescriptor>,
     ) {
         let mut value = entity(descriptor);
-        if let Some(lifecycle) = lifecycle {
-            value["lifecycle"] = self.lifecycles.add(descriptor.id, lifecycle);
+        if let (Some(lifecycle), Some(object)) = (lifecycle, value.as_object_mut()) {
+            object.insert(
+                "lifecycle".to_owned(),
+                self.lifecycles.add(descriptor.id, lifecycle),
+            );
         }
         self.entities.push((descriptor.id, value));
     }
