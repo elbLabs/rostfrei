@@ -263,7 +263,7 @@ impl RecordedEvent {
             return Err(EnvelopeError::ZeroRecordedVersion);
         }
         if commit_event_count == 0
-            || commit_event_count as usize > MAX_EVENTS_PER_BATCH
+            || u32::try_from(MAX_EVENTS_PER_BATCH).is_ok_and(|maximum| commit_event_count > maximum)
             || commit_event_ordinal >= commit_event_count
         {
             return Err(EnvelopeError::InvalidCommitCoordinates);

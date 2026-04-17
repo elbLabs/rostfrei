@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{mem::size_of, time::Duration};
 
 use async_nats::jetstream::stream::{Config, DiscardPolicy, RetentionPolicy, StorageType};
 use rostfrei_core::{EventStoreError, EventStoreErrorKind};
@@ -236,7 +236,8 @@ fn valid_stream_name(value: &str) -> bool {
 fn digest_parts(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
     for part in parts {
-        digest.update((part.len() as u64).to_be_bytes());
+        digest.update([0_u8; 8 - size_of::<usize>()]);
+        digest.update(part.len().to_be_bytes());
         digest.update(part);
     }
     encode_lower_hex(digest.finalize())
@@ -345,6 +346,10 @@ mod tests {
             NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST").expect("valid config");
         let subject = config.aggregate_subject("Account", "account-123");
         assert_eq!(subject, config.aggregate_subject("Account", "account-123"));
+        assert_eq!(
+            subject,
+            "fast-inbox.domain.commercial-access.aggregate.c747047da35490fdcc850f47802f98b07d5095ea8296688da589d8bf883b4246"
+        );
         assert!(!subject.contains("Account"));
         assert!(!subject.contains("account-123"));
         assert_ne!(subject, config.aggregate_subject("Account", "account-124"));

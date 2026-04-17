@@ -41,7 +41,20 @@ impl CatalogAggregate {
     #[query(id = "contains", label = "Contains")]
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub const fn contains(root: &CatalogRoot, input: &u64) -> bool {
-        root.count as u64 == *input
+        #[cfg(target_pointer_width = "16")]
+        let count = {
+            let [first, second] = root.count.to_be_bytes();
+            u64::from_be_bytes([0, 0, 0, 0, 0, 0, first, second])
+        };
+        #[cfg(target_pointer_width = "32")]
+        let count = {
+            let [first, second, third, fourth] = root.count.to_be_bytes();
+            u64::from_be_bytes([0, 0, 0, 0, first, second, third, fourth])
+        };
+        #[cfg(target_pointer_width = "64")]
+        let count = u64::from_be_bytes(root.count.to_be_bytes());
+
+        count == *input
     }
 
     #[query(id = "search", label = "Search")]

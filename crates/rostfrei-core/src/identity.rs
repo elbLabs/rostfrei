@@ -274,7 +274,14 @@ pub(crate) fn derive_event_id(commit_id: &CommitId, ordinal: u32) -> EventId {
 }
 
 fn hash_part(hasher: &mut Sha256, part: &[u8]) {
-    hasher.update((part.len() as u64).to_be_bytes());
+    #[cfg(target_pointer_width = "16")]
+    let length = u64::from(u16::from_be_bytes(part.len().to_be_bytes()));
+    #[cfg(target_pointer_width = "32")]
+    let length = u64::from(u32::from_be_bytes(part.len().to_be_bytes()));
+    #[cfg(target_pointer_width = "64")]
+    let length = u64::from_be_bytes(part.len().to_be_bytes());
+
+    hasher.update(length.to_be_bytes());
     hasher.update(part);
 }
 
@@ -296,4 +303,28 @@ fn lower_hex_digit(nibble: u8) -> char {
         b'a'.saturating_add(nibble.saturating_sub(10))
     };
     char::from(byte)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derived_identities_preserve_canonical_hash_bytes() {
+        let stream_id = StreamId::new(
+            AggregateType("catalog".to_owned()),
+            AggregateId("7".to_owned()),
+        );
+        let operation_id = OperationId("op-1".to_owned());
+
+        let commit_id = derive_commit_id(&stream_id, &operation_id);
+        assert_eq!(
+            commit_id.as_str(),
+            "commit:bf262f5f3be9e3a262fba391b4e115be62d51bd3071487fdac0d31458163614c"
+        );
+        assert_eq!(
+            derive_event_id(&commit_id, 42).as_str(),
+            "event:cc12539e54324f7b7d2e6bf5144bc34c74fb585dc0609bc2096ecdca248aa77d"
+        );
+    }
 }
