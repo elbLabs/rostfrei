@@ -19,19 +19,19 @@ pub fn parse(signature: &Signature, visibility: &Visibility) -> syn::Result<Pars
             "queries must be associated functions without a receiver",
         ));
     }
-    if signature.inputs.is_empty() {
+    let Some(root_input) = signature.inputs.first() else {
         return Err(syn::Error::new_spanned(
             &signature.inputs,
             "queries require a root parameter",
         ));
-    }
-    if signature.inputs.len() > 2 {
+    };
+    if let Some(excess_input) = signature.inputs.iter().nth(2) {
         return Err(syn::Error::new_spanned(
-            signature.inputs.iter().nth(2).unwrap(),
+            excess_input,
             "queries accept at most one input parameter",
         ));
     }
-    let root = borrowed(signature.inputs.first().unwrap(), "root", "query root")?;
+    let root = borrowed(root_input, "root", "query root")?;
     let input = signature
         .inputs
         .iter()

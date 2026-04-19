@@ -8,6 +8,8 @@ mod connection;
 mod consumer;
 #[path = "../src/error.rs"]
 mod error;
+#[path = "../src/hex.rs"]
+mod hex;
 #[path = "../src/messaging_config.rs"]
 mod messaging_config;
 #[path = "../src/provisioning.rs"]
@@ -20,7 +22,7 @@ mod query;
 mod stream_policy;
 
 use std::{
-    collections::HashMap,
+    collections::HashSet,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -37,7 +39,7 @@ use rostfrei_messaging_core::{
     MessageDelivery, MessageHandler, MessageId, MessageTimestamp, OperationId, OutboundMessage,
     QuarantineReason, QueryAddress, QueryErrorClassification, QueryErrorPayload, QueryHandler,
     QueryOptions, QueryOutcome, QueryRequest, QueryRequestErrorKind, QueryRequester, QueryResponse,
-    QueryServer, QueryServerErrorKind, RetryDelay, SchemaVersion, TraceContext,
+    QueryServer, QueryServerError, QueryServerErrorKind, RetryDelay, SchemaVersion, TraceContext,
     derive_command_response_address,
 };
 use serde_json::{Value, json};
@@ -48,8 +50,16 @@ use messaging_config::{MessagingTopology, NatsConnectionConfig, QueueGroup, Stre
 use provisioning::{
     ApplicationMessagingConfig, provision_application_messaging, provision_durable_consumer,
 };
-use publish::{CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE, NatsPublisher};
+use publish::{CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE, NatsPublishAck, NatsPublisher};
 use query::{CORRELATION_ID_HEADER, NatsQueryServerConfig, REQUEST_ID_HEADER};
+
+type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+fn checked_add_usize(value: usize, increment: usize, context: &'static str) -> TestResult<usize> {
+    value
+        .checked_add(increment)
+        .ok_or_else(|| format!("{context} exceeds usize").into())
+}
 
 const TEST_NATS_URL_ENV: &str = "ROSTFREI_NATS_URL";
 const TRACE_PARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
@@ -62,73 +72,61 @@ struct Fixture {
 }
 
 impl Fixture {
-    async fn new(url: String) -> Self {
+    async fn new(url: String) -> TestResult<Self> {
         let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let application = ApplicationName::new(format!("test-{}-{sequence}", std::process::id()))
-            .expect("application name");
-        let context = application
-            .bounded_context("messaging")
-            .expect("bounded context");
-        let messaging = ApplicationMessagingConfig::new(&application)
-            .expect("messaging config")
-            .with_max_bytes(64 * 1024 * 1024)
-            .expect("test stream capacity");
+        let application = ApplicationName::new(format!("test-{}-{sequence}", std::process::id()))?;
+        let context = application.bounded_context("messaging")?;
+        let messaging =
+            ApplicationMessagingConfig::new(&application)?.with_max_bytes(64 * 1024 * 1024)?;
         let topology = messaging.topology().clone();
         let connection = connect(&NatsConnectionConfig::new(
             format!("messaging-test-{sequence}"),
             url,
         ))
-        .await
-        .expect("connect to test NATS");
+        .await?;
 
-        provision_application_messaging(connection.jetstream(), &messaging)
-            .await
-            .expect("provision application messaging");
-        provision_application_messaging(connection.jetstream(), &messaging)
-            .await
-            .expect("repeated provisioning must be idempotent");
-        connection
-            .verify_application_messaging(&messaging)
-            .await
-            .expect("provisioned messaging policy");
+        provision_application_messaging(connection.jetstream(), &messaging).await?;
+        provision_application_messaging(connection.jetstream(), &messaging).await?;
+        connection.verify_application_messaging(&messaging).await?;
 
-        Self {
+        Ok(Self {
             connection,
             topology,
             context,
-        }
+        })
     }
 
-    fn command_address(&self, name: &str) -> CommandAddress {
-        self.context.command_address(name).expect("command address")
+    fn command_address(&self, name: &str) -> TestResult<CommandAddress> {
+        Ok(self.context.command_address(name)?)
     }
 
-    fn query_address(&self, name: &str) -> QueryAddress {
-        self.context.query_address(name).expect("query address")
+    fn query_address(&self, name: &str) -> TestResult<QueryAddress> {
+        Ok(self.context.query_address(name)?)
     }
 
-    async fn message_counts(&self) -> [u64; 4] {
-        [
-            stream_message_count(self.connection.jetstream(), self.topology.command_stream()).await,
+    async fn message_counts(&self) -> TestResult<[u64; 4]> {
+        Ok([
+            stream_message_count(self.connection.jetstream(), self.topology.command_stream())
+                .await?,
             stream_message_count(
                 self.connection.jetstream(),
                 self.topology.command_response_stream(),
             )
-            .await,
+            .await?,
             stream_message_count(
                 self.connection.jetstream(),
                 self.topology.integration_event_stream(),
             )
-            .await,
+            .await?,
             stream_message_count(
                 self.connection.jetstream(),
                 self.topology.quarantine_stream(),
             )
-            .await,
-        ]
+            .await?,
+        ])
     }
 
-    async fn cleanup(self) {
+    async fn cleanup(self) -> TestResult<()> {
         for stream in [
             self.topology.command_stream(),
             self.topology.command_response_stream(),
@@ -138,13 +136,10 @@ impl Fixture {
             self.connection
                 .jetstream()
                 .delete_stream(stream.as_str())
-                .await
-                .expect("delete test stream");
+                .await?;
         }
-        self.connection
-            .drain()
-            .await
-            .expect("drain test connection");
+        self.connection.drain().await?;
+        Ok(())
     }
 }
 
@@ -153,15 +148,18 @@ async fn immutable_command_response_roundtrip_reconciles_duplicates_and_conflict
     let Some(url) = test_url() else {
         return;
     };
-    let fixture = Fixture::new(url).await;
-    let command_address = fixture.command_address("durable-response");
+    let fixture = Fixture::new(url).await.expect("messaging fixture");
+    let command_address = fixture
+        .command_address("durable-response")
+        .expect("durable response command address");
     let operation_id = OperationId::new("operation-1").expect("operation id");
-    let command_message_id = message_id("command-response-source");
+    let command_message_id =
+        message_id("command-response-source").expect("command response source message id");
     let response_address =
         derive_command_response_address(&command_address, &operation_id, &command_message_id)
             .expect("response address");
     let response = CommandResponse::accepted(
-        message_id("command-response"),
+        message_id("command-response").expect("command response message id"),
         command_message_id.clone(),
         command_address.clone(),
         operation_id.clone(),
@@ -238,99 +236,105 @@ async fn immutable_command_response_roundtrip_reconciles_duplicates_and_conflict
         CommandResponseReadErrorKind::IdentityConflict
     );
 
-    assert_absent_response_times_out(&fixture, &reader, &command_address).await;
+    assert_absent_response_times_out(&fixture, &reader, &command_address)
+        .await
+        .expect("absent response assertion");
 
-    fixture.cleanup().await;
+    fixture.cleanup().await.expect("messaging fixture cleanup");
 }
 
 async fn assert_absent_response_times_out(
     fixture: &Fixture,
     reader: &command_response::NatsCommandResponseReader,
     command_address: &CommandAddress,
-) {
-    let operation_id = OperationId::new("absent-operation").expect("operation id");
-    let command_message_id = message_id("absent-command");
+) -> TestResult<()> {
+    let operation_id = OperationId::new("absent-operation")?;
+    let command_message_id = message_id("absent-command")?;
     let address =
-        derive_command_response_address(command_address, &operation_id, &command_message_id)
-            .expect("absent response address");
-    let error = reader
+        derive_command_response_address(command_address, &operation_id, &command_message_id)?;
+    let result = reader
         .read_command_response(
             &address,
             &operation_id,
             &command_message_id,
             Duration::from_millis(100),
         )
-        .await
-        .expect_err("absent response must time out");
+        .await;
+    let Err(error) = result else {
+        return Err("absent response unexpectedly found".into());
+    };
     assert_eq!(error.kind(), CommandResponseReadErrorKind::Timeout);
     assert_eq!(
         stream_message_count(
             fixture.connection.jetstream(),
             fixture.topology.command_response_stream(),
         )
-        .await,
+        .await?,
         1
     );
+    Ok(())
 }
 
 fn test_url() -> Option<String> {
     std::env::var(TEST_NATS_URL_ENV).ok()
 }
 
-fn message_id(prefix: &str) -> MessageId {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time")
-        .as_nanos();
-    MessageId::new(format!("{prefix}-{nanos}")).expect("message id")
+fn message_id(prefix: &str) -> TestResult<MessageId> {
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    Ok(MessageId::new(format!("{prefix}-{nanos}"))?)
 }
 
-fn query_request(id: MessageId, payload: Value) -> QueryRequest<Value> {
-    QueryRequest::new(
+fn query_request(id: MessageId, payload: Value) -> TestResult<QueryRequest<Value>> {
+    Ok(QueryRequest::new(
         EnvelopeContext::new(
             id,
-            SchemaVersion::new(1).expect("schema version"),
-            CorrelationId::new("test-correlation").expect("correlation id"),
+            SchemaVersion::new(1)?,
+            CorrelationId::new("test-correlation")?,
             None,
         ),
-        MessageTimestamp::from_unix_milliseconds(1_700_000_000_000).expect("request timestamp"),
+        MessageTimestamp::from_unix_milliseconds(1_700_000_000_000)?,
         CallerMetadata::new(),
-        Some(TraceContext::new(TRACE_PARENT).expect("trace context")),
+        Some(TraceContext::new(TRACE_PARENT)?),
         payload,
-    )
-    .expect("query request")
+    )?)
 }
 
-async fn stream_message_count(context: &async_nats::jetstream::Context, name: &StreamName) -> u64 {
-    let mut stream = context.get_stream(name.as_str()).await.expect("get stream");
-    stream.info().await.expect("stream info").state.messages
+async fn stream_message_count(
+    context: &async_nats::jetstream::Context,
+    name: &StreamName,
+) -> TestResult<u64> {
+    let mut stream = context.get_stream(name.as_str()).await?;
+    Ok(stream.info().await?.state.messages)
 }
 
-async fn assert_application_scope_guards(fixture: &Fixture, publisher: &NatsPublisher) {
-    let mismatched_policy = ApplicationMessagingConfig::new(fixture.context.application())
-        .expect("mismatched messaging config")
-        .with_max_bytes(32 * 1024 * 1024)
-        .expect("mismatched stream capacity");
-    assert!(matches!(
-        fixture
-            .connection
-            .verify_application_messaging(&mismatched_policy)
-            .await,
-        Err(error::NatsError::Configuration)
-    ));
+struct ApplicationScopeGuardResults {
+    policy_verification: Result<(), error::NatsError>,
+    cross_application_publish: Result<NatsPublishAck, error::NatsError>,
+}
+
+async fn application_scope_guard_results(
+    fixture: &Fixture,
+    publisher: &NatsPublisher,
+) -> TestResult<ApplicationScopeGuardResults> {
+    let mismatched_policy = ApplicationMessagingConfig::new(fixture.context.application())?
+        .with_max_bytes(32 * 1024 * 1024)?;
+    let policy_verification = fixture
+        .connection
+        .verify_application_messaging(&mismatched_policy)
+        .await;
 
     let cross_application = OutboundMessage::new(
-        CommandAddress::new("other", "messaging", "publish").expect("other address"),
-        message_id("cross-application"),
+        CommandAddress::new("other", "messaging", "publish")?,
+        message_id("cross-application")?,
         br#"{"ok":true}"#.to_vec(),
-    )
-    .expect("cross-application message");
-    assert!(matches!(
-        publisher
-            .publish_command_with_ack(cross_application, Duration::from_secs(5))
-            .await,
-        Err(error::NatsError::InvalidMessage)
-    ));
+    )?;
+    let cross_application_publish = publisher
+        .publish_command_with_ack(cross_application, Duration::from_secs(5))
+        .await;
+    Ok(ApplicationScopeGuardResults {
+        policy_verification,
+        cross_application_publish,
+    })
 }
 
 #[tokio::test]
@@ -338,14 +342,16 @@ async fn puback_confirms_stream_sequence_duplicate_and_owned_headers() {
     let Some(url) = test_url() else {
         return;
     };
-    let fixture = Fixture::new(url).await;
-    let address = fixture.command_address("publish");
+    let fixture = Fixture::new(url).await.expect("messaging fixture");
+    let address = fixture
+        .command_address("publish")
+        .expect("publish command address");
     let mut metadata = CallerMetadata::new();
     metadata
         .insert("x-test-metadata", "caller-value")
         .expect("safe metadata");
     assert!(metadata.insert("Nats-Msg-Id", "override").is_err());
-    let id = message_id("publish");
+    let id = message_id("publish").expect("publish message id");
     let message = OutboundMessage::new(address.clone(), id.clone(), br#"{"ok":true}"#.to_vec())
         .expect("outbound message")
         .with_metadata(metadata)
@@ -354,7 +360,17 @@ async fn puback_confirms_stream_sequence_duplicate_and_owned_headers() {
         fixture.connection.jetstream().clone(),
         fixture.topology.clone(),
     );
-    assert_application_scope_guards(&fixture, &publisher).await;
+    let scope_guards = application_scope_guard_results(&fixture, &publisher)
+        .await
+        .expect("application scope guard observations");
+    assert!(matches!(
+        scope_guards.policy_verification,
+        Err(error::NatsError::Configuration)
+    ));
+    assert!(matches!(
+        scope_guards.cross_application_publish,
+        Err(error::NatsError::InvalidMessage)
+    ));
 
     let first = publisher
         .publish_command_with_ack(message.clone(), Duration::from_secs(5))
@@ -416,55 +432,94 @@ async fn puback_confirms_stream_sequence_duplicate_and_owned_headers() {
         Some(TRACE_PARENT)
     );
 
-    fixture.cleanup().await;
+    fixture.cleanup().await.expect("messaging fixture cleanup");
 }
 
 struct DispositionHandler {
-    deliveries: Mutex<HashMap<String, usize>>,
+    delivered_message_ids: Mutex<HashSet<String>>,
     acknowledged: AtomicUsize,
+    retry_delay: RetryDelay,
+    quarantine_reason: QuarantineReason,
+}
+
+impl DispositionHandler {
+    fn new() -> TestResult<Self> {
+        Ok(Self {
+            delivered_message_ids: Mutex::new(HashSet::new()),
+            acknowledged: AtomicUsize::new(0),
+            retry_delay: RetryDelay::new(Duration::from_millis(100))?,
+            quarantine_reason: QuarantineReason::new("test quarantine")?,
+        })
+    }
 }
 
 #[async_trait]
 impl MessageHandler<CommandAddress> for DispositionHandler {
     async fn handle(&self, delivery: MessageDelivery<CommandAddress>) -> DeliveryDisposition {
         let id = delivery.message_id().as_str().to_owned();
-        let mut deliveries = self.deliveries.lock().expect("delivery lock");
-        let count = deliveries.entry(id.clone()).or_default();
-        *count += 1;
+        let mut delivered_message_ids = match self.delivered_message_ids.lock() {
+            Ok(delivered_message_ids) => delivered_message_ids,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let first_delivery = delivered_message_ids.insert(id.clone());
+        drop(delivered_message_ids);
         match id.as_str() {
             value if value.starts_with("ack-") => {
                 self.acknowledged.fetch_add(1, Ordering::Relaxed);
                 DeliveryDisposition::Acknowledge
             }
-            value if value.starts_with("retry-") && *count == 1 => DeliveryDisposition::RetryAfter(
-                RetryDelay::new(Duration::from_millis(100)).expect("retry delay"),
-            ),
+            value if value.starts_with("retry-") && first_delivery => {
+                DeliveryDisposition::RetryAfter(self.retry_delay)
+            }
             value if value.starts_with("retry-") => {
                 self.acknowledged.fetch_add(1, Ordering::Relaxed);
                 DeliveryDisposition::Acknowledge
             }
-            _ => DeliveryDisposition::Quarantine(
-                QuarantineReason::new("test quarantine").expect("quarantine reason"),
-            ),
+            _ => DeliveryDisposition::Quarantine(self.quarantine_reason.clone()),
         }
     }
+}
+
+struct ProvisionedDispositionConsumer {
+    config: ConsumerConfig<CommandAddress>,
+    ack_wait: Duration,
+}
+
+async fn provision_disposition_consumer(
+    fixture: &Fixture,
+    address: &CommandAddress,
+) -> TestResult<ProvisionedDispositionConsumer> {
+    let config = ConsumerConfig::new(
+        fixture.context.consumer_name("consume", 1)?,
+        fixture.context.durable_name("consume", 1)?,
+        address.clone(),
+        Duration::from_secs(10),
+        Duration::from_secs(5),
+        4,
+        3,
+    )?;
+    let ack_wait =
+        provision_durable_consumer(fixture.connection.jetstream(), &fixture.topology, &config)
+            .await?
+            .config
+            .ack_wait;
+    provision_durable_consumer(fixture.connection.jetstream(), &fixture.topology, &config).await?;
+    Ok(ProvisionedDispositionConsumer { config, ack_wait })
 }
 
 async fn publish_disposition_commands(
     publisher: &NatsPublisher,
     address: &CommandAddress,
-) -> MessageId {
-    let quarantine_id = message_id("quarantine");
+) -> TestResult<MessageId> {
+    let quarantine_id = message_id("quarantine")?;
     for (id, prefix) in [
-        (message_id("ack"), "ack"),
-        (message_id("retry"), "retry"),
+        (message_id("ack")?, "ack"),
+        (message_id("retry")?, "retry"),
         (quarantine_id.clone(), "quarantine"),
     ] {
         let mut metadata = CallerMetadata::new();
         if prefix == "quarantine" {
-            metadata
-                .insert("x-quarantine-test", "preserved")
-                .expect("quarantine metadata");
+            metadata.insert("x-quarantine-test", "preserved")?;
         }
         publisher
             .publish_command(
@@ -472,14 +527,12 @@ async fn publish_disposition_commands(
                     address.clone(),
                     id,
                     format!(r#"{{"kind":"{prefix}"}}"#).into_bytes(),
-                )
-                .expect("outbound command")
+                )?
                 .with_metadata(metadata),
             )
-            .await
-            .expect("publish command");
+            .await?;
     }
-    quarantine_id
+    Ok(quarantine_id)
 }
 
 #[tokio::test]
@@ -487,51 +540,32 @@ async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() 
     let Some(url) = test_url() else {
         return;
     };
-    let fixture = Fixture::new(url).await;
-    let address = fixture.command_address("consume");
-    let name = fixture
-        .context
-        .consumer_name("consume", 1)
-        .expect("consumer name");
-    let durable = fixture
-        .context
-        .durable_name("consume", 1)
-        .expect("durable name");
-    let config = ConsumerConfig::new(
-        name,
-        durable,
-        address.clone(),
-        Duration::from_secs(10),
-        Duration::from_secs(5),
-        4,
-        3,
-    )
-    .expect("consumer config");
-    let provisioned =
-        provision_durable_consumer(fixture.connection.jetstream(), &fixture.topology, &config)
-            .await
-            .expect("provision durable consumer");
-    assert_eq!(provisioned.config.ack_wait, Duration::from_secs(10));
-    provision_durable_consumer(fixture.connection.jetstream(), &fixture.topology, &config)
+    let fixture = Fixture::new(url).await.expect("messaging fixture");
+    let address = fixture
+        .command_address("consume")
+        .expect("consume command address");
+    let provisioned = provision_disposition_consumer(&fixture, &address)
         .await
-        .expect("repeated durable provisioning must be idempotent");
+        .expect("provision durable consumer idempotently");
+    assert_eq!(provisioned.ack_wait, Duration::from_secs(10));
 
-    let handler = Arc::new(DispositionHandler {
-        deliveries: Mutex::new(HashMap::new()),
-        acknowledged: AtomicUsize::new(0),
-    });
+    let handler = Arc::new(DispositionHandler::new().expect("disposition handler"));
     let factory = NatsConsumerFactory::new(
         fixture.connection.jetstream().clone(),
         fixture.topology.clone(),
     );
-    let consumer =
-        <NatsConsumerFactory as MessageConsumerFactory<CommandAddress>>::create(&factory, config)
-            .expect("create command consumer");
+    let consumer = <NatsConsumerFactory as MessageConsumerFactory<CommandAddress>>::create(
+        &factory,
+        provisioned.config,
+    )
+    .expect("create command consumer");
     let task_handler = handler.clone();
     let consumer_task = tokio::spawn(async move { consumer.run(task_handler).await });
 
     let publisher = fixture.connection.publisher(fixture.topology.clone());
-    let quarantine_id = publish_disposition_commands(&publisher, &address).await;
+    let quarantine_id = publish_disposition_commands(&publisher, &address)
+        .await
+        .expect("publish disposition commands");
 
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -540,20 +574,22 @@ async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() 
                 fixture.connection.jetstream(),
                 fixture.topology.quarantine_stream(),
             )
-            .await;
+            .await?;
             let pending_source = stream_message_count(
                 fixture.connection.jetstream(),
                 fixture.topology.command_stream(),
             )
-            .await;
+            .await?;
             if acknowledged == 2 && quarantined == 1 && pending_source == 0 {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        TestResult::Ok(())
     })
     .await
-    .expect("consumer dispositions completed");
+    .expect("disposition observation timeout")
+    .expect("disposition observation polling");
 
     let (_, routed) = address.as_str().split_once('.').expect("routed address");
     let quarantine_subject = format!("{}.quarantine.{routed}", address.application());
@@ -587,21 +623,61 @@ async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() 
 
     consumer_task.abort();
     let _ = consumer_task.await;
-    fixture.cleanup().await;
+    fixture.cleanup().await.expect("messaging fixture cleanup");
 }
 
-struct RoundTripHandler;
+struct RoundTripHandler {
+    conflict: QueryErrorPayload,
+}
+
+impl RoundTripHandler {
+    fn new() -> TestResult<Self> {
+        Ok(Self {
+            conflict: QueryErrorPayload::new(
+                QueryErrorClassification::Conflict,
+                ApplicationErrorCode::new("test.conflict")?,
+                "test conflict",
+            )?,
+        })
+    }
+}
+
+struct QueryServerSetup {
+    server: query::NatsQueryServer,
+    invalid_scope: Result<(), QueryServerError>,
+}
+
+async fn query_server_setup(fixture: &Fixture) -> TestResult<QueryServerSetup> {
+    let server = fixture.connection.query_server(
+        fixture.context.application(),
+        NatsQueryServerConfig::default(),
+    )?;
+    let invalid_scope = <query::NatsQueryServer as QueryServer<Value, Value>>::run(
+        &server,
+        QueryAddress::new("other", "messaging", "roundtrip")?,
+        Arc::new(RoundTripHandler::new()?),
+    )
+    .await;
+    Ok(QueryServerSetup {
+        server,
+        invalid_scope,
+    })
+}
+
+async fn publish_malformed_query(fixture: &Fixture, address: &QueryAddress) -> TestResult<()> {
+    fixture
+        .connection
+        .client()
+        .publish(address.as_str().to_owned(), b"not-json".to_vec().into())
+        .await?;
+    Ok(())
+}
 
 #[async_trait]
 impl QueryHandler<Value, Value> for RoundTripHandler {
     async fn handle(&self, request: QueryRequest<Value>) -> Result<Value, QueryErrorPayload> {
         if request.payload().get("error").is_some() {
-            return Err(QueryErrorPayload::new(
-                QueryErrorClassification::Conflict,
-                ApplicationErrorCode::new("test.conflict").expect("application code"),
-                "test conflict",
-            )
-            .expect("query error"));
+            return Err(self.conflict.clone());
         }
         Ok(json!({"echo": request.payload()}))
     }
@@ -612,43 +688,39 @@ async fn core_nats_query_roundtrip_preserves_errors_and_does_not_touch_jetstream
     let Some(url) = test_url() else {
         return;
     };
-    let fixture = Fixture::new(url).await;
-    let before = fixture.message_counts().await;
-    let address = fixture.query_address("roundtrip");
-    let server = fixture
-        .connection
-        .query_server(
-            fixture.context.application(),
-            NatsQueryServerConfig::default(),
-        )
-        .expect("query server");
-    let invalid_server_scope = <query::NatsQueryServer as QueryServer<Value, Value>>::run(
-        &server,
-        QueryAddress::new("other", "messaging", "roundtrip").expect("other query address"),
-        Arc::new(RoundTripHandler),
-    )
-    .await
-    .expect_err("query server must reject another application");
+    let fixture = Fixture::new(url).await.expect("messaging fixture");
+    let before = fixture
+        .message_counts()
+        .await
+        .expect("message counts before query roundtrip");
+    let address = fixture
+        .query_address("roundtrip")
+        .expect("roundtrip query address");
+    let query_server = query_server_setup(&fixture)
+        .await
+        .expect("query server setup and invalid-scope observation");
+    let invalid_server_scope = query_server
+        .invalid_scope
+        .expect_err("query server must reject another application");
     assert_eq!(
         invalid_server_scope.kind(),
         QueryServerErrorKind::InvalidConfiguration
     );
+    let server = query_server.server;
     let server_address = address.clone();
+    let round_trip_handler = Arc::new(RoundTripHandler::new().expect("roundtrip query handler"));
     let server_task = tokio::spawn(async move {
         <query::NatsQueryServer as QueryServer<Value, Value>>::run(
             &server,
             server_address,
-            Arc::new(RoundTripHandler),
+            round_trip_handler,
         )
         .await
     });
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // A malformed request is isolated to this delivery and cannot end the server loop.
-    fixture
-        .connection
-        .client()
-        .publish(address.as_str().to_owned(), b"not-json".to_vec().into())
+    publish_malformed_query(&fixture, &address)
         .await
         .expect("publish malformed query");
     let requester = fixture
@@ -658,7 +730,11 @@ async fn core_nats_query_roundtrip_preserves_errors_and_does_not_touch_jetstream
         <query::NatsQueryRequester as QueryRequester<Value, Value>>::request(
             &requester,
             &QueryAddress::new("other", "messaging", "roundtrip").expect("other query address"),
-            query_request(message_id("cross-application-query"), json!({})),
+            query_request(
+                message_id("cross-application-query").expect("cross-application query id"),
+                json!({}),
+            )
+            .expect("cross-application query request"),
             QueryOptions::new(Duration::from_secs(3), 64 * 1024).expect("query options"),
         )
         .await
@@ -670,7 +746,11 @@ async fn core_nats_query_roundtrip_preserves_errors_and_does_not_touch_jetstream
     let success = requester
         .request(
             &address,
-            query_request(message_id("query-success"), json!({"value": 42})),
+            query_request(
+                message_id("query-success").expect("successful query id"),
+                json!({"value": 42}),
+            )
+            .expect("successful query request"),
             QueryOptions::new(Duration::from_secs(3), 64 * 1024).expect("query options"),
         )
         .await
@@ -683,7 +763,11 @@ async fn core_nats_query_roundtrip_preserves_errors_and_does_not_touch_jetstream
     let failure: QueryResponse<Value> = requester
         .request(
             &address,
-            query_request(message_id("query-error"), json!({"error": true})),
+            query_request(
+                message_id("query-error").expect("error query id"),
+                json!({"error": true}),
+            )
+            .expect("error query request"),
             QueryOptions::new(Duration::from_secs(3), 64 * 1024).expect("query options"),
         )
         .await
@@ -693,11 +777,17 @@ async fn core_nats_query_roundtrip_preserves_errors_and_does_not_touch_jetstream
     };
     assert_eq!(error.classification(), QueryErrorClassification::Conflict);
     assert_eq!(error.code().as_str(), "test.conflict");
-    assert_eq!(fixture.message_counts().await, before);
+    assert_eq!(
+        fixture
+            .message_counts()
+            .await
+            .expect("message counts after query roundtrip"),
+        before
+    );
 
     server_task.abort();
     let _ = server_task.await;
-    fixture.cleanup().await;
+    fixture.cleanup().await.expect("messaging fixture cleanup");
 }
 
 struct QueueHandler {
@@ -718,8 +808,8 @@ async fn query_servers_in_one_queue_group_share_requests() {
     let Some(url) = test_url() else {
         return;
     };
-    let fixture = Fixture::new(url).await;
-    let address = fixture.query_address("queue");
+    let fixture = Fixture::new(url).await.expect("messaging fixture");
+    let address = fixture.query_address("queue").expect("queue query address");
     let queue_group = QueueGroup::new(format!(
         "queue-{}",
         FIXTURE_SEQUENCE.load(Ordering::Relaxed)
@@ -758,16 +848,23 @@ async fn query_servers_in_one_queue_group_share_requests() {
         let _: QueryResponse<Value> = requester
             .request(
                 &address,
-                query_request(message_id("queue-query"), json!({"index": index})),
+                query_request(
+                    message_id("queue-query").expect("queue query id"),
+                    json!({"index": index}),
+                )
+                .expect("queue query request"),
                 QueryOptions::new(Duration::from_secs(3), 64 * 1024).expect("query options"),
             )
             .await
             .expect("queue query response");
     }
-    assert_eq!(
-        first_calls.load(Ordering::Relaxed) + second_calls.load(Ordering::Relaxed),
-        20
-    );
+    let total_calls = checked_add_usize(
+        first_calls.load(Ordering::Relaxed),
+        second_calls.load(Ordering::Relaxed),
+        "combined queue query handler call count",
+    )
+    .expect("combined queue query handler call count arithmetic");
+    assert_eq!(total_calls, 20);
     assert!(first_calls.load(Ordering::Relaxed) > 0);
     assert!(second_calls.load(Ordering::Relaxed) > 0);
 
@@ -775,7 +872,7 @@ async fn query_servers_in_one_queue_group_share_requests() {
         task.abort();
         let _ = task.await;
     }
-    fixture.cleanup().await;
+    fixture.cleanup().await.expect("messaging fixture cleanup");
 }
 
 #[test]

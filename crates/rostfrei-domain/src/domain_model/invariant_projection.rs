@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use crate::{InvariantDescriptor, InvariantId, InvariantOwnerId};
 
-use super::id_projection::invariant_owner as invariant_owner_id;
+use super::{error::DomainModelError, id_projection::invariant_owner as invariant_owner_id};
 
 pub(super) struct InvariantProjection {
     registered_owners: Vec<InvariantOwnerId>,
@@ -10,7 +10,7 @@ pub(super) struct InvariantProjection {
 }
 
 impl InvariantProjection {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             registered_owners: Vec::new(),
             invariants: Vec::new(),
@@ -27,14 +27,15 @@ impl InvariantProjection {
         &mut self,
         expected_owner: InvariantOwnerId,
         descriptors: &'static [InvariantDescriptor],
-    ) {
-        self.validate_registered_owner(expected_owner);
-        self.validate_group(expected_owner, descriptors);
+    ) -> Result<(), DomainModelError> {
+        self.validate_registered_owner(expected_owner)?;
+        self.validate_group(expected_owner, descriptors)?;
         self.invariants.extend(
             descriptors
                 .iter()
                 .map(|descriptor| (*descriptor, invariant(*descriptor))),
         );
+        Ok(())
     }
 
     pub(super) fn into_values(self) -> Vec<Value> {
@@ -44,33 +45,48 @@ impl InvariantProjection {
             .collect()
     }
 
-    fn validate_registered_owner(&self, owner: InvariantOwnerId) {
+    fn validate_registered_owner(&self, owner: InvariantOwnerId) -> Result<(), DomainModelError> {
         if !self.registered_owners.contains(&owner) {
-            panic!("unregistered invariant owner: {owner:?}");
+            return Err(DomainModelError::UnregisteredInvariantOwner {
+                owner: Box::new(owner),
+            });
         }
+        Ok(())
     }
 
     fn validate_group(
         &self,
         expected_owner: InvariantOwnerId,
         descriptors: &'static [InvariantDescriptor],
-    ) {
+    ) -> Result<(), DomainModelError> {
         for (index, descriptor) in descriptors.iter().enumerate() {
-            Self::validate_owner(expected_owner, descriptor);
-            self.validate_id(descriptor.id, &descriptors[..index]);
+            Self::validate_owner(expected_owner, descriptor)?;
+            self.validate_id(descriptor.id, descriptors.iter().take(index))?;
         }
+        Ok(())
     }
 
-    fn validate_owner(expected_owner: InvariantOwnerId, descriptor: &InvariantDescriptor) {
+    fn validate_owner(
+        expected_owner: InvariantOwnerId,
+        descriptor: &InvariantDescriptor,
+    ) -> Result<(), DomainModelError> {
         if descriptor.id.owner != expected_owner {
-            panic!("invariant descriptor owner mismatch: {:?}", descriptor.id);
+            return Err(DomainModelError::InvariantDescriptorOwnerMismatch {
+                id: Box::new(descriptor.id),
+            });
         }
+        Ok(())
     }
 
-    fn validate_id(&self, id: InvariantId, preceding: &[InvariantDescriptor]) {
-        if self.has_id(id) || preceding.iter().any(|descriptor| descriptor.id == id) {
-            panic!("duplicate InvariantId: {id:?}");
+    fn validate_id<'a>(
+        &self,
+        id: InvariantId,
+        preceding: impl Iterator<Item = &'a InvariantDescriptor>,
+    ) -> Result<(), DomainModelError> {
+        if self.has_id(id) || preceding.into_iter().any(|descriptor| descriptor.id == id) {
+            return Err(DomainModelError::DuplicateInvariantId { id: Box::new(id) });
         }
+        Ok(())
     }
 
     fn has_id(&self, id: InvariantId) -> bool {

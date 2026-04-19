@@ -26,21 +26,14 @@ pub fn assemble_assertions_with_path(
     owner: Option<&TypePath>,
     fields: &[Field],
 ) -> TokenStream {
-    let assertions = fields.iter().map(|field| {
-        let base = &field.base;
-        match &field.role {
-            Role::Identity | Role::AggregateReference(_) => quote!(assert_identity::<#base>();),
-            Role::Entity => {
-                let owner = owner.unwrap();
-                quote!(assert_entity::<#base, #owner>();)
-            }
-            Role::ValueObject => quote!(assert_value_object::<#base>();),
-            Role::SemanticScalar(provider) => {
-                quote!(assert_semantic_scalar::<#provider, #base>();)
-            }
-            Role::Scalar(_) => quote!(),
-        }
-    });
+    let assertions = match fields
+        .iter()
+        .map(|field| assemble_assertion(field, owner))
+        .collect::<syn::Result<Vec<_>>>()
+    {
+        Ok(assertions) => assertions,
+        Err(error) => return error.into_compile_error(),
+    };
     quote! {
         const _: () = {
             fn assert_identity<T: #domain_path::DomainIdentityType>() {}
@@ -58,6 +51,28 @@ pub fn assemble_assertions_with_path(
             }
         };
     }
+}
+
+fn assemble_assertion(field: &Field, owner: Option<&TypePath>) -> syn::Result<TokenStream> {
+    let base = &field.base;
+    let assertion = match &field.role {
+        Role::Identity | Role::AggregateReference(_) => quote!(assert_identity::<#base>();),
+        Role::Entity => {
+            let owner = owner.ok_or_else(|| {
+                syn::Error::new_spanned(
+                    base,
+                    "Entity field owner must be validated before assembly",
+                )
+            })?;
+            quote!(assert_entity::<#base, #owner>();)
+        }
+        Role::ValueObject => quote!(assert_value_object::<#base>();),
+        Role::SemanticScalar(provider) => {
+            quote!(assert_semantic_scalar::<#provider, #base>();)
+        }
+        Role::Scalar(_) => quote!(),
+    };
+    Ok(assertion)
 }
 
 fn assemble_kind(domain_path: &Path, field: &Field) -> TokenStream {
@@ -92,7 +107,20 @@ fn assemble_kind(domain_path: &Path, field: &Field) -> TokenStream {
 }
 
 pub fn assemble_scalar(domain_path: &Path, path: &syn::TypePath) -> TokenStream {
-    scalar_tokens(domain_path, &super::scalar::classify(path).unwrap())
+    match validated_scalar(domain_path, path) {
+        Ok(tokens) => tokens,
+        Err(error) => error.into_compile_error(),
+    }
+}
+
+fn validated_scalar(domain_path: &Path, path: &syn::TypePath) -> syn::Result<TokenStream> {
+    let scalar = super::scalar::classify(path).ok_or_else(|| {
+        syn::Error::new_spanned(
+            path,
+            "DomainIdentity field must be a supported canonical scalar",
+        )
+    })?;
+    Ok(scalar_tokens(domain_path, &scalar))
 }
 
 fn scalar_tokens(domain_path: &Path, scalar: &Scalar) -> TokenStream {

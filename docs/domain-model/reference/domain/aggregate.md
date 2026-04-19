@@ -44,7 +44,7 @@ Action.
 
 An aggregate is the only public entry point for behavior within its boundary.
 The aggregate type is the public action-owner marker; its configured root is
-the entity state passed to associated aggregate actions by convention.
+the state exposed by its executable `AggregateInstance`.
 
 Entities and value objects do not expose public actions. Aggregate actions invoke
 their internal behavior when needed.
@@ -56,12 +56,16 @@ attached to the Aggregate through `actions = [TraitPath, ...]`:
 
 ```rust
 mod contracts {
-    use domain::domain_actions;
+    use rostfrei::domain_actions;
 
-    #[domain_actions(aggregate)]
+    #[domain_actions(aggregate(instance = TodoAggregateActions))]
     pub trait TodoActions {
-        #[action(id = "rename", label = "Rename todo")]
-        fn rename(root: &mut super::TodoRoot, input: String);
+        #[action(
+            id = "rename",
+            label = "Rename todo",
+            raises = [super::TodoRenamed]
+        )]
+        fn rename(&mut self, input: String);
     }
 }
 
@@ -72,30 +76,39 @@ mod contracts {
     context = Planning,
     root = TodoRoot,
     actions = [contracts::TodoActions],
+    events = [TodoRenamed],
 )]
 pub struct Todo;
 
-impl contracts::TodoActions for Todo {
-    fn rename(root: &mut TodoRoot, input: String) {
-        root.title = input;
+impl contracts::TodoAggregateActions for AggregateInstance<Todo> {
+    fn rename(&mut self, input: String) {
+        self.raise(TodoRenamed {
+            todo_id: self.state().id.clone(),
+            title: input,
+        });
     }
 }
 ```
 
 The trait must be `pub`, non-generic, and contain only action methods without
-default bodies. Every method begins with `root: &mut RootType`, where `RootType`
-is the Aggregate's configured root, followed by zero or one business `input`.
-The Aggregate must implement every attached trait.
+default bodies. An executable method begins with `&mut self`, followed by zero
+or one business `input`, and returns `()` or `Result<(), DomainError>`. Each
+Action declares the Aggregate-owned event types it may raise. The application
+implements the generated instance trait for `AggregateInstance<Aggregate>` and
+calls `self.raise(...)` explicitly.
 
-Calls use ordinary Rust trait semantics. Fully qualified syntax works directly:
+Bring the generated instance trait into scope to call the Action through the
+executable Aggregate:
 
 ```rust
-<Todo as contracts::TodoActions>::rename(&mut root, title);
+use contracts::TodoAggregateActions as _;
+aggregate.rename(title);
 ```
 
-To call `Todo::rename(&mut root, title)`, first bring
-`contracts::TodoActions` into scope, commonly with
-`use contracts::TodoActions as _;`.
+Command handlers map command data into one or more domain Action inputs and may
+call multiple generated Action methods. One Action may raise multiple events.
+Each raise updates the state seen by later code, while a final command rejection
+causes the executor to discard the complete staged event set.
 
 The Aggregate derive exposes attached descriptors through
 `AggregateType::ACTION_CONTRACTS`. Registering the Aggregate in `domain_model!`

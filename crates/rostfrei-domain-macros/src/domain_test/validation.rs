@@ -4,12 +4,12 @@ use syn::{Attribute, ItemFn, Meta, MetaList, Token};
 
 use super::DomainTestKind;
 
-pub(crate) fn validate_function(function: &ItemFn, kind: DomainTestKind) -> syn::Result<()> {
+pub(super) fn validate_function(function: &ItemFn, kind: DomainTestKind) -> syn::Result<()> {
     validate_signature(function, kind)?;
     validate_attributes(function, kind)
 }
 
-pub(crate) fn companion_attributes(function: &ItemFn) -> syn::Result<Vec<Attribute>> {
+pub(super) fn companion_attributes(function: &ItemFn) -> syn::Result<Vec<Attribute>> {
     let mut attributes = Vec::new();
     for attribute in &function.attrs {
         if attribute.path().is_ident("cfg") {

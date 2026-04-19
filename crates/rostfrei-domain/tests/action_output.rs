@@ -277,14 +277,18 @@ fn permits_owned_events_and_existing_output_kinds() {
     let receipt_actions = <Receipt as ReceiptOutputActions>::__DOMAIN_ACTIONS;
     let event = ActionOutputDescriptor::DomainEvent(MailboxOpened::DESCRIPTOR.id);
     assert_eq!(mailbox_actions[0].output, Some(event));
-    let Some(ActionOutputDescriptor::Optional(optional_event)) = mailbox_actions[1].output else {
-        panic!("expected optional event output")
-    };
-    assert_eq!(*optional_event, event);
-    let Some(ActionOutputDescriptor::List(list_event)) = mailbox_actions[2].output else {
-        panic!("expected event list output")
-    };
-    assert_eq!(*list_event, event);
+    assert_eq!(
+        mailbox_actions[1].output,
+        Some(ActionOutputDescriptor::Optional(
+            &ActionOutputDescriptor::DomainEvent(MailboxOpened::DESCRIPTOR.id),
+        ))
+    );
+    assert_eq!(
+        mailbox_actions[2].output,
+        Some(ActionOutputDescriptor::List(
+            &ActionOutputDescriptor::DomainEvent(MailboxOpened::DESCRIPTOR.id),
+        ))
+    );
     assert!(matches!(
         mailbox_actions[3].output,
         Some(ActionOutputDescriptor::Optional(_))
@@ -349,7 +353,8 @@ fn preserves_event_output_json() {
         errors: [MailboxDenied, CoordinationDenied],
 
         query_groups: [],
-    };
+    }
+    .expect("action output domain model should be valid");
 
     assert_eq!(
         model["actions"][0]["output"],

@@ -1,0 +1,5 @@
+error: raises is only supported by executable aggregate action contracts
+ --> tests/ui/fail/action_raises_on_entity.rs:5:47
+  |
+5 |     #[action(id = "change", label = "Change", raises = [EntityChanged])]
+  |                                               ^^^^^^

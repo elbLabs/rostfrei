@@ -105,7 +105,7 @@ async fn run_dispatch_test(
         )?;
         wait_for_command_stream_empty(connection, config).await?;
         ensure(
-            store.load(&demo_stream()).await?.len() == 2,
+            store.load(&demo_stream()?).await?.len() == 2,
             "the rejected second rental appended an event",
         )?;
         assert_retained_responses(connection, config).await?;
@@ -171,14 +171,14 @@ async fn assert_retained_responses(
         info.state.messages == 2,
         "response stream did not retain two outcomes",
     )?;
-    let mut accepted = 0;
-    let mut rejected = 0;
+    let mut accepted = 0_u64;
+    let mut rejected = 0_u64;
     for sequence in 1..=info.state.last_sequence {
         let stored = stream.get_raw_message(sequence).await?;
         let response: CommandResponse = serde_json::from_slice(&stored.payload)?;
         match response.outcome() {
-            CommandResponseOutcome::Accepted => accepted += 1,
-            CommandResponseOutcome::Rejected(_) => rejected += 1,
+            CommandResponseOutcome::Accepted => accepted = accepted.saturating_add(1),
+            CommandResponseOutcome::Rejected(_) => rejected = rejected.saturating_add(1),
         }
     }
     ensure(
@@ -204,7 +204,7 @@ async fn wait_for_history_len(
         .checked_add(Duration::from_secs(10))
         .ok_or_else(|| io::Error::other("aggregate-history deadline overflowed"))?;
     loop {
-        if store.load(&demo_stream()).await?.len() == expected {
+        if store.load(&demo_stream()?).await?.len() == expected {
             return Ok(());
         }
         if Instant::now() >= deadline {

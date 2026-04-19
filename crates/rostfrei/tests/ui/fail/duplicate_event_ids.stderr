@@ -12,8 +12,8 @@ note: inside `rostfrei::__private::rostfrei_domain_runtime::__private::assert_un
    |
   ::: $WORKSPACE/crates/rostfrei-domain-runtime/src/lib.rs
    |
-   | /                 assert!(
-   | |                     !strings_equal(ids[left], ids[right]),
-   | |                     "duplicate domain event ID in aggregate"
-   | |                 );
-   | |_________________- in this macro invocation
+   | /             assert!(
+   | |                 !strings_equal(left, candidate),
+   | |                 "duplicate domain event ID in aggregate"
+   | |             );
+   | |_____________- in this macro invocation

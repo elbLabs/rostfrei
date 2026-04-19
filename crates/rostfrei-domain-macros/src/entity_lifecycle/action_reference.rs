@@ -8,7 +8,13 @@ use super::ir::ActionReferencePath;
 pub fn parse(input: ParseStream) -> syn::Result<ActionReferencePath> {
     let mut path: Path = input.parse()?;
     validate_path(&path)?;
-    let reference_segment = path.segments.pop().unwrap().into_value();
+    let Some(reference_segment) = path.segments.pop() else {
+        return Err(syn::Error::new_spanned(
+            &path,
+            "transition action must use `TraitPath::REFERENCE`",
+        ));
+    };
+    let reference_segment = reference_segment.into_value();
     path.segments.pop_punct();
     let reference = reference_segment.ident;
     validate_reference(&reference)?;

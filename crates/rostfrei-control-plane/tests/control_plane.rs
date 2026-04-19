@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{error::Error, sync::Arc};
 
 use async_trait::async_trait;
 #[cfg(feature = "http")]
@@ -30,6 +30,8 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, Notify};
 #[cfg(feature = "http")]
 use tower::ServiceExt as _;
+
+type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 const AGGREGATE_TYPE: &str = "test-context/test-aggregate";
 const OTHER_AGGREGATE_TYPE: &str = "test-context/other-aggregate";
@@ -229,17 +231,17 @@ impl DomainModule for OtherTestDomainModule {
     }
 }
 
-fn builder(history: Arc<dyn EventHistory>) -> ControlPlaneBuilder {
+fn builder(history: Arc<dyn EventHistory>) -> TestResult<ControlPlaneBuilder> {
     let mut registry = DomainRegistry::new();
-    registry.register_module::<TestDomainModule>().unwrap();
-    ControlPlaneBuilder::with_registry(history, registry)
+    registry.register_module::<TestDomainModule>()?;
+    Ok(ControlPlaneBuilder::with_registry(history, registry))
 }
 
-fn control_plane(maximum_operations: usize) -> ControlPlane {
+fn control_plane(maximum_operations: usize) -> TestResult<ControlPlane> {
     let mut builder =
-        builder(Arc::new(InMemoryEventStore::new())).with_maximum_operations(maximum_operations);
-    builder.register::<TestCommand, _>(TestWireCodec).unwrap();
-    builder.build().unwrap()
+        builder(Arc::new(InMemoryEventStore::new()))?.with_maximum_operations(maximum_operations);
+    builder.register::<TestCommand, _>(TestWireCodec)?;
+    Ok(builder.build()?)
 }
 
 #[derive(Clone)]
@@ -281,13 +283,11 @@ impl DispatchAdapter for RecordingDispatcher {
     }
 }
 
-fn dispatch_control_plane(dispatcher: impl DispatchAdapter + 'static) -> ControlPlane {
-    let mut builder = builder(Arc::new(InMemoryEventStore::new()));
-    builder.register::<TestCommand, _>(TestWireCodec).unwrap();
-    builder
-        .register_dispatch::<TestCommand>(Arc::new(dispatcher))
-        .unwrap();
-    builder.build().unwrap()
+fn dispatch_control_plane(dispatcher: impl DispatchAdapter + 'static) -> TestResult<ControlPlane> {
+    let mut builder = builder(Arc::new(InMemoryEventStore::new()))?;
+    builder.register::<TestCommand, _>(TestWireCodec)?;
+    builder.register_dispatch::<TestCommand>(Arc::new(dispatcher))?;
+    Ok(builder.build()?)
 }
 
 struct LimitedDispatcher;
@@ -314,7 +314,7 @@ impl DispatchAdapter for LimitedDispatcher {
     }
 }
 
-async fn submit(control_plane: &ControlPlane, operation_id: &str, payload: Value) {
+async fn submit(control_plane: &ControlPlane, operation_id: &str, payload: Value) -> TestResult {
     control_plane
         .submit_simulation(
             AGGREGATE_TYPE,
@@ -326,36 +326,35 @@ async fn submit(control_plane: &ControlPlane, operation_id: &str, payload: Value
             },
             Some(operation_id),
         )
-        .await
-        .unwrap();
+        .await?;
+    Ok(())
 }
 
-async fn terminal_operation(control_plane: &ControlPlane, operation_id: &str) -> Value {
-    terminal_operation_with_trace(control_plane, operation_id)
-        .await
-        .0
+async fn terminal_operation(control_plane: &ControlPlane, operation_id: &str) -> TestResult<Value> {
+    let (operation, _) = terminal_operation_with_trace(control_plane, operation_id).await?;
+    Ok(operation)
 }
 
 async fn terminal_operation_with_trace(
     control_plane: &ControlPlane,
     operation_id: &str,
-) -> (Value, String) {
-    let mut subscription = control_plane.subscribe(operation_id, 0).await.unwrap();
+) -> TestResult<(Value, String)> {
+    let mut subscription = control_plane.subscribe(operation_id, 0).await?;
     let mut trace = String::new();
     while let Some(event) = subscription.next().await {
-        trace.push_str(&serde_json::to_string(&event).unwrap());
+        trace.push_str(&serde_json::to_string(&event)?);
     }
-    (
-        serde_json::to_value(control_plane.operation(operation_id).await.unwrap()).unwrap(),
+    Ok((
+        serde_json::to_value(control_plane.operation(operation_id).await?)?,
         trace,
-    )
+    ))
 }
 
 #[tokio::test]
 async fn accepted_dispatch_traces_publication_before_terminal_response_and_is_idempotent() {
     let dispatcher = RecordingDispatcher::successful();
     let invocations = Arc::clone(&dispatcher.invocations);
-    let control_plane = dispatch_control_plane(dispatcher);
+    let control_plane = dispatch_control_plane(dispatcher).unwrap();
     let request = || DispatchRequest {
         schema_version: 1,
         payload: json!({ "reject": false }),
@@ -371,8 +370,9 @@ async fn accepted_dispatch_traces_publication_before_terminal_response_and_is_id
         )
         .await
         .unwrap();
-    let (operation, trace) =
-        terminal_operation_with_trace(&control_plane, "dispatch-operation").await;
+    let (operation, trace) = terminal_operation_with_trace(&control_plane, "dispatch-operation")
+        .await
+        .unwrap();
 
     assert_eq!(operation["mode"], "dispatch");
     assert_eq!(operation["result"]["decision"], "accepted");
@@ -391,11 +391,16 @@ async fn accepted_dispatch_traces_publication_before_terminal_response_and_is_id
     assert!(trace.contains("response-message-1"));
     assert!(!trace.contains("history-replayed"));
     assert!(trace.contains("command-accepted"));
-    let published = trace.find("command-published").unwrap();
-    let responded = trace.find("command-responded").unwrap();
-    let accepted = trace.find("command-accepted").unwrap();
-    let completed = trace.find("completed").unwrap();
-    assert!(published < responded && responded < accepted && accepted < completed);
+    assert!(matches!(
+        (
+            trace.find("command-published"),
+            trace.find("command-responded"),
+            trace.find("command-accepted"),
+            trace.find("completed"),
+        ),
+        (Some(published), Some(responded), Some(accepted), Some(completed))
+            if published < responded && responded < accepted && accepted < completed
+    ));
 
     control_plane
         .submit_dispatch(
@@ -407,7 +412,8 @@ async fn accepted_dispatch_traces_publication_before_terminal_response_and_is_id
         )
         .await
         .unwrap();
-    assert_eq!(invocations.lock().await.len(), 1);
+    let invocation_count = invocations.lock().await.len();
+    assert_eq!(invocation_count, 1);
     assert_eq!(
         control_plane
             .submit_dispatch(
@@ -424,11 +430,27 @@ async fn accepted_dispatch_traces_publication_before_terminal_response_and_is_id
         Err(SubmissionError::IdentityConflict)
     );
 
-    let invocation = &invocations.lock().await[0];
-    assert_eq!(invocation.operation_id().as_str(), "dispatch-operation");
-    assert_eq!(invocation.aggregate_type(), AGGREGATE_TYPE);
-    assert_eq!(invocation.aggregate_id().as_str(), "aggregate-1");
-    assert_eq!(invocation.command(), COMMAND_NAME);
+    let invocations = invocations.lock().await;
+    assert_eq!(
+        invocations
+            .first()
+            .map(|invocation| invocation.operation_id().as_str()),
+        Some("dispatch-operation")
+    );
+    assert_eq!(
+        invocations.first().map(DispatchInvocation::aggregate_type),
+        Some(AGGREGATE_TYPE)
+    );
+    assert_eq!(
+        invocations
+            .first()
+            .map(|invocation| invocation.aggregate_id().as_str()),
+        Some("aggregate-1")
+    );
+    assert_eq!(
+        invocations.first().map(DispatchInvocation::command),
+        Some(COMMAND_NAME)
+    );
 }
 
 #[tokio::test]
@@ -448,7 +470,7 @@ async fn rejected_dispatch_is_terminal_and_obeys_the_trace_payload_policy() {
             rejection.clone(),
         )),
     };
-    let control_plane = dispatch_control_plane(dispatcher);
+    let control_plane = dispatch_control_plane(dispatcher).unwrap();
     control_plane
         .submit_dispatch(
             AGGREGATE_TYPE,
@@ -462,8 +484,9 @@ async fn rejected_dispatch_is_terminal_and_obeys_the_trace_payload_policy() {
         )
         .await
         .unwrap();
-    let (operation, trace) =
-        terminal_operation_with_trace(&control_plane, "rejected-dispatch").await;
+    let (operation, trace) = terminal_operation_with_trace(&control_plane, "rejected-dispatch")
+        .await
+        .unwrap();
     assert_eq!(operation["result"]["decision"], "rejected");
     assert!(operation["result"].get("appended").is_none());
     assert_eq!(operation["result"]["published"], true);
@@ -483,6 +506,7 @@ async fn rejected_dispatch_is_terminal_and_obeys_the_trace_payload_policy() {
     assert!(!trace.contains("private\":\"details"));
 
     let mut builder = builder(Arc::new(InMemoryEventStore::new()))
+        .unwrap()
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder.register::<TestCommand, _>(TestWireCodec).unwrap();
     builder
@@ -510,7 +534,9 @@ async fn rejected_dispatch_is_terminal_and_obeys_the_trace_payload_policy() {
         )
         .await
         .unwrap();
-    let exposed = terminal_operation(&exposed, "exposed-rejection").await;
+    let exposed = terminal_operation(&exposed, "exposed-rejection")
+        .await
+        .unwrap();
     assert_eq!(exposed["result"]["rejection"]["classification"], "conflict");
     assert_eq!(exposed["result"]["rejection"]["code"], "TEST_REJECTION");
     assert_eq!(
@@ -528,7 +554,7 @@ async fn dispatch_failures_are_stable_and_redacted() {
             "private broker failure",
         )),
     };
-    let control_plane = dispatch_control_plane(dispatcher);
+    let control_plane = dispatch_control_plane(dispatcher).unwrap();
 
     control_plane
         .submit_dispatch(
@@ -543,7 +569,9 @@ async fn dispatch_failures_are_stable_and_redacted() {
         )
         .await
         .unwrap();
-    let (operation, trace) = terminal_operation_with_trace(&control_plane, "failed-dispatch").await;
+    let (operation, trace) = terminal_operation_with_trace(&control_plane, "failed-dispatch")
+        .await
+        .unwrap();
     assert_eq!(operation["failure"]["code"], "dispatch-unavailable");
     assert_eq!(
         operation["failure"]["message"],
@@ -554,7 +582,7 @@ async fn dispatch_failures_are_stable_and_redacted() {
 
 #[tokio::test]
 async fn dispatch_admission_honors_the_adapter_payload_limit() {
-    let control_plane = dispatch_control_plane(LimitedDispatcher);
+    let control_plane = dispatch_control_plane(LimitedDispatcher).unwrap();
 
     assert_eq!(
         control_plane
@@ -577,7 +605,7 @@ async fn dispatch_admission_honors_the_adapter_payload_limit() {
 fn dispatch_registration_requires_and_preserves_a_simulation_binding() {
     let dispatcher: Arc<dyn DispatchAdapter> = Arc::new(RecordingDispatcher::successful());
     let history: Arc<dyn EventHistory> = Arc::new(InMemoryEventStore::new());
-    let mut missing_simulation = builder(Arc::clone(&history));
+    let mut missing_simulation = builder(Arc::clone(&history)).unwrap();
     assert!(matches!(
         missing_simulation.register_dispatch::<TestCommand>(Arc::clone(&dispatcher)),
         Err(RuntimeRegistrationError::DispatchWithoutSimulationBinding {
@@ -586,7 +614,7 @@ fn dispatch_registration_requires_and_preserves_a_simulation_binding() {
         })
     ));
 
-    let mut duplicate_dispatch = builder(history);
+    let mut duplicate_dispatch = builder(history).unwrap();
     duplicate_dispatch
         .register::<TestCommand, _>(TestWireCodec)
         .unwrap();
@@ -608,15 +636,18 @@ fn authorize(request: axum::http::request::Builder) -> axum::http::request::Buil
 }
 
 #[cfg(feature = "http")]
-async fn json_body(response: axum::response::Response) -> Value {
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    serde_json::from_slice(&bytes).unwrap()
+async fn json_body(response: axum::response::Response) -> TestResult<Value> {
+    let bytes = response.into_body().collect().await?.to_bytes();
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
 #[cfg(feature = "http")]
 #[tokio::test]
 async fn http_requires_a_bearer_capability_and_reports_invalid_input() {
-    let app = http::router(control_plane(1024), HttpConfig::new(API_TOKEN).unwrap());
+    let app = http::router(
+        control_plane(1024).unwrap(),
+        HttpConfig::new(API_TOKEN).unwrap(),
+    );
 
     let unauthorized = app
         .clone()
@@ -658,7 +689,7 @@ async fn http_requires_a_bearer_capability_and_reports_invalid_input() {
         .await
         .unwrap();
     assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(json_body(malformed).await["code"], "invalid-json");
+    assert_eq!(json_body(malformed).await.unwrap()["code"], "invalid-json");
 
     let oversized = app
         .oneshot(
@@ -678,13 +709,16 @@ async fn http_requires_a_bearer_capability_and_reports_invalid_input() {
         .await
         .unwrap();
     assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
-    assert_eq!(json_body(oversized).await["code"], "payload-too-large");
+    assert_eq!(
+        json_body(oversized).await.unwrap()["code"],
+        "payload-too-large"
+    );
 }
 
 #[cfg(feature = "http")]
 #[tokio::test]
 async fn dispatch_http_uses_a_separate_capability_and_requires_idempotency() {
-    let control_plane = dispatch_control_plane(RecordingDispatcher::successful());
+    let control_plane = dispatch_control_plane(RecordingDispatcher::successful()).unwrap();
     let app = http::router(control_plane.clone(), HttpConfig::new(API_TOKEN).unwrap()).merge(
         http::dispatch_router(
             control_plane,
@@ -731,7 +765,7 @@ async fn dispatch_http_uses_a_separate_capability_and_requires_idempotency() {
         .unwrap();
     assert_eq!(missing_key.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        json_body(missing_key).await["code"],
+        json_body(missing_key).await.unwrap()["code"],
         "idempotency-key-required"
     );
 
@@ -750,7 +784,7 @@ async fn dispatch_http_uses_a_separate_capability_and_requires_idempotency() {
         .await
         .unwrap();
     assert_eq!(accepted.status(), StatusCode::ACCEPTED);
-    assert_eq!(json_body(accepted).await["mode"], "dispatch");
+    assert_eq!(json_body(accepted).await.unwrap()["mode"], "dispatch");
 
     let completion = app
         .oneshot(
@@ -780,16 +814,19 @@ async fn dispatch_http_uses_a_separate_capability_and_requires_idempotency() {
 
 #[tokio::test]
 async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
-    let control_plane = control_plane(1);
+    let control_plane = control_plane(1).unwrap();
 
     submit(
         &control_plane,
         "redacted-accepted",
         json!({ "reject": false }),
     )
-    .await;
+    .await
+    .unwrap();
     let (accepted, accepted_trace) =
-        terminal_operation_with_trace(&control_plane, "redacted-accepted").await;
+        terminal_operation_with_trace(&control_plane, "redacted-accepted")
+            .await
+            .unwrap();
     assert!(
         accepted["result"]["predictedEvents"][0]
             .get("payload")
@@ -807,13 +844,16 @@ async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
         "redacted-rejected",
         json!({ "reject": true }),
     )
-    .await;
+    .await
+    .unwrap();
     assert_eq!(
         control_plane.operation("redacted-accepted").await,
         Err(SubmissionError::NotFound)
     );
     let (rejected, rejected_trace) =
-        terminal_operation_with_trace(&control_plane, "redacted-rejected").await;
+        terminal_operation_with_trace(&control_plane, "redacted-rejected")
+            .await
+            .unwrap();
     assert_eq!(rejected["result"]["rejection"], json!({ "redacted": true }));
     assert!(!rejected_trace.contains("rejected outcome details"));
 
@@ -822,9 +862,12 @@ async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
         "redacted-failure",
         json!({ "reject": "not-a-boolean" }),
     )
-    .await;
+    .await
+    .unwrap();
     let (failure, failure_trace) =
-        terminal_operation_with_trace(&control_plane, "redacted-failure").await;
+        terminal_operation_with_trace(&control_plane, "redacted-failure")
+            .await
+            .unwrap();
     assert_eq!(failure["failure"]["code"], "invalid-command-payload");
     assert_eq!(
         failure["failure"]["message"],
@@ -878,7 +921,9 @@ async fn runtime_bindings_scope_local_command_names_to_the_aggregate() {
             )
             .await
             .unwrap();
-        terminal_operation(&control_plane, operation_id).await;
+        terminal_operation(&control_plane, operation_id)
+            .await
+            .unwrap();
     }
 }
 
@@ -909,7 +954,7 @@ fn runtime_bindings_require_exact_registry_coverage() {
         .unwrap();
     empty_registry_builder.build().unwrap();
 
-    let missing_binding = builder(Arc::clone(&history));
+    let missing_binding = builder(Arc::clone(&history)).unwrap();
     assert!(matches!(
         missing_binding.build(),
         Err(RuntimeRegistrationError::MissingBinding {
@@ -918,7 +963,7 @@ fn runtime_bindings_require_exact_registry_coverage() {
         })
     ));
 
-    let mut duplicate_binding = builder(history);
+    let mut duplicate_binding = builder(history).unwrap();
     duplicate_binding
         .register::<TestCommand, _>(TestWireCodec)
         .unwrap();
@@ -934,6 +979,7 @@ fn runtime_bindings_require_exact_registry_coverage() {
 #[test]
 fn excessive_concurrency_configuration_does_not_panic() {
     let mut builder = builder(Arc::new(InMemoryEventStore::new()))
+        .unwrap()
         .with_maximum_operations(usize::MAX)
         .with_maximum_concurrent_simulations(usize::MAX);
     builder.register::<TestCommand, _>(TestWireCodec).unwrap();
@@ -943,7 +989,7 @@ fn excessive_concurrency_configuration_does_not_panic() {
 
 #[tokio::test]
 async fn generated_operation_ids_are_distinct_and_valid() {
-    let control_plane = control_plane(4);
+    let control_plane = control_plane(4).unwrap();
     let request = || SimulationRequest {
         schema_version: 1,
         payload: json!({ "reject": false }),
@@ -980,18 +1026,18 @@ impl EventHistory for BlockingHistory {
 fn blocking_control_plane(
     maximum_operations: usize,
     maximum_concurrent_simulations: usize,
-) -> (ControlPlane, Arc<Notify>, Arc<Notify>) {
+) -> TestResult<(ControlPlane, Arc<Notify>, Arc<Notify>)> {
     let entered = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
     let history: Arc<dyn EventHistory> = Arc::new(BlockingHistory {
         entered: Arc::clone(&entered),
         release: Arc::clone(&release),
     });
-    let mut builder = builder(history)
+    let mut builder = builder(history)?
         .with_maximum_operations(maximum_operations)
         .with_maximum_concurrent_simulations(maximum_concurrent_simulations);
-    builder.register::<TestCommand, _>(TestWireCodec).unwrap();
-    (builder.build().unwrap(), entered, release)
+    builder.register::<TestCommand, _>(TestWireCodec)?;
+    Ok((builder.build()?, entered, release))
 }
 
 fn simulation_request(reject: bool) -> SimulationRequest {
@@ -1003,7 +1049,7 @@ fn simulation_request(reject: bool) -> SimulationRequest {
 
 #[tokio::test]
 async fn concurrent_admission_is_bounded_before_operation_capacity() {
-    let (control_plane, entered, release) = blocking_control_plane(4, 1);
+    let (control_plane, entered, release) = blocking_control_plane(4, 1).unwrap();
     control_plane
         .submit_simulation(
             AGGREGATE_TYPE,
@@ -1041,12 +1087,14 @@ async fn concurrent_admission_is_bounded_before_operation_capacity() {
     );
 
     release.notify_one();
-    let _ = terminal_operation(&control_plane, "running-operation").await;
+    terminal_operation(&control_plane, "running-operation")
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn operation_capacity_rejects_work_when_no_terminal_record_can_be_evicted() {
-    let (control_plane, entered, release) = blocking_control_plane(1, 1);
+    let (control_plane, entered, release) = blocking_control_plane(1, 1).unwrap();
     control_plane
         .submit_simulation(
             AGGREGATE_TYPE,
@@ -1073,7 +1121,9 @@ async fn operation_capacity_rejects_work_when_no_terminal_record_can_be_evicted(
     );
 
     release.notify_one();
-    let _ = terminal_operation(&control_plane, "capacity-running").await;
+    terminal_operation(&control_plane, "capacity-running")
+        .await
+        .unwrap();
 }
 
 struct FailedHistory(EventStoreErrorKind);
@@ -1091,7 +1141,7 @@ async fn corrupt_history_and_infrastructure_failures_have_distinct_codes() {
         (EventStoreErrorKind::CorruptHistory, "corrupt-history"),
         (EventStoreErrorKind::Unavailable, "history-unavailable"),
     ] {
-        let mut builder = builder(Arc::new(FailedHistory(kind)));
+        let mut builder = builder(Arc::new(FailedHistory(kind))).unwrap();
         builder.register::<TestCommand, _>(TestWireCodec).unwrap();
         let control_plane = builder.build().unwrap();
         submit(
@@ -1099,9 +1149,12 @@ async fn corrupt_history_and_infrastructure_failures_have_distinct_codes() {
             &format!("failed-history-{expected_code}"),
             json!({ "reject": false }),
         )
-        .await;
+        .await
+        .unwrap();
         let operation =
-            terminal_operation(&control_plane, &format!("failed-history-{expected_code}")).await;
+            terminal_operation(&control_plane, &format!("failed-history-{expected_code}"))
+                .await
+                .unwrap();
         assert_eq!(operation["failure"]["code"], expected_code);
     }
 }
@@ -1118,20 +1171,27 @@ impl EventCodec<TestAggregate> for FailingEventCodec {
     }
 
     fn decode(&self, _event: &RecordedEvent) -> Result<TestEvent, EventCodecError> {
-        unreachable!("the test history is empty")
+        Err(EventCodecError::new(
+            EventCodecErrorKind::MalformedPayload,
+            "unexpected event in empty test history",
+        ))
     }
 }
 
 #[tokio::test]
 async fn event_codec_failures_have_a_stable_code() {
-    let mut builder = builder(Arc::new(InMemoryEventStore::new()));
+    let mut builder = builder(Arc::new(InMemoryEventStore::new())).unwrap();
     builder
         .register_with_codec::<TestCommand, _, _>(FailingEventCodec, TestWireCodec)
         .unwrap();
     let control_plane = builder.build().unwrap();
-    submit(&control_plane, "codec-failure", json!({ "reject": false })).await;
+    submit(&control_plane, "codec-failure", json!({ "reject": false }))
+        .await
+        .unwrap();
 
-    let operation = terminal_operation(&control_plane, "codec-failure").await;
+    let operation = terminal_operation(&control_plane, "codec-failure")
+        .await
+        .unwrap();
     assert_eq!(operation["failure"]["code"], "event-codec-failed");
 }
 
@@ -1146,13 +1206,17 @@ impl EventCodec<TestAggregate> for BinaryEventCodec {
     }
 
     fn decode(&self, _event: &RecordedEvent) -> Result<TestEvent, EventCodecError> {
-        unreachable!("the test history is empty")
+        Err(EventCodecError::new(
+            EventCodecErrorKind::MalformedPayload,
+            "unexpected event in empty test history",
+        ))
     }
 }
 
 #[tokio::test]
 async fn non_json_predictions_are_exposed_as_base64_only_when_explicitly_enabled() {
     let mut builder = builder(Arc::new(InMemoryEventStore::new()))
+        .unwrap()
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder
         .register_with_codec::<TestCommand, _, _>(BinaryEventCodec, TestWireCodec)
@@ -1163,9 +1227,12 @@ async fn non_json_predictions_are_exposed_as_base64_only_when_explicitly_enabled
         "binary-prediction",
         json!({ "reject": false }),
     )
-    .await;
+    .await
+    .unwrap();
 
-    let operation = terminal_operation(&control_plane, "binary-prediction").await;
+    let operation = terminal_operation(&control_plane, "binary-prediction")
+        .await
+        .unwrap();
     let event = &operation["result"]["predictedEvents"][0];
     assert!(event.get("payload").is_none());
     assert_eq!(event["payloadBase64"], "/wAB");
@@ -1174,46 +1241,62 @@ async fn non_json_predictions_are_exposed_as_base64_only_when_explicitly_enabled
 #[derive(Clone, Copy)]
 struct PanickingWireCodec;
 
+struct DeliberateCommandCodecPanic;
+
 impl CommandWireCodec<TestCommand> for PanickingWireCodec {
     fn decode(&self, _payload: &Value) -> Result<TestCommand, CommandWireCodecError> {
-        panic!("deliberate command codec panic")
+        std::panic::resume_unwind(Box::new(DeliberateCommandCodecPanic))
     }
 
     fn encode_rejection(&self, _rejection: &TestRejection) -> Result<Value, CommandWireCodecError> {
-        unreachable!("decode always panics")
+        Err(CommandWireCodecError::new(
+            "rejection encoding is unavailable after command decoding panics",
+        ))
     }
 }
 
 #[tokio::test]
 async fn panics_become_one_terminal_failure_and_release_admission() {
-    let mut builder =
-        builder(Arc::new(InMemoryEventStore::new())).with_maximum_concurrent_simulations(1);
+    let mut builder = builder(Arc::new(InMemoryEventStore::new()))
+        .unwrap()
+        .with_maximum_concurrent_simulations(1);
     builder
         .register::<TestCommand, _>(PanickingWireCodec)
         .unwrap();
     let control_plane = builder.build().unwrap();
-    submit(&control_plane, "panicking-operation", json!({})).await;
+    submit(&control_plane, "panicking-operation", json!({}))
+        .await
+        .unwrap();
 
-    let operation = terminal_operation(&control_plane, "panicking-operation").await;
+    let operation = terminal_operation(&control_plane, "panicking-operation")
+        .await
+        .unwrap();
     assert_eq!(operation["status"], "failed");
     assert_eq!(operation["failure"]["code"], "simulation-panicked");
     assert_eq!(operation["latestEventId"], 3);
 
-    submit(&control_plane, "panicking-operation-2", json!({})).await;
-    let second = terminal_operation(&control_plane, "panicking-operation-2").await;
+    submit(&control_plane, "panicking-operation-2", json!({}))
+        .await
+        .unwrap();
+    let second = terminal_operation(&control_plane, "panicking-operation-2")
+        .await
+        .unwrap();
     assert_eq!(second["failure"]["code"], "simulation-panicked");
 }
 
 #[tokio::test]
 async fn future_and_terminal_operation_cursors_are_explicit() {
-    let control_plane = control_plane(4);
+    let control_plane = control_plane(4).unwrap();
     submit(
         &control_plane,
         "cursor-operation",
         json!({ "reject": false }),
     )
-    .await;
-    let operation = terminal_operation(&control_plane, "cursor-operation").await;
+    .await
+    .unwrap();
+    let operation = terminal_operation(&control_plane, "cursor-operation")
+        .await
+        .unwrap();
     let latest = operation["latestEventId"].as_u64().unwrap();
 
     let terminal = control_plane
@@ -1232,14 +1315,17 @@ async fn future_and_terminal_operation_cursors_are_explicit() {
 #[cfg(feature = "http")]
 #[tokio::test]
 async fn http_reports_future_sse_cursors_with_a_stable_code() {
-    let control_plane = control_plane(4);
+    let control_plane = control_plane(4).unwrap();
     submit(
         &control_plane,
         "http-cursor-operation",
         json!({ "reject": false }),
     )
-    .await;
-    let operation = terminal_operation(&control_plane, "http-cursor-operation").await;
+    .await
+    .unwrap();
+    let operation = terminal_operation(&control_plane, "http-cursor-operation")
+        .await
+        .unwrap();
     let latest = operation["latestEventId"].as_u64().unwrap();
     let app = http::router(control_plane, HttpConfig::new(API_TOKEN).unwrap());
 
@@ -1254,5 +1340,5 @@ async fn http_reports_future_sse_cursors_with_a_stable_code() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(json_body(response).await["code"], "future-cursor");
+    assert_eq!(json_body(response).await.unwrap()["code"], "future-cursor");
 }
