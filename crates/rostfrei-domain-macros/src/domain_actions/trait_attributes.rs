@@ -101,19 +101,18 @@ fn parse(
     })?;
     let id = id.ok_or_else(|| syn::Error::new_spanned(attribute, "missing id"))?;
     let label = label.ok_or_else(|| syn::Error::new_spanned(attribute, "missing label"))?;
-    let raises = match (raises_policy, raises) {
-        (RaisesPolicy::Forbidden, None) => Vec::new(),
-        (RaisesPolicy::Forbidden, Some(_)) => unreachable!("forbidden raises returned early"),
-        (RaisesPolicy::Required, None) => {
-            return Err(syn::Error::new_spanned(attribute, "missing raises"));
-        }
-        (RaisesPolicy::Required, Some(raises)) if raises.is_empty() => {
-            return Err(syn::Error::new_spanned(
-                attribute,
-                "executable aggregate actions must declare at least one raised event",
-            ));
-        }
-        (RaisesPolicy::Required, Some(raises)) => raises,
+    let raises = match raises_policy {
+        RaisesPolicy::Forbidden => Vec::new(),
+        RaisesPolicy::Required => match raises {
+            None => return Err(syn::Error::new_spanned(attribute, "missing raises")),
+            Some(raises) if raises.is_empty() => {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "executable aggregate actions must declare at least one raised event",
+                ));
+            }
+            Some(raises) => raises,
+        },
     };
     Ok((id, label, raises))
 }

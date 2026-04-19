@@ -372,8 +372,10 @@ async fn command_composes_generated_actions_and_replays_their_events() {
 }
 
 #[test]
-fn executable_action_can_raise_multiple_declared_event_types() -> TestResult {
-    let mut aggregate = AggregateInstance::<AccountAggregate>::new(stream("multi-event-action")?);
+fn executable_action_can_raise_multiple_declared_event_types() {
+    let mut aggregate = AggregateInstance::<AccountAggregate>::new(
+        stream("multi-event-action").expect("valid multi-event action stream fixture"),
+    );
 
     aggregate.deposit_and_observe(4);
 
@@ -387,18 +389,17 @@ fn executable_action_can_raise_multiple_declared_event_types() -> TestResult {
         Some(&BalanceObserved { balance: 4 })
     );
     assert_eq!(aggregate.state().observed_balance, 4);
-    Ok(())
 }
 
 #[tokio::test]
-async fn command_rejection_discards_events_raised_by_an_action() -> TestResult {
-    let stream = stream("rejected-account")?;
+async fn command_rejection_discards_events_raised_by_an_action() {
+    let stream = stream("rejected-account").expect("valid rejected account stream fixture");
     let store = InMemoryEventStore::new();
     let executor = Executor::new(store.clone());
 
     let outcome = executor
         .execute::<AccountAggregate, _>(
-            metadata(&stream, "rejected-deposit")?,
+            metadata(&stream, "rejected-deposit").expect("valid rejected deposit metadata fixture"),
             &DepositThenReject { amount: 9 },
         )
         .await
@@ -415,7 +416,6 @@ async fn command_rejection_discards_events_raised_by_an_action() -> TestResult {
             .expect("load rejected stream")
             .is_empty()
     );
-    Ok(())
 }
 
 #[test]

@@ -70,7 +70,7 @@ fn rejects_an_unavailable_bicycle_without_changing_it() {
 
 #[test]
 fn model_projects_each_executable_fleet_action_once() {
-    let model = bike_rental::domain_model();
+    let model = bike_rental::domain_model().expect("bike-rental domain model");
     let actions = model["actions"].as_array().unwrap();
     let fleet_actions = actions
         .iter()

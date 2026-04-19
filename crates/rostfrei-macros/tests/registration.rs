@@ -67,8 +67,8 @@ fn assert_registered_command(command: &zs_registry::CommandDescriptor) {
 }
 
 #[test]
-fn derived_domain_types_register_and_query_without_state_trait_requirements(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn derived_domain_types_register_and_query_without_state_trait_requirements()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut registry = DomainRegistry::new();
     registry.register_module::<Accounts>()?;
 

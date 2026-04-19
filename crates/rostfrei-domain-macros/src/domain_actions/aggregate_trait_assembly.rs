@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+
 use proc_macro2::TokenStream;
-use quote::{quote, quote_spanned};
+use quote::{ToTokens as _, quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{Ident, ItemTrait, Path, WherePredicate};
 
@@ -15,9 +17,7 @@ pub fn assemble(
 ) -> syn::Result<TokenStream> {
     let has_instance = instance.is_some();
     if has_instance {
-        for action in actions {
-            add_raised_event_predicates(domain_path, &mut item, action)?;
-        }
+        add_raised_event_predicates(domain_path, &mut item, actions)?;
     }
     let instance = instance.map_or_else(
         || Ok(TokenStream::new()),
@@ -55,9 +55,14 @@ pub fn assemble(
 fn add_raised_event_predicates(
     domain_path: &Path,
     item: &mut ItemTrait,
-    action: &Action,
+    actions: &[Action],
 ) -> syn::Result<()> {
-    for event in &action.raises {
+    let mut event_keys = HashSet::new();
+    for event in actions
+        .iter()
+        .flat_map(|action| &action.raises)
+        .filter(|event| event_keys.insert(event.to_token_stream().to_string()))
+    {
         let predicate: WherePredicate = syn::parse2(
             quote_spanned! {event.span()=> #event: #domain_path::DomainEventType<Owner = Self>},
         )?;
