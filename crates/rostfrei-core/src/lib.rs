@@ -28,6 +28,10 @@ pub use identity::{
 };
 pub use memory::InMemoryEventStore;
 pub use store::{AppendOutcome, EventHistory, EventStore, EventStoreError, EventStoreErrorKind};
+pub use store::{
+    EventTransaction, MAX_TRANSACTION_ITEMS, TransactionAppendOutcome, TransactionParticipant,
+    TransactionReceipt, TransactionStreamReceipt,
+};
 
 #[doc(hidden)]
 pub mod __private {
