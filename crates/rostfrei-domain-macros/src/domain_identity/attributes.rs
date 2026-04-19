@@ -6,23 +6,21 @@ pub struct Attributes {
 }
 
 pub fn parse(attributes: &[Attribute]) -> syn::Result<Attributes> {
-    let domain: Vec<_> = attributes
+    let mut domain = attributes
         .iter()
-        .filter(|attribute| crate::helper::domain_attribute::is_helper(attribute))
-        .collect();
-    if domain.is_empty() {
+        .filter(|attribute| crate::helper::domain_attribute::is_helper(attribute));
+    let Some(attribute) = domain.next() else {
         return Err(syn::Error::new(
             proc_macro2::Span::call_site(),
             "DomainIdentity requires #[domain(owner = EntityType)]",
         ));
-    }
-    if domain.len() > 1 {
+    };
+    if let Some(duplicate) = domain.next() {
         return Err(syn::Error::new_spanned(
-            domain[1],
+            duplicate,
             "DomainIdentity supports exactly one domain attribute",
         ));
     }
-    let attribute = domain[0];
     let mut owner = None;
     let mut scalar = None;
     attribute.parse_nested_meta(|meta| {

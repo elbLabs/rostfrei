@@ -124,15 +124,19 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "bike-rental"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "http-body-util",
  "rostfrei",
  "rostfrei-control-plane",
+ "rostfrei-messaging-core",
+ "rostfrei-nats",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
  "tower",
+ "tracing",
 ]
 
 [[package]]
@@ -862,6 +866,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "tracing",
 ]
 
 [[package]]
@@ -927,6 +932,7 @@ dependencies = [
  "async-trait",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
 ]
 

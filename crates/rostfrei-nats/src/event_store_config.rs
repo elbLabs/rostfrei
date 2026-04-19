@@ -1,18 +1,50 @@
-use std::fmt::Write as _;
-use std::time::Duration;
+use std::{mem::size_of, time::Duration};
 
 use async_nats::jetstream::stream::{Config, DiscardPolicy, RetentionPolicy, StorageType};
 use rostfrei_core::{EventStoreError, EventStoreErrorKind};
 use rostfrei_messaging_core::{ApplicationName, BoundedContext, BoundedContextName};
 use sha2::{Digest, Sha256};
 
+use crate::hex::encode_lower_hex;
+
 const MAX_STREAM_NAME_LEN: usize = 255;
 const MAX_EVENT_BYTES: usize = 64 * 1024 * 1024;
-const DUPLICATE_WINDOW: Duration = Duration::from_secs(2 * 60);
+const DUPLICATE_WINDOW: Duration = Duration::from_mins(2);
 pub const DEFAULT_EVENT_STORE_MAX_STREAM_BYTES: i64 = 10 * 1024 * 1024 * 1024;
 pub const DEFAULT_EVENT_STORE_MAX_EVENT_BYTES: usize = 2 * 1024 * 1024;
 pub const DEFAULT_EVENT_STORE_REPLICAS: usize = 1;
 pub const DEFAULT_EVENT_STORE_PUBACK_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct EventByteLimit {
+    value: usize,
+    nats_value: i32,
+    comparison_value: i64,
+}
+
+impl EventByteLimit {
+    const DEFAULT: Self = Self {
+        value: DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
+        nats_value: 2 * 1024 * 1024,
+        comparison_value: 2 * 1024 * 1024,
+    };
+
+    fn new(value: usize) -> Result<Self, EventStoreError> {
+        if value == 0 || value > MAX_EVENT_BYTES {
+            return Err(invalid(format!(
+                "maximum event bytes must be between 1 and {MAX_EVENT_BYTES}"
+            )));
+        }
+        let nats_value = i32::try_from(value)
+            .map_err(|_| invalid("maximum event bytes cannot be represented by JetStream"))?;
+        let comparison_value = i64::from(nats_value);
+        Ok(Self {
+            value,
+            nats_value,
+            comparison_value,
+        })
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NatsEventStoreConfig {
@@ -21,7 +53,7 @@ pub struct NatsEventStoreConfig {
     stream_name: String,
     subject_prefix: String,
     max_stream_bytes: i64,
-    max_event_bytes: usize,
+    max_event_bytes: EventByteLimit,
     replicas: usize,
     puback_timeout: Duration,
 }
@@ -47,7 +79,7 @@ impl NatsEventStoreConfig {
             stream_name: stream_name.into(),
             subject_prefix,
             max_stream_bytes: DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
-            max_event_bytes: DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
+            max_event_bytes: EventByteLimit::DEFAULT,
             replicas: DEFAULT_EVENT_STORE_REPLICAS,
             puback_timeout: DEFAULT_EVENT_STORE_PUBACK_TIMEOUT,
         };
@@ -69,7 +101,7 @@ impl NatsEventStoreConfig {
         max_event_bytes: usize,
     ) -> Result<Self, EventStoreError> {
         self.max_stream_bytes = max_stream_bytes;
-        self.max_event_bytes = max_event_bytes;
+        self.max_event_bytes = EventByteLimit::new(max_event_bytes)?;
         self.validate()?;
         Ok(self)
     }
@@ -102,7 +134,7 @@ impl NatsEventStoreConfig {
     }
 
     pub const fn max_event_bytes(&self) -> usize {
-        self.max_event_bytes
+        self.max_event_bytes.value
     }
 
     pub const fn replicas(&self) -> usize {
@@ -137,8 +169,7 @@ impl NatsEventStoreConfig {
             max_messages: -1,
             max_messages_per_subject: -1,
             max_bytes: self.max_stream_bytes,
-            max_message_size: i32::try_from(self.max_event_bytes)
-                .expect("validated event size fits in i32"),
+            max_message_size: self.max_event_bytes.nats_value,
             max_consumers: -1,
             no_ack: false,
             duplicate_window: DUPLICATE_WINDOW,
@@ -158,14 +189,7 @@ impl NatsEventStoreConfig {
         if self.max_stream_bytes <= 0 {
             return Err(invalid("maximum stream bytes must be finite and positive"));
         }
-        if self.max_event_bytes == 0 || self.max_event_bytes > MAX_EVENT_BYTES {
-            return Err(invalid(format!(
-                "maximum event bytes must be between 1 and {MAX_EVENT_BYTES}"
-            )));
-        }
-        if self.max_stream_bytes
-            < i64::try_from(self.max_event_bytes).expect("maximum event size fits in i64")
-        {
+        if self.max_stream_bytes < self.max_event_bytes.comparison_value {
             return Err(invalid(
                 "maximum stream bytes must be at least maximum event bytes",
             ));
@@ -212,14 +236,11 @@ fn valid_stream_name(value: &str) -> bool {
 fn digest_parts(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
     for part in parts {
-        digest.update((part.len() as u64).to_be_bytes());
+        digest.update([0_u8; 8 - size_of::<usize>()]);
+        digest.update(part.len().to_be_bytes());
         digest.update(part);
     }
-    let mut output = String::with_capacity(64);
-    for byte in digest.finalize() {
-        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    output
+    encode_lower_hex(digest.finalize())
 }
 
 fn invalid(message: impl Into<String>) -> EventStoreError {
@@ -325,6 +346,10 @@ mod tests {
             NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST").expect("valid config");
         let subject = config.aggregate_subject("Account", "account-123");
         assert_eq!(subject, config.aggregate_subject("Account", "account-123"));
+        assert_eq!(
+            subject,
+            "fast-inbox.domain.commercial-access.aggregate.c747047da35490fdcc850f47802f98b07d5095ea8296688da589d8bf883b4246"
+        );
         assert!(!subject.contains("Account"));
         assert!(!subject.contains("account-123"));
         assert_ne!(subject, config.aggregate_subject("Account", "account-124"));

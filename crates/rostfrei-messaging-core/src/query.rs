@@ -1,18 +1,18 @@
 use std::{fmt, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{
-    envelope::validate_serialized_size, CallerMetadata, CausationId, ContractError,
-    ContractErrorKind, CorrelationId, EnvelopeContext, MessageBuildError, MessageId,
-    MessageTimestamp, QueryAddress, QueryRequestError, QueryServerError, SchemaVersion,
-    TraceContext, MAX_ENVELOPE_BYTES,
+    CallerMetadata, CausationId, ContractError, ContractErrorKind, CorrelationId, EnvelopeContext,
+    MAX_ENVELOPE_BYTES, MessageBuildError, MessageId, MessageTimestamp, QueryAddress,
+    QueryRequestError, QueryServerError, SchemaVersion, TraceContext,
+    envelope::validate_serialized_size,
 };
 
 pub const MAX_APPLICATION_ERROR_CODE_BYTES: usize = 128;
 pub const MAX_QUERY_ERROR_MESSAGE_BYTES: usize = 1024;
-pub const MAX_QUERY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+pub const MAX_QUERY_TIMEOUT: Duration = Duration::from_mins(5);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct QueryRequest<T> {
@@ -512,7 +512,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MessageBuildErrorKind, MAX_ENVELOPE_BYTES};
+    use crate::{MAX_ENVELOPE_BYTES, MessageBuildErrorKind};
 
     const TRACE_PARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 

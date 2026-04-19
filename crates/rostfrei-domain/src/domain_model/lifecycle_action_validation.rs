@@ -1,12 +1,14 @@
 use crate::{ActionId, EntityLifecycleDescriptor};
 
+use super::error::DomainModelError;
+
 pub(super) struct LifecycleActionInventory {
     attached: Vec<ActionId>,
     extensions: Vec<ActionId>,
 }
 
 impl LifecycleActionInventory {
-    pub(super) fn new(attached: Vec<ActionId>, extensions: Vec<ActionId>) -> Self {
+    pub(super) const fn new(attached: Vec<ActionId>, extensions: Vec<ActionId>) -> Self {
         Self {
             attached,
             extensions,
@@ -17,30 +19,31 @@ impl LifecycleActionInventory {
 pub(super) fn validate(
     descriptors: impl IntoIterator<Item = EntityLifecycleDescriptor>,
     inventory: &LifecycleActionInventory,
-) {
+) -> Result<(), DomainModelError> {
     for descriptor in descriptors {
         for transition in descriptor.transitions {
-            validate_action(descriptor, transition.action, inventory);
+            validate_action(descriptor, transition.action, inventory)?;
         }
     }
+    Ok(())
 }
 
 fn validate_action(
     descriptor: EntityLifecycleDescriptor,
     action_id: ActionId,
     inventory: &LifecycleActionInventory,
-) {
+) -> Result<(), DomainModelError> {
     if inventory.attached.contains(&action_id) {
-        return;
+        return Ok(());
     }
     if inventory.extensions.contains(&action_id) {
-        panic!(
-            "Entity lifecycle action eligibility violation: lifecycle {:?} references extension-only action {action_id:?}; action extensions are not eligible for lifecycle transitions",
-            descriptor.id
-        );
+        return Err(DomainModelError::LifecycleExtensionOnlyAction {
+            lifecycle_id: Box::new(descriptor.id),
+            action_id: Box::new(action_id),
+        });
     }
-    panic!(
-        "Entity lifecycle action inventory violation: lifecycle {:?} references missing attached action {action_id:?}; attach its action contract to the lifecycle owner",
-        descriptor.id
-    );
+    Err(DomainModelError::LifecycleMissingAttachedAction {
+        lifecycle_id: Box::new(descriptor.id),
+        action_id: Box::new(action_id),
+    })
 }

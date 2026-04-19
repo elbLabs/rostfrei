@@ -1,12 +1,12 @@
 use proc_macro::TokenStream;
+use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::TokenStream as TokenStream2;
-use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
 use syn::parse::ParseStream;
 use syn::punctuated::Punctuated;
 use syn::{
-    parenthesized, parse_macro_input, Attribute, DeriveInput, Error, LitInt, LitStr, Path, Token,
-    Type,
+    Attribute, DeriveInput, Error, LitInt, LitStr, Path, Token, Type, parenthesized,
+    parse_macro_input,
 };
 
 #[proc_macro_derive(Command, attributes(rostfrei))]
@@ -123,10 +123,10 @@ impl CommandAttributes {
             &mut errors,
         );
 
-        if let Some(name) = &name {
-            if name.value().trim().is_empty() {
-                errors.push(Error::new(name.span(), "command name must not be empty"));
-            }
+        if let Some(name) = &name
+            && name.value().trim().is_empty()
+        {
+            errors.push(Error::new(name.span(), "command name must not be empty"));
         }
 
         if let Some(version) = &version {
@@ -208,10 +208,10 @@ impl ModuleAttributes {
             &mut errors,
         );
 
-        if let Some(name) = &name {
-            if name.value().trim().is_empty() {
-                errors.push(Error::new(name.span(), "module name must not be empty"));
-            }
+        if let Some(name) = &name
+            && name.value().trim().is_empty()
+        {
+            errors.push(Error::new(name.span(), "module name must not be empty"));
         }
 
         if commands.as_ref().is_some_and(Vec::is_empty) {

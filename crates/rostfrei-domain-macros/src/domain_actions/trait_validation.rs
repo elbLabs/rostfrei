@@ -1,14 +1,11 @@
-use syn::{FnArg, TraitItem};
+use syn::{FnArg, TraitItem, TraitItemFn};
 
 use super::action::Action;
 
 pub fn validate(items: &[TraitItem], actions: &mut [Action]) -> syn::Result<()> {
     validate_methods(items)?;
     for item in items {
-        let TraitItem::Fn(method) = item else {
-            unreachable!()
-        };
-        validate_receiver(&method.sig)?;
+        validate_receiver(&action_method(item)?.sig)?;
     }
     super::validation::validate_common(actions)?;
     for action in actions {
@@ -19,9 +16,7 @@ pub fn validate(items: &[TraitItem], actions: &mut [Action]) -> syn::Result<()> 
 
 pub fn validate_methods(items: &[TraitItem]) -> syn::Result<()> {
     for item in items {
-        let TraitItem::Fn(method) = item else {
-            unreachable!()
-        };
+        let method = action_method(item)?;
         if let Some(default) = &method.default {
             return Err(syn::Error::new_spanned(
                 default,
@@ -30,6 +25,16 @@ pub fn validate_methods(items: &[TraitItem]) -> syn::Result<()> {
         }
     }
     Ok(())
+}
+
+fn action_method(item: &TraitItem) -> syn::Result<&TraitItemFn> {
+    match item {
+        TraitItem::Fn(method) => Ok(method),
+        _ => Err(syn::Error::new_spanned(
+            item,
+            "domain action contract traits may only contain action methods",
+        )),
+    }
 }
 
 fn validate_receiver(signature: &syn::Signature) -> syn::Result<()> {

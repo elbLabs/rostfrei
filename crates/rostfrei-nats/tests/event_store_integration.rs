@@ -2,6 +2,8 @@
 mod event_store;
 #[path = "../src/event_store_config.rs"]
 mod event_store_config;
+#[path = "../src/hex.rs"]
+mod hex;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
 
@@ -9,15 +11,35 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_nats::jetstream::message::PublishMessage;
-use event_store::{provision_event_store, NatsEventStore};
+use event_store::{NatsEventStore, provision_event_store};
 use event_store_config::NatsEventStoreConfig;
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventStore,
-    EventStoreErrorKind, ExecutionMetadata, ExpectedVersion, NewEvent, OperationId, StreamId,
-    StreamVersion,
+    EventStoreError, EventStoreErrorKind, ExecutionMetadata, ExpectedVersion, NewEvent,
+    OperationId, RecordedEvent, StreamId, StreamVersion,
 };
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
 use rostfrei_testing::event_store_contract;
+
+type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+fn checked_add_u64(value: u64, increment: u64, context: &'static str) -> TestResult<u64> {
+    value
+        .checked_add(increment)
+        .ok_or_else(|| format!("{context} exceeds u64").into())
+}
+
+fn checked_add_usize(value: usize, increment: usize, context: &'static str) -> TestResult<usize> {
+    value
+        .checked_add(increment)
+        .ok_or_else(|| format!("{context} exceeds usize").into())
+}
+
+fn checked_add_i64(value: i64, increment: i64, context: &'static str) -> TestResult<i64> {
+    value
+        .checked_add(increment)
+        .ok_or_else(|| format!("{context} exceeds i64").into())
+}
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -29,8 +51,10 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         eprintln!("ROSTFREI_NATS_URL is not set; skipping real NATS integration test");
         return;
     };
-    let context = connect_context(&url).await;
-    let (bounded_context, stream_name) = unique_names("contract");
+    let context = connect_context(&url)
+        .await
+        .expect("real NATS JetStream context");
+    let (bounded_context, stream_name) = unique_names("contract").expect("unique contract names");
     let config = NatsEventStoreConfig::new(&bounded_context, stream_name)
         .expect("valid integration config")
         .with_storage_limits(64 * 1024 * 1024, 2 * 1024 * 1024)
@@ -52,10 +76,12 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         .expect("provisioned stream should connect");
     assert_eq!(store.config(), &config);
 
-    event_store_contract::run(|| store.clone()).await;
+    event_store_contract::try_run(|| store.clone())
+        .await
+        .expect("event-store contract");
 
-    let concurrent_stream = stream("concurrent-atomic-batches");
-    let (first_result, second_result) = tokio::join!(
+    let concurrent_stream = stream("concurrent-atomic-batches").expect("concurrent stream id");
+    let concurrent_results: [_; 2] = tokio::join!(
         store.append(
             &concurrent_stream,
             ExpectedVersion::NoStream,
@@ -64,7 +90,8 @@ async fn real_nats_event_store_contract_and_operator_policy() {
                 "concurrent-atomic-a",
                 "concurrent-a",
                 &[b"a-1", b"a-2", b"a-3"],
-            ),
+            )
+            .expect("first concurrent batch"),
         ),
         store.append(
             &concurrent_stream,
@@ -74,10 +101,11 @@ async fn real_nats_event_store_contract_and_operator_policy() {
                 "concurrent-atomic-b",
                 "concurrent-b",
                 &[b"b-1", b"b-2", b"b-3"],
-            ),
+            )
+            .expect("second concurrent batch"),
         ),
-    );
-    let concurrent_results = [first_result, second_result];
+    )
+    .into();
     assert_eq!(
         concurrent_results
             .iter()
@@ -100,17 +128,20 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         .await
         .expect("winning atomic batch should load");
     assert_eq!(concurrent_history.len(), 3);
-    assert!(concurrent_history
-        .windows(2)
-        .all(|events| events[0].commit_id() == events[1].commit_id()));
+    assert!(
+        concurrent_history
+            .windows(2)
+            .all(|events| events[0].commit_id() == events[1].commit_id())
+    );
 
-    let restart_stream = stream("restart-retry");
+    let restart_stream = stream("restart-retry").expect("restart stream id");
     let retried_batch = batch(
         &restart_stream,
         "restart-operation",
         "restart-content",
         &[b"first", b"second"],
-    );
+    )
+    .expect("restart retry batch");
     let first = store
         .append(
             &restart_stream,
@@ -128,14 +159,20 @@ async fn real_nats_event_store_contract_and_operator_policy() {
                 "restart-later-operation",
                 "restart-later-content",
                 &[b"later"],
-            ),
+            )
+            .expect("later restart batch"),
         )
         .await
         .expect("later append should succeed");
 
-    let reconnected = NatsEventStore::connect(connect_context(&url).await, config.clone())
-        .await
-        .expect("a new adapter should connect without provisioning");
+    let reconnected = NatsEventStore::connect(
+        connect_context(&url)
+            .await
+            .expect("reconnected NATS JetStream context"),
+        config.clone(),
+    )
+    .await
+    .expect("a new adapter should connect without provisioning");
     let replay = reconnected
         .append(&restart_stream, ExpectedVersion::NoStream, retried_batch)
         .await
@@ -153,7 +190,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         .expect("stream info should refresh")
         .state
         .messages;
-    let atomic_stream = stream("one-wire-commit");
+    let atomic_stream = stream("one-wire-commit").expect("one-wire stream id");
     store
         .append(
             &atomic_stream,
@@ -163,7 +200,8 @@ async fn real_nats_event_store_contract_and_operator_policy() {
                 "one-wire-operation",
                 "one-wire-content",
                 &[b"one", b"two", b"three"],
-            ),
+            )
+            .expect("one-wire atomic batch"),
         )
         .await
         .expect("atomic batch should append");
@@ -173,9 +211,14 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         .expect("stream info should refresh")
         .state
         .messages;
+    let expected_messages_after = checked_add_u64(
+        messages_before,
+        3,
+        "expected JetStream message count after atomic append",
+    )
+    .expect("expected message count arithmetic");
     assert_eq!(
-        messages_after,
-        messages_before + 3,
+        messages_after, expected_messages_after,
         "each domain event must use one JetStream message"
     );
     let atomic_subject = config.aggregate_subject(
@@ -185,14 +228,22 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     let mut next_sequence = 1_u64;
     let mut batch_id = None;
     for (index, expected_payload) in [b"one".as_slice(), b"two", b"three"].iter().enumerate() {
-        let expected_batch_sequence = (index + 1).to_string();
+        let expected_batch_sequence =
+            checked_add_usize(index, 1, "expected one-based batch sequence")
+                .expect("expected batch sequence arithmetic")
+                .to_string();
         let expected_payload_base64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, expected_payload);
         let stored_event = stream_info
             .get_first_raw_message_by_subject(&atomic_subject, next_sequence)
             .await
             .expect("stored atomic event");
-        next_sequence = stored_event.sequence + 1;
+        next_sequence = checked_add_u64(
+            stored_event.sequence,
+            1,
+            "next JetStream sequence after stored atomic event",
+        )
+        .expect("next JetStream sequence arithmetic");
         assert_eq!(
             stored_event
                 .headers
@@ -263,7 +314,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         );
     }
 
-    let boundary_stream = stream("maximum-atomic-batch");
+    let boundary_stream = stream("maximum-atomic-batch").expect("maximum batch stream id");
     let boundary_outcome = store
         .append(
             &boundary_stream,
@@ -273,7 +324,8 @@ async fn real_nats_event_store_contract_and_operator_policy() {
                 "maximum-batch-operation",
                 "maximum-batch-content",
                 1_000,
-            ),
+            )
+            .expect("maximum atomic batch fixture"),
         )
         .await
         .expect("the ADR-50 maximum event count should append atomically");
@@ -287,7 +339,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         1_000
     );
 
-    let incompatible_stream = stream("incompatible-wire");
+    let incompatible_stream = stream("incompatible-wire").expect("incompatible stream id");
     let incompatible_subject = config.aggregate_subject(
         incompatible_stream.aggregate_type().as_str(),
         incompatible_stream.aggregate_id().as_str(),
@@ -317,7 +369,15 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         config.stream_name(),
     )
     .expect("valid mismatching config")
-    .with_storage_limits(config.max_stream_bytes() + 1, config.max_event_bytes())
+    .with_storage_limits(
+        checked_add_i64(
+            config.max_stream_bytes(),
+            1,
+            "mismatching maximum stream byte limit",
+        )
+        .expect("mismatching stream limit arithmetic"),
+        config.max_event_bytes(),
+    )
     .expect("valid mismatching storage limits")
     .with_replicas(config.replicas())
     .expect("valid matching replicas")
@@ -329,22 +389,34 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         Err(ref error) if error.kind() == EventStoreErrorKind::ConfigurationMismatch
     ));
 
-    capacity_is_reported_distinctly(&context).await;
+    let capacity = capacity_observations(&context)
+        .await
+        .expect("capacity observations");
+    assert!(matches!(
+        &capacity.append_result,
+        Err(error) if error.kind() == EventStoreErrorKind::CapacityExhausted
+    ));
+    assert_eq!(
+        capacity.history_after, capacity.history_before,
+        "capacity failure must not store an event prefix"
+    );
 }
 
-async fn capacity_is_reported_distinctly(context: &async_nats::jetstream::Context) {
-    let (bounded_context, stream_name) = unique_names("capacity");
-    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)
-        .expect("valid capacity config")
-        .with_storage_limits(4096, 2048)
-        .expect("valid capacity limits");
-    provision_event_store(context, &config)
-        .await
-        .expect("capacity stream should provision");
-    let store = NatsEventStore::connect(context.clone(), config)
-        .await
-        .expect("capacity stream should connect");
-    let capacity_stream = stream("capacity");
+struct CapacityObservations {
+    append_result: Result<AppendOutcome, EventStoreError>,
+    history_before: Vec<RecordedEvent>,
+    history_after: Vec<RecordedEvent>,
+}
+
+async fn capacity_observations(
+    context: &async_nats::jetstream::Context,
+) -> TestResult<CapacityObservations> {
+    let (bounded_context, stream_name) = unique_names("capacity")?;
+    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
+        .with_storage_limits(4096, 2048)?;
+    provision_event_store(context, &config).await?;
+    let store = NatsEventStore::connect(context.clone(), config).await?;
+    let capacity_stream = stream("capacity")?;
     store
         .append(
             &capacity_stream,
@@ -354,16 +426,12 @@ async fn capacity_is_reported_distinctly(context: &async_nats::jetstream::Contex
                 "capacity-first-operation",
                 "capacity-first-content",
                 vec![1; 700],
-            ),
+            )?,
         )
-        .await
-        .expect("capacity stream should accept an initial event");
-    let before = store
-        .load(&capacity_stream)
-        .await
-        .expect("initial capacity history");
+        .await?;
+    let before = store.load(&capacity_stream).await?;
     let large_payload = vec![2; 700];
-    let result = store
+    let append_result = store
         .append(
             &capacity_stream,
             ExpectedVersion::Exact(StreamVersion::new(1)),
@@ -376,51 +444,38 @@ async fn capacity_is_reported_distinctly(context: &async_nats::jetstream::Contex
                     large_payload.as_slice(),
                     large_payload.as_slice(),
                 ],
-            ),
+            )?,
         )
         .await;
-    assert!(matches!(
-        result,
-        Err(ref error) if error.kind() == EventStoreErrorKind::CapacityExhausted
-    ));
-    assert_eq!(
-        store
-            .load(&capacity_stream)
-            .await
-            .expect("capacity failure history"),
-        before,
-        "capacity failure must not store an event prefix"
-    );
+    let history_after = store.load(&capacity_stream).await?;
+    Ok(CapacityObservations {
+        append_result,
+        history_before: before,
+        history_after,
+    })
 }
 
-async fn connect_context(url: &str) -> async_nats::jetstream::Context {
-    let client = async_nats::connect(url)
-        .await
-        .expect("NATS connection should succeed");
-    async_nats::jetstream::new(client)
+async fn connect_context(url: &str) -> TestResult<async_nats::jetstream::Context> {
+    let client = async_nats::connect(url).await?;
+    Ok(async_nats::jetstream::new(client))
 }
 
-fn unique_names(label: &str) -> (BoundedContext, String) {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should follow the Unix epoch")
-        .as_nanos();
+fn unique_names(label: &str) -> TestResult<(BoundedContext, String)> {
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let counter = UNIQUE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let process = std::process::id();
-    (
-        ApplicationName::new(format!("rostfrei-test-{process}-{counter}"))
-            .expect("application name")
-            .bounded_context(label)
-            .expect("bounded context"),
+    Ok((
+        ApplicationName::new(format!("rostfrei-test-{process}-{counter}"))?
+            .bounded_context(label)?,
         format!("EVENT_STORE_{label}_{process}_{nanos}_{counter}").to_ascii_uppercase(),
-    )
+    ))
 }
 
-fn stream(id: &str) -> StreamId {
-    StreamId::new(
-        AggregateType::new("IntegrationAggregate").expect("valid aggregate type"),
-        AggregateId::new(id).expect("valid aggregate id"),
-    )
+fn stream(id: &str) -> TestResult<StreamId> {
+    Ok(StreamId::new(
+        AggregateType::new("IntegrationAggregate")?,
+        AggregateId::new(id)?,
+    ))
 }
 
 fn batch(
@@ -428,32 +483,30 @@ fn batch(
     operation_id: &str,
     fingerprint_content: &str,
     payloads: &[&[u8]],
-) -> EventBatch {
+) -> TestResult<EventBatch> {
     let metadata = ExecutionMetadata::new(
         stream.clone(),
-        OperationId::new(operation_id).expect("valid operation id"),
+        OperationId::new(operation_id)?,
         ContentFingerprint::digest(fingerprint_content),
     );
     let events = payloads
         .iter()
         .enumerate()
         .map(|(ordinal, payload)| {
-            NewEvent::new(
-                metadata.event_id(u32::try_from(ordinal).expect("small integration batch")),
+            Ok(NewEvent::new(
+                metadata.event_id(u32::try_from(ordinal)?),
                 "integration-event",
                 1,
                 payload.to_vec(),
-            )
-            .expect("valid integration event")
+            )?)
         })
-        .collect();
-    EventBatch::new(
+        .collect::<TestResult<Vec<_>>>()?;
+    Ok(EventBatch::new(
         metadata.commit_id().clone(),
         metadata.operation_id().clone(),
         metadata.operation_fingerprint(),
         events,
-    )
-    .expect("non-empty integration batch")
+    )?)
 }
 
 fn owned_payload_batch(
@@ -461,22 +514,23 @@ fn owned_payload_batch(
     operation_id: &str,
     fingerprint_content: &str,
     payload: Vec<u8>,
-) -> EventBatch {
+) -> TestResult<EventBatch> {
     let metadata = ExecutionMetadata::new(
         stream.clone(),
-        OperationId::new(operation_id).expect("valid operation id"),
+        OperationId::new(operation_id)?,
         ContentFingerprint::digest(fingerprint_content),
     );
-    EventBatch::new(
+    Ok(EventBatch::new(
         metadata.commit_id().clone(),
         metadata.operation_id().clone(),
         metadata.operation_fingerprint(),
-        vec![
-            NewEvent::new(metadata.event_id(0), "integration-event", 1, payload)
-                .expect("valid integration event"),
-        ],
-    )
-    .expect("non-empty integration batch")
+        vec![NewEvent::new(
+            metadata.event_id(0),
+            "integration-event",
+            1,
+            payload,
+        )?],
+    )?)
 }
 
 fn repeated_batch(
@@ -484,28 +538,26 @@ fn repeated_batch(
     operation_id: &str,
     fingerprint_content: &str,
     event_count: u32,
-) -> EventBatch {
+) -> TestResult<EventBatch> {
     let metadata = ExecutionMetadata::new(
         stream.clone(),
-        OperationId::new(operation_id).expect("valid operation id"),
+        OperationId::new(operation_id)?,
         ContentFingerprint::digest(fingerprint_content),
     );
     let events = (0..event_count)
         .map(|ordinal| {
-            NewEvent::new(
+            Ok(NewEvent::new(
                 metadata.event_id(ordinal),
                 "integration-event",
                 1,
-                vec![u8::try_from(ordinal % 251).expect("bounded event byte")],
-            )
-            .expect("valid integration event")
+                vec![u8::try_from(ordinal % 251)?],
+            )?)
         })
-        .collect();
-    EventBatch::new(
+        .collect::<TestResult<Vec<_>>>()?;
+    Ok(EventBatch::new(
         metadata.commit_id().clone(),
         metadata.operation_id().clone(),
         metadata.operation_fingerprint(),
         events,
-    )
-    .expect("non-empty integration batch")
+    )?)
 }

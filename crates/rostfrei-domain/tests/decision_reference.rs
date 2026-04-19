@@ -67,7 +67,7 @@ const PRIMARY_LOCAL_ID: &str = PRIMARY_REFERENCE.local_id();
 const SECONDARY_REFERENCE: DecisionReference<SecondaryOwner> =
     DecisionReference::__from_local("publish");
 
-fn assert_reference_traits<T: Copy + Clone + Debug + Eq + Hash>() {}
+const fn assert_reference_traits<T: Copy + Clone + Debug + Eq + Hash>() {}
 
 #[test]
 fn generated_reference_matches_attached_decision_descriptor() {

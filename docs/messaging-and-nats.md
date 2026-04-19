@@ -27,13 +27,14 @@ The messaging configuration derives:
 | JetStream stream | Subject filter | Retention |
 | --- | --- | --- |
 | `FAST_INBOX_COMMANDS` | `fast-inbox.command.>` | Work queue |
+| `FAST_INBOX_COMMAND_RESPONSES` | `fast-inbox.command-response.>` | Limits |
 | `FAST_INBOX_INTEGRATION_EVENTS` | `fast-inbox.integration.>` | Limits |
 | `FAST_INBOX_QUARANTINE` | `fast-inbox.quarantine.>` | Limits |
 
-Command and integration-event payloads are limited to 1 MiB. Their streams
-reserve an additional 64 KiB for bounded caller metadata, tracing, and adapter
-headers; quarantine records remain limited to 2 MiB. If a malformed source
-message cannot fit after base64 encoding, its quarantine record retains a
+Command, command-response, and integration-event payloads are limited to 1 MiB.
+Their streams reserve an additional 64 KiB for bounded caller metadata, tracing,
+and adapter headers; quarantine records remain limited to 2 MiB. If a malformed
+source message cannot fit after base64 encoding, its quarantine record retains a
 bounded payload prefix together with the original size and SHA-256 digest.
 Existing command and integration-event streams using the former 2 MiB maximum
 must be reprovisioned before upgraded publishers and consumers start.
@@ -75,6 +76,80 @@ Command consumers and private domain-event consumers also remain in their
 configured bounded context; integration-event consumers may cross contexts
 inside the same application.
 
+## Command dispatch
+
+The control plane keeps simulation and live publication on separate routes. A
+deployment registers a command-specific `DispatchAdapter` and explicitly mounts
+the dispatch router with its own bearer capability:
+
+```text
+POST /v1/contexts/{context}/aggregates/{aggregate}/{id}/commands/{command}/dispatch
+```
+
+Dispatch requires `Idempotency-Key`. The target aggregate, command contract,
+schema version, operation identity, and payload are carried in a versioned
+command envelope. Consumers recompute the operation fingerprint before calling
+`Executor::execute`; they do not trust a producer-supplied fingerprint.
+Broker deduplication IDs bind the operation identity to that fingerprint, so a
+duplicate PubAck confirms an exact wire retry rather than different content
+submitted under a reused operation identity.
+The example NATS adapter makes bounded retries for publication timeouts and
+broker unavailability with the same message identity before reporting a
+terminal operation failure. After a PubAck, it reads responses in bounded
+30-second slices. A slice timeout or transient reader unavailability starts
+another slice; the commander keeps listening until a terminal response arrives
+or its operation task is cancelled. Invalid configuration, an invalid response,
+or an identity conflict remains terminal.
+Adapters may declare a lower payload limit than the control-plane maximum so
+envelope overhead is rejected during admission rather than after publication
+work has started.
+
+A JetStream command PubAck proves publication only. The dispatch adapter reports
+it through `DispatchObserver`, so the live operation emits `command.published`
+with the command message identity while the adapter continues waiting. The
+command consumer executes the command, derives its exact response address, and
+publishes one immutable accepted or rejected `CommandResponse`. It acknowledges
+the command only after the response PubAck. Transient response publication
+failures retry without acknowledging the command.
+
+Command responses have their own v1 wire schema, independent of the originating
+command schema. Each response carries the originating `CommandAddress`, and
+publishers and readers derive its exact subject from that address plus the
+operation and command-message identities. A mismatched subject is invalid.
+
+Before executing any delivery, including a redelivery, the worker performs a
+short exact lookup at that response address. A matching retained response means
+the command was already answered, so the worker ACKs without executing the
+aggregate again. Absence, reported as a lookup timeout, permits execution;
+response-store unavailability retries without execution. Invalid or conflicting
+stored responses are quarantined and never passed to the aggregate.
+
+The trace emits `command.responded`, `command.accepted` or `command.rejected`,
+and finally `operation.completed` with the same terminal decision. The result
+carries the command and response message identities and the command PubAck
+duplicate flag; it does not invent a base stream version or append evidence.
+The `appended` field is omitted for dispatch because the response does not carry
+authoritative persistence evidence. Simulation retains `appended: false`
+because simulation is guaranteed not to append. Business rejection does not
+append a domain event. Command and rejection payloads remain subject to the
+configured trace redaction policy.
+
+This is not an exactly-once terminal-outcome protocol. Accepted commands that
+append events can recover through event-store exact replay, and a retained
+response prevents execution after its PubAck. Rejected decisions and accepted
+decisions that emit no event still have a crash window between deciding and
+persisting the response: there is no transactional operation receipt or outbox,
+so redelivery can evaluate them again. Response-subject immutability also lasts
+only while the response remains retained under the configured command-response
+stream age and capacity limits; after eviction, the retained-response guard is
+gone.
+
+The same adapter is used across environments. Local and production deployments
+use stable application scopes. Real-server tests create a globally unique
+application scope, provision its normal messaging and event-store resources,
+and delete the command, command-response, integration-event, quarantine, and
+domain-event streams after the test.
+
 ## Consumer deadlines
 
 Durable consumers configure separate deadlines for application processing and
@@ -110,4 +185,9 @@ Application-first subjects make those permissions direct: `fast-inbox.>` grants
 access to one application's commands, queries, integration events, quarantine,
 and domain-event subjects. Core NATS request/reply also uses `_INBOX.*` reply
 subjects, so query clients and servers need the corresponding inbox publish and
-subscribe permissions.
+subscribe permissions. Command-response reads are JetStream management API
+requests, not ordinary subject subscriptions. In addition to command-response
+subject permissions, readers need permission to request stream information and
+raw messages for the configured response stream (the corresponding
+`$JS.API.STREAM.INFO.*` and `$JS.API.STREAM.MSG.GET.*` subjects) and to subscribe
+to their request inbox replies.

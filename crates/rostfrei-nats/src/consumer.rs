@@ -1,33 +1,34 @@
-use std::{fmt::Write as _, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_nats::{
+    HeaderMap,
     jetstream::{
         self,
         consumer::{self, AckPolicy, DeliverPolicy},
         message::AckKind,
     },
-    HeaderMap,
 };
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures_util::TryStreamExt;
 use rostfrei_messaging_core::{
-    CallerMetadata, CommandAddress, ConsumeError, ConsumeErrorKind, ConsumerConfig,
-    DeliveryDisposition, DeliveryInfo, IntegrationEventAddress, MessageAddress, MessageConsumer,
-    MessageConsumerFactory, MessageDelivery, MessageHandler, MessageId, PublishableAddress,
-    TraceContext,
+    CallerMetadata, CommandAddress, CommandResponseAddress, ConsumeError, ConsumeErrorKind,
+    ConsumerConfig, DeliveryDisposition, DeliveryInfo, IntegrationEventAddress, MessageAddress,
+    MessageConsumer, MessageConsumerFactory, MessageDelivery, MessageHandler, MessageId,
+    PublishableAddress, TraceContext,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::time::{sleep, timeout, Instant};
+use tokio::time::{Instant, sleep, timeout};
 
 use crate::{
     error::NatsError,
+    hex::encode_lower_hex,
     messaging_config::{MessagingTopology, StreamName},
     provisioning::durable_consumer_config,
     publish::{
-        publish_confirmed, safe_headers, CONTENT_TYPE_HEADER, DEFAULT_PUBLISH_TIMEOUT,
-        JSON_CONTENT_TYPE, TRACE_PARENT_HEADER, TRACE_STATE_HEADER,
+        CONTENT_TYPE_HEADER, DEFAULT_PUBLISH_TIMEOUT, JSON_CONTENT_TYPE, TRACE_PARENT_HEADER,
+        TRACE_STATE_HEADER, publish_confirmed, safe_headers,
     },
 };
 
@@ -177,11 +178,26 @@ impl MessageConsumerFactory<IntegrationEventAddress> for NatsConsumerFactory {
     }
 }
 
+impl MessageConsumerFactory<CommandResponseAddress> for NatsConsumerFactory {
+    fn create(
+        &self,
+        config: ConsumerConfig<CommandResponseAddress>,
+    ) -> Result<Arc<dyn MessageConsumer<CommandResponseAddress>>, ConsumeError> {
+        self.create_consumer(config)
+    }
+}
+
 trait ConsumableAddress: PublishableAddress {
     fn parse_nats(value: String) -> Result<Self, NatsError>;
 }
 
 impl ConsumableAddress for CommandAddress {
+    fn parse_nats(value: String) -> Result<Self, NatsError> {
+        Self::parse(value).map_err(|_| NatsError::InvalidMessage)
+    }
+}
+
+impl ConsumableAddress for CommandResponseAddress {
     fn parse_nats(value: String) -> Result<Self, NatsError> {
         Self::parse(value).map_err(|_| NatsError::InvalidMessage)
     }
@@ -368,7 +384,10 @@ where
 
     let handling = timeout(config.processing_timeout(), handler.handle(delivery));
     tokio::pin!(handling);
-    let progress_interval = config.ack_wait() / 2;
+    let progress_interval = config
+        .ack_wait()
+        .checked_div(2)
+        .ok_or(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
     let progress = sleep(progress_interval);
     tokio::pin!(progress);
 
@@ -381,7 +400,10 @@ where
             }
             () = &mut progress => {
                 send_progress(message).await?;
-                progress.as_mut().reset(Instant::now() + progress_interval);
+                let next_progress = Instant::now()
+                    .checked_add(progress_interval)
+                    .ok_or(ConsumeError::new(ConsumeErrorKind::Unavailable))?;
+                progress.as_mut().reset(next_progress);
             }
         }
     }
@@ -506,11 +528,15 @@ fn caller_metadata(headers: &HeaderMap) -> Result<CallerMetadata, NatsError> {
         if is_control_header(&name) {
             continue;
         }
-        if values.len() != 1 {
+        let mut values = values.iter();
+        let Some(value) = values.next() else {
+            return Err(NatsError::InvalidMessage);
+        };
+        if values.next().is_some() {
             return Err(NatsError::InvalidMessage);
         }
         metadata
-            .insert(name, values[0].as_str())
+            .insert(name, value.as_str())
             .map_err(|_| NatsError::InvalidMessage)?;
     }
     Ok(metadata)
@@ -694,20 +720,11 @@ fn quarantine_message_id(record: &QuarantineRecord) -> String {
     hash.update(record.source_consumer.as_bytes());
     hash.update([0]);
     hash.update(record.source_sequence.to_be_bytes());
-    let mut id = String::with_capacity(75);
-    id.push_str("quarantine-");
-    for byte in hash.finalize() {
-        write!(&mut id, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    id
+    format!("quarantine-{}", encode_lower_hex(hash.finalize()))
 }
 
 fn sha256_hex(payload: &[u8]) -> String {
-    let mut output = String::with_capacity(64);
-    for byte in Sha256::digest(payload) {
-        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    output
+    encode_lower_hex(Sha256::digest(payload))
 }
 
 async fn apply_ack(message: &jetstream::Message, kind: AckKind) -> Result<(), ConsumeError> {

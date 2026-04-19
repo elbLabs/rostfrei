@@ -4,7 +4,7 @@ use async_nats::jetstream::{
     stream::{Compression, Config},
 };
 
-pub(crate) fn stream_config_mismatches(expected: &Config, actual: &Config) -> Vec<&'static str> {
+pub fn stream_config_mismatches(expected: &Config, actual: &Config) -> Vec<&'static str> {
     let mut mismatches = Vec::new();
     macro_rules! compare {
         ($($field:ident),+ $(,)?) => {
@@ -66,7 +66,7 @@ pub(crate) fn stream_config_mismatches(expected: &Config, actual: &Config) -> Ve
     mismatches
 }
 
-pub(crate) fn is_stream_not_found(error: &GetStreamError) -> bool {
+pub fn is_stream_not_found(error: &GetStreamError) -> bool {
     matches!(
         error.kind(),
         GetStreamErrorKind::JetStream(error)

@@ -5,13 +5,13 @@ use domain::{
     Entity, EntityType, ScalarType, ValueObject, ValueObjectType, domain_actions, domain_model,
 };
 
-mod contracts {
+pub mod contracts {
     use domain::domain_actions;
 
     use super::Title;
 
     #[domain_actions(entity)]
-    pub(crate) trait TaskWorkflow {
+    pub(super) trait TaskWorkflow {
         #[action(id = "rename", label = "Rename task")]
         fn rename(&mut self, input: Title) -> Title;
 
@@ -99,13 +99,13 @@ impl TaskInspection for Task {
 impl contracts::TaskWorkflow for Task {
     fn rename(&mut self, input: Title) -> Title {
         self.title = input.0;
-        self.revision += 1;
+        self.revision = self.revision.saturating_add(1);
         Title(self.title.clone())
     }
 
     fn complete(&mut self) {
         self.complete = true;
-        self.revision += 1;
+        self.revision = self.revision.saturating_add(1);
     }
 
     fn reject(&mut self) -> Result<(), TaskRejected> {
@@ -190,15 +190,13 @@ fn entity_action_contracts_preserve_list_and_trait_source_order() {
         contracts[0][1].output,
         Some(ActionOutputDescriptor::ValueObject(Title::DESCRIPTOR.id))
     );
-    let Some(ActionOutputDescriptor::Optional(history)) = contracts[0][2].output else {
-        panic!("title-history should have an optional output");
-    };
-    let ActionOutputDescriptor::List(history) = *history else {
-        panic!("title-history should contain a list output");
-    };
     assert_eq!(
-        *history,
-        ActionOutputDescriptor::ValueObject(Title::DESCRIPTOR.id)
+        contracts[0][2].output,
+        Some(ActionOutputDescriptor::Optional(
+            &ActionOutputDescriptor::List(&ActionOutputDescriptor::ValueObject(
+                Title::DESCRIPTOR.id,
+            )),
+        ))
     );
     assert_eq!(
         contracts[1][0].input,
@@ -237,7 +235,8 @@ fn domain_model_automatically_projects_only_listed_entity_action_traits() {
         commands: [],
         errors: [TaskRejected],
         query_groups: [],
-    };
+    }
+    .expect("entity action domain model should be valid");
 
     let actions = model["actions"].as_array().unwrap();
     assert_eq!(
@@ -273,6 +272,7 @@ fn domain_model_automatically_projects_only_listed_entity_action_traits() {
         commands: [],
         errors: [],
         query_groups: [],
-    };
+    }
+    .expect("domain model without task actions should be valid");
     assert!(model_without_task["actions"].as_array().unwrap().is_empty());
 }

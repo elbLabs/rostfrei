@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use crate::{
-    CallerMetadata, CommandAddress, IntegrationEventAddress, MessageBuildError, MessageId,
-    PublishError, PublishableAddress, TraceContext,
+    CallerMetadata, CommandAddress, CommandResponseAddress, IntegrationEventAddress,
+    MessageBuildError, MessageId, PublishError, PublishableAddress, TraceContext,
 };
 
 pub const MAX_MESSAGE_PAYLOAD_BYTES: usize = 1024 * 1024;
@@ -123,7 +123,7 @@ where
     }
 }
 
-fn validate_payload_size(actual: usize, maximum: usize) -> Result<(), MessageBuildError> {
+const fn validate_payload_size(actual: usize, maximum: usize) -> Result<(), MessageBuildError> {
     if maximum == 0 || maximum > MAX_MESSAGE_PAYLOAD_BYTES {
         return Err(MessageBuildError::invalid_maximum(maximum));
     }
@@ -153,6 +153,14 @@ pub trait CommandPublisher: Send + Sync {
     async fn publish_command(
         &self,
         message: OutboundMessage<CommandAddress>,
+    ) -> Result<PublishReceipt, PublishError>;
+}
+
+#[async_trait]
+pub trait CommandResponsePublisher: Send + Sync {
+    async fn publish_command_response(
+        &self,
+        message: OutboundMessage<CommandResponseAddress>,
     ) -> Result<PublishReceipt, PublishError>;
 }
 

@@ -15,8 +15,8 @@ pub use domain_event::{
     DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError,
 };
 pub use envelope::{
-    EnvelopeError, EventBatch, ExpectedVersion, NewEvent, RecordedEvent, StreamVersion,
-    MAX_BATCH_PAYLOAD_LEN, MAX_EVENTS_PER_BATCH, MAX_EVENT_PAYLOAD_LEN, MAX_EVENT_TYPE_LEN,
+    EnvelopeError, EventBatch, ExpectedVersion, MAX_BATCH_PAYLOAD_LEN, MAX_EVENT_PAYLOAD_LEN,
+    MAX_EVENT_TYPE_LEN, MAX_EVENTS_PER_BATCH, NewEvent, RecordedEvent, StreamVersion,
 };
 pub use executor::{
     CommandExecutionError, CommandOutcome, CommandReceipt, CommandResult, Executor,
@@ -31,7 +31,7 @@ pub use store::{AppendOutcome, EventHistory, EventStore, EventStoreError, EventS
 
 #[doc(hidden)]
 pub mod __private {
-    use serde::{de::DeserializeOwned, Serialize};
+    use serde::{Serialize, de::DeserializeOwned};
 
     use crate::{EventCodecError, EventCodecErrorKind};
 

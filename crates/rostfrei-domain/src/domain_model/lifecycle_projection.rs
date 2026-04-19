@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use crate::{EntityId, EntityLifecycleDescriptor};
 
 use super::{
+    error::DomainModelError,
     id_projection::action as action_id,
     lifecycle_action_validation::{self, LifecycleActionInventory},
     lifecycle_descriptor_validation,
@@ -13,7 +14,7 @@ pub(super) struct LifecycleProjection {
 }
 
 impl LifecycleProjection {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             descriptors: Vec::new(),
         }
@@ -23,14 +24,17 @@ impl LifecycleProjection {
         &mut self,
         expected_owner: EntityId,
         descriptor: EntityLifecycleDescriptor,
-    ) -> Value {
-        lifecycle_descriptor_validation::validate(expected_owner, descriptor);
+    ) -> Result<Value, DomainModelError> {
+        lifecycle_descriptor_validation::validate(expected_owner, descriptor)?;
         self.descriptors.push(descriptor);
-        lifecycle(descriptor)
+        Ok(lifecycle(descriptor))
     }
 
-    pub(super) fn validate_actions(&self, inventory: &LifecycleActionInventory) {
-        lifecycle_action_validation::validate(self.descriptors.iter().copied(), inventory);
+    pub(super) fn validate_actions(
+        &self,
+        inventory: &LifecycleActionInventory,
+    ) -> Result<(), DomainModelError> {
+        lifecycle_action_validation::validate(self.descriptors.iter().copied(), inventory)
     }
 }
 

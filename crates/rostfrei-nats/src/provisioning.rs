@@ -6,7 +6,7 @@ use async_nats::jetstream::{
     stream::{self, DiscardPolicy, RetentionPolicy, StorageType},
 };
 use rostfrei_messaging_core::{
-    ApplicationName, ConsumerConfig, PublishableAddress, MAX_MESSAGE_PAYLOAD_BYTES,
+    ApplicationName, ConsumerConfig, MAX_MESSAGE_PAYLOAD_BYTES, PublishableAddress,
 };
 
 use crate::{
@@ -16,9 +16,9 @@ use crate::{
 };
 
 pub const DEFAULT_STREAM_MAX_BYTES: i64 = 10 * 1024 * 1024 * 1024;
-pub const DEFAULT_STREAM_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+pub const DEFAULT_STREAM_MAX_AGE: Duration = Duration::from_hours(720);
 pub const DEFAULT_STREAM_MAX_MESSAGE_BYTES: i32 = 2 * 1024 * 1024;
-pub const DEFAULT_DUPLICATE_WINDOW: Duration = Duration::from_secs(2 * 60);
+pub const DEFAULT_DUPLICATE_WINDOW: Duration = Duration::from_mins(2);
 const SOURCE_STREAM_MESSAGE_OVERHEAD_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -188,6 +188,7 @@ impl StreamProvisioningConfig {
 pub struct ApplicationMessagingConfig {
     topology: MessagingTopology,
     commands: StreamProvisioningConfig,
+    command_responses: StreamProvisioningConfig,
     integration_events: StreamProvisioningConfig,
     quarantine: StreamProvisioningConfig,
 }
@@ -205,6 +206,14 @@ impl ApplicationMessagingConfig {
             StreamRetention::WorkQueue,
         )?
         .with_description(format!("{} commands", application.as_str()))
+        .with_maximum_message_bytes(source_maximum_message_bytes);
+        let command_responses = StreamProvisioningConfig::new(
+            application,
+            topology.command_response_stream().clone(),
+            vec![application_subject_filter(application, "command-response")?],
+            StreamRetention::Limits,
+        )?
+        .with_description(format!("{} command responses", application.as_str()))
         .with_maximum_message_bytes(source_maximum_message_bytes);
         let integration_events = StreamProvisioningConfig::new(
             application,
@@ -224,6 +233,7 @@ impl ApplicationMessagingConfig {
         Ok(Self {
             topology,
             commands,
+            command_responses,
             integration_events,
             quarantine,
         })
@@ -231,6 +241,7 @@ impl ApplicationMessagingConfig {
 
     pub fn with_replicas(mut self, replicas: usize) -> Result<Self, NatsError> {
         self.commands = self.commands.with_replicas(replicas);
+        self.command_responses = self.command_responses.with_replicas(replicas);
         self.integration_events = self.integration_events.with_replicas(replicas);
         self.quarantine = self.quarantine.with_replicas(replicas);
         for stream in self.streams() {
@@ -241,6 +252,7 @@ impl ApplicationMessagingConfig {
 
     pub fn with_max_bytes(mut self, max_bytes: i64) -> Result<Self, NatsError> {
         self.commands = self.commands.with_max_bytes(max_bytes);
+        self.command_responses = self.command_responses.with_max_bytes(max_bytes);
         self.integration_events = self.integration_events.with_max_bytes(max_bytes);
         self.quarantine = self.quarantine.with_max_bytes(max_bytes);
         for stream in self.streams() {
@@ -265,12 +277,21 @@ impl ApplicationMessagingConfig {
         &self.integration_events
     }
 
+    pub const fn command_responses(&self) -> &StreamProvisioningConfig {
+        &self.command_responses
+    }
+
     pub const fn quarantine(&self) -> &StreamProvisioningConfig {
         &self.quarantine
     }
 
-    pub fn streams(&self) -> [&StreamProvisioningConfig; 3] {
-        [&self.commands, &self.integration_events, &self.quarantine]
+    pub const fn streams(&self) -> [&StreamProvisioningConfig; 4] {
+        [
+            &self.commands,
+            &self.command_responses,
+            &self.integration_events,
+            &self.quarantine,
+        ]
     }
 }
 
@@ -423,6 +444,10 @@ mod tests {
         assert_eq!(config.application().as_str(), "fast-inbox");
         assert_eq!(config.commands.name().as_str(), "FAST_INBOX_COMMANDS");
         assert_eq!(
+            config.command_responses.name().as_str(),
+            "FAST_INBOX_COMMAND_RESPONSES"
+        );
+        assert_eq!(
             config.integration_events.name().as_str(),
             "FAST_INBOX_INTEGRATION_EVENTS"
         );
@@ -430,6 +455,10 @@ mod tests {
         assert_eq!(
             config.commands.subjects()[0].as_str(),
             "fast-inbox.command.>"
+        );
+        assert_eq!(
+            config.command_responses.subjects()[0].as_str(),
+            "fast-inbox.command-response.>"
         );
         assert_eq!(
             config.integration_events.subjects()[0].as_str(),
@@ -441,6 +470,10 @@ mod tests {
         );
         assert_eq!(config.commands.retention(), StreamRetention::WorkQueue);
         assert_eq!(
+            config.command_responses.retention(),
+            StreamRetention::Limits
+        );
+        assert_eq!(
             config.integration_events.retention(),
             StreamRetention::Limits
         );
@@ -449,6 +482,10 @@ mod tests {
             config.commands.maximum_message_bytes,
             i32::try_from(MAX_MESSAGE_PAYLOAD_BYTES + SOURCE_STREAM_MESSAGE_OVERHEAD_BYTES)
                 .unwrap()
+        );
+        assert_eq!(
+            config.command_responses.maximum_message_bytes,
+            config.commands.maximum_message_bytes
         );
         assert_eq!(
             config.integration_events.maximum_message_bytes,
@@ -465,32 +502,40 @@ mod tests {
     fn application_config_rejects_invalid_replica_counts() {
         let application = ApplicationName::new("fast-inbox").unwrap();
 
-        assert!(ApplicationMessagingConfig::new(&application)
-            .unwrap()
-            .with_replicas(0)
-            .is_err());
-        assert!(ApplicationMessagingConfig::new(&application)
-            .unwrap()
-            .with_replicas(6)
-            .is_err());
+        assert!(
+            ApplicationMessagingConfig::new(&application)
+                .unwrap()
+                .with_replicas(0)
+                .is_err()
+        );
+        assert!(
+            ApplicationMessagingConfig::new(&application)
+                .unwrap()
+                .with_replicas(6)
+                .is_err()
+        );
     }
 
     #[test]
     fn application_config_validates_capacity_overrides() {
         let application = ApplicationName::new("fast-inbox").unwrap();
 
-        assert!(ApplicationMessagingConfig::new(&application)
-            .unwrap()
-            .with_max_bytes(i64::from(DEFAULT_STREAM_MAX_MESSAGE_BYTES) - 1)
-            .is_err());
+        assert!(
+            ApplicationMessagingConfig::new(&application)
+                .unwrap()
+                .with_max_bytes(i64::from(DEFAULT_STREAM_MAX_MESSAGE_BYTES) - 1)
+                .is_err()
+        );
         let config = ApplicationMessagingConfig::new(&application)
             .unwrap()
             .with_max_bytes(64 * 1024 * 1024)
             .unwrap();
-        assert!(config
-            .streams()
-            .iter()
-            .all(|stream| stream.max_bytes == 64 * 1024 * 1024));
+        assert!(
+            config
+                .streams()
+                .iter()
+                .all(|stream| stream.max_bytes == 64 * 1024 * 1024)
+        );
     }
 
     #[test]
@@ -517,13 +562,15 @@ mod tests {
         let name = StreamName::new("FAST_INBOX_CUSTOM").unwrap();
 
         for filter in [">", "*.command.>", "other.command.>"] {
-            assert!(StreamProvisioningConfig::new(
-                &application,
-                name.clone(),
-                vec![SubjectFilter::new(filter).unwrap()],
-                StreamRetention::Limits,
-            )
-            .is_err());
+            assert!(
+                StreamProvisioningConfig::new(
+                    &application,
+                    name.clone(),
+                    vec![SubjectFilter::new(filter).unwrap()],
+                    StreamRetention::Limits,
+                )
+                .is_err()
+            );
         }
     }
 

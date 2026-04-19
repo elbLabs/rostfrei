@@ -1,12 +1,12 @@
 use std::{fmt, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{
-    scope::validate_scope_segment, AddressKind, CallerMetadata, ConsumeError, ContractError,
-    ContractErrorKind, MessageBuildError, MessageId, PublishableAddress, TraceContext,
-    MAX_MESSAGE_PAYLOAD_BYTES,
+    AddressKind, CallerMetadata, ConsumeError, ContractError, ContractErrorKind,
+    MAX_MESSAGE_PAYLOAD_BYTES, MessageBuildError, MessageId, PublishableAddress, TraceContext,
+    scope::validate_scope_segment,
 };
 
 pub const CONSUMER_NAME_CONVENTION: &str = "<application>--<context>--<purpose>--v<major>";
@@ -14,8 +14,8 @@ pub const DURABLE_NAME_CONVENTION: &str = "<application>--<context>--<purpose>--
 pub const MAX_CONSUMER_NAME_BYTES: usize = 256;
 pub const MAX_CONCURRENCY: usize = 1024;
 pub const MAX_DELIVERY_ATTEMPTS: u32 = 1000;
-pub const MAX_PROCESSING_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
-pub const MAX_RETRY_DELAY: Duration = Duration::from_secs(24 * 60 * 60);
+pub const MAX_PROCESSING_TIMEOUT: Duration = Duration::from_hours(24);
+pub const MAX_RETRY_DELAY: Duration = Duration::from_hours(24);
 pub const MAX_QUARANTINE_REASON_BYTES: usize = 512;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -169,7 +169,10 @@ where
             ));
         }
         if name.context() != durable_name.context()
-            || (address.kind() == AddressKind::Command && name.context() != address.context())
+            || (matches!(
+                address.kind(),
+                AddressKind::Command | AddressKind::CommandResponse
+            ) && name.context() != address.context())
         {
             return Err(ContractError::new(
                 ContractErrorKind::InvalidFormat,
@@ -251,7 +254,7 @@ pub struct DeliveryInfo {
 }
 
 impl DeliveryInfo {
-    pub fn new(
+    pub const fn new(
         attempt: u32,
         pending: u64,
         source_sequence: u64,
@@ -513,11 +516,17 @@ fn parse_delivery_name(value: String, field: &'static str) -> Result<String, Con
             field,
         ));
     }
-    let segments = value.split("--").collect::<Vec<_>>();
-    if segments.len() != 4 {
+    let mut segments = value.split("--");
+    let (Some(application), Some(context), Some(purpose), Some(version), None) = (
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+    ) else {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
-    }
-    let Some(version) = segments[3].strip_prefix('v') else {
+    };
+    let Some(version) = version.strip_prefix('v') else {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
     };
     let major_version = version
@@ -526,7 +535,7 @@ fn parse_delivery_name(value: String, field: &'static str) -> Result<String, Con
     if version != major_version.to_string() {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
     }
-    build_delivery_name(segments[0], segments[1], segments[2], major_version, field)?;
+    build_delivery_name(application, context, purpose, major_version, field)?;
     Ok(value)
 }
 
@@ -538,6 +547,9 @@ fn delivery_name_segment(value: &str, index: usize) -> &str {
 mod tests {
     use super::*;
     use crate::{CommandAddress, MessageBuildErrorKind};
+
+    const DELIVERY_INFO_RESULT: Result<DeliveryInfo, ContractError> =
+        DeliveryInfo::new(2, 10, 42, 7);
 
     #[test]
     fn consumer_and_durable_names_are_stable_and_parseable() {
@@ -558,31 +570,35 @@ mod tests {
         let address = CommandAddress::new("acme", "orders", "place-order").unwrap();
         let consumer = ConsumerName::new("acme", "orders", "fulfillment", 1).unwrap();
         let durable = DurableName::new("acme", "orders", "fulfillment", 1).unwrap();
-        assert!(ConsumerConfig::new(
-            consumer.clone(),
-            durable.clone(),
-            address.clone(),
-            Duration::from_secs(30),
-            Duration::ZERO,
-            1,
-            5,
-        )
-        .is_err());
+        assert!(
+            ConsumerConfig::new(
+                consumer.clone(),
+                durable.clone(),
+                address.clone(),
+                Duration::from_secs(30),
+                Duration::ZERO,
+                1,
+                5,
+            )
+            .is_err()
+        );
         for ack_wait in [
             Duration::ZERO,
             Duration::from_secs(29),
             Duration::from_secs(30),
         ] {
-            assert!(ConsumerConfig::new(
-                consumer.clone(),
-                durable.clone(),
-                address.clone(),
-                ack_wait,
-                Duration::from_secs(30),
-                1,
-                5,
-            )
-            .is_err());
+            assert!(
+                ConsumerConfig::new(
+                    consumer.clone(),
+                    durable.clone(),
+                    address.clone(),
+                    ack_wait,
+                    Duration::from_secs(30),
+                    1,
+                    5,
+                )
+                .is_err()
+            );
         }
         let config = ConsumerConfig::new(
             consumer.clone(),
@@ -596,16 +612,18 @@ mod tests {
         .unwrap();
         assert_eq!(config.ack_wait(), Duration::from_secs(45));
         assert_eq!(config.processing_timeout(), Duration::from_secs(30));
-        assert!(ConsumerConfig::new(
-            consumer,
-            durable,
-            address,
-            Duration::from_secs(45),
-            Duration::from_secs(30),
-            1,
-            0,
-        )
-        .is_err());
+        assert!(
+            ConsumerConfig::new(
+                consumer,
+                durable,
+                address,
+                Duration::from_secs(45),
+                Duration::from_secs(30),
+                1,
+                0,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -645,23 +663,43 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.field(), "consumer bounded-context scope");
 
-        let integration_event =
-            crate::IntegrationEventAddress::new("acme", "orders", "order-placed").unwrap();
-        assert!(ConsumerConfig::new(
-            name,
-            durable,
-            integration_event,
+        let command_response = crate::CommandResponseAddress::new(
+            "acme",
+            "orders",
+            "0d0cb197be2a6e138e30cb34bb8b735e691293cec88cb6835f1e7088c480731c",
+        )
+        .unwrap();
+        let error = ConsumerConfig::new(
+            name.clone(),
+            durable.clone(),
+            command_response,
             Duration::from_secs(45),
             Duration::from_secs(30),
             1,
             5,
         )
-        .is_ok());
+        .unwrap_err();
+        assert_eq!(error.field(), "consumer bounded-context scope");
+
+        let integration_event =
+            crate::IntegrationEventAddress::new("acme", "orders", "order-placed").unwrap();
+        assert!(
+            ConsumerConfig::new(
+                name,
+                durable,
+                integration_event,
+                Duration::from_secs(45),
+                Duration::from_secs(30),
+                1,
+                5,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn deliveries_expose_identity_metadata_and_delivery_progress() {
-        let info = DeliveryInfo::new(2, 10, 42, 7).unwrap();
+        let info = DELIVERY_INFO_RESULT.unwrap();
         let trace_context =
             TraceContext::new("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").unwrap();
         let delivery = MessageDelivery::new_with_trace_context(

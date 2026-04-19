@@ -10,12 +10,12 @@ use rostfrei_core::{
     DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandlerError,
     DomainEventHandlerErrorKind, EventStoreErrorKind, MAX_EVENTS_PER_BATCH,
 };
-use rostfrei_messaging_core::{ConsumerName, DurableName, RetryDelay, MAX_PROCESSING_TIMEOUT};
+use rostfrei_messaging_core::{ConsumerName, DurableName, MAX_PROCESSING_TIMEOUT, RetryDelay};
 use thiserror::Error;
 use tokio::{sync::watch, time::timeout};
 
 use crate::{
-    event_store::{decode_consumed_event, DecodedEvent, NatsEventStore},
+    event_store::{DecodedEvent, NatsEventStore, decode_consumed_event},
     event_store_config::NatsEventStoreConfig,
 };
 
@@ -198,11 +198,14 @@ impl NatsDomainEventConsumer {
                     }
                     continue;
                 }
-                message = first_delivery.try_next() => match message
-                    .map_err(|error| unavailable(format!("domain-event delivery failed: {error}")))?
-                {
-                    Some(message) => message,
-                    None => continue,
+                message = first_delivery.try_next() => {
+                    let delivery = message.map_err(|error| {
+                        unavailable(format!("domain-event delivery failed: {error}"))
+                    })?;
+                    let Some(message) = delivery else {
+                        continue;
+                    };
+                    message
                 },
             };
             let first = self.buffer_delivery(first)?;
@@ -214,14 +217,14 @@ impl NatsDomainEventConsumer {
                 .stream_sequence
                 .checked_add(1)
                 .ok_or_else(|| invalid_committed_event("durable sequence space overflowed"))?;
-            if first.stream_sequence != expected_sequence {
+            if first.event.stream_sequence != expected_sequence {
                 tracing::warn!(
                     durable = %self.config.durable_name(),
                     expected_sequence,
-                    delivered_sequence = first.stream_sequence,
+                    delivered_sequence = first.event.stream_sequence,
                     "deferring delivery until the durable's earliest unresolved event is available"
                 );
-                defer_delivery(&first, self.config.ack_wait()).await?;
+                defer_delivery(&first.delivery, self.config.ack_wait()).await?;
                 if !wait_for_retry(self.config.ack_wait(), &mut shutdown).await {
                     return Ok(());
                 }
@@ -229,19 +232,23 @@ impl NatsDomainEventConsumer {
             }
 
             let mut commit = self
-                .reconstruct_acknowledged_prefix(&stream, &first)
+                .reconstruct_acknowledged_prefix(&stream, &first.event)
                 .await?;
-            if commit.is_empty() && first.decoded.event_ordinal != 0 {
+            if commit.is_empty() && first.event.decoded.event_ordinal != 0 {
                 return Err(invalid_committed_event(
                     "durable delivery started inside a committed event batch",
                 ));
             }
             if !commit.is_empty() {
-                validate_next_event(&commit, &first)?;
+                validate_next_event(&commit, &first.event)?;
             }
-            let event_count = first.decoded.event_count;
-            commit.push(first);
-            let remaining = event_count as usize - commit.len();
+            let event_count = first.event.decoded.event_count;
+            let commit_id = first.event.decoded.commit_id.clone();
+            let mut live_deliveries = LiveDeliveries::new(first.delivery);
+            commit.push(first.event);
+            let remaining = event_count.checked_sub(commit.len()).ok_or_else(|| {
+                invalid_committed_event("committed event batch exceeds its declared count")
+            })?;
             if remaining > 0 {
                 let mut remaining_deliveries = consumer
                     .batch()
@@ -252,7 +259,7 @@ impl NatsDomainEventConsumer {
                     .map_err(|error| {
                         unavailable(format!("failed to continue durable delivery: {error}"))
                     })?;
-                while commit.len() < event_count as usize {
+                while commit.len() < event_count {
                     let message = tokio::select! {
                         changed = shutdown.changed() => {
                             if changed.is_err() || *shutdown.borrow() {
@@ -267,8 +274,9 @@ impl NatsDomainEventConsumer {
                             ))?,
                     };
                     let next = self.buffer_delivery(message)?;
-                    validate_next_event(&commit, &next)?;
-                    commit.push(next);
+                    validate_next_event(&commit, &next.event)?;
+                    live_deliveries.push(next.delivery);
+                    commit.push(next.event);
                 }
             }
 
@@ -278,16 +286,16 @@ impl NatsDomainEventConsumer {
             )
             .await
             {
-                Ok(Ok(())) => acknowledge_commit(&commit).await?,
+                Ok(Ok(())) => acknowledge_commit(live_deliveries.last()).await?,
                 Ok(Err(error)) if error.kind() == DomainEventHandlerErrorKind::Retryable => {
                     tracing::warn!(
                         durable = %self.config.durable_name(),
-                        commit_id = %commit[0].decoded.commit_id,
+                        commit_id = %commit_id,
                         error = %error,
                         "domain-event handler requested redelivery"
                     );
                     let delay = self.config.retry_delay().get();
-                    retry_commit(&commit, delay).await?;
+                    retry_commit(&live_deliveries, delay).await?;
                     if !wait_for_retry(delay, &mut shutdown).await {
                         return Ok(());
                     }
@@ -295,7 +303,7 @@ impl NatsDomainEventConsumer {
                 Ok(Err(error)) => {
                     tracing::error!(
                         durable = %self.config.durable_name(),
-                        commit_id = %commit[0].decoded.commit_id,
+                        commit_id = %commit_id,
                         error = %error,
                         "domain-event durable is blocked and requires operator action"
                     );
@@ -304,11 +312,11 @@ impl NatsDomainEventConsumer {
                 Err(_) => {
                     tracing::warn!(
                         durable = %self.config.durable_name(),
-                        commit_id = %commit[0].decoded.commit_id,
+                        commit_id = %commit_id,
                         "domain-event handler timed out and will be redelivered"
                     );
                     let delay = self.config.retry_delay().get();
-                    retry_commit(&commit, delay).await?;
+                    retry_commit(&live_deliveries, delay).await?;
                     if !wait_for_retry(delay, &mut shutdown).await {
                         return Ok(());
                     }
@@ -320,7 +328,7 @@ impl NatsDomainEventConsumer {
     fn buffer_delivery(
         &self,
         message: jetstream::Message,
-    ) -> Result<BufferedDomainEvent, DomainEventConsumerError> {
+    ) -> Result<LiveDomainEvent, DomainEventConsumerError> {
         let info = message
             .info()
             .map_err(|error| unavailable(format!("delivery metadata is unavailable: {error}")))?;
@@ -345,10 +353,12 @@ impl NatsDomainEventConsumer {
             &message.payload,
         )
         .map_err(|error| invalid_committed_event(error.to_string()))?;
-        Ok(BufferedDomainEvent {
-            delivery: Some(message),
-            stream_sequence,
-            decoded,
+        Ok(LiveDomainEvent {
+            event: BufferedDomainEvent {
+                stream_sequence,
+                decoded,
+            },
+            delivery: message,
         })
     }
 
@@ -360,11 +370,13 @@ impl NatsDomainEventConsumer {
         if first.decoded.event_ordinal == 0 {
             return Ok(Vec::new());
         }
+        let event_ordinal = u64::try_from(first.decoded.event_ordinal)
+            .map_err(|_| invalid_committed_event("commit ordinal cannot be represented"))?;
         let start_sequence = first
             .stream_sequence
-            .checked_sub(u64::from(first.decoded.event_ordinal))
+            .checked_sub(event_ordinal)
             .ok_or_else(|| invalid_committed_event("commit start sequence underflowed"))?;
-        let mut prefix = Vec::with_capacity(first.decoded.event_ordinal as usize);
+        let mut prefix = Vec::with_capacity(first.decoded.event_ordinal);
         for sequence in start_sequence..first.stream_sequence {
             let raw = stream.get_raw_message(sequence).await.map_err(|error| {
                 unavailable(format!(
@@ -379,7 +391,6 @@ impl NatsDomainEventConsumer {
             )
             .map_err(|error| invalid_committed_event(error.to_string()))?;
             let event = BufferedDomainEvent {
-                delivery: None,
                 stream_sequence: raw.sequence,
                 decoded,
             };
@@ -411,9 +422,39 @@ impl NatsDomainEventConsumer {
 }
 
 struct BufferedDomainEvent {
-    delivery: Option<jetstream::Message>,
     stream_sequence: u64,
     decoded: DecodedEvent,
+}
+
+struct LiveDomainEvent {
+    event: BufferedDomainEvent,
+    delivery: jetstream::Message,
+}
+
+struct LiveDeliveries {
+    first: jetstream::Message,
+    rest: Vec<jetstream::Message>,
+}
+
+impl LiveDeliveries {
+    const fn new(first: jetstream::Message) -> Self {
+        Self {
+            first,
+            rest: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, delivery: jetstream::Message) {
+        self.rest.push(delivery);
+    }
+
+    fn last(&self) -> &jetstream::Message {
+        self.rest.last().unwrap_or(&self.first)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &jetstream::Message> {
+        std::iter::once(&self.first).chain(self.rest.iter())
+    }
 }
 
 pub async fn provision_domain_event_consumer(
@@ -507,10 +548,14 @@ fn validate_next_event(
     commit: &[BufferedDomainEvent],
     next: &BufferedDomainEvent,
 ) -> Result<(), DomainEventConsumerError> {
-    let first = &commit[0].decoded;
-    let previous = commit.last().expect("commit has a first event");
-    let expected_ordinal = u32::try_from(commit.len())
-        .map_err(|_| invalid_committed_event("commit ordinal cannot be represented"))?;
+    let first = &commit
+        .first()
+        .ok_or_else(|| invalid_committed_event("committed event batch is empty"))?
+        .decoded;
+    let previous = commit
+        .last()
+        .ok_or_else(|| invalid_committed_event("committed event batch is empty"))?;
+    let expected_ordinal = commit.len();
     if next.decoded.event_ordinal != expected_ordinal
         || next.decoded.event_count != first.event_count
         || next.decoded.batch_id != first.batch_id
@@ -537,33 +582,20 @@ fn validate_next_event(
     Ok(())
 }
 
-async fn acknowledge_commit(
-    commit: &[BufferedDomainEvent],
-) -> Result<(), DomainEventConsumerError> {
-    commit
-        .last()
-        .expect("commit is non-empty")
-        .delivery
-        .as_ref()
-        .expect("the final committed event has a live delivery")
-        .double_ack()
-        .await
-        .map_err(|error| {
-            DomainEventConsumerError::new(
-                DomainEventConsumerErrorKind::Acknowledgement,
-                format!("failed to acknowledge committed event batch: {error}"),
-            )
-        })
+async fn acknowledge_commit(delivery: &jetstream::Message) -> Result<(), DomainEventConsumerError> {
+    delivery.double_ack().await.map_err(|error| {
+        DomainEventConsumerError::new(
+            DomainEventConsumerErrorKind::Acknowledgement,
+            format!("failed to acknowledge committed event batch: {error}"),
+        )
+    })
 }
 
 async fn retry_commit(
-    commit: &[BufferedDomainEvent],
+    deliveries: &LiveDeliveries,
     delay: Duration,
 ) -> Result<(), DomainEventConsumerError> {
-    for event in commit {
-        let Some(message) = &event.delivery else {
-            continue;
-        };
+    for message in deliveries.iter() {
         message
             .double_ack_with(AckKind::Nak(Some(delay)))
             .await
@@ -578,13 +610,10 @@ async fn retry_commit(
 }
 
 async fn defer_delivery(
-    event: &BufferedDomainEvent,
+    delivery: &jetstream::Message,
     delay: Duration,
 ) -> Result<(), DomainEventConsumerError> {
-    event
-        .delivery
-        .as_ref()
-        .expect("buffered delivery is live")
+    delivery
         .double_ack_with(AckKind::Nak(Some(delay)))
         .await
         .map_err(|error| {

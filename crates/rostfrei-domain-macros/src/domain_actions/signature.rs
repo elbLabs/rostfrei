@@ -33,8 +33,8 @@ pub fn parse_entity(signature: &Signature) -> syn::Result<ParsedSignature> {
             "domain action contract receivers cannot have an explicit lifetime",
         ));
     }
-    let input = parse_business_inputs(signature.inputs.iter().skip(1), 1, "entity")?;
-    parsed(None, input, signature)
+    let input = parse_business_inputs(signature.inputs.iter().skip(1), "entity")?;
+    Ok(parsed(None, input, signature))
 }
 
 pub fn parse_domain_service(signature: &Signature) -> syn::Result<ParsedSignature> {
@@ -44,8 +44,8 @@ pub fn parse_domain_service(signature: &Signature) -> syn::Result<ParsedSignatur
             "domain service action contract methods must be associated functions without a receiver",
         ));
     }
-    let input = parse_business_inputs(signature.inputs.iter(), 1, "domain service")?;
-    parsed(None, input, signature)
+    let input = parse_business_inputs(signature.inputs.iter(), "domain service")?;
+    Ok(parsed(None, input, signature))
 }
 
 pub fn parse_value_object(signature: &Signature) -> syn::Result<ParsedSignature> {
@@ -64,12 +64,10 @@ pub fn parse_value_object(signature: &Signature) -> syn::Result<ParsedSignature>
         }
         Some(FnArg::Receiver(_)) => parse_business_inputs(
             signature.inputs.iter().skip(1),
-            1,
             "value object transformation",
         )?,
         _ => {
-            let input =
-                parse_business_inputs(signature.inputs.iter(), 1, "value object constructor")?;
+            let input = parse_business_inputs(signature.inputs.iter(), "value object constructor")?;
             if input.is_none() {
                 return Err(syn::Error::new_spanned(
                     &signature.inputs,
@@ -79,7 +77,7 @@ pub fn parse_value_object(signature: &Signature) -> syn::Result<ParsedSignature>
             input
         }
     };
-    parsed(None, input, signature)
+    Ok(parsed(None, input, signature))
 }
 
 pub fn parse_aggregate(signature: &Signature) -> syn::Result<ParsedSignature> {
@@ -87,7 +85,45 @@ pub fn parse_aggregate(signature: &Signature) -> syn::Result<ParsedSignature> {
 }
 
 pub fn parse_aggregate_instance(signature: &Signature) -> syn::Result<ParsedSignature> {
-    parse_aggregate_root(signature, false)
+    let Some(FnArg::Receiver(receiver)) = signature.inputs.first() else {
+        return Err(syn::Error::new_spanned(
+            &signature.ident,
+            "executable aggregate actions require an &mut self receiver",
+        ));
+    };
+    if receiver.colon_token.is_some() {
+        return Err(syn::Error::new_spanned(
+            receiver,
+            "executable aggregate actions do not support typed receivers",
+        ));
+    }
+    let Some((_, lifetime)) = &receiver.reference else {
+        return Err(syn::Error::new_spanned(
+            receiver,
+            "executable aggregate actions require an &mut self receiver",
+        ));
+    };
+    if receiver.mutability.is_none() {
+        return Err(syn::Error::new_spanned(
+            receiver,
+            "executable aggregate actions require a mutable &mut self receiver",
+        ));
+    }
+    if let Some(lifetime) = lifetime {
+        return Err(syn::Error::new_spanned(
+            lifetime,
+            "executable aggregate action receivers cannot have an explicit lifetime",
+        ));
+    }
+    let input = parse_business_inputs(signature.inputs.iter().skip(1), "aggregate")?;
+    let parsed = parsed(None, input, signature);
+    if !is_unit(&parsed.output) {
+        return Err(syn::Error::new_spanned(
+            &signature.output,
+            "executable aggregate actions must return () or Result<(), DomainError>",
+        ));
+    }
+    Ok(parsed)
 }
 
 fn parse_aggregate_root(signature: &Signature, mutable: bool) -> syn::Result<ParsedSignature> {
@@ -126,25 +162,25 @@ fn parse_aggregate_root(signature: &Signature, mutable: bool) -> syn::Result<Par
             "aggregate root cannot have an explicit lifetime",
         ));
     }
-    let input = parse_business_inputs(signature.inputs.iter().skip(1), 1, "aggregate")?;
-    parsed(Some((*reference.elem).clone()), input, signature)
+    let input = parse_business_inputs(signature.inputs.iter().skip(1), "aggregate")?;
+    Ok(parsed(Some((*reference.elem).clone()), input, signature))
 }
 
 fn parse_business_inputs<'a>(
     inputs: impl Iterator<Item = &'a FnArg>,
-    maximum: usize,
     owner: &str,
 ) -> syn::Result<Option<Type>> {
     let inputs: Vec<_> = inputs.collect();
-    if inputs.len() > maximum {
-        return Err(syn::Error::new_spanned(
-            inputs[maximum],
+    match inputs.as_slice() {
+        [] => Ok(None),
+        [input] => parse_input(input).map(Some),
+        [_, excess, ..] => Err(syn::Error::new_spanned(
+            excess,
             format!(
                 "{owner} actions accept at most one business input; group multiple values into one type"
             ),
-        ));
+        )),
     }
-    inputs.first().map(|input| parse_input(input)).transpose()
 }
 
 fn parse_input(input: &FnArg) -> syn::Result<Type> {
@@ -171,22 +207,18 @@ fn validate_pattern(pattern: &Pat, expected: &str) -> syn::Result<()> {
     Ok(())
 }
 
-fn parsed(
-    root: Option<Type>,
-    input: Option<Type>,
-    signature: &Signature,
-) -> syn::Result<ParsedSignature> {
+fn parsed(root: Option<Type>, input: Option<Type>, signature: &Signature) -> ParsedSignature {
     let output = match &signature.output {
         ReturnType::Default => syn::parse_quote_spanned!(signature.span()=> ()),
         ReturnType::Type(_, output) => (**output).clone(),
     };
     let (output, error) = split_result(output);
-    Ok(ParsedSignature {
+    ParsedSignature {
         root,
         input,
         output,
         error,
-    })
+    }
 }
 
 fn split_result(output: Type) -> (Type, Option<Type>) {
@@ -207,25 +239,27 @@ fn split_result(output: Type) -> (Type, Option<Type>) {
     if path
         .segments
         .iter()
-        .take(path.segments.len() - 1)
+        .rev()
+        .skip(1)
         .any(|segment| !matches!(segment.arguments, PathArguments::None))
     {
         return (output, None);
     }
-    let PathArguments::AngleBracketed(arguments) = &path.segments.last().unwrap().arguments else {
+    let Some(last_segment) = path.segments.last() else {
         return (output, None);
     };
-    let types: Vec<_> = arguments
-        .args
-        .iter()
-        .filter_map(|argument| match argument {
-            GenericArgument::Type(ty) => Some(ty.clone()),
-            _ => None,
-        })
-        .collect();
-    if arguments.args.len() == 2 && types.len() == 2 {
-        (types[0].clone(), Some(types[1].clone()))
-    } else {
-        (output, None)
+    let PathArguments::AngleBracketed(arguments) = &last_segment.arguments else {
+        return (output, None);
+    };
+    let mut arguments = arguments.args.iter();
+    match (arguments.next(), arguments.next(), arguments.next()) {
+        (Some(GenericArgument::Type(success)), Some(GenericArgument::Type(error)), None) => {
+            (success.clone(), Some(error.clone()))
+        }
+        _ => (output, None),
     }
+}
+
+fn is_unit(ty: &Type) -> bool {
+    matches!(ty, Type::Tuple(tuple) if tuple.elems.is_empty())
 }

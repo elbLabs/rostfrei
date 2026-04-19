@@ -6,28 +6,28 @@ pub struct DecisionAttribute {
 }
 
 pub fn extract(method: &mut TraitItemFn) -> syn::Result<DecisionAttribute> {
-    let positions: Vec<_> = method
-        .attrs
-        .iter()
-        .enumerate()
-        .filter(|(_, attribute)| attribute.path().is_ident("decision"))
-        .map(|(position, _)| position)
-        .collect();
+    let position = {
+        let mut positions = method
+            .attrs
+            .iter()
+            .enumerate()
+            .filter(|(_, attribute)| attribute.path().is_ident("decision"));
+        let Some((position, _)) = positions.next() else {
+            return Err(syn::Error::new_spanned(
+                &method.sig.ident,
+                "domain decision contract methods require exactly one decision attribute",
+            ));
+        };
+        if let Some((_, duplicate)) = positions.next() {
+            return Err(syn::Error::new_spanned(
+                duplicate,
+                "duplicate decision attribute",
+            ));
+        }
+        position
+    };
 
-    if positions.is_empty() {
-        return Err(syn::Error::new_spanned(
-            &method.sig.ident,
-            "domain decision contract methods require exactly one decision attribute",
-        ));
-    }
-    if positions.len() > 1 {
-        return Err(syn::Error::new_spanned(
-            &method.attrs[positions[1]],
-            "duplicate decision attribute",
-        ));
-    }
-
-    parse(&method.attrs.remove(positions[0]))
+    parse(&method.attrs.remove(position))
 }
 
 fn parse(attribute: &Attribute) -> syn::Result<DecisionAttribute> {

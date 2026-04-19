@@ -5,4 +5,10 @@ error[E0576]: cannot find method or associated constant `__DOMAIN_ACTION_REFEREN
    |                   ---------- similarly named associated constant `__DOMAIN_ACTION_REFERENCE_ACTIVATE` defined here
 ...
 36 |     #[transition(action = Actions::UNKNOWN, to = Active)]
-   |                                    ^^^^^^^ help: an associated constant with a similar name exists: `__DOMAIN_ACTION_REFERENCE_ACTIVATE`
+   |                                    ^^^^^^^
+   |
+help: an associated constant with a similar name exists
+   |
+36 -     #[transition(action = Actions::UNKNOWN, to = Active)]
+36 +     #[transition(action = Actions::__DOMAIN_ACTION_REFERENCE_ACTIVATE, to = Active)]
+   |
