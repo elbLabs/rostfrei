@@ -4,8 +4,9 @@ use domain::__private::DomainModelBuilder;
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, ActionOwnerType, Aggregate, AggregateId,
-    BoundedContext, BoundedContextId, DomainIdentity, DomainService, DomainServiceId, Entity,
-    EntityId, ValueObject, ValueObjectId, ValueObjectOwnerId, domain_actions, domain_model,
+    BoundedContext, BoundedContextId, DomainIdentity, DomainModelError, DomainService,
+    DomainServiceId, Entity, EntityId, ValueObject, ValueObjectId, ValueObjectOwnerId,
+    domain_actions, domain_model,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("extensions");
@@ -240,17 +241,35 @@ fn action_locals(model: &serde_json::Value) -> Result<Vec<&str>, &'static str> {
 #[test]
 fn accepts_extensions_for_every_registered_action_owner_kind() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_aggregate_type::<ExtensionOwner>();
-    builder.add_entity_type::<ExtensionRoot>();
-    builder.add_domain_identity_type::<ExtensionRootId>();
-    builder.add_value_object_type::<ExtensionValue>();
-    builder.add_domain_service_type::<ExtensionService>();
-    builder.add_action_extension::<FirstAggregateExtension>();
-    builder.add_action_extension::<EntityExtension>();
-    builder.add_action_extension::<ValueObjectExtension>();
-    builder.add_action_extension::<ServiceExtension>();
+    builder
+        .add_aggregate_type::<ExtensionOwner>()
+        .expect("extension owner should register");
+    builder
+        .add_entity_type::<ExtensionRoot>()
+        .expect("extension root should register");
+    builder
+        .add_domain_identity_type::<ExtensionRootId>()
+        .expect("extension root identity should register");
+    builder
+        .add_value_object_type::<ExtensionValue>()
+        .expect("extension value should register");
+    builder
+        .add_domain_service_type::<ExtensionService>()
+        .expect("extension service should register");
+    builder
+        .add_action_extension::<FirstAggregateExtension>()
+        .expect("aggregate extension should register");
+    builder
+        .add_action_extension::<EntityExtension>()
+        .expect("entity extension should register");
+    builder
+        .add_action_extension::<ValueObjectExtension>()
+        .expect("value-object extension should register");
+    builder
+        .add_action_extension::<ServiceExtension>()
+        .expect("service extension should register");
 
-    let model = builder.finish();
+    let model = builder.finish().expect("domain model should be valid");
 
     assert_eq!(
         action_locals(&model).unwrap(),
@@ -268,11 +287,17 @@ fn accepts_extensions_for_every_registered_action_owner_kind() {
 #[test]
 fn extensions_follow_attached_contracts_and_preserve_extension_order() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_aggregate_type::<ExtensionOwner>();
-    builder.add_action_extension::<FirstAggregateExtension>();
-    builder.add_action_extension::<SecondAggregateExtension>();
+    builder
+        .add_aggregate_type::<ExtensionOwner>()
+        .expect("extension owner should register");
+    builder
+        .add_action_extension::<FirstAggregateExtension>()
+        .expect("first extension should register");
+    builder
+        .add_action_extension::<SecondAggregateExtension>()
+        .expect("second extension should register");
 
-    let model = builder.finish();
+    let model = builder.finish().expect("domain model should be valid");
 
     assert_eq!(
         action_locals(&model).unwrap(),
@@ -286,51 +311,130 @@ fn extensions_follow_attached_contracts_and_preserve_extension_order() {
 }
 
 #[test]
-#[should_panic(expected = "action descriptor owner mismatch")]
 fn rejects_extension_descriptor_owner_mismatch() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_aggregate_type::<ExtensionOwner>();
-    builder.add_action_extension::<WrongOwnerExtension>();
+    builder
+        .add_aggregate_type::<ExtensionOwner>()
+        .expect("extension owner should register");
+
+    let id = ActionId {
+        owner: ActionOwnerId::Entity(ENTITY_ID),
+        local: "wrong-owner",
+    };
+    let error = builder
+        .add_action_extension::<WrongOwnerExtension>()
+        .expect_err("mismatched extension owner should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::ActionDescriptorOwnerMismatch { id: Box::new(id) }
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("action descriptor owner mismatch: {id:?}")
+    );
 }
 
 #[test]
-#[should_panic(expected = "unregistered action extension owner")]
 fn rejects_extension_for_an_unregistered_owner() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_action_extension::<UnregisteredOwnerExtension>();
+    let error = builder
+        .add_action_extension::<UnregisteredOwnerExtension>()
+        .expect_err("an extension for an unregistered owner should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::UnregisteredActionExtensionOwner {
+            owner: Box::new(UNREGISTERED_OWNER_ID),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("unregistered action extension owner: {UNREGISTERED_OWNER_ID:?}")
+    );
 }
 
 #[test]
-#[should_panic(expected = "action extension must not be empty")]
 fn rejects_empty_extension() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_aggregate_type::<ExtensionOwner>();
-    builder.add_action_extension::<EmptyExtension>();
+    builder
+        .add_aggregate_type::<ExtensionOwner>()
+        .expect("extension owner should register");
+    let error = builder
+        .add_action_extension::<EmptyExtension>()
+        .expect_err("an empty extension should be rejected");
+
+    assert_eq!(error, DomainModelError::EmptyActionExtension);
+    assert_eq!(error.to_string(), "action extension must not be empty");
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_across_extensions() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_aggregate_type::<ExtensionOwner>();
-    builder.add_action_extension::<FirstDuplicateExtension>();
-    builder.add_action_extension::<SecondDuplicateExtension>();
+    builder
+        .add_aggregate_type::<ExtensionOwner>()
+        .expect("extension owner should register");
+    builder
+        .add_action_extension::<FirstDuplicateExtension>()
+        .expect("first duplicate extension should register");
+
+    let id = ActionId {
+        owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
+        local: "duplicate-extension",
+    };
+    let error = builder
+        .add_action_extension::<SecondDuplicateExtension>()
+        .expect_err("the duplicate extension action should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId { id: Box::new(id) }
+    );
+    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_within_one_extension_slice() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_aggregate_type::<ExtensionOwner>();
-    builder.add_action_extension::<SingleSliceDuplicateExtension>();
+    builder
+        .add_aggregate_type::<ExtensionOwner>()
+        .expect("extension owner should register");
+
+    let id = ActionId {
+        owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
+        local: "duplicate-in-slice",
+    };
+    let error = builder
+        .add_action_extension::<SingleSliceDuplicateExtension>()
+        .expect_err("a duplicate action within one extension should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId { id: Box::new(id) }
+    );
+    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_against_an_attached_contract() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_aggregate_type::<ExtensionOwner>();
-    builder.add_action_extension::<AttachedDuplicateExtension>();
+    builder
+        .add_aggregate_type::<ExtensionOwner>()
+        .expect("extension owner should register");
+
+    let id = ActionId {
+        owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
+        local: "attached",
+    };
+    let error = builder
+        .add_action_extension::<AttachedDuplicateExtension>()
+        .expect_err("an extension duplicating an attached action should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId { id: Box::new(id) }
+    );
+    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
 }
 
 #[test]
@@ -346,7 +450,8 @@ fn domain_model_accepts_optional_action_extensions_and_still_allows_omission() {
         errors: [],
         action_extensions: [FirstAggregateExtension, SecondAggregateExtension],
         query_groups: [],
-    };
+    }
+    .expect("extended domain model should be valid");
     let omitted = domain_model! {
         contexts: [],
         aggregates: [ExtensionOwner],
@@ -357,7 +462,8 @@ fn domain_model_accepts_optional_action_extensions_and_still_allows_omission() {
         commands: [],
         errors: [],
         query_groups: [],
-    };
+    }
+    .expect("domain model without extensions should be valid");
 
     assert_eq!(
         action_locals(&extended).unwrap(),

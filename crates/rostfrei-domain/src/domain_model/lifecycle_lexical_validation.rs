@@ -1,39 +1,49 @@
 use crate::{EntityLifecycleDescriptor, EntityLifecycleStateDescriptor};
 
-pub(super) fn validate_lifecycle_id(descriptor: EntityLifecycleDescriptor) {
+use super::error::DomainModelError;
+
+pub(super) fn validate_lifecycle_id(
+    descriptor: EntityLifecycleDescriptor,
+) -> Result<(), DomainModelError> {
     if !valid_id(descriptor.id.local) {
-        panic!(
-            "entity lifecycle local id must be nonempty lowercase kebab-case using ASCII letters and digits: {:?}",
-            descriptor.id.local
-        );
+        return Err(DomainModelError::InvalidLifecycleLocalId {
+            local: descriptor.id.local,
+        });
     }
+    Ok(())
 }
 
-pub(super) fn validate_lifecycle_label(descriptor: EntityLifecycleDescriptor) {
+pub(super) fn validate_lifecycle_label(
+    descriptor: EntityLifecycleDescriptor,
+) -> Result<(), DomainModelError> {
     if descriptor.label.trim().is_empty() {
-        panic!(
-            "entity lifecycle label must not be empty: {:?}",
-            descriptor.label
-        );
+        return Err(DomainModelError::EmptyLifecycleLabel {
+            label: descriptor.label,
+        });
     }
+    Ok(())
 }
 
-pub(super) fn validate_state_id(descriptor: EntityLifecycleStateDescriptor) {
+pub(super) fn validate_state_id(
+    descriptor: EntityLifecycleStateDescriptor,
+) -> Result<(), DomainModelError> {
     if !valid_id(descriptor.id.local) {
-        panic!(
-            "entity lifecycle state local id must be nonempty lowercase kebab-case using ASCII letters and digits: {:?}",
-            descriptor.id.local
-        );
+        return Err(DomainModelError::InvalidLifecycleStateLocalId {
+            local: descriptor.id.local,
+        });
     }
+    Ok(())
 }
 
-pub(super) fn validate_state_label(descriptor: EntityLifecycleStateDescriptor) {
+pub(super) fn validate_state_label(
+    descriptor: EntityLifecycleStateDescriptor,
+) -> Result<(), DomainModelError> {
     if descriptor.label.trim().is_empty() {
-        panic!(
-            "entity lifecycle state label must not be empty: {:?}",
-            descriptor.label
-        );
+        return Err(DomainModelError::EmptyLifecycleStateLabel {
+            label: descriptor.label,
+        });
     }
+    Ok(())
 }
 
 fn valid_id(value: &str) -> bool {

@@ -1,7 +1,3 @@
-mod support;
-
-use support::{ExpectedPanicError, panic_message};
-
 use domain::__private::DomainModelBuilder;
 use domain::extension::ActionGroupType;
 use domain::{
@@ -9,10 +5,10 @@ use domain::{
     AggregateDescriptor, AggregateId, AggregateType, BoundedContextDescriptor, BoundedContextId,
     BoundedContextType, DecisionDescriptor, DecisionId, DecisionImplementationDescriptor,
     DecisionInputDescriptor, DecisionOutputDescriptor, DecisionOwnerId, DomainIdentityDescriptor,
-    DomainIdentityId, DomainIdentityType, EntityDescriptor, EntityId, EntityLifecycleDescriptor,
-    EntityLifecycleId, EntityLifecycleStateDescriptor, EntityLifecycleStateId,
-    EntityLifecycleTransitionDescriptor, EntityType, IdentityDescriptor, ScalarType, ValueObjectId,
-    ValueObjectOwnerId,
+    DomainIdentityId, DomainIdentityType, DomainModelError, DomainModelReference, EntityDescriptor,
+    EntityId, EntityLifecycleDescriptor, EntityLifecycleId, EntityLifecycleStateDescriptor,
+    EntityLifecycleStateId, EntityLifecycleTransitionDescriptor, EntityType, IdentityDescriptor,
+    ScalarType, ValueObjectId, ValueObjectOwnerId,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("lifecycle-action-validation");
@@ -255,23 +251,18 @@ impl ActionGroupType for LifecycleExtension {
     const ACTIONS: &'static [ActionDescriptor] = EXTENSION_ACTIONS;
 }
 
-fn finish_panic<const CASE: u8>(
-    configure: impl FnOnce(&mut DomainModelBuilder),
-) -> Result<String, ExpectedPanicError> {
-    panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_entity_type::<ValidationEntity<CASE>>();
-        configure(&mut builder);
-        builder.finish();
-    })
+fn finish<const CASE: u8>() -> Result<serde_json::Value, DomainModelError> {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_entity_type::<ValidationEntity<CASE>>()?;
+    builder.finish()
 }
 
 #[test]
 fn accepts_an_action_from_a_normally_attached_contract() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_entity_type::<ValidationEntity<0>>();
+    builder.add_entity_type::<ValidationEntity<0>>().unwrap();
 
-    let model = builder.finish();
+    let model = builder.finish().unwrap();
 
     assert_eq!(
         model["entities"][0]["lifecycle"]["transitions"][0]["action"]["local"],
@@ -280,64 +271,110 @@ fn accepts_an_action_from_a_normally_attached_contract() {
 }
 
 #[test]
-fn rejects_an_implemented_but_unattached_action_as_missing() -> Result<(), ExpectedPanicError> {
+fn rejects_an_implemented_but_unattached_action_as_missing() {
     let entity = ValidationEntity::<1>;
     entity.implemented_but_unattached();
 
-    let message = finish_panic::<1>(|_| {})?;
+    let error = finish::<1>().unwrap_err();
+    let message = error.to_string();
 
     assert!(message.starts_with("Entity lifecycle action inventory violation"));
     assert!(message.contains("implemented-unattached"));
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleMissingAttachedAction {
+            lifecycle_id: Box::new(LIFECYCLE_ID),
+            action_id: Box::new(IMPLEMENTED_UNATTACHED_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_a_fabricated_action_as_missing() -> Result<(), ExpectedPanicError> {
-    let message = finish_panic::<2>(|_| {})?;
+fn rejects_a_fabricated_action_as_missing() {
+    let error = finish::<2>().unwrap_err();
+    let message = error.to_string();
 
     assert!(message.starts_with("Entity lifecycle action inventory violation"));
     assert!(message.contains("fabricated"));
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleMissingAttachedAction {
+            lifecycle_id: Box::new(LIFECYCLE_ID),
+            action_id: Box::new(FABRICATED_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_an_extension_only_action_with_a_distinct_diagnostic() -> Result<(), ExpectedPanicError> {
-    let message = finish_panic::<3>(|builder| {
-        builder.add_action_extension::<LifecycleExtension>();
-    })?;
+fn rejects_an_extension_only_action_with_a_distinct_diagnostic() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_entity_type::<ValidationEntity<3>>().unwrap();
+    builder
+        .add_action_extension::<LifecycleExtension>()
+        .unwrap();
+
+    let error = builder.finish().unwrap_err();
+    let message = error.to_string();
 
     assert!(message.starts_with("Entity lifecycle action eligibility violation"));
     assert!(message.contains("extension-only action"));
     assert!(message.contains("action extensions are not eligible"));
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleExtensionOnlyAction {
+            lifecycle_id: Box::new(LIFECYCLE_ID),
+            action_id: Box::new(EXTENSION_ID),
+        }
+    );
 }
 
 #[test]
-fn validates_existing_action_descriptor_references_before_lifecycle_actions()
--> Result<(), ExpectedPanicError> {
-    let message = finish_panic::<4>(|_| {})?;
+fn validates_existing_action_descriptor_references_before_lifecycle_actions() {
+    let error = finish::<4>().unwrap_err();
+    let message = error.to_string();
 
     assert!(message.starts_with("Action reference inventory violation"));
     assert!(message.contains("broken-reference"));
     assert!(message.contains("missing-value"));
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(BROKEN_ACTION_ID),
+            reference: DomainModelReference::ValueObject(Box::new(MISSING_VALUE_ID)),
+            location: "input".to_owned(),
+            inventory_key: "value_objects",
+        }
+    );
 }
 
 #[test]
-fn validates_lifecycle_actions_before_existing_decision_references()
--> Result<(), ExpectedPanicError> {
-    let message = finish_panic::<5>(|_| {})?;
+fn validates_lifecycle_actions_before_existing_decision_references() {
+    let error = finish::<5>().unwrap_err();
+    let message = error.to_string();
 
     assert!(message.starts_with("Entity lifecycle action inventory violation"));
     assert!(message.contains("fabricated"));
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleMissingAttachedAction {
+            lifecycle_id: Box::new(LIFECYCLE_ID),
+            action_id: Box::new(FABRICATED_ID),
+        }
+    );
 }
 
 #[test]
-fn reports_missing_actions_in_transition_order() -> Result<(), ExpectedPanicError> {
-    let message = finish_panic::<6>(|_| {})?;
+fn reports_missing_actions_in_transition_order() {
+    let error = finish::<6>().unwrap_err();
+    let message = error.to_string();
 
     assert!(message.contains("ordered-first"));
     assert!(!message.contains("ordered-second"));
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleMissingAttachedAction {
+            lifecycle_id: Box::new(LIFECYCLE_ID),
+            action_id: Box::new(ORDERED_FIRST_ID),
+        }
+    );
 }

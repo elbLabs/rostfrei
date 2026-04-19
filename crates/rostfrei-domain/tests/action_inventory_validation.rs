@@ -2,18 +2,15 @@
 
 use std::fmt::Debug;
 
-mod support;
-
-use support::{ExpectedPanicError, panic_message};
-
 use domain::__private::DomainModelBuilder;
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainCommand, DomainCommandType,
     DomainError, DomainErrorId, DomainErrorOwnerId, DomainErrorType, DomainEvent, DomainEventId,
-    DomainIdentity, DomainIdentityId, DomainService, DomainServiceId, Entity, EntityId,
-    ValueObject, ValueObjectId, ValueObjectOwnerId, ValueObjectType, domain_actions,
+    DomainIdentity, DomainIdentityId, DomainModelError, DomainModelReference, DomainService,
+    DomainServiceId, Entity, EntityId, ValueObject, ValueObjectId, ValueObjectOwnerId,
+    ValueObjectType, domain_actions,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("action-inventory");
@@ -492,13 +489,19 @@ const fn extension_action_id(local: &'static str) -> ActionId {
 #[test]
 fn accepts_references_added_after_all_owner_actions_are_registered() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_aggregate_type::<InventoryAggregate>();
-    builder.add_domain_service_type::<InventoryService>();
-    builder.add_entity_type::<InventoryEntity>();
-    builder.add_value_object_type::<InventoryValue>();
+    builder.add_aggregate_type::<InventoryAggregate>().unwrap();
+    builder
+        .add_domain_service_type::<InventoryService>()
+        .unwrap();
+    builder.add_entity_type::<InventoryEntity>().unwrap();
+    builder.add_value_object_type::<InventoryValue>().unwrap();
 
-    builder.add_domain_command(AggregateCommand::DESCRIPTOR);
-    builder.add_domain_command(ServiceCommand::DESCRIPTOR);
+    builder
+        .add_domain_command(AggregateCommand::DESCRIPTOR)
+        .unwrap();
+    builder
+        .add_domain_command(ServiceCommand::DESCRIPTOR)
+        .unwrap();
     builder.add_domain_error(AggregateError::DESCRIPTOR);
     builder.add_domain_error(ServiceError::DESCRIPTOR);
     builder.add_domain_error(EntityError::DESCRIPTOR);
@@ -506,9 +509,11 @@ fn accepts_references_added_after_all_owner_actions_are_registered() {
     builder.add_value_object(InputValue::DESCRIPTOR);
     builder.add_value_object(OutputValue::DESCRIPTOR);
     builder.add_value_object(ServiceActionInput::DESCRIPTOR);
-    builder.add_domain_identity_type::<InventoryEntityIdentity>();
+    builder
+        .add_domain_identity_type::<InventoryEntityIdentity>()
+        .unwrap();
 
-    let model = builder.finish();
+    let model = builder.finish().unwrap();
 
     let actions = model["actions"].as_array().unwrap();
     assert_eq!(actions.len(), 4);
@@ -520,313 +525,390 @@ fn accepts_references_added_after_all_owner_actions_are_registered() {
 }
 
 #[test]
-fn aggregate_reports_missing_domain_identity_input() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_aggregate_type::<InventoryAggregate>();
-        builder.finish();
-    })?;
+fn aggregate_reports_missing_domain_identity_input() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_aggregate_type::<InventoryAggregate>().unwrap();
+
+    let error = builder.finish().unwrap_err();
+    let action_id = ActionId {
+        owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
+        local: "aggregate-action",
+    };
 
     assert_eq!(
-        message,
-        violation(
-            ActionId {
-                owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
-                local: "aggregate-action",
-            },
-            INVENTORY_IDENTITY_ID,
-            "input",
-            "identities",
-        )
+        error.to_string(),
+        violation(action_id, INVENTORY_IDENTITY_ID, "input", "identities",)
     );
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::DomainIdentity(Box::new(INVENTORY_IDENTITY_ID)),
+            location: "input".to_owned(),
+            inventory_key: "identities",
+        }
+    );
 }
 
 #[test]
-fn domain_service_reports_missing_event_output() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_domain_service_type::<InventoryService>();
-        builder.add_value_object(ServiceActionInput::DESCRIPTOR);
-        builder.finish();
-    })?;
+fn domain_service_reports_missing_event_output() {
+    let mut builder = DomainModelBuilder::new();
+    builder
+        .add_domain_service_type::<InventoryService>()
+        .unwrap();
+    builder.add_value_object(ServiceActionInput::DESCRIPTOR);
+
+    let error = builder.finish().unwrap_err();
+    let action_id = ActionId {
+        owner: ActionOwnerId::DomainService(SERVICE_ID),
+        local: "service-action",
+    };
 
     assert_eq!(
-        message,
-        violation(
-            ActionId {
-                owner: ActionOwnerId::DomainService(SERVICE_ID),
-                local: "service-action",
-            },
-            EVENT_ID,
-            "output",
-            "events",
-        )
+        error.to_string(),
+        violation(action_id, EVENT_ID, "output", "events")
     );
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::DomainEvent(Box::new(EVENT_ID)),
+            location: "output".to_owned(),
+            inventory_key: "events",
+        }
+    );
 }
 
 #[test]
-fn entity_reports_missing_value_object_input() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_entity_type::<InventoryEntity>();
-        builder.finish();
-    })?;
+fn entity_reports_missing_value_object_input() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_entity_type::<InventoryEntity>().unwrap();
+
+    let error = builder.finish().unwrap_err();
+    let action_id = ActionId {
+        owner: ActionOwnerId::Entity(ENTITY_ID),
+        local: "entity-action",
+    };
 
     assert_eq!(
-        message,
-        violation(
-            ActionId {
-                owner: ActionOwnerId::Entity(ENTITY_ID),
-                local: "entity-action",
-            },
-            INPUT_VALUE_ID,
-            "input",
-            "value_objects",
-        )
+        error.to_string(),
+        violation(action_id, INPUT_VALUE_ID, "input", "value_objects")
     );
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::ValueObject(Box::new(INPUT_VALUE_ID)),
+            location: "input".to_owned(),
+            inventory_key: "value_objects",
+        }
+    );
 }
 
 #[test]
-fn entity_reports_missing_value_object_output() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_entity_type::<InventoryEntity>();
-        builder.add_value_object(InputValue::DESCRIPTOR);
-        builder.finish();
-    })?;
+fn entity_reports_missing_value_object_output() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_entity_type::<InventoryEntity>().unwrap();
+    builder.add_value_object(InputValue::DESCRIPTOR);
+
+    let error = builder.finish().unwrap_err();
+    let action_id = ActionId {
+        owner: ActionOwnerId::Entity(ENTITY_ID),
+        local: "entity-action",
+    };
 
     assert_eq!(
-        message,
-        violation(
-            ActionId {
-                owner: ActionOwnerId::Entity(ENTITY_ID),
-                local: "entity-action",
-            },
-            OUTPUT_VALUE_ID,
-            "output",
-            "value_objects",
-        )
+        error.to_string(),
+        violation(action_id, OUTPUT_VALUE_ID, "output", "value_objects")
     );
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::ValueObject(Box::new(OUTPUT_VALUE_ID)),
+            location: "output".to_owned(),
+            inventory_key: "value_objects",
+        }
+    );
 }
 
 #[test]
-fn value_object_reports_missing_error() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_value_object_type::<InventoryValue>();
-        builder.add_value_object(InputValue::DESCRIPTOR);
-        builder.finish();
-    })?;
+fn value_object_reports_missing_error() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_value_object_type::<InventoryValue>().unwrap();
+    builder.add_value_object(InputValue::DESCRIPTOR);
+
+    let error = builder.finish().unwrap_err();
+    let action_id = ActionId {
+        owner: ActionOwnerId::ValueObject(VALUE_OBJECT_ID),
+        local: "value-action",
+    };
 
     assert_eq!(
-        message,
-        violation(
-            ActionId {
-                owner: ActionOwnerId::ValueObject(VALUE_OBJECT_ID),
-                local: "value-action",
-            },
-            VALUE_ERROR_ID,
-            "error",
-            "errors",
-        )
+        error.to_string(),
+        violation(action_id, VALUE_ERROR_ID, "error", "errors")
     );
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::DomainError(Box::new(VALUE_ERROR_ID)),
+            location: "error".to_owned(),
+            inventory_key: "errors",
+        }
+    );
 }
 
 #[test]
-fn traverses_deeply_nested_optional_list_outputs() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_domain_service_type::<ExtensionService>();
-        builder.add_action_extension::<NestedExtension>();
-        builder.finish();
-    })?;
+fn traverses_deeply_nested_optional_list_outputs() {
+    let mut builder = DomainModelBuilder::new();
+    builder
+        .add_domain_service_type::<ExtensionService>()
+        .unwrap();
+    builder.add_action_extension::<NestedExtension>().unwrap();
+
+    let error = builder.finish().unwrap_err();
+    let action_id = extension_action_id("nested");
+    let location = "output.optional.value.list.element.optional.value.list.element";
 
     assert_eq!(
-        message,
-        violation(
-            extension_action_id("nested"),
-            MISSING_EVENT_ID,
-            "output.optional.value.list.element.optional.value.list.element",
-            "events",
-        )
+        error.to_string(),
+        violation(action_id, MISSING_EVENT_ID, location, "events")
     );
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::DomainEvent(Box::new(MISSING_EVENT_ID)),
+            location: location.to_owned(),
+            inventory_key: "events",
+        }
+    );
 }
 
 #[test]
-fn reports_missing_raised_event() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_aggregate_type::<InventoryAggregate>();
-        builder.add_action_extension::<RaisedEventExtension>();
-        builder.add_domain_identity_type::<InventoryEntityIdentity>();
-        builder.add_domain_error(AggregateError::DESCRIPTOR);
-        builder.finish();
-    })?;
+fn reports_missing_raised_event() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_aggregate_type::<InventoryAggregate>().unwrap();
+    builder
+        .add_action_extension::<RaisedEventExtension>()
+        .unwrap();
+    builder
+        .add_domain_identity_type::<InventoryEntityIdentity>()
+        .unwrap();
+    builder.add_domain_error(AggregateError::DESCRIPTOR);
+
+    let error = builder.finish().unwrap_err();
+    let action_id = ActionId {
+        owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
+        local: "raised-event",
+    };
 
     assert_eq!(
-        message,
-        violation(
-            ActionId {
-                owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
-                local: "raised-event",
-            },
-            MISSING_EVENT_ID,
-            "raises[0]",
-            "events",
-        )
+        error.to_string(),
+        violation(action_id, MISSING_EVENT_ID, "raises[0]", "events")
     );
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::DomainEvent(Box::new(MISSING_EVENT_ID)),
+            location: "raises[0]".to_owned(),
+            inventory_key: "events",
+        }
+    );
 }
 
 #[test]
-fn rejects_raised_events_on_non_aggregate_actions() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_domain_service_type::<ExtensionService>();
-        builder.add_action_extension::<NonAggregateRaisedEventExtension>();
-        builder.finish();
-    })?;
+fn rejects_raised_events_on_non_aggregate_actions() {
+    let mut builder = DomainModelBuilder::new();
+    builder
+        .add_domain_service_type::<ExtensionService>()
+        .unwrap();
+    builder
+        .add_action_extension::<NonAggregateRaisedEventExtension>()
+        .unwrap();
+
+    let error = builder.finish().unwrap_err();
+    let action_id = extension_action_id("invalid-raised-event-owner");
 
     assert_eq!(
-        message,
+        error.to_string(),
         format!(
-            "Action raised-event owner violation: action {:?} is not owned by an Aggregate",
-            extension_action_id("invalid-raised-event-owner")
+            "Action raised-event owner violation: action {action_id:?} is not owned by an Aggregate"
         )
     );
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionRaisedEventOwnerNotAggregate {
+            action_id: Box::new(action_id),
+        }
+    );
 }
 
 #[test]
-fn rejects_another_aggregates_raised_event() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_aggregate_type::<InventoryAggregate>();
-        builder.add_action_extension::<ForeignRaisedEventExtension>();
-        builder.add_domain_identity_type::<InventoryEntityIdentity>();
-        builder.add_domain_error(AggregateError::DESCRIPTOR);
-        builder.finish();
-    })?;
+fn rejects_another_aggregates_raised_event() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_aggregate_type::<InventoryAggregate>().unwrap();
+    builder
+        .add_action_extension::<ForeignRaisedEventExtension>()
+        .unwrap();
+    builder
+        .add_domain_identity_type::<InventoryEntityIdentity>()
+        .unwrap();
+    builder.add_domain_error(AggregateError::DESCRIPTOR);
+
+    let error = builder.finish().unwrap_err();
     let action_id = ActionId {
         owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
         local: "foreign-raised-event",
     };
 
     assert_eq!(
-        message,
+        error.to_string(),
         format!(
             "Action raised-event owner violation: action {action_id:?} declares event {FOREIGN_EVENT_ID:?} owned by another Aggregate"
         )
     );
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionRaisedEventOwnerMismatch {
+            action_id: Box::new(action_id),
+            event_id: Box::new(FOREIGN_EVENT_ID),
+        }
+    );
 }
 
 #[test]
-fn reports_descriptor_failures_in_input_output_error_order() -> Result<(), ExpectedPanicError> {
-    let input_message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_domain_service_type::<ExtensionService>();
-        builder.add_action_extension::<DeterministicExtension>();
-        builder.finish();
-    })?;
-    let output_message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_domain_service_type::<ExtensionService>();
-        builder.add_action_extension::<DeterministicExtension>();
-        builder.add_value_object(ExtensionInput::DESCRIPTOR);
-        builder.finish();
-    })?;
-    let error_message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_domain_service_type::<ExtensionService>();
-        builder.add_action_extension::<DeterministicExtension>();
-        builder.add_value_object(ExtensionInput::DESCRIPTOR);
-        builder.add_domain_event(domain::DomainEventDescriptor {
+fn reports_descriptor_failures_in_input_output_error_order() {
+    let mut builder = DomainModelBuilder::new();
+    builder
+        .add_domain_service_type::<ExtensionService>()
+        .unwrap();
+    builder
+        .add_action_extension::<DeterministicExtension>()
+        .unwrap();
+    let input_error = builder.finish().unwrap_err();
+
+    let mut builder = DomainModelBuilder::new();
+    builder
+        .add_domain_service_type::<ExtensionService>()
+        .unwrap();
+    builder
+        .add_action_extension::<DeterministicExtension>()
+        .unwrap();
+    builder.add_value_object(ExtensionInput::DESCRIPTOR);
+    let output_error = builder.finish().unwrap_err();
+
+    let mut builder = DomainModelBuilder::new();
+    builder
+        .add_domain_service_type::<ExtensionService>()
+        .unwrap();
+    builder
+        .add_action_extension::<DeterministicExtension>()
+        .unwrap();
+    builder.add_value_object(ExtensionInput::DESCRIPTOR);
+    builder
+        .add_domain_event(domain::DomainEventDescriptor {
             id: MISSING_EVENT_ID,
             label: "Missing event",
             schema_version: 1,
             fields: &[],
-        });
-        builder.finish();
-    })?;
+        })
+        .unwrap();
+    let error_error = builder.finish().unwrap_err();
 
+    let action_id = extension_action_id("deterministic");
     assert_eq!(
-        input_message,
-        violation(
-            extension_action_id("deterministic"),
-            EXTENSION_INPUT_ID,
-            "input",
-            "value_objects",
-        )
+        input_error.to_string(),
+        violation(action_id, EXTENSION_INPUT_ID, "input", "value_objects")
     );
     assert_eq!(
-        output_message,
-        violation(
-            extension_action_id("deterministic"),
-            MISSING_EVENT_ID,
-            "output",
-            "events",
-        )
+        input_error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::ValueObject(Box::new(EXTENSION_INPUT_ID)),
+            location: "input".to_owned(),
+            inventory_key: "value_objects",
+        }
     );
     assert_eq!(
-        error_message,
-        violation(
-            extension_action_id("deterministic"),
-            MISSING_ERROR_ID,
-            "error",
-            "errors",
-        )
+        output_error.to_string(),
+        violation(action_id, MISSING_EVENT_ID, "output", "events")
     );
-    Ok(())
+    assert_eq!(
+        output_error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::DomainEvent(Box::new(MISSING_EVENT_ID)),
+            location: "output".to_owned(),
+            inventory_key: "events",
+        }
+    );
+    assert_eq!(
+        error_error.to_string(),
+        violation(action_id, MISSING_ERROR_ID, "error", "errors")
+    );
+    assert_eq!(
+        error_error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::DomainError(Box::new(MISSING_ERROR_ID)),
+            location: "error".to_owned(),
+            inventory_key: "errors",
+        }
+    );
 }
 
 #[test]
-fn validates_attached_actions_before_extensions() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_entity_type::<OrderedEntity>();
-        builder.add_action_extension::<OrderedExtension>();
-        builder.finish();
-    })?;
+fn validates_attached_actions_before_extensions() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_entity_type::<OrderedEntity>().unwrap();
+    builder.add_action_extension::<OrderedExtension>().unwrap();
+
+    let error = builder.finish().unwrap_err();
+    let action_id = ActionId {
+        owner: ActionOwnerId::Entity(ORDERED_ENTITY_ID),
+        local: "attached-missing",
+    };
 
     assert_eq!(
-        message,
-        violation(
-            ActionId {
-                owner: ActionOwnerId::Entity(ORDERED_ENTITY_ID),
-                local: "attached-missing",
-            },
-            ORDERED_INPUT_ID,
-            "input",
-            "value_objects",
-        )
+        error.to_string(),
+        violation(action_id, ORDERED_INPUT_ID, "input", "value_objects")
     );
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::ValueObject(Box::new(ORDERED_INPUT_ID)),
+            location: "input".to_owned(),
+            inventory_key: "value_objects",
+        }
+    );
 }
 
 #[test]
-fn action_group_extension_reports_dangling_reference() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_domain_service_type::<ExtensionService>();
-        builder.add_action_extension::<DanglingExtension>();
-        builder.finish();
-    })?;
+fn action_group_extension_reports_dangling_reference() {
+    let mut builder = DomainModelBuilder::new();
+    builder
+        .add_domain_service_type::<ExtensionService>()
+        .unwrap();
+    builder.add_action_extension::<DanglingExtension>().unwrap();
+
+    let error = builder.finish().unwrap_err();
+    let action_id = extension_action_id("dangling-extension");
 
     assert_eq!(
-        message,
-        violation(
-            extension_action_id("dangling-extension"),
-            MISSING_EVENT_ID,
-            "output",
-            "events",
-        )
+        error.to_string(),
+        violation(action_id, MISSING_EVENT_ID, "output", "events")
     );
-    Ok(())
+    assert_eq!(
+        error,
+        DomainModelError::ActionReferenceInventoryViolation {
+            action_id: Box::new(action_id),
+            reference: DomainModelReference::DomainEvent(Box::new(MISSING_EVENT_ID)),
+            location: "output".to_owned(),
+            inventory_key: "events",
+        }
+    );
 }

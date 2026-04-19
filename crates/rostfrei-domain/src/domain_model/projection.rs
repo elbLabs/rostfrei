@@ -16,6 +16,7 @@ use super::{
     decision_projection::DecisionProjection,
     decision_reference_validation::DecisionReferenceInventory,
     entity_projection::EntityProjection,
+    error::DomainModelError,
     field_projection,
     field_reference_collection::FieldReferenceCollection,
     field_reference_validation::{self, FieldReferenceInventory},
@@ -84,26 +85,27 @@ impl DomainModelBuilder {
         ));
     }
 
-    pub fn add_aggregate_type<A: AggregateType>(&mut self) {
+    pub fn add_aggregate_type<A: AggregateType>(&mut self) -> Result<(), DomainModelError> {
         self.add_aggregate(A::DESCRIPTOR);
         let owner = ActionOwnerId::Aggregate(A::DESCRIPTOR.id);
         self.actions.register_owner(owner);
         for contract in A::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract);
+            self.actions.add_group(owner, contract)?;
         }
         let owner = DecisionOwnerId::Aggregate(A::DESCRIPTOR.id);
         self.decisions.register_owner(owner);
         for contract in A::DECISION_CONTRACTS {
-            self.decisions.add_group(owner, contract);
+            self.decisions.add_group(owner, contract)?;
         }
         let owner = InvariantOwnerId::Aggregate(A::DESCRIPTOR.id);
         self.invariants.register_owner(owner);
         for contract in A::INVARIANT_CONTRACTS {
-            self.invariants.add_group(owner, contract);
+            self.invariants.add_group(owner, contract)?;
         }
         for event in A::DOMAIN_EVENTS {
-            self.add_domain_event(*event);
+            self.add_domain_event(*event)?;
         }
+        Ok(())
     }
 
     pub fn add_entity(&mut self, descriptor: EntityDescriptor) {
@@ -111,53 +113,64 @@ impl DomainModelBuilder {
         self.field_references.add_entity(descriptor);
     }
 
-    pub fn add_entity_type<E: EntityType>(&mut self) {
+    pub fn add_entity_type<E: EntityType>(&mut self) -> Result<(), DomainModelError> {
         self.entities
-            .add_with_lifecycle(E::DESCRIPTOR, E::LIFECYCLE);
+            .add_with_lifecycle(E::DESCRIPTOR, E::LIFECYCLE)?;
         self.field_references.add_entity(E::DESCRIPTOR);
         let owner = ActionOwnerId::Entity(E::DESCRIPTOR.id);
         self.actions.register_owner(owner);
         for contract in E::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract);
+            self.actions.add_group(owner, contract)?;
         }
         let owner = DecisionOwnerId::Entity(E::DESCRIPTOR.id);
         self.decisions.register_owner(owner);
         for contract in E::DECISION_CONTRACTS {
-            self.decisions.add_group(owner, contract);
+            self.decisions.add_group(owner, contract)?;
         }
         let owner = InvariantOwnerId::Entity(E::DESCRIPTOR.id);
         self.invariants.register_owner(owner);
         for contract in E::INVARIANT_CONTRACTS {
-            self.invariants.add_group(owner, contract);
+            self.invariants.add_group(owner, contract)?;
         }
+        Ok(())
     }
 
-    pub fn add_domain_identity(&mut self, descriptor: DomainIdentityDescriptor) {
-        self.add_domain_identity_descriptor(descriptor, None);
+    pub fn add_domain_identity(
+        &mut self,
+        descriptor: DomainIdentityDescriptor,
+    ) -> Result<(), DomainModelError> {
+        self.add_domain_identity_descriptor(descriptor, None)
     }
 
-    pub fn add_domain_identity_type<I: DomainIdentityType>(&mut self) {
-        if let Some(semantic_scalar) = I::SEMANTIC_SCALAR {
-            assert_eq!(
-                I::DESCRIPTOR.scalar,
-                semantic_scalar.representation,
-                "DomainIdentity semantic scalar representation must match its canonical scalar descriptor"
+    pub fn add_domain_identity_type<I: DomainIdentityType>(
+        &mut self,
+    ) -> Result<(), DomainModelError> {
+        if let Some(semantic_scalar) = I::SEMANTIC_SCALAR
+            && I::DESCRIPTOR.scalar != semantic_scalar.representation
+        {
+            return Err(
+                DomainModelError::DomainIdentitySemanticScalarRepresentationMismatch {
+                    canonical: I::DESCRIPTOR.scalar,
+                    semantic: semantic_scalar.representation,
+                },
             );
         }
-        self.add_domain_identity_descriptor(I::DESCRIPTOR, I::SEMANTIC_SCALAR);
+        self.add_domain_identity_descriptor(I::DESCRIPTOR, I::SEMANTIC_SCALAR)
     }
 
     fn add_domain_identity_descriptor(
         &mut self,
         descriptor: DomainIdentityDescriptor,
         semantic_scalar: Option<crate::SemanticScalarDescriptor>,
-    ) {
+    ) -> Result<(), DomainModelError> {
         if self
             .domain_identities
             .iter()
             .any(|(id, _)| *id == descriptor.id)
         {
-            panic!("duplicate DomainIdentityId: {:?}", descriptor.id);
+            return Err(DomainModelError::DuplicateDomainIdentityId {
+                id: Box::new(descriptor.id),
+            });
         }
         let scalar = semantic_scalar.map_or_else(
             || scalar_value(descriptor.scalar),
@@ -170,6 +183,7 @@ impl DomainModelBuilder {
                 "scalar": scalar,
             }),
         ));
+        Ok(())
     }
 
     pub fn add_value_object(&mut self, descriptor: ValueObjectDescriptor) {
@@ -186,23 +200,24 @@ impl DomainModelBuilder {
         self.value_objects.push((descriptor.id, value));
     }
 
-    pub fn add_value_object_type<V: ValueObjectType>(&mut self) {
+    pub fn add_value_object_type<V: ValueObjectType>(&mut self) -> Result<(), DomainModelError> {
         self.add_value_object(V::DESCRIPTOR);
         let owner = ActionOwnerId::ValueObject(V::DESCRIPTOR.id);
         self.actions.register_owner(owner);
         for contract in V::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract);
+            self.actions.add_group(owner, contract)?;
         }
         let owner = DecisionOwnerId::ValueObject(V::DESCRIPTOR.id);
         self.decisions.register_owner(owner);
         for contract in V::DECISION_CONTRACTS {
-            self.decisions.add_group(owner, contract);
+            self.decisions.add_group(owner, contract)?;
         }
         let owner = InvariantOwnerId::ValueObject(V::DESCRIPTOR.id);
         self.invariants.register_owner(owner);
         for contract in V::INVARIANT_CONTRACTS {
-            self.invariants.add_group(owner, contract);
+            self.invariants.add_group(owner, contract)?;
         }
+        Ok(())
     }
 
     pub fn add_domain_service(&mut self, descriptor: DomainServiceDescriptor) {
@@ -215,27 +230,35 @@ impl DomainModelBuilder {
         }));
     }
 
-    pub fn add_domain_service_type<S: DomainServiceType>(&mut self) {
+    pub fn add_domain_service_type<S: DomainServiceType>(
+        &mut self,
+    ) -> Result<(), DomainModelError> {
         self.add_domain_service(S::DESCRIPTOR);
         let owner = ActionOwnerId::DomainService(S::DESCRIPTOR.id);
         self.actions.register_owner(owner);
         for contract in S::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract);
+            self.actions.add_group(owner, contract)?;
         }
         let owner = DecisionOwnerId::DomainService(S::DESCRIPTOR.id);
         self.decisions.register_owner(owner);
         for contract in S::DECISION_CONTRACTS {
-            self.decisions.add_group(owner, contract);
+            self.decisions.add_group(owner, contract)?;
         }
+        Ok(())
     }
 
-    pub fn add_domain_event(&mut self, descriptor: DomainEventDescriptor) {
+    pub fn add_domain_event(
+        &mut self,
+        descriptor: DomainEventDescriptor,
+    ) -> Result<(), DomainModelError> {
         if self
             .domain_events
             .iter()
             .any(|(id, _)| *id == descriptor.id)
         {
-            panic!("duplicate DomainEventId: {:?}", descriptor.id);
+            return Err(DomainModelError::DuplicateDomainEventId {
+                id: Box::new(descriptor.id),
+            });
         }
         self.domain_events.push((
             descriptor.id,
@@ -250,15 +273,21 @@ impl DomainModelBuilder {
             }),
         ));
         self.field_references.add_domain_event(descriptor);
+        Ok(())
     }
 
-    pub fn add_domain_command(&mut self, descriptor: DomainCommandDescriptor) {
+    pub fn add_domain_command(
+        &mut self,
+        descriptor: DomainCommandDescriptor,
+    ) -> Result<(), DomainModelError> {
         if self
             .domain_commands
             .iter()
             .any(|(id, _)| *id == descriptor.id)
         {
-            panic!("duplicate DomainCommandId: {:?}", descriptor.id);
+            return Err(DomainModelError::DuplicateDomainCommandId {
+                id: Box::new(descriptor.id),
+            });
         }
         self.domain_commands.push((
             descriptor.id,
@@ -269,6 +298,7 @@ impl DomainModelBuilder {
             }),
         ));
         self.field_references.add_domain_command(descriptor);
+        Ok(())
     }
 
     pub fn add_domain_error(&mut self, descriptor: DomainErrorDescriptor) {
@@ -288,15 +318,20 @@ impl DomainModelBuilder {
         self.field_references.add_domain_error(descriptor);
     }
 
-    pub fn add_action_extension<G: ActionGroupType>(&mut self) {
+    pub fn add_action_extension<G: ActionGroupType>(&mut self) -> Result<(), DomainModelError> {
         let owner = <G::Owner as crate::ActionOwnerType>::ACTION_OWNER_ID;
-        self.actions.add_extension(owner, G::ACTIONS);
+        self.actions.add_extension(owner, G::ACTIONS)
     }
 
-    pub fn add_queries(&mut self, descriptors: &'static [QueryDescriptor]) {
+    pub fn add_queries(
+        &mut self,
+        descriptors: &'static [QueryDescriptor],
+    ) -> Result<(), DomainModelError> {
         for descriptor in descriptors {
             if self.queries.iter().any(|(id, _)| *id == descriptor.id) {
-                panic!("duplicate QueryId: {:?}", descriptor.id);
+                return Err(DomainModelError::DuplicateQueryId {
+                    id: Box::new(descriptor.id),
+                });
             }
             self.queries.push((
                 descriptor.id,
@@ -308,34 +343,35 @@ impl DomainModelBuilder {
                 }),
             ));
         }
+        Ok(())
     }
 
-    pub fn finish(self) -> Value {
+    pub fn finish(self) -> Result<Value, DomainModelError> {
         let inventory = ActionReferenceInventory::new(
             self.domain_identities.iter().map(|(id, _)| *id).collect(),
             self.domain_events.iter().map(|(id, _)| *id).collect(),
             self.domain_errors.iter().map(|(id, _)| *id).collect(),
             self.value_objects.iter().map(|(id, _)| *id).collect(),
         );
-        self.actions.validate_references(&inventory);
+        self.actions.validate_references(&inventory)?;
         let lifecycle_action_inventory = LifecycleActionInventory::new(
             self.actions.attached_ids().collect(),
             self.actions.extension_ids().collect(),
         );
         self.entities
-            .validate_lifecycle_actions(&lifecycle_action_inventory);
+            .validate_lifecycle_actions(&lifecycle_action_inventory)?;
         let decision_inventory =
             DecisionReferenceInventory::new(self.value_objects.iter().map(|(id, _)| *id).collect());
-        self.decisions.validate_references(&decision_inventory);
+        self.decisions.validate_references(&decision_inventory)?;
         let field_inventory = FieldReferenceInventory::new(
             self.domain_identities.iter().map(|(id, _)| *id).collect(),
             self.entities.ids().collect(),
             self.value_objects.iter().map(|(id, _)| *id).collect(),
             self.aggregates.iter().map(|(id, _)| *id).collect(),
         );
-        field_reference_validation::validate(self.field_references.iter(), &field_inventory);
+        field_reference_validation::validate(self.field_references.iter(), &field_inventory)?;
 
-        json!({
+        Ok(json!({
             "boundedContexts": self.bounded_contexts,
             "aggregates": self.aggregates.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "entities": self.entities.into_values(),
@@ -349,7 +385,7 @@ impl DomainModelBuilder {
             "decisions": self.decisions.into_values(),
             "queries": self.queries.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "invariants": self.invariants.into_values(),
-        })
+        }))
     }
 }
 

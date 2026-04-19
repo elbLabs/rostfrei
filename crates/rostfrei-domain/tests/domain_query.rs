@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate, BoundedContext, DomainIdentity, DomainIdentityType, Entity, QueryGroupType,
-    QueryInputDescriptor, QueryOutputDescriptor, ScalarType, ValueObject, ValueObjectType,
-    domain_model, domain_queries,
+    Aggregate, BoundedContext, DomainIdentity, DomainIdentityType, DomainModelError, Entity,
+    QueryGroupType, QueryInputDescriptor, QueryOutputDescriptor, ScalarType, ValueObject,
+    ValueObjectType, domain_model, domain_queries,
 };
 use serde_json::json;
 
@@ -121,7 +121,8 @@ fn projects_queries_and_identities_to_exact_json() {
         errors: [],
 
         query_groups: [CatalogQueries],
-    };
+    }
+    .expect("query domain model should be valid");
     let aggregate = json!({ "context": "catalog", "local": "catalog" });
     let entity = json!({ "aggregate": aggregate, "local": "catalog-root" });
     let identity = json!({ "owner": entity });
@@ -158,21 +159,38 @@ impl QueryGroupType for DuplicateQueries {
 }
 
 #[test]
-#[should_panic(expected = "duplicate QueryId")]
 fn rejects_duplicate_query_ids_across_groups() {
-    let _ = domain_model! {
+    let error = domain_model! {
         contexts: [], aggregates: [], entities: [], identities: [], value_objects: [],
         services: [], commands: [], errors: [],
         query_groups: [CatalogQueries, DuplicateQueries],
-    };
+    }
+    .expect_err("duplicate query IDs should be rejected");
+    let id = CatalogQueries::QUERIES[0].id;
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateQueryId { id: Box::new(id) }
+    );
+    assert_eq!(error.to_string(), format!("duplicate QueryId: {id:?}"));
 }
 
 #[test]
-#[should_panic(expected = "duplicate DomainIdentityId")]
 fn rejects_duplicate_identity_ids() {
-    let _ = domain_model! {
+    let error = domain_model! {
         contexts: [], aggregates: [], entities: [], identities: [CatalogId, CatalogId],
         value_objects: [], services: [], commands: [], errors: [],
         query_groups: [],
-    };
+    }
+    .expect_err("duplicate identity IDs should be rejected");
+    let id = CatalogId::DESCRIPTOR.id;
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateDomainIdentityId { id: Box::new(id) }
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("duplicate DomainIdentityId: {id:?}")
+    );
 }

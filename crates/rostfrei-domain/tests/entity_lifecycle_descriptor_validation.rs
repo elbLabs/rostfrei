@@ -1,14 +1,11 @@
-mod support;
-
-use support::{ExpectedPanicError, panic_message as capture_panic_message};
-
 use domain::__private::DomainModelBuilder;
 use domain::{
     ActionId, ActionOwnerId, AggregateDescriptor, AggregateId, AggregateType,
     BoundedContextDescriptor, BoundedContextId, BoundedContextType, DomainIdentityDescriptor,
-    DomainIdentityId, DomainIdentityType, EntityDescriptor, EntityId, EntityLifecycleDescriptor,
-    EntityLifecycleId, EntityLifecycleStateDescriptor, EntityLifecycleStateId,
-    EntityLifecycleTransitionDescriptor, EntityType, IdentityDescriptor, ScalarType,
+    DomainIdentityId, DomainIdentityType, DomainModelError, EntityDescriptor, EntityId,
+    EntityLifecycleDescriptor, EntityLifecycleId, EntityLifecycleStateDescriptor,
+    EntityLifecycleStateId, EntityLifecycleTransitionDescriptor, EntityType, IdentityDescriptor,
+    ScalarType,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("lifecycle-descriptor-validation");
@@ -352,126 +349,314 @@ impl<const CASE: u8> DomainIdentityType for ValidationIdentity<CASE> {
     };
 }
 
-fn panic_message<const CASE: u8>() -> Result<String, ExpectedPanicError> {
-    capture_panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_entity_type::<ValidationEntity<CASE>>();
-    })
-}
-
-fn assert_panic_starts_with<const CASE: u8>(expected: &str) -> Result<(), ExpectedPanicError> {
-    assert!(panic_message::<CASE>()?.starts_with(expected));
-    Ok(())
-}
-
-fn assert_panic_contains<const CASE: u8>(expected: &str) -> Result<(), ExpectedPanicError> {
-    assert!(panic_message::<CASE>()?.contains(expected));
-    Ok(())
+fn register<const CASE: u8>() -> Result<(), DomainModelError> {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_entity_type::<ValidationEntity<CASE>>()
 }
 
 #[test]
 fn accepts_a_well_formed_trusted_descriptor() {
-    let mut builder = DomainModelBuilder::new();
-    builder.add_entity_type::<ValidationEntity<0>>();
+    register::<0>().unwrap();
 }
 
 #[test]
-fn rejects_a_lifecycle_owned_by_another_entity_before_later_defects()
--> Result<(), ExpectedPanicError> {
-    assert_panic_starts_with::<1>("entity lifecycle descriptor owner mismatch")
+fn rejects_a_lifecycle_owned_by_another_entity_before_later_defects() {
+    let error = register::<1>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .starts_with("entity lifecycle descriptor owner mismatch")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleDescriptorOwnerMismatch {
+            expected: Box::new(ENTITY_ID),
+            found: Box::new(FOREIGN_ENTITY_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_an_invalid_lifecycle_local_id_before_its_blank_label() -> Result<(), ExpectedPanicError>
-{
-    assert_panic_starts_with::<13>(
-        "entity lifecycle local id must be nonempty lowercase kebab-case",
-    )
+fn rejects_an_invalid_lifecycle_local_id_before_its_blank_label() {
+    let error = register::<13>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .starts_with("entity lifecycle local id must be nonempty lowercase kebab-case")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::InvalidLifecycleLocalId { local: "Workflow" }
+    );
 }
 
 #[test]
-fn rejects_a_blank_lifecycle_local_id() -> Result<(), ExpectedPanicError> {
-    assert_panic_starts_with::<14>(
-        "entity lifecycle local id must be nonempty lowercase kebab-case",
-    )
+fn rejects_a_blank_lifecycle_local_id() {
+    let error = register::<14>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .starts_with("entity lifecycle local id must be nonempty lowercase kebab-case")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::InvalidLifecycleLocalId { local: "" }
+    );
 }
 
 #[test]
-fn rejects_a_blank_lifecycle_label_before_state_structure() -> Result<(), ExpectedPanicError> {
-    assert_panic_starts_with::<15>("entity lifecycle label must not be empty")
+fn rejects_a_blank_lifecycle_label_before_state_structure() {
+    let error = register::<15>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .starts_with("entity lifecycle label must not be empty")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::EmptyLifecycleLabel { label: " \t\n " }
+    );
 }
 
 #[test]
-fn rejects_an_empty_state_collection() -> Result<(), ExpectedPanicError> {
-    assert_panic_contains::<2>("must declare at least one state")
+fn rejects_an_empty_state_collection() {
+    let error = register::<2>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("must declare at least one state")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleWithoutStates {
+            lifecycle_id: Box::new(LIFECYCLE_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_a_state_owned_by_another_lifecycle() -> Result<(), ExpectedPanicError> {
-    assert_panic_contains::<3>("state ownership mismatch")
+fn rejects_a_state_owned_by_another_lifecycle() {
+    let error = register::<3>().unwrap_err();
+
+    assert!(error.to_string().contains("state ownership mismatch"));
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleStateOwnershipMismatch {
+            location: "state",
+            expected: Box::new(LIFECYCLE_ID),
+            found: Box::new(FOREIGN_LIFECYCLE_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_an_invalid_state_local_id() -> Result<(), ExpectedPanicError> {
-    assert_panic_starts_with::<16>(
-        "entity lifecycle state local id must be nonempty lowercase kebab-case",
-    )
+fn rejects_an_invalid_state_local_id() {
+    let error = register::<16>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .starts_with("entity lifecycle state local id must be nonempty lowercase kebab-case")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::InvalidLifecycleStateLocalId {
+            local: "Draft_State",
+        }
+    );
 }
 
 #[test]
-fn rejects_a_blank_state_local_id() -> Result<(), ExpectedPanicError> {
-    assert_panic_starts_with::<17>(
-        "entity lifecycle state local id must be nonempty lowercase kebab-case",
-    )
+fn rejects_a_blank_state_local_id() {
+    let error = register::<17>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .starts_with("entity lifecycle state local id must be nonempty lowercase kebab-case")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::InvalidLifecycleStateLocalId { local: "" }
+    );
 }
 
 #[test]
-fn rejects_a_blank_state_label() -> Result<(), ExpectedPanicError> {
-    assert_panic_starts_with::<18>("entity lifecycle state label must not be empty")
+fn rejects_a_blank_state_label() {
+    let error = register::<18>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .starts_with("entity lifecycle state label must not be empty")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::EmptyLifecycleStateLabel { label: " \t\n " }
+    );
 }
 
 #[test]
-fn rejects_duplicate_state_ids_before_initial_validation() -> Result<(), ExpectedPanicError> {
-    assert_panic_starts_with::<4>("duplicate EntityLifecycleStateId")
+fn rejects_duplicate_state_ids_before_initial_validation() {
+    let error = register::<4>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .starts_with("duplicate EntityLifecycleStateId")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateEntityLifecycleStateId {
+            id: Box::new(DRAFT_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_an_initial_state_owned_by_another_lifecycle() -> Result<(), ExpectedPanicError> {
-    assert_panic_contains::<5>("initial state ownership mismatch")
+fn rejects_an_initial_state_owned_by_another_lifecycle() {
+    let error = register::<5>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("initial state ownership mismatch")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleStateOwnershipMismatch {
+            location: "initial state",
+            expected: Box::new(LIFECYCLE_ID),
+            found: Box::new(FOREIGN_LIFECYCLE_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_an_undeclared_initial_state() -> Result<(), ExpectedPanicError> {
-    assert_panic_contains::<6>("initial state is not declared")
+fn rejects_an_undeclared_initial_state() {
+    let error = register::<6>().unwrap_err();
+
+    assert!(error.to_string().contains("initial state is not declared"));
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleStateNotDeclared {
+            location: "initial state",
+            id: Box::new(MISSING_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_a_transition_source_owned_by_another_lifecycle() -> Result<(), ExpectedPanicError> {
-    assert_panic_contains::<7>("transition source ownership mismatch")
+fn rejects_a_transition_source_owned_by_another_lifecycle() {
+    let error = register::<7>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("transition source ownership mismatch")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleStateOwnershipMismatch {
+            location: "transition source",
+            expected: Box::new(LIFECYCLE_ID),
+            found: Box::new(FOREIGN_LIFECYCLE_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_an_undeclared_transition_source() -> Result<(), ExpectedPanicError> {
-    assert_panic_contains::<8>("transition source is not declared")
+fn rejects_an_undeclared_transition_source() {
+    let error = register::<8>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("transition source is not declared")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleStateNotDeclared {
+            location: "transition source",
+            id: Box::new(MISSING_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_a_transition_target_owned_by_another_lifecycle() -> Result<(), ExpectedPanicError> {
-    assert_panic_contains::<9>("transition target ownership mismatch")
+fn rejects_a_transition_target_owned_by_another_lifecycle() {
+    let error = register::<9>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("transition target ownership mismatch")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleStateOwnershipMismatch {
+            location: "transition target",
+            expected: Box::new(LIFECYCLE_ID),
+            found: Box::new(FOREIGN_LIFECYCLE_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_an_undeclared_transition_target() -> Result<(), ExpectedPanicError> {
-    assert_panic_contains::<10>("transition target is not declared")
+fn rejects_an_undeclared_transition_target() {
+    let error = register::<10>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("transition target is not declared")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleStateNotDeclared {
+            location: "transition target",
+            id: Box::new(MISSING_ID),
+        }
+    );
 }
 
 #[test]
-fn rejects_a_transition_action_not_owned_by_the_exact_entity() -> Result<(), ExpectedPanicError> {
-    assert_panic_contains::<11>("transition action owner mismatch")
+fn rejects_a_transition_action_not_owned_by_the_exact_entity() {
+    let error = register::<11>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("transition action owner mismatch")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::LifecycleTransitionActionOwnerMismatch {
+            expected: Box::new(ActionOwnerId::Entity(ENTITY_ID)),
+            found: Box::new(ActionOwnerId::Aggregate(AGGREGATE_ID)),
+        }
+    );
 }
 
 #[test]
-fn rejects_duplicate_semantic_transition_keys_even_with_different_targets()
--> Result<(), ExpectedPanicError> {
-    assert_panic_starts_with::<12>("duplicate entity lifecycle transition key")
+fn rejects_duplicate_semantic_transition_keys_even_with_different_targets() {
+    let error = register::<12>().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .starts_with("duplicate entity lifecycle transition key")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateLifecycleTransitionKey {
+            source: Box::new(DRAFT_ID),
+            action: Box::new(ACTION_ID),
+        }
+    );
 }

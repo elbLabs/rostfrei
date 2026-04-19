@@ -15,8 +15,8 @@ use event_store::{NatsEventStore, provision_event_store};
 use event_store_config::NatsEventStoreConfig;
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventStore,
-    EventStoreErrorKind, ExecutionMetadata, ExpectedVersion, NewEvent, OperationId, StreamId,
-    StreamVersion,
+    EventStoreError, EventStoreErrorKind, ExecutionMetadata, ExpectedVersion, NewEvent,
+    OperationId, RecordedEvent, StreamId, StreamVersion,
 };
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
 use rostfrei_testing::event_store_contract;
@@ -46,13 +46,15 @@ static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[tokio::test]
 #[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
 #[allow(clippy::too_many_lines)]
-async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> {
+async fn real_nats_event_store_contract_and_operator_policy() {
     let Ok(url) = std::env::var("ROSTFREI_NATS_URL") else {
         eprintln!("ROSTFREI_NATS_URL is not set; skipping real NATS integration test");
-        return Ok(());
+        return;
     };
-    let context = connect_context(&url).await?;
-    let (bounded_context, stream_name) = unique_names("contract")?;
+    let context = connect_context(&url)
+        .await
+        .expect("real NATS JetStream context");
+    let (bounded_context, stream_name) = unique_names("contract").expect("unique contract names");
     let config = NatsEventStoreConfig::new(&bounded_context, stream_name)
         .expect("valid integration config")
         .with_storage_limits(64 * 1024 * 1024, 2 * 1024 * 1024)
@@ -74,9 +76,11 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
         .expect("provisioned stream should connect");
     assert_eq!(store.config(), &config);
 
-    event_store_contract::try_run(|| store.clone()).await?;
+    event_store_contract::try_run(|| store.clone())
+        .await
+        .expect("event-store contract");
 
-    let concurrent_stream = stream("concurrent-atomic-batches")?;
+    let concurrent_stream = stream("concurrent-atomic-batches").expect("concurrent stream id");
     let concurrent_results: [_; 2] = tokio::join!(
         store.append(
             &concurrent_stream,
@@ -86,7 +90,8 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
                 "concurrent-atomic-a",
                 "concurrent-a",
                 &[b"a-1", b"a-2", b"a-3"],
-            )?,
+            )
+            .expect("first concurrent batch"),
         ),
         store.append(
             &concurrent_stream,
@@ -96,7 +101,8 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
                 "concurrent-atomic-b",
                 "concurrent-b",
                 &[b"b-1", b"b-2", b"b-3"],
-            )?,
+            )
+            .expect("second concurrent batch"),
         ),
     )
     .into();
@@ -128,13 +134,14 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
             .all(|events| events[0].commit_id() == events[1].commit_id())
     );
 
-    let restart_stream = stream("restart-retry")?;
+    let restart_stream = stream("restart-retry").expect("restart stream id");
     let retried_batch = batch(
         &restart_stream,
         "restart-operation",
         "restart-content",
         &[b"first", b"second"],
-    )?;
+    )
+    .expect("restart retry batch");
     let first = store
         .append(
             &restart_stream,
@@ -152,14 +159,20 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
                 "restart-later-operation",
                 "restart-later-content",
                 &[b"later"],
-            )?,
+            )
+            .expect("later restart batch"),
         )
         .await
         .expect("later append should succeed");
 
-    let reconnected = NatsEventStore::connect(connect_context(&url).await?, config.clone())
-        .await
-        .expect("a new adapter should connect without provisioning");
+    let reconnected = NatsEventStore::connect(
+        connect_context(&url)
+            .await
+            .expect("reconnected NATS JetStream context"),
+        config.clone(),
+    )
+    .await
+    .expect("a new adapter should connect without provisioning");
     let replay = reconnected
         .append(&restart_stream, ExpectedVersion::NoStream, retried_batch)
         .await
@@ -177,7 +190,7 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
         .expect("stream info should refresh")
         .state
         .messages;
-    let atomic_stream = stream("one-wire-commit")?;
+    let atomic_stream = stream("one-wire-commit").expect("one-wire stream id");
     store
         .append(
             &atomic_stream,
@@ -187,7 +200,8 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
                 "one-wire-operation",
                 "one-wire-content",
                 &[b"one", b"two", b"three"],
-            )?,
+            )
+            .expect("one-wire atomic batch"),
         )
         .await
         .expect("atomic batch should append");
@@ -201,7 +215,8 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
         messages_before,
         3,
         "expected JetStream message count after atomic append",
-    )?;
+    )
+    .expect("expected message count arithmetic");
     assert_eq!(
         messages_after, expected_messages_after,
         "each domain event must use one JetStream message"
@@ -214,7 +229,9 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
     let mut batch_id = None;
     for (index, expected_payload) in [b"one".as_slice(), b"two", b"three"].iter().enumerate() {
         let expected_batch_sequence =
-            checked_add_usize(index, 1, "expected one-based batch sequence")?.to_string();
+            checked_add_usize(index, 1, "expected one-based batch sequence")
+                .expect("expected batch sequence arithmetic")
+                .to_string();
         let expected_payload_base64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, expected_payload);
         let stored_event = stream_info
@@ -225,7 +242,8 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
             stored_event.sequence,
             1,
             "next JetStream sequence after stored atomic event",
-        )?;
+        )
+        .expect("next JetStream sequence arithmetic");
         assert_eq!(
             stored_event
                 .headers
@@ -296,7 +314,7 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
         );
     }
 
-    let boundary_stream = stream("maximum-atomic-batch")?;
+    let boundary_stream = stream("maximum-atomic-batch").expect("maximum batch stream id");
     let boundary_outcome = store
         .append(
             &boundary_stream,
@@ -306,7 +324,8 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
                 "maximum-batch-operation",
                 "maximum-batch-content",
                 1_000,
-            )?,
+            )
+            .expect("maximum atomic batch fixture"),
         )
         .await
         .expect("the ADR-50 maximum event count should append atomically");
@@ -320,7 +339,7 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
         1_000
     );
 
-    let incompatible_stream = stream("incompatible-wire")?;
+    let incompatible_stream = stream("incompatible-wire").expect("incompatible stream id");
     let incompatible_subject = config.aggregate_subject(
         incompatible_stream.aggregate_type().as_str(),
         incompatible_stream.aggregate_id().as_str(),
@@ -355,7 +374,8 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
             config.max_stream_bytes(),
             1,
             "mismatching maximum stream byte limit",
-        )?,
+        )
+        .expect("mismatching stream limit arithmetic"),
         config.max_event_bytes(),
     )
     .expect("valid mismatching storage limits")
@@ -369,13 +389,28 @@ async fn real_nats_event_store_contract_and_operator_policy() -> TestResult<()> 
         Err(ref error) if error.kind() == EventStoreErrorKind::ConfigurationMismatch
     ));
 
-    capacity_is_reported_distinctly(&context).await?;
-    Ok(())
+    let capacity = capacity_observations(&context)
+        .await
+        .expect("capacity observations");
+    assert!(matches!(
+        &capacity.append_result,
+        Err(error) if error.kind() == EventStoreErrorKind::CapacityExhausted
+    ));
+    assert_eq!(
+        capacity.history_after, capacity.history_before,
+        "capacity failure must not store an event prefix"
+    );
 }
 
-async fn capacity_is_reported_distinctly(
+struct CapacityObservations {
+    append_result: Result<AppendOutcome, EventStoreError>,
+    history_before: Vec<RecordedEvent>,
+    history_after: Vec<RecordedEvent>,
+}
+
+async fn capacity_observations(
     context: &async_nats::jetstream::Context,
-) -> TestResult<()> {
+) -> TestResult<CapacityObservations> {
     let (bounded_context, stream_name) = unique_names("capacity")?;
     let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
         .with_storage_limits(4096, 2048)?;
@@ -396,7 +431,7 @@ async fn capacity_is_reported_distinctly(
         .await?;
     let before = store.load(&capacity_stream).await?;
     let large_payload = vec![2; 700];
-    let result = store
+    let append_result = store
         .append(
             &capacity_stream,
             ExpectedVersion::Exact(StreamVersion::new(1)),
@@ -412,16 +447,12 @@ async fn capacity_is_reported_distinctly(
             )?,
         )
         .await;
-    assert!(matches!(
-        result,
-        Err(ref error) if error.kind() == EventStoreErrorKind::CapacityExhausted
-    ));
-    assert_eq!(
-        store.load(&capacity_stream).await?,
-        before,
-        "capacity failure must not store an event prefix"
-    );
-    Ok(())
+    let history_after = store.load(&capacity_stream).await?;
+    Ok(CapacityObservations {
+        append_result,
+        history_before: before,
+        history_after,
+    })
 }
 
 async fn connect_context(url: &str) -> TestResult<async_nats::jetstream::Context> {
