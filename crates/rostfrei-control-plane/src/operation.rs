@@ -56,16 +56,32 @@ pub struct PredictedDomainEvent {
 )]
 pub enum OperationResult {
     Accepted {
-        base_stream_version: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base_stream_version: Option<u64>,
         predicted_events: Vec<PredictedDomainEvent>,
-        appended: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        appended: Option<bool>,
         published: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        command_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        response_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duplicate: Option<bool>,
     },
     Rejected {
-        base_stream_version: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base_stream_version: Option<u64>,
         rejection: Value,
-        appended: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        appended: Option<bool>,
         published: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        command_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        response_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duplicate: Option<bool>,
     },
 }
 
@@ -111,12 +127,30 @@ pub struct OperationEvent {
 pub enum OperationEventKind {
     Queued,
     Started,
-    HistoryReplayed { base_stream_version: u64 },
+    HistoryReplayed {
+        base_stream_version: u64,
+    },
     CommandAccepted,
-    PredictedDomainEvent { event: PredictedDomainEvent },
-    CommandRejected { rejection: Value },
-    Completed { decision: CompletedDecision },
-    Failed { code: &'static str, message: String },
+    PredictedDomainEvent {
+        event: PredictedDomainEvent,
+    },
+    CommandRejected {
+        rejection: Value,
+    },
+    CommandPublished {
+        command_message_id: String,
+        duplicate: bool,
+    },
+    CommandResponded {
+        response_message_id: String,
+    },
+    Completed {
+        decision: CompletedDecision,
+    },
+    Failed {
+        code: &'static str,
+        message: String,
+    },
 }
 
 impl OperationEventKind {
@@ -128,6 +162,8 @@ impl OperationEventKind {
             Self::CommandAccepted => "command.accepted",
             Self::PredictedDomainEvent { .. } => "domain-event.predicted",
             Self::CommandRejected { .. } => "command.rejected",
+            Self::CommandPublished { .. } => "command.published",
+            Self::CommandResponded { .. } => "command.responded",
             Self::Completed { .. } => "operation.completed",
             Self::Failed { .. } => "operation.failed",
         }
@@ -141,6 +177,7 @@ pub struct NewOperation<'a> {
     pub schema_version: u32,
     pub aggregate_type: &'a str,
     pub aggregate_id: &'a str,
+    pub mode: &'static str,
 }
 
 struct OperationState {
@@ -169,7 +206,7 @@ impl OperationRecord {
                 fingerprint: operation.fingerprint,
                 snapshot: OperationSnapshot {
                     operation_id: operation.operation_id,
-                    mode: "simulate",
+                    mode: operation.mode,
                     status: OperationStatus::Queued,
                     command: operation.command.to_owned(),
                     schema_version: operation.schema_version,
@@ -243,6 +280,23 @@ impl OperationRecord {
         }
         fail_state(&mut state, code, message);
         self.terminal.store(true, Ordering::Release);
+        let latest = state.snapshot.latest_event_id;
+        drop(state);
+        self.changed.send_replace(latest);
+    }
+
+    pub async fn command_published(&self, command_message_id: String, duplicate: bool) {
+        let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() {
+            return;
+        }
+        push_event(
+            &mut state,
+            OperationEventKind::CommandPublished {
+                command_message_id,
+                duplicate,
+            },
+        );
         let latest = state.snapshot.latest_event_id;
         drop(state);
         self.changed.send_replace(latest);
@@ -351,6 +405,7 @@ mod tests {
             schema_version: 1,
             aggregate_type: "test-context/test-aggregate",
             aggregate_id: "aggregate-1",
+            mode: "simulate",
         })
     }
 
@@ -361,10 +416,13 @@ mod tests {
         completed
             .complete(
                 OperationResult::Rejected {
-                    base_stream_version: 0,
+                    base_stream_version: Some(0),
                     rejection: Value::Null,
-                    appended: false,
+                    appended: Some(false),
                     published: false,
+                    command_message_id: None,
+                    response_message_id: None,
+                    duplicate: None,
                 },
                 vec![OperationEventKind::CommandAccepted; MAX_COMPLETION_TRACE_EVENTS],
             )
@@ -389,10 +447,13 @@ mod tests {
         oversized
             .complete(
                 OperationResult::Rejected {
-                    base_stream_version: 0,
+                    base_stream_version: Some(0),
                     rejection: Value::Null,
-                    appended: false,
+                    appended: Some(false),
                     published: false,
+                    command_message_id: None,
+                    response_message_id: None,
+                    duplicate: None,
                 },
                 vec![OperationEventKind::CommandAccepted; MAX_COMPLETION_TRACE_EVENTS + 1],
             )

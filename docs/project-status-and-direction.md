@@ -90,9 +90,16 @@ newer and supports at most 1,000 events in one commit. Retry correctness is a
 persisted rostfrei semantic and does not rely on the finite JetStream message
 deduplication window.
 
-Messaging supports typed commands, integration events, and queries; bounded
-wire envelopes; PubAck-confirmed publication; durable pull consumers; delayed
-retry; bounded delivery attempts; quarantine; and Core NATS request/reply.
+Messaging supports typed commands, durable command responses, integration
+events, and queries; bounded wire envelopes; PubAck-confirmed publication;
+durable pull consumers; delayed retry; bounded delivery attempts; quarantine;
+and Core NATS request/reply.
+Command responses use an independently versioned schema and exact derived
+addresses. Workers reconcile retained responses before command execution, but
+this does not provide exactly-once terminal decisions: rejected and
+accepted-no-event outcomes still lack a transactional receipt/outbox across the
+decision-to-response crash window, and response immutability lasts only for the
+configured response retention.
 Query requesters expose `QueryResult<T>`, keeping transport and protocol failures
 outside `QueryResponse<T>` while application query errors remain response
 outcomes.

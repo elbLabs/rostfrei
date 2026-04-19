@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{
     ConsumerName, ContractError, ContractErrorKind, DurableName,
-    address::{CommandAddress, IntegrationEventAddress, QueryAddress},
+    address::{CommandAddress, CommandResponseAddress, IntegrationEventAddress, QueryAddress},
 };
 
 pub const MAX_SCOPE_NAME_BYTES: usize = 64;
@@ -73,6 +73,13 @@ impl BoundedContext {
         name: &str,
     ) -> Result<IntegrationEventAddress, ContractError> {
         IntegrationEventAddress::new(self.application.as_str(), self.name.as_str(), name)
+    }
+
+    pub fn command_response_address(
+        &self,
+        name: &str,
+    ) -> Result<CommandResponseAddress, ContractError> {
+        CommandResponseAddress::new(self.application.as_str(), self.name.as_str(), name)
     }
 
     pub fn query_address(&self, name: &str) -> Result<QueryAddress, ContractError> {
@@ -194,6 +201,16 @@ mod tests {
         assert_eq!(
             context.command_address("evaluate").unwrap().as_str(),
             "fast-inbox.command.commercial-access.evaluate"
+        );
+        assert_eq!(
+            context
+                .command_response_address("a".repeat(64).as_str())
+                .unwrap()
+                .as_str(),
+            format!(
+                "fast-inbox.command-response.commercial-access.{}",
+                "a".repeat(64)
+            )
         );
         assert_eq!(
             context

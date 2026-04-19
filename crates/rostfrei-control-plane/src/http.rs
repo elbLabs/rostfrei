@@ -12,11 +12,13 @@ use futures_util::stream;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::{ControlPlane, MAX_COMMAND_PAYLOAD_LEN, SimulationRequest, SubmissionError};
+use crate::{
+    ControlPlane, DispatchRequest, MAX_COMMAND_PAYLOAD_LEN, SimulationRequest, SubmissionError,
+};
 
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
 const LAST_EVENT_ID: &str = "last-event-id";
-const SIMULATION_REQUEST_OVERHEAD: usize = 64 * 1024;
+const COMMAND_REQUEST_OVERHEAD: usize = 64 * 1024;
 
 #[derive(Clone)]
 pub struct HttpConfig {
@@ -25,13 +27,18 @@ pub struct HttpConfig {
 
 impl HttpConfig {
     pub fn new(bearer_token: impl Into<String>) -> Result<Self, HttpConfigError> {
-        let bearer_token = bearer_token.into();
-        if bearer_token.is_empty() || !bearer_token.bytes().all(|byte| byte.is_ascii_graphic()) {
-            return Err(HttpConfigError::InvalidBearerToken);
-        }
-        Ok(Self {
-            bearer_token: bearer_token.into(),
-        })
+        validate_bearer_token(bearer_token).map(|bearer_token| Self { bearer_token })
+    }
+}
+
+#[derive(Clone)]
+pub struct DispatchHttpConfig {
+    bearer_token: Arc<str>,
+}
+
+impl DispatchHttpConfig {
+    pub fn new(bearer_token: impl Into<String>) -> Result<Self, HttpConfigError> {
+        validate_bearer_token(bearer_token).map(|bearer_token| Self { bearer_token })
     }
 }
 
@@ -41,8 +48,21 @@ pub enum HttpConfigError {
     InvalidBearerToken,
 }
 
+fn validate_bearer_token(bearer_token: impl Into<String>) -> Result<Arc<str>, HttpConfigError> {
+    let bearer_token = bearer_token.into();
+    if bearer_token.is_empty() || !bearer_token.bytes().all(|byte| byte.is_ascii_graphic()) {
+        return Err(HttpConfigError::InvalidBearerToken);
+    }
+    Ok(bearer_token.into())
+}
+
 #[derive(Clone)]
 struct HttpState {
+    control_plane: ControlPlane,
+}
+
+#[derive(Clone)]
+struct DispatchHttpState {
     control_plane: ControlPlane,
 }
 
@@ -58,10 +78,26 @@ pub fn router(control_plane: ControlPlane, config: HttpConfig) -> Router {
             get(operation_events),
         )
         .layer(DefaultBodyLimit::max(
-            MAX_COMMAND_PAYLOAD_LEN + SIMULATION_REQUEST_OVERHEAD,
+            MAX_COMMAND_PAYLOAD_LEN + COMMAND_REQUEST_OVERHEAD,
         ))
         .layer(middleware::from_fn_with_state(config, authorize_request))
         .with_state(HttpState { control_plane })
+}
+
+pub fn dispatch_router(control_plane: ControlPlane, config: DispatchHttpConfig) -> Router {
+    Router::new()
+        .route(
+            "/v1/contexts/{context}/aggregates/{aggregate}/{aggregate_id}/commands/{command}/dispatch",
+            post(submit_dispatch),
+        )
+        .layer(DefaultBodyLimit::max(
+            MAX_COMMAND_PAYLOAD_LEN + COMMAND_REQUEST_OVERHEAD,
+        ))
+        .layer(middleware::from_fn_with_state(
+            config,
+            authorize_dispatch_request,
+        ))
+        .with_state(DispatchHttpState { control_plane })
 }
 
 async fn authorize_request(
@@ -70,6 +106,17 @@ async fn authorize_request(
     next: Next,
 ) -> Response {
     if !is_authorized(&config, request.headers()) {
+        return unauthorized();
+    }
+    next.run(request).await
+}
+
+async fn authorize_dispatch_request(
+    State(config): State<DispatchHttpConfig>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if !has_bearer_token(config.bearer_token.as_ref(), request.headers()) {
         return unauthorized();
     }
     next.run(request).await
@@ -101,25 +148,44 @@ async fn submit_simulation(
         )
         .await
     {
-        Ok(operation) => {
-            let location = format!("/v1/operations/{}", operation.operation_id);
-            let location = match HeaderValue::from_str(&location) {
-                Ok(location) => Some(location),
-                Err(error) => {
-                    tracing::error!(
-                        operation_id = %operation.operation_id,
-                        %error,
-                        "accepted operation location could not be encoded as an HTTP header"
-                    );
-                    None
-                }
-            };
-            let mut response = (StatusCode::ACCEPTED, Json(operation)).into_response();
-            if let Some(location) = location {
-                response.headers_mut().insert(header::LOCATION, location);
-            }
-            response
+        Ok(operation) => accepted_operation(operation),
+        Err(error) => error_response(&error),
+    }
+}
+
+async fn submit_dispatch(
+    State(state): State<DispatchHttpState>,
+    Path((context, aggregate, aggregate_id, command)): Path<(String, String, String, String)>,
+    headers: HeaderMap,
+    request: Result<Json<DispatchRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return json_rejection(&rejection),
+    };
+    let idempotency_key = match optional_header(&headers, IDEMPOTENCY_KEY) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            return bad_request_with_code(
+                "idempotency-key-required",
+                "Idempotency-Key is required for dispatch",
+            );
         }
+        Err(message) => return bad_request(&message),
+    };
+    let aggregate_type = format!("{context}/{aggregate}");
+    match state
+        .control_plane
+        .submit_dispatch(
+            &aggregate_type,
+            &aggregate_id,
+            &command,
+            request,
+            idempotency_key,
+        )
+        .await
+    {
+        Ok(operation) => accepted_operation(operation),
         Err(error) => error_response(&error),
     }
 }
@@ -192,11 +258,15 @@ fn optional_header<'a>(
 }
 
 fn is_authorized(config: &HttpConfig, headers: &HeaderMap) -> bool {
+    has_bearer_token(config.bearer_token.as_ref(), headers)
+}
+
+fn has_bearer_token(expected: &str, headers: &HeaderMap) -> bool {
     headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|token| token == config.bearer_token.as_ref())
+        .is_some_and(|token| token == expected)
 }
 
 fn unauthorized() -> Response {
@@ -238,9 +308,9 @@ struct ErrorBody<'a> {
 
 fn error_response(error: &SubmissionError) -> Response {
     let (status, code, retry_after) = match error {
-        SubmissionError::UnknownCommand { .. } | SubmissionError::NotFound => {
-            (StatusCode::NOT_FOUND, "not-found", false)
-        }
+        SubmissionError::UnknownCommand { .. }
+        | SubmissionError::DispatchNotEnabled { .. }
+        | SubmissionError::NotFound => (StatusCode::NOT_FOUND, "not-found", false),
         SubmissionError::IdentityConflict => (StatusCode::CONFLICT, "identity-conflict", false),
         SubmissionError::CapacityExhausted => {
             (StatusCode::SERVICE_UNAVAILABLE, "capacity-exhausted", true)
@@ -248,6 +318,11 @@ fn error_response(error: &SubmissionError) -> Response {
         SubmissionError::ConcurrencyExhausted => (
             StatusCode::SERVICE_UNAVAILABLE,
             "concurrency-exhausted",
+            true,
+        ),
+        SubmissionError::DispatchConcurrencyExhausted => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "dispatch-concurrency-exhausted",
             true,
         ),
         SubmissionError::InvalidAggregateId(_) | SubmissionError::InvalidOperationId(_) => {
@@ -275,12 +350,36 @@ fn error_response(error: &SubmissionError) -> Response {
 }
 
 fn bad_request(message: &str) -> Response {
+    bad_request_with_code("invalid-request", message)
+}
+
+fn bad_request_with_code(code: &'static str, message: &str) -> Response {
     (
         StatusCode::BAD_REQUEST,
         Json(ErrorBody {
-            code: "invalid-request",
+            code,
             message: message.to_owned(),
         }),
     )
         .into_response()
+}
+
+fn accepted_operation(operation: crate::OperationSnapshot) -> Response {
+    let location = format!("/v1/operations/{}", operation.operation_id);
+    let location = match HeaderValue::from_str(&location) {
+        Ok(location) => Some(location),
+        Err(error) => {
+            tracing::error!(
+                operation_id = %operation.operation_id,
+                %error,
+                "accepted operation location could not be encoded as an HTTP header"
+            );
+            None
+        }
+    };
+    let mut response = (StatusCode::ACCEPTED, Json(operation)).into_response();
+    if let Some(location) = location {
+        response.headers_mut().insert(header::LOCATION, location);
+    }
+    response
 }

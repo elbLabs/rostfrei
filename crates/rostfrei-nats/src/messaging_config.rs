@@ -143,6 +143,7 @@ impl fmt::Display for QueueGroup {
 pub struct MessagingTopology {
     application: ApplicationName,
     command: StreamName,
+    command_response: StreamName,
     integration_event: StreamName,
     quarantine: StreamName,
 }
@@ -154,8 +155,31 @@ impl MessagingTopology {
         integration_event_stream: StreamName,
         quarantine_stream: StreamName,
     ) -> Result<Self, NatsError> {
-        if command_stream == integration_event_stream
+        let command_response_stream = StreamName::new(format!(
+            "{}_COMMAND_RESPONSES",
+            application_stream_token(&application)
+        ))?;
+        Self::new_with_command_response_stream(
+            application,
+            command_stream,
+            command_response_stream,
+            integration_event_stream,
+            quarantine_stream,
+        )
+    }
+
+    pub fn new_with_command_response_stream(
+        application: ApplicationName,
+        command_stream: StreamName,
+        command_response_stream: StreamName,
+        integration_event_stream: StreamName,
+        quarantine_stream: StreamName,
+    ) -> Result<Self, NatsError> {
+        if command_stream == command_response_stream
+            || command_stream == integration_event_stream
             || command_stream == quarantine_stream
+            || command_response_stream == integration_event_stream
+            || command_response_stream == quarantine_stream
             || integration_event_stream == quarantine_stream
         {
             return Err(NatsError::Configuration);
@@ -163,6 +187,7 @@ impl MessagingTopology {
         Ok(Self {
             application,
             command: command_stream,
+            command_response: command_response_stream,
             integration_event: integration_event_stream,
             quarantine: quarantine_stream,
         })
@@ -170,9 +195,10 @@ impl MessagingTopology {
 
     pub fn for_application(application: &ApplicationName) -> Result<Self, NatsError> {
         let prefix = application_stream_token(application);
-        Self::new(
+        Self::new_with_command_response_stream(
             application.clone(),
             StreamName::new(format!("{prefix}_COMMANDS"))?,
+            StreamName::new(format!("{prefix}_COMMAND_RESPONSES"))?,
             StreamName::new(format!("{prefix}_INTEGRATION_EVENTS"))?,
             StreamName::new(format!("{prefix}_QUARANTINE"))?,
         )
@@ -186,6 +212,10 @@ impl MessagingTopology {
         &self.command
     }
 
+    pub const fn command_response_stream(&self) -> &StreamName {
+        &self.command_response
+    }
+
     pub const fn integration_event_stream(&self) -> &StreamName {
         &self.integration_event
     }
@@ -197,6 +227,7 @@ impl MessagingTopology {
     pub const fn stream_for(&self, kind: AddressKind) -> Option<&StreamName> {
         match kind {
             AddressKind::Command => Some(&self.command),
+            AddressKind::CommandResponse => Some(&self.command_response),
             AddressKind::IntegrationEvent => Some(&self.integration_event),
             AddressKind::Query => None,
         }
@@ -399,6 +430,17 @@ mod tests {
                 application,
                 shared.clone(),
                 shared,
+                StreamName::new("FAST_INBOX_QUARANTINE").unwrap(),
+            )
+            .is_err()
+        );
+
+        assert!(
+            MessagingTopology::new_with_command_response_stream(
+                ApplicationName::new("fast-inbox").unwrap(),
+                StreamName::new("FAST_INBOX_COMMANDS").unwrap(),
+                StreamName::new("FAST_INBOX_COMMANDS").unwrap(),
+                StreamName::new("FAST_INBOX_INTEGRATION_EVENTS").unwrap(),
                 StreamName::new("FAST_INBOX_QUARANTINE").unwrap(),
             )
             .is_err()

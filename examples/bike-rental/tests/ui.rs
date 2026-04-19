@@ -4,7 +4,7 @@ use http_body_util::BodyExt as _;
 use tower::ServiceExt as _;
 
 #[tokio::test]
-async fn example_serves_a_command_ui_for_the_simulation_api() {
+async fn example_serves_distinct_dispatch_and_simulation_modes() {
     let response = ui::router()
         .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
         .await
@@ -27,6 +27,9 @@ async fn example_serves_a_command_ui_for_the_simulation_api() {
     .unwrap();
     assert!(body.contains("Bike rental command lab"));
     assert!(body.contains("rent-bicycle"));
+    assert!(body.contains("value=\"dispatch\""));
+    assert!(body.contains("value=\"simulate\""));
+    assert!(body.contains("waits for the durable accepted or rejected response"));
     assert!(body.contains("/v1/operations/"));
     assert!(body.contains("last-event-id"));
     assert!(body.contains("operation.failed"));

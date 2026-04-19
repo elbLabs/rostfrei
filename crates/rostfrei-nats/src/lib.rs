@@ -1,5 +1,6 @@
 //! NATS adapters for rostfrei event sourcing and messaging.
 
+mod command_response;
 mod connection;
 mod consumer;
 mod domain_event_consumer;
@@ -13,6 +14,10 @@ mod publish;
 mod query;
 mod stream_policy;
 
+pub use command_response::{
+    DEFAULT_COMMAND_RESPONSE_POLL_INTERVAL, MAX_COMMAND_RESPONSE_POLL_INTERVAL,
+    NatsCommandResponseReader,
+};
 pub use connection::{ConnectionHealth, NatsConnection, connect};
 pub use consumer::{MAX_QUARANTINE_RECORD_BYTES, NatsConsumerFactory, QuarantineRecord};
 pub use domain_event_consumer::{
