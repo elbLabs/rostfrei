@@ -1,35 +1,37 @@
+use std::collections::HashSet;
+
 use proc_macro2::TokenStream;
-use quote::{quote, quote_spanned};
+use quote::{ToTokens as _, quote, quote_spanned};
 use syn::spanned::Spanned;
-use syn::{ItemTrait, Path, WherePredicate};
+use syn::{Ident, ItemTrait, Path, WherePredicate};
 
 use super::action::Action;
 use super::contract_trait_assembly::{self, Configuration, OutputPolicy};
+use super::signature::ParsedSignature;
 
 pub fn assemble(
     domain_path: &Path,
-    runtime_path: Option<&Path>,
+    instance: Option<(Path, &Ident)>,
     mut item: ItemTrait,
     actions: &[Action],
-    instance_trait: Option<&syn::Ident>,
 ) -> syn::Result<TokenStream> {
-    if instance_trait.is_some() {
-        for action in actions {
-            add_raised_event_predicates(domain_path, &mut item, action)?;
-        }
+    let has_instance = instance.is_some();
+    if has_instance {
+        add_raised_event_predicates(domain_path, &mut item, actions)?;
     }
-    let instance = match (runtime_path, instance_trait) {
-        (Some(runtime_path), Some(instance_trait)) => super::aggregate_instance_assembly::assemble(
-            domain_path,
-            runtime_path,
-            &item,
-            actions,
-            instance_trait,
-        ),
-        (None, None) => TokenStream::new(),
-        _ => unreachable!("runtime path and instance trait are resolved together"),
-    };
-    if instance_trait.is_some() {
+    let instance = instance.map_or_else(
+        || Ok(TokenStream::new()),
+        |(runtime_path, instance_trait)| {
+            super::aggregate_instance_assembly::assemble(
+                domain_path,
+                &runtime_path,
+                &item,
+                actions,
+                instance_trait,
+            )
+        },
+    )?;
+    if has_instance {
         item.items.clear();
     }
     let contract = contract_trait_assembly::assemble(
@@ -41,7 +43,7 @@ pub fn assemble(
             output_policy: OutputPolicy::Declared(syn::parse_quote!(
                 #domain_path::__private::AggregateActionOutput
             )),
-            owner_predicate: instance_trait.is_none().then_some(add_root_predicate),
+            owner_predicate: (!has_instance).then_some(add_root_predicate),
         },
     )?;
     Ok(quote! {
@@ -53,9 +55,14 @@ pub fn assemble(
 fn add_raised_event_predicates(
     domain_path: &Path,
     item: &mut ItemTrait,
-    action: &Action,
+    actions: &[Action],
 ) -> syn::Result<()> {
-    for event in &action.raises {
+    let mut event_keys = HashSet::new();
+    for event in actions
+        .iter()
+        .flat_map(|action| &action.raises)
+        .filter(|event| event_keys.insert(event.to_token_stream().to_string()))
+    {
         let predicate: WherePredicate = syn::parse2(
             quote_spanned! {event.span()=> #event: #domain_path::DomainEventType<Owner = Self>},
         )?;
@@ -68,8 +75,14 @@ fn add_root_predicate(
     domain_path: &Path,
     item: &mut ItemTrait,
     action: &Action,
+    signature: &ParsedSignature,
 ) -> syn::Result<()> {
-    let root = action.signature.as_ref().unwrap().root.as_ref().unwrap();
+    let Some(root) = signature.root.as_ref() else {
+        return Err(syn::Error::new_spanned(
+            &action.syntax.ident,
+            "aggregate actions require a first `root: &mut RootType` parameter",
+        ));
+    };
     let predicate: WherePredicate = syn::parse2(
         quote_spanned! {root.span()=> Self: #domain_path::AggregateType<Root = #root>},
     )?;

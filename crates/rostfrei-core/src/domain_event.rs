@@ -14,7 +14,7 @@ pub struct CommittedDomainEvent<'a, E> {
 }
 
 impl<'a, E> CommittedDomainEvent<'a, E> {
-    fn new(recorded: &'a RecordedEvent, event: E) -> Self {
+    const fn new(recorded: &'a RecordedEvent, event: E) -> Self {
         Self { recorded, event }
     }
 

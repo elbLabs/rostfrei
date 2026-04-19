@@ -94,7 +94,7 @@ pub enum RuntimeRegistrationError {
 }
 
 #[derive(Clone, Debug, Error)]
-pub(crate) enum RuntimeSimulationError {
+pub enum RuntimeSimulationError {
     #[error("invalid command payload: {0}")]
     InvalidPayload(CommandWireCodecError),
     #[error(transparent)]
@@ -105,7 +105,7 @@ pub(crate) enum RuntimeSimulationError {
     StreamVersionOverflow,
 }
 
-pub(crate) enum RuntimeDecision {
+pub enum RuntimeDecision {
     Accepted {
         base_stream_version: u64,
         events: Vec<PredictedDomainEvent>,
@@ -117,7 +117,7 @@ pub(crate) enum RuntimeDecision {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct CommandKey {
+pub struct CommandKey {
     pub aggregate_type: String,
     pub command: String,
     pub schema_version: u32,
@@ -138,7 +138,7 @@ impl CommandKey {
 }
 
 #[async_trait]
-pub(crate) trait ErasedCommandSimulator: Send + Sync {
+pub trait ErasedCommandSimulator: Send + Sync {
     fn descriptor(&self) -> &CommandDescriptor;
 
     async fn simulate(
@@ -235,7 +235,7 @@ fn predicted_event(
     })
 }
 
-pub(crate) struct RuntimeBindings {
+pub struct RuntimeBindings {
     pub registry: DomainRegistry,
     pub simulators: HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
 }
@@ -338,7 +338,7 @@ impl RuntimeBindings {
     }
 }
 
-pub(crate) fn stream_id(
+pub fn stream_id(
     descriptor: &CommandDescriptor,
     aggregate_id: AggregateId,
 ) -> Result<StreamId, rostfrei_core::IdentityError> {

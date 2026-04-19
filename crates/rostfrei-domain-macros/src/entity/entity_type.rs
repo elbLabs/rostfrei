@@ -11,7 +11,7 @@ pub fn assemble(
     name: &Ident,
     attributes: &Attributes,
     fields: &[Field],
-    identity: usize,
+    identity: &Field,
 ) -> TokenStream {
     let id = &attributes.id;
     let label = &attributes.label;
@@ -26,8 +26,8 @@ pub fn assemble(
             );
         }
     });
-    let identity_name = &fields[identity].name;
-    let identity_type = &fields[identity].base;
+    let identity_name = &identity.name;
+    let identity_type = &identity.base;
     let fields = crate::field::assemble_descriptors_with_path(domain_path, fields);
     quote! {
         impl #domain_path::EntityType for #name {

@@ -30,26 +30,27 @@ pub fn extract(items: &mut [TraitItem], raises_policy: RaisesPolicy) -> syn::Res
                 "domain action contract traits may only contain action methods",
             ));
         };
-        let positions: Vec<_> = method
-            .attrs
-            .iter()
-            .enumerate()
-            .filter(|(_, attr)| attr.path().is_ident("action"))
-            .map(|(position, _)| position)
-            .collect();
-        if positions.is_empty() {
-            return Err(syn::Error::new_spanned(
-                &method.sig.ident,
-                "domain action contract methods require exactly one action attribute",
-            ));
-        }
-        if positions.len() > 1 {
-            return Err(syn::Error::new_spanned(
-                &method.attrs[positions[1]],
-                "duplicate action attribute",
-            ));
-        }
-        let attribute = method.attrs.remove(positions[0]);
+        let position = {
+            let mut positions = method
+                .attrs
+                .iter()
+                .enumerate()
+                .filter(|(_, attribute)| attribute.path().is_ident("action"));
+            let Some((position, _)) = positions.next() else {
+                return Err(syn::Error::new_spanned(
+                    &method.sig.ident,
+                    "domain action contract methods require exactly one action attribute",
+                ));
+            };
+            if let Some((_, duplicate)) = positions.next() {
+                return Err(syn::Error::new_spanned(
+                    duplicate,
+                    "duplicate action attribute",
+                ));
+            }
+            position
+        };
+        let attribute = method.attrs.remove(position);
         let (id, label, raises) = parse(&attribute, raises_policy)?;
         actions.push(Action {
             id,
@@ -100,19 +101,18 @@ fn parse(
     })?;
     let id = id.ok_or_else(|| syn::Error::new_spanned(attribute, "missing id"))?;
     let label = label.ok_or_else(|| syn::Error::new_spanned(attribute, "missing label"))?;
-    let raises = match (raises_policy, raises) {
-        (RaisesPolicy::Forbidden, None) => Vec::new(),
-        (RaisesPolicy::Forbidden, Some(_)) => unreachable!("forbidden raises returned early"),
-        (RaisesPolicy::Required, None) => {
-            return Err(syn::Error::new_spanned(attribute, "missing raises"));
-        }
-        (RaisesPolicy::Required, Some(raises)) if raises.is_empty() => {
-            return Err(syn::Error::new_spanned(
-                attribute,
-                "executable aggregate actions must declare at least one raised event",
-            ));
-        }
-        (RaisesPolicy::Required, Some(raises)) => raises,
+    let raises = match raises_policy {
+        RaisesPolicy::Forbidden => Vec::new(),
+        RaisesPolicy::Required => match raises {
+            None => return Err(syn::Error::new_spanned(attribute, "missing raises")),
+            Some(raises) if raises.is_empty() => {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "executable aggregate actions must declare at least one raised event",
+                ));
+            }
+            Some(raises) => raises,
+        },
     };
     Ok((id, label, raises))
 }

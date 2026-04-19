@@ -160,7 +160,8 @@ fn derives_attaches_and_projects_the_entity_lifecycle_contract() {
         commands: [],
         errors: [],
         query_groups: [],
-    };
+    }
+    .expect("entity lifecycle model projection should succeed");
 
     assert_eq!(
         model["entities"][0]["lifecycle"],

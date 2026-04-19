@@ -196,9 +196,13 @@ impl DomainIdentityType for PlainIdentity {
 #[test]
 fn projects_exact_nested_lifecycle_json_in_descriptor_order() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_entity_type::<Todo>();
+    builder
+        .add_entity_type::<Todo>()
+        .expect("lifecycle entity registration should succeed");
 
-    let model = builder.finish();
+    let model = builder
+        .finish()
+        .expect("lifecycle model projection should succeed");
 
     assert_eq!(
         model["entities"][0],
@@ -279,9 +283,13 @@ fn projects_exact_nested_lifecycle_json_in_descriptor_order() {
 fn omits_lifecycle_for_descriptor_registration_and_lifecycle_free_types() {
     let mut builder = DomainModelBuilder::new();
     builder.add_entity(Todo::DESCRIPTOR);
-    builder.add_entity_type::<PlainEntity>();
+    builder
+        .add_entity_type::<PlainEntity>()
+        .expect("lifecycle-free entity registration should succeed");
 
-    let model = builder.finish();
+    let model = builder
+        .finish()
+        .expect("lifecycle-free model projection should succeed");
 
     assert_eq!(
         model["entities"],

@@ -49,6 +49,7 @@ pub use domain_event::{
     DomainEventType,
 };
 pub use domain_identity::{DomainIdentityDescriptor, DomainIdentityId, DomainIdentityType};
+pub use domain_model::{DomainModelError, DomainModelReference};
 pub use domain_query::{
     QueryDescriptor, QueryGroupType, QueryId, QueryInputDescriptor, QueryInputType,
     QueryOutputDescriptor, QueryOutputType,
@@ -88,7 +89,7 @@ pub mod __private {
         AggregateActionOutput, DomainServiceActionOutput, EntityActionOutput, SameType,
         ValueObjectActionOutput,
     };
-    pub use crate::domain_model::DomainModelBuilder;
+    pub use crate::domain_model::{DomainModelBuilder, try_build};
     pub use crate::domain_test::emit_domain_test_metadata as emit_domain_test_descriptor;
     pub use serde;
     pub use serde_json;
@@ -108,17 +109,18 @@ macro_rules! domain_model {
         $(action_extensions: [$($action_extension:ty),* $(,)?],)?
         query_groups: [$($query_group:ty),* $(,)?] $(,)?
     } => {{
-        let mut builder = $crate::__private::DomainModelBuilder::new();
-        $(builder.add_bounded_context(<$context as $crate::BoundedContextType>::DESCRIPTOR);)*
-        $(builder.add_aggregate_type::<$aggregate>();)*
-        $(builder.add_entity_type::<$entity>();)*
-        $(builder.add_domain_identity_type::<$identity>();)*
-        $(builder.add_value_object_type::<$value_object>();)*
-        $(builder.add_domain_service_type::<$service>();)*
-        $(builder.add_domain_command(<$command as $crate::DomainCommandType>::DESCRIPTOR);)*
-        $(builder.add_domain_error(<$error as $crate::DomainErrorType>::DESCRIPTOR);)*
-        $($(builder.add_action_extension::<$action_extension>();)*)?
-        $(builder.add_queries(<$query_group as $crate::QueryGroupType>::QUERIES);)*
-        builder.finish()
+        $crate::__private::try_build(|builder| {
+            $(builder.add_bounded_context(<$context as $crate::BoundedContextType>::DESCRIPTOR);)*
+            $(builder.add_aggregate_type::<$aggregate>()?;)*
+            $(builder.add_entity_type::<$entity>()?;)*
+            $(builder.add_domain_identity_type::<$identity>()?;)*
+            $(builder.add_value_object_type::<$value_object>()?;)*
+            $(builder.add_domain_service_type::<$service>()?;)*
+            $(builder.add_domain_command(<$command as $crate::DomainCommandType>::DESCRIPTOR)?;)*
+            $(builder.add_domain_error(<$error as $crate::DomainErrorType>::DESCRIPTOR);)*
+            $($(builder.add_action_extension::<$action_extension>()?;)*)?
+            $(builder.add_queries(<$query_group as $crate::QueryGroupType>::QUERIES)?;)*
+            Ok(())
+        })
     }};
 }

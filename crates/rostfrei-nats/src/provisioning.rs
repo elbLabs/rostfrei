@@ -269,7 +269,7 @@ impl ApplicationMessagingConfig {
         &self.quarantine
     }
 
-    pub fn streams(&self) -> [&StreamProvisioningConfig; 3] {
+    pub const fn streams(&self) -> [&StreamProvisioningConfig; 3] {
         [&self.commands, &self.integration_events, &self.quarantine]
     }
 }

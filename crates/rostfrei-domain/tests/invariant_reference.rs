@@ -27,7 +27,7 @@ trait GeneratedReferenceInvariants {
 struct ReferenceValue(bool);
 
 impl GeneratedReferenceInvariants for ReferenceValue {
-    fn validate(candidate: &ReferenceValue) -> Option<InvariantViolation> {
+    fn validate(candidate: &Self) -> Option<InvariantViolation> {
         (!candidate.0).then(|| InvariantViolation::new("value", "must be valid"))
     }
 }
@@ -64,7 +64,7 @@ const PRIMARY_LOCAL_ID: &str = PRIMARY_REFERENCE.local_id();
 const SECONDARY_REFERENCE: InvariantReference<SecondaryOwner> =
     InvariantReference::__from_local("publish");
 
-fn assert_reference_traits<T: Copy + Clone + Debug + Eq + Hash>() {}
+const fn assert_reference_traits<T: Copy + Clone + Debug + Eq + Hash>() {}
 
 #[test]
 fn generated_reference_matches_attached_invariant_descriptor() {

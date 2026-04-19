@@ -69,11 +69,11 @@ impl<A: Aggregate> AggregateInstance<A> {
         aggregate
     }
 
-    pub fn stream_id(&self) -> &StreamId {
+    pub const fn stream_id(&self) -> &StreamId {
         &self.stream_id
     }
 
-    pub fn state(&self) -> &A::State {
+    pub const fn state(&self) -> &A::State {
         &self.state
     }
 

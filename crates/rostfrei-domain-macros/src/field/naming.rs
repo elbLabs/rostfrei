@@ -1,4 +1,4 @@
-use syn::{Fields, LitStr, Result};
+use syn::{Fields, Index, LitStr, Member, Result};
 
 use super::{ir::Field, role, scalar, shape};
 
@@ -7,9 +7,19 @@ pub fn extract(fields: &Fields) -> Result<Vec<Field>> {
         .iter()
         .enumerate()
         .map(|(index, field)| {
-            let name = field.ident.as_ref().map_or_else(
-                || LitStr::new(&index.to_string(), field.ty.span()),
-                |ident| LitStr::new(ident.to_string().trim_start_matches("r#"), ident.span()),
+            let (name, member) = field.ident.as_ref().map_or_else(
+                || {
+                    (
+                        LitStr::new(&index.to_string(), field.ty.span()),
+                        Member::Unnamed(Index::from(index)),
+                    )
+                },
+                |ident| {
+                    (
+                        LitStr::new(ident.to_string().trim_start_matches("r#"), ident.span()),
+                        Member::Named(ident.clone()),
+                    )
+                },
             );
             let (wrappers, base) = shape::parse(&field.ty)?;
             let role = match role::parse(&field.attrs)? {
@@ -23,6 +33,7 @@ pub fn extract(fields: &Fields) -> Result<Vec<Field>> {
             };
             Ok(Field {
                 name,
+                member,
                 base,
                 wrappers,
                 role,

@@ -4,7 +4,7 @@ use domain::__private::DomainModelBuilder;
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, Aggregate, AggregateId, BoundedContext,
-    BoundedContextId, DomainIdentity, Entity, EntityId, domain_actions,
+    BoundedContextId, DomainIdentity, DomainModelError, Entity, EntityId, domain_actions,
 };
 
 const BOUNDARY_AGGREGATE_ID: AggregateId = AggregateId {
@@ -179,41 +179,100 @@ impl SecondDuplicateActions for DuplicateTraitEntity {
 }
 
 #[test]
-#[should_panic(expected = "unregistered action extension owner")]
 fn rejects_extension_for_an_unregistered_owner() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_action_extension::<FirstExtension>();
+    let owner = ActionOwnerId::Entity(BOUNDARY_ENTITY_ID);
+    let error = builder
+        .add_action_extension::<FirstExtension>()
+        .expect_err("an extension for an unregistered owner should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::UnregisteredActionExtensionOwner {
+            owner: Box::new(owner),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("unregistered action extension owner: {owner:?}")
+    );
 }
 
 #[test]
-#[should_panic(expected = "action descriptor owner mismatch")]
 fn rejects_extension_descriptor_owner_mismatch() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_entity_type::<BoundaryEntity>();
-    builder.add_action_extension::<WrongOwnerExtension>();
+    builder
+        .add_entity_type::<BoundaryEntity>()
+        .expect("boundary entity should register");
+
+    let id = ActionId {
+        owner: ActionOwnerId::Aggregate(BOUNDARY_AGGREGATE_ID),
+        local: "wrong",
+    };
+    let error = builder
+        .add_action_extension::<WrongOwnerExtension>()
+        .expect_err("mismatched extension owner should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::ActionDescriptorOwnerMismatch { id: Box::new(id) }
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("action descriptor owner mismatch: {id:?}")
+    );
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_across_extensions() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_entity_type::<BoundaryEntity>();
-    builder.add_action_extension::<FirstDuplicateExtension>();
-    builder.add_action_extension::<SecondDuplicateExtension>();
+    builder
+        .add_entity_type::<BoundaryEntity>()
+        .expect("boundary entity should register");
+    builder
+        .add_action_extension::<FirstDuplicateExtension>()
+        .expect("first duplicate extension should register");
+
+    let id = ActionId {
+        owner: ActionOwnerId::Entity(BOUNDARY_ENTITY_ID),
+        local: "duplicate",
+    };
+    let error = builder
+        .add_action_extension::<SecondDuplicateExtension>()
+        .expect_err("the duplicate extension action should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId { id: Box::new(id) }
+    );
+    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_against_an_attached_contract() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_entity_type::<BoundaryEntity>();
-    builder.add_action_extension::<AttachedDuplicateExtension>();
+    builder
+        .add_entity_type::<BoundaryEntity>()
+        .expect("boundary entity should register");
+
+    let id = ActionId {
+        owner: ActionOwnerId::Entity(BOUNDARY_ENTITY_ID),
+        local: "shared",
+    };
+    let error = builder
+        .add_action_extension::<AttachedDuplicateExtension>()
+        .expect_err("an extension duplicating an attached action should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId { id: Box::new(id) }
+    );
+    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_across_entity_attached_traits_during_model_registration() {
-    let _ = domain::domain_model! {
+    let error = domain::domain_model! {
         contexts: [],
         aggregates: [],
         entities: [DuplicateTraitEntity],
@@ -224,18 +283,40 @@ fn rejects_duplicate_action_id_across_entity_attached_traits_during_model_regist
         errors: [],
 
         query_groups: [],
+    }
+    .expect_err("duplicate attached entity actions should be rejected");
+    let id = ActionId {
+        owner: ActionOwnerId::Entity(EntityId {
+            aggregate: BOUNDARY_AGGREGATE_ID,
+            local: "duplicate-trait-entity",
+        }),
+        local: "duplicate",
     };
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId { id: Box::new(id) }
+    );
+    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
 }
 
 #[test]
 fn preserves_multiple_extensions_for_the_same_registered_owner() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_entity_type::<BoundaryEntity>();
-    builder.add_domain_identity_type::<BoundaryEntityId>();
-    builder.add_action_extension::<FirstExtension>();
-    builder.add_action_extension::<SecondExtension>();
+    builder
+        .add_entity_type::<BoundaryEntity>()
+        .expect("boundary entity should register");
+    builder
+        .add_domain_identity_type::<BoundaryEntityId>()
+        .expect("boundary identity should register");
+    builder
+        .add_action_extension::<FirstExtension>()
+        .expect("first extension should register");
+    builder
+        .add_action_extension::<SecondExtension>()
+        .expect("second extension should register");
 
-    let model = builder.finish();
+    let model = builder.finish().expect("domain model should be valid");
     let actions = model["actions"].as_array().unwrap();
 
     assert_eq!(actions.len(), 3);

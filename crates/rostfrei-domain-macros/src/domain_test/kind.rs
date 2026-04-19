@@ -15,8 +15,4 @@ impl DomainTestKind {
             Self::Lifecycle => "lifecycle",
         }
     }
-
-    pub(crate) const fn accepts_typed_reference(self) -> bool {
-        matches!(self, Self::Action | Self::Decision | Self::Invariant)
-    }
 }

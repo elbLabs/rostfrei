@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+repository_root=$(git rev-parse --show-toplevel)
+cd "$repository_root"
+
+printf '%s\n' 'Running workspace Clippy checks...'
+cargo clippy --workspace --all-targets --all-features

@@ -3,13 +3,15 @@ use proc_macro2::Span;
 use syn::{Path, Result};
 
 pub fn resolve_optional() -> Result<Option<Path>> {
-    match crate_name("rostfrei") {
-        Ok(found) => facade_path(found).map(Some),
-        Err(_) => match crate_name("rostfrei-domain-runtime") {
-            Ok(found) => dependency_path("rostfrei-domain-runtime", found).map(Some),
-            Err(_) => Ok(None),
+    crate_name("rostfrei").map_or_else(
+        |_| {
+            crate_name("rostfrei-domain-runtime").map_or_else(
+                |_| Ok(None),
+                |found| dependency_path("rostfrei-domain-runtime", found).map(Some),
+            )
         },
-    }
+        |found| facade_path(found).map(Some),
+    )
 }
 
 pub fn resolve() -> Result<Path> {
