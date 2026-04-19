@@ -233,6 +233,7 @@ impl ActionGroupType for WorkExtensionActions {
         label: "Work extension",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     }];
 }
@@ -250,6 +251,7 @@ impl ActionGroupType for DuplicateCoordinatorExtensionActions {
         label: "Duplicate available",
         input: None,
         output: Some(ActionOutputDescriptor::Scalar(ScalarType::Bool)),
+        raises: &[],
         error: None,
     }];
 }

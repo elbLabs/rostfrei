@@ -15,7 +15,7 @@ pub fn assemble(
 ) -> syn::Result<TokenStream> {
     if instance_trait.is_some() {
         for action in actions {
-            add_event_predicate(domain_path, &mut item, action)?;
+            add_raised_event_predicates(domain_path, &mut item, action)?;
         }
     }
     let instance = match (runtime_path, instance_trait) {
@@ -29,6 +29,9 @@ pub fn assemble(
         (None, None) => TokenStream::new(),
         _ => unreachable!("runtime path and instance trait are resolved together"),
     };
+    if instance_trait.is_some() {
+        item.items.clear();
+    }
     let contract = contract_trait_assembly::assemble(
         domain_path,
         item,
@@ -38,7 +41,7 @@ pub fn assemble(
             output_policy: OutputPolicy::Declared(syn::parse_quote!(
                 #domain_path::__private::AggregateActionOutput
             )),
-            owner_predicate: Some(add_root_predicate),
+            owner_predicate: instance_trait.is_none().then_some(add_root_predicate),
         },
     )?;
     Ok(quote! {
@@ -47,16 +50,17 @@ pub fn assemble(
     })
 }
 
-fn add_event_predicate(
+fn add_raised_event_predicates(
     domain_path: &Path,
     item: &mut ItemTrait,
     action: &Action,
 ) -> syn::Result<()> {
-    let output = &action.signature.as_ref().unwrap().output;
-    let predicate: WherePredicate = syn::parse2(
-        quote_spanned! {output.span()=> #output: #domain_path::DomainEventType<Owner = Self>},
-    )?;
-    item.generics.make_where_clause().predicates.push(predicate);
+    for event in &action.raises {
+        let predicate: WherePredicate = syn::parse2(
+            quote_spanned! {event.span()=> #event: #domain_path::DomainEventType<Owner = Self>},
+        )?;
+        item.generics.make_where_clause().predicates.push(predicate);
+    }
     Ok(())
 }
 

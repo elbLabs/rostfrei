@@ -184,6 +184,7 @@ impl ActionGroupType for LedgerExtensionActions {
         label: "Ledger extension action",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     }];
 }
@@ -201,6 +202,7 @@ impl ActionGroupType for DuplicateMoneyExtensionActions {
         label: "Duplicate from minor units",
         input: Some(ActionInputDescriptor::Scalar(ScalarType::U64)),
         output: Some(ActionOutputDescriptor::ValueObject(Money::DESCRIPTOR.id)),
+        raises: &[],
         error: None,
     }];
 }
@@ -279,6 +281,7 @@ fn value_object_action_contracts_preserve_attachment_and_method_order_and_descri
                 label: "From minor units",
                 input: Some(ActionInputDescriptor::Scalar(ScalarType::U64)),
                 output: Some(ActionOutputDescriptor::ValueObject(Money::DESCRIPTOR.id)),
+                raises: &[],
                 error: None,
             },
             ActionDescriptor {
@@ -289,6 +292,7 @@ fn value_object_action_contracts_preserve_attachment_and_method_order_and_descri
                 label: "Clear money",
                 input: None,
                 output: Some(ActionOutputDescriptor::ValueObject(Money::DESCRIPTOR.id)),
+                raises: &[],
                 error: None,
             },
         ]
@@ -304,6 +308,7 @@ fn value_object_action_contracts_preserve_attachment_and_method_order_and_descri
                 label: "Increase money",
                 input: Some(ActionInputDescriptor::Scalar(ScalarType::U64)),
                 output: Some(ActionOutputDescriptor::ValueObject(Money::DESCRIPTOR.id)),
+                raises: &[],
                 error: None,
             },
             ActionDescriptor {
@@ -314,6 +319,7 @@ fn value_object_action_contracts_preserve_attachment_and_method_order_and_descri
                 label: "Checked increase",
                 input: Some(ActionInputDescriptor::Scalar(ScalarType::U64)),
                 output: Some(ActionOutputDescriptor::ValueObject(Money::DESCRIPTOR.id)),
+                raises: &[],
                 error: Some(MoneyOverflow::DESCRIPTOR.id),
             },
         ]

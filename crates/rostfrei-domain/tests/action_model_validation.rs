@@ -26,6 +26,7 @@ const fn action(
         label,
         input: None,
         output: None,
+        raises: &[],
         error: None,
     }
 }

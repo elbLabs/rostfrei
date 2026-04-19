@@ -137,6 +137,7 @@ fn action(descriptor: &ActionDescriptor) -> Value {
         "label": descriptor.label,
         "input": descriptor.input.map(action_input),
         "output": descriptor.output.map(action_output),
+        "raises": descriptor.raises.iter().copied().map(domain_event_id).collect::<Vec<_>>(),
         "error": descriptor.error.map(domain_error_id),
     })
 }
