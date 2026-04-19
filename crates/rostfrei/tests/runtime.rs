@@ -355,11 +355,13 @@ async fn command_rejection_discards_events_raised_by_an_action() {
         outcome,
         CommandOutcome::Rejected("deliberate rejection")
     ));
-    assert!(store
-        .load(&stream)
-        .await
-        .expect("load rejected stream")
-        .is_empty());
+    assert!(
+        store
+            .load(&stream)
+            .await
+            .expect("load rejected stream")
+            .is_empty()
+    );
 }
 
 #[test]
