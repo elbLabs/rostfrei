@@ -210,6 +210,37 @@ impl ConsumeError {
 
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
+pub enum CommandResponseReadErrorKind {
+    #[error("command response read timed out")]
+    Timeout,
+    #[error("command response reader is unavailable")]
+    Unavailable,
+    #[error("command response is invalid")]
+    InvalidResponse,
+    #[error("command response identity conflicts with the request")]
+    IdentityConflict,
+    #[error("command response reader configuration is invalid")]
+    InvalidConfiguration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("{kind}")]
+pub struct CommandResponseReadError {
+    kind: CommandResponseReadErrorKind,
+}
+
+impl CommandResponseReadError {
+    pub const fn new(kind: CommandResponseReadErrorKind) -> Self {
+        Self { kind }
+    }
+
+    pub const fn kind(self) -> CommandResponseReadErrorKind {
+        self.kind
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
 pub enum QueryRequestErrorKind {
     #[error("query request serialization failed")]
     Serialization,

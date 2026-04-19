@@ -12,10 +12,10 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures_util::TryStreamExt;
 use rostfrei_messaging_core::{
-    CallerMetadata, CommandAddress, ConsumeError, ConsumeErrorKind, ConsumerConfig,
-    DeliveryDisposition, DeliveryInfo, IntegrationEventAddress, MessageAddress, MessageConsumer,
-    MessageConsumerFactory, MessageDelivery, MessageHandler, MessageId, PublishableAddress,
-    TraceContext,
+    CallerMetadata, CommandAddress, CommandResponseAddress, ConsumeError, ConsumeErrorKind,
+    ConsumerConfig, DeliveryDisposition, DeliveryInfo, IntegrationEventAddress, MessageAddress,
+    MessageConsumer, MessageConsumerFactory, MessageDelivery, MessageHandler, MessageId,
+    PublishableAddress, TraceContext,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -177,11 +177,26 @@ impl MessageConsumerFactory<IntegrationEventAddress> for NatsConsumerFactory {
     }
 }
 
+impl MessageConsumerFactory<CommandResponseAddress> for NatsConsumerFactory {
+    fn create(
+        &self,
+        config: ConsumerConfig<CommandResponseAddress>,
+    ) -> Result<Arc<dyn MessageConsumer<CommandResponseAddress>>, ConsumeError> {
+        self.create_consumer(config)
+    }
+}
+
 trait ConsumableAddress: PublishableAddress {
     fn parse_nats(value: String) -> Result<Self, NatsError>;
 }
 
 impl ConsumableAddress for CommandAddress {
+    fn parse_nats(value: String) -> Result<Self, NatsError> {
+        Self::parse(value).map_err(|_| NatsError::InvalidMessage)
+    }
+}
+
+impl ConsumableAddress for CommandResponseAddress {
     fn parse_nats(value: String) -> Result<Self, NatsError> {
         Self::parse(value).map_err(|_| NatsError::InvalidMessage)
     }

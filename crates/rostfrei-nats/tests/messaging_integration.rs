@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+#[path = "../src/command_response.rs"]
+mod command_response;
 #[path = "../src/connection.rs"]
 mod connection;
 #[path = "../src/consumer.rs"]
@@ -30,11 +32,13 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use rostfrei_messaging_core::{
     ApplicationErrorCode, ApplicationName, BoundedContext, CallerMetadata, CommandAddress,
-    CommandPublisher, ConsumerConfig, CorrelationId, DeliveryDisposition, EnvelopeContext,
-    MessageConsumerFactory, MessageDelivery, MessageHandler, MessageId, MessageTimestamp,
-    OutboundMessage, QuarantineReason, QueryAddress, QueryErrorClassification, QueryErrorPayload,
-    QueryHandler, QueryOptions, QueryOutcome, QueryRequest, QueryRequestErrorKind, QueryRequester,
-    QueryResponse, QueryServer, QueryServerErrorKind, RetryDelay, SchemaVersion, TraceContext,
+    CommandPublisher, CommandResponse, CommandResponseReadErrorKind, CommandResponseReader,
+    ConsumerConfig, CorrelationId, DeliveryDisposition, EnvelopeContext, MessageConsumerFactory,
+    MessageDelivery, MessageHandler, MessageId, MessageTimestamp, OperationId, OutboundMessage,
+    QuarantineReason, QueryAddress, QueryErrorClassification, QueryErrorPayload, QueryHandler,
+    QueryOptions, QueryOutcome, QueryRequest, QueryRequestErrorKind, QueryRequester, QueryResponse,
+    QueryServer, QueryServerErrorKind, RetryDelay, SchemaVersion, TraceContext,
+    derive_command_response_address,
 };
 use serde_json::{Value, json};
 
@@ -103,9 +107,14 @@ impl Fixture {
         self.context.query_address(name).expect("query address")
     }
 
-    async fn message_counts(&self) -> [u64; 3] {
+    async fn message_counts(&self) -> [u64; 4] {
         [
             stream_message_count(self.connection.jetstream(), self.topology.command_stream()).await,
+            stream_message_count(
+                self.connection.jetstream(),
+                self.topology.command_response_stream(),
+            )
+            .await,
             stream_message_count(
                 self.connection.jetstream(),
                 self.topology.integration_event_stream(),
@@ -122,6 +131,7 @@ impl Fixture {
     async fn cleanup(self) {
         for stream in [
             self.topology.command_stream(),
+            self.topology.command_response_stream(),
             self.topology.integration_event_stream(),
             self.topology.quarantine_stream(),
         ] {
@@ -136,6 +146,131 @@ impl Fixture {
             .await
             .expect("drain test connection");
     }
+}
+
+#[tokio::test]
+async fn immutable_command_response_roundtrip_reconciles_duplicates_and_conflicts() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    let fixture = Fixture::new(url).await;
+    let command_address = fixture.command_address("durable-response");
+    let operation_id = OperationId::new("operation-1").expect("operation id");
+    let command_message_id = message_id("command-response-source");
+    let response_address =
+        derive_command_response_address(&command_address, &operation_id, &command_message_id)
+            .expect("response address");
+    let response = CommandResponse::accepted(
+        message_id("command-response"),
+        command_message_id.clone(),
+        command_address.clone(),
+        operation_id.clone(),
+        CorrelationId::new("response-correlation").expect("correlation id"),
+    )
+    .expect("accepted response");
+    let message = OutboundMessage::json(
+        response_address.clone(),
+        response.message_id().clone(),
+        &response,
+    )
+    .expect("response message");
+    let publisher = fixture.connection.publisher(fixture.topology.clone());
+
+    let first = publisher
+        .publish_command_response_with_ack(message.clone(), Duration::from_secs(5))
+        .await
+        .expect("first response PubAck");
+    assert_eq!(first.stream(), fixture.topology.command_response_stream());
+    assert!(!first.duplicate());
+    let duplicate = publisher
+        .publish_command_response_with_ack(message, Duration::from_secs(5))
+        .await
+        .expect("matching response duplicate");
+    assert!(duplicate.duplicate());
+    assert_eq!(duplicate.sequence(), first.sequence());
+
+    let conflicting = CommandResponse::accepted(
+        response.message_id().clone(),
+        command_message_id.clone(),
+        command_address.clone(),
+        operation_id.clone(),
+        CorrelationId::new("different-correlation").expect("correlation id"),
+    )
+    .expect("conflicting response");
+    let conflict = publisher
+        .publish_command_response_with_ack(
+            OutboundMessage::json(
+                response_address.clone(),
+                conflicting.message_id().clone(),
+                &conflicting,
+            )
+            .expect("conflicting response message"),
+            Duration::from_secs(5),
+        )
+        .await
+        .expect_err("a response subject is immutable");
+    assert_eq!(conflict, error::NatsError::IdentityConflict);
+
+    let reader = fixture
+        .connection
+        .command_response_reader(fixture.topology.clone());
+    let read = reader
+        .read_command_response(
+            &response_address,
+            &operation_id,
+            &command_message_id,
+            Duration::from_secs(2),
+        )
+        .await
+        .expect("stored response");
+    assert_eq!(read, response);
+    let identity_error = reader
+        .read_command_response(
+            &response_address,
+            &OperationId::new("different-operation").expect("operation id"),
+            &command_message_id,
+            Duration::from_secs(2),
+        )
+        .await
+        .expect_err("expected operation identity must match");
+    assert_eq!(
+        identity_error.kind(),
+        CommandResponseReadErrorKind::IdentityConflict
+    );
+
+    assert_absent_response_times_out(&fixture, &reader, &command_address).await;
+
+    fixture.cleanup().await;
+}
+
+async fn assert_absent_response_times_out(
+    fixture: &Fixture,
+    reader: &command_response::NatsCommandResponseReader,
+    command_address: &CommandAddress,
+) {
+    let operation_id = OperationId::new("absent-operation").expect("operation id");
+    let command_message_id = message_id("absent-command");
+    let address =
+        derive_command_response_address(command_address, &operation_id, &command_message_id)
+            .expect("absent response address");
+    let error = reader
+        .read_command_response(
+            &address,
+            &operation_id,
+            &command_message_id,
+            Duration::from_millis(100),
+        )
+        .await
+        .expect_err("absent response must time out");
+    assert_eq!(error.kind(), CommandResponseReadErrorKind::Timeout);
+    assert_eq!(
+        stream_message_count(
+            fixture.connection.jetstream(),
+            fixture.topology.command_response_stream(),
+        )
+        .await,
+        1
+    );
 }
 
 fn test_url() -> Option<String> {

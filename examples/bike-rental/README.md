@@ -30,8 +30,9 @@ cargo test --locked -p bike-rental
 ## NATS command lab
 
 The runnable example uses the same NATS publication, durable command consumer,
-and `NatsEventStore` path intended for deployed systems. NATS Server 2.12 or
-newer is required for atomic event batches. Start a disposable local server:
+immutable command responses, and `NatsEventStore` path intended for deployed
+systems. NATS Server 2.12 or newer is required for atomic event batches. Start a
+disposable local server:
 
 ```sh
 docker compose -f examples/bike-rental/compose.yaml up -d
@@ -90,7 +91,7 @@ curl --request POST \
   --data '{"schemaVersion":1,"payload":{"bicycle_id":"bike-42"}}'
 ```
 
-Stream the publication trace:
+Stream the command-completion trace:
 
 ```sh
 curl --no-buffer \
@@ -105,15 +106,28 @@ curl --header 'authorization: Bearer local-development-token' \
   http://127.0.0.1:3000/v1/operations/rental-operation-1
 ```
 
-The dispatch trace reports `command.published` only after a confirmed JetStream
-PubAck. Publication is not aggregate acceptance: the durable worker consumes
-the envelope, recomputes its operation fingerprint, executes `RentBicycle`, and
-appends accepted events to the `city-fleet` stream. Reusing an
-`Idempotency-Key` returns the retained operation for the exact same request and
-returns `409 Conflict` for different content.
-The NATS adapter makes bounded retries for publication timeouts and broker
-unavailability with the same content-scoped message identity before reporting a
-terminal failure.
+The dispatch trace reports `command.published` immediately after the command
+JetStream PubAck but remains running. The durable worker consumes the envelope,
+recomputes its operation fingerprint, executes `RentBicycle`, derives the exact
+response address, and publishes an immutable accepted or rejected response. It
+ACKs the command only after the response PubAck. Before execution, the worker
+checks that exact response address; a matching retained response is ACKed without
+running the aggregate again. Store unavailability retries without execution,
+while an invalid or conflicting response is quarantined. The response uses its
+own v1 schema and carries the originating command address.
+
+The adapter reads responses in bounded 30-second slices and keeps listening
+through slice timeouts or transient reader unavailability until a response
+arrives or the operation task is cancelled. It then reports
+`command.responded`, the business outcome, and terminal completion. Accepted
+execution appends events to the `city-fleet` stream, but the dispatch result
+omits `appended` because the response contains no authoritative append evidence;
+simulation continues to report `appended: false`. Reusing an `Idempotency-Key`
+returns the retained operation for the exact same request and returns
+`409 Conflict` for different content.
+The NATS adapter makes bounded retries for command publication timeouts and
+broker unavailability with the same content-scoped message identity. The worker
+also retries transient response publication without acknowledging the command.
 
 The broker deduplication identity includes both the operation identity and the
 request fingerprint, so a duplicate PubAck represents an exact wire retry, not
@@ -121,7 +135,17 @@ different content submitted under a reused operation identity.
 
 Dispatching `bike-42` again with another idempotency key publishes another real
 command. The worker replays `BicycleRented`, rejects the second rental as
-`BicycleUnavailable`, acknowledges that business outcome, and appends no event.
+`BicycleUnavailable`, durably publishes that rejection before acknowledging the
+command, and appends no event. Both command responses remain observable in the
+application's command-response stream.
+
+This flow does not promise exactly-once terminal decisions. Event-appending
+acceptance can recover by exact event-store replay, but rejected and
+accepted-no-event decisions have a crash window between deciding and persisting
+their response because there is no transactional operation receipt or outbox.
+A redelivery can evaluate those decisions again. Response immutability and the
+pre-execution reconciliation guard last only while the response is retained
+under the configured response-stream age and capacity limits.
 
 Submit a non-mutating simulation by changing the route suffix to `/simulate`.
 Simulation reports replay, acceptance or rejection, predicted events, and
@@ -145,7 +169,7 @@ beyond in-memory retention belongs in that operation store.
 
 Fast tests use fakes and `InMemoryEventStore`. The real-server test uses the same
 NATS adapter and worker as runtime, creates a globally unique application scope,
-and deletes all four JetStream streams after the run:
+and deletes all five JetStream streams after the run:
 
 ```sh
 ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \

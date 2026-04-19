@@ -58,7 +58,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
     <header>
       <h1>Bike rental command lab</h1>
       <p>Publish a real command through NATS or preview it without changing the stream.</p>
-      <p class="notice" id="mode-notice">Dispatch waits for a JetStream PubAck; publication is not a business acceptance.</p>
+      <p class="notice" id="mode-notice">Dispatch reports PubAck immediately, then waits for the durable accepted or rejected response.</p>
     </header>
     <div class="layout">
       <section class="panel" aria-labelledby="command-heading">
@@ -169,7 +169,6 @@ const INDEX_HTML: &str = r#"<!doctype html>
         if (name === 'operation.completed') {
           if (data.decision === 'rejected') outcome = { message: 'Rejected', state: 'error' };
           if (data.decision === 'accepted') outcome = { message: 'Accepted', state: 'complete' };
-          if (data.decision === 'published') outcome = { message: 'Published', state: 'complete' };
         }
       }
 
@@ -205,7 +204,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
 
     mode.addEventListener('change', () => {
       modeNotice.textContent = mode.value === 'dispatch'
-        ? 'Dispatch waits for a JetStream PubAck; publication is not a business acceptance.'
+        ? 'Dispatch reports PubAck immediately, then waits for the durable accepted or rejected response.'
         : 'Simulation replays history and discards every predicted event.';
     });
 
