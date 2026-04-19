@@ -18,8 +18,10 @@ use thiserror::Error;
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::{
-    CommandWireCodec, DomainJsonWireCodec, OperationEventKind, OperationResult, OperationSnapshot,
+    CommandWireCodec, DispatchAdapter, DispatchError, DispatchErrorKind, DispatchInvocation,
+    DispatchReceipt, DomainJsonWireCodec, OperationEventKind, OperationResult, OperationSnapshot,
     OperationSubscription, PredictedDomainEvent, RuntimeRegistrationError, SubscriptionError,
+    dispatch_fingerprint,
     operation::{NewOperation, OperationRecord, subscribe},
     runtime::{
         CommandKey, ErasedCommandSimulator, RuntimeBindings, RuntimeDecision,
@@ -30,10 +32,18 @@ use crate::{
 pub const MAX_COMMAND_PAYLOAD_LEN: usize = 1024 * 1024;
 const DEFAULT_MAXIMUM_OPERATIONS: usize = 1024;
 const DEFAULT_MAXIMUM_CONCURRENT_SIMULATIONS: usize = 32;
+const DEFAULT_MAXIMUM_CONCURRENT_DISPATCHES: usize = 32;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SimulationRequest {
+    pub schema_version: u32,
+    pub payload: Value,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchRequest {
     pub schema_version: u32,
     pub payload: Value,
 }
@@ -61,7 +71,7 @@ impl TracePayloadPolicy for RedactTracePayloads {
     }
 
     fn failure_message(&self, _message: String) -> String {
-        "simulation failure details are redacted".to_owned()
+        "operation failure details are redacted".to_owned()
     }
 }
 
@@ -92,6 +102,14 @@ pub enum SubmissionError {
         command: String,
         schema_version: u32,
     },
+    #[error(
+        "dispatch is not enabled for command `{command}` version {schema_version} on aggregate `{aggregate_type}`"
+    )]
+    DispatchNotEnabled {
+        aggregate_type: String,
+        command: String,
+        schema_version: u32,
+    },
     #[error("invalid aggregate identity: {0}")]
     InvalidAggregateId(String),
     #[error("invalid operation identity: {0}")]
@@ -104,6 +122,8 @@ pub enum SubmissionError {
     CapacityExhausted,
     #[error("simulation concurrency is exhausted")]
     ConcurrencyExhausted,
+    #[error("dispatch concurrency is exhausted")]
+    DispatchConcurrencyExhausted,
     #[error("operation was not found")]
     NotFound,
     #[error(transparent)]
@@ -115,6 +135,7 @@ pub struct ControlPlaneBuilder {
     bindings: RuntimeBindings,
     maximum_operations: usize,
     maximum_concurrent_simulations: usize,
+    maximum_concurrent_dispatches: usize,
     trace_payload_policy: Arc<dyn TracePayloadPolicy>,
 }
 
@@ -129,6 +150,7 @@ impl ControlPlaneBuilder {
             bindings: RuntimeBindings::new(registry),
             maximum_operations: DEFAULT_MAXIMUM_OPERATIONS,
             maximum_concurrent_simulations: DEFAULT_MAXIMUM_CONCURRENT_SIMULATIONS,
+            maximum_concurrent_dispatches: DEFAULT_MAXIMUM_CONCURRENT_DISPATCHES,
             trace_payload_policy: Arc::new(RedactTracePayloads),
         }
     }
@@ -145,6 +167,15 @@ impl ControlPlaneBuilder {
         maximum_concurrent_simulations: usize,
     ) -> Self {
         self.maximum_concurrent_simulations = maximum_concurrent_simulations;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_maximum_concurrent_dispatches(
+        mut self,
+        maximum_concurrent_dispatches: usize,
+    ) -> Self {
+        self.maximum_concurrent_dispatches = maximum_concurrent_dispatches;
         self
     }
 
@@ -184,6 +215,17 @@ impl ControlPlaneBuilder {
         self.register::<Command, _>(DomainJsonWireCodec)
     }
 
+    pub fn register_dispatch<Command>(
+        &mut self,
+        adapter: Arc<dyn DispatchAdapter>,
+    ) -> Result<&mut Self, RuntimeRegistrationError>
+    where
+        Command: CommandDefinition,
+    {
+        self.bindings.register_dispatch::<Command>(adapter)?;
+        Ok(self)
+    }
+
     pub fn register_with_codec<Command, Codec, Wire>(
         &mut self,
         event_codec: Codec,
@@ -208,13 +250,19 @@ impl ControlPlaneBuilder {
             .maximum_concurrent_simulations
             .min(self.maximum_operations)
             .min(Semaphore::MAX_PERMITS);
+        let maximum_concurrent_dispatches = self
+            .maximum_concurrent_dispatches
+            .min(self.maximum_operations)
+            .min(Semaphore::MAX_PERMITS);
         Ok(ControlPlane {
             inner: Arc::new(ControlPlaneInner {
                 history: self.history,
                 simulators: self.bindings.simulators,
+                dispatchers: self.bindings.dispatchers,
                 operations: Mutex::new(OperationTable::default()),
                 maximum_operations: self.maximum_operations,
                 simulation_permits: Arc::new(Semaphore::new(maximum_concurrent_simulations)),
+                dispatch_permits: Arc::new(Semaphore::new(maximum_concurrent_dispatches)),
                 generated_ids: AtomicU64::new(0),
                 trace_payload_policy: self.trace_payload_policy,
             }),
@@ -225,9 +273,11 @@ impl ControlPlaneBuilder {
 struct ControlPlaneInner {
     history: Arc<dyn EventHistory>,
     simulators: HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
+    dispatchers: HashMap<CommandKey, Arc<dyn DispatchAdapter>>,
     operations: Mutex<OperationTable>,
     maximum_operations: usize,
     simulation_permits: Arc<Semaphore>,
+    dispatch_permits: Arc<Semaphore>,
     generated_ids: AtomicU64,
     trace_payload_policy: Arc<dyn TracePayloadPolicy>,
 }
@@ -313,11 +363,12 @@ impl ControlPlane {
             schema_version: request.schema_version,
             aggregate_type,
             aggregate_id: aggregate_id.as_str(),
+            mode: "simulate",
         });
 
         let permit = {
             let mut operations = self.inner.operations.lock().await;
-            if let Some(existing) = operations.records.get(&operation_key) {
+            if let Some(existing) = operations.records.get(&operation_key).cloned() {
                 if existing.fingerprint().await != fingerprint.to_hex() {
                     return Err(SubmissionError::IdentityConflict);
                 }
@@ -362,6 +413,120 @@ impl ControlPlane {
                     .fail(
                         "simulation-panicked",
                         "the command simulation task panicked".to_owned(),
+                    )
+                    .await;
+            }
+        });
+        Ok(queued)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub async fn submit_dispatch(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: &str,
+        command: &str,
+        request: DispatchRequest,
+        idempotency_key: &str,
+    ) -> Result<OperationSnapshot, SubmissionError> {
+        let key = CommandKey::new(aggregate_type, command, request.schema_version);
+        let simulator = self.inner.simulators.get(&key).cloned().ok_or_else(|| {
+            SubmissionError::UnknownCommand {
+                aggregate_type: aggregate_type.to_owned(),
+                command: command.to_owned(),
+                schema_version: request.schema_version,
+            }
+        })?;
+        let dispatcher = self.inner.dispatchers.get(&key).cloned().ok_or_else(|| {
+            SubmissionError::DispatchNotEnabled {
+                aggregate_type: aggregate_type.to_owned(),
+                command: command.to_owned(),
+                schema_version: request.schema_version,
+            }
+        })?;
+        let aggregate_id = AggregateId::new(aggregate_id)
+            .map_err(|error| SubmissionError::InvalidAggregateId(error.to_string()))?;
+        let operation_id = validate_http_operation_id(idempotency_key)?;
+        let maximum_payload_len = dispatcher
+            .maximum_payload_len()
+            .min(MAX_COMMAND_PAYLOAD_LEN);
+        if request.payload.to_string().len() > maximum_payload_len {
+            return Err(SubmissionError::PayloadTooLarge {
+                maximum: maximum_payload_len,
+            });
+        }
+        let fingerprint = dispatch_fingerprint(
+            aggregate_type,
+            aggregate_id.as_str(),
+            command,
+            request.schema_version,
+            &request.payload,
+        );
+        let operation_key = operation_id.as_str().to_owned();
+        let record = OperationRecord::new(NewOperation {
+            operation_id: operation_key.clone(),
+            fingerprint: fingerprint.to_hex(),
+            command,
+            schema_version: request.schema_version,
+            aggregate_type,
+            aggregate_id: aggregate_id.as_str(),
+            mode: "dispatch",
+        });
+
+        let permit = {
+            let mut operations = self.inner.operations.lock().await;
+            if let Some(existing) = operations.records.get(&operation_key) {
+                if existing.fingerprint().await != fingerprint.to_hex() {
+                    return Err(SubmissionError::IdentityConflict);
+                }
+                return Ok(existing.snapshot().await);
+            }
+            if operations.records.len() >= self.inner.maximum_operations
+                && !operations.has_terminal()
+            {
+                return Err(SubmissionError::CapacityExhausted);
+            }
+            let permit = Arc::clone(&self.inner.dispatch_permits)
+                .try_acquire_owned()
+                .map_err(|_| SubmissionError::DispatchConcurrencyExhausted)?;
+            if operations.records.len() >= self.inner.maximum_operations {
+                assert!(operations.evict_terminal());
+            }
+            operations.insertion_order.push_back(operation_key.clone());
+            operations
+                .records
+                .insert(operation_key, Arc::clone(&record));
+            permit
+        };
+
+        let queued = record.snapshot().await;
+        let control_plane = self.clone();
+        let panic_record = Arc::clone(&record);
+        let aggregate_type = aggregate_type.to_owned();
+        let command = command.to_owned();
+        let execution = tokio::spawn(async move {
+            let _permit = permit;
+            control_plane
+                .run_dispatch(
+                    record,
+                    simulator,
+                    dispatcher,
+                    operation_id,
+                    aggregate_type,
+                    aggregate_id,
+                    command,
+                    request.schema_version,
+                    fingerprint,
+                    request.payload,
+                )
+                .await;
+        });
+        tokio::spawn(async move {
+            if execution.await.is_err() {
+                panic_record
+                    .fail(
+                        "dispatch-panicked",
+                        "the command dispatch task panicked".to_owned(),
                     )
                     .await;
             }
@@ -466,6 +631,55 @@ impl ControlPlane {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn run_dispatch(
+        &self,
+        record: Arc<OperationRecord>,
+        simulator: Arc<dyn ErasedCommandSimulator>,
+        dispatcher: Arc<dyn DispatchAdapter>,
+        operation_id: OperationId,
+        aggregate_type: String,
+        aggregate_id: AggregateId,
+        command: String,
+        schema_version: u32,
+        fingerprint: ContentFingerprint,
+        payload: Value,
+    ) {
+        record.start().await;
+        if let Err(error) = simulator.validate_payload(&payload) {
+            record
+                .fail(
+                    "invalid-command-payload",
+                    self.inner
+                        .trace_payload_policy
+                        .failure_message(error.to_string()),
+                )
+                .await;
+            return;
+        }
+        let invocation = DispatchInvocation::new(
+            operation_id,
+            fingerprint,
+            aggregate_type,
+            aggregate_id,
+            command,
+            schema_version,
+            payload,
+        );
+        match dispatcher.dispatch(invocation).await {
+            Ok(receipt) => complete_published(&record, receipt).await,
+            Err(error) => {
+                let (code, message) = dispatch_failure(&error);
+                record
+                    .fail(
+                        code,
+                        self.inner.trace_payload_policy.failure_message(message),
+                    )
+                    .await;
+            }
+        }
+    }
+
     fn generated_operation_id(&self) -> Result<OperationId, SubmissionError> {
         let sequence = self.inner.generated_ids.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
@@ -543,6 +757,32 @@ async fn complete_rejected(record: &OperationRecord, base_stream_version: u64, r
             ],
         )
         .await;
+}
+
+async fn complete_published(record: &OperationRecord, receipt: DispatchReceipt) {
+    record
+        .complete(
+            OperationResult::Published {
+                duplicate: receipt.duplicate(),
+                appended: false,
+                published: true,
+            },
+            vec![OperationEventKind::CommandPublished {
+                duplicate: receipt.duplicate(),
+            }],
+        )
+        .await;
+}
+
+fn dispatch_failure(error: &DispatchError) -> (&'static str, String) {
+    let code = match error.kind() {
+        DispatchErrorKind::InvalidRequest => "invalid-dispatch-request",
+        DispatchErrorKind::Rejected => "dispatch-rejected",
+        DispatchErrorKind::Timeout => "dispatch-timeout",
+        DispatchErrorKind::Unavailable => "dispatch-unavailable",
+        DispatchErrorKind::InvalidConfiguration => "dispatch-misconfigured",
+    };
+    (code, error.message().to_owned())
 }
 
 fn runtime_failure(error: RuntimeSimulationError) -> (&'static str, String) {

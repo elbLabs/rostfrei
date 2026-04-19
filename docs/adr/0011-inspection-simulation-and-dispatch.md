@@ -24,6 +24,14 @@ rewrites authoritative history. Tooling must technically separate simulation
 from live dispatch. Live dispatch is disabled unless deployment
 configuration, authorization, and auditing permit it.
 
+The HTTP control plane mounts dispatch separately from simulation and requires
+a distinct bearer capability. Commands opt into dispatch individually through
+an asynchronous `DispatchAdapter`. A publication-backed adapter completes the
+control-plane operation only after broker confirmation and reports `published`;
+it does not report `accepted`, `rejected`, or `appended` without evidence from
+the command execution side. The idempotency key is mandatory for dispatch and
+is included in a mode-specific request fingerprint.
+
 ## Consequences
 
 Developers and AI tools can explore real histories and test commands without
@@ -32,3 +40,8 @@ server boundary rather than by client convention. Deterministic aggregate handle
 are directly simulatable; commands involving external effects require a future
 execution-journal seam and cannot be represented as safely simulated until that
 contract exists.
+
+Local, test, and production deployments can use the same NATS dispatch adapter.
+They differ in application scope and resource lifecycle: tests use unique
+application-scoped JetStream resources and delete their streams after the run,
+while production uses stable operator-owned resources.

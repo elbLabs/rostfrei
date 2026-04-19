@@ -57,8 +57,8 @@ const INDEX_HTML: &str = r#"<!doctype html>
   <main>
     <header>
       <h1>Bike rental command lab</h1>
-      <p>Submit a command to the local control plane and watch its trace arrive.</p>
-      <p class="notice">Simulation only: commands and predicted events are not appended or published.</p>
+      <p>Publish a real command through NATS or preview it without changing the stream.</p>
+      <p class="notice" id="mode-notice">Dispatch waits for a JetStream PubAck; publication is not a business acceptance.</p>
     </header>
     <div class="layout">
       <section class="panel" aria-labelledby="command-heading">
@@ -66,6 +66,12 @@ const INDEX_HTML: &str = r#"<!doctype html>
         <form id="command-form">
           <label>Bearer token
             <input id="token" name="token" type="password" placeholder="local-development-token" autocomplete="off" required>
+          </label>
+          <label>Mode
+            <select id="mode" name="mode">
+              <option value="dispatch">Dispatch via NATS</option>
+              <option value="simulate">Simulate without changes</option>
+            </select>
           </label>
           <label>Aggregate ID
             <input id="aggregate-id" name="aggregateId" value="city-fleet" required>
@@ -101,6 +107,8 @@ const INDEX_HTML: &str = r#"<!doctype html>
     const submit = document.querySelector('#submit');
     const status = document.querySelector('#status');
     const events = document.querySelector('#events');
+    const mode = document.querySelector('#mode');
+    const modeNotice = document.querySelector('#mode-notice');
 
     function setStatus(message, state) {
       status.textContent = message;
@@ -159,9 +167,9 @@ const INDEX_HTML: &str = r#"<!doctype html>
         if (id && Number.isSafeInteger(Number(id))) cursor = Number(id);
         if (name === 'operation.failed') outcome = { message: 'Failed', state: 'error' };
         if (name === 'operation.completed') {
-          outcome = data.decision === 'rejected'
-            ? { message: 'Rejected', state: 'error' }
-            : { message: 'Accepted', state: 'complete' };
+          if (data.decision === 'rejected') outcome = { message: 'Rejected', state: 'error' };
+          if (data.decision === 'accepted') outcome = { message: 'Accepted', state: 'complete' };
+          if (data.decision === 'published') outcome = { message: 'Published', state: 'complete' };
         }
       }
 
@@ -195,6 +203,12 @@ const INDEX_HTML: &str = r#"<!doctype html>
       throw new Error('event stream ended before the operation completed');
     }
 
+    mode.addEventListener('change', () => {
+      modeNotice.textContent = mode.value === 'dispatch'
+        ? 'Dispatch waits for a JetStream PubAck; publication is not a business acceptance.'
+        : 'Simulation replays history and discards every predicted event.';
+    });
+
     async function errorMessage(response) {
       try {
         const body = await response.json();
@@ -212,6 +226,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
 
       try {
         const token = document.querySelector('#token').value;
+        const selectedMode = mode.value;
         const aggregateId = document.querySelector('#aggregate-id').value;
         const command = document.querySelector('#command').value;
         const bicycleId = document.querySelector('#bicycle-id').value;
@@ -219,7 +234,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
           ? crypto.randomUUID()
           : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
         const operationId = `ui-${randomId}`;
-        const endpoint = `/v1/contexts/bike-rental/aggregates/rental-fleet/${encodeURIComponent(aggregateId)}/commands/${encodeURIComponent(command)}/simulate`;
+        const endpoint = `/v1/contexts/bike-rental/aggregates/rental-fleet/${encodeURIComponent(aggregateId)}/commands/${encodeURIComponent(command)}/${selectedMode}`;
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -230,7 +245,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
           body: JSON.stringify({ schemaVersion: 1, payload: { bicycle_id: bicycleId } }),
         });
         if (!response.ok) throw new Error(await errorMessage(response));
-        setStatus('Streaming', 'running');
+        setStatus('Tracking', 'running');
         const outcome = await readEvents(operationId, token);
         setStatus(outcome.message, outcome.state);
       } catch (error) {
