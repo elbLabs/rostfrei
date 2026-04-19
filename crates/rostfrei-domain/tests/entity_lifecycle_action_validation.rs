@@ -69,6 +69,7 @@ const ATTACHED_ACTIONS: &[ActionDescriptor] = &[ActionDescriptor {
     label: "Attached",
     input: None,
     output: None,
+    raises: &[],
     error: None,
 }];
 const ATTACHED_CONTRACTS: &[&[ActionDescriptor]] = &[ATTACHED_ACTIONS];
@@ -77,6 +78,7 @@ const BROKEN_ACTIONS: &[ActionDescriptor] = &[ActionDescriptor {
     label: "Broken reference",
     input: Some(ActionInputDescriptor::ValueObject(MISSING_VALUE_ID)),
     output: None,
+    raises: &[],
     error: None,
 }];
 const BROKEN_ACTION_CONTRACTS: &[&[ActionDescriptor]] = &[BROKEN_ACTIONS];
@@ -85,6 +87,7 @@ const EXTENSION_ACTIONS: &[ActionDescriptor] = &[ActionDescriptor {
     label: "Extension only",
     input: None,
     output: None,
+    raises: &[],
     error: None,
 }];
 const BROKEN_DECISIONS: &[DecisionDescriptor] = &[DecisionDescriptor {

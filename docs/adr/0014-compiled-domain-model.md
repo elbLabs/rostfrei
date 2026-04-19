@@ -32,10 +32,9 @@ schema version, fields, and the default JSON payload contract. An aggregate's
 membership. The aggregate derive generates the owned descriptors, a doc-hidden
 aggregate event representation, concrete event conversions, `Apply<Event>`
 dispatch to the declared root, JSON encoding and fail-closed replay decoding.
-Applications declare executable aggregate Actions that return concrete events
-and never declare or use the generated representation. The generated
-`AggregateInstance` adapter raises successful Action results, applies them
-immediately, and records them as uncommitted events.
+Applications declare executable aggregate Actions that explicitly raise
+concrete events and never declare or use the generated representation. Raising
+an event applies it immediately and records it as uncommitted.
 
 `domain_model!` projects each aggregate's attached events automatically in
 aggregate and attachment order. It has no flat event inventory, so an event
@@ -55,13 +54,14 @@ Normal applications depend on the `rostfrei` facade and use `rostfrei::Aggregate
 `rostfrei::Executor` with `#[rostfrei(...)]`. Implementation crates and generated
 event representations are not part of normal application syntax.
 
-Executable aggregate Actions use an immutable root, domain-specific input, and a
-direct aggregate-owned event result. `domain_actions(aggregate(instance = ...))`
-generates extension methods on `AggregateInstance` from the same contract and
-implementation used for model metadata. The generated adapter raises only a
-successful event result; rejected Actions leave state and uncommitted events
-unchanged. Commands remain an application boundary and map their payloads into
-one or more Action inputs rather than being passed to Actions directly.
+Executable aggregate Actions use `&mut self`, domain-specific input, and
+`()`/`Result<(), DomainError>` outcomes.
+`domain_actions(aggregate(instance = ...))` generates the trait implemented for
+`AggregateInstance`; Action implementations explicitly call `self.raise(...)`
+zero or more times. `raises = [...]` declares possible event types for the
+compiled model, while the Aggregate's `events = [...]` remains the executable
+event inventory. Commands remain an application boundary and map their payloads
+into one or more Action inputs rather than being passed to Actions directly.
 
 `DomainCommand` derives the runtime command definition from its owner, local ID,
 and schema version. Registering a command runtime binding inserts that descriptor

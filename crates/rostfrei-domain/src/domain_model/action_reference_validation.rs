@@ -1,6 +1,6 @@
 use crate::{
-    ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, DomainErrorId,
-    DomainEventId, DomainIdentityId, ValueObjectId,
+    ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
+    DomainErrorId, DomainEventId, DomainIdentityId, ValueObjectId,
 };
 
 pub(super) struct ActionReferenceInventory {
@@ -41,6 +41,23 @@ fn validate_references(descriptor: ActionDescriptor, inventory: &ActionReference
     }
     if let Some(output) = descriptor.output {
         validate_output_references(descriptor.id, output, "output", inventory);
+    }
+    for (index, id) in descriptor.raises.iter().enumerate() {
+        let ActionOwnerId::Aggregate(owner) = descriptor.id.owner else {
+            panic!(
+                "Action raised-event owner violation: action {:?} is not owned by an Aggregate",
+                descriptor.id
+            );
+        };
+        if id.aggregate != owner {
+            panic!(
+                "Action raised-event owner violation: action {:?} declares event {id:?} owned by another Aggregate",
+                descriptor.id
+            );
+        }
+        if !inventory.domain_events.contains(id) {
+            missing_reference(descriptor.id, id, &format!("raises[{index}]"), "events");
+        }
     }
     if let Some(id) = descriptor.error
         && !inventory.domain_errors.contains(&id)

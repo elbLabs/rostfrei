@@ -68,6 +68,13 @@ const MISSING_EVENT_ID: DomainEventId = DomainEventId {
     aggregate: AGGREGATE_ID,
     local: "missing-event",
 };
+const FOREIGN_EVENT_ID: DomainEventId = DomainEventId {
+    aggregate: AggregateId {
+        context: CONTEXT_ID,
+        local: "foreign-aggregate",
+    },
+    local: "foreign-event",
+};
 const AGGREGATE_ERROR_ID: DomainErrorId = DomainErrorId {
     owner: DomainErrorOwnerId::Aggregate(AGGREGATE_ID),
     local: "aggregate-error",
@@ -340,6 +347,7 @@ const fn extension_action(
         label: local,
         input,
         output,
+        raises: &[],
         error,
     }
 }
@@ -389,6 +397,60 @@ impl ActionGroupType for DanglingExtension {
     )];
 }
 
+struct RaisedEventExtension;
+
+impl ActionGroupType for RaisedEventExtension {
+    type Owner = InventoryAggregate;
+
+    const ACTIONS: &'static [ActionDescriptor] = &[ActionDescriptor {
+        id: ActionId {
+            owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
+            local: "raised-event",
+        },
+        label: "Raised event",
+        input: None,
+        output: None,
+        raises: &[MISSING_EVENT_ID],
+        error: None,
+    }];
+}
+
+struct NonAggregateRaisedEventExtension;
+
+impl ActionGroupType for NonAggregateRaisedEventExtension {
+    type Owner = ExtensionService;
+
+    const ACTIONS: &'static [ActionDescriptor] = &[ActionDescriptor {
+        id: ActionId {
+            owner: ActionOwnerId::DomainService(EXTENSION_SERVICE_ID),
+            local: "invalid-raised-event-owner",
+        },
+        label: "Invalid raised event owner",
+        input: None,
+        output: None,
+        raises: &[MISSING_EVENT_ID],
+        error: None,
+    }];
+}
+
+struct ForeignRaisedEventExtension;
+
+impl ActionGroupType for ForeignRaisedEventExtension {
+    type Owner = InventoryAggregate;
+
+    const ACTIONS: &'static [ActionDescriptor] = &[ActionDescriptor {
+        id: ActionId {
+            owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
+            local: "foreign-raised-event",
+        },
+        label: "Foreign raised event",
+        input: None,
+        output: None,
+        raises: &[FOREIGN_EVENT_ID],
+        error: None,
+    }];
+}
+
 struct OrderedExtension;
 
 impl ActionGroupType for OrderedExtension {
@@ -402,6 +464,7 @@ impl ActionGroupType for OrderedExtension {
         label: "Extension missing",
         input: None,
         output: Some(ActionOutputDescriptor::ValueObject(OUTPUT_VALUE_ID)),
+        raises: &[],
         error: None,
     }];
 }
@@ -598,6 +661,72 @@ fn traverses_deeply_nested_optional_list_outputs() {
             MISSING_EVENT_ID,
             "output.optional.value.list.element.optional.value.list.element",
             "events",
+        )
+    );
+}
+
+#[test]
+fn reports_missing_raised_event() {
+    let message = panic_message(|| {
+        let mut builder = DomainModelBuilder::new();
+        builder.add_aggregate_type::<InventoryAggregate>();
+        builder.add_action_extension::<RaisedEventExtension>();
+        builder.add_domain_identity_type::<InventoryEntityIdentity>();
+        builder.add_domain_error(AggregateError::DESCRIPTOR);
+        builder.finish();
+    });
+
+    assert_eq!(
+        message,
+        violation(
+            ActionId {
+                owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
+                local: "raised-event",
+            },
+            MISSING_EVENT_ID,
+            "raises[0]",
+            "events",
+        )
+    );
+}
+
+#[test]
+fn rejects_raised_events_on_non_aggregate_actions() {
+    let message = panic_message(|| {
+        let mut builder = DomainModelBuilder::new();
+        builder.add_domain_service_type::<ExtensionService>();
+        builder.add_action_extension::<NonAggregateRaisedEventExtension>();
+        builder.finish();
+    });
+
+    assert_eq!(
+        message,
+        format!(
+            "Action raised-event owner violation: action {:?} is not owned by an Aggregate",
+            extension_action_id("invalid-raised-event-owner")
+        )
+    );
+}
+
+#[test]
+fn rejects_another_aggregates_raised_event() {
+    let message = panic_message(|| {
+        let mut builder = DomainModelBuilder::new();
+        builder.add_aggregate_type::<InventoryAggregate>();
+        builder.add_action_extension::<ForeignRaisedEventExtension>();
+        builder.add_domain_identity_type::<InventoryEntityIdentity>();
+        builder.add_domain_error(AggregateError::DESCRIPTOR);
+        builder.finish();
+    });
+    let action_id = ActionId {
+        owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
+        local: "foreign-raised-event",
+    };
+
+    assert_eq!(
+        message,
+        format!(
+            "Action raised-event owner violation: action {action_id:?} declares event {FOREIGN_EVENT_ID:?} owned by another Aggregate"
         )
     );
 }

@@ -80,6 +80,7 @@ const DUPLICATE_VALUE_ACTIONS: &[ActionDescriptor] = &[
         label: "First duplicate",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     },
     ActionDescriptor {
@@ -90,6 +91,7 @@ const DUPLICATE_VALUE_ACTIONS: &[ActionDescriptor] = &[
         label: "Second duplicate",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     },
 ];

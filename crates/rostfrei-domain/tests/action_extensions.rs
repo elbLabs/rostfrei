@@ -36,6 +36,7 @@ const fn action(owner: ActionOwnerId, local: &'static str) -> ActionDescriptor {
         label: local,
         input: None,
         output: None,
+        raises: &[],
         error: None,
     }
 }

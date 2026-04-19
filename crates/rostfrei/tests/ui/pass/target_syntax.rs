@@ -52,17 +52,21 @@ struct MoneyDeposited {
 }
 
 mod aggregate_actions {
-    use super::{Account, AccountAggregate, MoneyDeposited};
+    use super::{AccountAggregate, AggregateInstance, MoneyDeposited};
 
     #[rostfrei::domain_actions(aggregate(instance = AccountAggregateActions))]
     pub trait AccountAggregateActionContract {
-        #[action(id = "deposit", label = "Deposit")]
-        fn deposit(root: &Account, input: i64) -> MoneyDeposited;
+        #[action(
+            id = "deposit",
+            label = "Deposit",
+            raises = [MoneyDeposited]
+        )]
+        fn deposit(&mut self, input: i64);
     }
 
-    impl AccountAggregateActionContract for AccountAggregate {
-        fn deposit(_root: &Account, input: i64) -> MoneyDeposited {
-            MoneyDeposited { amount: input }
+    impl AccountAggregateActions for AggregateInstance<AccountAggregate> {
+        fn deposit(&mut self, input: i64) {
+            self.raise(MoneyDeposited { amount: input });
         }
     }
 }

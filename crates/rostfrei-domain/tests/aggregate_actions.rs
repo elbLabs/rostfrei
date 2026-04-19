@@ -153,6 +153,7 @@ impl ActionGroupType for AccountExtensionActions {
         label: "Account extension action",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     }];
 }
@@ -170,6 +171,7 @@ impl ActionGroupType for DuplicateAccountExtensionActions {
         label: "Duplicate open",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     }];
 }

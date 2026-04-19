@@ -23,16 +23,17 @@ owned by that exact Aggregate.
 [Entity](../reference/domain/entity.md) and
 [Value Object](../reference/domain/value-object.md) Actions do not record
 Domain Events. A [Domain Service](../reference/domain/domain-service.md) does
-not record Domain Events; it returns the Aggregate Domain Events produced by the
-Aggregate Actions it coordinates when those Aggregates have exactly the
-service's Bounded Context.
+not record Domain Events.
 
-An Aggregate Action may record zero or more Domain Events.
+An Aggregate Action explicitly records zero or more Domain Events with
+`self.raise(event)`.
 
 Domain Events are recorded only after Lifecycle Conformance and Invariant
 Validation succeed.
 
-A denied Action records no Domain Event.
+A fallible Action completes every denial check before its first `raise` and
+records no event when denied. Returning an error after raising violates the
+Action contract; there is no independent Action rollback boundary.
 
 A successful Aggregate state change and its Domain Events are one atomic domain
 outcome.
