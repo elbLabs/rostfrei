@@ -1,5 +1,5 @@
-error: unknown domain decision contract kind `application`; expected `aggregate`, `domain_service`, `entity`, or `value_object`
- --> tests/ui/domain_decision_contract/bad_macro_kind.rs:3:20
+error: unsupported domain_decisions argument `domain_service`; expected `aggregate` or `entity`, and `group = GroupType`
+ --> tests/ui/domain_decision_contract/bad_macro_kind.rs:7:20
   |
-3 | #[domain_decisions(application)]
-  |                    ^^^^^^^^^^^
+7 | #[domain_decisions(domain_service, group = Group)]
+  |                    ^^^^^^^^^^^^^^

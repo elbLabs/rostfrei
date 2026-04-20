@@ -5,13 +5,16 @@ compiled domain metadata without depending on a production application:
 
 - `RentalFleetAggregate` owns the fleet and its bicycles;
 - `RentBicycle` is a public aggregate command;
-- `AssessRentalEligibility` returns an allowed outcome or a typed denial reason;
+- `RentalEligibilityDecisions` groups `AssessRentalEligibility`, which returns
+  first-class eligible, already-rented, or maintenance-required outcomes;
 - `BicycleRented` and `BicycleUnavailable` describe action outcomes; and
 - `BicycleAvailabilityQueries` exposes a read-only availability query.
 
 The public command maps its payload to the `BicycleId` domain identity. The
-modeled Action validates the request and explicitly raises `BicycleRented` on
-success. Neither the Action nor the Decision receives the command message.
+modeled Action exhaustively translates the eligibility outcome, explicitly
+raising `BicycleRented` on success while preserving `BicycleUnavailable` as its
+external error. The Decision takes the compact status and condition values;
+neither the Action nor the Decision receives the command message.
 
 Print the compiled domain model:
 

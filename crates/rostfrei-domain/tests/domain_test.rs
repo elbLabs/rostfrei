@@ -1,5 +1,6 @@
 #![allow(dead_code, non_snake_case, private_bounds, private_interfaces)]
 
+use domain::DecisionOutcome;
 use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle, EntityLifecycleType,
     InvariantOwnerType, InvariantViolation, ValueObject, domain_action_test, domain_actions,
@@ -11,13 +12,23 @@ use domain::{
 #[domain(id = "testing", label = "Testing")]
 struct Testing;
 
-#[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
+#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
 #[domain(id = "decision-input", label = "Decision input", owner = TestAggregate)]
 struct DecisionInput(bool);
 
 #[derive(ValueObject, Debug, Eq, PartialEq)]
 #[domain(id = "decision-output", label = "Decision output", owner = TestAggregate)]
 struct DecisionOutput(bool);
+
+#[derive(DecisionOutcome, Debug, Eq, PartialEq)]
+enum TestDecisionOutcome {
+    #[outcome(id = "accepted", label = "Accepted")]
+    Accepted(DecisionOutput),
+    #[outcome(id = "rejected", label = "Rejected")]
+    Rejected,
+}
+
+struct TestDecisions;
 
 #[domain_actions(aggregate)]
 pub trait AggregateActions {
@@ -29,12 +40,6 @@ pub trait AggregateActions {
 trait RootActions {
     #[action(id = "activate", label = "Activate")]
     fn activate(&mut self);
-}
-
-#[domain_decisions(aggregate)]
-pub trait AggregateDecisions {
-    #[decision(id = "accept", label = "Accept")]
-    fn accept(input: DecisionInput) -> DecisionOutput;
 }
 
 #[domain_invariants(aggregate)]
@@ -84,10 +89,22 @@ struct TestRoot {
     context = Testing,
     root = TestRoot,
     actions = [AggregateActions],
-    decisions = [AggregateDecisions],
+    decisions = [TestDecisions],
     invariants = [AggregateInvariants],
 )]
 struct TestAggregate;
+
+#[domain_decisions(aggregate, group = TestDecisions)]
+impl TestAggregate {
+    #[decision(id = "accept", label = "Accept")]
+    const fn accept(input: DecisionInput) -> TestDecisionOutcome {
+        if input.0 {
+            TestDecisionOutcome::Accepted(DecisionOutput(true))
+        } else {
+            TestDecisionOutcome::Rejected
+        }
+    }
+}
 
 impl AggregateActions for TestAggregate {
     fn mark(root: &mut TestRoot, input: bool) {
@@ -98,12 +115,6 @@ impl AggregateActions for TestAggregate {
 impl RootActions for TestRoot {
     fn activate(&mut self) {
         self.active = true;
-    }
-}
-
-impl AggregateDecisions for TestAggregate {
-    fn accept(input: DecisionInput) -> DecisionOutput {
-        DecisionOutput(input.0)
     }
 }
 
@@ -142,11 +153,11 @@ fn case_distinct_test_name() {}
 #[domain_action_test(<TestAggregate as AggregateActions>::MARK)]
 fn CASE_DISTINCT_TEST_NAME() {}
 
-#[domain_decision_test(<TestAggregate as AggregateDecisions>::ACCEPT)]
+#[domain_decision_test(TestAggregate::ACCEPT)]
 fn decision_tests_keep_the_authored_body() {
     assert_eq!(
         TestAggregate::accept(DecisionInput(true)),
-        DecisionOutput(true)
+        TestDecisionOutcome::Accepted(DecisionOutput(true))
     );
 }
 

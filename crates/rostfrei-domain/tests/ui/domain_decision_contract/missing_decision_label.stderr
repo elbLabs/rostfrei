@@ -1,5 +1,0 @@
-error: missing label
- --> tests/ui/domain_decision_contract/missing_decision_label.rs:8:5
-  |
-8 |     #[decision(id = "decide")]
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^

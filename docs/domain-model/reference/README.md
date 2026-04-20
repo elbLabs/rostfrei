@@ -38,6 +38,7 @@ examples use paths such as `domain::Aggregate`.
 
 ### Domain Outcomes
 
+- [Decision outcomes](domain/decision.md#outcome-contract)
 - [Domain Error](domain/domain-error.md)
 - [Domain Event](domain/domain-event.md)
 

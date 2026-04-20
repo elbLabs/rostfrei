@@ -1,5 +1,0 @@
-error: domain decision contract traits cannot have existing supertraits
- --> tests/ui/domain_decision_contract/existing_supertrait.rs:4:18
-  |
-4 | trait Decisions: Send {}
-  |                  ^^^^

@@ -15,7 +15,6 @@ across aggregates in one [Bounded Context](bounded-context.md).
 A domain service owns:
 
 - its public service actions
-- its attached coordination decisions
 
 A service invokes public [Aggregate](aggregate.md) actions. It does not invoke
 an [Entity](entity.md) or [Value Object](value-object.md) directly. Because it
@@ -39,11 +38,9 @@ Aggregate Action.
 
 ## Decisions
 
-Domain Service Decision contracts use `#[domain_decisions(domain_service)]`.
-The service implements each contract attached through
-`decisions = [TraitPath, ...]`. A Domain Service Action may also call any other
-visible Decision in the same Bounded Context. The compiler does not enforce
-Action call permissions. See [Decision](decision.md).
+A Domain Service cannot own Decisions. A Domain Service Action may call any
+visible Aggregate- or Entity-owned Decision in the same Bounded Context. The
+compiler does not enforce Action call permissions. See [Decision](decision.md).
 
 ## Actions
 
@@ -98,4 +95,4 @@ A domain service does not:
 - A [Bounded Context](bounded-context.md) contains domain services.
 - An [Aggregate](aggregate.md) owns state and exposes public behavior.
 - An [Action](action.md) may be owned by a domain service.
-- A [Decision](decision.md) may be owned by a domain service.
+- A domain service Action may call a visible [Decision](decision.md).

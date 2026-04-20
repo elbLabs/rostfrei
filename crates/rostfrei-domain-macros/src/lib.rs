@@ -3,6 +3,7 @@ use syn::{DeriveInput, Error, parse_macro_input};
 
 mod aggregate;
 mod bounded_context;
+mod decision_outcome;
 mod domain_actions;
 mod domain_command;
 mod domain_decisions;
@@ -108,6 +109,13 @@ pub fn derive_aggregate(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(DomainIdentity, attributes(domain, rostfrei))]
 pub fn derive_domain_identity(input: TokenStream) -> TokenStream {
     domain_identity::expand(&parse_macro_input!(input as DeriveInput))
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+#[proc_macro_derive(DecisionOutcome, attributes(outcome))]
+pub fn derive_decision_outcome(input: TokenStream) -> TokenStream {
+    decision_outcome::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

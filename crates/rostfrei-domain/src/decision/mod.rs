@@ -1,29 +1,37 @@
 mod aggregate_owner_type;
+mod attached_group;
 mod descriptor;
-mod domain_service_owner_type;
 mod entity_owner_type;
+mod group_type;
 mod id;
 mod implementation_descriptor;
 mod input_descriptor;
 mod input_type;
-mod output_descriptor;
-mod output_type;
+mod outcome_descriptor;
+mod outcome_id;
+mod outcome_type;
+mod outcome_value;
 mod owner_id;
 mod owner_type;
+mod parameter_descriptor;
 mod reference;
-mod value_object_owner_type;
 
 pub use aggregate_owner_type::AggregateDecisionOwnerType;
+pub use attached_group::AttachedDecisionGroup;
 pub use descriptor::DecisionDescriptor;
-pub use domain_service_owner_type::DomainServiceDecisionOwnerType;
 pub use entity_owner_type::EntityDecisionOwnerType;
+pub use group_type::DecisionGroupType;
 pub use id::DecisionId;
 pub use implementation_descriptor::DecisionImplementationDescriptor;
 pub use input_descriptor::DecisionInputDescriptor;
 pub use input_type::DecisionInputType;
-pub use output_descriptor::DecisionOutputDescriptor;
-pub use output_type::DecisionOutputType;
+pub use outcome_descriptor::{
+    DecisionOutcomeDescriptor, DecisionOutcomeNamedFieldDescriptor, DecisionOutcomeShapeDescriptor,
+};
+pub use outcome_id::DecisionOutcomeId;
+pub use outcome_type::DecisionOutcomeType;
+pub use outcome_value::{DecisionOutcomeValueDescriptor, DecisionOutcomeValueType};
 pub use owner_id::DecisionOwnerId;
 pub use owner_type::DecisionOwnerType;
+pub use parameter_descriptor::DecisionParameterDescriptor;
 pub use reference::DecisionReference;
-pub use value_object_owner_type::ValueObjectDecisionOwnerType;

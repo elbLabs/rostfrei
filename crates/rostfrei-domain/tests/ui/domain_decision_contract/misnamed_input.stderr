@@ -1,5 +1,0 @@
-error: decision parameter must be a simple identifier named `input`
- --> tests/ui/domain_decision_contract/misnamed_input.rs:9:15
-  |
-9 |     fn decide(value: Input) -> Output;
-  |               ^^^^^

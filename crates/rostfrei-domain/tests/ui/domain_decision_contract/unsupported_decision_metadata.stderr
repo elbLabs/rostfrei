@@ -1,5 +1,0 @@
-error: unsupported decision attribute metadata
- --> tests/ui/domain_decision_contract/unsupported_decision_metadata.rs:8:49
-  |
-8 |     #[decision(id = "decide", label = "Decide", other = "value")]
-  |                                                 ^^^^^

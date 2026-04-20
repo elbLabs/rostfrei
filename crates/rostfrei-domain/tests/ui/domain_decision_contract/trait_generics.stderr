@@ -1,5 +1,0 @@
-error: domain decision contract traits cannot be generic
- --> tests/ui/domain_decision_contract/trait_generics.rs:4:17
-  |
-4 | trait Decisions<T> {}
-  |                 ^

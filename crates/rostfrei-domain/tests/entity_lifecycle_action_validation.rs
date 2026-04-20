@@ -4,9 +4,10 @@ use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOwnerId, ActionOwnerType,
     AggregateDescriptor, AggregateId, AggregateType, BoundedContextDescriptor, BoundedContextId,
     BoundedContextType, DecisionDescriptor, DecisionId, DecisionImplementationDescriptor,
-    DecisionInputDescriptor, DecisionOutputDescriptor, DecisionOwnerId, DomainIdentityDescriptor,
-    DomainIdentityId, DomainIdentityType, DomainModelError, DomainModelReference, EntityDescriptor,
-    EntityId, EntityLifecycleDescriptor, EntityLifecycleId, EntityLifecycleStateDescriptor,
+    DecisionInputDescriptor, DecisionOutcomeDescriptor, DecisionOutcomeShapeDescriptor,
+    DecisionOwnerId, DecisionParameterDescriptor, DomainIdentityDescriptor, DomainIdentityId,
+    DomainIdentityType, DomainModelError, DomainModelReference, EntityDescriptor, EntityId,
+    EntityLifecycleDescriptor, EntityLifecycleId, EntityLifecycleStateDescriptor,
     EntityLifecycleStateId, EntityLifecycleTransitionDescriptor, EntityType, IdentityDescriptor,
     ScalarType, ValueObjectId, ValueObjectOwnerId,
 };
@@ -93,11 +94,18 @@ const BROKEN_DECISIONS: &[DecisionDescriptor] = &[DecisionDescriptor {
         local: "broken-decision",
     },
     label: "Broken decision",
-    input: DecisionInputDescriptor::ValueObject(MISSING_VALUE_ID),
-    output: DecisionOutputDescriptor::ValueObject(MISSING_VALUE_ID),
+    parameters: &[DecisionParameterDescriptor {
+        name: "input",
+        input: DecisionInputDescriptor::ValueObject(MISSING_VALUE_ID),
+    }],
+    outcomes: &[DecisionOutcomeDescriptor {
+        local_id: "done",
+        label: "Done",
+        shape: DecisionOutcomeShapeDescriptor::Unit,
+    }],
     implementation: DecisionImplementationDescriptor::Rust,
 }];
-const BROKEN_DECISION_CONTRACTS: &[&[DecisionDescriptor]] = &[BROKEN_DECISIONS];
+const BROKEN_DECISION_GROUPS: &[&[DecisionDescriptor]] = &[BROKEN_DECISIONS];
 
 const STATES: &[EntityLifecycleStateDescriptor] = &[EntityLifecycleStateDescriptor {
     id: READY_ID,
@@ -170,9 +178,9 @@ const fn action_contracts(case: u8) -> &'static [&'static [ActionDescriptor]] {
     }
 }
 
-const fn decision_contracts(case: u8) -> &'static [&'static [DecisionDescriptor]] {
+const fn decision_groups(case: u8) -> &'static [&'static [DecisionDescriptor]] {
     match case {
-        5 => BROKEN_DECISION_CONTRACTS,
+        5 => BROKEN_DECISION_GROUPS,
         _ => &[],
     }
 }
@@ -217,7 +225,7 @@ impl<const CASE: u8> EntityType for ValidationEntity<CASE> {
     };
     const LIFECYCLE: Option<EntityLifecycleDescriptor> = Some(lifecycle(CASE));
     const ACTION_CONTRACTS: &'static [&'static [ActionDescriptor]] = action_contracts(CASE);
-    const DECISION_CONTRACTS: &'static [&'static [DecisionDescriptor]] = decision_contracts(CASE);
+    const DECISION_GROUPS: &'static [&'static [DecisionDescriptor]] = decision_groups(CASE);
 }
 
 impl<const CASE: u8> ActionOwnerType for ValidationEntity<CASE> {
