@@ -1,18 +1,17 @@
 use std::{convert::Infallible, sync::Arc};
 
 use rostfrei::{
-    Aggregate, AggregateInstance, Apply, CommandExecutionError, CommandHandler, CommandType,
-    ContentFingerprint, DomainRegistry, EventHistory, EventStore, ExecutionMetadata, Executor,
-    Initialize, OperationId, RegistrationError, StreamAggregateId, StreamAggregateType, StreamId,
-    domain_module,
+    Aggregate, AggregateInstance, CommandExecutionError, CommandHandler, ContentFingerprint,
+    DomainRegistry, EventHistory, EventStore, ExecutionMetadata, Executor, OperationId,
+    RegistrationError, StreamAggregateId, StreamAggregateType, StreamId, domain_module,
 };
 use rostfrei_tracer::{CommandInputField, CommandInputOption, CommandInputOptions, TracerBuilder};
 use thiserror::Error;
 
-use crate::rental::{
-    AddBicycle, Bicycle, BicycleAdded, BicycleCondition, BicycleId, BicycleRented, BicycleReturned,
-    BicycleStatus, FleetId, ImportedBicycle, RentBicycle, RentalFleet, RentalFleetActions,
-    RentalFleetAggregate, RentalFleetImported, ReturnBicycle,
+use crate::rental_fleet::{
+    AddBicycle, BicycleCondition, BicycleId, BicycleStatus, ImportRentalFleetInput,
+    ImportedBicycle, RentBicycle, RentalFleet, RentalFleetActions, RentalFleetAggregate,
+    ReturnBicycle,
 };
 
 pub const COMMAND_NAME: &str = "rent-bicycle";
@@ -63,83 +62,6 @@ impl CommandInputOptions<ReturnBicycle> for ReturnBicycleInputOptions {
     }
 }
 
-impl Initialize<RentalFleetAggregate> for RentalFleet {
-    fn initialize(stream_id: &StreamId) -> Self {
-        Self::new(FleetId::from(stream_id.aggregate_id()), Vec::new())
-    }
-}
-
-impl Apply<RentalFleetImported> for RentalFleet {
-    fn apply(&mut self, event: &RentalFleetImported) {
-        *self = Self::new(
-            self.fleet_id().clone(),
-            event
-                .bicycles
-                .iter()
-                .map(|bicycle| {
-                    Bicycle::new(
-                        bicycle.bicycle_id.clone(),
-                        bicycle.status,
-                        bicycle.condition,
-                    )
-                })
-                .collect(),
-        );
-    }
-}
-
-impl Apply<BicycleRented> for RentalFleet {
-    fn apply(&mut self, event: &BicycleRented) {
-        self.apply_rental(&event.bicycle_id);
-    }
-}
-
-impl Apply<BicycleReturned> for RentalFleet {
-    fn apply(&mut self, event: &BicycleReturned) {
-        self.apply_return(&event.bicycle_id);
-    }
-}
-
-impl Apply<BicycleAdded> for RentalFleet {
-    fn apply(&mut self, event: &BicycleAdded) {
-        self.apply_addition(event);
-    }
-}
-
-impl CommandHandler<RentBicycle> for RentalFleetAggregate {
-    type Rejection = <RentBicycle as CommandType>::Rejection;
-
-    fn handle(
-        command: &RentBicycle,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.rent_bicycle(command.bicycle_id.clone())
-    }
-}
-
-impl CommandHandler<ReturnBicycle> for RentalFleetAggregate {
-    type Rejection = <ReturnBicycle as CommandType>::Rejection;
-
-    fn handle(
-        command: &ReturnBicycle,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.return_bicycle(command.bicycle_id.clone())
-    }
-}
-
-impl CommandHandler<AddBicycle> for RentalFleetAggregate {
-    type Rejection = <AddBicycle as CommandType>::Rejection;
-
-    fn handle(
-        _command: &AddBicycle,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.add_bicycle();
-        Ok(())
-    }
-}
-
 domain_module! {
     pub struct BikeRentalRuntimeModule {
         commands: [RentBicycle, ReturnBicycle, AddBicycle],
@@ -175,10 +97,7 @@ impl CommandHandler<ImportDemoFleet> for RentalFleetAggregate {
         command: &ImportDemoFleet,
         aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        aggregate.raise(RentalFleetImported {
-            fleet_id: aggregate.state().fleet_id().clone(),
-            bicycles: command.bicycles.clone(),
-        });
+        aggregate.import_rental_fleet(ImportRentalFleetInput::new(command.bicycles.clone()));
         Ok(())
     }
 }

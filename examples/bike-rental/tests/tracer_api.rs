@@ -16,7 +16,7 @@ use axum::{
 };
 use bike_rental::{
     domain_model,
-    rental::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
+    rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
     runtime::{
         RentBicycleInputOptions, ReturnBicycleInputOptions, demo_stream, seed_demo, tracer_builder,
     },
