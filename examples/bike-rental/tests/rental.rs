@@ -3,16 +3,18 @@
     reason = "static test fixture identities must be valid"
 )]
 
-use bike_rental::rental_fleet::{
-    BicycleAdded, BicycleAvailability, BicycleCondition, BicycleId, BicycleNotRented,
-    BicycleRented, BicycleReturned, BicycleStatus, BicycleUnavailable, FleetId, ImportedBicycle,
-    RentBicycle, RentalFleetActions, RentalFleetAggregate, RentalFleetImported,
+use bike_rental::{
+    demo::{demo_stream, seed_demo},
+    rental_fleet::{
+        self, BicycleAdded, BicycleAvailability, BicycleCondition, BicycleId, BicycleNotRented,
+        BicycleRented, BicycleReturned, BicycleStatus, BicycleUnavailable, FleetId,
+        ImportedBicycle, RentBicycle, RentalFleetActions, RentalFleetAggregate,
+        RentalFleetImported,
+    },
 };
-use bike_rental::runtime::{demo_stream, seed_demo};
 use rostfrei::{
     AggregateInstance, CommandOutcome, CommandReceipt, ContentFingerprint, EventVariant,
-    ExecutionMetadata, Executor, InMemoryEventStore, OperationId, StreamAggregateId,
-    StreamAggregateType, StreamId,
+    ExecutionMetadata, Executor, InMemoryEventStore, OperationId,
 };
 use uuid::Uuid;
 
@@ -22,10 +24,7 @@ fn fleet(
 ) -> AggregateInstance<RentalFleetAggregate> {
     let fleet_id = FleetId::new("city-fleet").unwrap();
     AggregateInstance::rehydrate(
-        StreamId::new(
-            StreamAggregateType::new("bike-rental/rental-fleet").unwrap(),
-            StreamAggregateId::new(fleet_id.as_str()).unwrap(),
-        ),
+        rental_fleet::stream_id(fleet_id.as_str()).unwrap(),
         [RentalFleetImported {
             fleet_id,
             bicycles: vec![ImportedBicycle {
