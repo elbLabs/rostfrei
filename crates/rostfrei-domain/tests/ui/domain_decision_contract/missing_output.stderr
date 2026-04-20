@@ -1,5 +1,5 @@
-error: decisions must return Result<T, E>
- --> tests/ui/domain_decision_contract/missing_output.rs:8:8
+error: decisions must declare an explicit owned return type implementing DecisionOutcomeType
+ --> tests/ui/domain_decision_contract/missing_output.rs:9:8
   |
-8 |     fn decide() {}
+9 |     fn decide() {}
   |        ^^^^^^

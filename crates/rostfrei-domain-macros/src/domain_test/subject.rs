@@ -98,13 +98,8 @@ impl DecisionSubject {
         let span = self.span;
         quote_spanned! {span=>
             {
-                fn assert_attached<T: #domain_path::__private::AttachedDecisionProvider>() {}
-                let _ = assert_attached::<#owner>;
-                let _: &'static [#domain_path::DecisionDescriptor] =
-                    <#owner as #domain_path::__private::DecisionProvider>::DECISIONS;
-                let reference: #domain_path::DecisionReference<#owner> =
-                    #owner::#hidden_reference;
-                #domain_path::DomainTestSubject::Decision(reference.id())
+                let reference = #owner::#hidden_reference;
+                #domain_path::DomainTestSubject::Decision(reference.__attached_id())
             }
         }
     }

@@ -10,16 +10,18 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     let context = &attributes.context;
     let root = &attributes.root;
     let actions = &attributes.actions;
-    let decision_contracts = attributes.decisions.then(|| {
+    let decision_groups = &attributes.decisions;
+    let decision_attachments = decision_groups.iter().map(|group| {
         quote! {
-            const DECISION_CONTRACTS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
-                <Self as #domain_path::__private::DecisionProvider>::DECISIONS,
-            ];
+            impl #domain_path::AttachedDecisionGroup<#group> for #name {}
         }
     });
-    let decision_attachment = attributes.decisions.then(|| {
+    let decision_assertions = (!decision_groups.is_empty()).then(|| {
         quote! {
-            impl #domain_path::__private::AttachedDecisionProvider for #name {}
+            const _: () = {
+                fn assert_owner<Group: #domain_path::DecisionGroupType<Owner = #name>>() {}
+                #(let _ = assert_owner::<#decision_groups>;)*
+            };
         }
     });
     let invariants = &attributes.invariants;
@@ -47,7 +49,9 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
             const ACTION_CONTRACTS: &'static [&'static [#domain_path::ActionDescriptor]] = &[
                 #(<Self as #actions>::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE,)*
             ];
-            #decision_contracts
+            const DECISION_GROUPS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
+                #(<#decision_groups as #domain_path::DecisionGroupType>::DECISIONS,)*
+            ];
             const INVARIANT_CONTRACTS: &'static [&'static [#domain_path::InvariantDescriptor]] = &[
                 #(<Self as #invariants>::__DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE,)*
             ];
@@ -55,6 +59,8 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
                 #(<#events as #domain_path::DomainEventType>::DESCRIPTOR,)*
             ];
         }
-        #decision_attachment
+
+        #decision_assertions
+        #(#decision_attachments)*
     }
 }

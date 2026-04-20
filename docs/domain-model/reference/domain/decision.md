@@ -7,30 +7,34 @@ kind: reference
 
 ## Definition
 
-A **Decision** is a named, pure, stateless domain rule implemented as an
-associated function on an Aggregate or Entity. Its parameters contain all facts
-required to evaluate the rule, and its `Result<T, E>` expresses the accepted or
-denied outcome.
+A **Decision** is a named, pure, stateless domain policy owned by an
+[Aggregate](aggregate.md) or [Entity](entity.md). It is an associated function on
+that owner's inherent impl. Its parameters contain every fact required to
+evaluate the policy, and its non-generic outcome enum describes the closed set
+of possible domain results.
 
-## Ownership
+A Decision does not classify those results as accepted, denied, success, or
+failure. A caller assigns meaning to an outcome in the context of its own
+behavior.
 
-A Decision belongs to exactly one domain object:
+## Ownership and Groups
 
-- an [Aggregate](aggregate.md)
-- an [Entity](entity.md)
+A Decision belongs to exactly one Aggregate or Entity. Value Objects and Domain
+Services cannot own Decisions.
 
-Value Objects and Domain Services cannot own Decisions. Ownership identifies
-and projects the Decision, but does not restrict it to Actions owned by the same
-object. Any [Action](action.md) in the same
-[Bounded Context](bounded-context.md) may call a Decision when ordinary Rust
-visibility makes its function accessible.
+Decisions are organized into explicit groups. A group is a user-declared,
+non-generic Rust marker type associated with one inherent Decision impl:
 
-The compiler validates the Decision declaration and its attachment. It does not
-enforce which Actions have permission to call a visible Decision.
+```rust
+pub(crate) struct AssignmentPolicies;
+pub(crate) struct SchedulingPolicies;
+```
 
-## Rust Representation
+The marker is an ordinary Rust type. Its declaration controls its visibility
+and module path; `domain_decisions` has no visibility option. Decision methods
+also use normal Rust visibility.
 
-Decision methods are declared directly in one inherent owner `impl` block:
+The owner explicitly attaches groups in projection order:
 
 ```rust
 #[derive(Aggregate)]
@@ -39,105 +43,199 @@ Decision methods are declared directly in one inherent owner `impl` block:
     label = "Todo",
     context = Planning,
     root = TodoRoot,
-    decisions,
+    decisions = [AssignmentPolicies, SchedulingPolicies],
 )]
 pub struct Todo;
+```
 
-#[domain_decisions(aggregate)]
+Each attachment must be a normal, non-generic type path whose group names that
+exact owner. Implementing a group does not attach it. Omitting `decisions` is
+equivalent to `decisions = []`; the former bare `decisions` marker is not
+supported.
+
+An owner may attach multiple groups. Compiled Decisions preserve model owner
+inventory order, group attachment order, and method source order within each
+group. Groups organize Rust declarations and attachment only: they have no model
+ID and are not projected into compiled JSON.
+
+Ownership identifies and projects the Decision, but does not restrict it to
+Actions owned by the same object. Any [Action](action.md) in the same
+[Bounded Context](bounded-context.md) may call a Decision when ordinary Rust
+visibility makes its function accessible. The compiler validates declaration
+and attachment; it does not enforce Action-to-Decision call permissions.
+
+## Rust Representation
+
+A Decision group is declared on an inherent owner impl. The owner kind and group
+are both explicit:
+
+```rust
+#[derive(DecisionOutcome)]
+pub(crate) enum AssignmentOutcome {
+    #[outcome(id = "assignable", label = "Assignable")]
+    Assignable { remaining_capacity: u32 },
+
+    #[outcome(id = "requires-review", label = "Requires review")]
+    RequiresReview(ReviewReason),
+
+    #[outcome(id = "unavailable", label = "Unavailable")]
+    Unavailable,
+}
+
+#[domain_decisions(aggregate, group = AssignmentPolicies)]
 impl Todo {
     #[decision(id = "can-assign", label = "Can assign todo")]
-    fn can_assign(
-        assignee: Assignee,
+    pub(crate) fn can_assign(
+        assignee: &Assignee,
         open_assignment_count: u32,
-    ) -> Result<AssignmentApproval, AssignmentDenial> {
-        todo!()
+    ) -> AssignmentOutcome {
+        if assignee.requires_review() {
+            AssignmentOutcome::RequiresReview(assignee.review_reason())
+        } else if open_assignment_count >= 10 {
+            AssignmentOutcome::Unavailable
+        } else {
+            AssignmentOutcome::Assignable {
+                remaining_capacity: 9 - open_assignment_count,
+            }
+        }
     }
 }
 ```
 
-The derive attribute uses the marker `decisions` to attach the inherent Decision
-block to the owner. The impl attribute names its owner kind explicitly:
-
-- `#[domain_decisions(aggregate)]`
-- `#[domain_decisions(entity)]`
+Use `#[domain_decisions(aggregate, group = GroupType)]` for an Aggregate owner
+and `#[domain_decisions(entity, group = GroupType)]` for an Entity owner. The
+macro accepts no group visibility syntax; declare `GroupType` with the desired
+normal Rust visibility.
 
 Every Decision method has exactly one
-`#[decision(id = "...", label = "...")]`. The `id` is the owner-local stable
-ID, and `label` is its human-readable name. The Rust signature supplies all
-parameter, success, and denial metadata.
+`#[decision(id = "...", label = "...")]`. The `id` is stable and local to the
+owner; the `label` is human-readable. IDs must remain unique across all groups
+attached to one owner.
 
-Each method is an associated function with no receiver or Aggregate root
-parameter. It may have zero or more by-value parameters. Every parameter uses a
-simple immutable identifier and a supported scalar or
-[Value Object](value-object.md) type. Every Decision returns `Result<T, E>`;
-supported result types are scalars, Value Objects, and unit. Unit is projected
-as no output or error descriptor.
+The decorated impl is non-generic and inherent. A Decision is an associated
+function with no `self` receiver or Aggregate root parameter. It may have zero
+or more parameters, each using a simple immutable identifier and a supported
+scalar or [Value Object](value-object.md) type.
 
-A Decision signature does not accept or return:
+A parameter may own its value as `T` or borrow it as a top-level immutable `&T`.
+Both forms produce the same model metadata for `T`. An immutable borrow uses an
+elided lifetime or explicit `'static`; Decisions cannot declare named lifetime
+generics. Mutable references such as `&mut T` and nested references such as
+`Option<&T>`, `Vec<&T>`, or `&&T` are rejected.
+
+A Decision signature does not accept:
 
 - `&self`, `&mut self`, or `self`
 - an Aggregate root
-- borrowed parameters
+- mutable or nested references
 - [Domain Commands](domain-command.md)
 - [Domain Events](domain-event.md)
 - [Domain Errors](domain-error.md)
-- a top-level `Option` or `Vec`
-- async, unsafe, extern, variadic, or generic functions
+- top-level `Option` or `Vec`
 
-A Value Object used at the boundary may model supported nested value shapes
-according to the Value Object contract. The Decision boundary itself remains
-flat: each function parameter becomes one named parameter descriptor.
+Decision functions cannot be async, unsafe, extern, variadic, or generic, and
+cannot have a `where` clause.
 
-The owner has at most one `#[domain_decisions(...)]` impl. Omitting the
-`decisions` marker from the owner derive leaves the functions callable but does
-not project their descriptors. A marker without a matching Decision impl fails
-to compile.
+## Outcome Contract
 
-## Calls
+Every Decision declares an explicit, owned return type. It is a non-generic enum
+deriving `DecisionOutcome`; it is not `Result` and cannot contain references.
 
-Calls use ordinary inherent Rust syntax and preserve the authored `Result` type:
+Each enum variant has exactly one stable
+`#[outcome(id = "...", label = "...")]`. Outcome IDs are unique within the enum.
+The derive accepts all Rust enum variant shapes:
+
+- unit, such as `Unavailable`
+- tuple, such as `RequiresReview(ReviewReason)`
+- named struct, such as `Assignable { remaining_capacity: u32 }`
+
+Tuple and named fields may be supported scalars or Value Objects. References,
+containers, Domain Errors, Domain Events, Entities, and arbitrary unmodeled Rust
+types are not outcome field values. Explicit enum discriminants are unsupported.
+Variant and field order follow source order; raw named-field identifiers are
+normalized.
+
+Each projected variant is a first-class, Decision-scoped outcome with an ID of
+the form `DecisionOutcomeId { decision, local }`. The Rust enum itself is the
+closed return contract; the compiled model nests its outcomes under the
+Decision rather than creating a group or standalone outcome inventory.
+
+There is no accepted/denied classification. Unit, tuple, and struct describe
+payload shape only. No variant is automatically a Domain Error or Domain Event.
+
+## Calls and Translation
+
+Calls use ordinary inherent Rust syntax and preserve the authored enum:
 
 ```rust
-let approval = Todo::can_assign(assignee, open_assignment_count)?;
+match Todo::can_assign(&assignee, open_assignment_count) {
+    AssignmentOutcome::Assignable { remaining_capacity } => {
+        plan_assignment(remaining_capacity);
+    }
+    AssignmentOutcome::RequiresReview(reason) => {
+        request_manual_review(reason);
+    }
+    AssignmentOutcome::Unavailable => {
+        return Err(AssignmentDenied::capacity_reached());
+    }
+}
 ```
 
-Rust module and method visibility determine whether an Action can make the call.
-The compiled model does not contain Action-to-Decision links, and
-`#[action(...)]` has no Decision metadata. The compiler does not infer calls
-from function bodies or enforce call permissions between same-context owners.
+Rust module and method visibility determine whether the call is available. The
+compiled model contains no Action-to-Decision links, and `#[action(...)]` has no
+Decision metadata. The compiler does not infer calls or matches from function
+bodies.
 
-## Business Denial
-
-A Decision expresses business denial as the `Err(E)` branch of its result. The
-error type is modeled Decision output data, not a Domain Error. An Action may
-translate it into an owner-appropriate Domain Error when its public contract
-requires one. That translation does not add an Action-to-Decision metadata
-relationship.
+An [Action](action.md) exhaustively matches the outcome and translates it for
+its own contract as needed. A variant may cause the Action to continue, raise a
+[Domain Event](domain-event.md), return an owner-appropriate
+[Domain Error](domain-error.md), or perform another allowed domain step. That
+translation does not classify the Decision outcome globally and does not add an
+Action-to-Decision model relationship.
 
 ## Purity and Statelessness
 
 A Decision is normatively pure and stateless. It does not mutate domain state,
 load state or infrastructure data, invoke Actions, emit events, or depend on
-hidden mutable state. Equal parameters represent the same domain facts and
-produce the same result.
+hidden mutable state. Equal modeled facts produce the same outcome.
 
-Rust Decisions v1 validates the declared signature and modeled types. It does
-not mechanically inspect the method body for I/O, mutation through external
-state, nondeterminism, or other side effects. Authors preserve these semantics.
+The compiler validates the declared signature and modeled types. It does not
+mechanically inspect the method body for I/O, mutation through external state,
+nondeterminism, or other side effects. Authors preserve these semantics.
+
+## Domain Test References
+
+Decision Domain Tests use readable owner-associated syntax derived from the
+stable Decision ID:
+
+```rust
+#[domain_decision_test(Todo::CAN_ASSIGN)]
+fn full_queues_are_unavailable() {
+    // ...
+}
+```
+
+`Owner::REFERENCE` is attribute syntax backed by a doc-hidden,
+group-typed `DecisionReference<Group>` anchor. The Domain Test macro checks that
+the referenced group is attached to that exact owner before producing the
+Decision ID. A wrong owner, unknown stable reference, unattached group, or group
+attached to a different owner fails compilation. Application calls still use
+the actual function name, such as `Todo::can_assign(...)`.
 
 ## Consumers
 
-Rust Decisions v1 supports Actions as the modeled consumer. Any visible Action
-in the same Bounded Context may call a Decision through ordinary Rust.
+Actions are the supported modeled Decision consumer. Any visible Action in the
+same Bounded Context may call a Decision through ordinary Rust.
 
 Decision integration with [Invariants](invariant.md) and
-[Lifecycles](lifecycle.md) is not part of v1. Their descriptors do not reference
+[Lifecycles](lifecycle.md) is not defined. Their descriptors do not reference
 Decisions, and this reference does not define an execution relationship for
 them.
 
 ## Model Shape
 
-The attached inherent block projects one descriptor per Decision:
+The attached group projects one descriptor per Decision. The group itself is
+not part of the descriptor:
 
 ```rust
 DecisionDescriptor {
@@ -156,22 +254,41 @@ DecisionDescriptor {
             input: DecisionInputDescriptor::Scalar(ScalarType::U32),
         },
     ],
-    output: Some(DecisionOutputDescriptor::ValueObject(
-        AssignmentApproval::DESCRIPTOR.id,
-    )),
-    error: Some(DecisionOutputDescriptor::ValueObject(
-        AssignmentDenial::DESCRIPTOR.id,
-    )),
+    outcomes: &[
+        DecisionOutcomeDescriptor {
+            local_id: "assignable",
+            label: "Assignable",
+            shape: DecisionOutcomeShapeDescriptor::Struct {
+                fields: &[DecisionOutcomeNamedFieldDescriptor {
+                    name: "remaining_capacity",
+                    value: DecisionOutcomeValueDescriptor::Scalar(ScalarType::U32),
+                }],
+            },
+        },
+        DecisionOutcomeDescriptor {
+            local_id: "requires-review",
+            label: "Requires review",
+            shape: DecisionOutcomeShapeDescriptor::Tuple {
+                fields: &[DecisionOutcomeValueDescriptor::ValueObject(
+                    ReviewReason::DESCRIPTOR.id,
+                )],
+            },
+        },
+        DecisionOutcomeDescriptor {
+            local_id: "unavailable",
+            label: "Unavailable",
+            shape: DecisionOutcomeShapeDescriptor::Unit,
+        },
+    ],
     implementation: DecisionImplementationDescriptor::Rust,
 }
 ```
 
-The descriptor contains `id`, `label`, `parameters`, `output`, `error`, and
-`implementation`. `DecisionId` combines the typed owner ID with the owner-local
-Decision ID. Parameters retain their Rust names and source order. Value Object
-fields remain on the Value Object inventory items.
+Borrowing `assignee` as `&Assignee` does not appear in the descriptor; an owned
+`Assignee` parameter projects the same `DecisionInputDescriptor`.
 
-Compiled model JSON uses a top-level `decisions` inventory:
+Compiled model JSON uses the top-level `decisions` inventory and ordered nested
+`outcomes`:
 
 ```json
 {
@@ -204,46 +321,99 @@ Compiled model JSON uses a top-level `decisions` inventory:
           "input": { "kind": "scalar", "scalar": "u32" }
         }
       ],
-      "output": {
-        "kind": "valueObject",
-        "id": {
-          "owner": {
-            "kind": "aggregate",
-            "id": { "context": "planning", "local": "todo" }
+      "outcomes": [
+        {
+          "id": {
+            "decision": {
+              "owner": {
+                "kind": "aggregate",
+                "id": { "context": "planning", "local": "todo" }
+              },
+              "local": "can-assign"
+            },
+            "local": "assignable"
           },
-          "local": "assignment-approval"
-        }
-      },
-      "error": {
-        "kind": "valueObject",
-        "id": {
-          "owner": {
-            "kind": "aggregate",
-            "id": { "context": "planning", "local": "todo" }
+          "label": "Assignable",
+          "shape": {
+            "kind": "struct",
+            "fields": [
+              {
+                "name": "remaining_capacity",
+                "value": { "kind": "scalar", "scalar": "u32" }
+              }
+            ]
+          }
+        },
+        {
+          "id": {
+            "decision": {
+              "owner": {
+                "kind": "aggregate",
+                "id": { "context": "planning", "local": "todo" }
+              },
+              "local": "can-assign"
+            },
+            "local": "requires-review"
           },
-          "local": "assignment-denial"
+          "label": "Requires review",
+          "shape": {
+            "kind": "tuple",
+            "fields": [
+              {
+                "kind": "valueObject",
+                "id": {
+                  "owner": {
+                    "kind": "aggregate",
+                    "id": { "context": "planning", "local": "todo" }
+                  },
+                  "local": "review-reason"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": {
+            "decision": {
+              "owner": {
+                "kind": "aggregate",
+                "id": { "context": "planning", "local": "todo" }
+              },
+              "local": "can-assign"
+            },
+            "local": "unavailable"
+          },
+          "label": "Unavailable",
+          "shape": { "kind": "unit" }
         }
-      },
+      ],
       "implementation": { "kind": "rust" }
     }
   ]
 }
 ```
 
-`parameters` is always an array and may be empty. Unit success or denial types
-project `output` or `error` as `null`. `implementation.kind` is `rust` in v1. A
-Decision descriptor has no consumer, Action, gate, command, event,
-implementation path, or DMN field.
+`parameters` and `outcomes` are always arrays and preserve declaration order.
+Tuple shapes contain ordered value descriptors. Struct shapes contain ordered
+`name`/`value` field descriptors. Unit shapes contain only `kind`.
+
+Decision JSON has no `output`, `error`, accepted/denied flag, group, consumer,
+Action, gate, command, event, implementation path, or DMN field.
 
 ## Implementation Status
 
-Rust inherent owner functions and marker attachment are the Decisions v1
-implementation. DMN is a future implementation target. V1 does not load a DMN
-file, project a DMN requirements graph, or require DMN metadata.
+Inherent owner functions, explicit group attachment, `DecisionOutcome` enums,
+and group-typed Domain Test references are the Rust implementation. DMN remains
+a future implementation target; the current model does not load a DMN file or
+project a DMN requirements graph.
 
 ## Related Concepts
 
-- An [Action](action.md) is the supported modeled consumer in v1.
-- A [Value Object](value-object.md) can define a Decision parameter, output, or
-  denial.
+- [ADR 0016](../../../adr/0016-decision-policies-groups-and-outcomes.md) records
+  the Decision redesign and migration from `output`/`error` model fields.
+- An [Action](action.md) calls a Decision and translates its outcomes when needed.
+- A [Value Object](value-object.md) can define a Decision parameter or an outcome
+  payload field.
+- A [Domain Error](domain-error.md) belongs to an Action owner, not to a Decision
+  outcome.
 - A [Bounded Context](bounded-context.md) bounds Decision visibility and use.

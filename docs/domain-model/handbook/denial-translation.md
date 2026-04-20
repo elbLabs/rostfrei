@@ -19,7 +19,8 @@ Internal denial
 
 An [Aggregate](../reference/domain/aggregate.md) translates:
 
-- its own Action denial selected from Decision output or lifecycle results
+- its own Action denial translated from a relevant Decision outcome or lifecycle
+  result
 - the complete `Vec<InvariantViolation>` returned by owner validation
 - directly owned [Entity](../reference/domain/entity.md) denials
 - directly owned [Value Object](../reference/domain/value-object.md) denials
@@ -48,7 +49,7 @@ object structure.
 
 A [Domain Service](../reference/domain/domain-service.md) translates:
 
-- its own Action denial selected from Decision output
+- its own Action denial translated from a relevant Decision outcome
 - a delegated Aggregate Domain Error
 
 into a Service-owned Domain Error.

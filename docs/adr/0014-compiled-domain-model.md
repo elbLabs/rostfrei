@@ -70,6 +70,12 @@ optional grouping mechanism, not a prerequisite for command registration and
 not a declaration of every modeled domain capability. Decision metadata is
 attached to explicit inherent aggregate or entity impl blocks.
 
+The Decision-specific attachment, signature, outcome, testing, and model shape
+contracts were subsequently refined by
+[ADR 0016](0016-decision-policies-groups-and-outcomes.md). Its explicit groups
+and `DecisionOutcome` enum contract supersede earlier single-block and
+`Result`-shaped Decision details without superseding the rest of this ADR.
+
 ## Consequences
 
 rostfrei has one source of truth for domain identity, structure, event

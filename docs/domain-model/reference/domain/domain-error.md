@@ -9,11 +9,12 @@ kind: reference
 
 A **Domain Error** is a modeled business denial.
 
-It describes why a domain action or lifecycle rule was not allowed. An
+It describes why a domain Action or lifecycle rule was not allowed. An
 invariant checker returns `InvariantViolation`, not a Domain Error; the Action
 translates the complete violation collection into its own Domain Error. A
-Decision similarly returns business-denial data through the `Err(E)` branch of
-its result for an Action to translate.
+Decision instead returns an unclassified `DecisionOutcome` enum. The calling
+Action may translate a relevant variant into its own Domain Error, but the
+variant is not itself an error or a globally denied outcome.
 
 ## Ownership
 
@@ -47,7 +48,9 @@ It may also include:
 - details that explain the denial
 
 An owner may reuse the same domain error for multiple local denials. The rule
-that produces the error supplies the specific fields or details.
+that produces the error supplies the specific fields or details. An Action may
+also construct that error while matching a Decision outcome; this translation
+is local to the Action and is not projected as Decision metadata.
 
 `DomainError` supports non-generic structs. Its descriptor projects canonical
 scalar, [Custom scalar](custom-scalar.md), identity, Value Object, and
@@ -92,5 +95,7 @@ message: Todo title is invalid.
 ## Related Concepts
 
 - An [Action](action.md) may return a domain error.
+- A [Decision](decision.md) returns unclassified outcomes that an Action may
+  translate into a Domain Error when appropriate.
 - An [Invariant](invariant.md) returns violation data that an Action translates.
 - A [Lifecycle](lifecycle.md) may deny an unavailable transition.

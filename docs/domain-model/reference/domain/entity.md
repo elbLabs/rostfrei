@@ -16,8 +16,8 @@ It belongs to one [Aggregate](aggregate.md).
 An entity owns:
 
 - its state
-- its internal actions, attached decisions, attached invariant contracts, and
-  lifecycle
+- its internal actions, ordered attached Decision groups, attached invariant
+  contracts, and lifecycle
 - its contained value objects
 
 An Entity Action may call any visible Decision in the same Bounded Context. The
@@ -83,10 +83,17 @@ types, and untagged custom types are unsupported.
 
 ## Decisions
 
-Entity Decisions are inherent associated functions declared in a
-`#[domain_decisions(entity)]` impl block. The `decisions` marker on the Entity
-derive attaches the block for projection. It does not limit the Decision to
-Entity-owned Actions. See [Decision](decision.md).
+Entity Decisions are stateless associated functions declared on inherent Entity
+impls. Each impl names a user-declared group marker with
+`#[domain_decisions(entity, group = GroupType)]`; the macro has no visibility
+option, so the marker and functions use normal Rust visibility.
+
+The Entity explicitly attaches zero or more groups with
+`decisions = [GroupA, GroupB]`. Attachment order is projection order, followed by
+method source order within each group. A group must name this exact Entity as its
+owner. Groups are organizational and are not projected into model JSON. The
+attachment does not limit a Decision to Entity-owned Actions. See
+[Decision](decision.md).
 
 ## Invariants
 

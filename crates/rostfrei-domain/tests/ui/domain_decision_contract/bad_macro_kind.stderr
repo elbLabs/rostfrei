@@ -1,5 +1,5 @@
-error: unknown domain decision owner kind `domain_service`; expected `aggregate` or `entity`
- --> tests/ui/domain_decision_contract/bad_macro_kind.rs:5:20
+error: unsupported domain_decisions argument `domain_service`; expected `aggregate` or `entity`, and `group = GroupType`
+ --> tests/ui/domain_decision_contract/bad_macro_kind.rs:7:20
   |
-5 | #[domain_decisions(domain_service)]
+7 | #[domain_decisions(domain_service, group = Group)]
   |                    ^^^^^^^^^^^^^^

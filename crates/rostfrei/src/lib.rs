@@ -35,9 +35,9 @@ pub use rostfrei_registry::{
 #[doc(hidden)]
 pub mod __private {
     pub use domain::__private::{
-        AggregateActionOutput, AttachedDecisionProvider, DecisionProvider,
-        DomainServiceActionOutput, EntityActionOutput, SameType, ValueObjectActionOutput,
-        emit_domain_test_descriptor, serde, serde_json,
+        AggregateActionOutput, AttachedDecisionGroup, DomainServiceActionOutput,
+        EntityActionOutput, SameType, ValueObjectActionOutput, emit_domain_test_descriptor, serde,
+        serde_json,
     };
     pub use rostfrei_domain_runtime as domain_runtime;
 }

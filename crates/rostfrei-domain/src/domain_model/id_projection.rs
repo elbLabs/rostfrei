@@ -1,9 +1,9 @@
 use serde_json::{Value, json};
 
 use crate::{
-    ActionId, ActionOwnerId, AggregateId, DecisionOwnerId, DomainCommandId, DomainCommandOwnerId,
-    DomainErrorId, DomainErrorOwnerId, DomainEventId, DomainIdentityId, EntityId, InvariantOwnerId,
-    QueryId, ValueObjectId, ValueObjectOwnerId,
+    ActionId, ActionOwnerId, AggregateId, DecisionId, DecisionOutcomeId, DecisionOwnerId,
+    DomainCommandId, DomainCommandOwnerId, DomainErrorId, DomainErrorOwnerId, DomainEventId,
+    DomainIdentityId, EntityId, InvariantOwnerId, QueryId, ValueObjectId, ValueObjectOwnerId,
 };
 
 pub(super) fn action(id: ActionId) -> Value {
@@ -32,6 +32,14 @@ pub(super) fn action_owner(id: ActionOwnerId) -> Value {
             "id": value_object(id),
         }),
     }
+}
+
+pub(super) fn decision(id: DecisionId) -> Value {
+    json!({ "owner": decision_owner(id.owner), "local": id.local })
+}
+
+pub(super) fn decision_outcome(id: DecisionOutcomeId) -> Value {
+    json!({ "decision": decision(id.decision), "local": id.local })
 }
 
 pub(super) fn decision_owner(id: DecisionOwnerId) -> Value {

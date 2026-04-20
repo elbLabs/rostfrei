@@ -1,5 +1,7 @@
 use domain::{Aggregate, BoundedContext, DomainIdentity, Entity};
 
+struct MissingGroup;
+
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
 struct Context;
@@ -16,7 +18,13 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "owner", label = "Owner", context = Context, root = Root, decisions)]
+#[domain(
+    id = "owner",
+    label = "Owner",
+    context = Context,
+    root = Root,
+    decisions = [MissingGroup]
+)]
 struct Owner;
 
 fn main() {}

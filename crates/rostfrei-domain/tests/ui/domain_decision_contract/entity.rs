@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
 use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, ValueObject, domain_decisions};
+use domain::DecisionOutcome;
+
+struct RootDecisions;
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -11,7 +14,12 @@ struct Context;
 struct RootId(u8);
 
 #[derive(Entity)]
-#[domain(id = "root", label = "Root", owner = Owner, decisions)]
+#[domain(
+    id = "root",
+    label = "Root",
+    owner = Owner,
+    decisions = [RootDecisions]
+)]
 struct Root {
     #[domain(identity)]
     id: RootId,
@@ -21,21 +29,24 @@ struct Root {
 #[domain(id = "owner", label = "Owner", context = Context, root = Root)]
 struct Owner;
 
-#[derive(ValueObject)]
+#[derive(ValueObject, Debug, Eq, PartialEq)]
 #[domain(id = "output", label = "Output", owner = Owner)]
 struct Output(u8);
 
-#[domain_decisions(entity)]
+#[derive(DecisionOutcome, Debug, Eq, PartialEq)]
+enum Outcome {
+    #[outcome(id = "accepted", label = "Accepted")]
+    Accepted(Output),
+}
+
+#[domain_decisions(entity, group = RootDecisions)]
 impl Root {
     #[decision(id = "decide", label = "Decide")]
-    fn decide(value: u8) -> Result<Output, Output> {
-        Ok(Output(value))
+    fn decide(value: u8) -> Outcome {
+        Outcome::Accepted(Output(value))
     }
 }
 
 fn main() {
-    let Ok(output) = Root::decide(1) else {
-        panic!("decision should succeed");
-    };
-    assert_eq!(output.0, 1);
+    assert_eq!(Root::decide(1), Outcome::Accepted(Output(1)));
 }

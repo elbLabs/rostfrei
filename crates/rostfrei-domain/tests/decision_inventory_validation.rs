@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use domain::__private::DomainModelBuilder;
+use domain::DecisionOutcome;
 use domain::{
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DecisionId, DecisionOwnerId,
     DomainIdentity, DomainModelError, Entity, ValueObject, ValueObjectId, ValueObjectOwnerId,
@@ -16,18 +17,20 @@ const INPUT_ID: ValueObjectId = ValueObjectId {
     owner: ValueObjectOwnerId::BoundedContext(CONTEXT_ID),
     local: "inventory-input",
 };
-const OUTPUT_ID: ValueObjectId = ValueObjectId {
+const ACCEPTED_ID: ValueObjectId = ValueObjectId {
     owner: ValueObjectOwnerId::BoundedContext(CONTEXT_ID),
-    local: "inventory-output",
+    local: "inventory-accepted",
 };
-const ERROR_ID: ValueObjectId = ValueObjectId {
+const REJECTED_ID: ValueObjectId = ValueObjectId {
     owner: ValueObjectOwnerId::BoundedContext(CONTEXT_ID),
-    local: "inventory-error",
+    local: "inventory-rejected",
 };
 const DECISION_ID: DecisionId = DecisionId {
     owner: DecisionOwnerId::Aggregate(AGGREGATE_ID),
     local: "evaluate",
 };
+
+struct InventoryDecisions;
 
 #[derive(BoundedContext)]
 #[domain(id = "decision-inventory", label = "Decision inventory")]
@@ -43,7 +46,7 @@ struct InventoryIdentity(u64);
     label = "Inventory aggregate",
     context = InventoryContext,
     root = InventoryRoot,
-    decisions
+    decisions = [InventoryDecisions]
 )]
 struct InventoryAggregate;
 
@@ -59,21 +62,35 @@ struct InventoryRoot {
 struct InventoryInput(u64);
 
 #[derive(ValueObject)]
-#[domain(id = "inventory-output", label = "Inventory output", owner = InventoryContext)]
-struct InventoryOutput(bool);
+#[domain(id = "inventory-accepted", label = "Inventory accepted", owner = InventoryContext)]
+struct InventoryAccepted(bool);
 
 #[derive(ValueObject)]
-#[domain(id = "inventory-error", label = "Inventory error", owner = InventoryContext)]
-struct InventoryError;
+#[domain(id = "inventory-rejected", label = "Inventory rejected", owner = InventoryContext)]
+struct InventoryRejected;
 
-#[domain_decisions(aggregate)]
+#[derive(DecisionOutcome)]
+enum InventoryOutcome {
+    #[outcome(id = "accepted", label = "Accepted")]
+    Accepted(InventoryAccepted, bool),
+    #[outcome(id = "rejected", label = "Rejected")]
+    Rejected {
+        reason: InventoryRejected,
+        retryable: bool,
+    },
+}
+
+#[domain_decisions(aggregate, group = InventoryDecisions)]
 impl InventoryAggregate {
     #[decision(id = "evaluate", label = "Evaluate")]
-    const fn evaluate(input: InventoryInput) -> Result<InventoryOutput, InventoryError> {
+    const fn evaluate(input: InventoryInput) -> InventoryOutcome {
         if input.0 > 0 {
-            Ok(InventoryOutput(true))
+            InventoryOutcome::Accepted(InventoryAccepted(true), true)
         } else {
-            Err(InventoryError)
+            InventoryOutcome::Rejected {
+                reason: InventoryRejected,
+                retryable: false,
+            }
         }
     }
 }
@@ -94,8 +111,8 @@ fn owner_builder() -> Result<DomainModelBuilder, DomainModelError> {
 fn accepts_references_registered_after_the_owner() {
     let mut builder = owner_builder().unwrap();
     builder.add_value_object(InventoryInput::DESCRIPTOR);
-    builder.add_value_object(InventoryOutput::DESCRIPTOR);
-    builder.add_value_object(InventoryError::DESCRIPTOR);
+    builder.add_value_object(InventoryAccepted::DESCRIPTOR);
+    builder.add_value_object(InventoryRejected::DESCRIPTOR);
 
     let model = builder.finish().unwrap();
 
@@ -105,63 +122,71 @@ fn accepts_references_registered_after_the_owner() {
 #[test]
 fn reports_a_missing_input_value_object() {
     let mut builder = owner_builder().unwrap();
-    builder.add_value_object(InventoryOutput::DESCRIPTOR);
-    builder.add_value_object(InventoryError::DESCRIPTOR);
+    builder.add_value_object(InventoryAccepted::DESCRIPTOR);
+    builder.add_value_object(InventoryRejected::DESCRIPTOR);
 
     let error = builder.finish().unwrap_err();
 
-    assert_eq!(error.to_string(), violation(INPUT_ID, "input"));
+    assert_eq!(
+        error.to_string(),
+        violation(INPUT_ID, "parameters[0].input")
+    );
     assert_eq!(
         error,
         DomainModelError::DecisionReferenceInventoryViolation {
             decision_id: Box::new(DECISION_ID),
             value_object_id: Box::new(INPUT_ID),
-            location: "input",
+            location: "parameters[0].input".to_owned(),
         }
     );
 }
 
 #[test]
-fn reports_a_missing_output_value_object() {
+fn reports_a_missing_tuple_outcome_value_object() {
     let mut builder = owner_builder().unwrap();
     builder.add_value_object(InventoryInput::DESCRIPTOR);
-    builder.add_value_object(InventoryError::DESCRIPTOR);
+    builder.add_value_object(InventoryRejected::DESCRIPTOR);
 
     let error = builder.finish().unwrap_err();
+    let location = "outcomes[0].shape.fields[0]";
 
-    assert_eq!(error.to_string(), violation(OUTPUT_ID, "output"));
+    assert_eq!(error.to_string(), violation(ACCEPTED_ID, location));
     assert_eq!(
         error,
         DomainModelError::DecisionReferenceInventoryViolation {
             decision_id: Box::new(DECISION_ID),
-            value_object_id: Box::new(OUTPUT_ID),
-            location: "output",
+            value_object_id: Box::new(ACCEPTED_ID),
+            location: location.to_owned(),
         }
     );
 }
 
 #[test]
-fn reports_a_missing_error_value_object() {
+fn reports_a_missing_struct_outcome_value_object() {
     let mut builder = owner_builder().unwrap();
     builder.add_value_object(InventoryInput::DESCRIPTOR);
-    builder.add_value_object(InventoryOutput::DESCRIPTOR);
+    builder.add_value_object(InventoryAccepted::DESCRIPTOR);
 
     let error = builder.finish().unwrap_err();
+    let location = "outcomes[1].shape.fields[0].value";
 
-    assert_eq!(error.to_string(), violation(ERROR_ID, "error"));
+    assert_eq!(error.to_string(), violation(REJECTED_ID, location));
     assert_eq!(
         error,
         DomainModelError::DecisionReferenceInventoryViolation {
             decision_id: Box::new(DECISION_ID),
-            value_object_id: Box::new(ERROR_ID),
-            location: "error",
+            value_object_id: Box::new(REJECTED_ID),
+            location: location.to_owned(),
         }
     );
 }
 
 #[test]
-fn validates_parameter_output_and_error_references_in_order() {
+fn validates_parameters_then_outcomes_in_source_and_field_order() {
     let error = owner_builder().unwrap().finish().unwrap_err();
 
-    assert_eq!(error.to_string(), violation(INPUT_ID, "input"));
+    assert_eq!(
+        error.to_string(),
+        violation(INPUT_ID, "parameters[0].input")
+    );
 }

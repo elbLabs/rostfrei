@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
+use domain::DecisionOutcome;
 use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, ValueObject, domain_decisions};
+
+struct OwnerDecisions;
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -18,24 +21,42 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "owner", label = "Owner", context = Context, root = Root, decisions)]
+#[domain(
+    id = "owner",
+    label = "Owner",
+    context = Context,
+    root = Root,
+    decisions = [OwnerDecisions]
+)]
 struct Owner;
 
-#[derive(ValueObject)]
+#[derive(ValueObject, Debug, Eq, PartialEq)]
 #[domain(id = "output", label = "Output", owner = Owner)]
 struct Output(u8);
 
-#[domain_decisions(aggregate)]
+#[derive(DecisionOutcome, Debug, Eq, PartialEq)]
+enum Outcome {
+    #[outcome(id = "accepted", label = "Accepted")]
+    Accepted(Output, bool),
+    #[outcome(id = "rejected", label = "Rejected")]
+    Rejected { code: u8, retryable: bool },
+}
+
+#[domain_decisions(aggregate, group = OwnerDecisions)]
 impl Owner {
     #[decision(id = "decide", label = "Decide")]
-    fn decide(value: u8, accepted: bool) -> Result<Output, Output> {
-        accepted.then_some(Output(value)).ok_or(Output(value))
+    fn decide(value: u8, accepted: bool) -> Outcome {
+        if accepted {
+            Outcome::Accepted(Output(value), true)
+        } else {
+            Outcome::Rejected {
+                code: value,
+                retryable: false,
+            }
+        }
     }
 }
 
 fn main() {
-    let Ok(output) = Owner::decide(1, true) else {
-        panic!("decision should succeed");
-    };
-    assert_eq!(output.0, 1);
+    assert_eq!(Owner::decide(1, true), Outcome::Accepted(Output(1), true));
 }

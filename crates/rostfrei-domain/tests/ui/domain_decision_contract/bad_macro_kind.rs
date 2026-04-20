@@ -1,12 +1,14 @@
 use domain::domain_decisions;
 
 struct Owner;
+struct Group;
+struct Outcome;
 
-#[domain_decisions(domain_service)]
+#[domain_decisions(domain_service, group = Group)]
 impl Owner {
     #[decision(id = "decide", label = "Decide")]
-    fn decide() -> Result<(), ()> {
-        Ok(())
+    fn decide() -> Outcome {
+        Outcome
     }
 }
 

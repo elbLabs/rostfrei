@@ -1,4 +1,7 @@
 use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, domain_decisions};
+use domain::DecisionOutcome;
+
+struct Decisions;
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -19,11 +22,17 @@ struct Root {
 #[domain(id = "owner", label = "Owner", context = Context, root = Root)]
 struct Owner;
 
-#[domain_decisions(entity)]
+#[derive(DecisionOutcome)]
+enum Outcome {
+    #[outcome(id = "done", label = "Done")]
+    Done,
+}
+
+#[domain_decisions(entity, group = Decisions)]
 impl Owner {
     #[decision(id = "decide", label = "Decide")]
-    fn decide() -> Result<(), ()> {
-        Ok(())
+    fn decide() -> Outcome {
+        Outcome::Done
     }
 }
 

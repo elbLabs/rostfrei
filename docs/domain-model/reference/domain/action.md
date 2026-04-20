@@ -244,19 +244,22 @@ their descriptive output forms.
 
 ## Decisions
 
-An Action is the supported modeled consumer of [Decisions](decision.md) in Rust
-Decisions v1. It may call any Decision in the same
-[Bounded Context](bounded-context.md) when ordinary Rust visibility makes the
-Decision function accessible. The Action and Decision do not need the same owner.
+An Action is the supported modeled consumer of [Decisions](decision.md). It may
+call any Decision in the same [Bounded Context](bounded-context.md) when ordinary
+Rust visibility makes the Decision function accessible. The Action and Decision
+do not need the same owner.
 
 Decision calls are ordinary inherent Rust calls. Action descriptors contain no
-Decision references, and action attributes have no Decision metadata. The
-compiler validates Decision declarations and attachment but does not inspect
-Action bodies, infer a call graph, or enforce call permissions between
+Decision references, and Action attributes have no Decision metadata. The
+compiler validates Decision declarations and exact group attachment but does not
+inspect Action bodies, infer a call graph, or enforce call permissions between
 same-context owners.
 
-A Decision returns `Result<T, E>`. The Action uses the accepted value or may
-translate the modeled business denial into an owner-appropriate Domain Error.
+A Decision returns a non-generic enum deriving `DecisionOutcome`, not `Result`.
+The Action exhaustively matches its unit, tuple, and named outcomes and translates
+each as needed. A branch may continue, raise Domain Events, or return an
+owner-appropriate Domain Error. Decisions do not classify outcomes as accepted
+or denied; that meaning belongs to the Action's translation.
 
 ## Denials
 

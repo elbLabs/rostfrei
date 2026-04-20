@@ -4,6 +4,9 @@ use domain::domain_decision_test;
 
 mod owner {
     use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, domain_decisions};
+    use domain::DecisionOutcome;
+
+    pub struct PublicDecisions;
 
     #[derive(BoundedContext)]
     #[domain(id = "context", label = "Context")]
@@ -21,21 +24,33 @@ mod owner {
     }
 
     #[derive(Aggregate)]
-    #[domain(id = "owner", label = "Owner", context = Context, root = Root, decisions)]
+    #[domain(
+        id = "owner",
+        label = "Owner",
+        context = Context,
+        root = Root,
+        decisions = [PublicDecisions]
+    )]
     pub struct Owner;
 
-    #[domain_decisions(aggregate)]
+    #[derive(DecisionOutcome, Debug, Eq, PartialEq)]
+    pub enum Outcome {
+        #[outcome(id = "checked", label = "Checked")]
+        Checked(u8),
+    }
+
+    #[domain_decisions(aggregate, group = PublicDecisions)]
     impl Owner {
         #[decision(id = "check", label = "Check")]
-        pub fn check(value: u8) -> Result<u8, u8> {
-            Ok(value)
+        pub fn check(value: u8) -> Outcome {
+            Outcome::Checked(value)
         }
     }
 }
 
 #[domain_decision_test(owner::Owner::CHECK)]
 fn public_decision_can_be_tested_from_another_module() {
-    assert_eq!(owner::Owner::check(1), Ok(1));
+    assert_eq!(owner::Owner::check(1), owner::Outcome::Checked(1));
 }
 
 fn main() {}

@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 
 pub fn expand(args: TokenStream, tokens: TokenStream) -> syn::Result<TokenStream> {
-    let owner_kind = super::arguments::parse(args)?;
+    let arguments = super::arguments::parse(args)?;
     let mut input = super::input::parse(tokens)?;
     let decisions = super::decision_collection::collect(&mut input.item.items)?;
     let domain_path = crate::helper::domain_api_path::resolve()?;
@@ -9,7 +9,8 @@ pub fn expand(args: TokenStream, tokens: TokenStream) -> syn::Result<TokenStream
         &domain_path,
         &input.item,
         &input.owner,
+        &arguments.group,
         &decisions,
-        owner_kind,
+        arguments.owner_kind,
     ))
 }

@@ -1,5 +1,5 @@
-error: decisions cannot be async, unsafe, extern, variadic, generic, or have where clauses
- --> tests/ui/domain_decision_contract/generic_method.rs:8:5
-  |
-8 |     fn decide<T>() -> Result<(), ()> {
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+error: decisions cannot declare type or const generics
+  --> tests/ui/domain_decision_contract/generic_method.rs:10:15
+   |
+10 |     fn decide<T>() -> Outcome {
+   |               ^

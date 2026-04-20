@@ -94,8 +94,8 @@ impl DomainModelBuilder {
         }
         let owner = DecisionOwnerId::Aggregate(A::DESCRIPTOR.id);
         self.decisions.register_owner(owner);
-        for contract in A::DECISION_CONTRACTS {
-            self.decisions.add_group(owner, contract)?;
+        for group in A::DECISION_GROUPS {
+            self.decisions.add_group(owner, group)?;
         }
         let owner = InvariantOwnerId::Aggregate(A::DESCRIPTOR.id);
         self.invariants.register_owner(owner);
@@ -124,8 +124,8 @@ impl DomainModelBuilder {
         }
         let owner = DecisionOwnerId::Entity(E::DESCRIPTOR.id);
         self.decisions.register_owner(owner);
-        for contract in E::DECISION_CONTRACTS {
-            self.decisions.add_group(owner, contract)?;
+        for group in E::DECISION_GROUPS {
+            self.decisions.add_group(owner, group)?;
         }
         let owner = InvariantOwnerId::Entity(E::DESCRIPTOR.id);
         self.invariants.register_owner(owner);
