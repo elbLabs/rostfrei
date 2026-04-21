@@ -39,9 +39,24 @@ events, an exact replay of previously appended events, and an accepted decision
 that produced no events. Only codec and EventStore failures are returned as
 `CommandExecutionError`; a modeled rejection is not an execution error.
 
-The `EventStore` port exposes only aggregate-stream load and atomic append.
-Adapters must implement the same observable behavior as the in-memory reference
-store.
+The `EventStore` port loads aggregate streams and atomically appends either one
+commit or an event transaction. An event transaction has an ordered set of
+unique aggregate-stream participants. A participant may contribute a commit or
+act as a read-only expected-version guard, but every transaction contains at
+least one commit. All participant commits share the transaction operation,
+fingerprint, correlation, and causation metadata.
+
+The first participant is the primary stream. Its stream identity and the
+operation identity address the durable transaction receipt used for exact
+retry. Expected versions are admission preconditions rather than durable
+transaction identity, so an otherwise identical retry returns the original
+receipt after later commits. The transaction limit counts every domain event,
+each read-only guard, and the receipt against a common 1,000-item budget.
+
+Adapters that do not implement multi-stream transactions retain a default
+single-stream adapter over `append`. All adapters must implement the same
+observable behavior as the in-memory reference store within their declared
+capabilities.
 
 ## Consequences
 
@@ -50,3 +65,6 @@ failures and domain rejections remain structurally distinct. A command that perf
 external side effects still needs a future execution-journal seam; the first
 release deliberately does not pretend an event append makes external effects
 atomic.
+
+An atomic event transaction cannot cross event stores. Cross-bounded-context or
+cross-service consistency still requires an explicit process manager or saga.
