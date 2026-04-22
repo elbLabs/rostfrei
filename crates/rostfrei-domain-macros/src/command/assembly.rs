@@ -22,9 +22,9 @@ pub fn assemble(
     );
     let descriptors = crate::field::assemble_descriptors_with_path(domain_path, fields);
     let assertions = crate::field::assemble_assertions_with_path(domain_path, name, None, fields);
-    let decode_json = attributes
+    let json_codec = attributes
         .json
-        .then(|| assemble_json_decoder(domain_path, name, fields, syntax_fields));
+        .then(|| assemble_json_codec(domain_path, name, fields, syntax_fields));
     quote! {
         impl #domain_path::CommandType for #name {
             type Owner = #owner;
@@ -44,7 +44,7 @@ pub fn assemble(
         }
 
         #assertions
-        #decode_json
+        #json_codec
     }
 }
 
@@ -52,7 +52,7 @@ pub fn assemble(
     clippy::too_many_lines,
     reason = "keeps command JSON decoder token generation in one auditable block"
 )]
-fn assemble_json_decoder(
+fn assemble_json_codec(
     domain_path: &Path,
     name: &Ident,
     parsed_fields: &[Field],
@@ -62,9 +62,49 @@ fn assemble_json_decoder(
     let where_clause = (!field_types.is_empty()).then(|| {
         quote! {
             where
-                #(#field_types: #domain_path::__private::serde::de::DeserializeOwned,)*
+                #(#field_types: #domain_path::__private::serde::de::DeserializeOwned
+                    + #domain_path::__private::serde::Serialize,)*
         }
     });
+    let encode = match fields {
+        Fields::Named(_) => {
+            let fields = parsed_fields.iter().map(|parsed_field| {
+                let member = &parsed_field.member;
+                let wire_name = &parsed_field.name;
+                quote! {
+                    object.insert(
+                        #wire_name.to_owned(),
+                        #domain_path::__private::serde_json::to_value(&self.#member)
+                            .map_err(|error| ::std::format!(
+                                "command field `{}` could not be encoded: {error}",
+                                #wire_name,
+                            ))?,
+                    );
+                }
+            });
+            quote! {
+                let mut object = #domain_path::__private::serde_json::Map::new();
+                #(#fields)*
+                #domain_path::__private::serde_json::Value::Object(object)
+            }
+        }
+        Fields::Unnamed(fields) => {
+            let fields = fields.unnamed.iter().enumerate().map(|(index, _)| {
+                let index = Index::from(index);
+                quote! {
+                    #domain_path::__private::serde_json::to_value(&self.#index)
+                        .map_err(|error| ::std::format!(
+                            "command field `{}` could not be encoded: {error}",
+                            #index,
+                        ))?
+                }
+            });
+            quote! {
+                #domain_path::__private::serde_json::Value::Array(::std::vec![#(#fields),*])
+            }
+        }
+        Fields::Unit => quote!(#domain_path::__private::serde_json::Value::Null),
+    };
     let construct = match fields {
         Fields::Named(_) => {
             let field_names = parsed_fields.iter().map(|field| &field.name);
@@ -156,6 +196,15 @@ fn assemble_json_decoder(
         impl #domain_path::JsonCommandPayload for #name
         #where_clause
         {
+            fn encode_json(
+                &self,
+            ) -> ::core::result::Result<
+                #domain_path::__private::serde_json::Value,
+                ::std::string::String,
+            > {
+                ::core::result::Result::Ok({ #encode })
+            }
+
             fn decode_json(
                 payload: &#domain_path::__private::serde_json::Value,
             ) -> ::core::result::Result<Self, ::std::string::String> {

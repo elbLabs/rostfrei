@@ -10,8 +10,9 @@ and NATS JetStream adapters at the application edge.
 The workspace contains eleven framework crates plus the bike-rental example
 Cargo package:
 
-- `rostfrei`: application facade for the compiled domain model,
-  event-sourcing runtime, registry, and public macros.
+- `rostfrei`: application facade for the compiled domain model, typed command
+  and integration-event buses, event-sourcing runtime, registry, and public
+  macros.
 - `rostfrei-control-plane`: explicitly registered command simulation, bounded
   in-memory operation traces, bounded concurrent admission, status resources,
   and an optional authenticated HTTP/SSE adapter.
@@ -28,7 +29,8 @@ Cargo package:
 - `rostfrei-macros`: derives for command definitions and domain modules.
 - `rostfrei-messaging-core`: transport-neutral commands, integration events,
   queries, envelopes, and delivery contracts.
-- `rostfrei-nats`: NATS messaging and authoritative JetStream event storage.
+- `rostfrei-nats`: command and integration-event bus adapters, NATS messaging,
+  and authoritative JetStream event storage.
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
 
 Messaging is application-scoped. An application name such as `fast-inbox`
@@ -40,23 +42,25 @@ and provisioning API.
 
 [`examples/bike-rental`](examples/bike-rental) is a self-contained public
 example with an aggregate action, a decision, a query, a domain event, and a
-domain error. It also contains a runnable local control-plane server that
-publishes `RentBicycle` through NATS, executes it against `NatsEventStore`, and
-can separately simulate the command without mutation. The aggregate identity in
-the API is qualified by its bounded context, and `#[domain(json)]` supplies the
-example's generated command and rejection JSON while aggregate event JSON comes
-from the compiled aggregate codec.
+domain error. It also contains a runnable local control-plane server that routes
+`RentBicycle` through `CommandBus`, executes it against `NatsEventStore`, maps
+the committed `BicycleRented` fact to `BicycleRentalStarted`, and publishes that
+public event through `IntegrationEventBus`. The same command can be simulated
+without mutation. The aggregate identity in the API is qualified by its bounded
+context, and `#[domain(json)]` supplies the example's generated command and
+rejection JSON while aggregate event JSON comes from the compiled aggregate
+codec.
 
 A control-plane instance receives one explicit read-only `EventHistory` and
 exposes only commands with matching executable bindings. Live dispatch also
-requires an explicit command-specific `DispatchAdapter` and separately mounted,
-separately authorized HTTP router. A dispatch operation reports confirmed
-publication rather than claiming that the asynchronous business command was
-accepted. When history is a `NatsEventStore`, its configuration fixes the
-application and bounded-context stream scope; the context-qualified HTTP route
-must address that same history. Operation status and traces are retained only
-in memory, payloads are redacted by default, and local deployments must opt in
-explicitly to expose them.
+requires an explicit adapter over `CommandBus` and a separately mounted,
+separately authorized HTTP router. The control plane translates external JSON
+into the bus's dynamic request without defining a second execution or wire path.
+When history is a `NatsEventStore`, its configuration fixes the application and
+bounded-context stream scope; the context-qualified HTTP route must address that
+same history. Operation status and traces are retained only in memory, payloads
+are redacted by default, and local deployments must opt in explicitly to expose
+them.
 
 rostfrei does not provision infrastructure during service startup. Operators
 use the explicit provisioning APIs with bounded, application-scoped defaults

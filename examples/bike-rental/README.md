@@ -30,10 +30,13 @@ cargo test --locked -p bike-rental
 
 ## NATS command lab
 
-The runnable example uses the same NATS publication, durable command consumer,
-immutable command responses, and `NatsEventStore` path intended for deployed
-systems. NATS Server 2.12 or newer is required for atomic event batches. Start a
-disposable local server:
+The runnable example uses the shared `CommandBus`, `IntegrationEventBus`, NATS
+adapters, durable command and domain-event consumers, immutable command
+responses, and `NatsEventStore` path intended for deployed systems. After
+`BicycleRented` commits, the domain-event consumer maps it to the public
+`BicycleRentalStarted` integration event; a separate durable consumer handles
+that event. NATS Server 2.12 or newer is required for atomic event batches.
+Start a disposable local server:
 
 ```sh
 docker compose -f examples/bike-rental/compose.yaml up -d
@@ -69,8 +72,8 @@ address. `ROSTFREI_API_TOKEN` protects simulation and operation traces;
 equal for local development but should be distinct in deployed environments.
 Operation resources and traces require `ROSTFREI_API_TOKEN`, including for an
 operation created with `ROSTFREI_DISPATCH_TOKEN`.
-Runtime startup verifies the operator-provisioned NATS topology and exits if the
-durable command consumer stops.
+Runtime startup verifies the operator-provisioned NATS topology and exits if a
+durable command, domain-event, or integration-event consumer stops.
 
 The fleet contains serviceable `bike-42` and maintenance-required `bike-99`.
 This local server explicitly exposes trace payloads for demonstration; the
@@ -117,7 +120,7 @@ running the aggregate again. Store unavailability retries without execution,
 while an invalid or conflicting response is quarantined. The response uses its
 own v1 schema and carries the originating command address.
 
-The adapter reads responses in bounded 30-second slices and keeps listening
+The adapter reads responses in bounded slices and keeps listening
 through slice timeouts or transient reader unavailability until a response
 arrives or the operation task is cancelled. It then reports
 `command.responded`, the business outcome, and terminal completion. Accepted
