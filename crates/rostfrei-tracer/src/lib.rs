@@ -1,5 +1,6 @@
 mod behavioral;
 mod catalog;
+mod command_bus;
 mod correlation;
 mod input;
 mod operation;
@@ -22,6 +23,7 @@ pub use catalog::{
     CatalogCommandVersion, CatalogContext, CatalogTestRepository, CatalogTestScenario,
     TracerCatalog,
 };
+pub use command_bus::CommandBusTransport;
 pub use correlation::{
     CorrelationCommandOutcome, CorrelationError, CorrelationEvent, CorrelationEventKind,
     CorrelationObserver, CorrelationSubscription, DomainEventObservation,
