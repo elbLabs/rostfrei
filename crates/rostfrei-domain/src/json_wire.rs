@@ -6,6 +6,8 @@ use crate::CommandType;
 
 /// A command with a generated conventional JSON object representation.
 pub trait JsonCommandPayload: CommandType + Sized {
+    fn encode_json(&self) -> Result<Value, String>;
+
     fn decode_json(payload: &Value) -> Result<Self, String>;
 }
 

@@ -55,9 +55,3 @@ error[E0107]: enum takes 1 generic argument but 2 generic arguments were supplie
    |            ^^^^^^   ----- help: remove the unnecessary generic argument
    |            |
    |            expected 1 generic argument
-   |
-note: enum defined here, with 1 generic parameter: `T`
-  --> $RUST/core/src/option.rs
-   |
-   | pub enum Option<T> {
-   |          ^^^^^^ -

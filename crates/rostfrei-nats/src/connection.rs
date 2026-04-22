@@ -8,6 +8,7 @@ use crate::{
     command_response::NatsCommandResponseReader,
     consumer::NatsConsumerFactory,
     error::NatsError,
+    messaging_adapter::NatsMessagingAdapter,
     messaging_config::{MessagingTopology, NatsConnectionConfig},
     provisioning::{ApplicationMessagingConfig, verify_application_messaging, verify_stream},
     publish::NatsPublisher,
@@ -53,6 +54,13 @@ impl NatsConnection {
         topology: MessagingTopology,
     ) -> NatsCommandResponseReader {
         NatsCommandResponseReader::new(self.jetstream.clone(), topology)
+    }
+
+    pub fn messaging_adapter(&self, topology: MessagingTopology) -> NatsMessagingAdapter {
+        NatsMessagingAdapter::new(
+            self.publisher(topology.clone()),
+            self.command_response_reader(topology),
+        )
     }
 
     pub fn query_requester(&self, application: &ApplicationName) -> NatsQueryRequester {

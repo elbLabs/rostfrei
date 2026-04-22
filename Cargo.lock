@@ -858,6 +858,7 @@ dependencies = [
  "base64",
  "futures-util",
  "http-body-util",
+ "rostfrei",
  "rostfrei-core",
  "rostfrei-domain",
  "rostfrei-registry",
