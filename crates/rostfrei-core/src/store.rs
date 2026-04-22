@@ -165,9 +165,24 @@ impl EventTransaction {
     }
 }
 
-pub(crate) fn validate_transaction_item_limit(
+/// Validates the transaction's primary participant and durable item limit.
+///
+/// Returns the number of domain events in the transaction.
+pub fn validate_transaction_item_limit(
     transaction: &EventTransaction,
 ) -> Result<usize, EventStoreError> {
+    let primary = transaction.participants().first().ok_or_else(|| {
+        EventStoreError::new(
+            EventStoreErrorKind::InvalidRequest,
+            "an event transaction must contain at least one participant",
+        )
+    })?;
+    if primary.batch().is_none() {
+        return Err(EventStoreError::new(
+            EventStoreErrorKind::InvalidRequest,
+            "an event transaction's primary participant must contain an event batch",
+        ));
+    }
     let domain_event_count = transaction
         .participants()
         .iter()
@@ -375,18 +390,13 @@ pub trait EventStore: EventHistory {
         &self,
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        validate_transaction_item_limit(&transaction)?;
         let [participant] = transaction.participants() else {
             return Err(EventStoreError::new(
                 EventStoreErrorKind::ConfigurationMismatch,
                 "event store does not support atomic multi-stream transactions",
             ));
         };
-        if participant.batch().is_none() {
-            return Err(EventStoreError::new(
-                EventStoreErrorKind::ConfigurationMismatch,
-                "event store does not support read-only transaction participants",
-            ));
-        }
         let participant = participant.clone();
         let batch = participant.batch().cloned().ok_or_else(|| {
             EventStoreError::new(
@@ -404,7 +414,6 @@ pub trait EventStore: EventHistory {
                 "participant commit metadata does not match its transaction",
             ));
         }
-        validate_transaction_item_limit(&transaction)?;
         let outcome = self
             .append(
                 participant.stream_id(),

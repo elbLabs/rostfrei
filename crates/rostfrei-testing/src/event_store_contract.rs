@@ -99,8 +99,10 @@ where
     try_identities_are_stream_scoped(&make_store()).await?;
     try_conflict_leaves_history_unchanged(&make_store()).await?;
     try_multi_stream_transaction_is_atomic_and_ordered(&make_store()).await?;
+    try_transaction_rejects_a_read_only_primary(&make_store()).await?;
     try_transaction_accepts_a_read_only_participant(&make_store()).await?;
     try_transaction_identities_are_primary_stream_scoped(&make_store()).await?;
+    try_transaction_rejects_primary_identity_reused_from_a_participant(&make_store()).await?;
     try_multi_stream_conflict_leaves_all_histories_unchanged(&make_store()).await?;
     try_multi_stream_exact_retry_survives_later_commits(&make_store()).await?;
     try_transaction_item_limit_preserves_direct_append_limit(&make_store()).await?;
@@ -267,6 +269,52 @@ pub async fn try_concurrent_transactions_have_one_winner<Store: EventStore>(
     Ok(())
 }
 
+pub async fn transaction_rejects_a_read_only_primary<Store: EventStore>(store: &Store) {
+    assert_contract_success(try_transaction_rejects_a_read_only_primary(store).await);
+}
+
+pub async fn try_transaction_rejects_a_read_only_primary<Store: EventStore>(
+    store: &Store,
+) -> ContractResult {
+    let primary = stream("transaction-read-only-primary")?;
+    let changed = stream("transaction-read-only-primary-changed")?;
+    let operation = "transaction-read-only-primary";
+    let result = store
+        .append_transaction(EventTransaction::new(
+            OperationId::new(operation)
+                .map_err(|error| fixture_error("read-only primary operation ID", error))?,
+            ContentFingerprint::digest(operation),
+            vec![
+                TransactionParticipant::new(primary.clone(), ExpectedVersion::NoStream, None),
+                TransactionParticipant::new(
+                    changed.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(
+                        &changed,
+                        operation,
+                        operation,
+                        &[b"must-not-append"],
+                    )?),
+                ),
+            ],
+        ))
+        .await;
+    let Err(error) = result else {
+        return Err(ContractTestError::UnexpectedSuccess {
+            context: "transaction with a read-only primary participant",
+        });
+    };
+    assert_eq!(error.kind(), EventStoreErrorKind::InvalidRequest);
+    for participant in [&primary, &changed] {
+        let history = store
+            .load(participant)
+            .await
+            .map_err(|source| store_error("read-only primary participant load", source))?;
+        assert!(history.is_empty());
+    }
+    Ok(())
+}
+
 pub async fn transaction_accepts_a_read_only_participant<Store: EventStore>(store: &Store) {
     assert_contract_success(try_transaction_accepts_a_read_only_participant(store).await);
 }
@@ -380,6 +428,103 @@ pub async fn try_transaction_accepts_a_read_only_participant<Store: EventStore>(
         ));
     };
     assert_eq!(prior_observed_receipt.base_version(), StreamVersion::new(1));
+    Ok(())
+}
+
+pub async fn transaction_rejects_primary_identity_reused_from_a_participant<Store: EventStore>(
+    store: &Store,
+) {
+    assert_contract_success(
+        try_transaction_rejects_primary_identity_reused_from_a_participant(store).await,
+    );
+}
+
+pub async fn try_transaction_rejects_primary_identity_reused_from_a_participant<
+    Store: EventStore,
+>(
+    store: &Store,
+) -> ContractResult {
+    let original_primary = stream("transaction-reused-participant-original-primary")?;
+    let reused_primary = stream("transaction-reused-participant-new-primary")?;
+    let untouched = stream("transaction-reused-participant-untouched")?;
+    let operation = "transaction-reused-participant-operation";
+    let operation_id = OperationId::new(operation)
+        .map_err(|error| fixture_error("reused participant operation ID", error))?;
+    let fingerprint = ContentFingerprint::digest(operation);
+    let reused_primary_batch = batch(
+        &reused_primary,
+        operation,
+        operation,
+        &[b"original-participant-write"],
+    )?;
+    store
+        .append_transaction(EventTransaction::new(
+            operation_id.clone(),
+            fingerprint,
+            vec![
+                TransactionParticipant::new(
+                    original_primary.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(
+                        &original_primary,
+                        operation,
+                        operation,
+                        &[b"original-primary-write"],
+                    )?),
+                ),
+                TransactionParticipant::new(
+                    reused_primary.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(reused_primary_batch.clone()),
+                ),
+            ],
+        ))
+        .await
+        .map_err(|source| store_error("transaction with reusable participant", source))?;
+    let before = store
+        .load(&reused_primary)
+        .await
+        .map_err(|source| store_error("reused participant pre-conflict load", source))?;
+
+    let result = store
+        .append_transaction(EventTransaction::new(
+            operation_id,
+            fingerprint,
+            vec![
+                TransactionParticipant::new(
+                    reused_primary.clone(),
+                    ExpectedVersion::Exact(StreamVersion::new(1)),
+                    Some(reused_primary_batch),
+                ),
+                TransactionParticipant::new(
+                    untouched.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(
+                        &untouched,
+                        operation,
+                        operation,
+                        &[b"must-not-append"],
+                    )?),
+                ),
+            ],
+        ))
+        .await;
+    let Err(error) = result else {
+        return Err(ContractTestError::UnexpectedSuccess {
+            context: "transaction primary identity reused from a prior participant",
+        });
+    };
+    assert_eq!(error.kind(), EventStoreErrorKind::IdentityConflict);
+    let after = store
+        .load(&reused_primary)
+        .await
+        .map_err(|source| store_error("reused participant post-conflict load", source))?;
+    assert_eq!(after, before);
+    let untouched_history = store
+        .load(&untouched)
+        .await
+        .map_err(|source| store_error("reused participant untouched-stream load", source))?;
+    assert!(untouched_history.is_empty());
     Ok(())
 }
 

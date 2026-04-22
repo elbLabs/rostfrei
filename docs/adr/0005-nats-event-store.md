@@ -28,8 +28,10 @@ guard message for each read-only participant, and a final internal transaction
 receipt. A guard applies an expected sequence to another aggregate subject, so
 read-only decisions are protected against write skew. The receipt is addressed
 by primary aggregate stream and operation identity and is the final batch
-message. Aggregate consumers filter out internal subjects and use transaction
-event ordinals to deliver only complete domain-event groups.
+message. The primary participant always contributes a commit, so its aggregate
+subject atomically arbitrates reuse of that receipt identity. Aggregate
+consumers filter out internal subjects and use transaction event ordinals to
+deliver only complete domain-event groups.
 
 This requires `async-nats` 0.50's `server_2_12` feature and NATS Server 2.12.1
 or newer. An ADR-50 batch contains at most 1,000 items. A direct single-stream
