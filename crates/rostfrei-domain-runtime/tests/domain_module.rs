@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate as DomainAggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandType,
-    DomainEvent, DomainIdentity, Entity, JsonCommandPayload,
+    Aggregate as DomainAggregate, AggregateType, BoundedContext, Command, CommandType, DomainEvent,
+    DomainIdentity, Entity, JsonCommandPayload,
 };
 use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance, CommandHandler};
 use rostfrei_domain_runtime::{Apply, Initialize, domain_module};
@@ -35,7 +35,7 @@ struct CatalogRoot {
 )]
 struct CatalogAggregate;
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(
     id = "open-catalog",
     label = "Open catalog",
@@ -44,7 +44,7 @@ struct CatalogAggregate;
 )]
 struct OpenCatalog;
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(
     id = "describe-catalog",
     label = "Describe catalog",
@@ -52,7 +52,7 @@ struct OpenCatalog;
 )]
 struct DescribeCatalog;
 
-#[derive(Debug, DomainCommand, Eq, PartialEq)]
+#[derive(Debug, Command, Eq, PartialEq)]
 #[domain(
     id = "rename-catalog",
     label = "Rename catalog",
@@ -111,7 +111,7 @@ domain_module! {
 }
 
 #[test]
-fn registers_runtime_metadata_from_the_domain_command() {
+fn registers_runtime_metadata_from_the_command() {
     let mut registry = DomainRegistry::new();
     registry.register_module::<CatalogModule>().unwrap();
 
@@ -120,7 +120,7 @@ fn registers_runtime_metadata_from_the_domain_command() {
         .unwrap();
 
     assert_eq!(descriptor.aggregate_type, "catalog/catalog");
-    assert_eq!(descriptor.domain_command(), Some(&OpenCatalog::DESCRIPTOR));
+    assert_eq!(descriptor.modeled_command(), Some(&OpenCatalog::DESCRIPTOR));
     assert_eq!(
         <OpenCatalog as CommandDefinition>::Aggregate::AGGREGATE_TYPE,
         "catalog"
@@ -133,7 +133,7 @@ fn registers_runtime_metadata_from_the_domain_command() {
 }
 
 #[test]
-fn domain_commands_can_register_without_a_runtime_module() {
+fn commands_can_register_without_a_runtime_module() {
     let mut registry = DomainRegistry::new();
 
     registry.register_command::<OpenCatalog>().unwrap();
@@ -143,7 +143,7 @@ fn domain_commands_can_register_without_a_runtime_module() {
         registry
             .command("catalog/catalog", "open-catalog", 1)
             .unwrap()
-            .domain_command(),
+            .modeled_command(),
         Some(&OpenCatalog::DESCRIPTOR)
     );
 }

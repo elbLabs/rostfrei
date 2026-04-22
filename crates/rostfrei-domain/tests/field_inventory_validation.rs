@@ -3,8 +3,8 @@ use std::fmt::Debug;
 use domain::__private::DomainModelBuilder;
 use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, AggregateDescriptor, AggregateId, BoundedContext,
-    BoundedContextId, DomainCommandDescriptor, DomainCommandId, DomainCommandOwnerId,
-    DomainErrorDescriptor, DomainErrorId, DomainErrorOwnerId, DomainEventDescriptor, DomainEventId,
+    BoundedContextId, CommandDescriptor, CommandId, CommandOwnerId, DomainErrorDescriptor,
+    DomainErrorId, DomainErrorOwnerId, DomainEventDescriptor, DomainEventId,
     DomainIdentityDescriptor, DomainIdentityId, DomainModelError, DomainModelReference,
     EntityDescriptor, EntityId, FieldDescriptor, FieldKind, FieldValue, FieldWrapper,
     IdentityDescriptor, ScalarType, SemanticScalarDescriptor, ValueObjectDescriptor, ValueObjectId,
@@ -53,8 +53,8 @@ const CONTRACT_REJECTED_VALUE_ID: ValueObjectId = ValueObjectId {
     owner: ValueObjectOwnerId::BoundedContext(CONTEXT_ID),
     local: "contract-rejected-value",
 };
-const COMMAND_ID: DomainCommandId = DomainCommandId {
-    owner: DomainCommandOwnerId::Aggregate(AGGREGATE_ID),
+const COMMAND_ID: CommandId = CommandId {
+    owner: CommandOwnerId::Aggregate(AGGREGATE_ID),
     local: "inventory-command",
 };
 const EVENT_ID: DomainEventId = DomainEventId {
@@ -324,12 +324,12 @@ const ENTITY_REFERENCE: EntityDescriptor = EntityDescriptor {
         },
     }],
 };
-const ACCEPTED_COMMAND: DomainCommandDescriptor = DomainCommandDescriptor {
+const ACCEPTED_COMMAND: CommandDescriptor = CommandDescriptor {
     id: COMMAND_ID,
     label: "Accepted command",
     fields: &[],
 };
-const COMMAND_REFERENCE: DomainCommandDescriptor = DomainCommandDescriptor {
+const COMMAND_REFERENCE: CommandDescriptor = CommandDescriptor {
     id: COMMAND_ID,
     label: "Command source",
     fields: &[FieldDescriptor {
@@ -394,29 +394,23 @@ fn accepts_forward_references_registered_cycles_wrappers_and_non_reference_scala
 #[test]
 fn rejected_duplicate_command_does_not_leave_field_reference_records() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_domain_command(ACCEPTED_COMMAND).unwrap();
+    builder.add_command(ACCEPTED_COMMAND).unwrap();
 
-    let error = builder.add_domain_command(COMMAND_REFERENCE).unwrap_err();
+    let error = builder.add_command(COMMAND_REFERENCE).unwrap_err();
     assert_eq!(
         error.to_string(),
-        format!("duplicate DomainCommandId: {COMMAND_ID:?}")
+        format!("duplicate CommandId: {COMMAND_ID:?}")
     );
     assert_eq!(
         error,
-        DomainModelError::DuplicateDomainCommandId {
+        DomainModelError::DuplicateCommandId {
             id: Box::new(COMMAND_ID),
         }
     );
 
     let model = builder.finish().unwrap();
-    assert_eq!(model["domainCommands"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        model["domainCommands"][0]["fields"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
+    assert_eq!(model["commands"].as_array().unwrap().len(), 1);
+    assert_eq!(model["commands"][0]["fields"].as_array().unwrap().len(), 0);
 }
 
 #[test]
@@ -582,9 +576,9 @@ fn reports_a_missing_reference_from_an_entity_field() {
 #[test]
 fn reports_a_missing_reference_from_a_command_field() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_domain_command(COMMAND_REFERENCE).unwrap();
+    builder.add_command(COMMAND_REFERENCE).unwrap();
     let error = builder.finish().unwrap_err();
-    let location = format!("domain command {COMMAND_ID:?} field {:?}", "aggregate");
+    let location = format!("command {COMMAND_ID:?} field {:?}", "aggregate");
 
     assert_eq!(
         error.to_string(),

@@ -19,7 +19,7 @@ pub trait CommandDefinition: Sized + Send + Sync + 'static {
             aggregate_type: <Self::Aggregate as Aggregate>::aggregate_type().into_owned(),
             rust_command_type: type_name::<Self>(),
             rust_aggregate_type: type_name::<Self::Aggregate>(),
-            domain_command: None,
+            modeled_command: None,
         }
     }
 }
@@ -38,7 +38,7 @@ pub struct CommandDescriptor {
     pub aggregate_type: String,
     pub rust_command_type: &'static str,
     pub rust_aggregate_type: &'static str,
-    pub domain_command: Option<domain::DomainCommandDescriptor>,
+    pub modeled_command: Option<domain::CommandDescriptor>,
 }
 
 impl CommandDescriptor {
@@ -50,8 +50,8 @@ impl CommandDescriptor {
         }
     }
 
-    pub const fn domain_command(&self) -> Option<&domain::DomainCommandDescriptor> {
-        self.domain_command.as_ref()
+    pub const fn modeled_command(&self) -> Option<&domain::CommandDescriptor> {
+        self.modeled_command.as_ref()
     }
 }
 

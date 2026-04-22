@@ -2,10 +2,10 @@ use serde_json::Value;
 
 use std::convert::Infallible;
 
-use crate::DomainCommandType;
+use crate::CommandType;
 
-/// A domain command with a generated conventional JSON object representation.
-pub trait JsonCommandPayload: DomainCommandType + Sized {
+/// A command with a generated conventional JSON object representation.
+pub trait JsonCommandPayload: CommandType + Sized {
     fn decode_json(payload: &Value) -> Result<Self, String>;
 }
 

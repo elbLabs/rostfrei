@@ -26,16 +26,16 @@ pub fn assemble(
         .json
         .then(|| assemble_json_decoder(domain_path, name, fields, syntax_fields));
     quote! {
-        impl #domain_path::DomainCommandType for #name {
+        impl #domain_path::CommandType for #name {
             type Owner = #owner;
             type Rejection = #rejection;
 
             const LOCAL_ID: &'static str = #id;
             const SCHEMA_VERSION: u32 = #schema_version;
-            const DESCRIPTOR: #domain_path::DomainCommandDescriptor =
-                #domain_path::DomainCommandDescriptor {
-                    id: #domain_path::DomainCommandId {
-                        owner: <#owner as #domain_path::DomainCommandOwnerType>::DOMAIN_COMMAND_OWNER_ID,
+            const DESCRIPTOR: #domain_path::CommandDescriptor =
+                #domain_path::CommandDescriptor {
+                    id: #domain_path::CommandId {
+                        owner: <#owner as #domain_path::CommandOwnerType>::COMMAND_OWNER_ID,
                         local: Self::LOCAL_ID,
                     },
                     label: #label,

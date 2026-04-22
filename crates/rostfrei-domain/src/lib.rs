@@ -3,8 +3,8 @@ extern crate self as domain;
 mod action;
 mod aggregate;
 mod bounded_context;
+mod command;
 mod decision;
-mod domain_command;
 mod domain_error;
 mod domain_event;
 mod domain_identity;
@@ -31,6 +31,7 @@ pub use action::{
 };
 pub use aggregate::{AggregateDescriptor, AggregateId, AggregateType};
 pub use bounded_context::{BoundedContextDescriptor, BoundedContextId, BoundedContextType};
+pub use command::{CommandDescriptor, CommandId, CommandOwnerId, CommandOwnerType, CommandType};
 #[doc(hidden)]
 pub use decision::AttachedDecisionGroup;
 pub use decision::{
@@ -40,10 +41,6 @@ pub use decision::{
     DecisionOutcomeShapeDescriptor, DecisionOutcomeType, DecisionOutcomeValueDescriptor,
     DecisionOutcomeValueType, DecisionOwnerId, DecisionOwnerType, DecisionParameterDescriptor,
     DecisionReference, EntityDecisionOwnerType,
-};
-pub use domain_command::{
-    DomainCommandDescriptor, DomainCommandId, DomainCommandOwnerId, DomainCommandOwnerType,
-    DomainCommandType,
 };
 pub use domain_error::{
     DomainErrorDescriptor, DomainErrorId, DomainErrorOwnerId, DomainErrorOwnerType, DomainErrorType,
@@ -76,10 +73,10 @@ pub use invariant::{
 };
 pub use json_wire::{JsonCommandPayload, JsonErrorPayload};
 pub use rostfrei_domain_macros::{
-    Aggregate, BoundedContext, DecisionOutcome, DomainCommand, DomainError, DomainEvent,
-    DomainIdentity, DomainService, Entity, EntityLifecycle, ValueObject, domain_action_test,
-    domain_actions, domain_decision_test, domain_decisions, domain_invariant_test,
-    domain_invariants, domain_lifecycle_test, domain_queries,
+    Aggregate, BoundedContext, Command, DecisionOutcome, DomainError, DomainEvent, DomainIdentity,
+    DomainService, Entity, EntityLifecycle, ValueObject, domain_action_test, domain_actions,
+    domain_decision_test, domain_decisions, domain_invariant_test, domain_invariants,
+    domain_lifecycle_test, domain_queries,
 };
 pub use value_object::{
     ValueObjectDescriptor, ValueObjectId, ValueObjectOwnerId, ValueObjectOwnerType,
@@ -121,7 +118,7 @@ macro_rules! domain_model {
             $(builder.add_domain_identity_type::<$identity>()?;)*
             $(builder.add_value_object_type::<$value_object>()?;)*
             $(builder.add_domain_service_type::<$service>()?;)*
-            $(builder.add_domain_command(<$command as $crate::DomainCommandType>::DESCRIPTOR)?;)*
+            $(builder.add_command(<$command as $crate::CommandType>::DESCRIPTOR)?;)*
             $(builder.add_domain_error(<$error as $crate::DomainErrorType>::DESCRIPTOR);)*
             $($(builder.add_action_extension::<$action_extension>()?;)*)?
             $(builder.add_queries(<$query_group as $crate::QueryGroupType>::QUERIES)?;)*

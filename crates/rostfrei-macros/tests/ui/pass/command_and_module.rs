@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use rostfrei_macros::{Command, Module};
+use rostfrei_macros::{CommandDefinition, Module};
 use zs_core::{Aggregate, AggregateInstance, CommandHandler, StreamId};
 
 struct Account<T: Send + Sync + 'static>(PhantomData<T>);
@@ -18,7 +18,7 @@ impl<T: Send + Sync + 'static> Aggregate for Account<T> {
     fn apply(_state: &mut Self::State, (): &Self::Event) {}
 }
 
-#[derive(Command)]
+#[derive(CommandDefinition)]
 #[rostfrei(name = "account.open", version = 1, aggregate = Account<T>)]
 struct OpenAccount<T: Send + Sync + 'static>(PhantomData<T>);
 

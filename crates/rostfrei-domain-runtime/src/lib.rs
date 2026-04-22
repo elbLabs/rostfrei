@@ -19,7 +19,7 @@ pub trait AggregateRuntime:
 
 #[doc(hidden)]
 pub mod __private {
-    pub use domain::{DomainCommandOwnerType, DomainCommandType};
+    pub use domain::{CommandOwnerType, CommandType};
     pub use rostfrei_core as core;
     pub use rostfrei_core::{Aggregate, AggregateInstance};
     pub use rostfrei_registry::{
@@ -70,9 +70,9 @@ pub mod __private {
     }
 }
 
-/// Groups domain commands into a named registry module.
+/// Groups commands into a named registry module.
 ///
-/// Domain command derives provide their runtime definitions. This macro only
+/// Command derives provide their runtime definitions. This macro only
 /// supplies an optional module-level grouping for applications that need one.
 #[macro_export]
 macro_rules! domain_module {
@@ -85,10 +85,10 @@ macro_rules! domain_module {
         const _: () = {
             $(
                 $crate::__private::assert_same_command_namespace(
-                    <<$first as $crate::__private::DomainCommandType>::Owner as
-                        $crate::__private::DomainCommandOwnerType>::DOMAIN_COMMAND_NAMESPACE,
-                    <<$command as $crate::__private::DomainCommandType>::Owner as
-                        $crate::__private::DomainCommandOwnerType>::DOMAIN_COMMAND_NAMESPACE,
+                    <<$first as $crate::__private::CommandType>::Owner as
+                        $crate::__private::CommandOwnerType>::COMMAND_NAMESPACE,
+                    <<$command as $crate::__private::CommandType>::Owner as
+                        $crate::__private::CommandOwnerType>::COMMAND_NAMESPACE,
                 );
             )*
         };
@@ -98,8 +98,8 @@ macro_rules! domain_module {
 
         impl $crate::__private::DomainModule for $module {
             const MODULE_NAME: &'static str =
-                <<$first as $crate::__private::DomainCommandType>::Owner as
-                    $crate::__private::DomainCommandOwnerType>::DOMAIN_COMMAND_NAMESPACE;
+                <<$first as $crate::__private::CommandType>::Owner as
+                    $crate::__private::CommandOwnerType>::COMMAND_NAMESPACE;
 
             fn descriptor() -> $crate::__private::ModuleDescriptor {
                 $crate::__private::ModuleDescriptor {
