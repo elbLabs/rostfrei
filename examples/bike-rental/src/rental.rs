@@ -1,9 +1,7 @@
-use std::convert::Infallible;
-
 use rostfrei::{
-    Aggregate, AggregateInstance, BoundedContext, DecisionOutcome, DomainCommand, DomainError,
-    DomainEvent, DomainIdentity, Entity, ValueObject, domain_actions, domain_decisions,
-    domain_queries,
+    Aggregate, AggregateInstance, BoundedContext, Command, DecisionOutcome, DomainError,
+    DomainEvent, DomainIdentity, Entity, StreamAggregateId, ValueObject, domain_actions,
+    domain_decisions, domain_queries,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -146,6 +144,12 @@ impl FleetId {
     }
 }
 
+impl From<&StreamAggregateId> for FleetId {
+    fn from(value: &StreamAggregateId) -> Self {
+        Self(value.as_str().to_owned())
+    }
+}
+
 impl TryFrom<String> for FleetId {
     type Error = &'static str;
 
@@ -210,7 +214,7 @@ pub enum BicycleAvailability {
     Unavailable,
 }
 
-#[derive(DomainCommand, Clone, Debug, Eq, PartialEq)]
+#[derive(Command, Clone, Debug, Eq, PartialEq)]
 #[domain(
     id = "rent-bicycle",
     label = "Rent bicycle",
@@ -224,7 +228,7 @@ pub struct RentBicycle {
     pub bicycle_id: BicycleId,
 }
 
-#[derive(DomainCommand, Clone, Debug, Eq, PartialEq)]
+#[derive(Command, Clone, Debug, Eq, PartialEq)]
 #[domain(
     id = "return-bicycle",
     label = "Return bicycle",
@@ -238,7 +242,7 @@ pub struct ReturnBicycle {
     pub bicycle_id: BicycleId,
 }
 
-#[derive(DomainCommand, Clone, Debug, Eq, PartialEq)]
+#[derive(Command, Clone, Debug, Eq, PartialEq)]
 #[domain(
     id = "add-bicycle",
     label = "Add bicycle",
@@ -341,7 +345,7 @@ pub(crate) enum RentalEligibilityOutcome {
 
 pub(crate) struct RentalEligibilityDecisions;
 
-#[domain_decisions(aggregate)]
+#[domain_decisions(aggregate, group = RentalEligibilityDecisions)]
 impl RentalFleetAggregate {
     #[decision(id = "assess-rental-eligibility", label = "Assess rental eligibility")]
     pub(crate) fn assess_rental_eligibility(
@@ -464,75 +468,6 @@ fn allocate_bicycle_id(root: &RentalFleet) -> BicycleId {
         }
         sequence = sequence.saturating_add(1);
     }
-
-    fn add_bicycle(&mut self, _input: &AddBicycle) -> Result<(), Infallible> {
-        let fleet_id = self.state().fleet_id.clone();
-        let bicycle_id = allocate_bicycle_id(self.state());
-        self.raise(BicycleAdded {
-            fleet_id,
-            bicycle_id,
-            condition: BicycleCondition::Serviceable,
-        });
-        Ok(())
-    }
-}
-
-fn ensure_rental_allowed(
-    root: &RentalFleet,
-    input: &RentBicycle,
-) -> Result<(), BicycleUnavailable> {
-    let bicycle = root
-        .bicycles
-        .iter()
-        .find(|bicycle| bicycle.bicycle_id == input.bicycle_id)
-        .ok_or_else(|| BicycleUnavailable {
-            bicycle_id: input.bicycle_id.clone(),
-        })?;
-    RentalFleetAggregate::assess_rental_eligibility(bicycle.status, bicycle.condition).map_err(
-        |_| BicycleUnavailable {
-            bicycle_id: input.bicycle_id.clone(),
-        },
-    )?;
-
-    Ok(())
-}
-
-fn ensure_return_allowed(
-    root: &RentalFleet,
-    input: &ReturnBicycle,
-) -> Result<(), BicycleNotRented> {
-    let rented = root.bicycles.iter().any(|bicycle| {
-        bicycle.bicycle_id == input.bicycle_id && bicycle.status == BicycleStatus::Rented
-    });
-    if !rented {
-        return Err(BicycleNotRented {
-            bicycle_id: input.bicycle_id.clone(),
-        });
-    }
-    Ok(())
-}
-
-fn allocate_bicycle_id(root: &RentalFleet) -> BicycleId {
-    let mut sequence = root.bicycles.len();
-    loop {
-        let seed = format!(
-            "rostfrei:bike-rental:bicycle:v1:{}:{sequence}",
-            root.fleet_id.as_str()
-        );
-        let candidate =
-            BicycleId::new(Uuid::new_v5(&Uuid::NAMESPACE_URL, seed.as_bytes()).to_string())
-                .expect("a canonical UUID is a valid bicycle identity");
-        if root
-            .bicycles
-            .iter()
-            .all(|bicycle| bicycle.bicycle_id != candidate)
-        {
-            return candidate;
-        }
-        sequence = sequence
-            .checked_add(1)
-            .expect("a fleet cannot contain more bicycles than addressable memory");
-    }
 }
 
 #[domain_queries(group = BicycleAvailabilityQueries)]
@@ -560,4 +495,34 @@ impl RentalFleetAggregate {
 fn non_empty(value: impl Into<String>) -> Option<String> {
     let value = value.into();
     (!value.trim().is_empty() && value.trim() == value).then_some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rental_eligibility_returns_first_class_outcomes() {
+        assert_eq!(
+            RentalFleetAggregate::assess_rental_eligibility(
+                BicycleStatus::Available,
+                BicycleCondition::Serviceable,
+            ),
+            RentalEligibilityOutcome::Eligible
+        );
+        assert_eq!(
+            RentalFleetAggregate::assess_rental_eligibility(
+                BicycleStatus::Rented,
+                BicycleCondition::Serviceable,
+            ),
+            RentalEligibilityOutcome::AlreadyRented
+        );
+        assert_eq!(
+            RentalFleetAggregate::assess_rental_eligibility(
+                BicycleStatus::Available,
+                BicycleCondition::MaintenanceRequired,
+            ),
+            RentalEligibilityOutcome::MaintenanceRequired
+        );
+    }
 }

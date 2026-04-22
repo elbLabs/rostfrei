@@ -121,7 +121,7 @@ pub fn build_catalog(
             model_context_label(domain_model, &context_id).unwrap_or_else(|| context_id.clone());
         let aggregate_label = model_aggregate_label(domain_model, &context_id, &aggregate_id)
             .unwrap_or_else(|| aggregate_id.clone());
-        let command_label = descriptor.domain_command().map_or_else(
+        let command_label = descriptor.modeled_command().map_or_else(
             || descriptor.command_name.to_owned(),
             |command| command.label.to_owned(),
         );
@@ -130,7 +130,7 @@ pub fn build_catalog(
             &context_id,
             &aggregate_id,
             descriptor
-                .domain_command()
+                .modeled_command()
                 .map_or(descriptor.command_name, |command| command.id.local),
         );
         let payload_template = payload_template(&fields, domain_model);
@@ -233,8 +233,8 @@ pub fn build_catalog(
 }
 
 fn http_coordinates(descriptor: &CommandDescriptor) -> Option<(String, String)> {
-    if let Some(command) = descriptor.domain_command()
-        && let domain::DomainCommandOwnerId::Aggregate(aggregate) = command.id.owner
+    if let Some(command) = descriptor.modeled_command()
+        && let domain::CommandOwnerId::Aggregate(aggregate) = command.id.owner
     {
         return Some((aggregate.context.0.to_owned(), aggregate.local.to_owned()));
     }
@@ -277,7 +277,7 @@ fn model_command_fields(
     command: &str,
 ) -> Vec<Value> {
     model
-        .and_then(|model| model.get("domainCommands"))
+        .and_then(|model| model.get("commands"))
         .and_then(Value::as_array)
         .and_then(|commands| {
             commands.iter().find(|item| {
