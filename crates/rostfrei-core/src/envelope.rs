@@ -8,7 +8,7 @@ use crate::{CommitId, ContentFingerprint, EventId, OperationId, StreamId};
 pub const MAX_EVENT_TYPE_LEN: usize = 128;
 pub const MAX_EVENT_PAYLOAD_LEN: usize = 1024 * 1024;
 pub const MAX_BATCH_PAYLOAD_LEN: usize = 1024 * 1024;
-pub const MAX_EVENTS_PER_BATCH: usize = 1000;
+pub const MAX_EVENTS_PER_BATCH: usize = 100;
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StreamVersion(u64);
@@ -49,8 +49,10 @@ pub enum EnvelopeError {
     PayloadTooLarge { maximum: usize },
     #[error("an event batch must contain at least one event")]
     EmptyBatch,
-    #[error("an event batch exceeds its {maximum}-event limit")]
-    BatchTooLarge { maximum: usize },
+    #[error(
+        "event batch contains {actual} domain events, exceeding the {maximum}-event atomic commit limit; split the work across commands"
+    )]
+    BatchTooLarge { actual: usize, maximum: usize },
     #[error("an event batch payload exceeds its {maximum}-byte limit")]
     BatchPayloadTooLarge { maximum: usize },
     #[error("an event batch must not contain duplicate event identities")]
@@ -134,6 +136,7 @@ impl EventBatch {
         }
         if events.len() > MAX_EVENTS_PER_BATCH {
             return Err(EnvelopeError::BatchTooLarge {
+                actual: events.len(),
                 maximum: MAX_EVENTS_PER_BATCH,
             });
         }

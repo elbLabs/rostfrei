@@ -51,7 +51,9 @@ operation identity address the durable transaction receipt used for exact
 retry. Expected versions are admission preconditions rather than durable
 transaction identity, so an otherwise identical retry returns the original
 receipt after later commits. The transaction limit counts every domain event,
-each read-only guard, and the receipt against a common 1,000-item budget.
+each read-only guard, and the receipt against a common 100-item budget. A commit
+contains at most 100 domain events. Commands that exceed either limit fail with
+an actionable `InvalidRequest` before anything is appended.
 
 Adapters that do not implement durable transaction receipts and provenance
 reject `append_transaction` with `ConfigurationMismatch`. Transaction-capable

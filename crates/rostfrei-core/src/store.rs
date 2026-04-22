@@ -10,7 +10,7 @@ use crate::{
 };
 
 /// Maximum number of durable items in one atomic event transaction.
-pub const MAX_TRANSACTION_ITEMS: usize = 1_000;
+pub const MAX_TRANSACTION_ITEMS: usize = 100;
 
 const TRANSACTION_RECEIPT_ITEMS: usize = 1;
 
@@ -213,7 +213,9 @@ pub fn validate_transaction_item_limit(
     if item_count > MAX_TRANSACTION_ITEMS {
         return Err(EventStoreError::new(
             EventStoreErrorKind::InvalidRequest,
-            format!("transaction exceeds the {MAX_TRANSACTION_ITEMS}-item limit"),
+            format!(
+                "event transaction contains {item_count} atomic items, exceeding the {MAX_TRANSACTION_ITEMS}-item limit; reduce its domain events or read guards, or split the work across commands"
+            ),
         ));
     }
     Ok(domain_event_count)
