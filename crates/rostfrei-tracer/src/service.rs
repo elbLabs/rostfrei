@@ -1,8 +1,8 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -19,29 +19,29 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 
 use crate::{
-    behavioral::{
-        TestCommand, TestDefinitionCollection, TestDefinitionRevision, TestExpectationResult,
-        TestOutcome, TestReport, TestReportFailure, TestReportStatus, TestRepository,
-        TestRepositoryError, TraceExpectation,
-    },
-    catalog::{
-        build_catalog, AggregateInstanceCollection, AggregateInstanceSummary, TracerCatalog,
-    },
-    command_execution_fingerprint,
-    correlation::CorrelationHub,
-    input::{CommandInputDocument, CommandInputOptions},
-    operation::{subscribe, NewOperation, OperationRecord},
-    runtime::{
-        stream_id, CommandKey, ErasedCommandInputOptions, ErasedCommandSimulator, RuntimeBindings,
-        RuntimeDecision, RuntimeSimulationError,
-    },
-    transport::canonical_json_payload,
     CommandInvocation, CommandOutcome, CommandPublication, CommandReceipt, CommandTransport,
     CommandTransportError, CommandTransportErrorKind, CommandTransportObserver,
     CorrelationCommandOutcome, CorrelationError, CorrelationEventKind, CorrelationObserver,
     CorrelationSubscription, DomainEventObservation, OperationEventKind, OperationMode,
     OperationResult, OperationSnapshot, OperationSubscription, PredictedDomainEvent,
     RuntimeRegistrationError, SubscriptionError,
+    behavioral::{
+        TestCommand, TestDefinitionCollection, TestDefinitionRevision, TestExpectationResult,
+        TestOutcome, TestReport, TestReportFailure, TestReportStatus, TestRepository,
+        TestRepositoryError, TraceExpectation,
+    },
+    catalog::{
+        AggregateInstanceCollection, AggregateInstanceSummary, TracerCatalog, build_catalog,
+    },
+    command_execution_fingerprint,
+    correlation::CorrelationHub,
+    input::{CommandInputDocument, CommandInputOptions},
+    operation::{NewOperation, OperationRecord, subscribe},
+    runtime::{
+        CommandKey, ErasedCommandInputOptions, ErasedCommandSimulator, RuntimeBindings,
+        RuntimeDecision, RuntimeSimulationError, stream_id,
+    },
+    transport::canonical_json_payload,
 };
 
 pub const MAX_COMMAND_PAYLOAD_LEN: usize = 1024 * 1024;
@@ -62,7 +62,7 @@ pub trait TestScenarioReset: Send + Sync {
     async fn reset(&self) -> Result<(), TestScenarioResetError>;
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum TestScenarioResetError {
     #[error("test scenario reset is not configured")]
     Unavailable,
@@ -76,7 +76,9 @@ pub enum TestRunError {
     Repository(#[from] TestRepositoryError),
     #[error(transparent)]
     Reset(#[from] TestScenarioResetError),
-    #[error("test definition `{test_id}` references fixture `{actual}`, but Tracer provides `{expected}`")]
+    #[error(
+        "test definition `{test_id}` references fixture `{actual}`, but Tracer provides `{expected}`"
+    )]
     FixtureMismatch {
         test_id: String,
         expected: String,
@@ -145,7 +147,7 @@ impl TracePayloadPolicy for ExposeTracePayloadsForLocalDevelopment {
     }
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum SubmissionError {
     #[error(
         "unknown command `{command}` version {schema_version} for aggregate `{aggregate_type}`"
@@ -179,7 +181,7 @@ pub enum SubmissionError {
     InvalidCursor(#[from] SubscriptionError),
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum DiscoveryError {
     #[error("aggregate type `{aggregate_type}` is not in the runtime catalog")]
     UnknownAggregate { aggregate_type: String },
@@ -191,7 +193,7 @@ pub enum DiscoveryError {
     Directory(String),
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum CommandInputError {
     #[error(
         "unknown command `{command}` version {schema_version} for aggregate `{aggregate_type}`"
@@ -261,7 +263,7 @@ impl TracerBuilder {
     where
         Store: EventStore + 'static,
     {
-        self.history = Arc::clone(&store) as Arc<dyn EventHistory>;
+        self.history = store.clone();
         self.test_event_store = Some(store);
         self
     }
@@ -302,13 +304,13 @@ impl TracerBuilder {
     }
 
     #[must_use]
-    pub fn with_maximum_operations(mut self, maximum_operations: usize) -> Self {
+    pub const fn with_maximum_operations(mut self, maximum_operations: usize) -> Self {
         self.maximum_operations = maximum_operations;
         self
     }
 
     #[must_use]
-    pub fn with_maximum_concurrent_simulations(
+    pub const fn with_maximum_concurrent_simulations(
         mut self,
         maximum_concurrent_simulations: usize,
     ) -> Self {
@@ -328,6 +330,7 @@ impl TracerBuilder {
     pub fn register_json<Command>(&mut self) -> Result<&mut Self, RuntimeRegistrationError>
     where
         Command: CommandDefinition + domain::JsonCommandPayload,
+        Command::Aggregate: rostfrei_core::CommandHandler<Command>,
         <Command::Aggregate as rostfrei_core::Aggregate>::State: Send,
         <Command::Aggregate as rostfrei_core::Aggregate>::Event: rostfrei_core::Event + Send,
         <Command::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection:
@@ -407,7 +410,8 @@ impl TracerBuilder {
                 correlations: CorrelationHub::new(self.maximum_operations),
                 maximum_operations: self.maximum_operations,
                 maximum_operation_payload_bytes,
-                operation_permits: Arc::new(Semaphore::new(maximum_concurrent_operations)),
+                non_dispatch_permits: Arc::new(Semaphore::new(maximum_concurrent_operations)),
+                dispatch_permits: Arc::new(Semaphore::new(maximum_concurrent_operations)),
                 generated_ids: AtomicU64::new(0),
                 test_generation: AtomicU64::new(0),
                 test_run_sequence: AtomicU64::new(0),
@@ -489,7 +493,8 @@ struct TracerInner {
     correlations: Arc<CorrelationHub>,
     maximum_operations: usize,
     maximum_operation_payload_bytes: usize,
-    operation_permits: Arc<Semaphore>,
+    non_dispatch_permits: Arc<Semaphore>,
+    dispatch_permits: Arc<Semaphore>,
     generated_ids: AtomicU64,
     test_generation: AtomicU64,
     test_run_sequence: AtomicU64,
@@ -556,10 +561,7 @@ impl OperationTable {
 
     fn evict_terminal(&mut self) -> Option<String> {
         for _ in 0..self.insertion_order.len() {
-            let operation_id = self
-                .insertion_order
-                .pop_front()
-                .expect("the bounded scan starts with a non-empty queue");
+            let operation_id = self.insertion_order.pop_front()?;
             if self
                 .records
                 .get(&operation_id)
@@ -785,6 +787,7 @@ impl Tracer {
                     }
                 }
                 () = &mut deadline => {
+                    self.abort_operation(&queued.operation_id).await;
                     return Ok(TestCommandEvaluation {
                         operation_id: queued.operation_id,
                         correlation_id: queued.correlation_id,
@@ -989,6 +992,10 @@ impl Tracer {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "the reset guard must remain held until the spawned operation completes"
+    )]
     async fn submit_operation(
         &self,
         mode: OperationMode,
@@ -1031,6 +1038,10 @@ impl Tracer {
         })?;
         let aggregate_id = AggregateId::new(aggregate_id)
             .map_err(|error| SubmissionError::InvalidAggregateId(error.to_string()))?;
+        #[allow(
+            clippy::significant_drop_tightening,
+            reason = "the spawned operation must retain the scenario guard until completion"
+        )]
         let scenario_guard = if mode == OperationMode::Dispatch {
             None
         } else {
@@ -1116,24 +1127,33 @@ impl Tracer {
             let mut operations = self.inner.operations.lock().await;
             if let Some(existing) = operations.records.get(&operation_key) {
                 if existing.fingerprint().await != operation_fingerprint.to_hex() {
+                    drop(operations);
                     return Err(SubmissionError::IdentityConflict);
                 }
-                return Ok(existing.snapshot().await);
+                let snapshot = existing.snapshot().await;
+                drop(operations);
+                return Ok(snapshot);
             }
             if operations.records.len() >= self.inner.maximum_operations
                 && !operations.has_terminal()
             {
+                drop(operations);
                 return Err(SubmissionError::CapacityExhausted);
             }
-            let permit = Arc::clone(&self.inner.operation_permits)
+            let permits = if mode == OperationMode::Dispatch {
+                &self.inner.dispatch_permits
+            } else {
+                &self.inner.non_dispatch_permits
+            };
+            let permit = Arc::clone(permits)
                 .try_acquire_owned()
                 .map_err(|_| SubmissionError::ConcurrencyExhausted)?;
             let evicted = if operations.records.len() >= self.inner.maximum_operations {
-                Some(
-                    operations
-                        .evict_terminal()
-                        .expect("a terminal operation was observed before eviction"),
-                )
+                let Some(evicted) = operations.evict_terminal() else {
+                    drop(operations);
+                    return Err(SubmissionError::CapacityExhausted);
+                };
+                Some(evicted)
             } else {
                 None
             };
@@ -1157,11 +1177,14 @@ impl Tracer {
                 operations
                     .insertion_order
                     .retain(|retained| retained != &operation_key);
-                return Err(match error {
+                let error = match error {
                     CorrelationError::CapacityExhausted => SubmissionError::CapacityExhausted,
                     _ => SubmissionError::InvalidOperationId(error.to_string()),
-                });
+                };
+                drop(operations);
+                return Err(error);
             }
+            drop(operations);
             permit
         };
 
@@ -1197,6 +1220,7 @@ impl Tracer {
                 .record_correlation_result(&result_correlation_id, &result_record)
                 .await;
         });
+        panic_record.set_execution(execution.abort_handle());
         tokio::spawn(async move {
             if execution.await.is_err() {
                 panic_record
@@ -1219,6 +1243,20 @@ impl Tracer {
     ) -> Result<OperationSnapshot, SubmissionError> {
         let record = self.record(operation_id).await?;
         Ok(record.snapshot().await)
+    }
+
+    async fn abort_operation(&self, operation_id: &str) {
+        let record = self
+            .inner
+            .operations
+            .lock()
+            .await
+            .records
+            .get(operation_id)
+            .cloned();
+        if let Some(record) = record {
+            record.abort_and_wait().await;
+        }
     }
 
     pub async fn subscribe(
@@ -1306,7 +1344,7 @@ impl Tracer {
         payload: Value,
     ) {
         record.start().await;
-        if mode != OperationMode::Simulate {
+        if let Some(transport) = transport {
             if let Err(error) = simulator.validate_payload(&payload) {
                 record
                     .fail(
@@ -1331,11 +1369,7 @@ impl Tracer {
                 payload,
             );
             let observer = Arc::new(OperationTransportObserver::new(Arc::clone(&record)));
-            match transport
-                .expect("transported modes require a configured command transport")
-                .invoke(invocation, observer.clone())
-                .await
-            {
+            match transport.invoke(invocation, observer.clone()).await {
                 Ok(receipt) if observer.matches(&receipt).await => {
                     complete_transport(
                         &record,
@@ -1662,7 +1696,9 @@ async fn complete_transport(
 }
 
 fn operation_payload_budget(maximum_operations: usize) -> usize {
-    (MAXIMUM_TOTAL_OPERATION_PAYLOAD_BYTES / maximum_operations.max(1))
+    MAXIMUM_TOTAL_OPERATION_PAYLOAD_BYTES
+        .checked_div(maximum_operations.max(1))
+        .unwrap_or(MAXIMUM_TOTAL_OPERATION_PAYLOAD_BYTES)
         .min(DEFAULT_MAXIMUM_OPERATION_PAYLOAD_BYTES)
 }
 
@@ -1677,7 +1713,7 @@ fn bound_predicted_event_payloads(events: &mut [PredictedDomainEvent], maximum_b
         if bytes > remaining {
             event.payload = None;
         } else {
-            remaining -= bytes;
+            remaining = remaining.saturating_sub(bytes);
         }
     }
 }
@@ -1700,7 +1736,7 @@ fn bounded_failure_message(
     if message.len() > maximum_bytes {
         let mut end = maximum_bytes;
         while !message.is_char_boundary(end) {
-            end -= 1;
+            end = end.saturating_sub(1);
         }
         message.truncate(end);
     }
@@ -1708,9 +1744,7 @@ fn bounded_failure_message(
 }
 
 fn serialized_value_len(value: &Value) -> usize {
-    serde_json::to_vec(value)
-        .expect("trace payloads always serialize")
-        .len()
+    value.to_string().len()
 }
 
 fn transport_failure(error: &CommandTransportError) -> (&'static str, String) {
@@ -1775,7 +1809,7 @@ fn request_fingerprint(
 fn framed_fingerprint(values: &[&[u8]]) -> ContentFingerprint {
     let mut framed = Vec::new();
     for value in values {
-        let length = u64::try_from(value.len()).expect("request parts fit in u64");
+        let length = u64::try_from(value.len()).unwrap_or(u64::MAX);
         framed.extend_from_slice(&length.to_be_bytes());
         framed.extend_from_slice(value);
     }

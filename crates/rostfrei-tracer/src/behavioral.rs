@@ -10,9 +10,9 @@ use std::{
 
 use rostfrei_core::ContentFingerprint;
 use serde::{
+    Deserialize, Serialize,
     de::{self, Deserializer},
     ser::{SerializeStruct, Serializer},
-    Deserialize, Serialize,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -21,11 +21,12 @@ use crate::{CorrelationCommandOutcome, CorrelationEvent, CorrelationEventKind};
 
 const TEST_DEFINITION_SCHEMA_VERSION: u32 = 1;
 const MAX_TEST_TIMEOUT_MILLIS: u64 = 60_000;
+const MAX_TEST_SETUP_COMMANDS: usize = 32;
 const MAX_TEST_DEFINITIONS: usize = 256;
 const MAX_TEST_DEFINITION_BYTES: usize = 1024 * 1024;
 const MAX_TEST_REPOSITORY_BYTES: usize = 8 * 1024 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TestDefinition {
     #[serde(deserialize_with = "deserialize_definition_schema_version")]
@@ -45,22 +46,35 @@ impl TestDefinition {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TestGiven {
     #[serde(deserialize_with = "deserialize_nonempty")]
     pub fixture: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_setup_commands")]
     pub commands: Vec<TestCommand>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+fn deserialize_setup_commands<'de, D>(deserializer: D) -> Result<Vec<TestCommand>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let commands = Vec::<TestCommand>::deserialize(deserializer)?;
+    if commands.len() > MAX_TEST_SETUP_COMMANDS {
+        return Err(de::Error::custom(format!(
+            "setup contains more than {MAX_TEST_SETUP_COMMANDS} commands"
+        )));
+    }
+    Ok(commands)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TestWhen {
     pub command: TestCommand,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TestCommand {
     #[serde(deserialize_with = "deserialize_nonempty")]
@@ -80,7 +94,7 @@ pub struct TestAggregate {
     pub id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TestThen {
     pub outcome: TestOutcome,
@@ -89,14 +103,14 @@ pub struct TestThen {
     pub trace: TestTrace,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TestTrace {
     #[serde(default)]
     pub contains: Vec<TraceExpectation>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(
     deny_unknown_fields,
     tag = "kind",
@@ -128,7 +142,7 @@ impl TraceExpectation {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TestOutcome {
     Accepted,
     Rejected(TestRejection),
@@ -195,7 +209,7 @@ struct RejectedOutcomeDocument {
     rejected: TestRejection,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TestRejection {
     #[serde(deserialize_with = "deserialize_nonempty")]
@@ -289,7 +303,7 @@ pub struct TestDefinitionSummary {
     pub run_href: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestDefinitionRevision {
     pub revision: String,
@@ -320,7 +334,7 @@ pub enum TestReportStatus {
     Failed,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestExpectationResult {
     pub expectation: TraceExpectation,
@@ -335,7 +349,7 @@ pub struct TestReportFailure {
     pub message: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestReport {
     pub run_id: String,
@@ -381,6 +395,10 @@ impl FilesystemTestRepository {
         let mut definitions = BTreeMap::new();
         let mut source_files = BTreeMap::new();
         let mut total_bytes = 0_usize;
+        let definition_read_limit = MAX_TEST_DEFINITION_BYTES
+            .checked_add(1)
+            .and_then(|limit| u64::try_from(limit).ok())
+            .ok_or(TestRepositoryError::RepositoryTooLarge)?;
         for (file_name, path) in candidates {
             let file = file_name.to_string_lossy().into_owned();
             let file_type = fs::symlink_metadata(&path)
@@ -396,7 +414,7 @@ impl FilesystemTestRepository {
             let mut bytes = Vec::new();
             File::open(&path)
                 .map_err(|_| TestRepositoryError::DefinitionUnreadable { file: file.clone() })?
-                .take((MAX_TEST_DEFINITION_BYTES + 1) as u64)
+                .take(definition_read_limit)
                 .read_to_end(&mut bytes)
                 .map_err(|_| TestRepositoryError::DefinitionUnreadable { file: file.clone() })?;
             if bytes.len() > MAX_TEST_DEFINITION_BYTES {
@@ -716,13 +734,29 @@ then:
     }
 
     #[test]
+    fn rejects_more_than_thirty_two_setup_commands() {
+        let command = "    - name: register-bike\n      schemaVersion: 1\n      aggregate:\n        type: rental/bicycle\n        id: bicycle-1\n      payload: {}\n";
+        let commands = (0..=MAX_TEST_SETUP_COMMANDS)
+            .map(|_| command)
+            .collect::<String>();
+        let yaml = MINIMAL_ACCEPTED.replace(
+            "  fixture: available-bike",
+            &format!("  fixture: available-bike\n  commands:\n{commands}"),
+        );
+
+        assert!(TestDefinition::from_yaml(yaml).is_err());
+    }
+
+    #[test]
     fn rejects_malformed_unknown_and_invalid_documents() {
         assert!(TestDefinition::from_yaml("schemaVersion: [").is_err());
         assert!(TestDefinition::from_yaml(format!("{MINIMAL_ACCEPTED}unknown: true")).is_err());
-        assert!(TestDefinition::from_yaml(
-            MINIMAL_ACCEPTED.replace("schemaVersion: 1", "schemaVersion: 2")
-        )
-        .is_err());
+        assert!(
+            TestDefinition::from_yaml(
+                MINIMAL_ACCEPTED.replace("schemaVersion: 1", "schemaVersion: 2")
+            )
+            .is_err()
+        );
         assert!(
             TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace("within: 2s", "within: 0ms"))
                 .is_err()
@@ -731,19 +765,21 @@ then:
             TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace("within: 2s", "within: 61s"))
                 .is_err()
         );
-        assert!(TestDefinition::from_yaml(
-            MINIMAL_ACCEPTED.replace("id: rent-a-bike", "id: Bad_ID")
-        )
-        .is_err());
-        assert!(TestDefinition::from_yaml(
-            MINIMAL_ACCEPTED.replace("name: Rent a bike", "name: ''")
-        )
-        .is_err());
-        assert!(TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace(
-            "schemaVersion: 1\n    aggregate:",
-            "schemaVersion: 0\n    aggregate:"
-        ))
-        .is_err());
+        assert!(
+            TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace("id: rent-a-bike", "id: Bad_ID"))
+                .is_err()
+        );
+        assert!(
+            TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace("name: Rent a bike", "name: ''"))
+                .is_err()
+        );
+        assert!(
+            TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace(
+                "schemaVersion: 1\n    aggregate:",
+                "schemaVersion: 0\n    aggregate:"
+            ))
+            .is_err()
+        );
     }
 
     #[test]

@@ -1,11 +1,17 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
-use async_nats::{Client, Message, Subscriber};
+use async_nats::{
+    Client, Message,
+    jetstream::{self, consumer, consumer::DeliverPolicy},
+};
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use rostfrei_messaging_core::{ApplicationName, CorrelationId, MessageId};
+use tokio::time::MissedTickBehavior;
 
 use crate::{error::NatsError, publish::CORRELATION_ID_HEADER};
+
+const STREAM_GENERATION_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CorrelatedMessageFamily {
@@ -53,6 +59,13 @@ pub trait CorrelatedMessageHandler: Send + Sync {
 pub struct NatsCorrelationObserver {
     client: Client,
     application: ApplicationName,
+    stream_names: Option<CorrelationStreamNames>,
+}
+
+#[derive(Clone)]
+struct CorrelationStreamNames {
+    domain_events: String,
+    integration_events: String,
 }
 
 impl NatsCorrelationObserver {
@@ -60,22 +73,54 @@ impl NatsCorrelationObserver {
         Self {
             client,
             application,
+            stream_names: None,
         }
     }
 
+    #[must_use]
+    pub fn with_streams(
+        mut self,
+        domain_event_stream: impl Into<String>,
+        integration_event_stream: impl Into<String>,
+    ) -> Self {
+        self.stream_names = Some(CorrelationStreamNames {
+            domain_events: domain_event_stream.into(),
+            integration_events: integration_event_stream.into(),
+        });
+        self
+    }
+
     pub async fn subscribe(&self) -> Result<NatsCorrelationSubscription, NatsError> {
-        let domain_events = self
-            .client
-            .subscribe(format!("{}.domain.>", self.application.as_str()))
-            .await
-            .map_err(|_| NatsError::Consumer)?;
-        let integration_events = self
-            .client
-            .subscribe(format!("{}.integration.>", self.application.as_str()))
-            .await
-            .map_err(|_| NatsError::Consumer)?;
-        self.client.flush().await.map_err(|_| NatsError::Flush)?;
+        let context = jetstream::new(self.client.clone());
+        let domain_filter = family_filter(&self.application, CorrelatedMessageFamily::DomainEvent);
+        let integration_filter =
+            family_filter(&self.application, CorrelatedMessageFamily::IntegrationEvent);
+        let stream_names = if let Some(stream_names) = &self.stream_names {
+            stream_names.clone()
+        } else {
+            CorrelationStreamNames {
+                domain_events: context
+                    .stream_by_subject(domain_filter)
+                    .await
+                    .map_err(|_| NatsError::StreamNotFound)?,
+                integration_events: context
+                    .stream_by_subject(integration_filter)
+                    .await
+                    .map_err(|_| NatsError::StreamNotFound)?,
+            }
+        };
+        let domain_events =
+            ObservedStream::subscribe(&context, stream_names.domain_events, DeliverPolicy::New)
+                .await?;
+        let integration_events = ObservedStream::subscribe(
+            &context,
+            stream_names.integration_events,
+            DeliverPolicy::New,
+        )
+        .await?;
         Ok(NatsCorrelationSubscription {
+            context,
+            application: self.application.clone(),
             domain_events,
             integration_events,
         })
@@ -87,8 +132,10 @@ impl NatsCorrelationObserver {
 }
 
 pub struct NatsCorrelationSubscription {
-    domain_events: Subscriber,
-    integration_events: Subscriber,
+    context: jetstream::Context,
+    application: ApplicationName,
+    domain_events: ObservedStream,
+    integration_events: ObservedStream,
 }
 
 impl NatsCorrelationSubscription {
@@ -96,27 +143,114 @@ impl NatsCorrelationSubscription {
         mut self,
         handler: Arc<dyn CorrelatedMessageHandler>,
     ) -> Result<(), NatsError> {
+        let mut generation_poll = tokio::time::interval(STREAM_GENERATION_POLL_INTERVAL);
+        generation_poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             tokio::select! {
-                message = self.domain_events.next() => {
+                message = self.domain_events.messages.next() => {
                     let Some(message) = message else {
                         return Err(NatsError::Consumer);
                     };
-                    if let Some(message) = correlated_message(&message, CorrelatedMessageFamily::DomainEvent) {
+                    let Ok(message) = message else {
+                        continue;
+                    };
+                    if family_matches(&self.application, message.subject.as_str(), CorrelatedMessageFamily::DomainEvent)
+                        && let Some(message) = correlated_message(&message.message, CorrelatedMessageFamily::DomainEvent)
+                    {
                         handler.handle(message).await;
                     }
                 }
-                message = self.integration_events.next() => {
+                message = self.integration_events.messages.next() => {
                     let Some(message) = message else {
                         return Err(NatsError::Consumer);
                     };
-                    if let Some(message) = correlated_message(&message, CorrelatedMessageFamily::IntegrationEvent) {
+                    let Ok(message) = message else {
+                        continue;
+                    };
+                    if family_matches(&self.application, message.subject.as_str(), CorrelatedMessageFamily::IntegrationEvent)
+                        && let Some(message) = correlated_message(&message.message, CorrelatedMessageFamily::IntegrationEvent)
+                    {
                         handler.handle(message).await;
                     }
+                }
+                _ = generation_poll.tick() => {
+                    let _ = self.domain_events.refresh_if_recreated(&self.context).await;
+                    let _ = self.integration_events.refresh_if_recreated(&self.context).await;
                 }
             }
         }
     }
+}
+
+struct ObservedStream {
+    name: String,
+    generation: String,
+    messages: consumer::pull::Ordered,
+}
+
+impl ObservedStream {
+    async fn subscribe(
+        context: &jetstream::Context,
+        name: String,
+        deliver_policy: DeliverPolicy,
+    ) -> Result<Self, NatsError> {
+        let stream = context
+            .get_stream(name.clone())
+            .await
+            .map_err(|_| NatsError::StreamNotFound)?;
+        let generation = stream.cached_info().created.to_string();
+        let consumer: consumer::OrderedPullConsumer = stream
+            .create_consumer(consumer::pull::OrderedConfig {
+                description: Some("rostfrei correlation observer".to_owned()),
+                deliver_policy,
+                ..Default::default()
+            })
+            .await
+            .map_err(|_| NatsError::Consumer)?;
+        let messages = consumer.messages().await.map_err(|_| NatsError::Consumer)?;
+        Ok(Self {
+            name,
+            generation,
+            messages,
+        })
+    }
+
+    async fn refresh_if_recreated(
+        &mut self,
+        context: &jetstream::Context,
+    ) -> Result<(), NatsError> {
+        let stream = context
+            .get_stream(self.name.clone())
+            .await
+            .map_err(|_| NatsError::StreamNotFound)?;
+        if stream.cached_info().created.to_string() != self.generation {
+            // Every message in a replacement stream is newer than the original subscription.
+            *self = Self::subscribe(context, self.name.clone(), DeliverPolicy::All).await?;
+        }
+        Ok(())
+    }
+}
+
+fn family_filter(application: &ApplicationName, family: CorrelatedMessageFamily) -> String {
+    let token = match family {
+        CorrelatedMessageFamily::DomainEvent => "domain",
+        CorrelatedMessageFamily::IntegrationEvent => "integration",
+    };
+    format!("{}.{token}.>", application.as_str())
+}
+
+fn family_matches(
+    application: &ApplicationName,
+    subject: &str,
+    family: CorrelatedMessageFamily,
+) -> bool {
+    let filter = family_filter(application, family);
+    let Some(prefix) = filter.strip_suffix('>') else {
+        return false;
+    };
+    subject
+        .strip_prefix(prefix)
+        .is_some_and(|remainder| !remainder.is_empty())
 }
 
 fn correlated_message(
@@ -141,4 +275,35 @@ fn one_header<'a>(headers: &'a async_nats::HeaderMap, name: &str) -> Option<&'a 
     let mut values = headers.get_all(name.to_owned());
     let value = values.next()?.as_str();
     values.next().is_none().then_some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn family_filtering_remains_application_scoped() {
+        let application = ApplicationName::new("bike-rental-test").expect("application name");
+
+        assert!(family_matches(
+            &application,
+            "bike-rental-test.domain.bike-rental.aggregate.123",
+            CorrelatedMessageFamily::DomainEvent,
+        ));
+        assert!(family_matches(
+            &application,
+            "bike-rental-test.integration.bicycle-rental-started",
+            CorrelatedMessageFamily::IntegrationEvent,
+        ));
+        assert!(!family_matches(
+            &application,
+            "bike-rental-prod.domain.bike-rental.aggregate.123",
+            CorrelatedMessageFamily::DomainEvent,
+        ));
+        assert!(!family_matches(
+            &application,
+            "bike-rental-test.command.rent-bicycle",
+            CorrelatedMessageFamily::DomainEvent,
+        ));
+    }
 }

@@ -6,9 +6,6 @@ edition = "2024"
 rust-version.workspace = true
 license.workspace = true
 
-[lints]
-workspace = true
-
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true
@@ -28,3 +25,6 @@ uuid.workspace = true
 http-body-util = "0.1"
 rostfrei-core = { path = "../../crates/rostfrei-core" }
 tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true

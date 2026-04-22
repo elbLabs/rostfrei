@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy: {
         "^/(?:catalog|contexts|tests|test-scenario|operations|correlations)(?:/|$)": {
-          target: "http://127.0.0.1:3000",
+          target: "http://127.0.0.1:1309",
           configure(proxy) {
             proxy.on("proxyReq", (request) => {
               if (!request.hasHeader("authorization")) {

@@ -1,17 +1,13 @@
 use std::sync::{
-    Arc,
+    Arc, Mutex as StdMutex, PoisonError,
     atomic::{AtomicBool, Ordering},
 };
 
-use rostfrei_core::MAX_EVENTS_PER_BATCH;
 use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::{Mutex, watch};
-
-const MAX_COMPLETION_TRACE_EVENTS: usize = MAX_EVENTS_PER_BATCH + 2;
-const TRACE_LIMIT_FAILURE_CODE: &str = "invalid-runtime";
-const TRACE_LIMIT_FAILURE_MESSAGE: &str = "operation trace exceeds its bounded event limit";
+use tokio::task::AbortHandle;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,7 +204,6 @@ pub struct NewOperation<'a> {
     pub schema_version: u32,
     pub aggregate_type: &'a str,
     pub aggregate_id: &'a str,
-    pub mode: &'static str,
 }
 
 struct OperationState {
@@ -218,11 +213,12 @@ struct OperationState {
     publication: Option<(String, bool)>,
 }
 
-pub(crate) struct OperationRecord {
+pub struct OperationRecord {
     mode: OperationMode,
     state: Mutex<OperationState>,
     changed: watch::Sender<u64>,
     terminal: AtomicBool,
+    execution: StdMutex<Option<AbortHandle>>,
 }
 
 impl OperationRecord {
@@ -255,7 +251,34 @@ impl OperationRecord {
             }),
             changed,
             terminal: AtomicBool::new(false),
+            execution: StdMutex::new(None),
         })
+    }
+
+    pub fn set_execution(&self, execution: AbortHandle) {
+        let mut registered = self
+            .execution
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !self.is_terminal() {
+            *registered = Some(execution);
+        }
+    }
+
+    pub async fn abort_and_wait(&self) {
+        let execution = self
+            .execution
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(execution) = execution {
+            execution.abort();
+        }
+        if self.is_terminal() {
+            return;
+        }
+        let mut changed = self.changed.subscribe();
+        while !self.is_terminal() && changed.changed().await.is_ok() {}
     }
 
     pub async fn fingerprint(&self) -> String {
@@ -271,15 +294,10 @@ impl OperationRecord {
     }
 
     pub async fn start(&self) {
-        let mut state = self.state.lock().await;
-        if state.snapshot.status != OperationStatus::Queued {
-            return;
-        }
-        push_event(&mut state, OperationEventKind::Started);
-        state.snapshot.status = OperationStatus::Running;
-        let latest = state.snapshot.latest_event_id;
-        drop(state);
-        self.changed.send_replace(latest);
+        self.append(OperationEventKind::Started, |snapshot| {
+            snapshot.status = OperationStatus::Running;
+        })
+        .await;
     }
 
     pub async fn complete(&self, result: OperationResult, events: Vec<OperationEventKind>) {
@@ -291,21 +309,14 @@ impl OperationRecord {
         if state.snapshot.status.is_terminal() {
             return;
         }
-        if events.len() > MAX_COMPLETION_TRACE_EVENTS {
-            fail_state(
-                &mut state,
-                TRACE_LIMIT_FAILURE_CODE,
-                TRACE_LIMIT_FAILURE_MESSAGE.to_owned(),
-            );
-        } else {
-            for kind in events {
-                push_event(&mut state, kind);
-            }
-            push_event(&mut state, OperationEventKind::Completed { decision });
-            state.snapshot.status = OperationStatus::Completed;
-            state.snapshot.result = Some(result);
+        for kind in events {
+            push_event(&mut state, kind);
         }
+        push_event(&mut state, OperationEventKind::Completed { decision });
+        state.snapshot.status = OperationStatus::Completed;
+        state.snapshot.result = Some(result);
         self.terminal.store(true, Ordering::Release);
+        self.clear_execution();
         let latest = state.snapshot.latest_event_id;
         drop(state);
         self.changed.send_replace(latest);
@@ -316,23 +327,11 @@ impl OperationRecord {
         if state.snapshot.status.is_terminal() {
             return;
         }
-        fail_state(&mut state, code, message);
-        self.terminal.store(true, Ordering::Release);
-        let latest = state.snapshot.latest_event_id;
-        drop(state);
-        self.changed.send_replace(latest);
-    }
-
-    pub async fn command_published(&self, command_message_id: String, duplicate: bool) {
-        let mut state = self.state.lock().await;
-        if state.snapshot.status.is_terminal() {
-            return;
-        }
         push_event(
             &mut state,
-            OperationEventKind::CommandPublished {
-                command_message_id,
-                duplicate,
+            OperationEventKind::Failed {
+                code,
+                message: message.clone(),
             },
         );
         state.snapshot.status = OperationStatus::Failed;
@@ -343,6 +342,7 @@ impl OperationRecord {
             duplicate: None,
         });
         self.terminal.store(true, Ordering::Release);
+        self.clear_execution();
         let latest = state.snapshot.latest_event_id;
         drop(state);
         self.changed.send_replace(latest);
@@ -376,6 +376,7 @@ impl OperationRecord {
             duplicate: Some(duplicate),
         });
         self.terminal.store(true, Ordering::Release);
+        self.clear_execution();
         let latest = state.snapshot.latest_event_id;
         drop(state);
         self.changed.send_replace(latest);
@@ -413,6 +414,13 @@ impl OperationRecord {
         self.terminal.load(Ordering::Acquire)
     }
 
+    fn clear_execution(&self) {
+        self.execution
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+    }
+
     async fn append(&self, kind: OperationEventKind, update: impl FnOnce(&mut OperationSnapshot)) {
         let mut state = self.state.lock().await;
         if state.snapshot.status.is_terminal() {
@@ -445,27 +453,13 @@ impl OperationRecord {
 }
 
 fn push_event(state: &mut OperationState, kind: OperationEventKind) {
-    let id = state.next_event_id;
-    state.next_event_id = state.next_event_id.saturating_add(1);
+    let id = state.snapshot.latest_event_id.saturating_add(1);
     state.events.push(OperationEvent {
         id,
         operation_id: state.snapshot.operation_id.clone(),
         kind,
     });
     state.snapshot.latest_event_id = id;
-}
-
-fn fail_state(state: &mut OperationState, code: &'static str, message: String) {
-    push_event(
-        state,
-        OperationEventKind::Failed {
-            code,
-            message: message.clone(),
-        },
-    );
-    state.snapshot.status = OperationStatus::Failed;
-    state.snapshot.result = None;
-    state.snapshot.failure = Some(OperationFailure { code, message });
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -510,89 +504,4 @@ pub async fn subscribe(
     after: u64,
 ) -> Result<OperationSubscription, SubscriptionError> {
     record.subscription(after).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn record(operation_id: &str) -> Arc<OperationRecord> {
-        OperationRecord::new(NewOperation {
-            operation_id: operation_id.to_owned(),
-            fingerprint: "fingerprint".to_owned(),
-            command: "test-command",
-            schema_version: 1,
-            aggregate_type: "test-context/test-aggregate",
-            aggregate_id: "aggregate-1",
-            mode: "simulate",
-        })
-    }
-
-    #[tokio::test]
-    async fn bounded_traces_keep_ordered_ids_and_emit_events_for_terminal_transitions() {
-        let completed = record("maximum-trace");
-        completed.start().await;
-        completed
-            .complete(
-                OperationResult::Rejected {
-                    base_stream_version: Some(0),
-                    rejection: Value::Null,
-                    appended: Some(false),
-                    published: false,
-                    command_message_id: None,
-                    response_message_id: None,
-                    duplicate: None,
-                },
-                vec![OperationEventKind::CommandAccepted; MAX_COMPLETION_TRACE_EVENTS],
-            )
-            .await;
-        let completed_state = completed.state.lock().await;
-        assert_eq!(completed_state.snapshot.status, OperationStatus::Completed);
-        assert_eq!(
-            completed_state.snapshot.latest_event_id,
-            completed_state.events.last().map_or(0, |event| event.id)
-        );
-        assert!(completed_state.events.windows(2).all(|events| {
-            matches!(events, [previous, current] if current.id == previous.id.saturating_add(1))
-        }));
-        assert!(matches!(
-            completed_state.events.last().map(|event| &event.kind),
-            Some(OperationEventKind::Completed { .. })
-        ));
-        drop(completed_state);
-
-        let oversized = record("oversized-trace");
-        oversized.start().await;
-        oversized
-            .complete(
-                OperationResult::Rejected {
-                    base_stream_version: Some(0),
-                    rejection: Value::Null,
-                    appended: Some(false),
-                    published: false,
-                    command_message_id: None,
-                    response_message_id: None,
-                    duplicate: None,
-                },
-                vec![OperationEventKind::CommandAccepted; MAX_COMPLETION_TRACE_EVENTS + 1],
-            )
-            .await;
-        let oversized_state = oversized.state.lock().await;
-        assert_eq!(oversized_state.snapshot.status, OperationStatus::Failed);
-        assert_eq!(oversized_state.snapshot.latest_event_id, 3);
-        assert!(matches!(
-            oversized_state.events.last().map(|event| &event.kind),
-            Some(OperationEventKind::Failed {
-                code: TRACE_LIMIT_FAILURE_CODE,
-                message,
-            }) if message == TRACE_LIMIT_FAILURE_MESSAGE
-        ));
-        assert_eq!(
-            oversized_state.snapshot.failure,
-            Some(OperationFailure {
-                code: TRACE_LIMIT_FAILURE_CODE,
-                message: TRACE_LIMIT_FAILURE_MESSAGE.to_owned(),
-            })
-        );
-    }
 }

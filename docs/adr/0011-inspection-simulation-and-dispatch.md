@@ -24,18 +24,17 @@ rewrites authoritative history. Tooling must technically separate simulation
 from live dispatch. Live dispatch is disabled unless deployment
 configuration, authorization, and auditing permit it.
 
-The HTTP control plane mounts dispatch separately from simulation and requires
-a distinct bearer capability. Commands opt into dispatch individually through
-an asynchronous `DispatchAdapter`. A publication-backed adapter reports command
-broker confirmation through `DispatchObserver` while it continues waiting for a
-durable command response. It completes the control-plane operation as accepted
-or rejected only from that command-execution response; dispatch results do not
-claim appended events or invent a base stream version, so remote results omit
-append evidence while simulations explicitly report `appended: false`.
-`DispatchAdapter` implementations must await the observer's publication callback
-before returning; the control plane also verifies that the observed publication
-matches the terminal receipt. The idempotency key is mandatory for dispatch and
-is included in a mode-specific request fingerprint.
+Tracer mounts Dispatch separately from Simulate and requires a distinct bearer
+capability. Test and Dispatch use separate instances of the same asynchronous
+`CommandTransport`. A publication-backed transport reports broker confirmation
+through `CommandTransportObserver` while it continues waiting for a durable
+command response. Tracer completes the operation as accepted or rejected only
+from that command-execution response; transported results do not claim local
+append evidence or invent a base stream version, while simulations explicitly
+report `appended: false`. A transport must report publication before returning,
+and Tracer verifies that the observation matches the terminal receipt. The
+idempotency key is mandatory for transported commands and is included in a
+mode-specific request fingerprint.
 
 ## Consequences
 

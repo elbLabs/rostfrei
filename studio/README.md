@@ -33,7 +33,7 @@ bun install
 bun run dev
 ```
 
-Vite proxies Tracer API paths to `http://127.0.0.1:3000` and attaches the appropriate local
+Vite proxies Tracer API paths to `http://127.0.0.1:1309` and attaches the appropriate local
 capability server-side, so Studio connects automatically without
 exposing it to browser code. Discovery, Simulate, Test, and reset use
 `ROSTFREI_API_TOKEN`; Dispatch and its operation and correlation resources use

@@ -1,15 +1,15 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
+        Arc, Mutex as StdMutex, PoisonError,
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex as StdMutex,
     },
 };
 
 use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 
 use crate::{OperationMode, TracePayloadPolicy};
 
@@ -18,7 +18,7 @@ const DEFAULT_MAXIMUM_EVENTS_PER_CORRELATION: usize = 512;
 const DEFAULT_MAXIMUM_BYTES_PER_CORRELATION: usize = 4 * 1024 * 1024;
 const MAXIMUM_TOTAL_CORRELATION_BYTES: usize = 64 * 1024 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CorrelationEvent {
     pub id: u64,
@@ -27,7 +27,7 @@ pub struct CorrelationEvent {
     pub kind: CorrelationEventKind,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(
     tag = "type",
     rename_all = "kebab-case",
@@ -87,7 +87,7 @@ pub enum CorrelationCommandOutcome {
     Indeterminate,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DomainEventObservation {
     pub event_type: String,
     pub schema_version: u32,
@@ -118,7 +118,7 @@ impl DomainEventObservation {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IntegrationEventObservation {
     pub event_type: String,
     pub schema_version: u32,
@@ -236,15 +236,19 @@ pub struct CorrelationSubscription {
 impl CorrelationSubscription {
     pub async fn next(&mut self) -> Option<CorrelationEvent> {
         loop {
-            {
+            let (event, is_closed, is_lagged) = {
                 let state = self.record.state.lock().await;
-                if let Some(event) = state.events.iter().find(|event| event.id > self.cursor) {
-                    self.cursor = event.id;
-                    return Some(event.clone());
-                }
-                if self.record.closed.load(Ordering::Acquire) {
-                    return None;
-                }
+                state.event_after_or_closed(self.cursor, &self.record.closed)
+            };
+            if is_lagged {
+                return None;
+            }
+            if let Some(event) = event {
+                self.cursor = event.id;
+                return Some(event);
+            }
+            if is_closed {
+                return None;
             }
             if self.receiver.changed().await.is_err() {
                 return None;
@@ -253,7 +257,7 @@ impl CorrelationSubscription {
     }
 }
 
-pub(crate) struct CorrelationHub {
+pub struct CorrelationHub {
     state: StdMutex<CorrelationTable>,
     maximum_correlations: usize,
     maximum_events_per_correlation: usize,
@@ -295,7 +299,7 @@ impl CorrelationHub {
         aggregate_id: String,
     ) -> Result<(), CorrelationError> {
         validate_correlation_id(correlation_id)?;
-        let mut table = self.state.lock().expect("correlation table lock poisoned");
+        let mut table = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if table.records.contains_key(correlation_id) {
             return Err(CorrelationError::InvalidId(
                 "correlation is already registered".to_owned(),
@@ -411,7 +415,7 @@ impl CorrelationHub {
     }
 
     pub fn retain_dispatch_correlations(&self) {
-        let mut table = self.state.lock().expect("correlation table lock poisoned");
+        let mut table = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let removed = table
             .records
             .extract_if(|_, record| record.mode != OperationMode::Dispatch)
@@ -429,7 +433,7 @@ impl CorrelationHub {
 
     pub fn remove(&self, correlation_id: &str) {
         let record = {
-            let mut table = self.state.lock().expect("correlation table lock poisoned");
+            let mut table = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             table
                 .insertion_order
                 .retain(|retained| retained != correlation_id);
@@ -444,7 +448,7 @@ impl CorrelationHub {
         validate_correlation_id(correlation_id)?;
         self.state
             .lock()
-            .expect("correlation table lock poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .records
             .get(correlation_id)
             .cloned()
@@ -522,15 +526,12 @@ impl CorrelationRecord {
         let _lifecycle = self
             .lifecycle
             .lock()
-            .expect("correlation lifecycle lock poisoned");
+            .unwrap_or_else(PoisonError::into_inner);
         if self.closed.load(Ordering::Acquire) {
             return Err(CorrelationError::NotFound);
         }
         let id = state.next_id;
-        state.next_id = state
-            .next_id
-            .checked_add(1)
-            .expect("bounded correlation events cannot exhaust u64 IDs");
+        state.next_id = state.next_id.saturating_add(1);
         let event = bounded_event(
             CorrelationEvent {
                 id,
@@ -561,7 +562,7 @@ impl CorrelationRecord {
         let _lifecycle = self
             .lifecycle
             .lock()
-            .expect("correlation lifecycle lock poisoned");
+            .unwrap_or_else(PoisonError::into_inner);
         self.closed.store(true, Ordering::Release);
         let latest = *self.changed.borrow();
         self.changed.send_replace(latest);
@@ -574,14 +575,30 @@ struct CorrelationState {
     retained_bytes: usize,
 }
 
+impl CorrelationState {
+    fn event_after_or_closed(
+        &self,
+        cursor: u64,
+        closed: &AtomicBool,
+    ) -> (Option<CorrelationEvent>, bool, bool) {
+        let is_lagged = self
+            .events
+            .front()
+            .is_some_and(|event| cursor.saturating_add(1) < event.id);
+        let event = self.events.iter().find(|event| event.id > cursor).cloned();
+        let is_closed = event.is_none() && closed.load(Ordering::Acquire);
+        (event, is_closed, is_lagged)
+    }
+}
+
 fn serialized_event_len(event: &CorrelationEvent) -> usize {
-    serde_json::to_vec(event)
-        .expect("correlation events always serialize")
-        .len()
+    serde_json::to_vec(event).map_or(usize::MAX, |serialized| serialized.len())
 }
 
 fn correlation_byte_budget(maximum_correlations: usize) -> usize {
-    (MAXIMUM_TOTAL_CORRELATION_BYTES / maximum_correlations.max(1))
+    MAXIMUM_TOTAL_CORRELATION_BYTES
+        .checked_div(maximum_correlations.max(1))
+        .unwrap_or(MAXIMUM_TOTAL_CORRELATION_BYTES)
         .min(DEFAULT_MAXIMUM_BYTES_PER_CORRELATION)
 }
 
@@ -605,11 +622,57 @@ fn bounded_event(
     }
 }
 
-pub(crate) fn validate_correlation_id(value: &str) -> Result<(), CorrelationError> {
+pub fn validate_correlation_id(value: &str) -> Result<(), CorrelationError> {
     if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
         return Err(CorrelationError::InvalidId(
             "correlation ID must contain 1-256 non-control characters".to_owned(),
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "test assertions intentionally panic while fixture setup uses Result"
+    )]
+    async fn active_subscription_closes_instead_of_skipping_evicted_events()
+    -> Result<(), CorrelationError> {
+        let hub = Arc::new(CorrelationHub {
+            state: StdMutex::new(CorrelationTable::default()),
+            maximum_correlations: 1,
+            maximum_events_per_correlation: 2,
+            maximum_bytes_per_correlation: DEFAULT_MAXIMUM_BYTES_PER_CORRELATION,
+        });
+        hub.register_command(
+            "correlation-1",
+            OperationMode::Test,
+            "operation-1".to_owned(),
+            "test-command".to_owned(),
+            1,
+            "test-context/test-aggregate".to_owned(),
+            "aggregate-1".to_owned(),
+        )?;
+        let mut subscription = hub.subscribe("correlation-1", 0).await?;
+        for operation_id in ["operation-1", "operation-2"] {
+            hub.command_result(
+                "correlation-1",
+                operation_id.to_owned(),
+                CorrelationCommandOutcome::Accepted,
+                None,
+            )
+            .await?;
+        }
+
+        assert_eq!(subscription.next().await, None);
+        assert!(matches!(
+            hub.subscribe("correlation-1", 0).await,
+            Err(CorrelationError::ExpiredCursor { oldest: 2 })
+        ));
+        Ok(())
+    }
 }

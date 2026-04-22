@@ -1,47 +1,46 @@
-use std::io;
+#![allow(
+    clippy::unwrap_used,
+    reason = "static test fixture identities must be valid"
+)]
 
 use bike_rental::rental::{
-    AddBicycle, BicycleAdded, BicycleAvailability, BicycleCondition, BicycleId, BicycleNotRented,
+    BicycleAdded, BicycleAvailability, BicycleCondition, BicycleId, BicycleNotRented,
     BicycleRented, BicycleReturned, BicycleStatus, BicycleUnavailable, FleetId, ImportedBicycle,
-    RentBicycle, RentalFleetActions, RentalFleetAggregate, RentalFleetImported, ReturnBicycle,
+    RentBicycle, RentalFleetActions, RentalFleetAggregate, RentalFleetImported,
 };
 use bike_rental::runtime::{demo_stream, seed_demo};
 use rostfrei::{
-    AggregateInstance, ContentFingerprint, EventVariant, ExecutionError, ExecutionMetadata,
-    ExecutionOutcome, Executor, InMemoryEventStore, OperationId, StreamAggregateId,
+    AggregateInstance, CommandOutcome, CommandReceipt, ContentFingerprint, EventVariant,
+    ExecutionMetadata, Executor, InMemoryEventStore, OperationId, StreamAggregateId,
     StreamAggregateType, StreamId,
 };
 use uuid::Uuid;
 
-type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
-
 fn fleet(
     status: BicycleStatus,
     condition: BicycleCondition,
-) -> TestResult<AggregateInstance<RentalFleetAggregate>> {
-    let fleet_id = FleetId::new("city-fleet")
-        .ok_or_else(|| io::Error::other("fixture fleet ID should be non-empty"))?;
-    Ok(AggregateInstance::rehydrate(
+) -> AggregateInstance<RentalFleetAggregate> {
+    let fleet_id = FleetId::new("city-fleet").unwrap();
+    AggregateInstance::rehydrate(
         StreamId::new(
-            StreamAggregateType::new("bike-rental/rental-fleet")?,
-            StreamAggregateId::new(fleet_id.as_str())?,
+            StreamAggregateType::new("bike-rental/rental-fleet").unwrap(),
+            StreamAggregateId::new(fleet_id.as_str()).unwrap(),
         ),
         [RentalFleetImported {
             fleet_id,
             bicycles: vec![ImportedBicycle {
-                bicycle_id: BicycleId::new("bike-42")
-                    .ok_or_else(|| io::Error::other("fixture bicycle ID should be non-empty"))?,
+                bicycle_id: BicycleId::new("bike-42").unwrap(),
                 status,
                 condition,
             }],
         }
         .into()],
-    ))
+    )
 }
 
 #[test]
 fn rents_an_available_serviceable_bicycle() {
-    let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable).unwrap();
+    let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable);
     let bicycle_id = BicycleId::new("bike-42").unwrap();
 
     fleet.rent_bicycle(bicycle_id.clone()).unwrap();
@@ -56,12 +55,11 @@ fn rents_an_available_serviceable_bicycle() {
 }
 
 #[test]
-fn rejects_a_maintenance_required_bicycle_without_changing_it() {
+fn rejects_an_unavailable_bicycle_without_changing_it() {
     let mut fleet = fleet(
         BicycleStatus::Available,
         BicycleCondition::MaintenanceRequired,
-    )
-    .unwrap();
+    );
     let bicycle_id = BicycleId::new("bike-42").unwrap();
 
     let error = fleet.rent_bicycle(bicycle_id.clone()).unwrap_err();
@@ -78,11 +76,7 @@ fn rejects_a_maintenance_required_bicycle_without_changing_it() {
 fn returns_a_rented_bicycle_and_rejects_a_second_return() {
     let mut fleet = fleet(BicycleStatus::Rented, BicycleCondition::Serviceable);
     let bicycle_id = BicycleId::new("bike-42").unwrap();
-    let command = ReturnBicycle {
-        bicycle_id: bicycle_id.clone(),
-    };
-
-    fleet.return_bicycle(&command).unwrap();
+    fleet.return_bicycle(bicycle_id.clone()).unwrap();
 
     let event = EventVariant::<BicycleReturned>::event(&fleet.uncommitted_events()[0]).unwrap();
     assert_eq!(event.bicycle_id, bicycle_id);
@@ -95,10 +89,8 @@ fn returns_a_rented_bicycle_and_rejects_a_second_return() {
         Some(BicycleAvailability::Available)
     );
     assert_eq!(
-        fleet.return_bicycle(&command),
-        Err(BicycleNotRented {
-            bicycle_id: command.bicycle_id.clone(),
-        })
+        fleet.return_bicycle(bicycle_id.clone()),
+        Err(BicycleNotRented { bicycle_id })
     );
     assert_eq!(fleet.uncommitted_events().len(), 1);
 }
@@ -106,9 +98,7 @@ fn returns_a_rented_bicycle_and_rejects_a_second_return() {
 #[test]
 fn adds_serviceable_bicycles_with_generated_unique_ids() {
     let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable);
-    let command = AddBicycle;
-
-    fleet.add_bicycle(&command).unwrap();
+    fleet.add_bicycle();
 
     let event = EventVariant::<BicycleAdded>::event(&fleet.uncommitted_events()[0]).unwrap();
     let first_bicycle_id = event.bicycle_id.clone();
@@ -123,7 +113,7 @@ fn adds_serviceable_bicycles_with_generated_unique_ids() {
         RentalFleetAggregate::bicycle_availability(fleet.state(), &event.bicycle_id),
         Some(BicycleAvailability::Available)
     );
-    fleet.add_bicycle(&command).unwrap();
+    fleet.add_bicycle();
     let second = EventVariant::<BicycleAdded>::event(&fleet.uncommitted_events()[1]).unwrap();
     assert_ne!(second.bicycle_id, first_bicycle_id);
     assert_eq!(fleet.state().bicycles().len(), 3);
@@ -149,9 +139,12 @@ async fn rejects_renting_the_same_bicycle_twice_when_commands_are_executed() {
         )
         .await
         .unwrap();
-    assert!(matches!(outcome, ExecutionOutcome::Appended(_)));
+    assert!(matches!(
+        outcome,
+        CommandOutcome::Accepted(CommandReceipt::Appended(_))
+    ));
 
-    let error = Executor::new(store.clone())
+    let outcome = Executor::new(store.clone())
         .execute::<RentalFleetAggregate, _>(
             ExecutionMetadata::new(
                 demo_stream(),
@@ -161,13 +154,15 @@ async fn rejects_renting_the_same_bicycle_twice_when_commands_are_executed() {
             &command,
         )
         .await
-        .unwrap_err();
+        .unwrap();
 
-    match error {
-        ExecutionError::Rejected(error) => {
+    match outcome {
+        CommandOutcome::Rejected(error) => {
             assert_eq!(error, BicycleUnavailable { bicycle_id });
         }
-        error => panic!("expected domain rejection, got {error}"),
+        outcome @ CommandOutcome::Accepted(_) => {
+            panic!("expected domain rejection, got {outcome:?}");
+        }
     }
     assert_eq!(store.load(&demo_stream()).await.unwrap().len(), 2);
 }

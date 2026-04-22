@@ -6,7 +6,7 @@ use rostfrei_core::{
     Aggregate, AggregateId, ContentFingerprint, Event, EventHistory, ExecutionMetadata, Executor,
     NewEvent, OperationId, SimulationDecision, SimulationError, StreamId,
 };
-use rostfrei_registry::{CommandDefinition, CommandDescriptor, DomainRegistry, RegistrationError};
+use rostfrei_registry::{CommandDefinition, CommandDescriptor, DomainRegistry};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -17,8 +17,11 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum RuntimeRegistrationError {
-    #[error(transparent)]
-    Registry(#[from] RegistrationError),
+    #[error("command `{command}` version {schema_version} is not in the domain registry")]
+    MissingDescriptor {
+        command: &'static str,
+        schema_version: u32,
+    },
     #[error("command `{command}` version {schema_version} is already bound")]
     DuplicateBinding {
         command: &'static str,
@@ -64,12 +67,12 @@ pub enum RuntimeSimulationError {
 }
 
 #[derive(Clone, Debug, Error)]
-pub(crate) enum RuntimeInputError {
+pub enum RuntimeInputError {
     #[error(transparent)]
     Rehydration(#[from] SimulationError),
 }
 
-pub(crate) enum RuntimeDecision {
+pub enum RuntimeDecision {
     Accepted {
         base_stream_version: u64,
         events: Vec<PredictedDomainEvent>,
@@ -118,7 +121,7 @@ pub trait ErasedCommandSimulator: Send + Sync {
 }
 
 #[async_trait]
-pub(crate) trait ErasedCommandInputOptions: Send + Sync {
+pub trait ErasedCommandInputOptions: Send + Sync {
     async fn fields(
         &self,
         history: Arc<dyn EventHistory>,
@@ -129,7 +132,6 @@ pub(crate) trait ErasedCommandInputOptions: Send + Sync {
 struct TypedCommandInputOptions<Command, Provider>
 where
     Command: CommandDefinition,
-    Command::Aggregate: rostfrei_core::CommandHandler<Command>,
 {
     provider: Provider,
     marker: std::marker::PhantomData<fn() -> Command>,
@@ -139,7 +141,6 @@ where
 impl<Command, Provider> ErasedCommandInputOptions for TypedCommandInputOptions<Command, Provider>
 where
     Command: CommandDefinition,
-    Command::Aggregate: rostfrei_core::CommandHandler<Command>,
     <Command::Aggregate as Aggregate>::State: Send,
     <Command::Aggregate as Aggregate>::Event: Event + Send,
     Provider: CommandInputOptions<Command> + 'static,
@@ -170,6 +171,7 @@ where
 impl<Command> ErasedCommandSimulator for TypedCommandSimulator<Command>
 where
     Command: CommandDefinition + JsonCommandPayload,
+    Command::Aggregate: rostfrei_core::CommandHandler<Command>,
     <Command::Aggregate as Aggregate>::State: Send,
     <Command::Aggregate as rostfrei_core::Aggregate>::Event: Event + Send,
     <Command::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection: JsonErrorPayload,
@@ -255,6 +257,7 @@ impl RuntimeBindings {
     pub fn register_json<Command>(&mut self) -> Result<(), RuntimeRegistrationError>
     where
         Command: CommandDefinition + JsonCommandPayload,
+        Command::Aggregate: rostfrei_core::CommandHandler<Command>,
         <Command::Aggregate as Aggregate>::State: Send,
         <Command::Aggregate as Aggregate>::Event: Event + Send,
         <Command::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection: JsonErrorPayload,
@@ -305,13 +308,12 @@ impl RuntimeBindings {
     ) -> Result<(), RuntimeRegistrationError>
     where
         Command: CommandDefinition,
-        Command::Aggregate: rostfrei_core::CommandHandler<Command>,
         <Command::Aggregate as Aggregate>::State: Send,
         <Command::Aggregate as Aggregate>::Event: Event + Send,
         Provider: CommandInputOptions<Command> + 'static,
     {
         let expected_descriptor = Command::descriptor();
-        let descriptor = match self
+        let descriptor = self
             .registry
             .command(
                 &expected_descriptor.aggregate_type,
@@ -363,35 +365,6 @@ impl RuntimeBindings {
                 });
             }
         }
-        Ok(())
-    }
-
-    pub fn register_dispatch<Command>(
-        &mut self,
-        adapter: Arc<dyn DispatchAdapter>,
-    ) -> Result<(), RuntimeRegistrationError>
-    where
-        Command: CommandDefinition,
-    {
-        let descriptor = Command::descriptor();
-        let key = CommandKey::new(
-            descriptor.aggregate_type,
-            Command::COMMAND_NAME,
-            Command::SCHEMA_VERSION,
-        );
-        if !self.simulators.contains_key(&key) {
-            return Err(RuntimeRegistrationError::DispatchWithoutSimulationBinding {
-                command: Command::COMMAND_NAME,
-                schema_version: Command::SCHEMA_VERSION,
-            });
-        }
-        if self.dispatchers.contains_key(&key) {
-            return Err(RuntimeRegistrationError::DuplicateDispatchBinding {
-                command: Command::COMMAND_NAME,
-                schema_version: Command::SCHEMA_VERSION,
-            });
-        }
-        self.dispatchers.insert(key, adapter);
         Ok(())
     }
 }

@@ -11,11 +11,11 @@ pub mod transport;
 pub mod http;
 
 pub use behavioral::{
-    outcome_matches, payload_matches_subset, trace_expectation_matches, FilesystemTestRepository,
-    TestAggregate, TestCommand, TestDefinition, TestDefinitionCollection, TestDefinitionRevision,
-    TestDefinitionSummary, TestExpectationResult, TestGiven, TestOutcome, TestRejection,
-    TestReport, TestReportFailure, TestReportStatus, TestRepository, TestRepositoryError, TestThen,
-    TestTimeout, TestTimeoutParseError, TestTrace, TestWhen, TraceExpectation,
+    FilesystemTestRepository, TestAggregate, TestCommand, TestDefinition, TestDefinitionCollection,
+    TestDefinitionRevision, TestDefinitionSummary, TestExpectationResult, TestGiven, TestOutcome,
+    TestRejection, TestReport, TestReportFailure, TestReportStatus, TestRepository,
+    TestRepositoryError, TestThen, TestTimeout, TestTimeoutParseError, TestTrace, TestWhen,
+    TraceExpectation, outcome_matches, payload_matches_subset, trace_expectation_matches,
 };
 pub use catalog::{
     AggregateInstanceCollection, AggregateInstanceSummary, CatalogAggregate, CatalogCommand,
@@ -35,12 +35,12 @@ pub use operation::{
 };
 pub use runtime::RuntimeRegistrationError;
 pub use service::{
-    CommandInputError, DiscoveryError, ExposeTracePayloadsForLocalDevelopment, RedactTracePayloads,
-    SimulationRequest, SubmissionError, TestRunError, TestScenarioReset, TestScenarioResetError,
-    TracePayloadPolicy, Tracer, TracerBuilder, MAX_COMMAND_PAYLOAD_LEN,
+    CommandInputError, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
+    MAX_COMMAND_PAYLOAD_LEN, RedactTracePayloads, SimulationRequest, SubmissionError, TestRunError,
+    TestScenarioReset, TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
 };
 pub use transport::{
-    command_execution_fingerprint, CommandInvocation, CommandOutcome, CommandPublication,
-    CommandReceipt, CommandRejection, CommandTransport, CommandTransportError,
-    CommandTransportErrorKind, CommandTransportObserver,
+    CommandInvocation, CommandOutcome, CommandPublication, CommandReceipt, CommandRejection,
+    CommandTransport, CommandTransportError, CommandTransportErrorKind, CommandTransportObserver,
+    command_execution_fingerprint,
 };
