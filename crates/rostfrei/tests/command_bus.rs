@@ -3,11 +3,11 @@
 use std::{convert::Infallible, error::Error, sync::Arc};
 
 use rostfrei::{
-    Aggregate, AggregateInstance, Apply, CommandBus, CommandBusErrorKind, CommandHandler,
+    Aggregate, AggregateInstance, Apply, Command, CommandBus, CommandBusErrorKind, CommandHandler,
     CommandMessageAdapter, CommandProcessor, CommandProcessorErrorKind, CommandRequest,
-    Command, DomainEvent, DomainIdentity, DynamicCommandRequest, EncodedCommand, Entity,
-    EventStore, InMemoryEventStore, InMemoryMessagingAdapter, Initialize, OperationId,
-    StreamAggregateId, StreamId, command_execution_fingerprint,
+    DomainEvent, DomainIdentity, DynamicCommandRequest, EncodedCommand, Entity, EventStore,
+    InMemoryEventStore, InMemoryMessagingAdapter, Initialize, OperationId, StreamAggregateId,
+    StreamId, command_execution_fingerprint,
 };
 use rostfrei::{BoundedContext, InfallibleCommandRejectionMapper};
 use rostfrei_messaging_core::{
