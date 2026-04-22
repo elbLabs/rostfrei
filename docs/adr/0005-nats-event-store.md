@@ -34,12 +34,14 @@ consumers filter out internal subjects and use transaction event ordinals to
 deliver only complete domain-event groups.
 
 This requires `async-nats` 0.50's `server_2_12` feature and NATS Server 2.12.1
-or newer. An ADR-50 batch contains at most 1,000 items. A direct single-stream
-append can contain 1,000 events; an event transaction budgets its domain events,
-read guards, and receipt against the same limit. Unrelated aggregate subjects do
-not conflict. Stored commit IDs, operation fingerprints, and transaction
-receipts provide exact retry after reconnect or restart without relying on
-JetStream message-ID deduplication.
+or newer. Although ADR-50 permits 1,000 items, rostfrei caps an atomic publish at
+100 items so oversized commands fail before publication instead of approaching
+the server's batch assembly deadline. A direct single-stream append can contain
+100 events; an event transaction budgets its domain events, read guards, and
+receipt against the same limit. Unrelated aggregate subjects do not conflict.
+Stored commit IDs, operation fingerprints, and transaction receipts provide
+exact retry after reconnect or restart without relying on JetStream message-ID
+deduplication.
 
 Authoritative streams use file storage, Limits retention, zero max age,
 `DiscardNew`, unlimited message counts, finite byte capacity, explicit replicas,
