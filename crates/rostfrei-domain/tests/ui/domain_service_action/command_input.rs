@@ -1,4 +1,4 @@
-use domain::{BoundedContext, DomainCommand, DomainService, domain_actions};
+use domain::{BoundedContext, Command, DomainService, domain_actions};
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -8,7 +8,7 @@ struct Context;
 #[domain(id = "other", label = "Other", context = Context)]
 struct Other;
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(id = "execute", label = "Execute", owner = Other)]
 pub struct Execute;
 

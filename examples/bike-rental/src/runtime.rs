@@ -50,7 +50,7 @@ impl Apply<BicycleRented> for RentalFleet {
 }
 
 impl CommandHandler<RentBicycle> for RentalFleetAggregate {
-    type Rejection = <RentBicycle as rostfrei::DomainCommandType>::Rejection;
+    type Rejection = <RentBicycle as rostfrei::CommandType>::Rejection;
 
     fn handle(
         command: &RentBicycle,

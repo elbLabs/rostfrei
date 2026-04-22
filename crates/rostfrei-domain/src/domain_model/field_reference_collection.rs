@@ -1,10 +1,9 @@
 use std::fmt;
 
 use crate::{
-    DomainCommandDescriptor, DomainCommandId, DomainErrorDescriptor, DomainErrorId,
-    DomainEventDescriptor, DomainEventId, EntityDescriptor, EntityId, FieldDescriptor, FieldKind,
-    ValueObjectDescriptor, ValueObjectId, ValueObjectShapeDescriptor,
-    ValueObjectVariantShapeDescriptor,
+    CommandDescriptor, CommandId, DomainErrorDescriptor, DomainErrorId, DomainEventDescriptor,
+    DomainEventId, EntityDescriptor, EntityId, FieldDescriptor, FieldKind, ValueObjectDescriptor,
+    ValueObjectId, ValueObjectShapeDescriptor, ValueObjectVariantShapeDescriptor,
 };
 
 #[derive(Clone, Copy)]
@@ -19,7 +18,7 @@ pub(super) enum FieldReference {
 enum FieldDescriptorOwner {
     Entity(EntityId),
     ValueObject(ValueObjectId),
-    DomainCommand(DomainCommandId),
+    Command(CommandId),
     DomainEvent(DomainEventId),
     DomainError(DomainErrorId),
 }
@@ -36,7 +35,7 @@ impl fmt::Display for FieldDescriptorLocation {
         match self.owner {
             FieldDescriptorOwner::Entity(id) => write!(formatter, "entity {id:?}"),
             FieldDescriptorOwner::ValueObject(id) => write!(formatter, "value object {id:?}"),
-            FieldDescriptorOwner::DomainCommand(id) => write!(formatter, "domain command {id:?}"),
+            FieldDescriptorOwner::Command(id) => write!(formatter, "command {id:?}"),
             FieldDescriptorOwner::DomainEvent(id) => write!(formatter, "domain event {id:?}"),
             FieldDescriptorOwner::DomainError(id) => write!(formatter, "domain error {id:?}"),
         }?;
@@ -91,9 +90,9 @@ impl FieldReferenceCollection {
         }
     }
 
-    pub(super) fn add_domain_command(&mut self, descriptor: DomainCommandDescriptor) {
+    pub(super) fn add_command(&mut self, descriptor: CommandDescriptor) {
         self.add_fields(
-            FieldDescriptorOwner::DomainCommand(descriptor.id),
+            FieldDescriptorOwner::Command(descriptor.id),
             None,
             descriptor.fields,
         );

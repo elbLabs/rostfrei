@@ -1,11 +1,10 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate, BoundedContext, DomainCommand, DomainCommandType, DomainError, DomainErrorType,
-    DomainEvent, DomainEventDefinitionType, DomainIdentity, DomainIdentityDescriptor,
-    DomainIdentityId, DomainIdentityType, DomainModelError, Entity, EntityType, FieldKind,
-    FieldWrapper, ScalarType, SemanticScalar, SemanticScalarDescriptor, ValueObject,
-    ValueObjectType, domain_model,
+    Aggregate, BoundedContext, Command, CommandType, DomainError, DomainErrorType, DomainEvent,
+    DomainEventDefinitionType, DomainIdentity, DomainIdentityDescriptor, DomainIdentityId,
+    DomainIdentityType, DomainModelError, Entity, EntityType, FieldKind, FieldWrapper, ScalarType,
+    SemanticScalar, SemanticScalarDescriptor, ValueObject, ValueObjectType, domain_model,
 };
 use serde_json::json;
 
@@ -74,7 +73,7 @@ struct ExternalReference {
     value: foreign::Uuid,
 }
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(id = "correlate-document", label = "Correlate document", owner = Documents)]
 struct CorrelateDocument {
     #[domain(scalar = UuidScalar)]
@@ -263,7 +262,7 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
             },
         },
     });
-    assert_eq!(model["domainCommands"][0]["fields"][0], semantic_field);
+    assert_eq!(model["commands"][0]["fields"][0], semantic_field);
     assert_eq!(model["domainEvents"][0]["fields"][0], semantic_field);
     assert_eq!(model["domainErrors"][0]["fields"][0], semantic_field);
 

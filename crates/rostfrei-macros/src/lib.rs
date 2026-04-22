@@ -9,8 +9,8 @@ use syn::{
     parse_macro_input,
 };
 
-#[proc_macro_derive(Command, attributes(rostfrei))]
-pub fn derive_command(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(CommandDefinition, attributes(rostfrei))]
+pub fn derive_command_definition(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_command(&input)
         .unwrap_or_else(Error::into_compile_error)

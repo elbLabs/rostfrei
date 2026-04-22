@@ -1,4 +1,4 @@
-use domain::{Aggregate, BoundedContext, DomainCommand, DomainError, DomainEvent, DomainIdentity, Entity, ValueObject, domain_queries};
+use domain::{Aggregate, BoundedContext, Command, DomainError, DomainEvent, DomainIdentity, Entity, ValueObject, domain_queries};
 
 #[derive(BoundedContext)]
 #[domain(id = "catalog", label = "Catalog")]
@@ -20,7 +20,7 @@ struct Model;
 #[domain(id = "filter", label = "Filter", owner = Model)]
 struct Filter(String);
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(id = "command", label = "Command", owner = Model)]
 struct Command;
 

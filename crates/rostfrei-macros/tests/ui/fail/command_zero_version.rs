@@ -1,8 +1,8 @@
-use rostfrei_macros::Command;
+use rostfrei_macros::CommandDefinition;
 
 struct Account;
 
-#[derive(Command)]
+#[derive(CommandDefinition)]
 #[rostfrei(name = "account.open", version = 0, aggregate = Account)]
 struct OpenAccount;
 
