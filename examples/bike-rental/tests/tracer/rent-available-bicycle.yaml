@@ -1,0 +1,31 @@
+schemaVersion: 1
+id: rent-available-bicycle
+name: Rent an available bicycle
+given:
+  fixture: demo-fleet
+when:
+  command:
+    name: rent-bicycle
+    schemaVersion: 1
+    aggregate:
+      type: bike-rental/rental-fleet
+      id: city-fleet
+    payload:
+      bicycle_id: bike-42
+then:
+  outcome: accepted
+  within: 35s
+  trace:
+    contains:
+      - kind: domain-event
+        name: bicycle-rented
+        schemaVersion: 1
+        payload:
+          fleet_id: city-fleet
+          bicycle_id: bike-42
+      - kind: integration-event
+        name: bicycle-rental-started
+        schemaVersion: 1
+        payload:
+          fleet_id: city-fleet
+          bicycle_id: bike-42

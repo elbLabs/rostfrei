@@ -20,11 +20,30 @@ pub enum OperationStatus {
     Running,
     Completed,
     Failed,
+    Indeterminate,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OperationMode {
+    Simulate,
+    Test,
+    Dispatch,
+}
+
+impl OperationMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Simulate => "simulate",
+            Self::Test => "test",
+            Self::Dispatch => "dispatch",
+        }
+    }
 }
 
 impl OperationStatus {
     pub const fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed)
+        matches!(self, Self::Completed | Self::Failed | Self::Indeterminate)
     }
 }
 
@@ -44,8 +63,6 @@ pub struct PredictedDomainEvent {
     pub schema_version: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub payload_base64: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -89,7 +106,8 @@ pub enum OperationResult {
 #[serde(rename_all = "camelCase")]
 pub struct OperationSnapshot {
     pub operation_id: String,
-    pub mode: &'static str,
+    pub correlation_id: String,
+    pub mode: OperationMode,
     pub status: OperationStatus,
     pub command: String,
     pub schema_version: u32,
@@ -107,6 +125,10 @@ pub struct OperationSnapshot {
 pub struct OperationFailure {
     pub code: &'static str,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duplicate: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -151,6 +173,12 @@ pub enum OperationEventKind {
         code: &'static str,
         message: String,
     },
+    Indeterminate {
+        code: &'static str,
+        message: String,
+        command_message_id: String,
+        duplicate: bool,
+    },
 }
 
 impl OperationEventKind {
@@ -166,13 +194,16 @@ impl OperationEventKind {
             Self::CommandResponded { .. } => "command.responded",
             Self::Completed { .. } => "operation.completed",
             Self::Failed { .. } => "operation.failed",
+            Self::Indeterminate { .. } => "operation.indeterminate",
         }
     }
 }
 
 pub struct NewOperation<'a> {
     pub operation_id: String,
+    pub correlation_id: String,
     pub fingerprint: String,
+    pub mode: OperationMode,
     pub command: &'a str,
     pub schema_version: u32,
     pub aggregate_type: &'a str,
@@ -184,10 +215,11 @@ struct OperationState {
     fingerprint: String,
     snapshot: OperationSnapshot,
     events: Vec<OperationEvent>,
-    next_event_id: u64,
+    publication: Option<(String, bool)>,
 }
 
-pub struct OperationRecord {
+pub(crate) struct OperationRecord {
+    mode: OperationMode,
     state: Mutex<OperationState>,
     changed: watch::Sender<u64>,
     terminal: AtomicBool,
@@ -202,10 +234,12 @@ impl OperationRecord {
         };
         let (changed, _) = watch::channel(1);
         Arc::new(Self {
+            mode: operation.mode,
             state: Mutex::new(OperationState {
                 fingerprint: operation.fingerprint,
                 snapshot: OperationSnapshot {
                     operation_id: operation.operation_id,
+                    correlation_id: operation.correlation_id,
                     mode: operation.mode,
                     status: OperationStatus::Queued,
                     command: operation.command.to_owned(),
@@ -217,7 +251,7 @@ impl OperationRecord {
                     failure: None,
                 },
                 events: vec![event],
-                next_event_id: 2,
+                publication: None,
             }),
             changed,
             terminal: AtomicBool::new(false),
@@ -226,6 +260,10 @@ impl OperationRecord {
 
     pub async fn fingerprint(&self) -> String {
         self.state.lock().await.fingerprint.clone()
+    }
+
+    pub const fn mode(&self) -> OperationMode {
+        self.mode
     }
 
     pub async fn snapshot(&self) -> OperationSnapshot {
@@ -297,13 +335,94 @@ impl OperationRecord {
                 duplicate,
             },
         );
+        state.snapshot.status = OperationStatus::Failed;
+        state.snapshot.failure = Some(OperationFailure {
+            code,
+            message,
+            command_message_id: None,
+            duplicate: None,
+        });
+        self.terminal.store(true, Ordering::Release);
         let latest = state.snapshot.latest_event_id;
         drop(state);
         self.changed.send_replace(latest);
     }
 
+    pub async fn indeterminate(
+        &self,
+        code: &'static str,
+        message: String,
+        command_message_id: String,
+        duplicate: bool,
+    ) {
+        let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() {
+            return;
+        }
+        push_event(
+            &mut state,
+            OperationEventKind::Indeterminate {
+                code,
+                message: message.clone(),
+                command_message_id: command_message_id.clone(),
+                duplicate,
+            },
+        );
+        state.snapshot.status = OperationStatus::Indeterminate;
+        state.snapshot.failure = Some(OperationFailure {
+            code,
+            message,
+            command_message_id: Some(command_message_id),
+            duplicate: Some(duplicate),
+        });
+        self.terminal.store(true, Ordering::Release);
+        let latest = state.snapshot.latest_event_id;
+        drop(state);
+        self.changed.send_replace(latest);
+    }
+
+    pub async fn command_published(&self, command_message_id: String, duplicate: bool) {
+        let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() || state.publication.is_some() {
+            return;
+        }
+        push_event(
+            &mut state,
+            OperationEventKind::CommandPublished {
+                command_message_id: command_message_id.clone(),
+                duplicate,
+            },
+        );
+        state.publication = Some((command_message_id, duplicate));
+        let latest = state.snapshot.latest_event_id;
+        drop(state);
+        self.changed.send_replace(latest);
+    }
+
+    pub async fn fail_after_possible_publication(&self, code: &'static str, message: String) {
+        let publication = self.state.lock().await.publication.clone();
+        if let Some((command_message_id, duplicate)) = publication {
+            self.indeterminate(code, message, command_message_id, duplicate)
+                .await;
+        } else {
+            self.fail(code, message).await;
+        }
+    }
+
     pub fn is_terminal(&self) -> bool {
         self.terminal.load(Ordering::Acquire)
+    }
+
+    async fn append(&self, kind: OperationEventKind, update: impl FnOnce(&mut OperationSnapshot)) {
+        let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() {
+            return;
+        }
+        push_event(&mut state, kind);
+        update(&mut state.snapshot);
+        let latest = state.snapshot.latest_event_id;
+        drop(state);
+        self.changed.send_replace(latest);
     }
 
     async fn subscription(

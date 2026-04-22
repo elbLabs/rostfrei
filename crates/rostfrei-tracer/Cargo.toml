@@ -1,5 +1,5 @@
 [package]
-name = "rostfrei-control-plane"
+name = "rostfrei-tracer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,6 @@ http = ["dep:axum", "dep:futures-util"]
 [dependencies]
 async-trait.workspace = true
 axum = { workspace = true, optional = true }
-base64.workspace = true
 futures-util = { workspace = true, optional = true }
 rostfrei-core = { path = "../rostfrei-core" }
 rostfrei-domain = { path = "../rostfrei-domain" }
@@ -20,6 +19,7 @@ rostfrei-registry = { path = "../rostfrei-registry" }
 rostfrei = { path = "../rostfrei" }
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -27,6 +27,8 @@ tracing.workspace = true
 [dev-dependencies]
 axum.workspace = true
 http-body-util = "0.1"
+rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
+tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
 [lints]
