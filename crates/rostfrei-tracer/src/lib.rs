@@ -3,6 +3,7 @@ mod catalog;
 mod command_bus;
 mod correlation;
 mod input;
+mod message_series;
 mod operation;
 mod runtime;
 mod service;
@@ -30,6 +31,13 @@ pub use correlation::{
     IntegrationEventObservation,
 };
 pub use input::{CommandInputDocument, CommandInputField, CommandInputOption, CommandInputOptions};
+pub use message_series::{
+    ExpectedMessageNode, MessageGraphDefinition, MessageSeriesDefinition,
+    MessageSeriesDefinitionError, MessageSeriesValidationIssue, ObservedCommandOutcome,
+    ObservedMessageNode, ObservedMessageSeries, ObservedMessageSeriesError,
+    ObservedMessageSeriesOutcomeIssue, message_series_definition_schema,
+    observed_message_series_schema,
+};
 pub use operation::{
     CompletedDecision, OperationEvent, OperationEventKind, OperationMode, OperationResult,
     OperationSnapshot, OperationStatus, OperationSubscription, PredictedDomainEvent,
