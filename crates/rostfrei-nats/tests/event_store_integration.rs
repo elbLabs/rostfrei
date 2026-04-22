@@ -586,6 +586,7 @@ async fn transaction_contract_and_wire_policy(
     let operation = "multi-stream-operation";
     let operation_id = OperationId::new(operation)?;
     let fingerprint = ContentFingerprint::digest(operation);
+    let primary_batch = batch(&primary, operation, operation, &[b"debited", b"audited"])?;
 
     store
         .append(
@@ -602,12 +603,7 @@ async fn transaction_contract_and_wire_policy(
             TransactionParticipant::new(
                 primary.clone(),
                 ExpectedVersion::NoStream,
-                Some(batch(
-                    &primary,
-                    operation,
-                    operation,
-                    &[b"debited", b"audited"],
-                )?),
+                Some(primary_batch.clone()),
             ),
             TransactionParticipant::new(
                 secondary.clone(),
@@ -654,6 +650,16 @@ async fn transaction_contract_and_wire_policy(
     check(
         store.load(&secondary).await?.len() == 1,
         "secondary transaction history has the wrong length",
+    )?;
+    let direct_primary_retry = store
+        .append(&primary, ExpectedVersion::NoStream, primary_batch)
+        .await;
+    check(
+        matches!(
+            direct_primary_retry,
+            Err(ref error) if error.kind() == EventStoreErrorKind::IdentityConflict
+        ),
+        "a transaction primary batch was interpreted as a standalone append replay",
     )?;
 
     let mut stream_info = context.get_stream(config.stream_name()).await?;
