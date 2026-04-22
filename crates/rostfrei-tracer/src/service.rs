@@ -555,17 +555,20 @@ struct OperationTable {
 }
 
 impl OperationTable {
-    fn has_terminal(&self) -> bool {
-        self.records.values().any(|record| record.is_terminal())
+    fn has_evictable(&self, correlations: &CorrelationHub) -> bool {
+        self.records.iter().any(|(operation_id, record)| {
+            record.is_evictable() && !correlations.has_active_subscribers(operation_id)
+        })
     }
 
-    fn evict_terminal(&mut self) -> Option<String> {
+    fn evict_terminal(&mut self, correlations: &CorrelationHub) -> Option<String> {
         for _ in 0..self.insertion_order.len() {
             let operation_id = self.insertion_order.pop_front()?;
             if self
                 .records
                 .get(&operation_id)
-                .is_some_and(|record| record.is_terminal())
+                .is_some_and(|record| record.is_evictable())
+                && correlations.remove_if_inactive(&operation_id)
             {
                 self.records.remove(&operation_id);
                 return Some(operation_id);
@@ -1135,7 +1138,7 @@ impl Tracer {
                 return Ok(snapshot);
             }
             if operations.records.len() >= self.inner.maximum_operations
-                && !operations.has_terminal()
+                && !operations.has_evictable(&self.inner.correlations)
             {
                 drop(operations);
                 return Err(SubmissionError::CapacityExhausted);
@@ -1148,17 +1151,13 @@ impl Tracer {
             let permit = Arc::clone(permits)
                 .try_acquire_owned()
                 .map_err(|_| SubmissionError::ConcurrencyExhausted)?;
-            let evicted = if operations.records.len() >= self.inner.maximum_operations {
-                let Some(evicted) = operations.evict_terminal() else {
-                    drop(operations);
-                    return Err(SubmissionError::CapacityExhausted);
-                };
-                Some(evicted)
-            } else {
-                None
-            };
-            if let Some(evicted) = evicted {
-                self.inner.correlations.remove(&evicted);
+            if operations.records.len() >= self.inner.maximum_operations
+                && operations
+                    .evict_terminal(&self.inner.correlations)
+                    .is_none()
+            {
+                drop(operations);
+                return Err(SubmissionError::CapacityExhausted);
             }
             operations.insertion_order.push_back(operation_key.clone());
             operations
@@ -1533,6 +1532,7 @@ impl Tracer {
             .correlations
             .command_result(correlation_id, snapshot.operation_id, outcome, result)
             .await;
+        record.mark_correlation_recorded();
     }
 
     fn generated_operation_id(&self, mode: OperationMode) -> Result<OperationId, SubmissionError> {

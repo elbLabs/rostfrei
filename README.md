@@ -96,10 +96,15 @@ Enable the tracked Git hooks once per checkout:
 git config core.hooksPath .githooks
 ```
 
-The pre-commit hook runs Clippy for every workspace package, target, and feature:
+The pre-commit hook runs Clippy for every workspace package, target, and feature,
+then installs the locked Studio dependencies and runs its lint and type checks:
 
 ```sh
 cargo clippy --workspace --all-targets --all-features
+cd studio
+bun install --frozen-lockfile
+bun run lint
+bun run typecheck
 ```
 
 A commit is rejected when Clippy reports an error.

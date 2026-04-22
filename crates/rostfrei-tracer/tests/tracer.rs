@@ -497,6 +497,49 @@ async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
     assert!(!failure_trace.contains("reject must be a boolean"));
 }
 
+#[tokio::test]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test operations and subscriptions must succeed"
+)]
+async fn active_correlation_subscribers_prevent_terminal_eviction() {
+    let tracer = tracer(1);
+    submit(&tracer, "retained-correlation", json!({ "reject": false })).await;
+    terminal_operation(&tracer, "retained-correlation").await;
+    let mut correlation = tracer
+        .subscribe_correlation("retained-correlation", 0)
+        .await
+        .unwrap();
+    while let Some(event) = correlation.next().await {
+        if matches!(event.kind, CorrelationEventKind::CommandResult { .. }) {
+            break;
+        }
+    }
+    tokio::task::yield_now().await;
+
+    let blocked = tracer
+        .submit_simulation(
+            AGGREGATE_TYPE,
+            "aggregate-1",
+            COMMAND_NAME,
+            SimulationRequest {
+                schema_version: 1,
+                payload: json!({ "reject": false }),
+            },
+            Some("replacement-operation"),
+        )
+        .await;
+    assert_eq!(blocked, Err(SubmissionError::CapacityExhausted));
+    assert!(tracer.operation("retained-correlation").await.is_ok());
+
+    drop(correlation);
+    submit(&tracer, "replacement-operation", json!({ "reject": false })).await;
+    assert_eq!(
+        tracer.operation("retained-correlation").await,
+        Err(SubmissionError::NotFound)
+    );
+}
+
 struct OversizedTracePayloads;
 
 impl TracePayloadPolicy for OversizedTracePayloads {
