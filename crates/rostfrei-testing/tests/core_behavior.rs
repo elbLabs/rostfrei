@@ -13,8 +13,9 @@ use rostfrei_core::{
     ContentFingerprint, DomainEventDispatchOutcome, DomainEventHandler, DomainEventHandlerError,
     DomainEventHandlerErrorKind, DomainEventRegistrationError, EnvelopeError, EventBatch,
     EventCodec, EventCodecError, EventCodecErrorKind, EventHistory, EventStore, EventStoreError,
-    EventStoreErrorKind, ExecutionMetadata, Executor, ExpectedVersion, InMemoryEventStore,
-    NewEvent, OperationId, RecordedEvent, SimulationDecision, StreamId, StreamVersion,
+    EventStoreErrorKind, EventTransaction, ExecutionMetadata, Executor, ExpectedVersion,
+    InMemoryEventStore, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent,
+    SimulationDecision, StreamId, StreamVersion, TransactionParticipant,
 };
 use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_messaging_core::{CausationId, CorrelationId};
@@ -126,6 +127,9 @@ enum AccountCommand {
     CreditThenObserve {
         amount: i64,
     },
+    CreditMany {
+        event_count: usize,
+    },
     RecordThenReject,
     NoOp,
 }
@@ -162,6 +166,11 @@ impl CommandHandler<AccountCommand> for Account {
                 aggregate.raise(AccountEvent::BalanceObserved {
                     balance: balance_after_credit,
                 });
+            }
+            AccountCommand::CreditMany { event_count } => {
+                for _ in 0..*event_count {
+                    aggregate.raise(AccountEvent::Credited { amount: 1 });
+                }
             }
             AccountCommand::RecordThenReject => {
                 aggregate.raise(AccountEvent::Credited { amount: 100 });
@@ -475,6 +484,27 @@ impl EventStore for ForcedConflictStore {
 
 struct EmptyEventHistory;
 
+struct AppendOnlyStore(InMemoryEventStore);
+
+#[async_trait]
+impl EventHistory for AppendOnlyStore {
+    async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        self.0.load(stream_id).await
+    }
+}
+
+#[async_trait]
+impl EventStore for AppendOnlyStore {
+    async fn append(
+        &self,
+        stream_id: &StreamId,
+        expected_version: ExpectedVersion,
+        batch: EventBatch,
+    ) -> Result<AppendOutcome, EventStoreError> {
+        self.0.append(stream_id, expected_version, batch).await
+    }
+}
+
 #[async_trait]
 impl EventHistory for EmptyEventHistory {
     async fn load(&self, _stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
@@ -526,8 +556,14 @@ fn provenance() -> ImportProvenance {
 }
 
 #[tokio::test]
-async fn in_memory_store_satisfies_reusable_contract() {
+async fn in_memory_store_satisfies_reusable_contracts() {
     event_store_contract::run(InMemoryEventStore::new).await;
+    event_store_contract::run_atomic_multi_stream_transactions(InMemoryEventStore::new).await;
+}
+
+#[tokio::test]
+async fn default_transaction_adapter_satisfies_reusable_base_contract() {
+    event_store_contract::run(|| AppendOnlyStore(InMemoryEventStore::new())).await;
 }
 
 #[tokio::test]
@@ -546,6 +582,78 @@ async fn reusable_contract_reports_errors_and_legacy_wrapper_fails_closed() {
     })
     .await;
     assert!(matches!(assertion, Err(error) if error.is_panic()));
+}
+
+#[tokio::test]
+async fn default_transaction_adapter_rejects_all_transactions_and_has_no_receipts() {
+    let stream = stream("default-transaction-adapter")
+        .expect("valid default transaction adapter stream fixture");
+    let operation = "default-transaction-operation";
+    let transaction_metadata = metadata(&stream, operation, "default-transaction-content")
+        .expect("valid default transaction metadata fixture");
+    let batch = EventBatch::new(
+        transaction_metadata.commit_id().clone(),
+        transaction_metadata.operation_id().clone(),
+        transaction_metadata.operation_fingerprint(),
+        vec![
+            NewEvent::new(
+                transaction_metadata.event_id(0),
+                "default-transaction-event",
+                1,
+                b"event",
+            )
+            .expect("valid event"),
+        ],
+    )
+    .expect("valid batch");
+    let store = AppendOnlyStore(InMemoryEventStore::new());
+    let transactions = [
+        EventTransaction::new(
+            transaction_metadata.operation_id().clone(),
+            transaction_metadata.operation_fingerprint(),
+            vec![TransactionParticipant::new(
+                stream.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch.clone()),
+            )],
+        ),
+        EventTransaction::new(
+            OperationId::new("default-read-only-primary").expect("valid operation identity"),
+            ContentFingerprint::digest("default-read-only-primary"),
+            vec![TransactionParticipant::new(
+                stream.clone(),
+                ExpectedVersion::NoStream,
+                None,
+            )],
+        ),
+        EventTransaction::new(
+            OperationId::new("default-empty-transaction").expect("valid operation identity"),
+            ContentFingerprint::digest("default-empty-transaction"),
+            Vec::new(),
+        ),
+    ];
+
+    for transaction in transactions {
+        let error = store
+            .append_transaction(transaction)
+            .await
+            .expect_err("an adapter without transaction support must reject every transaction");
+        assert_eq!(error.kind(), EventStoreErrorKind::ConfigurationMismatch);
+    }
+    assert!(
+        store
+            .load(&stream)
+            .await
+            .expect("rejected transaction stream should load")
+            .is_empty()
+    );
+    assert!(
+        store
+            .load_transaction_receipt(&stream, transaction_metadata.operation_id())
+            .await
+            .expect("the default receipt lookup should succeed")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -825,6 +933,44 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
             .await
             .expect("load should succeed"),
         before_rejection
+    );
+}
+
+#[tokio::test]
+async fn executor_rejects_commands_that_exceed_the_atomic_commit_limit() {
+    let stream = stream("oversized-command").expect("valid oversized command stream fixture");
+    let executor = Executor::with_codec(InMemoryEventStore::new(), AccountCodec);
+    let event_count = MAX_EVENTS_PER_BATCH.saturating_add(1);
+
+    let error = executor
+        .execute::<Account, _>(
+            metadata(
+                &stream,
+                "oversized-command-operation",
+                "oversized-command-content",
+            )
+            .expect("valid oversized command metadata fixture"),
+            &AccountCommand::CreditMany { event_count },
+        )
+        .await
+        .expect_err("a command exceeding the atomic commit limit must fail");
+    let CommandExecutionError::Store(error) = error else {
+        panic!("an oversized command must fail as an event-store request");
+    };
+    assert_eq!(error.kind(), EventStoreErrorKind::InvalidRequest);
+    assert_eq!(
+        error.message(),
+        format!(
+            "event batch contains {event_count} domain events, exceeding the {MAX_EVENTS_PER_BATCH}-event atomic commit limit; split the work across commands"
+        )
+    );
+    assert!(
+        executor
+            .store()
+            .load(&stream)
+            .await
+            .expect("oversized command stream should load")
+            .is_empty()
     );
 }
 

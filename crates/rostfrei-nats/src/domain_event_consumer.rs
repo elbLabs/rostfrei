@@ -4,11 +4,12 @@ use async_nats::jetstream::{
     self,
     consumer::{self, AckPolicy, DeliverPolicy},
     message::AckKind,
+    stream::{RawMessageError, RawMessageErrorKind},
 };
 use futures_util::TryStreamExt;
 use rostfrei_core::{
     DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, EventStoreErrorKind, MAX_EVENTS_PER_BATCH,
+    DomainEventHandlerErrorKind, EventStore, EventStoreErrorKind, MAX_EVENTS_PER_BATCH,
 };
 use rostfrei_messaging_core::{ConsumerName, DurableName, MAX_PROCESSING_TIMEOUT, RetryDelay};
 use thiserror::Error;
@@ -122,7 +123,7 @@ impl NatsDomainEventConsumerConfig {
 
 pub struct NatsDomainEventConsumer {
     context: jetstream::Context,
-    event_store: NatsEventStoreConfig,
+    event_store: NatsEventStore,
     config: NatsDomainEventConsumerConfig,
     dispatcher: Arc<DomainEventDispatcher>,
 }
@@ -134,7 +135,7 @@ impl NatsDomainEventConsumer {
         config: NatsDomainEventConsumerConfig,
         dispatcher: Arc<DomainEventDispatcher>,
     ) -> Result<Self, DomainEventConsumerError> {
-        NatsEventStore::connect(context.clone(), event_store.clone())
+        let event_store = NatsEventStore::connect(context.clone(), event_store)
             .await
             .map_err(|error| {
                 let kind = match error.kind() {
@@ -147,14 +148,14 @@ impl NatsDomainEventConsumer {
                 DomainEventConsumerError::new(kind, error.to_string())
             })?;
         let stream = context
-            .get_stream(event_store.stream_name())
+            .get_stream(event_store.config().stream_name())
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
         let consumer: consumer::PullConsumer = stream
             .get_consumer(config.durable_name().as_str())
             .await
             .map_err(|error| unavailable(format!("failed to get durable consumer: {error}")))?;
-        verify_consumer(&consumer, &event_store, &config)?;
+        verify_consumer(&consumer, event_store.config(), &config)?;
         Ok(Self {
             context,
             event_store,
@@ -173,14 +174,14 @@ impl NatsDomainEventConsumer {
         }
         let stream = self
             .context
-            .get_stream(self.event_store.stream_name())
+            .get_stream(self.event_store.config().stream_name())
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
         let consumer: consumer::PullConsumer = stream
             .get_consumer(self.config.durable_name().as_str())
             .await
             .map_err(|error| unavailable(format!("failed to get durable consumer: {error}")))?;
-        verify_consumer(&consumer, &self.event_store, &self.config)?;
+        verify_consumer(&consumer, self.event_store.config(), &self.config)?;
         loop {
             let mut first_delivery = consumer
                 .batch()
@@ -212,11 +213,19 @@ impl NatsDomainEventConsumer {
             let consumer_info = consumer.get_info().await.map_err(|error| {
                 unavailable(format!("failed to inspect durable progress: {error}"))
             })?;
-            let expected_sequence = consumer_info
+            let search_start = consumer_info
                 .ack_floor
                 .stream_sequence
                 .checked_add(1)
                 .ok_or_else(|| invalid_committed_event("durable sequence space overflowed"))?;
+            let expected_sequence = stream
+                .get_first_raw_message_by_subject(
+                    &self.event_store.config().aggregate_subject_filter(),
+                    search_start,
+                )
+                .await
+                .map_err(|error| earliest_unresolved_lookup_error(&error))?
+                .sequence;
             if first.event.stream_sequence != expected_sequence {
                 tracing::warn!(
                     durable = %self.config.durable_name(),
@@ -234,20 +243,17 @@ impl NatsDomainEventConsumer {
             let mut commit = self
                 .reconstruct_acknowledged_prefix(&stream, &first.event)
                 .await?;
-            if commit.is_empty() && first.event.decoded.event_ordinal != 0 {
-                return Err(invalid_committed_event(
-                    "durable delivery started inside a committed event batch",
-                ));
-            }
-            if !commit.is_empty() {
+            if commit.is_empty() {
+                validate_first_event(&first.event)?;
+            } else {
                 validate_next_event(&commit, &first.event)?;
             }
-            let event_count = first.event.decoded.event_count;
+            let event_count = first.event.decoded.transaction_event_count;
             let commit_id = first.event.decoded.commit_id.clone();
             let mut live_deliveries = LiveDeliveries::new(first.delivery);
             commit.push(first.event);
             let remaining = event_count.checked_sub(commit.len()).ok_or_else(|| {
-                invalid_committed_event("committed event batch exceeds its declared count")
+                invalid_committed_event("committed transaction exceeds its declared event count")
             })?;
             if remaining > 0 {
                 let mut remaining_deliveries = consumer
@@ -279,6 +285,8 @@ impl NatsDomainEventConsumer {
                     commit.push(next.event);
                 }
             }
+            validate_complete_transaction(&commit)?;
+            self.validate_transaction_receipt(&commit).await?;
 
             match timeout(
                 self.config.processing_timeout(),
@@ -332,7 +340,7 @@ impl NatsDomainEventConsumer {
         let info = message
             .info()
             .map_err(|error| unavailable(format!("delivery metadata is unavailable: {error}")))?;
-        if info.stream != self.event_store.stream_name()
+        if info.stream != self.event_store.config().stream_name()
             || info.consumer != self.config.durable_name().as_str()
             || info.stream_sequence == 0
             || info.consumer_sequence == 0
@@ -347,7 +355,7 @@ impl NatsDomainEventConsumer {
             .as_ref()
             .ok_or_else(|| invalid_committed_event("stored domain event has no headers"))?;
         let decoded = decode_consumed_event(
-            &self.event_store,
+            self.event_store.config(),
             message.subject.as_str(),
             headers,
             &message.payload,
@@ -367,24 +375,25 @@ impl NatsDomainEventConsumer {
         stream: &jetstream::stream::Stream,
         first: &BufferedDomainEvent,
     ) -> Result<Vec<BufferedDomainEvent>, DomainEventConsumerError> {
-        if first.decoded.event_ordinal == 0 {
+        if first.decoded.transaction_event_ordinal == 0 {
             return Ok(Vec::new());
         }
-        let event_ordinal = u64::try_from(first.decoded.event_ordinal)
-            .map_err(|_| invalid_committed_event("commit ordinal cannot be represented"))?;
+        let transaction_event_ordinal = u64::try_from(first.decoded.transaction_event_ordinal)
+            .map_err(|_| {
+                invalid_committed_event("transaction event ordinal cannot be represented")
+            })?;
         let start_sequence = first
             .stream_sequence
-            .checked_sub(event_ordinal)
+            .checked_sub(transaction_event_ordinal)
             .ok_or_else(|| invalid_committed_event("commit start sequence underflowed"))?;
-        let mut prefix = Vec::with_capacity(first.decoded.event_ordinal);
+        let mut prefix = Vec::with_capacity(first.decoded.transaction_event_ordinal);
         for sequence in start_sequence..first.stream_sequence {
-            let raw = stream.get_raw_message(sequence).await.map_err(|error| {
-                unavailable(format!(
-                    "failed to reconstruct acknowledged commit prefix: {error}"
-                ))
-            })?;
+            let raw = stream
+                .get_raw_message(sequence)
+                .await
+                .map_err(|error| acknowledged_prefix_lookup_error(&error))?;
             let decoded = decode_consumed_event(
-                &self.event_store,
+                self.event_store.config(),
                 raw.subject.as_str(),
                 &raw.headers,
                 &raw.payload,
@@ -395,17 +404,64 @@ impl NatsDomainEventConsumer {
                 decoded,
             };
             if prefix.is_empty() {
-                if event.decoded.event_ordinal != 0 {
-                    return Err(invalid_committed_event(
-                        "acknowledged commit prefix does not start at ordinal zero",
-                    ));
-                }
+                validate_first_event(&event)?;
             } else {
                 validate_next_event(&prefix, &event)?;
             }
             prefix.push(event);
         }
         Ok(prefix)
+    }
+
+    async fn validate_transaction_receipt(
+        &self,
+        commit: &[BufferedDomainEvent],
+    ) -> Result<(), DomainEventConsumerError> {
+        let first = commit
+            .first()
+            .ok_or_else(|| invalid_committed_event("committed transaction is empty"))?;
+        if commit
+            .iter()
+            .any(|event| event.decoded.is_transactional != first.decoded.is_transactional)
+        {
+            return Err(invalid_committed_event(
+                "committed event batch mixes transactional and direct event schemas",
+            ));
+        }
+        if !first.decoded.is_transactional {
+            return Ok(());
+        }
+
+        let receipt = self
+            .event_store
+            .load_transaction_receipt(
+                first.decoded.recorded.stream_id(),
+                &first.decoded.operation_id,
+            )
+            .await
+            .map_err(|error| match error.kind() {
+                EventStoreErrorKind::Unavailable => unavailable(format!(
+                    "failed to load committed transaction receipt: {error}"
+                )),
+                _ => invalid_committed_event(format!(
+                    "committed transaction receipt is invalid: {error}"
+                )),
+            })?
+            .ok_or_else(|| {
+                invalid_committed_event("committed transactional events have no durable receipt")
+            })?;
+        let receipt_events = receipt.events();
+        if receipt_events.len() != commit.len()
+            || receipt_events
+                .iter()
+                .zip(commit)
+                .any(|(receipt_event, buffered)| receipt_event != &buffered.decoded.recorded)
+        {
+            return Err(invalid_committed_event(
+                "committed transactional events do not match their durable receipt",
+            ));
+        }
+        Ok(())
     }
 
     async fn handle_commit(
@@ -555,28 +611,67 @@ fn validate_next_event(
     let previous = commit
         .last()
         .ok_or_else(|| invalid_committed_event("committed event batch is empty"))?;
-    let expected_ordinal = commit.len();
-    if next.decoded.event_ordinal != expected_ordinal
-        || next.decoded.event_count != first.event_count
-        || next.decoded.batch_id != first.batch_id
-        || next.decoded.commit_id != first.commit_id
-        || next.decoded.operation_id != first.operation_id
-        || next.decoded.operation_fingerprint != first.operation_fingerprint
-        || next.decoded.recorded.stream_id() != first.recorded.stream_id()
-        || next.decoded.recorded.correlation_id() != first.recorded.correlation_id()
-        || next.decoded.recorded.causation_id() != first.recorded.causation_id()
-        || next.decoded.recorded.stream_version().value()
-            != previous
+    let same_stream = next.decoded.recorded.stream_id() == previous.decoded.recorded.stream_id();
+    let stream_coordinates_valid = if same_stream {
+        next.decoded.commit_id == previous.decoded.commit_id
+            && previous.decoded.event_ordinal.checked_add(1) == Some(next.decoded.event_ordinal)
+            && next.decoded.event_count == previous.decoded.event_count
+            && previous
                 .decoded
                 .recorded
                 .stream_version()
                 .value()
                 .checked_add(1)
-                .unwrap_or(0)
-        || next.stream_sequence != previous.stream_sequence.checked_add(1).unwrap_or(0)
+                == Some(next.decoded.recorded.stream_version().value())
+    } else {
+        previous.decoded.event_ordinal.checked_add(1) == Some(previous.decoded.event_count)
+            && next.decoded.event_ordinal == 0
+            && !commit.iter().any(|event| {
+                event.decoded.recorded.stream_id() == next.decoded.recorded.stream_id()
+            })
+    };
+    if next.decoded.transaction_event_ordinal != commit.len()
+        || next.decoded.transaction_event_count != first.transaction_event_count
+        || next.decoded.batch_id != first.batch_id
+        || next.decoded.operation_id != first.operation_id
+        || next.decoded.operation_fingerprint != first.operation_fingerprint
+        || next.decoded.recorded.correlation_id() != first.recorded.correlation_id()
+        || next.decoded.recorded.causation_id() != first.recorded.causation_id()
+        || !stream_coordinates_valid
+        || previous.stream_sequence.checked_add(1) != Some(next.stream_sequence)
     {
         return Err(invalid_committed_event(
             "committed event batch is missing, reordered, or inconsistent",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_first_event(first: &BufferedDomainEvent) -> Result<(), DomainEventConsumerError> {
+    if first.decoded.transaction_event_ordinal != 0 || first.decoded.event_ordinal != 0 {
+        return Err(invalid_committed_event(
+            "committed transaction does not start at the first event of a local batch",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_complete_transaction(
+    commit: &[BufferedDomainEvent],
+) -> Result<(), DomainEventConsumerError> {
+    let first = commit
+        .first()
+        .ok_or_else(|| invalid_committed_event("committed transaction is empty"))?;
+    let last = commit
+        .last()
+        .ok_or_else(|| invalid_committed_event("committed transaction is empty"))?;
+    if commit.len() != first.decoded.transaction_event_count
+        || last.decoded.transaction_event_ordinal.checked_add(1)
+            != Some(first.decoded.transaction_event_count)
+        || last.decoded.event_ordinal.checked_add(1) != Some(last.decoded.event_count)
+    {
+        return Err(invalid_committed_event(
+            "committed transaction ends inside a local event batch",
         ));
     }
     Ok(())
@@ -664,12 +759,46 @@ fn unavailable(message: impl Into<String>) -> DomainEventConsumerError {
     DomainEventConsumerError::new(DomainEventConsumerErrorKind::Unavailable, message)
 }
 
+fn acknowledged_prefix_lookup_error(error: &RawMessageError) -> DomainEventConsumerError {
+    raw_message_lookup_error(
+        error,
+        "acknowledged commit prefix",
+        "reconstruct acknowledged commit prefix",
+    )
+}
+
+fn earliest_unresolved_lookup_error(error: &RawMessageError) -> DomainEventConsumerError {
+    raw_message_lookup_error(
+        error,
+        "the durable's earliest unresolved event",
+        "locate the durable's earliest unresolved event",
+    )
+}
+
+fn raw_message_lookup_error(
+    error: &RawMessageError,
+    missing_history: &str,
+    lookup: &str,
+) -> DomainEventConsumerError {
+    if error.kind() == RawMessageErrorKind::NoMessageFound {
+        invalid_committed_event(format!(
+            "{missing_history} is missing from authoritative event history: {error}"
+        ))
+    } else {
+        unavailable(format!("failed to {lookup}: {error}"))
+    }
+}
+
 fn invalid_committed_event(message: impl Into<String>) -> DomainEventConsumerError {
     DomainEventConsumerError::new(DomainEventConsumerErrorKind::InvalidCommittedEvent, message)
 }
 
 #[cfg(test)]
 mod tests {
+    use rostfrei_core::{
+        AggregateId, AggregateType, ContentFingerprint, ExecutionMetadata, OperationId,
+        RecordedEvent, StreamId, StreamVersion,
+    };
     use rostfrei_messaging_core::{ApplicationName, ConsumerName, DurableName};
 
     use super::*;
@@ -695,7 +824,76 @@ mod tests {
             .unwrap()
             .filter_subject;
 
-        assert_eq!(stream_subjects, vec![consumer_subject]);
+        assert!(stream_subjects.contains(&consumer_subject));
+    }
+
+    #[test]
+    fn acknowledged_prefix_lookup_distinguishes_missing_history_from_unavailability() {
+        let missing = acknowledged_prefix_lookup_error(&RawMessageError::new(
+            RawMessageErrorKind::NoMessageFound,
+        ));
+        let unavailable =
+            acknowledged_prefix_lookup_error(&RawMessageError::new(RawMessageErrorKind::Other));
+
+        assert_eq!(
+            missing.kind(),
+            DomainEventConsumerErrorKind::InvalidCommittedEvent
+        );
+        assert_eq!(
+            unavailable.kind(),
+            DomainEventConsumerErrorKind::Unavailable
+        );
+    }
+
+    #[test]
+    fn earliest_unresolved_lookup_distinguishes_missing_history_from_unavailability() {
+        let missing = earliest_unresolved_lookup_error(&RawMessageError::new(
+            RawMessageErrorKind::NoMessageFound,
+        ));
+        let unavailable =
+            earliest_unresolved_lookup_error(&RawMessageError::new(RawMessageErrorKind::Other));
+
+        assert_eq!(
+            missing.kind(),
+            DomainEventConsumerErrorKind::InvalidCommittedEvent
+        );
+        assert_eq!(
+            unavailable.kind(),
+            DomainEventConsumerErrorKind::Unavailable
+        );
+    }
+
+    #[test]
+    fn transaction_grouping_rejects_early_stream_switch() {
+        let source = stream_id("source");
+        let destination = stream_id("destination");
+        let first = buffered_event(&source, 1, 0, 2, 0, 2, 1);
+        let next = buffered_event(&destination, 1, 0, 1, 1, 2, 2);
+
+        let error = validate_next_event(&[first], &next).unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            DomainEventConsumerErrorKind::InvalidCommittedEvent
+        );
+    }
+
+    #[test]
+    fn transaction_grouping_rejects_incomplete_final_local_commit() {
+        let source = stream_id("source");
+        let destination = stream_id("destination");
+        let first = buffered_event(&source, 1, 0, 1, 0, 2, 1);
+        let final_event = buffered_event(&destination, 1, 0, 2, 1, 2, 2);
+        let mut commit = vec![first];
+        validate_next_event(&commit, &final_event).unwrap();
+        commit.push(final_event);
+
+        let error = validate_complete_transaction(&commit).unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            DomainEventConsumerErrorKind::InvalidCommittedEvent
+        );
     }
 
     #[test]
@@ -748,5 +946,61 @@ mod tests {
                 .kind(),
             DomainEventConsumerErrorKind::InvalidConfiguration
         );
+    }
+
+    fn stream_id(id: &str) -> StreamId {
+        StreamId::new(
+            AggregateType::new("test").unwrap(),
+            AggregateId::new(id).unwrap(),
+        )
+    }
+
+    fn buffered_event(
+        stream_id: &StreamId,
+        stream_version: u64,
+        event_ordinal: usize,
+        event_count: usize,
+        transaction_event_ordinal: usize,
+        transaction_event_count: usize,
+        stream_sequence: u64,
+    ) -> BufferedDomainEvent {
+        let operation_id = OperationId::new("transaction-operation").unwrap();
+        let operation_fingerprint = ContentFingerprint::digest("transaction-operation");
+        let metadata = ExecutionMetadata::new(
+            stream_id.clone(),
+            operation_id.clone(),
+            operation_fingerprint,
+        );
+        let commit_event_ordinal = u32::try_from(event_ordinal).unwrap();
+        let commit_event_count = u32::try_from(event_count).unwrap();
+        let recorded = RecordedEvent::new_in_commit(
+            stream_id.clone(),
+            StreamVersion::new(stream_version),
+            metadata.event_id(commit_event_ordinal),
+            metadata.commit_id().clone(),
+            operation_id.clone(),
+            operation_fingerprint,
+            commit_event_ordinal,
+            commit_event_count,
+            "test-event",
+            1,
+            Vec::new(),
+        )
+        .unwrap();
+        BufferedDomainEvent {
+            stream_sequence,
+            decoded: DecodedEvent {
+                batch_id: "transaction-batch".to_owned(),
+                commit_id: metadata.commit_id().clone(),
+                operation_id,
+                operation_fingerprint,
+                event_ordinal,
+                event_count,
+                transaction_event_ordinal,
+                transaction_event_count,
+                is_transactional: false,
+                recorded,
+            },
+        }
     }
 }
