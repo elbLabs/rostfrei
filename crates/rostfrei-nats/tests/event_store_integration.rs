@@ -102,6 +102,9 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     transaction_contract_and_wire_policy(&store, &context, &config)
         .await
         .expect("transaction contract and wire policy");
+    concurrent_transaction_identity_race(&store)
+        .await
+        .expect("transaction identity race");
 
     let concurrent_stream = stream("concurrent-atomic-batches").expect("concurrent stream id");
     let concurrent_results: [_; 2] = tokio::join!(
@@ -1007,6 +1010,75 @@ async fn transaction_contract_and_wire_policy(
     check(
         store.load(&oversized_primary).await?.is_empty(),
         "an early oversized rejection appended domain events",
+    )
+}
+
+async fn concurrent_transaction_identity_race(store: &NatsEventStore) -> TestResult<()> {
+    let shared = stream("transaction-identity-race-shared")?;
+    let first_primary = stream("transaction-identity-race-primary-a")?;
+    let second_primary = stream("transaction-identity-race-primary-b")?;
+    let operation = "transaction-identity-race";
+    let operation_id = OperationId::new(operation)?;
+    let fingerprint = ContentFingerprint::digest(operation);
+    let shared_batch = batch(&shared, operation, operation, &[b"shared"])?;
+    let first = EventTransaction::new(
+        operation_id.clone(),
+        fingerprint,
+        vec![
+            TransactionParticipant::new(
+                first_primary.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch(&first_primary, operation, operation, &[b"first"])?),
+            ),
+            TransactionParticipant::new(
+                shared.clone(),
+                ExpectedVersion::NoStream,
+                Some(shared_batch.clone()),
+            ),
+        ],
+    );
+    let second = EventTransaction::new(
+        operation_id,
+        fingerprint,
+        vec![
+            TransactionParticipant::new(
+                second_primary.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch(&second_primary, operation, operation, &[b"second"])?),
+            ),
+            TransactionParticipant::new(
+                shared.clone(),
+                ExpectedVersion::NoStream,
+                Some(shared_batch),
+            ),
+        ],
+    );
+
+    let results: [_; 2] = tokio::join!(
+        store.append_transaction(first),
+        store.append_transaction(second),
+    )
+    .into();
+    check(
+        results.iter().filter(|result| result.is_ok()).count() == 1,
+        "concurrent transactions with a shared identity did not have one winner",
+    )?;
+    check(
+        results
+            .iter()
+            .filter(|result| {
+                matches!(
+                    result,
+                    Err(error) if error.kind() == EventStoreErrorKind::IdentityConflict
+                )
+            })
+            .count()
+            == 1,
+        "the losing transaction did not report an identity conflict",
+    )?;
+    check(
+        store.load(&shared).await?.len() == 1,
+        "the identity race did not append exactly one shared event",
     )
 }
 

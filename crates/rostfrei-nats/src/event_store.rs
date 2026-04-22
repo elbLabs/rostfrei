@@ -18,7 +18,7 @@ use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint, EventBatch,
     EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind, EventTransaction,
     ExecutionMetadata, ExpectedVersion, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent,
-    StreamId, StreamVersion, TransactionAppendOutcome, TransactionReceipt,
+    StreamId, StreamVersion, TransactionAppendOutcome, TransactionParticipant, TransactionReceipt,
     TransactionStreamReceipt, validate_transaction_item_limit,
 };
 use rostfrei_messaging_core::{CausationId, CorrelationId};
@@ -186,6 +186,25 @@ impl NatsEventStore {
             ));
         }
         Ok(None)
+    }
+
+    fn transaction_participant_has_conflicting_identity(
+        history: &History,
+        participant: &TransactionParticipant,
+        primary_stream_id: &StreamId,
+        operation_id: &OperationId,
+    ) -> Result<bool, EventStoreError> {
+        if participant.stream_id() == primary_stream_id
+            && history
+                .events
+                .iter()
+                .any(|event| event.operation_id() == operation_id)
+        {
+            return Ok(true);
+        }
+        participant.batch().map_or(Ok(false), |batch| {
+            Self::resolve_existing(history, batch).map(|existing| existing.is_some())
+        })
     }
 
     async fn resolve_expectation_race(
@@ -396,18 +415,31 @@ impl NatsEventStore {
         let primary_stream_id = transaction
             .primary_stream_id()
             .ok_or_else(|| invalid("an event transaction must contain at least one participant"))?;
-        match self
+        if let Some(receipt) = self
             .load_transaction_receipt_inner(primary_stream_id, transaction.operation_id())
             .await?
         {
-            Some(receipt) if transaction_matches_receipt(transaction, &receipt) => {
-                Ok(TransactionAppendOutcome::ExactReplay(receipt))
+            if transaction_matches_receipt(transaction, &receipt) {
+                return Ok(TransactionAppendOutcome::ExactReplay(receipt));
             }
-            Some(_) => Err(identity_conflict(
+            return Err(identity_conflict(
                 "transaction identity was reused with different content",
-            )),
-            None => Err(conflict("an aggregate changed during transaction append")),
+            ));
         }
+        for participant in transaction.participants() {
+            let history = self.load_history(participant.stream_id()).await?;
+            if Self::transaction_participant_has_conflicting_identity(
+                &history,
+                participant,
+                primary_stream_id,
+                transaction.operation_id(),
+            )? {
+                return Err(identity_conflict(
+                    "operation identity was already used without its transaction receipt",
+                ));
+            }
+        }
+        Err(conflict("an aggregate changed during transaction append"))
     }
 }
 
@@ -551,19 +583,12 @@ impl EventStore for NatsEventStore {
         let mut staged = Vec::with_capacity(transaction.participants().len());
         for participant in transaction.participants() {
             let history = self.load_history(participant.stream_id()).await?;
-            if participant.stream_id() == &primary_stream_id
-                && history
-                    .events
-                    .iter()
-                    .any(|event| event.operation_id() == transaction.operation_id())
-            {
-                return Err(identity_conflict(
-                    "operation identity was already used without its transaction receipt",
-                ));
-            }
-            if let Some(batch) = participant.batch()
-                && Self::resolve_existing(&history, batch)?.is_some()
-            {
+            if Self::transaction_participant_has_conflicting_identity(
+                &history,
+                participant,
+                &primary_stream_id,
+                transaction.operation_id(),
+            )? {
                 return Err(identity_conflict(
                     "operation identity was already used without its transaction receipt",
                 ));
@@ -2454,6 +2479,58 @@ mod tests {
                 .expect_err("a read-only primary must be rejected")
                 .kind(),
             EventStoreErrorKind::InvalidRequest
+        );
+    }
+
+    #[test]
+    fn transaction_race_identity_check_matches_sequential_participant_rules() {
+        let primary = stream_id();
+        let secondary = StreamId::new(
+            AggregateType::new("Test").unwrap(),
+            AggregateId::new("secondary-race").unwrap(),
+        );
+        let operation_id = OperationId::new("transaction-race-operation").unwrap();
+        let fingerprint = ContentFingerprint::digest("transaction-race-content");
+        let metadata = ExecutionMetadata::new(secondary.clone(), operation_id.clone(), fingerprint);
+        let batch = EventBatch::new(
+            metadata.commit_id().clone(),
+            operation_id.clone(),
+            fingerprint,
+            vec![NewEvent::new(metadata.event_id(0), "opened", 1, Vec::new()).unwrap()],
+        )
+        .unwrap();
+        let events = record_batch(&secondary, StreamVersion::ZERO, &batch)
+            .unwrap()
+            .into_events();
+        let history = History {
+            events: events.clone(),
+            commits: vec![StoredCommit {
+                batch: batch.clone(),
+                events,
+            }],
+            last_subject_stream_sequence: 1,
+        };
+        let writer =
+            TransactionParticipant::new(secondary.clone(), ExpectedVersion::NoStream, Some(batch));
+        let observer = TransactionParticipant::new(secondary, ExpectedVersion::NoStream, None);
+
+        assert!(
+            NatsEventStore::transaction_participant_has_conflicting_identity(
+                &history,
+                &writer,
+                &primary,
+                &operation_id,
+            )
+            .unwrap()
+        );
+        assert!(
+            !NatsEventStore::transaction_participant_has_conflicting_identity(
+                &history,
+                &observer,
+                &primary,
+                &operation_id,
+            )
+            .unwrap()
         );
     }
 
