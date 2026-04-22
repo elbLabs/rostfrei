@@ -13,9 +13,9 @@ Cargo package:
 - `rostfrei`: application facade for the compiled domain model, typed command
   and integration-event buses, event-sourcing runtime, registry, and public
   macros.
-- `rostfrei-control-plane`: explicitly registered command simulation, bounded
-  in-memory operation traces, bounded concurrent admission, status resources,
-  and an optional authenticated HTTP/SSE adapter.
+- `rostfrei-tracer`: explicitly registered read-only simulation,
+  isolated test execution, separately authorized production dispatch, bounded
+  in-memory operation traces, and an optional authenticated HTTP/SSE adapter.
 - `rostfrei-core`: aggregate execution, event-store contracts, and the
   in-memory reference store.
 - `rostfrei-domain` (imported as `domain`): the compiled domain model,
@@ -26,7 +26,8 @@ Cargo package:
   application, and runtime registration for compiled domain types.
 - `rostfrei-registry`: explicit command metadata, domain modules, and
   deterministic runtime registration.
-- `rostfrei-macros`: derives for command definitions and domain modules.
+- `rostfrei-macros`: low-level `CommandDefinition` and `Module` derives for
+  direct registry and kernel users.
 - `rostfrei-messaging-core`: transport-neutral commands, integration events,
   queries, envelopes, and delivery contracts.
 - `rostfrei-nats`: command and integration-event bus adapters, NATS messaging,
@@ -34,37 +35,39 @@ Cargo package:
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
 
 Messaging is application-scoped. An application name such as `fast-inbox`
-derives its command, integration-event, and quarantine streams and prefixes all
-rostfrei business subjects. Bounded contexts derive typed addresses and
-authoritative domain-event streams. See
-[`docs/messaging-and-nats.md`](docs/messaging-and-nats.md) for the conventions
-and provisioning API.
+derives its command, command-response, integration-event, and quarantine streams
+and prefixes all rostfrei business subjects. Bounded contexts derive typed
+addresses and authoritative domain-event streams. See
+[`docs/adr`](docs/adr) for the messaging conventions and provisioning decisions.
 
 [`examples/bike-rental`](examples/bike-rental) is a self-contained public
-example with an aggregate action, a decision, a query, a domain event, and a
-domain error. It also contains a runnable local control-plane server that routes
-`RentBicycle` through `CommandBus`, executes it against `NatsEventStore`, maps
-the committed `BicycleRented` fact to `BicycleRentalStarted`, and publishes that
-public event through `IntegrationEventBus`. The same command can be simulated
-without mutation. The aggregate identity in the API is qualified by its bounded
-context, and `#[domain(json)]` supplies the example's generated command and
-rejection JSON while aggregate event JSON comes from the compiled aggregate
-codec.
+example with rental, return, and fleet-addition commands plus their decisions,
+queries, events, and domain errors. Its runnable NATS-backed local Tracer routes
+Test and Dispatch through the shared `CommandBus`, executes against
+`NatsEventStore`, maps committed domain events to public integration events,
+and publishes them through `IntegrationEventBus`. Simulate remains read-only,
+Test uses resettable isolated state, and Dispatch requires separate production
+authorization. The aggregate identity in the API is qualified by its bounded
+context, and `#[domain(json)]` supplies the generated command and rejection JSON
+while aggregate event JSON comes from the compiled aggregate codec.
 
-A control-plane instance receives one explicit read-only `EventHistory` and
-exposes only commands with matching executable bindings. Live dispatch also
-requires an explicit adapter over `CommandBus` and a separately mounted,
-separately authorized HTTP router. The control plane translates external JSON
-into the bus's dynamic request without defining a second execution or wire path.
-When history is a `NatsEventStore`, its configuration fixes the application and
-bounded-context stream scope; the context-qualified HTTP route must address that
-same history. Operation status and traces are retained only in memory, payloads
-are redacted by default, and local deployments must opt in explicitly to expose
-them.
+A Tracer instance receives an explicit test `EventHistory` for discovery,
+dynamic inputs, and read-only Simulate. Test and Dispatch instead use separately
+configured implementations of the same protocol-neutral command transport. The
+bike-rental example instantiates one NATS runtime definition for each environment:
+both publish a durable command, execute through a command worker and `Executor`,
+append to the environment's `NatsEventStore`, publish a durable accepted or
+rejected response, and run the same post-commit domain and integration-event
+handlers. Transported submissions require an idempotency key. Test reset rotates
+the scenario generation and recreates only the isolated Test topology; a failed
+reset keeps Test and its state-dependent discovery unavailable until a reset
+succeeds. Operation status and traces are retained only in bounded memory,
+payloads are redacted by default, and local deployments must opt in explicitly
+to expose them.
 
-rostfrei does not provision infrastructure during service startup. Operators
-use the explicit provisioning APIs with bounded, application-scoped defaults
-that the deployment can override.
+rostfrei does not implicitly provision infrastructure. Operators use explicit
+provisioning APIs with bounded, application-scoped defaults; the local
+bike-rental example invokes them during startup for demonstration.
 Authoritative NATS event storage requires NATS Server 2.12.1 or newer. In
 addition to atomic multi-event commits, one event transaction can atomically
 append commits to multiple aggregate streams in the same bounded-context event

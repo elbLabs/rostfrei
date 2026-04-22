@@ -27,10 +27,11 @@ pub use identity::{
     IdentityError, OperationId, StreamId,
 };
 pub use memory::InMemoryEventStore;
-pub use store::{AppendOutcome, EventHistory, EventStore, EventStoreError, EventStoreErrorKind};
 pub use store::{
-    EventTransaction, MAX_TRANSACTION_ITEMS, TransactionAppendOutcome, TransactionParticipant,
-    TransactionReceipt, TransactionStreamReceipt, validate_transaction_item_limit,
+    AppendOutcome, EventHistory, EventStore, EventStoreError, EventStoreErrorKind,
+    EventTransaction, MAX_TRANSACTION_ITEMS, StreamDirectory, StreamSummary,
+    TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
+    validate_transaction_item_limit,
 };
 
 #[doc(hidden)]

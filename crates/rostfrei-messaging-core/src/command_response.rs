@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     ApplicationErrorCode, CommandAddress, CommandResponseAddress, CommandResponseReadError,
-    ContractError, ContractErrorKind, CorrelationId, MessageBuildError, MessageId, OperationId,
-    SchemaVersion, envelope::validate_serialized_size,
+    CommandResponseReadErrorKind, ContractError, ContractErrorKind, CorrelationId,
+    MessageBuildError, MessageId, OperationId, SchemaVersion, envelope::validate_serialized_size,
 };
 
 pub const MAX_COMMAND_REJECTION_MESSAGE_BYTES: usize = 1024;
@@ -277,6 +277,29 @@ pub fn derive_command_response_address(
 /// Repeated reads for the same identity must return the same response while the
 /// transport's documented response-retention window remains open.
 pub trait CommandResponseReader: Send + Sync {
+    /// Looks up one exact retained response without waiting for its publication.
+    async fn find_command_response(
+        &self,
+        address: &CommandResponseAddress,
+        expected_operation_id: &OperationId,
+        expected_command_message_id: &MessageId,
+        timeout: Duration,
+    ) -> Result<Option<CommandResponse>, CommandResponseReadError> {
+        match self
+            .read_command_response(
+                address,
+                expected_operation_id,
+                expected_command_message_id,
+                timeout,
+            )
+            .await
+        {
+            Ok(response) => Ok(Some(response)),
+            Err(error) if error.kind() == CommandResponseReadErrorKind::Timeout => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     async fn read_command_response(
         &self,
         address: &CommandResponseAddress,

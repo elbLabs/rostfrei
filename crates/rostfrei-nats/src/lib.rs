@@ -3,6 +3,7 @@
 mod command_response;
 mod connection;
 mod consumer;
+mod correlation_observer;
 mod domain_event_consumer;
 mod error;
 mod event_store;
@@ -21,6 +22,10 @@ pub use command_response::{
 };
 pub use connection::{ConnectionHealth, NatsConnection, connect};
 pub use consumer::{MAX_QUARANTINE_RECORD_BYTES, NatsConsumerFactory, QuarantineRecord};
+pub use correlation_observer::{
+    CorrelatedMessage, CorrelatedMessageFamily, CorrelatedMessageHandler, NatsCorrelationObserver,
+    NatsCorrelationSubscription,
+};
 pub use domain_event_consumer::{
     DomainEventConsumerError, DomainEventConsumerErrorKind, NatsDomainEventConsumer,
     NatsDomainEventConsumerConfig, provision_domain_event_consumer,
@@ -41,5 +46,5 @@ pub use provisioning::{
     provision_application_messaging, provision_durable_consumer, provision_stream,
     verify_application_messaging, verify_stream,
 };
-pub use publish::{NatsPublishAck, NatsPublisher};
+pub use publish::{CORRELATION_ID_HEADER, NatsPublishAck, NatsPublisher};
 pub use query::{NatsQueryRequester, NatsQueryServer, NatsQueryServerConfig};

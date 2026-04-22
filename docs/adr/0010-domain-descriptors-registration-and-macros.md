@@ -31,20 +31,21 @@ reflection are not authoritative registration mechanisms.
 ## Implementation staging
 
 The first implemented vertical slice deliberately stops before automatic linked
-registration. Commands derive their runtime definitions, and registering
-an executable control-plane binding inserts its descriptor directly into the
-registry. Generated domain modules remain available for applications that need
-an explicit grouping, but are not required for command execution. Registration
-uses deterministic storage and does not use `inventory`, linker-time collection,
-global mutable state, or runtime reflection.
+registration. Domain commands derive their runtime definitions, generated domain
+modules group those definitions explicitly, and applications register the modules
+that belong to a runtime. Tracer then binds JSON codecs and input providers to the
+registered command descriptors. Registration uses deterministic storage and does
+not use `inventory`, linker-time collection, global mutable state, or runtime
+reflection.
 
 ADR 0014 subsequently absorbed the richer compiled domain model into rostfrei.
 Model-backed commands now retain their structural domain descriptor when
-registered through `rostfrei-domain-runtime`. The control plane can deserialize
-and simulate explicitly bound commands, but the runtime still does not discover
-handlers or modules automatically, subscribe to a bus, or enable live dispatch.
-Automatic linked registration in the broader decision remains deferred until
-its runtime and deployment tradeoffs are addressed explicitly.
+registered through `rostfrei-domain-runtime`. Tracer can deserialize and simulate
+explicitly bound commands, while Test and Dispatch use an explicitly configured
+protocol-neutral command transport. The runtime still does not discover handlers
+or modules automatically or choose an environment on the application's behalf.
+Automatic linked registration in the broader decision remains deferred until its
+runtime and deployment tradeoffs are addressed explicitly.
 
 ## Consequences
 

@@ -1,81 +1,27 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use domain::{JsonCommandPayload, JsonErrorPayload};
 use rostfrei_core::{
-    Aggregate, AggregateId, ContentFingerprint, Event, EventCodec, EventHistory, ExecutionMetadata,
-    Executor, JsonEventCodec, NewEvent, OperationId, SimulationDecision, SimulationError, StreamId,
+    Aggregate, AggregateId, ContentFingerprint, Event, EventHistory, ExecutionMetadata, Executor,
+    NewEvent, OperationId, SimulationDecision, SimulationError, StreamId,
 };
-use rostfrei_registry::{CommandDefinition, CommandDescriptor, DomainRegistry, RegistrationError};
+use rostfrei_registry::{CommandDefinition, CommandDescriptor, DomainRegistry};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::{DispatchAdapter, operation::PredictedDomainEvent};
-
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
-#[error("{message}")]
-pub struct CommandWireCodecError {
-    message: String,
-}
-
-impl CommandWireCodecError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-pub trait CommandWireCodec<Command>: Send + Sync
-where
-    Command: CommandDefinition,
-    Command::Aggregate: rostfrei_core::CommandHandler<Command>,
-{
-    fn decode(&self, payload: &Value) -> Result<Command, CommandWireCodecError>;
-
-    fn encode_rejection(
-        &self,
-        rejection: &<<Command as CommandDefinition>::Aggregate as rostfrei_core::CommandHandler<
-            Command,
-        >>::Rejection,
-    ) -> Result<Value, CommandWireCodecError>;
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DomainJsonWireCodec;
-
-impl<Command> CommandWireCodec<Command> for DomainJsonWireCodec
-where
-    Command: CommandDefinition + JsonCommandPayload,
-    Command::Aggregate: rostfrei_core::CommandHandler<Command>,
-    <<Command as CommandDefinition>::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection:
-        JsonErrorPayload,
-{
-    fn decode(&self, payload: &Value) -> Result<Command, CommandWireCodecError> {
-        Command::decode_json(payload).map_err(CommandWireCodecError::new)
-    }
-
-    fn encode_rejection(
-        &self,
-        rejection: &<<Command as CommandDefinition>::Aggregate as rostfrei_core::CommandHandler<
-            Command,
-        >>::Rejection,
-    ) -> Result<Value, CommandWireCodecError> {
-        rejection
-            .encode_json()
-            .map_err(CommandWireCodecError::new)
-    }
-}
+use crate::{
+    input::{CommandInputDocument, CommandInputOptions},
+    operation::PredictedDomainEvent,
+};
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum RuntimeRegistrationError {
-    #[error(transparent)]
-    Registry(#[from] RegistrationError),
+    #[error("command `{command}` version {schema_version} is not in the domain registry")]
+    MissingDescriptor {
+        command: &'static str,
+        schema_version: u32,
+    },
     #[error("command `{command}` version {schema_version} is already bound")]
     DuplicateBinding {
         command: &'static str,
@@ -91,28 +37,39 @@ pub enum RuntimeRegistrationError {
         command: &'static str,
         schema_version: u32,
     },
-    #[error("command `{command}` version {schema_version} already has a dispatch binding")]
-    DuplicateDispatchBinding {
+    #[error("command `{command}` version {schema_version} already has an input-options binding")]
+    DuplicateInputOptions {
         command: &'static str,
         schema_version: u32,
     },
-    #[error("command `{command}` version {schema_version} has no simulation binding")]
-    DispatchWithoutSimulationBinding {
-        command: &'static str,
-        schema_version: u32,
-    },
+    #[error("a test scenario reset requires a configured test event store")]
+    ResetWithoutTestStore,
+    #[error("a test scenario reset requires a configured test command transport")]
+    ResetWithoutTestTransport,
+    #[error("a test repository requires a named test fixture")]
+    TestRepositoryWithoutFixture,
+    #[error("test definition `{id}` is invalid: {message}")]
+    InvalidTestDefinition { id: String, message: String },
 }
 
 #[derive(Clone, Debug, Error)]
 pub enum RuntimeSimulationError {
     #[error("invalid command payload: {0}")]
-    InvalidPayload(CommandWireCodecError),
+    InvalidPayload(String),
     #[error(transparent)]
     Simulation(#[from] SimulationError),
     #[error("rejection encoding failed: {0}")]
-    RejectionEncoding(CommandWireCodecError),
+    RejectionEncoding(String),
+    #[error("event payload is not valid JSON: {0}")]
+    InvalidEventPayload(String),
     #[error("predicted stream version overflow")]
     StreamVersionOverflow,
+}
+
+#[derive(Clone, Debug, Error)]
+pub enum RuntimeInputError {
+    #[error(transparent)]
+    Rehydration(#[from] SimulationError),
 }
 
 pub enum RuntimeDecision {
@@ -151,7 +108,7 @@ impl CommandKey {
 pub trait ErasedCommandSimulator: Send + Sync {
     fn descriptor(&self) -> &CommandDescriptor;
 
-    fn validate_payload(&self, payload: &Value) -> Result<(), CommandWireCodecError>;
+    fn validate_payload(&self, payload: &Value) -> Result<(), String>;
 
     async fn simulate(
         &self,
@@ -163,33 +120,68 @@ pub trait ErasedCommandSimulator: Send + Sync {
     ) -> Result<RuntimeDecision, RuntimeSimulationError>;
 }
 
-struct TypedCommandSimulator<Command, Codec, Wire>
+#[async_trait]
+pub trait ErasedCommandInputOptions: Send + Sync {
+    async fn fields(
+        &self,
+        history: Arc<dyn EventHistory>,
+        stream_id: StreamId,
+    ) -> Result<CommandInputDocument, RuntimeInputError>;
+}
+
+struct TypedCommandInputOptions<Command, Provider>
 where
     Command: CommandDefinition,
-    Command::Aggregate: rostfrei_core::CommandHandler<Command>,
 {
-    descriptor: CommandDescriptor,
-    event_codec: Codec,
-    wire_codec: Wire,
+    provider: Provider,
     marker: std::marker::PhantomData<fn() -> Command>,
 }
 
 #[async_trait]
-impl<Command, Codec, Wire> ErasedCommandSimulator for TypedCommandSimulator<Command, Codec, Wire>
+impl<Command, Provider> ErasedCommandInputOptions for TypedCommandInputOptions<Command, Provider>
 where
     Command: CommandDefinition,
+    <Command::Aggregate as Aggregate>::State: Send,
+    <Command::Aggregate as Aggregate>::Event: Event + Send,
+    Provider: CommandInputOptions<Command> + 'static,
+{
+    async fn fields(
+        &self,
+        history: Arc<dyn EventHistory>,
+        stream_id: StreamId,
+    ) -> Result<CommandInputDocument, RuntimeInputError> {
+        let aggregate = Executor::new(history)
+            .rehydrate::<Command::Aggregate>(&stream_id)
+            .await?;
+        Ok(CommandInputDocument {
+            fields: self.provider.fields(aggregate.state()),
+        })
+    }
+}
+
+struct TypedCommandSimulator<Command>
+where
+    Command: CommandDefinition,
+{
+    descriptor: CommandDescriptor,
+    marker: std::marker::PhantomData<fn() -> Command>,
+}
+
+#[async_trait]
+impl<Command> ErasedCommandSimulator for TypedCommandSimulator<Command>
+where
+    Command: CommandDefinition + JsonCommandPayload,
     Command::Aggregate: rostfrei_core::CommandHandler<Command>,
     <Command::Aggregate as Aggregate>::State: Send,
-    <Command::Aggregate as rostfrei_core::Aggregate>::Event: Send,
-    Codec: EventCodec<Command::Aggregate> + Clone + Send + Sync + 'static,
-    Wire: CommandWireCodec<Command> + 'static,
+    <Command::Aggregate as rostfrei_core::Aggregate>::Event: Event + Send,
+    <Command::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection: JsonErrorPayload,
 {
     fn descriptor(&self) -> &CommandDescriptor {
         &self.descriptor
     }
 
-    fn validate_payload(&self, payload: &Value) -> Result<(), CommandWireCodecError> {
-        self.wire_codec.decode(payload).map(|_| ())
+    fn validate_payload(&self, payload: &Value) -> Result<(), String> {
+        Command::decode_json(payload).map(|_| ())
     }
 
     async fn simulate(
@@ -200,12 +192,10 @@ where
         fingerprint: ContentFingerprint,
         payload: Value,
     ) -> Result<RuntimeDecision, RuntimeSimulationError> {
-        let command = self
-            .wire_codec
-            .decode(&payload)
-            .map_err(RuntimeSimulationError::InvalidPayload)?;
+        let command =
+            Command::decode_json(&payload).map_err(RuntimeSimulationError::InvalidPayload)?;
         let metadata = ExecutionMetadata::new(stream_id, operation_id, fingerprint);
-        let outcome = Executor::with_codec(history, self.event_codec.clone())
+        let outcome = Executor::new(history)
             .simulate::<Command::Aggregate, Command>(metadata, &command)
             .await?;
         let (base_version, decision) = outcome.into_parts();
@@ -220,9 +210,8 @@ where
             }),
             SimulationDecision::Rejected(rejection) => Ok(RuntimeDecision::Rejected {
                 base_stream_version: base_version.value(),
-                rejection: self
-                    .wire_codec
-                    .encode_rejection(&rejection)
+                rejection: rejection
+                    .encode_json()
                     .map_err(RuntimeSimulationError::RejectionEncoding)?,
             }),
         }
@@ -239,22 +228,21 @@ fn predicted_event(
     let predicted_stream_version = base_version
         .checked_add(u64::from(ordinal) + 1)
         .ok_or(RuntimeSimulationError::StreamVersionOverflow)?;
-    let payload = serde_json::from_slice(event.payload()).ok();
-    let payload_base64 = payload.is_none().then(|| BASE64.encode(event.payload()));
+    let payload = serde_json::from_slice(event.payload())
+        .map_err(|error| RuntimeSimulationError::InvalidEventPayload(error.to_string()))?;
     Ok(PredictedDomainEvent {
         ordinal,
         predicted_stream_version,
         event_type: event.event_type().to_owned(),
         schema_version: event.schema_version(),
-        payload,
-        payload_base64,
+        payload: Some(payload),
     })
 }
 
 pub struct RuntimeBindings {
     pub registry: DomainRegistry,
     pub simulators: HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
-    pub dispatchers: HashMap<CommandKey, Arc<dyn DispatchAdapter>>,
+    pub input_options: HashMap<CommandKey, Arc<dyn ErasedCommandInputOptions>>,
 }
 
 impl RuntimeBindings {
@@ -262,76 +250,101 @@ impl RuntimeBindings {
         Self {
             registry,
             simulators: HashMap::new(),
-            dispatchers: HashMap::new(),
+            input_options: HashMap::new(),
         }
     }
 
-    pub fn register<Command, Wire>(
-        &mut self,
-        wire_codec: Wire,
-    ) -> Result<(), RuntimeRegistrationError>
+    pub fn register_json<Command>(&mut self) -> Result<(), RuntimeRegistrationError>
     where
-        Command: CommandDefinition,
+        Command: CommandDefinition + JsonCommandPayload,
         Command::Aggregate: rostfrei_core::CommandHandler<Command>,
         <Command::Aggregate as Aggregate>::State: Send,
         <Command::Aggregate as Aggregate>::Event: Event + Send,
-        Wire: CommandWireCodec<Command> + 'static,
+        <Command::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection: JsonErrorPayload,
     {
-        self.register_with_codec::<Command, JsonEventCodec, Wire>(JsonEventCodec, wire_codec)
+        let expected_descriptor = Command::descriptor();
+        let descriptor = self
+            .registry
+            .command(
+                &expected_descriptor.aggregate_type,
+                Command::COMMAND_NAME,
+                <Command as CommandDefinition>::SCHEMA_VERSION,
+            )
+            .cloned()
+            .ok_or(RuntimeRegistrationError::MissingDescriptor {
+                command: Command::COMMAND_NAME,
+                schema_version: <Command as CommandDefinition>::SCHEMA_VERSION,
+            })?;
+        if descriptor != expected_descriptor {
+            return Err(RuntimeRegistrationError::DescriptorMismatch {
+                command: Command::COMMAND_NAME,
+                schema_version: <Command as CommandDefinition>::SCHEMA_VERSION,
+            });
+        }
+        let key = CommandKey::new(
+            &descriptor.aggregate_type,
+            Command::COMMAND_NAME,
+            <Command as CommandDefinition>::SCHEMA_VERSION,
+        );
+        if self.simulators.contains_key(&key) {
+            return Err(RuntimeRegistrationError::DuplicateBinding {
+                command: Command::COMMAND_NAME,
+                schema_version: <Command as CommandDefinition>::SCHEMA_VERSION,
+            });
+        }
+        self.simulators.insert(
+            key,
+            Arc::new(TypedCommandSimulator::<Command> {
+                descriptor,
+                marker: std::marker::PhantomData,
+            }),
+        );
+        Ok(())
     }
 
-    pub fn register_with_codec<Command, Codec, Wire>(
+    pub fn register_input_options<Command, Provider>(
         &mut self,
-        event_codec: Codec,
-        wire_codec: Wire,
+        provider: Provider,
     ) -> Result<(), RuntimeRegistrationError>
     where
         Command: CommandDefinition,
-        Command::Aggregate: rostfrei_core::CommandHandler<Command>,
         <Command::Aggregate as Aggregate>::State: Send,
-        <Command::Aggregate as Aggregate>::Event: Send,
-        Codec: EventCodec<Command::Aggregate> + Clone + Send + Sync + 'static,
-        Wire: CommandWireCodec<Command> + 'static,
+        <Command::Aggregate as Aggregate>::Event: Event + Send,
+        Provider: CommandInputOptions<Command> + 'static,
     {
         let expected_descriptor = Command::descriptor();
-        let descriptor = match self
+        let descriptor = self
             .registry
             .command(
                 &expected_descriptor.aggregate_type,
                 Command::COMMAND_NAME,
                 Command::SCHEMA_VERSION,
             )
-            .cloned()
-        {
-            Some(descriptor) if descriptor != expected_descriptor => {
-                return Err(RuntimeRegistrationError::DescriptorMismatch {
-                    command: Command::COMMAND_NAME,
-                    schema_version: Command::SCHEMA_VERSION,
-                });
-            }
-            Some(descriptor) => descriptor,
-            None => {
-                self.registry.register_command::<Command>()?;
-                expected_descriptor
-            }
-        };
+            .ok_or(RuntimeRegistrationError::MissingDescriptor {
+                command: Command::COMMAND_NAME,
+                schema_version: Command::SCHEMA_VERSION,
+            })?;
+        if descriptor != &expected_descriptor {
+            return Err(RuntimeRegistrationError::DescriptorMismatch {
+                command: Command::COMMAND_NAME,
+                schema_version: Command::SCHEMA_VERSION,
+            });
+        }
         let key = CommandKey::new(
             &descriptor.aggregate_type,
             Command::COMMAND_NAME,
             Command::SCHEMA_VERSION,
         );
-        if self.simulators.contains_key(&key) {
-            return Err(RuntimeRegistrationError::DuplicateBinding {
+        if self.input_options.contains_key(&key) {
+            return Err(RuntimeRegistrationError::DuplicateInputOptions {
                 command: Command::COMMAND_NAME,
                 schema_version: Command::SCHEMA_VERSION,
             });
         }
-        self.simulators.insert(
+        self.input_options.insert(
             key,
-            Arc::new(TypedCommandSimulator::<Command, Codec, Wire> {
-                descriptor,
-                event_codec,
-                wire_codec,
+            Arc::new(TypedCommandInputOptions::<Command, Provider> {
+                provider,
                 marker: std::marker::PhantomData,
             }),
         );
@@ -352,35 +365,6 @@ impl RuntimeBindings {
                 });
             }
         }
-        Ok(())
-    }
-
-    pub fn register_dispatch<Command>(
-        &mut self,
-        adapter: Arc<dyn DispatchAdapter>,
-    ) -> Result<(), RuntimeRegistrationError>
-    where
-        Command: CommandDefinition,
-    {
-        let descriptor = Command::descriptor();
-        let key = CommandKey::new(
-            descriptor.aggregate_type,
-            Command::COMMAND_NAME,
-            Command::SCHEMA_VERSION,
-        );
-        if !self.simulators.contains_key(&key) {
-            return Err(RuntimeRegistrationError::DispatchWithoutSimulationBinding {
-                command: Command::COMMAND_NAME,
-                schema_version: Command::SCHEMA_VERSION,
-            });
-        }
-        if self.dispatchers.contains_key(&key) {
-            return Err(RuntimeRegistrationError::DuplicateDispatchBinding {
-                command: Command::COMMAND_NAME,
-                schema_version: Command::SCHEMA_VERSION,
-            });
-        }
-        self.dispatchers.insert(key, adapter);
         Ok(())
     }
 }

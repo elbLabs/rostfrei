@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{
-    AddressKind, CallerMetadata, ConsumeError, ContractError, ContractErrorKind,
+    AddressKind, CallerMetadata, ConsumeError, ContractError, ContractErrorKind, CorrelationId,
     MAX_MESSAGE_PAYLOAD_BYTES, MessageBuildError, MessageId, PublishableAddress, TraceContext,
     scope::validate_scope_segment,
 };
@@ -306,6 +306,7 @@ where
     message_id: MessageId,
     payload: Vec<u8>,
     metadata: CallerMetadata,
+    correlation_id: Option<CorrelationId>,
     trace_context: Option<TraceContext>,
     info: DeliveryInfo,
 }
@@ -321,7 +322,7 @@ where
         metadata: CallerMetadata,
         info: DeliveryInfo,
     ) -> Result<Self, MessageBuildError> {
-        Self::new_with_trace_context(address, message_id, payload, metadata, None, info)
+        Self::new_with_transport_context(address, message_id, payload, metadata, None, None, info)
     }
 
     pub fn new_with_trace_context(
@@ -329,6 +330,26 @@ where
         message_id: MessageId,
         payload: Vec<u8>,
         metadata: CallerMetadata,
+        trace_context: Option<TraceContext>,
+        info: DeliveryInfo,
+    ) -> Result<Self, MessageBuildError> {
+        Self::new_with_transport_context(
+            address,
+            message_id,
+            payload,
+            metadata,
+            None,
+            trace_context,
+            info,
+        )
+    }
+
+    pub fn new_with_transport_context(
+        address: A,
+        message_id: MessageId,
+        payload: Vec<u8>,
+        metadata: CallerMetadata,
+        correlation_id: Option<CorrelationId>,
         trace_context: Option<TraceContext>,
         info: DeliveryInfo,
     ) -> Result<Self, MessageBuildError> {
@@ -343,6 +364,7 @@ where
             message_id,
             payload,
             metadata,
+            correlation_id,
             trace_context,
             info,
         })
@@ -362,6 +384,10 @@ where
 
     pub const fn metadata(&self) -> &CallerMetadata {
         &self.metadata
+    }
+
+    pub const fn correlation_id(&self) -> Option<&CorrelationId> {
+        self.correlation_id.as_ref()
     }
 
     pub const fn trace_context(&self) -> Option<&TraceContext> {

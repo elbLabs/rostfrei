@@ -576,7 +576,7 @@ async fn transaction_history_remains_readable_after_lower_limit_provisioning(
 ) -> TestResult<()> {
     const HISTORICAL_WRITE_LIMIT: usize = 64 * 1024;
     const CURRENT_WRITE_LIMIT: usize = 4 * 1024;
-    const READ_ONLY_PARTICIPANTS: usize = 128;
+    const READ_ONLY_PARTICIPANTS: usize = MAX_TRANSACTION_ITEMS - 2;
 
     if context.client().max_payload() < HISTORICAL_WRITE_LIMIT + 4 * 1024 {
         eprintln!("NATS max_payload is too small for transaction migration coverage");

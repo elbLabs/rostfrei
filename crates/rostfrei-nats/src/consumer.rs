@@ -13,9 +13,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures_util::TryStreamExt;
 use rostfrei_messaging_core::{
     CallerMetadata, CommandAddress, CommandResponseAddress, ConsumeError, ConsumeErrorKind,
-    ConsumerConfig, DeliveryDisposition, DeliveryInfo, IntegrationEventAddress, MessageAddress,
-    MessageConsumer, MessageConsumerFactory, MessageDelivery, MessageHandler, MessageId,
-    PublishableAddress, TraceContext,
+    ConsumerConfig, CorrelationId, DeliveryDisposition, DeliveryInfo, IntegrationEventAddress,
+    MessageAddress, MessageConsumer, MessageConsumerFactory, MessageDelivery, MessageHandler,
+    MessageId, PublishableAddress, TraceContext,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,8 +27,8 @@ use crate::{
     messaging_config::{MessagingTopology, StreamName},
     provisioning::durable_consumer_config,
     publish::{
-        CONTENT_TYPE_HEADER, DEFAULT_PUBLISH_TIMEOUT, JSON_CONTENT_TYPE, TRACE_PARENT_HEADER,
-        TRACE_STATE_HEADER, publish_confirmed, safe_headers,
+        CONTENT_TYPE_HEADER, CORRELATION_ID_HEADER, DEFAULT_PUBLISH_TIMEOUT, JSON_CONTENT_TYPE,
+        TRACE_PARENT_HEADER, TRACE_STATE_HEADER, publish_confirmed, safe_headers,
     },
 };
 
@@ -131,6 +131,29 @@ impl NatsConsumerFactory {
         }
         self.quarantine_publish_timeout = quarantine_publish_timeout;
         Ok(self)
+    }
+
+    pub async fn verify_consumer<A>(&self, config: &ConsumerConfig<A>) -> Result<(), ConsumeError>
+    where
+        A: PublishableAddress,
+    {
+        if config.address().application() != self.topology.application().as_str() {
+            return Err(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration));
+        }
+        let source_stream = self
+            .topology
+            .stream_for(config.address().kind())
+            .ok_or_else(|| ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
+        let stream = self
+            .context
+            .get_stream(source_stream.as_str())
+            .await
+            .map_err(|_| ConsumeError::new(ConsumeErrorKind::Unavailable))?;
+        let consumer: consumer::PullConsumer = stream
+            .get_consumer(config.durable_name().as_str())
+            .await
+            .map_err(|_| ConsumeError::new(ConsumeErrorKind::Unavailable))?;
+        verify_consumer(&consumer, config)
     }
 
     fn create_consumer<A>(
@@ -496,16 +519,21 @@ where
         .ok_or(NatsError::InvalidMessage)
         .and_then(|value| MessageId::new(value).map_err(|_| NatsError::InvalidMessage))?;
     let metadata = caller_metadata(headers)?;
+    let correlation_id = single_header(headers, CORRELATION_ID_HEADER)?
+        .map(CorrelationId::new)
+        .transpose()
+        .map_err(|_| NatsError::InvalidMessage)?;
     let trace_context = trace_context(headers)?;
     let address = A::parse_nats(message.subject.to_string())?;
     if &address != expected_address {
         return Err(NatsError::InvalidMessage);
     }
-    MessageDelivery::new_with_trace_context(
+    MessageDelivery::new_with_transport_context(
         address,
         message_id,
         message.payload.to_vec(),
         metadata,
+        correlation_id,
         trace_context,
         info,
     )
