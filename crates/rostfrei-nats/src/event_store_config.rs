@@ -8,12 +8,11 @@ use sha2::{Digest, Sha256};
 use crate::hex::encode_lower_hex;
 
 const MAX_STREAM_NAME_LEN: usize = 255;
-const MAX_EVENT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_SUPPORTED_EVENT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ATOMIC_HEADER_BYTES: usize = 4 * 1024;
 const DUPLICATE_WINDOW: Duration = Duration::from_mins(2);
 pub const DEFAULT_EVENT_STORE_MAX_STREAM_BYTES: i64 = 10 * 1024 * 1024 * 1024;
 pub const DEFAULT_EVENT_STORE_MAX_EVENT_BYTES: usize = 512 * 1024;
-pub const LEGACY_EVENT_STORE_MAX_EVENT_BYTES: usize = 2 * 1024 * 1024;
 pub const DEFAULT_EVENT_STORE_REPLICAS: usize = 1;
 pub const DEFAULT_EVENT_STORE_PUBACK_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -30,13 +29,13 @@ impl EventByteLimit {
         value: DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
         wire_value: 516 * 1024,
         nats_value: 516 * 1024,
-        comparison_value: 512 * 1024,
+        comparison_value: 516 * 1024,
     };
 
     fn new(value: usize) -> Result<Self, EventStoreError> {
-        if value == 0 || value > MAX_EVENT_BYTES {
+        if value == 0 || value > MAX_SUPPORTED_EVENT_BYTES {
             return Err(invalid(format!(
-                "maximum event bytes must be between 1 and {MAX_EVENT_BYTES}"
+                "maximum event bytes must be between 1 and {MAX_SUPPORTED_EVENT_BYTES}"
             )));
         }
         let wire_value = value
@@ -45,8 +44,9 @@ impl EventByteLimit {
         let nats_value = i32::try_from(wire_value).map_err(|_| {
             invalid("maximum wire message bytes cannot be represented by JetStream")
         })?;
-        let comparison_value = i64::try_from(value)
-            .map_err(|_| invalid("maximum event bytes cannot be represented by JetStream"))?;
+        let comparison_value = i64::try_from(wire_value).map_err(|_| {
+            invalid("maximum wire message bytes cannot be represented by JetStream")
+        })?;
         Ok(Self {
             value,
             wire_value,
@@ -233,7 +233,7 @@ impl NatsEventStoreConfig {
         }
         if self.max_stream_bytes < self.max_event_bytes.comparison_value {
             return Err(invalid(
-                "maximum stream bytes must be at least maximum event bytes",
+                "maximum stream bytes must be at least maximum wire message bytes",
             ));
         }
         if !(1..=5).contains(&self.replicas) {
@@ -390,6 +390,46 @@ mod tests {
         assert_eq!(config.stream_config().max_message_size, 516 * 1024);
         assert_eq!(config.replicas(), DEFAULT_EVENT_STORE_REPLICAS);
         assert_eq!(config.puback_timeout(), DEFAULT_EVENT_STORE_PUBACK_TIMEOUT);
+    }
+
+    #[test]
+    fn configured_event_limit_supports_the_historical_global_maximum() {
+        let unsupported = MAX_SUPPORTED_EVENT_BYTES.checked_add(1).unwrap();
+        let maximum_wire_bytes = MAX_SUPPORTED_EVENT_BYTES.checked_add(4 * 1024).unwrap();
+        let config = NatsEventStoreConfig::for_bounded_context(&context())
+            .unwrap()
+            .with_storage_limits(
+                i64::try_from(maximum_wire_bytes).unwrap(),
+                MAX_SUPPORTED_EVENT_BYTES,
+            )
+            .unwrap();
+
+        assert_eq!(config.max_event_bytes(), MAX_SUPPORTED_EVENT_BYTES);
+        assert!(
+            NatsEventStoreConfig::for_bounded_context(&context())
+                .unwrap()
+                .with_storage_limits(i64::try_from(unsupported).unwrap(), unsupported,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn stream_capacity_must_cover_the_wire_message_allowance() {
+        let payload_bytes = 512 * 1024;
+        let payload_only = i64::try_from(payload_bytes).unwrap();
+        let wire_bytes = i64::try_from(payload_bytes + 4 * 1024).unwrap();
+
+        let error = NatsEventStoreConfig::for_bounded_context(&context())
+            .unwrap()
+            .with_storage_limits(payload_only, payload_bytes)
+            .expect_err("payload-only stream capacity must be rejected");
+        assert_eq!(error.kind(), EventStoreErrorKind::InvalidRequest);
+        assert!(error.message().contains("wire message"));
+
+        NatsEventStoreConfig::for_bounded_context(&context())
+            .unwrap()
+            .with_storage_limits(wire_bytes, payload_bytes)
+            .expect("wire-sized stream capacity must be accepted");
     }
 
     #[test]

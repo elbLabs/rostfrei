@@ -388,66 +388,12 @@ pub trait EventStore: EventHistory {
 
     async fn append_transaction(
         &self,
-        transaction: EventTransaction,
+        _transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
-        validate_transaction_item_limit(&transaction)?;
-        let [participant] = transaction.participants() else {
-            return Err(EventStoreError::new(
-                EventStoreErrorKind::ConfigurationMismatch,
-                "event store does not support atomic multi-stream transactions",
-            ));
-        };
-        let participant = participant.clone();
-        let batch = participant.batch().cloned().ok_or_else(|| {
-            EventStoreError::new(
-                EventStoreErrorKind::InvalidRequest,
-                "a single-stream transaction must contain an event batch",
-            )
-        })?;
-        if batch.operation_id() != transaction.operation_id()
-            || batch.operation_fingerprint() != transaction.operation_fingerprint()
-            || batch.correlation_id() != transaction.correlation_id()
-            || batch.causation_id() != transaction.causation_id()
-        {
-            return Err(EventStoreError::new(
-                EventStoreErrorKind::InvalidRequest,
-                "participant commit metadata does not match its transaction",
-            ));
-        }
-        let outcome = self
-            .append(
-                participant.stream_id(),
-                participant.expected_version(),
-                batch,
-            )
-            .await?;
-        let base_version = outcome
-            .events()
-            .first()
-            .and_then(|event| event.stream_version().value().checked_sub(1))
-            .map(StreamVersion::new)
-            .ok_or_else(|| {
-                EventStoreError::new(
-                    EventStoreErrorKind::CorruptHistory,
-                    "event store returned an empty or invalid append outcome",
-                )
-            })?;
-        let receipt = TransactionReceipt {
-            operation_id: transaction.operation_id,
-            operation_fingerprint: transaction.operation_fingerprint,
-            correlation_id: transaction.correlation_id,
-            causation_id: transaction.causation_id,
-            streams: vec![TransactionStreamReceipt::new(
-                participant.stream_id().clone(),
-                base_version,
-                outcome.events().to_vec(),
-            )],
-        };
-        Ok(if outcome.is_exact_replay() {
-            TransactionAppendOutcome::ExactReplay(receipt)
-        } else {
-            TransactionAppendOutcome::Appended(receipt)
-        })
+        Err(EventStoreError::new(
+            EventStoreErrorKind::ConfigurationMismatch,
+            "event store does not support event transactions",
+        ))
     }
 }
 

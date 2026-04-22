@@ -53,10 +53,10 @@ transaction identity, so an otherwise identical retry returns the original
 receipt after later commits. The transaction limit counts every domain event,
 each read-only guard, and the receipt against a common 1,000-item budget.
 
-Adapters that do not implement multi-stream transactions retain a default
-single-stream adapter over `append`. All adapters must implement the same
-observable behavior as the in-memory reference store within their declared
-capabilities.
+Adapters that do not implement durable transaction receipts and provenance
+reject `append_transaction` with `ConfigurationMismatch`. Transaction-capable
+adapters must implement the same observable behavior as the in-memory reference
+store.
 
 ## Consequences
 

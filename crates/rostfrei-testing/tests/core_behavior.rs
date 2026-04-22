@@ -14,9 +14,8 @@ use rostfrei_core::{
     DomainEventHandlerErrorKind, DomainEventRegistrationError, EnvelopeError, EventBatch,
     EventCodec, EventCodecError, EventCodecErrorKind, EventHistory, EventStore, EventStoreError,
     EventStoreErrorKind, EventTransaction, ExecutionMetadata, Executor, ExpectedVersion,
-    InMemoryEventStore, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent,
-    SimulationDecision, StreamId, StreamVersion, TransactionParticipant,
-    validate_transaction_item_limit,
+    InMemoryEventStore, NewEvent, OperationId, RecordedEvent, SimulationDecision, StreamId,
+    StreamVersion, TransactionParticipant,
 };
 use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_messaging_core::{CausationId, CorrelationId};
@@ -539,34 +538,6 @@ fn metadata(
     ))
 }
 
-fn batch_with_event_count(
-    stream: &StreamId,
-    operation: &str,
-    event_count: usize,
-) -> TestResult<EventBatch> {
-    let metadata = metadata(stream, operation, operation)?;
-    let events = (0..event_count)
-        .map(|ordinal| {
-            let ordinal = u32::try_from(ordinal)
-                .map_err(|error| fixture_error("transaction event ordinal", error))?;
-            NewEvent::new(
-                metadata.event_id(ordinal),
-                "account-credited",
-                1,
-                br#"{"amount":1}"#,
-            )
-            .map_err(|error| fixture_error("transaction event", error))
-        })
-        .collect::<TestResult<Vec<_>>>()?;
-    EventBatch::new(
-        metadata.commit_id().clone(),
-        metadata.operation_id().clone(),
-        metadata.operation_fingerprint(),
-        events,
-    )
-    .map_err(|error| fixture_error("transaction event batch", error))
-}
-
 fn provenance() -> ImportProvenance {
     ImportProvenance {
         source_system: "legacy-ledger".to_owned(),
@@ -577,8 +548,14 @@ fn provenance() -> ImportProvenance {
 }
 
 #[tokio::test]
-async fn in_memory_store_satisfies_reusable_contract() {
+async fn in_memory_store_satisfies_reusable_contracts() {
     event_store_contract::run(InMemoryEventStore::new).await;
+    event_store_contract::run_atomic_multi_stream_transactions(InMemoryEventStore::new).await;
+}
+
+#[tokio::test]
+async fn default_transaction_adapter_satisfies_reusable_base_contract() {
+    event_store_contract::run(|| AppendOnlyStore(InMemoryEventStore::new())).await;
 }
 
 #[tokio::test]
@@ -600,7 +577,7 @@ async fn reusable_contract_reports_errors_and_legacy_wrapper_fails_closed() {
 }
 
 #[tokio::test]
-async fn default_single_stream_transaction_validates_metadata_and_replay_version() {
+async fn default_transaction_adapter_rejects_all_transactions_and_has_no_receipts() {
     let stream = stream("default-transaction-adapter")
         .expect("valid default transaction adapter stream fixture");
     let operation = "default-transaction-operation";
@@ -622,8 +599,17 @@ async fn default_single_stream_transaction_validates_metadata_and_replay_version
     )
     .expect("valid batch");
     let store = AppendOnlyStore(InMemoryEventStore::new());
-    let read_only_error = store
-        .append_transaction(EventTransaction::new(
+    let transactions = [
+        EventTransaction::new(
+            transaction_metadata.operation_id().clone(),
+            transaction_metadata.operation_fingerprint(),
+            vec![TransactionParticipant::new(
+                stream.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch.clone()),
+            )],
+        ),
+        EventTransaction::new(
             OperationId::new("default-read-only-primary").expect("valid operation identity"),
             ContentFingerprint::digest("default-read-only-primary"),
             vec![TransactionParticipant::new(
@@ -631,119 +617,35 @@ async fn default_single_stream_transaction_validates_metadata_and_replay_version
                 ExpectedVersion::NoStream,
                 None,
             )],
-        ))
-        .await
-        .expect_err("the default adapter must reject a read-only primary");
-    assert_eq!(read_only_error.kind(), EventStoreErrorKind::InvalidRequest);
+        ),
+        EventTransaction::new(
+            OperationId::new("default-empty-transaction").expect("valid operation identity"),
+            ContentFingerprint::digest("default-empty-transaction"),
+            Vec::new(),
+        ),
+    ];
 
-    let transaction = EventTransaction::new(
-        transaction_metadata.operation_id().clone(),
-        transaction_metadata.operation_fingerprint(),
-        vec![TransactionParticipant::new(
-            stream.clone(),
-            ExpectedVersion::NoStream,
-            Some(batch.clone()),
-        )],
-    );
-    store
-        .append_transaction(transaction)
-        .await
-        .expect("default single-stream transaction should append");
-
-    let replay = store
-        .append_transaction(EventTransaction::new(
-            transaction_metadata.operation_id().clone(),
-            transaction_metadata.operation_fingerprint(),
-            vec![TransactionParticipant::new(
-                stream.clone(),
-                ExpectedVersion::Exact(StreamVersion::new(99)),
-                Some(batch.clone()),
-            )],
-        ))
-        .await
-        .expect("exact replay should ignore the now-stale incoming expectation");
-    assert!(replay.is_exact_replay());
-    assert_eq!(
-        replay.receipt().streams()[0].base_version(),
-        StreamVersion::ZERO
-    );
-
-    let malformed = store
-        .append_transaction(EventTransaction::new(
-            OperationId::new("different-transaction-operation").expect("valid operation identity"),
-            ContentFingerprint::digest("default-transaction-content"),
-            vec![TransactionParticipant::new(
-                stream,
-                ExpectedVersion::Exact(StreamVersion::new(1)),
-                Some(batch),
-            )],
-        ))
-        .await
-        .expect_err("transaction and batch metadata must agree");
-    assert_eq!(malformed.kind(), EventStoreErrorKind::InvalidRequest);
-}
-
-#[tokio::test]
-async fn default_single_stream_transaction_enforces_item_limit_without_reducing_append_limit() {
-    let store = AppendOnlyStore(InMemoryEventStore::new());
-    let accepted_stream = stream("default-transaction-limit-accepted")
-        .expect("valid accepted transaction limit stream fixture");
-    let accepted_operation = "default-transaction-limit-accepted";
-    let accepted_event_count = MAX_TRANSACTION_ITEMS.saturating_sub(1);
-    let accepted_transaction = EventTransaction::new(
-        OperationId::new(accepted_operation).expect("valid operation identity"),
-        ContentFingerprint::digest(accepted_operation),
-        vec![TransactionParticipant::new(
-            accepted_stream.clone(),
-            ExpectedVersion::NoStream,
-            Some(
-                batch_with_event_count(&accepted_stream, accepted_operation, accepted_event_count)
-                    .expect("valid accepted transaction limit batch fixture"),
-            ),
-        )],
-    );
-    assert_eq!(
-        validate_transaction_item_limit(&accepted_transaction),
-        Ok(accepted_event_count)
-    );
-    let accepted = store
-        .append_transaction(accepted_transaction)
-        .await
-        .expect("999 events and one receipt should fit the transaction item limit");
-    assert_eq!(accepted.receipt().events().len(), accepted_event_count);
-
-    let rejected_stream = stream("default-transaction-limit-rejected")
-        .expect("valid rejected transaction limit stream fixture");
-    let rejected_operation = "default-transaction-limit-rejected";
-    let maximum_batch =
-        batch_with_event_count(&rejected_stream, rejected_operation, MAX_TRANSACTION_ITEMS)
-            .expect("valid rejected transaction limit batch fixture");
-    let error = store
-        .append_transaction(EventTransaction::new(
-            OperationId::new(rejected_operation).expect("valid operation identity"),
-            ContentFingerprint::digest(rejected_operation),
-            vec![TransactionParticipant::new(
-                rejected_stream.clone(),
-                ExpectedVersion::NoStream,
-                Some(maximum_batch.clone()),
-            )],
-        ))
-        .await
-        .expect_err("1000 events and one receipt must exceed the transaction item limit");
-    assert_eq!(error.kind(), EventStoreErrorKind::InvalidRequest);
+    for transaction in transactions {
+        let error = store
+            .append_transaction(transaction)
+            .await
+            .expect_err("an adapter without transaction support must reject every transaction");
+        assert_eq!(error.kind(), EventStoreErrorKind::ConfigurationMismatch);
+    }
     assert!(
         store
-            .load(&rejected_stream)
+            .load(&stream)
             .await
-            .expect("rejected stream should load")
+            .expect("rejected transaction stream should load")
             .is_empty()
     );
-
-    let direct = store
-        .append(&rejected_stream, ExpectedVersion::NoStream, maximum_batch)
-        .await
-        .expect("the transaction limit must not reduce the direct append batch limit");
-    assert_eq!(direct.events().len(), MAX_TRANSACTION_ITEMS);
+    assert!(
+        store
+            .load_transaction_receipt(&stream, transaction_metadata.operation_id())
+            .await
+            .expect("the default receipt lookup should succeed")
+            .is_none()
+    );
 }
 
 #[tokio::test]

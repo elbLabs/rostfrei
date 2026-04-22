@@ -1,3 +1,6 @@
+#[path = "../src/hex.rs"]
+mod hex;
+
 use std::{
     sync::{
         Arc,
@@ -10,11 +13,12 @@ use async_nats::jetstream::consumer;
 use async_nats::{
     HeaderMap, Request,
     header::{
-        NATS_BATCH_ID, NATS_BATCH_SEQUENCE, NATS_EXPECTED_LAST_SUBJECT_SEQUENCE,
-        NATS_EXPECTED_STREAM, NATS_REQUIRED_API_LEVEL,
+        NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL, NATS_BATCH_ID, NATS_BATCH_SEQUENCE,
+        NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, NATS_EXPECTED_STREAM, NATS_REQUIRED_API_LEVEL,
     },
 };
 use async_trait::async_trait;
+use base64::Engine as _;
 use rostfrei::{Aggregate as RuntimeAggregate, Apply, Initialize};
 use rostfrei_core::{
     AggregateId, AggregateType, CommittedDomainEvent, ContentFingerprint, DomainEventDispatcher,
@@ -28,6 +32,7 @@ use rostfrei_nats::{
     provision_domain_event_consumer, provision_event_store,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, watch};
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -666,6 +671,64 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
     );
 }
 
+#[tokio::test]
+#[ignore = "requires NATS Server 2.12.1 configured by ROSTFREI_NATS_URL"]
+async fn schema_four_events_without_a_valid_receipt_are_not_dispatched() -> TestResult<()> {
+    let Ok(url) = std::env::var("ROSTFREI_NATS_URL") else {
+        eprintln!("ROSTFREI_NATS_URL is not set; skipping real NATS integration test");
+        return Ok(());
+    };
+    let client = async_nats::connect(url).await?;
+    if !client.is_server_compatible(2, 12, 1) {
+        return Err("NATS Server 2.12.1 or newer is required".into());
+    }
+    let context = async_nats::jetstream::new(client.clone());
+    let suffix = unique_suffix()?;
+    let bounded_context = ApplicationName::new(format!("rostfrei-receipt-{suffix}"))?
+        .bounded_context("domain-event-consumer")?;
+    let event_store_config = NatsEventStoreConfig::new(
+        &bounded_context,
+        format!("DOMAIN_EVENT_RECEIPT_{suffix}").to_ascii_uppercase(),
+    )?
+    .with_storage_limits(64 * 1024 * 1024, 512 * 1024)?;
+    provision_event_store(&context, &event_store_config).await?;
+    let config = consumer_config(&bounded_context, &format!("receipt-{suffix}"))?;
+    provision_domain_event_consumer(&context, &event_store_config, &config).await?;
+
+    let (sender, mut receiver) = mpsc::unbounded_channel();
+    let handler = Arc::new(RecordingHandler::new(sender, 0));
+    let consumer = connect_consumer(
+        context.clone(),
+        event_store_config.clone(),
+        config,
+        handler.clone(),
+    )
+    .await?;
+    let forged_stream = stream("missing-receipt")?;
+    commit_schema_four_event_without_receipt(&client, &event_store_config, &forged_stream).await?;
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        consumer.run_until_shutdown(shutdown_rx),
+    )
+    .await?;
+    let error = result
+        .err()
+        .ok_or("a schema-4 event without a receipt did not stop the durable")?;
+    if error.kind() != rostfrei_nats::DomainEventConsumerErrorKind::InvalidCommittedEvent {
+        return Err(format!("consumer returned the wrong error: {error}").into());
+    }
+    if handler.calls.load(Ordering::Relaxed) != 0 {
+        return Err("the handler was called for a receiptless schema-4 event".into());
+    }
+    if !matches!(receiver.try_recv(), Err(mpsc::error::TryRecvError::Empty)) {
+        return Err("a receiptless schema-4 event was dispatched".into());
+    }
+    drop(shutdown_tx);
+    Ok(())
+}
+
 async fn connect_consumer(
     context: async_nats::jetstream::Context,
     event_store: NatsEventStoreConfig,
@@ -812,6 +875,146 @@ async fn stage_uncommitted_batch(
         )
         .await?;
     Ok(response.payload.to_vec())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedStoredEventWire<'a> {
+    schema_version: u16,
+    checksum: String,
+    event: &'a ForgedStoredEventContent<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedStoredEventContent<'a> {
+    event_store_stream: &'a str,
+    application: &'a str,
+    bounded_context: &'a str,
+    stream: ForgedStreamIdentity<'a>,
+    stream_version: u64,
+    commit_id: &'a str,
+    operation_id: &'a str,
+    operation_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    correlation_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    causation_id: Option<&'a str>,
+    commit_event_ordinal: u32,
+    commit_event_count: u32,
+    transaction_event_ordinal: u32,
+    transaction_event_count: u32,
+    event_id: &'a str,
+    event_type: &'a str,
+    event_schema_version: u32,
+    payload_base64: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedStreamIdentity<'a> {
+    aggregate_type: &'a str,
+    aggregate_id: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedEventChecksumInput<'a> {
+    schema_version: u16,
+    event: &'a ForgedStoredEventContent<'a>,
+}
+
+async fn commit_schema_four_event_without_receipt(
+    client: &async_nats::Client,
+    config: &NatsEventStoreConfig,
+    stream_id: &StreamId,
+) -> TestResult<()> {
+    const SCHEMA_VERSION: u16 = 4;
+    let event_batch = batch(
+        stream_id,
+        "schema-four-without-receipt",
+        &["must-not-dispatch"],
+    )?;
+    let event = event_batch
+        .events()
+        .first()
+        .ok_or("forged event batch is empty")?;
+    let content = ForgedStoredEventContent {
+        event_store_stream: config.stream_name(),
+        application: config.application().as_str(),
+        bounded_context: config.bounded_context().as_str(),
+        stream: ForgedStreamIdentity {
+            aggregate_type: stream_id.aggregate_type().as_str(),
+            aggregate_id: stream_id.aggregate_id().as_str(),
+        },
+        stream_version: 1,
+        commit_id: event_batch.commit_id().as_str(),
+        operation_id: event_batch.operation_id().as_str(),
+        operation_fingerprint: event_batch.operation_fingerprint().to_hex(),
+        correlation_id: None,
+        causation_id: None,
+        commit_event_ordinal: 0,
+        commit_event_count: 1,
+        transaction_event_ordinal: 0,
+        transaction_event_count: 1,
+        event_id: event.event_id().as_str(),
+        event_type: event.event_type(),
+        event_schema_version: event.schema_version(),
+        payload_base64: base64::engine::general_purpose::STANDARD.encode(event.payload()),
+    };
+    let checksum_input = serde_json::to_vec(&ForgedEventChecksumInput {
+        schema_version: SCHEMA_VERSION,
+        event: &content,
+    })?;
+    let payload = serde_json::to_vec(&ForgedStoredEventWire {
+        schema_version: SCHEMA_VERSION,
+        checksum: hex::encode_lower_hex(Sha256::digest(checksum_input)),
+        event: &content,
+    })?;
+    let batch_id = "schema-four-with-unrelated-filler";
+    let subject = config.aggregate_subject(
+        stream_id.aggregate_type().as_str(),
+        stream_id.aggregate_id().as_str(),
+    );
+    let mut event_headers = HeaderMap::new();
+    event_headers.insert("Content-Type", "application/json");
+    event_headers.insert(NATS_REQUIRED_API_LEVEL, "2");
+    event_headers.insert(NATS_BATCH_ID, batch_id);
+    event_headers.insert(NATS_BATCH_SEQUENCE, "1");
+    event_headers.insert(NATS_EXPECTED_STREAM, config.stream_name());
+    event_headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
+    let staged = client
+        .send_request(
+            subject,
+            Request::new()
+                .headers(event_headers)
+                .payload(payload.into())
+                .timeout(Some(config.puback_timeout())),
+        )
+        .await?;
+    if !staged.payload.is_empty() {
+        return Err("NATS acknowledged the forged event before its filler".into());
+    }
+
+    let mut filler_headers = HeaderMap::new();
+    filler_headers.insert("Content-Type", "application/json");
+    filler_headers.insert(NATS_REQUIRED_API_LEVEL, "2");
+    filler_headers.insert(NATS_BATCH_ID, batch_id);
+    filler_headers.insert(NATS_BATCH_SEQUENCE, "2");
+    filler_headers.insert(NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL);
+    let committed = client
+        .send_request(
+            config.transaction_guard_subject(stream_id, "unrelated-filler", 0),
+            Request::new()
+                .headers(filler_headers)
+                .payload(br#"{"unrelated":true}"#.to_vec().into())
+                .timeout(Some(config.puback_timeout())),
+        )
+        .await?;
+    if committed.payload.is_empty() {
+        return Err("NATS did not commit the forged event with its filler".into());
+    }
+    Ok(())
 }
 
 fn unique_suffix() -> TestResult<String> {
