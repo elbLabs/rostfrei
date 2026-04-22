@@ -19,9 +19,7 @@ pub use rostfrei_core::{
     InMemoryEventStore, NewEvent, OperationId, RecordedEvent, SimulationDecision, SimulationError,
     SimulationOutcome, StreamId, StreamVersion,
 };
-pub use rostfrei_domain_runtime::{
-    AggregateRuntime, Apply, Initialize, domain_command_handler, domain_module,
-};
+pub use rostfrei_domain_runtime::{AggregateRuntime, Apply, Initialize, domain_module};
 pub use rostfrei_messaging_core::{
     CommandAddress, CommandPublisher, CommandRejection, CommandRejectionClassification,
     CommandResponse, CommandResponseOutcome, CommandResponseReader, DurableName,
