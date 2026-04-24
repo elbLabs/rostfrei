@@ -37,12 +37,15 @@ use tokio::{
 };
 
 use crate::{
-    rental::{
+    demo::{SeedError, seed_demo},
+    rental_fleet::{
         AddBicycle, BicycleId, BicycleRented, FleetId, RentBicycle, RentalFleetAggregate,
         ReturnBicycle,
     },
-    runtime::{SeedError, seed_demo},
 };
+
+#[cfg(test)]
+mod tests;
 
 pub const BOUNDED_CONTEXT_NAME: &str = "bike-rental";
 pub const BICYCLE_RENTAL_STARTED_EVENT_NAME: &str = "bicycle-rental-started";

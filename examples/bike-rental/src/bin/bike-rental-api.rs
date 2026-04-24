@@ -1,10 +1,9 @@
 use std::{env, path::PathBuf, sync::Arc};
 
 use bike_rental::{
-    domain_model,
-    nats_runtime::BikeRentalNatsRuntime,
-    rental::{AddBicycle, RentBicycle, ReturnBicycle},
-    runtime::{RentBicycleInputOptions, ReturnBicycleInputOptions, tracer_builder},
+    BikeRentalNatsRuntime, domain_model,
+    rental_fleet::{AddBicycle, RentBicycle, ReturnBicycle},
+    tracer::{self, RentBicycleInputOptions, ReturnBicycleInputOptions},
 };
 use rostfrei::EventHistory;
 use rostfrei_nats::{NatsConnectionConfig, ServerVersion, connect};
@@ -41,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let test_repository: Arc<dyn TestRepository> = Arc::new(FilesystemTestRepository::load(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer"),
     )?);
-    let mut builder = tracer_builder(history)?
+    let mut builder = tracer::builder(history)?
         .with_domain_model(domain_model()?)
         .with_test_event_store(test_store.clone())
         .with_stream_directory(test_store)
