@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{env, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -18,9 +18,10 @@ use rostfrei_messaging_core::{
 };
 use rostfrei_nats::{
     ApplicationMessagingConfig, CorrelatedMessage, CorrelatedMessageFamily,
-    CorrelatedMessageHandler, DomainEventConsumerError, NatsConnection, NatsCorrelationObserver,
-    NatsDomainEventConsumer, NatsDomainEventConsumerConfig, NatsError, NatsEventStore,
-    NatsEventStoreConfig, NatsMessagingAdapter, provision_application_messaging,
+    CorrelatedMessageHandler, DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
+    DEFAULT_EVENT_STORE_MAX_STREAM_BYTES, DomainEventConsumerError, NatsConnection,
+    NatsCorrelationObserver, NatsDomainEventConsumer, NatsDomainEventConsumerConfig, NatsError,
+    NatsEventStore, NatsEventStoreConfig, NatsMessagingAdapter, provision_application_messaging,
     provision_domain_event_consumer, provision_durable_consumer, provision_event_store,
 };
 use rostfrei_tracer::{
@@ -59,7 +60,10 @@ const CONSUMER_CONCURRENCY: usize = 4;
 const COMMAND_CONSUMER_CONCURRENCY: usize = 1;
 const MAXIMUM_DELIVERY_ATTEMPTS: u32 = 5;
 const COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
-const MESSAGING_STREAM_MAX_BYTES: i64 = 64 * 1024 * 1024;
+const DEFAULT_MESSAGING_STREAM_MAX_BYTES: i64 = 64 * 1024 * 1024;
+const MESSAGING_STREAM_MAX_BYTES_ENV: &str = "ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES";
+const EVENT_STORE_MAX_STREAM_BYTES_ENV: &str = "ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES";
+const EVENT_STORE_MAX_EVENT_BYTES_ENV: &str = "ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES";
 
 #[derive(Debug, Error)]
 pub enum BikeRentalNatsError {
@@ -77,8 +81,95 @@ pub enum BikeRentalNatsError {
     EventStore(#[from] EventStoreError),
     #[error(transparent)]
     Nats(#[from] NatsError),
+    #[error("environment variable `{name}` must be a positive integer byte count, got `{value}`")]
+    ResourceLimitEnvironment { name: &'static str, value: String },
     #[error(transparent)]
     Seed(#[from] SeedError),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BikeRentalNatsResourceLimits {
+    messaging_stream: i64,
+    event_store_stream: i64,
+    event_store_event: usize,
+}
+
+impl BikeRentalNatsResourceLimits {
+    pub const fn new(
+        messaging_stream_max_bytes: i64,
+        event_store_max_stream_bytes: i64,
+        event_store_max_event_bytes: usize,
+    ) -> Self {
+        Self {
+            messaging_stream: messaging_stream_max_bytes,
+            event_store_stream: event_store_max_stream_bytes,
+            event_store_event: event_store_max_event_bytes,
+        }
+    }
+
+    pub fn from_env() -> Result<Self, BikeRentalNatsError> {
+        let defaults = Self::default();
+        Ok(Self::new(
+            env_i64(MESSAGING_STREAM_MAX_BYTES_ENV, defaults.messaging_stream)?,
+            env_i64(
+                EVENT_STORE_MAX_STREAM_BYTES_ENV,
+                defaults.event_store_stream,
+            )?,
+            env_usize(EVENT_STORE_MAX_EVENT_BYTES_ENV, defaults.event_store_event)?,
+        ))
+    }
+
+    pub const fn messaging_stream_max_bytes(self) -> i64 {
+        self.messaging_stream
+    }
+
+    pub const fn event_store_max_stream_bytes(self) -> i64 {
+        self.event_store_stream
+    }
+
+    pub const fn event_store_max_event_bytes(self) -> usize {
+        self.event_store_event
+    }
+}
+
+impl Default for BikeRentalNatsResourceLimits {
+    fn default() -> Self {
+        Self::new(
+            DEFAULT_MESSAGING_STREAM_MAX_BYTES,
+            DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
+            DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
+        )
+    }
+}
+
+fn env_i64(name: &'static str, default: i64) -> Result<i64, BikeRentalNatsError> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse::<i64>()
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or(BikeRentalNatsError::ResourceLimitEnvironment { name, value }),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(env::VarError::NotUnicode(_)) => Err(BikeRentalNatsError::ResourceLimitEnvironment {
+            name,
+            value: "<non-Unicode>".to_owned(),
+        }),
+    }
+}
+
+fn env_usize(name: &'static str, default: usize) -> Result<usize, BikeRentalNatsError> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or(BikeRentalNatsError::ResourceLimitEnvironment { name, value }),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(env::VarError::NotUnicode(_)) => Err(BikeRentalNatsError::ResourceLimitEnvironment {
+            name,
+            value: "<non-Unicode>".to_owned(),
+        }),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -147,6 +238,7 @@ impl BikeRentalIntegrationEventRoute {
 pub struct BikeRentalNatsConfig {
     application: ApplicationName,
     context: BoundedContext,
+    resource_limits: BikeRentalNatsResourceLimits,
     messaging: ApplicationMessagingConfig,
     event_store: NatsEventStoreConfig,
     domain_event_consumer: NatsDomainEventConsumerConfig,
@@ -156,11 +248,22 @@ pub struct BikeRentalNatsConfig {
 
 impl BikeRentalNatsConfig {
     pub fn new(application: &str) -> Result<Self, BikeRentalNatsError> {
+        Self::new_with_resource_limits(application, BikeRentalNatsResourceLimits::default())
+    }
+
+    pub fn new_with_resource_limits(
+        application: &str,
+        resource_limits: BikeRentalNatsResourceLimits,
+    ) -> Result<Self, BikeRentalNatsError> {
         let application = ApplicationName::new(application)?;
         let context = application.bounded_context(BOUNDED_CONTEXT_NAME)?;
         let messaging = ApplicationMessagingConfig::new(&application)?
-            .with_max_bytes(MESSAGING_STREAM_MAX_BYTES)?;
-        let event_store = NatsEventStoreConfig::for_bounded_context(&context)?;
+            .with_max_bytes(resource_limits.messaging_stream_max_bytes())?;
+        let event_store = NatsEventStoreConfig::for_bounded_context(&context)?
+            .with_storage_limits(
+                resource_limits.event_store_max_stream_bytes(),
+                resource_limits.event_store_max_event_bytes(),
+            )?;
         let domain_event_consumer = NatsDomainEventConsumerConfig::new(
             context.consumer_name(DOMAIN_EVENT_PUBLISHER_PURPOSE, 1)?,
             context.durable_name(DOMAIN_EVENT_PUBLISHER_PURPOSE, 1)?,
@@ -177,6 +280,7 @@ impl BikeRentalNatsConfig {
         Ok(Self {
             application,
             context,
+            resource_limits,
             messaging,
             event_store,
             domain_event_consumer,
@@ -191,6 +295,10 @@ impl BikeRentalNatsConfig {
 
     pub const fn context(&self) -> &BoundedContext {
         &self.context
+    }
+
+    pub const fn resource_limits(&self) -> BikeRentalNatsResourceLimits {
+        self.resource_limits
     }
 
     pub const fn messaging(&self) -> &ApplicationMessagingConfig {
@@ -468,7 +576,20 @@ impl BikeRentalNatsRuntime {
         connection: NatsConnection,
         application: &str,
     ) -> Result<Self, BikeRentalNatsError> {
-        let config = BikeRentalNatsConfig::new(application)?;
+        Self::provision_with_resource_limits(
+            connection,
+            application,
+            BikeRentalNatsResourceLimits::default(),
+        )
+        .await
+    }
+
+    pub async fn provision_with_resource_limits(
+        connection: NatsConnection,
+        application: &str,
+        resource_limits: BikeRentalNatsResourceLimits,
+    ) -> Result<Self, BikeRentalNatsError> {
+        let config = BikeRentalNatsConfig::new_with_resource_limits(application, resource_limits)?;
         config.provision(&connection).await?;
         let store = config.connect_store(&connection).await?;
         let messaging = Arc::new(

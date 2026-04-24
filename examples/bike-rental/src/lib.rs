@@ -7,6 +7,6 @@ pub use bike_rental_nats::{
     BICYCLE_RENTAL_STARTED_EVENT_NAME, BOUNDED_CONTEXT_NAME, BicycleRentalStarted,
     BicycleRentalStartedHandler, BicycleRentedIntegrationMapper, BikeRentalCommand,
     BikeRentalCommandRoute, BikeRentalIntegrationEventRoute, BikeRentalNatsConfig,
-    BikeRentalNatsError, BikeRentalNatsRuntime,
+    BikeRentalNatsError, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
 };
 pub use domain::{BikeRental, domain_model, rental_fleet};

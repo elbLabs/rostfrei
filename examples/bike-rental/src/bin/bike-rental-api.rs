@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf, sync::Arc};
 
 use bike_rental::{
-    BikeRentalNatsRuntime, domain_model,
+    BikeRentalNatsResourceLimits, BikeRentalNatsRuntime, domain_model,
     rental_fleet::{AddBicycle, RentBicycle, ReturnBicycle},
     tracer::{self, RentBicycleInputOptions, ReturnBicycleInputOptions},
 };
@@ -19,18 +19,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let application = env::var("ROSTFREI_APPLICATION").unwrap_or_else(|_| "bike-rental".to_owned());
     let test_application = format!("{application}-test");
     let production_application = format!("{application}-prod");
+    let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
     let connection = connect(
         &NatsConnectionConfig::new("bike-rental-api", nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
     )
     .await?;
 
-    let test_runtime =
-        Arc::new(BikeRentalNatsRuntime::provision(connection.clone(), &test_application).await?);
+    let test_runtime = Arc::new(
+        BikeRentalNatsRuntime::provision_with_resource_limits(
+            connection.clone(),
+            &test_application,
+            resource_limits,
+        )
+        .await?,
+    );
     test_runtime.reset().await?;
 
-    let production_runtime =
-        Arc::new(BikeRentalNatsRuntime::provision(connection, &production_application).await?);
+    let production_runtime = Arc::new(
+        BikeRentalNatsRuntime::provision_with_resource_limits(
+            connection,
+            &production_application,
+            resource_limits,
+        )
+        .await?,
+    );
     production_runtime.seed_demo().await?;
     production_runtime.start_workers().await?;
 
