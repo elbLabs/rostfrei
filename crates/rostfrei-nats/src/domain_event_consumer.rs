@@ -77,6 +77,7 @@ impl NatsDomainEventConsumerConfig {
     ) -> Result<Self, DomainEventConsumerError> {
         if name.application() != durable_name.application()
             || name.context() != durable_name.context()
+            || name.traffic_scope() != durable_name.traffic_scope()
         {
             return Err(invalid_configuration(
                 "consumer and durable names must have the same application and bounded context",
@@ -536,6 +537,8 @@ fn durable_domain_event_consumer_config(
         || config.durable_name().application() != event_store.application().as_str()
         || config.name().context() != event_store.bounded_context().as_str()
         || config.durable_name().context() != event_store.bounded_context().as_str()
+        || config.name().traffic_scope() != event_store.traffic_scope()
+        || config.durable_name().traffic_scope() != event_store.traffic_scope()
     {
         return Err(invalid_configuration(
             "domain-event consumer belongs to a different application or bounded context",

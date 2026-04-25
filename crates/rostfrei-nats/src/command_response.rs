@@ -56,7 +56,7 @@ impl CommandResponseReader for NatsCommandResponseReader {
         expected_command_message_id: &MessageId,
         read_timeout: Duration,
     ) -> Result<Option<CommandResponse>, CommandResponseReadError> {
-        validate_read_configuration(address, self.topology.application().as_str(), read_timeout)?;
+        validate_read_configuration(address, &self.topology, read_timeout)?;
 
         timeout(read_timeout, async {
             let stream = self
@@ -99,7 +99,7 @@ impl CommandResponseReader for NatsCommandResponseReader {
         expected_command_message_id: &MessageId,
         read_timeout: Duration,
     ) -> Result<CommandResponse, CommandResponseReadError> {
-        validate_read_configuration(address, self.topology.application().as_str(), read_timeout)?;
+        validate_read_configuration(address, &self.topology, read_timeout)?;
 
         timeout(read_timeout, async {
             let stream = self
@@ -145,10 +145,11 @@ impl CommandResponseReader for NatsCommandResponseReader {
 
 fn validate_read_configuration(
     address: &CommandResponseAddress,
-    application: &str,
+    topology: &MessagingTopology,
     read_timeout: Duration,
 ) -> Result<(), CommandResponseReadError> {
-    if address.application() != application
+    if address.application() != topology.application().as_str()
+        || address.traffic_scope() != topology.traffic_scope()
         || read_timeout.is_zero()
         || read_timeout > MAX_COMMAND_RESPONSE_TIMEOUT
     {
@@ -227,8 +228,8 @@ const fn read_error(kind: CommandResponseReadErrorKind) -> CommandResponseReadEr
 mod tests {
     use super::*;
     use rostfrei_messaging_core::{
-        COMMAND_RESPONSE_SCHEMA_VERSION, CommandAddress, CorrelationId,
-        derive_command_response_address,
+        ApplicationName, COMMAND_RESPONSE_SCHEMA_VERSION, CommandAddress, CorrelationId,
+        TrafficScope, derive_command_response_address,
     };
 
     fn response_fixture() -> (
@@ -377,13 +378,27 @@ mod tests {
     #[test]
     fn read_configuration_bounds_scope_and_timeout() {
         let (address, _, _, _) = response_fixture();
-        assert!(validate_read_configuration(&address, "acme", Duration::from_secs(1)).is_ok());
-        assert!(validate_read_configuration(&address, "other", Duration::from_secs(1)).is_err());
-        assert!(validate_read_configuration(&address, "acme", Duration::ZERO).is_err());
+        let topology =
+            MessagingTopology::for_application(&ApplicationName::new("acme").unwrap()).unwrap();
+        let other =
+            MessagingTopology::for_application(&ApplicationName::new("other").unwrap()).unwrap();
+        let test_address = derive_command_response_address(
+            &CommandAddress::new_in_scope("acme", TrafficScope::Test, "orders", "place-order")
+                .unwrap(),
+            &OperationId::new("operation-1").unwrap(),
+            &MessageId::new("command-1").unwrap(),
+        )
+        .unwrap();
+        assert!(validate_read_configuration(&address, &topology, Duration::from_secs(1)).is_ok());
+        assert!(validate_read_configuration(&address, &other, Duration::from_secs(1)).is_err());
+        assert!(
+            validate_read_configuration(&test_address, &topology, Duration::from_secs(1)).is_err()
+        );
+        assert!(validate_read_configuration(&address, &topology, Duration::ZERO).is_err());
         assert!(
             validate_read_configuration(
                 &address,
-                "acme",
+                &topology,
                 MAX_COMMAND_RESPONSE_TIMEOUT + Duration::from_nanos(1),
             )
             .is_err()

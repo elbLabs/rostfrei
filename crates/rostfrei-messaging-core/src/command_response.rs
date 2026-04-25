@@ -264,8 +264,9 @@ pub fn derive_command_response_address(
         hash.update(value);
     }
     let name = format!("{:x}", hash.finalize());
-    CommandResponseAddress::new(
+    CommandResponseAddress::new_in_scope(
         command_address.application(),
+        command_address.traffic_scope(),
         command_address.context(),
         &name,
     )
@@ -511,5 +512,21 @@ mod tests {
             )
             .unwrap()
         );
+        let test_command = CommandAddress::new_in_scope(
+            "acme",
+            crate::TrafficScope::Test,
+            "orders",
+            "place-order",
+        )
+        .unwrap();
+        let test_address =
+            derive_command_response_address(&test_command, &operation, &command_message).unwrap();
+        assert_eq!(test_address.traffic_scope(), crate::TrafficScope::Test);
+        assert!(
+            test_address
+                .as_str()
+                .starts_with("acme.test.command-response.orders.")
+        );
+        assert_ne!(test_address, address);
     }
 }

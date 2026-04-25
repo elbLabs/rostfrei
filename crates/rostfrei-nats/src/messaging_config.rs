@@ -1,6 +1,6 @@
 use std::{fmt, time::Duration};
 
-use rostfrei_messaging_core::{AddressKind, ApplicationName};
+use rostfrei_messaging_core::{AddressKind, ApplicationName, TrafficScope};
 
 use crate::error::NatsError;
 
@@ -142,6 +142,7 @@ impl fmt::Display for QueueGroup {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessagingTopology {
     application: ApplicationName,
+    traffic_scope: TrafficScope,
     command: StreamName,
     command_response: StreamName,
     integration_event: StreamName,
@@ -155,12 +156,29 @@ impl MessagingTopology {
         integration_event_stream: StreamName,
         quarantine_stream: StreamName,
     ) -> Result<Self, NatsError> {
+        Self::new_in_scope(
+            application,
+            TrafficScope::Normal,
+            command_stream,
+            integration_event_stream,
+            quarantine_stream,
+        )
+    }
+
+    pub fn new_in_scope(
+        application: ApplicationName,
+        traffic_scope: TrafficScope,
+        command_stream: StreamName,
+        integration_event_stream: StreamName,
+        quarantine_stream: StreamName,
+    ) -> Result<Self, NatsError> {
         let command_response_stream = StreamName::new(format!(
             "{}_COMMAND_RESPONSES",
-            application_stream_token(&application)
+            traffic_stream_prefix(application.as_str(), traffic_scope)
         ))?;
-        Self::new_with_command_response_stream(
+        Self::new_with_command_response_stream_in_scope(
             application,
+            traffic_scope,
             command_stream,
             command_response_stream,
             integration_event_stream,
@@ -170,6 +188,24 @@ impl MessagingTopology {
 
     pub fn new_with_command_response_stream(
         application: ApplicationName,
+        command_stream: StreamName,
+        command_response_stream: StreamName,
+        integration_event_stream: StreamName,
+        quarantine_stream: StreamName,
+    ) -> Result<Self, NatsError> {
+        Self::new_with_command_response_stream_in_scope(
+            application,
+            TrafficScope::Normal,
+            command_stream,
+            command_response_stream,
+            integration_event_stream,
+            quarantine_stream,
+        )
+    }
+
+    pub fn new_with_command_response_stream_in_scope(
+        application: ApplicationName,
+        traffic_scope: TrafficScope,
         command_stream: StreamName,
         command_response_stream: StreamName,
         integration_event_stream: StreamName,
@@ -186,6 +222,7 @@ impl MessagingTopology {
         }
         Ok(Self {
             application,
+            traffic_scope,
             command: command_stream,
             command_response: command_response_stream,
             integration_event: integration_event_stream,
@@ -194,9 +231,17 @@ impl MessagingTopology {
     }
 
     pub fn for_application(application: &ApplicationName) -> Result<Self, NatsError> {
-        let prefix = application_stream_token(application);
-        Self::new_with_command_response_stream(
+        Self::for_application_in_scope(application, TrafficScope::Normal)
+    }
+
+    pub fn for_application_in_scope(
+        application: &ApplicationName,
+        traffic_scope: TrafficScope,
+    ) -> Result<Self, NatsError> {
+        let prefix = traffic_stream_prefix(application.as_str(), traffic_scope);
+        Self::new_with_command_response_stream_in_scope(
             application.clone(),
+            traffic_scope,
             StreamName::new(format!("{prefix}_COMMANDS"))?,
             StreamName::new(format!("{prefix}_COMMAND_RESPONSES"))?,
             StreamName::new(format!("{prefix}_INTEGRATION_EVENTS"))?,
@@ -206,6 +251,10 @@ impl MessagingTopology {
 
     pub const fn application(&self) -> &ApplicationName {
         &self.application
+    }
+
+    pub const fn traffic_scope(&self) -> TrafficScope {
+        self.traffic_scope
     }
 
     pub const fn command_stream(&self) -> &StreamName {
@@ -234,16 +283,26 @@ impl MessagingTopology {
     }
 }
 
-fn application_stream_token(application: &ApplicationName) -> String {
-    application
-        .as_str()
+pub fn traffic_subject_prefix(application: &str, traffic_scope: TrafficScope) -> String {
+    traffic_scope.subject_segment().map_or_else(
+        || application.to_owned(),
+        |scope| format!("{application}.{scope}"),
+    )
+}
+
+pub fn traffic_stream_prefix(application: &str, traffic_scope: TrafficScope) -> String {
+    let application = application
         .bytes()
         .map(|byte| match byte {
             b'-' => b'_',
             _ => byte.to_ascii_uppercase(),
         })
         .map(char::from)
-        .collect()
+        .collect::<String>();
+    match traffic_scope {
+        TrafficScope::Normal => application,
+        TrafficScope::Test => format!("{application}__TEST"),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -445,5 +504,18 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn test_topology_derives_disjoint_stream_names() {
+        let application = ApplicationName::new("fast-inbox").unwrap();
+        let normal = MessagingTopology::for_application(&application).unwrap();
+        let test =
+            MessagingTopology::for_application_in_scope(&application, TrafficScope::Test).unwrap();
+
+        assert_eq!(normal.command_stream().as_str(), "FAST_INBOX_COMMANDS");
+        assert_eq!(test.command_stream().as_str(), "FAST_INBOX__TEST_COMMANDS");
+        assert_eq!(test.traffic_scope(), TrafficScope::Test);
+        assert_ne!(normal.command_stream(), test.command_stream());
     }
 }
