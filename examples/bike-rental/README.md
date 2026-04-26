@@ -96,10 +96,15 @@ The API advertises all command fields, runtime choices, instances, mode actions,
 and reset links through `GET /catalog` and its linked resources. Clients can
 follow these links without embedding bike-rental values.
 
-Behavioral tests are YAML files in `tests/tracer`. They name the deterministic
-`demo-fleet` fixture, run setup and subject commands through the isolated test
-NATS pipeline, and assert the command outcome plus correlated domain or
-integration events. The filesystem remains the source of truth:
+Behavioral tests are canonical JSON documents in `tests/tracer`. They name the
+deterministic `demo-fleet` fixture and describe one expected causal graph. The
+root command in `expected.graphs[0]` is also the executable test subject; setup
+commands run first, then that root is published through the isolated Test NATS
+WorkQueue. The server constructs the observed command, durable response, domain
+event, and integration-event series and performs the comparison. Expected JSON
+objects use subset semantics, while scalar values and array lengths/order must
+match exactly. The filesystem remains the source of truth, and the same JSON
+wire document can be submitted inline:
 
 ```sh
 curl --header 'authorization: Bearer local-development-token' \
@@ -108,10 +113,17 @@ curl --header 'authorization: Bearer local-development-token' \
 curl --request POST \
   --header 'authorization: Bearer local-development-token' \
   http://127.0.0.1:1309/tests/rent-available-bicycle/runs
+
+curl --request POST \
+  --header 'authorization: Bearer local-development-token' \
+  --header 'content-type: application/json' \
+  --data-binary @examples/bike-rental/tests/tracer/rent-available-bicycle.json \
+  http://127.0.0.1:1309/test-runs
 ```
 
 Run the dispatch-isolation check and all three behavioral definitions against
-a real NATS server:
+a real NATS Server 2.12.1 or newer. These tests are deliberately ignored during
+normal test runs; the explicit command is:
 
 ```sh
 ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
@@ -119,8 +131,11 @@ ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
   ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES=268435456 \
   ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES=524288 \
   cargo test --locked -p bike-rental \
-  --test nats_runtime_integration
+  --test nats_runtime_integration -- --ignored --test-threads=1
 ```
+
+The opt-in run fails rather than skips when `ROSTFREI_NATS_URL` is missing,
+empty, unreachable, or points to an unsupported server version.
 
 Submit a simulation:
 

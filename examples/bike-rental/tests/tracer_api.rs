@@ -457,10 +457,19 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["cache-control"], "private, no-store");
     let catalog = json_body(response).await;
-    assert_eq!(catalog["catalogVersion"], 3);
+    assert_eq!(catalog["catalogVersion"], 4);
     assert_eq!(catalog["testScenario"]["resetHref"], "/test-scenario/reset");
     assert_eq!(catalog["testScenario"]["fixtures"][0], "demo-fleet");
     assert_eq!(catalog["testRepository"]["definitionsHref"], "/tests");
+    assert_eq!(
+        catalog["behavioralTest"],
+        json!({
+            "schemaHref": "/schemas/behavioral-test-v1",
+            "validateHref": "/tests/validate",
+            "runHref": "/test-runs",
+            "definitionsHref": "/tests"
+        })
+    );
     assert_eq!(catalog["contexts"][0]["id"], "bike-rental");
     assert_eq!(catalog["contexts"][0]["label"], "Bike Rental");
     let aggregate = &catalog["contexts"][0]["aggregates"][0];
@@ -542,6 +551,10 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
             "return-rented-bicycle"
         ]
     );
+    assert_eq!(
+        tests["items"][1]["runHref"],
+        "/tests/rent-available-bicycle/runs"
+    );
 
     let test = app
         .clone()
@@ -555,7 +568,8 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         .unwrap();
     assert_eq!(test.status(), StatusCode::OK);
     let test = json_body(test).await;
-    assert_eq!(test["definition"]["given"]["fixture"], "demo-fleet");
+    assert_eq!(test["definition"]["setup"]["fixture"], "demo-fleet");
+    assert_eq!(test["definition"]["schemaVersion"], 1);
     assert_eq!(test["revision"].as_str().unwrap().len(), 64);
 
     let response = app

@@ -5,7 +5,7 @@ use std::{error::Error, sync::Arc};
 use super::{
     APPLICATION_NAME, BicycleRentalStarted, BicycleRentalStartedHandler,
     BicycleRentedIntegrationMapper, BikeRentalCommand, BikeRentalNatsConfig,
-    BikeRentalNatsResourceLimits,
+    BikeRentalNatsResourceLimits, integration_event_observation,
 };
 use crate::{
     demo::{demo_stream, seed_demo},
@@ -375,6 +375,50 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
     let message = messages
         .first()
         .ok_or("integration message was not published")?;
+    let message_correlation = message
+        .message()
+        .correlation_id()
+        .ok_or("integration message omitted its correlation ID")?;
+    let observation = integration_event_observation(
+        message.address().as_str(),
+        Some(message.message_id()),
+        message_correlation,
+        message.payload(),
+    )?;
+    assert_eq!(observation.message_id, message.message_id().as_str());
+    assert_eq!(
+        observation.causation_id.as_deref(),
+        Some(rented.event_id().as_str())
+    );
+    assert_eq!(observation.event_type, "bicycle-rental-started");
+    assert_eq!(observation.schema_version, 1);
+    assert_eq!(observation.subject, message.address().as_str());
+    assert_eq!(
+        observation.payload.as_ref(),
+        Some(&json!({
+            "source_event_id": rented.event_id().as_str(),
+            "fleet_id": "city-fleet",
+            "bicycle_id": "bike-42"
+        }))
+    );
+    assert!(
+        integration_event_observation(
+            message.address().as_str(),
+            None,
+            message_correlation,
+            message.payload(),
+        )
+        .is_err()
+    );
+    assert!(
+        integration_event_observation(
+            message.address().as_str(),
+            Some(message.message_id()),
+            &CorrelationId::new("wrong-correlation")?,
+            message.payload(),
+        )
+        .is_err()
+    );
     let delivery_info = DeliveryInfo::new(1, 0, 1, 1)?;
     let valid = MessageDelivery::new_with_transport_context(
         message.address().clone(),
@@ -413,10 +457,20 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
             "message_id".to_owned(),
             serde_json::Value::String(arbitrary_message_id.as_str().to_owned()),
         );
+    let invalid_identity_payload = serde_json::to_vec(&invalid_identity)?;
+    assert!(
+        integration_event_observation(
+            message.address().as_str(),
+            Some(&arbitrary_message_id),
+            message_correlation,
+            &invalid_identity_payload,
+        )
+        .is_err()
+    );
     let invalid_identity = MessageDelivery::new_with_transport_context(
         message.address().clone(),
         arbitrary_message_id,
-        serde_json::to_vec(&invalid_identity)?,
+        invalid_identity_payload,
         CallerMetadata::new(),
         message.message().correlation_id().cloned(),
         None,

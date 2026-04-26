@@ -9,7 +9,7 @@
 use std::{
     env,
     error::Error,
-    io,
+    fs, io,
     path::PathBuf,
     process,
     sync::Arc,
@@ -31,16 +31,21 @@ use bike_rental::{
 use http_body_util::BodyExt as _;
 use rostfrei::{
     Aggregate, Command, EventHistory, OperationId, RecordedEvent, StreamAggregateId,
-    integration_message_id,
+    command_message_id, command_response_message_id, integration_message_id,
 };
-use rostfrei_messaging_core::{CausationId, IntegrationEventEnvelope, SchemaVersion};
+use rostfrei_messaging_core::{
+    CausationId, CorrelationId, IntegrationEventEnvelope, MessageId,
+    OperationId as MessagingOperationId, SchemaVersion,
+};
 use rostfrei_nats::{
-    CORRELATION_ID_HEADER, NatsConnection, NatsConnectionConfig, ServerVersion, connect,
+    CORRELATION_ID_HEADER, NatsConnection, NatsConnectionConfig, ServerVersion, StreamRetention,
+    connect,
 };
 use rostfrei_tracer::{
-    CommandInvocation, CommandOutcome, CommandPublication, CommandReceipt,
-    CommandTransportObserver, ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository,
-    OperationMode, TestRepository, TestScenarioReset, command_execution_fingerprint,
+    CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
+    ExpectedMessageKind, ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository,
+    ObservedMessageSeries, OperationMode, TestRepository, TestScenarioReset,
+    command_execution_fingerprint,
     http::{self, HttpConfig},
 };
 use serde::Deserialize;
@@ -80,10 +85,9 @@ impl CommandTransportObserver for RecordingObserver {
 }
 
 #[tokio::test]
+#[ignore = "requires NATS 2.12.1+"]
 async fn command_workers_and_test_reset_are_subject_scope_isolated() -> TestResult {
-    let Ok(nats_url) = env::var("ROSTFREI_NATS_URL") else {
-        return Ok(());
-    };
+    let nats_url = required_nats_url()?;
     let scope = unique_scope()?;
     let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
     let test_config = BikeRentalNatsConfig::new_test_with_resource_limits(&scope, resource_limits)?;
@@ -133,10 +137,9 @@ async fn command_workers_and_test_reset_are_subject_scope_isolated() -> TestResu
 }
 
 #[tokio::test]
+#[ignore = "requires NATS 2.12.1+"]
 async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime() -> TestResult {
-    let Ok(nats_url) = env::var("ROSTFREI_NATS_URL") else {
-        return Ok(());
-    };
+    let nats_url = required_nats_url()?;
     let scope = unique_scope()?;
     let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
     let test_config = BikeRentalNatsConfig::new_test_with_resource_limits(&scope, resource_limits)?;
@@ -177,6 +180,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
         let app = http::router(tracer, HttpConfig::new(API_TOKEN)?);
 
         let run_result: TestResult = async {
+            let definition_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer");
             let response = app
                 .clone()
                 .oneshot(
@@ -196,6 +200,320 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             ensure(
                 definitions.len() == 3,
                 "expected exactly three bike-rental behavioral definitions",
+            )?;
+
+            let canonical_bytes = fs::read(definition_root.join("rent-available-bicycle.json"))?;
+            let canonical_definition: Value = serde_json::from_slice(&canonical_bytes)?;
+            let response = app
+                .clone()
+                .oneshot(
+                    authorize(Request::builder())
+                        .method("POST")
+                        .uri("/test-runs")
+                        .header("content-type", "application/json")
+                        .body(Body::from(canonical_bytes))?,
+                )
+                .await?;
+            ensure(
+                response.status() == StatusCode::OK,
+                "inline behavioral test execution did not return a typed report",
+            )?;
+            let report = json_response(response).await?;
+            ensure(
+                report["status"] == "passed",
+                "inline behavioral test failed",
+            )?;
+            ensure(
+                report["testId"] == "rent-available-bicycle",
+                "inline report used the wrong test ID",
+            )?;
+            ensure(
+                report.get("revision").is_none(),
+                "inline report unexpectedly included a repository revision",
+            )?;
+            ensure(
+                report["expected"] == canonical_definition["expected"],
+                "inline report changed the submitted expectation",
+            )?;
+            ensure(
+                report["comparison"]["status"] == "passed"
+                    && report["comparison"]["diagnostics"] == json!([]),
+                "server-side message-series comparison did not pass cleanly",
+            )?;
+
+            let operation_id = required_json_str(&report, "/operationId")?;
+            let correlation_id = required_json_str(&report, "/correlationId")?;
+            let aggregate_type = RentalFleetAggregate::aggregate_type().into_owned();
+            let command_payload = json!({"bicycle_id": "bike-42"});
+            let expected_command_message_id = command_message_id(
+                test_runtime
+                    .config()
+                    .command_route(BikeRentalCommand::RentBicycle)
+                    .address(),
+                &MessagingOperationId::new(operation_id)?,
+                command_execution_fingerprint(
+                    &aggregate_type,
+                    "city-fleet",
+                    RentBicycle::COMMAND_NAME,
+                    RentBicycle::SCHEMA_VERSION,
+                    &command_payload,
+                ),
+                &CorrelationId::new(correlation_id)?,
+                None,
+            )?;
+            let expected_response_message_id =
+                command_response_message_id(&expected_command_message_id)?;
+
+            ensure(
+                report["operationHref"] == format!("/operations/{operation_id}"),
+                "inline report operation link is invalid",
+            )?;
+            ensure(
+                report["operationEventsHref"] == format!("/operations/{operation_id}/events"),
+                "inline report operation-events link is invalid",
+            )?;
+            ensure(
+                report["correlationEventsHref"] == format!("/correlations/{correlation_id}/events"),
+                "inline report correlation-events link is invalid",
+            )?;
+            ensure(
+                report["operation"]["operationId"] == operation_id
+                    && report["operation"]["correlationId"] == correlation_id
+                    && report["operation"]["mode"] == "test"
+                    && report["operation"]["status"] == "completed"
+                    && report["operation"]["command"] == RentBicycle::COMMAND_NAME
+                    && report["operation"]["schemaVersion"] == RentBicycle::SCHEMA_VERSION
+                    && report["operation"]["aggregateType"] == aggregate_type
+                    && report["operation"]["aggregateId"] == "city-fleet",
+                "inline report operation snapshot is not the executed Test command",
+            )?;
+            ensure(
+                report["operation"]["result"]["decision"] == "accepted"
+                    && report["operation"]["result"].get("appended").is_none()
+                    && report["operation"]["result"]["published"] == true
+                    && report["operation"]["result"]["duplicate"] == false
+                    && report["operation"]["result"]["commandMessageId"]
+                        == expected_command_message_id.as_str()
+                    && report["operation"]["result"]["responseMessageId"]
+                        == expected_response_message_id.as_str(),
+                "operation result did not retain the exact durable command identities",
+            )?;
+
+            let observed: ObservedMessageSeries =
+                serde_json::from_value(report["observed"].clone())?;
+            ensure(
+                observed.messages().len() == 3 && observed.command_outcomes().len() == 1,
+                "observed series is not the complete command/event/outcome chain",
+            )?;
+            ensure(
+                observed.topology_issues().is_empty() && observed.outcome_issues().is_empty(),
+                "observed series contains unresolved causal or outcome links",
+            )?;
+            ensure(
+                observed
+                    .messages()
+                    .iter()
+                    .all(|message| message.correlation_id() == correlation_id)
+                    && observed
+                        .command_outcomes()
+                        .iter()
+                        .all(|outcome| outcome.correlation_id() == correlation_id),
+                "observed series did not preserve the report correlation",
+            )?;
+            let mut observation_orders = observed
+                .messages()
+                .iter()
+                .map(rostfrei_tracer::ObservedMessageNode::observation_order)
+                .chain(
+                    observed
+                        .command_outcomes()
+                        .iter()
+                        .map(rostfrei_tracer::ObservedCommandOutcome::observation_order),
+                )
+                .collect::<Vec<_>>();
+            observation_orders.sort_unstable();
+            ensure(
+                observation_orders == [0, 1, 2, 3],
+                "observationOrder values are not complete and unique",
+            )?;
+
+            let command = observed_message(&observed, ExpectedMessageKind::Command)?;
+            let domain_event = observed_message(&observed, ExpectedMessageKind::DomainEvent)?;
+            let integration_event =
+                observed_message(&observed, ExpectedMessageKind::IntegrationEvent)?;
+            ensure(
+                command.message_id() == expected_command_message_id.as_str()
+                    && command.causation_id().is_none()
+                    && command.name() == RentBicycle::COMMAND_NAME
+                    && command.schema_version() == RentBicycle::SCHEMA_VERSION
+                    && command.payload() == Some(&command_payload)
+                    && command.aggregate().is_some_and(|aggregate| {
+                        aggregate.aggregate_type == aggregate_type && aggregate.id == "city-fleet"
+                    }),
+                "observed root command identity or content is invalid",
+            )?;
+
+            let command_outcome = observed
+                .command_outcomes()
+                .first()
+                .ok_or_else(|| io::Error::other("observed command outcome is absent"))?;
+            ensure(
+                command_outcome.command_message_id() == expected_command_message_id.as_str()
+                    && command_outcome.response_message_id()
+                        == expected_response_message_id.as_str()
+                    && serde_json::to_value(command_outcome.outcome())?
+                        == json!({"status": "accepted"})
+                    && report["commandOutcome"] == serde_json::to_value(command_outcome)?,
+                "durable command response is absent or linked to the wrong command",
+            )?;
+
+            wait_for_history_len(&test_runtime, 2).await?;
+            let history = test_runtime.store().load(&demo_stream()).await?;
+            let seeded_event = history
+                .first()
+                .ok_or_else(|| io::Error::other("demo fixture seed event is absent"))?;
+            ensure(
+                seeded_event.event_type() == "rental-fleet-imported"
+                    && seeded_event.operation_id().as_str() == "seed-city-fleet"
+                    && seeded_event.stream_version().value() == 1
+                    && seeded_event.correlation_id().is_none()
+                    && seeded_event.causation_id().is_none(),
+                "inline run did not reset and seed the deterministic demo fixture",
+            )?;
+            let persisted_event = history
+                .get(1)
+                .ok_or_else(|| io::Error::other("rental event was not persisted"))?;
+            let persisted_payload: Value = serde_json::from_slice(persisted_event.payload())?;
+            ensure(
+                persisted_event.event_type() == "bicycle-rented"
+                    && persisted_event.schema_version() == 1
+                    && persisted_event.operation_id().as_str() == operation_id
+                    && persisted_event
+                        .correlation_id()
+                        .is_some_and(|id| id.as_str() == correlation_id)
+                    && persisted_event.causation_id().map(CausationId::as_str)
+                        == Some(expected_command_message_id.as_str())
+                    && persisted_event.stream_id().aggregate_type().as_str() == aggregate_type
+                    && persisted_event.stream_id().aggregate_id().as_str() == "city-fleet"
+                    && persisted_payload
+                        == json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"}),
+                "persisted domain event does not prove the executed command chain",
+            )?;
+            ensure(
+                domain_event.message_id() == persisted_event.event_id().as_str()
+                    && domain_event.causation_id() == Some(expected_command_message_id.as_str())
+                    && domain_event.name() == persisted_event.event_type()
+                    && domain_event.schema_version() == persisted_event.schema_version()
+                    && domain_event.payload() == Some(&persisted_payload)
+                    && domain_event.aggregate().is_some_and(|aggregate| {
+                        aggregate.aggregate_type == aggregate_type && aggregate.id == "city-fleet"
+                    }),
+                "observed domain event is not the actual persisted event",
+            )?;
+
+            let exact_integration_message_id = wait_for_integration_chain(
+                &connection,
+                &test_runtime,
+                persisted_event,
+                expected_command_message_id.as_str(),
+                1,
+            )
+            .await?;
+            ensure(
+                integration_event.message_id() == exact_integration_message_id
+                    && integration_event.causation_id()
+                        == Some(persisted_event.event_id().as_str())
+                    && integration_event.name() == "bicycle-rental-started"
+                    && integration_event.schema_version() == 1
+                    && integration_event.payload()
+                        == Some(&json!({
+                            "source_event_id": persisted_event.event_id().as_str(),
+                            "fleet_id": "city-fleet",
+                            "bicycle_id": "bike-42"
+                        })),
+                "observed integration event is not the exact published event",
+            )?;
+            wait_for_command_stream_empty(&connection, &test_runtime).await?;
+
+            let comparison_matches = report["comparison"]["matches"]
+                .as_array()
+                .ok_or_else(|| io::Error::other("comparison matches are not an array"))?;
+            ensure(
+                comparison_matches.len() == 3
+                    && comparison_matches.iter().any(|matched| {
+                        matched["expectedKey"] == "subject"
+                            && matched["observedMessageId"] == expected_command_message_id.as_str()
+                    })
+                    && comparison_matches.iter().any(|matched| {
+                        matched["expectedKey"] == "bicycle-rented"
+                            && matched["observedMessageId"] == persisted_event.event_id().as_str()
+                    })
+                    && comparison_matches.iter().any(|matched| {
+                        matched["expectedKey"] == "rental-started"
+                            && matched["observedMessageId"] == exact_integration_message_id
+                    }),
+                "comparison did not assign every expected key to its exact observed identity",
+            )?;
+
+            let mut mismatched_definition = canonical_definition.clone();
+            mismatched_definition["id"] = json!("rent-available-bicycle-payload-mismatch");
+            mismatched_definition["name"] = json!("Report a child payload mismatch");
+            mismatched_definition["expected"]["within"] = json!("3s");
+            mismatched_definition["expected"]["settleFor"] = json!("50ms");
+            *mismatched_definition
+                .pointer_mut("/expected/graphs/0/nodes/1/payload/bicycle_id")
+                .ok_or_else(|| io::Error::other("canonical child payload is absent"))? =
+                json!("bike-does-not-match");
+            ensure(
+                mismatched_definition["expected"]["graphs"][0]["nodes"][0]
+                    == canonical_definition["expected"]["graphs"][0]["nodes"][0],
+                "failure fixture changed the executable root command",
+            )?;
+            let response = app
+                .clone()
+                .oneshot(
+                    authorize(Request::builder())
+                        .method("POST")
+                        .uri("/test-runs")
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_vec(&mismatched_definition)?))?,
+                )
+                .await?;
+            ensure(
+                response.status() == StatusCode::OK,
+                "behavioral mismatch was returned as an infrastructure error",
+            )?;
+            let failed_report = json_response(response).await?;
+            ensure(
+                failed_report["status"] == "failed"
+                    && failed_report["comparison"]["status"] == "failed"
+                    && failed_report["operation"]["status"] == "completed"
+                    && failed_report["operation"]["result"]["decision"] == "accepted"
+                    && failed_report["commandOutcome"]["outcome"]["status"] == "accepted",
+                "behavioral mismatch did not return a typed failed report for a valid root",
+            )?;
+            let payload_diagnostic = failed_report["comparison"]["diagnostics"]
+                .as_array()
+                .and_then(|diagnostics| {
+                    diagnostics
+                        .iter()
+                        .find(|diagnostic| diagnostic["code"] == "payload-mismatch")
+                })
+                .ok_or_else(|| {
+                    io::Error::other(format!(
+                        "payload-mismatch diagnostic is absent: {failed_report}"
+                    ))
+                })?;
+            ensure(
+                payload_diagnostic["path"] == "expected:bicycle-rented/payload"
+                    && payload_diagnostic["expected"]
+                        == json!({
+                            "fleet_id": "city-fleet",
+                            "bicycle_id": "bike-does-not-match"
+                        })
+                    && payload_diagnostic["observed"]
+                        == json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"}),
+                "payload-mismatch diagnostic is not stable and structured",
             )?;
 
             for definition in definitions {
@@ -229,6 +547,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                     report["revision"] == revision,
                     "behavioral report used the wrong definition revision",
                 )?;
+                if id == "reject-unavailable-bicycle" {
+                    assert_rejection_report(&report)?;
+                }
             }
             Ok(())
         }
@@ -256,6 +577,70 @@ fn authorize(request: axum::http::request::Builder) -> axum::http::request::Buil
 async fn json_response(response: axum::response::Response) -> TestResult<Value> {
     let bytes = response.into_body().collect().await?.to_bytes();
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+fn required_json_str<'a>(value: &'a Value, pointer: &str) -> TestResult<&'a str> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .ok_or_else(|| io::Error::other(format!("response omitted string `{pointer}`")).into())
+}
+
+fn observed_message(
+    observed: &ObservedMessageSeries,
+    kind: ExpectedMessageKind,
+) -> TestResult<&rostfrei_tracer::ObservedMessageNode> {
+    observed
+        .messages()
+        .iter()
+        .find(|message| message.kind() == kind)
+        .ok_or_else(|| io::Error::other("observed series omitted a required message kind").into())
+}
+
+fn assert_rejection_report(report: &Value) -> TestResult {
+    let command_message_id = required_json_str(report, "/commandOutcome/commandMessageId")?;
+    let response_message_id = required_json_str(report, "/commandOutcome/responseMessageId")?;
+    let expected_response_message_id =
+        command_response_message_id(&MessageId::new(command_message_id)?)?;
+    ensure(
+        response_message_id == expected_response_message_id.as_str()
+            && report["operation"]["result"]["commandMessageId"] == command_message_id
+            && report["operation"]["result"]["responseMessageId"] == response_message_id,
+        "rejected command response identities are absent or not linked",
+    )?;
+    let expected_outcome = json!({
+        "status": "rejected",
+        "value": {
+            "classification": "conflict",
+            "code": "BICYCLE_UNAVAILABLE",
+            "message": "The requested bicycle cannot currently be rented.",
+            "details": {
+                "bicycle_id": "bike-99",
+                "code": "BICYCLE_UNAVAILABLE",
+                "message": "The requested bicycle cannot currently be rented."
+            }
+        }
+    });
+    let expected_rejection = json!({
+        "classification": "conflict",
+        "code": "BICYCLE_UNAVAILABLE",
+        "message": "The requested bicycle cannot currently be rented.",
+        "details": {
+            "bicycle_id": "bike-99",
+            "code": "BICYCLE_UNAVAILABLE",
+            "message": "The requested bicycle cannot currently be rented."
+        }
+    });
+    if report["commandOutcome"]["outcome"] != expected_outcome
+        || report["operation"]["result"]["rejection"] != expected_rejection
+    {
+        return Err(io::Error::other(format!(
+            "rejected command outcome omitted classification, code, message, or details: commandOutcome={}, operationRejection={}",
+            report["commandOutcome"]["outcome"], report["operation"]["result"]["rejection"]
+        ))
+        .into());
+    }
+    Ok(())
 }
 
 async fn run_isolation_test(
@@ -323,8 +708,14 @@ async fn run_isolation_test(
             .is_some_and(|correlation| correlation.as_str() == "test-rent-correlation"),
         "Test event did not preserve command correlation",
     )?;
-    wait_for_integration_chain(connection, test_runtime, &test_history[1], &test_receipt, 1)
-        .await?;
+    wait_for_integration_chain(
+        connection,
+        test_runtime,
+        &test_history[1],
+        test_receipt.command_message_id(),
+        1,
+    )
+    .await?;
     ensure(
         production_runtime.store().load(&demo_stream()).await?.len() == 1,
         "Test command changed production history",
@@ -413,7 +804,7 @@ async fn run_isolation_test(
         connection,
         test_runtime,
         &reset_test_history[1],
-        &reset_test_receipt,
+        reset_test_receipt.command_message_id(),
         1,
     )
     .await?;
@@ -441,7 +832,7 @@ async fn run_isolation_test(
         connection,
         production_runtime,
         &production_history[2],
-        &production_rent_receipt,
+        production_rent_receipt.command_message_id(),
         1,
     )
     .await?;
@@ -494,9 +885,9 @@ async fn wait_for_integration_chain(
     connection: &NatsConnection,
     runtime: &BikeRentalNatsRuntime,
     source_event: &RecordedEvent,
-    receipt: &CommandReceipt,
+    command_message_id: &str,
     expected_messages: u64,
-) -> TestResult {
+) -> TestResult<String> {
     let deadline = Instant::now() + Duration::from_secs(10);
     let route = runtime.config().integration_event_route();
     let expected_message_id = integration_message_id(
@@ -580,7 +971,7 @@ async fn wait_for_integration_chain(
                 )?;
                 ensure(
                     source_event.causation_id().map(CausationId::as_str)
-                        == Some(receipt.command_message_id()),
+                        == Some(command_message_id),
                     "domain event did not preserve command causation",
                 )?;
                 ensure(
@@ -592,7 +983,7 @@ async fn wait_for_integration_chain(
                     envelope.payload().source_event_id() == source_event.event_id().as_str(),
                     "integration payload did not identify its committed event",
                 )?;
-                return Ok(());
+                return Ok(expected_message_id.as_str().to_owned());
             }
         }
         if Instant::now() >= deadline {
@@ -671,7 +1062,34 @@ async fn wait_for_command_stream_empty(
         .as_str();
     loop {
         let mut command_stream = connection.jetstream().get_stream(stream_name).await?;
-        if command_stream.info().await?.state.messages == 0 {
+        let stream_info = command_stream.info().await?;
+        if stream_info.state.messages == 0 {
+            ensure(
+                runtime.config().messaging().commands().retention() == StreamRetention::WorkQueue,
+                "command stream is not configured as a WorkQueue",
+            )?;
+            ensure(
+                stream_info.state.consumer_count == runtime.config().command_routes().len(),
+                "command WorkQueue has an unexpected passive consumer",
+            )?;
+            let mut worker_acknowledged = false;
+            for route in runtime.config().command_routes() {
+                let info = consumer_info(
+                    connection,
+                    stream_name,
+                    route.consumer().durable_name().as_str(),
+                )
+                .await?;
+                ensure(
+                    info.num_pending == 0 && info.num_ack_pending == 0,
+                    "command WorkQueue consumer is not idle after acknowledgement",
+                )?;
+                worker_acknowledged |= info.ack_floor.stream_sequence > 0;
+            }
+            ensure(
+                worker_acknowledged,
+                "no normal command worker acknowledged a WorkQueue command",
+            )?;
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -708,6 +1126,17 @@ async fn cleanup<'a>(
 fn unique_scope() -> TestResult<String> {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     Ok(format!("brt-{:x}-{nanos:x}", process::id()))
+}
+
+fn required_nats_url() -> TestResult<String> {
+    match env::var("ROSTFREI_NATS_URL") {
+        Ok(url) if !url.trim().is_empty() => Ok(url),
+        Ok(_) => Err(io::Error::other("ROSTFREI_NATS_URL must not be empty").into()),
+        Err(error) => Err(io::Error::other(format!(
+            "ROSTFREI_NATS_URL is required for this ignored real-NATS test: {error}"
+        ))
+        .into()),
+    }
 }
 
 fn ensure(condition: bool, message: &'static str) -> TestResult {

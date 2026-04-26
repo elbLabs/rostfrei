@@ -1,59 +1,33 @@
 {
-  "$id": "https://rostfrei.dev/schemas/tracer/message-series-definition-v1.schema.json",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Rostfrei Tracer Message Series Definition",
-  "description": "An ordered sequence of independently rooted causal message graphs.",
-  "type": "object",
-  "properties": {
-    "graphs": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/MessageGraphDefinition"
-      },
-      "minItems": 1
-    },
-    "settleFor": {
-      "$ref": "#/$defs/TimeoutSchema"
-    },
-    "within": {
-      "$ref": "#/$defs/TimeoutSchema"
-    }
-  },
-  "additionalProperties": false,
-  "required": [
-    "within",
-    "settleFor",
-    "graphs"
-  ],
   "$defs": {
     "AcceptedOutcomeSchema": {
-      "type": "string",
       "enum": [
         "accepted"
-      ]
+      ],
+      "type": "string"
     },
     "AggregateSchema": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "id": {
-          "type": "string",
-          "pattern": "\\S"
+          "pattern": "\\S",
+          "type": "string"
         },
         "type": {
-          "type": "string",
-          "pattern": "\\S"
+          "pattern": "\\S",
+          "type": "string"
         }
       },
-      "additionalProperties": false,
       "required": [
         "type",
         "id"
-      ]
+      ],
+      "type": "object"
     },
     "ExpectedMessageNode": {
       "oneOf": [
         {
-          "type": "object",
+          "additionalProperties": false,
           "properties": {
             "aggregate": {
               "$ref": "#/$defs/AggregateSchema"
@@ -62,8 +36,8 @@
               "$ref": "#/$defs/NonEmptyStringSchema"
             },
             "kind": {
-              "type": "string",
-              "const": "command"
+              "const": "command",
+              "type": "string"
             },
             "name": {
               "$ref": "#/$defs/NonEmptyStringSchema"
@@ -83,12 +57,12 @@
             },
             "payload": true,
             "schemaVersion": {
-              "type": "integer",
               "format": "uint32",
-              "minimum": 1
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
             }
           },
-          "additionalProperties": false,
           "required": [
             "kind",
             "key",
@@ -96,17 +70,18 @@
             "schemaVersion",
             "aggregate",
             "outcome"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
+          "additionalProperties": false,
           "properties": {
             "key": {
               "$ref": "#/$defs/NonEmptyStringSchema"
             },
             "kind": {
-              "type": "string",
-              "const": "domain-event"
+              "const": "domain-event",
+              "type": "string"
             },
             "name": {
               "$ref": "#/$defs/NonEmptyStringSchema"
@@ -123,28 +98,29 @@
             },
             "payload": true,
             "schemaVersion": {
-              "type": "integer",
               "format": "uint32",
-              "minimum": 1
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
             }
           },
-          "additionalProperties": false,
           "required": [
             "kind",
             "key",
             "name",
             "schemaVersion"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
+          "additionalProperties": false,
           "properties": {
             "key": {
               "$ref": "#/$defs/NonEmptyStringSchema"
             },
             "kind": {
-              "type": "string",
-              "const": "integration-event"
+              "const": "integration-event",
+              "type": "string"
             },
             "name": {
               "$ref": "#/$defs/NonEmptyStringSchema"
@@ -161,18 +137,19 @@
             },
             "payload": true,
             "schemaVersion": {
-              "type": "integer",
               "format": "uint32",
-              "minimum": 1
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
             }
           },
-          "additionalProperties": false,
           "required": [
             "kind",
             "key",
             "name",
             "schemaVersion"
-          ]
+          ],
+          "type": "object"
         }
       ]
     },
@@ -187,29 +164,30 @@
       ]
     },
     "ExpectedRejectionSchema": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "code": {
-          "type": "string",
-          "pattern": "\\S"
+          "pattern": "\\S",
+          "type": "string"
         },
         "payload": true
       },
-      "additionalProperties": false,
       "required": [
         "code"
-      ]
+      ],
+      "type": "object"
     },
     "MessageGraphDefinition": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "nodes": {
-          "type": "array",
+          "description": "A causal graph with at most 64 parent-child levels and at most 64 direct children per node. Comparison also has a deterministic work limit for ambiguous assignments.",
           "items": {
             "$ref": "#/$defs/ExpectedMessageNode"
           },
           "maxItems": 4096,
-          "minItems": 1
+          "minItems": 1,
+          "type": "array"
         },
         "settleFor": {
           "anyOf": [
@@ -232,30 +210,56 @@
           ]
         }
       },
-      "additionalProperties": false,
       "required": [
         "nodes"
-      ]
+      ],
+      "type": "object"
     },
     "NonEmptyStringSchema": {
-      "type": "string",
-      "pattern": "\\S"
+      "pattern": "\\S",
+      "type": "string"
     },
     "RejectedOutcomeSchema": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "rejected": {
           "$ref": "#/$defs/ExpectedRejectionSchema"
         }
       },
-      "additionalProperties": false,
       "required": [
         "rejected"
-      ]
+      ],
+      "type": "object"
     },
     "TimeoutSchema": {
-      "type": "string",
-      "pattern": "^0*(?:(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|60000)ms|(?:[1-9]|[1-5][0-9]|60)s)$"
+      "pattern": "^0*(?:(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|60000)ms|(?:[1-9]|[1-5][0-9]|60)s)$",
+      "type": "string"
     }
-  }
+  },
+  "$id": "https://rostfrei.dev/schemas/tracer/message-series-definition-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "An ordered sequence of independently rooted causal message graphs.",
+  "properties": {
+    "graphs": {
+      "items": {
+        "$ref": "#/$defs/MessageGraphDefinition"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "settleFor": {
+      "$ref": "#/$defs/TimeoutSchema"
+    },
+    "within": {
+      "$ref": "#/$defs/TimeoutSchema"
+    }
+  },
+  "required": [
+    "within",
+    "settleFor",
+    "graphs"
+  ],
+  "title": "Rostfrei Tracer Message Series Definition",
+  "type": "object"
 }
