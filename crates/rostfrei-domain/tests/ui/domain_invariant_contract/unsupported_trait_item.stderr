@@ -1,5 +1,6 @@
-error: domain invariant contract traits may only contain methods
- --> tests/ui/domain_invariant_contract/unsupported_trait_item.rs:7:5
+error: invariant may only be applied to trait methods
+ --> tests/ui/domain_invariant_contract/unsupported_trait_item.rs:5:5
   |
-7 |     const ENABLED: bool;
-  |     ^^^^^^^^^^^^^^^^^^^^
+5 | /     #[invariant(id = "valid", label = "Valid")]
+6 | |     const VALID: bool;
+  | |______________________^

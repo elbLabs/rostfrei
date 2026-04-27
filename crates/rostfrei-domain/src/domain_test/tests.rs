@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::{
     ActionId, ActionOwnerId, AggregateId, BoundedContextId, DecisionId, DecisionOwnerId, EntityId,
-    EntityLifecycleId, InvariantId, InvariantOwnerId, ValueObjectId, ValueObjectOwnerId,
+    EntityLifecycleId, InvariantId,
 };
 
 use super::{DomainTestDescriptor, DomainTestSubject, emitter, projection};
@@ -18,11 +18,6 @@ const ENTITY: EntityId = EntityId {
     aggregate: AGGREGATE,
     local: "line-item",
 };
-const VALUE_OBJECT: ValueObjectId = ValueObjectId {
-    owner: ValueObjectOwnerId::Entity(ENTITY),
-    local: "quantity",
-};
-
 #[test]
 fn projects_subjects_with_model_id_shapes() {
     let cases = [
@@ -59,47 +54,17 @@ fn projects_subjects_with_model_id_shapes() {
             }),
         ),
         (
-            DomainTestSubject::Invariant(InvariantId {
-                owner: InvariantOwnerId::ValueObject(VALUE_OBJECT),
-                local: "positive",
-            }),
+            DomainTestSubject::Invariant(InvariantId("positive")),
             json!({
                 "kind": "invariant",
-                "id": {
-                    "owner": {
-                        "kind": "valueObject",
-                        "id": {
-                            "owner": {
-                                "kind": "entity",
-                                "id": {
-                                    "aggregate": {
-                                        "context": "sales",
-                                        "local": "order",
-                                    },
-                                    "local": "line-item",
-                                },
-                            },
-                            "local": "quantity",
-                        },
-                    },
-                    "local": "positive",
-                },
+                "id": "positive",
             }),
         ),
         (
-            DomainTestSubject::Lifecycle(EntityLifecycleId {
-                owner: ENTITY,
-                local: "fulfillment",
-            }),
+            DomainTestSubject::Lifecycle(EntityLifecycleId("fulfillment")),
             json!({
                 "kind": "lifecycle",
-                "id": {
-                    "owner": {
-                        "aggregate": { "context": "sales", "local": "order" },
-                        "local": "line-item",
-                    },
-                    "local": "fulfillment",
-                },
+                "id": "fulfillment",
             }),
         ),
     ];
@@ -123,10 +88,9 @@ fn projects_subjects_with_model_id_shapes() {
 
 #[test]
 fn compact_projection_is_deterministic_and_single_line() {
-    let descriptor = descriptor(DomainTestSubject::Lifecycle(EntityLifecycleId {
-        owner: ENTITY,
-        local: "fulfillment",
-    }));
+    let descriptor = descriptor(DomainTestSubject::Lifecycle(EntityLifecycleId(
+        "fulfillment",
+    )));
     let first = projection::compact(descriptor);
     let second = projection::compact(descriptor);
 

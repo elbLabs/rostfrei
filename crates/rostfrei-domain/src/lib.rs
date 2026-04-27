@@ -60,20 +60,16 @@ pub use domain_query::{
 };
 pub use domain_service::{DomainServiceDescriptor, DomainServiceId, DomainServiceType};
 pub use domain_test::{DomainTestDescriptor, DomainTestSubject};
-pub use entity::{EntityDescriptor, EntityId, EntityType, IdentityDescriptor};
+pub use entity::{EntityDefinition, EntityDescriptor, EntityId, EntityType, IdentityDescriptor};
 pub use entity_lifecycle::{
     EntityLifecycleDescriptor, EntityLifecycleId, EntityLifecycleStateDescriptor,
-    EntityLifecycleStateId, EntityLifecycleTransitionDescriptor, EntityLifecycleType,
+    EntityLifecycleStateId, EntityLifecycleType,
 };
 pub use field::{
     FieldDescriptor, FieldKind, FieldValue, FieldWrapper, ScalarType, SemanticScalar,
     SemanticScalarDescriptor,
 };
-pub use invariant::{
-    AggregateInvariantOwnerType, EntityInvariantOwnerType, InvariantDescriptor, InvariantId,
-    InvariantOwnerId, InvariantOwnerType, InvariantReference, InvariantViolation,
-    ValueObjectInvariantOwnerType,
-};
+pub use invariant::{InvariantDescriptor, InvariantId, InvariantReference, InvariantViolation};
 pub use json_wire::{JsonCommandPayload, JsonErrorPayload};
 pub use rostfrei_domain_macros::{
     Aggregate, AggregateEvents, BoundedContext, Command, DecisionOutcome, DomainError, DomainEvent,

@@ -6,27 +6,27 @@ pub struct StateAttribute {
 }
 
 pub fn parse(variant: &Variant) -> syn::Result<StateAttribute> {
-    let domains: Vec<_> = variant
+    let states: Vec<_> = variant
         .attrs
         .iter()
-        .filter(|attribute| crate::helper::domain_attribute::is_helper(attribute))
+        .filter(|attribute| attribute.path().is_ident("state"))
         .collect();
-    let Some(domain) = domains.first() else {
+    let Some(state) = states.first() else {
         return Err(syn::Error::new_spanned(
             &variant.ident,
-            "EntityLifecycle state variants require exactly one domain attribute",
+            "EntityLifecycle state variants require exactly one state attribute",
         ));
     };
-    if let Some(duplicate) = domains.get(1) {
+    if let Some(duplicate) = states.get(1) {
         return Err(syn::Error::new_spanned(
             duplicate,
-            "duplicate state domain attribute",
+            "duplicate state attribute",
         ));
     }
 
     let mut id = None;
     let mut label = None;
-    domain.parse_nested_meta(|meta| {
+    state.parse_nested_meta(|meta| {
         if meta.path.is_ident("id") {
             if id.is_some() {
                 return Err(meta.error("duplicate id"));
@@ -45,7 +45,7 @@ pub fn parse(variant: &Variant) -> syn::Result<StateAttribute> {
     })?;
 
     Ok(StateAttribute {
-        id: id.ok_or_else(|| syn::Error::new_spanned(domain, "missing state id"))?,
-        label: label.ok_or_else(|| syn::Error::new_spanned(domain, "missing state label"))?,
+        id: id.ok_or_else(|| syn::Error::new_spanned(state, "missing state id"))?,
+        label: label.ok_or_else(|| syn::Error::new_spanned(state, "missing state label"))?,
     })
 }

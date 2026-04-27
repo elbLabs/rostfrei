@@ -1,5 +1,5 @@
 error: duplicate invariant id
-  --> tests/ui/domain_invariant_contract/duplicate_invariant_id.rs:12:22
-   |
-12 |     #[invariant(id = "same", label = "Second")]
-   |                      ^^^^^^
+ --> tests/ui/domain_invariant_contract/duplicate_invariant_id.rs:7:22
+  |
+7 |     #[invariant(id = "valid", label = "Also valid")]
+  |                      ^^^^^^^

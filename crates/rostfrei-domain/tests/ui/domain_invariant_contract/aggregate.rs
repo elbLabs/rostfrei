@@ -1,48 +1,19 @@
-#![allow(unused, non_snake_case)]
+use domain::{InvariantDescriptor, domain_invariants};
 
-#![allow(dead_code)]
-
-use domain::{
-    Aggregate, BoundedContext, DomainIdentity, Entity, InvariantOwnerType, InvariantViolation,
-    domain_invariants,
-};
-
-#[derive(BoundedContext)]
-#[domain(id = "context", label = "Context")]
-struct Context;
-
-#[derive(DomainIdentity)]
-#[domain(owner = Root)]
-struct RootId(u8);
-
-#[derive(Entity)]
-#[domain(id = "root", label = "Root", owner = Owner)]
-struct Root {
-    #[domain(identity)]
-    id: RootId,
-}
-
-#[domain_invariants(aggregate)]
-trait Invariants {
+#[domain_invariants]
+trait Rules {
     #[invariant(id = "valid", label = "Valid")]
-    fn valid(candidate: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation>;
+    fn valid(candidate: &u8) -> bool;
 }
 
-#[derive(Aggregate)]
-#[domain(id = "owner", label = "Owner")]
-struct Owner;
+struct Policy;
 
-impl domain::AggregateDefinition for Owner {
-    type Context = Context;
-    type Root = Root;
-    type Event = domain::NoDomainEvents;
-}
-
-impl Invariants for Owner {
-    fn valid(candidate: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation> {
-        let _ = candidate;
-        None
+impl Rules for Policy {
+    fn valid(candidate: &u8) -> bool {
+        *candidate > 0
     }
 }
+
+const _: &'static [InvariantDescriptor] = <Policy as Rules>::__DOMAIN_INVARIANTS;
 
 fn main() {}

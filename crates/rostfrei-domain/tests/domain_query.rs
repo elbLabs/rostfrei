@@ -16,11 +16,16 @@ struct Catalog;
 struct CatalogId(u64);
 
 #[derive(Entity)]
-#[domain(id = "catalog-root", label = "Catalog", owner = CatalogAggregate)]
+#[domain(id = "catalog-root", label = "Catalog")]
 struct CatalogRoot {
     #[domain(identity)]
     id: CatalogId,
     count: usize,
+}
+
+impl domain::EntityDefinition for CatalogRoot {
+    type Owner = CatalogAggregate;
+    type Identity = CatalogId;
 }
 
 #[derive(Aggregate)]

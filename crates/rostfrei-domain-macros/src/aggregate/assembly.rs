@@ -14,8 +14,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     let value_object_owner = assemble_value_object_owner(domain_path, name);
     let domain_error_owner = assemble_domain_error_owner(domain_path, name);
     let command_owner = assemble_command_owner(domain_path, name);
-    let invariant_owner = assemble_invariant_owner(domain_path, name);
-    let aggregate_invariant_owner = assemble_aggregate_invariant_owner(domain_path, name);
     quote! {
         #aggregate_type
         #action_owner
@@ -26,27 +24,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
         #value_object_owner
         #domain_error_owner
         #command_owner
-        #invariant_owner
-        #aggregate_invariant_owner
-    }
-}
-
-fn assemble_invariant_owner(domain_path: &Path, name: &Ident) -> TokenStream {
-    quote! {
-        impl #domain_path::InvariantOwnerType for #name {
-            type Candidate = <Self as #domain_path::AggregateDefinition>::Root;
-            const INVARIANT_OWNER_ID: #domain_path::InvariantOwnerId =
-                #domain_path::InvariantOwnerId::Aggregate(
-                    <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
-                );
-
-        }
-    }
-}
-
-fn assemble_aggregate_invariant_owner(domain_path: &Path, name: &Ident) -> TokenStream {
-    quote! {
-        impl #domain_path::AggregateInvariantOwnerType for #name {}
     }
 }
 

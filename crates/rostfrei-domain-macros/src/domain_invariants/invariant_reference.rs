@@ -104,8 +104,8 @@ fn append(
         item.items.push(syn::parse2(quote_spanned! {id.span()=>
             #[doc(hidden)]
             #[allow(dead_code)]
-            const #ident: #domain_path::InvariantReference<Self> =
-                #domain_path::InvariantReference::<Self>::__from_local(#id);
+            const #ident: #domain_path::InvariantReference =
+                #domain_path::InvariantReference::__from_local(#id);
         })?);
     }
     Ok(())

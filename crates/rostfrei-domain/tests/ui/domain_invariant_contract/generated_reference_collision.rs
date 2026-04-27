@@ -1,13 +1,12 @@
-#![allow(non_snake_case, unused_imports)]
+use domain::{InvariantReference, domain_invariants};
 
-use domain::{InvariantOwnerType, InvariantViolation, domain_invariants};
+#[domain_invariants]
+trait Rules {
+    const __DOMAIN_INVARIANT_REFERENCE_VALID: InvariantReference =
+        InvariantReference::__from_local("other");
 
-#[domain_invariants(entity)]
-trait Invariants {
     #[invariant(id = "valid", label = "Valid")]
-    fn __DOMAIN_INVARIANT_REFERENCE_VALID(
-        candidate: &<Self as InvariantOwnerType>::Candidate,
-    ) -> Option<InvariantViolation>;
+    fn valid();
 }
 
 fn main() {}

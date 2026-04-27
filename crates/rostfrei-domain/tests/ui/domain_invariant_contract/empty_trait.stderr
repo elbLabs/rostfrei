@@ -1,7 +1,7 @@
 error: domain invariant contract traits require at least one annotated checker
- --> tests/ui/domain_invariant_contract/empty_trait.rs:5:1
+ --> tests/ui/domain_invariant_contract/empty_trait.rs:3:1
   |
-5 | #[domain_invariants(entity)]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3 | #[domain_invariants]
+  | ^^^^^^^^^^^^^^^^^^^^
   |
   = note: this error originates in the attribute macro `domain_invariants` (in Nightly builds, run with -Z macro-backtrace for more info)

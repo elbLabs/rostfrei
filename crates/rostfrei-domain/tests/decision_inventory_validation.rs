@@ -50,10 +50,15 @@ impl domain::AggregateDefinition for InventoryAggregate {
 }
 
 #[derive(Entity)]
-#[domain(id = "inventory-root", label = "Inventory root", owner = InventoryAggregate)]
+#[domain(id = "inventory-root", label = "Inventory root")]
 struct InventoryRoot {
     #[domain(identity)]
     id: InventoryIdentity,
+}
+
+impl domain::EntityDefinition for InventoryRoot {
+    type Owner = InventoryAggregate;
+    type Identity = InventoryIdentity;
 }
 
 #[derive(ValueObject, Clone, Copy)]

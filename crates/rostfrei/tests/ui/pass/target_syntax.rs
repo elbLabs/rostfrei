@@ -10,11 +10,16 @@ struct Banking;
 struct AccountId(String);
 
 #[derive(rostfrei::Entity)]
-#[rostfrei(id = "account", label = "Account", owner = AccountAggregate)]
+#[rostfrei(id = "account", label = "Account")]
 struct Account {
     #[rostfrei(identity)]
     id: AccountId,
     balance: i64,
+}
+
+impl rostfrei::EntityDefinition for Account {
+    type Owner = AccountAggregate;
+    type Identity = AccountId;
 }
 
 #[rostfrei::domain_actions(entity)]

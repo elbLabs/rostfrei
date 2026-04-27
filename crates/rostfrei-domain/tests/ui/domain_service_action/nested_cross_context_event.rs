@@ -15,10 +15,15 @@ struct Orders;
 struct OrderId(u8);
 
 #[derive(Entity)]
-#[domain(id = "order-root", label = "Order root", owner = Order)]
+#[domain(id = "order-root", label = "Order root")]
 struct OrderRoot {
     #[domain(identity)]
     id: OrderId,
+}
+
+impl domain::EntityDefinition for OrderRoot {
+    type Owner = Order;
+    type Identity = OrderId;
 }
 
 #[derive(Aggregate)]

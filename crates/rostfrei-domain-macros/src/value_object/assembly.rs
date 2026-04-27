@@ -20,7 +20,6 @@ pub fn assemble(
     let domain_error_owner = assemble_domain_error_owner(domain_path, name);
     let action_contracts = assemble_action_contracts(domain_path, name);
     let decision_contracts = assemble_decision_contracts(domain_path, name);
-    let invariant_owner = assemble_invariant_owner(domain_path, name, attributes);
     quote! {
         #value_object_type
         #assertions
@@ -30,7 +29,6 @@ pub fn assemble(
         #domain_error_owner
         #action_contracts
         #decision_contracts
-        #invariant_owner
     }
 }
 
@@ -51,43 +49,6 @@ fn assemble_assertions(domain_path: &Path, name: &Ident, shape: &Shape) -> Token
             });
             quote!(#(#assertions)*)
         }
-    }
-}
-
-fn assemble_invariant_owner(
-    domain_path: &Path,
-    name: &Ident,
-    attributes: &Attributes,
-) -> TokenStream {
-    let invariants = &attributes.invariants;
-    quote! {
-        impl #domain_path::InvariantOwnerType for #name {
-            type Candidate = Self;
-            const INVARIANT_OWNER_ID: #domain_path::InvariantOwnerId =
-                #domain_path::InvariantOwnerId::ValueObject(
-                    <Self as #domain_path::ValueObjectType>::DESCRIPTOR.id,
-                );
-
-            fn validate_invariants(
-                candidate: &Self::Candidate,
-            ) -> ::core::result::Result<
-                (),
-                ::std::vec::Vec<#domain_path::InvariantViolation>,
-            > {
-                let mut violations = ::std::vec::Vec::new();
-                #(<Self as #invariants>::__DOMAIN_INVARIANTS_APPEND_VIOLATIONS(
-                    candidate,
-                    &mut violations,
-                );)*
-                if violations.is_empty() {
-                    ::core::result::Result::Ok(())
-                } else {
-                    ::core::result::Result::Err(violations)
-                }
-            }
-        }
-
-        impl #domain_path::ValueObjectInvariantOwnerType for #name {}
     }
 }
 

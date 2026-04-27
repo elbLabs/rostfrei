@@ -4,7 +4,7 @@ use syn::{Ident, Path};
 
 use crate::field::Field;
 
-use super::{attributes::Attributes, entity_type, lifecycle, owner_traits};
+use super::{attributes::Attributes, entity_type, owner_traits};
 
 pub fn assemble(
     domain_path: &Path,
@@ -14,18 +14,15 @@ pub fn assemble(
     identity: &Field,
 ) -> TokenStream {
     let entity_type = entity_type::assemble(domain_path, name, attributes, fields, identity);
-    let field_assertions = crate::field::assemble_assertions_with_path(
-        domain_path,
-        name,
-        Some(&attributes.owner),
-        fields,
+    let owner: syn::TypePath = syn::parse_quote!(
+        <#name as #domain_path::EntityDefinition>::Owner
     );
-    let owner_traits = owner_traits::assemble(domain_path, name, attributes);
-    let lifecycle = lifecycle::assemble(domain_path, name, attributes);
+    let field_assertions =
+        crate::field::assemble_assertions_with_path(domain_path, name, Some(&owner), fields);
+    let owner_traits = owner_traits::assemble(domain_path, name);
     quote! {
         #entity_type
         #field_assertions
         #owner_traits
-        #lifecycle
     }
 }

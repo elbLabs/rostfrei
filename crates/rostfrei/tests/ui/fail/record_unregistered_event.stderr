@@ -1,16 +1,16 @@
 error[E0277]: the trait bound `Events: From<Unregistered>` is not satisfied
-  --> tests/ui/fail/record_unregistered_event.rs:56:25
+  --> tests/ui/fail/record_unregistered_event.rs:61:25
    |
-56 |         aggregate.raise(Unregistered);
+61 |         aggregate.raise(Unregistered);
    |                   ----- ^^^^^^^^^^^^ unsatisfied trait bound
    |                   |
    |                   required by a bound introduced by this call
    |
 help: the trait `From<Unregistered>` is not implemented for `Events`
       but trait `From<Registered>` is implemented for it
-  --> tests/ui/fail/record_unregistered_event.rs:27:10
+  --> tests/ui/fail/record_unregistered_event.rs:32:10
    |
-27 | #[derive(rostfrei::AggregateEvents)]
+32 | #[derive(rostfrei::AggregateEvents)]
    |          ^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `Registered`, found `Unregistered`
    = note: required for `Unregistered` to implement `Into<Events>`

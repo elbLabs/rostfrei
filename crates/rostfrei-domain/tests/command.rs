@@ -19,10 +19,15 @@ pub struct Catalog;
 pub struct ProductId(u64);
 
 #[derive(Entity)]
-#[domain(id = "catalog-root", label = "Catalog", owner = CatalogAggregate)]
+#[domain(id = "catalog-root", label = "Catalog")]
 pub struct CatalogRoot {
     #[domain(identity)]
     id: ProductId,
+}
+
+impl domain::EntityDefinition for CatalogRoot {
+    type Owner = CatalogAggregate;
+    type Identity = ProductId;
 }
 
 #[derive(Aggregate)]

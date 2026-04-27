@@ -1,5 +1,7 @@
-error: domain invariant contract methods require exactly one invariant attribute
- --> tests/ui/domain_invariant_contract/untagged_method.rs:7:8
+error: domain invariant contract traits require at least one annotated checker
+ --> tests/ui/domain_invariant_contract/untagged_method.rs:3:1
   |
-7 |     fn valid(candidate: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation>;
-  |        ^^^^^
+3 | #[domain_invariants]
+  | ^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `domain_invariants` (in Nightly builds, run with -Z macro-backtrace for more info)

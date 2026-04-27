@@ -1,25 +1,10 @@
-error: DomainIdentity requires #[domain(owner = EntityType)]
- --> tests/ui/field_invalid_roles.rs:3:10
-  |
-3 | #[derive(DomainIdentity)]
-  |          ^^^^^^^^^^^^^^
-  |
-  = note: this error originates in the derive macro `DomainIdentity` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error: field supports at most one domain role
-  --> tests/ui/field_invalid_roles.rs:11:24
+error: unexpected closing delimiter: `}`
+  --> tests/ui/field_invalid_roles.rs:14:1
    |
-11 |     #[domain(identity, value_object)]
-   |                        ^^^^^^^^^^^^
-
-error: unsupported field domain attribute
-  --> tests/ui/field_invalid_roles.rs:20:14
-   |
-20 |     #[domain(owns)]
-   |              ^^^^
-
-error: contained Entity fields are only valid on Entity
-  --> tests/ui/field_invalid_roles.rs:26:46
-   |
-26 | struct EntityInValueObject(#[domain(entity)] Other);
-   |                                              ^^^^^
+10 | struct Duplicate {
+   |                  - this opening brace...
+...
+13 | }
+   | - ...matches this closing brace
+14 | }
+   | ^ unexpected closing delimiter

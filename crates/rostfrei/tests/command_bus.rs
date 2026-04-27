@@ -28,12 +28,17 @@ struct Ledger;
 struct AccountId(String);
 
 #[derive(Entity)]
-#[domain(id = "account", label = "Account", owner = AccountAggregate)]
+#[domain(id = "account", label = "Account")]
 #[allow(dead_code)]
 struct Account {
     #[domain(identity)]
     id: AccountId,
     balance: i64,
+}
+
+impl rostfrei::EntityDefinition for Account {
+    type Owner = AccountAggregate;
+    type Identity = AccountId;
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, DomainEvent)]

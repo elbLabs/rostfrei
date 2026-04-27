@@ -1,5 +1,0 @@
-error: duplicate invariants
-  --> tests/ui/domain_invariant_contract/duplicate_invariants_key.rs:14:5
-   |
-14 |     invariants = [Invariants]
-   |     ^^^^^^^^^^

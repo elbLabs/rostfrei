@@ -9,10 +9,15 @@ struct Context;
 struct Id(u8);
 
 #[derive(Entity)]
-#[domain(id = "root", label = "Root", owner = Owner)]
+#[domain(id = "root", label = "Root")]
 pub struct Root {
     #[domain(identity)]
     id: Id,
+}
+
+impl domain::EntityDefinition for Root {
+    type Owner = Owner;
+    type Identity = Id;
 }
 
 #[domain_actions(aggregate)]

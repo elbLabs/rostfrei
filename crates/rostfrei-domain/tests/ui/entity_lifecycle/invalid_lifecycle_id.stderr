@@ -1,5 +1,5 @@
 error: id must be nonempty lowercase kebab-case using ASCII letters and digits
  --> tests/ui/entity_lifecycle/invalid_lifecycle_id.rs:4:15
   |
-4 | #[domain(id = "Bad Id", label = "Workflow", owner = Todo, initial = Draft)]
-  |               ^^^^^^^^
+4 | #[domain(id = "Invalid", label = "Workflow")]
+  |               ^^^^^^^^^

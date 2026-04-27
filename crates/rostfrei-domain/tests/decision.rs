@@ -36,15 +36,15 @@ impl domain::AggregateDefinition for LoanApplication {
 }
 
 #[derive(Entity)]
-#[domain(
-    id = "application-root",
-    label = "Application root",
-    owner = LoanApplication,
-    decisions = [RootDecisions]
-)]
+#[domain(id = "application-root", label = "Application root")]
 struct ApplicationRoot {
     #[domain(identity)]
     id: ApplicationId,
+}
+
+impl domain::EntityDefinition for ApplicationRoot {
+    type Owner = LoanApplication;
+    type Identity = ApplicationId;
 }
 
 #[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
@@ -235,7 +235,7 @@ fn generated_descriptors_preserve_group_method_and_outcome_order() {
         <AffordabilityDecisions as DecisionGroupType>::DECISIONS,
         <routing::RoutingDecisions as DecisionGroupType>::DECISIONS,
     ];
-    let entity = <ApplicationRoot as EntityType>::DECISION_GROUPS;
+    let entity = [<RootDecisions as DecisionGroupType>::DECISIONS];
 
     assert_eq!(aggregate.len(), 2);
     assert_eq!(

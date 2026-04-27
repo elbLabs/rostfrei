@@ -4,6 +4,21 @@ use crate::domain::rental_fleet::{
 };
 
 #[test]
+fn exposes_owner_independent_invariant_metadata() {
+    let descriptors = <RentalFleetAggregate as FleetConsistency>::__DOMAIN_INVARIANTS;
+    let reference = <RentalFleetAggregate as FleetConsistency>::
+        __DOMAIN_INVARIANT_REFERENCE_UNIQUE_BICYCLE_IDENTITIES;
+
+    assert_eq!(descriptors.len(), 1);
+    assert_eq!(
+        descriptors[0].id,
+        rostfrei::InvariantId("unique-bicycle-identities")
+    );
+    assert_eq!(descriptors[0].label, "Bicycle identities are unique");
+    assert_eq!(reference.id(), descriptors[0].id);
+}
+
+#[test]
 fn rejects_duplicate_bicycle_identities() {
     let bicycle_id = BicycleId::new("bike-42").expect("fixture bicycle ID should be valid");
     let fleet = RentalFleet::new(

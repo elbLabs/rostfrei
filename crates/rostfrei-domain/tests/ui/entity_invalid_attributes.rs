@@ -1,6 +1,5 @@
-use domain::{DomainIdentity, Entity};
+use domain::Entity;
 
-#[derive(DomainIdentity)]
 struct Id(u64);
 
 #[derive(Entity)]
@@ -10,10 +9,15 @@ struct Missing {
 }
 
 #[derive(Entity)]
-#[domain(id = "Bad--Id", label = "Bad", owner = Owner)]
+#[domain(id = "Bad--Id", label = "Bad")]
 struct MalformedId {
     #[domain(identity)]
     id: Id,
+}
+
+impl domain::EntityDefinition for MalformedId {
+    type Owner = Owner;
+    type Identity = Id;
 }
 
 #[derive(Entity)]

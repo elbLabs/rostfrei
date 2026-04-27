@@ -32,10 +32,15 @@ struct TaggedValues;
 struct RecordId(u64);
 
 #[derive(Entity)]
-#[domain(id = "record-root", label = "Record", owner = Records)]
+#[domain(id = "record-root", label = "Record")]
 struct RecordRoot {
     #[domain(identity)]
     id: RecordId,
+}
+
+impl domain::EntityDefinition for RecordRoot {
+    type Owner = Records;
+    type Identity = RecordId;
 }
 
 #[derive(Aggregate)]

@@ -19,10 +19,15 @@ struct WrongId(u64);
 struct Plain;
 
 #[derive(Entity)]
-#[domain(id = "root", label = "Root", owner = First)]
+#[domain(id = "root", label = "Root")]
 struct Root {
     #[domain(identity)]
     id: Id,
+}
+
+impl domain::EntityDefinition for Root {
+    type Owner = First;
+    type Identity = Id;
 }
 
 #[derive(Aggregate)]
@@ -36,10 +41,15 @@ impl domain::AggregateDefinition for First {
 }
 
 #[derive(Entity)]
-#[domain(id = "other-root", label = "Other root", owner = Second)]
+#[domain(id = "other-root", label = "Other root")]
 struct OtherRoot {
     #[domain(identity)]
     id: OtherId,
+}
+
+impl domain::EntityDefinition for OtherRoot {
+    type Owner = Second;
+    type Identity = OtherId;
 }
 
 #[derive(Aggregate)]
@@ -53,7 +63,7 @@ impl domain::AggregateDefinition for Second {
 }
 
 #[derive(Entity)]
-#[domain(id = "wrong", label = "Wrong", owner = First)]
+#[domain(id = "wrong", label = "Wrong")]
 struct Wrong {
     #[domain(identity)]
     id: WrongId,
@@ -63,6 +73,11 @@ struct Wrong {
     plain_value: Plain,
     #[domain(aggregate_ref = Plain)]
     reference: Plain,
+}
+
+impl domain::EntityDefinition for Wrong {
+    type Owner = First;
+    type Identity = WrongId;
 }
 
 #[derive(ValueObject)]

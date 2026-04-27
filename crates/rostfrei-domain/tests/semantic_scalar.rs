@@ -38,7 +38,7 @@ struct DocumentId(foreign::Uuid);
 struct RevisionId(u64);
 
 #[derive(Entity)]
-#[domain(id = "document-root", label = "Document", owner = Documents)]
+#[domain(id = "document-root", label = "Document")]
 struct DocumentRoot {
     #[domain(identity)]
     id: DocumentId,
@@ -49,11 +49,21 @@ struct DocumentRoot {
     title: String,
 }
 
+impl domain::EntityDefinition for DocumentRoot {
+    type Owner = Documents;
+    type Identity = DocumentId;
+}
+
 #[derive(Entity)]
-#[domain(id = "revision", label = "Revision", owner = Documents)]
+#[domain(id = "revision", label = "Revision")]
 struct Revision {
     #[domain(identity)]
     id: RevisionId,
+}
+
+impl domain::EntityDefinition for Revision {
+    type Owner = Documents;
+    type Identity = RevisionId;
 }
 
 #[derive(Aggregate)]
@@ -108,10 +118,15 @@ struct DocumentCorrelationRejected {
 struct ContradictoryId(foreign::Uuid);
 
 #[derive(Entity)]
-#[domain(id = "contradictory-root", label = "Contradictory", owner = ContradictoryDocuments)]
+#[domain(id = "contradictory-root", label = "Contradictory")]
 struct ContradictoryRoot {
     #[domain(identity)]
     id: ContradictoryId,
+}
+
+impl domain::EntityDefinition for ContradictoryRoot {
+    type Owner = ContradictoryDocuments;
+    type Identity = ContradictoryId;
 }
 
 #[derive(Aggregate)]

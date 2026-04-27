@@ -1,45 +1,37 @@
-error: DomainIdentity requires #[domain(owner = EntityType)]
- --> tests/ui/entity_invalid_identity.rs:3:10
-  |
-3 | #[derive(DomainIdentity)]
-  |          ^^^^^^^^^^^^^^
-  |
-  = note: this error originates in the derive macro `DomainIdentity` (in Nightly builds, run with -Z macro-backtrace for more info)
-
 error: custom domain fields require an explicit domain role
- --> tests/ui/entity_invalid_identity.rs:9:9
+ --> tests/ui/entity_invalid_identity.rs:8:9
   |
-9 |     id: Id,
+8 |     id: Id,
   |         ^^
 
 error: Entity requires exactly one identity field
-  --> tests/ui/entity_invalid_identity.rs:12:10
+  --> tests/ui/entity_invalid_identity.rs:11:10
    |
-12 | #[derive(Entity)]
+11 | #[derive(Entity)]
    |          ^^^^^^
    |
    = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: unsupported field domain attribute
-  --> tests/ui/entity_invalid_identity.rs:24:14
+  --> tests/ui/entity_invalid_identity.rs:23:14
    |
-24 |     #[domain(primary)]
+23 |     #[domain(primary)]
    |              ^^^^^^^
 
 error: field role does not accept a value or arguments
-  --> tests/ui/entity_invalid_identity.rs:31:14
+  --> tests/ui/entity_invalid_identity.rs:30:14
    |
-31 |     #[domain(identity = true)]
+30 |     #[domain(identity = true)]
    |              ^^^^^^^^
 
 error: field supports at most one domain role
-  --> tests/ui/entity_invalid_identity.rs:39:14
+  --> tests/ui/entity_invalid_identity.rs:38:14
    |
-39 |     #[domain(identity)]
+38 |     #[domain(identity)]
    |              ^^^^^^^^
 
 error: identity field must use a direct, non-wrapped type
-  --> tests/ui/entity_invalid_identity.rs:47:16
+  --> tests/ui/entity_invalid_identity.rs:46:16
    |
-47 |     id: Option<Id>,
+46 |     id: Option<Id>,
    |                ^^

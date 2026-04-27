@@ -3,9 +3,8 @@
 use domain::DecisionOutcome;
 use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle, EntityLifecycleType,
-    InvariantOwnerType, InvariantViolation, ValueObject, domain_action_test, domain_actions,
-    domain_decision_test, domain_decisions, domain_invariant_test, domain_invariants,
-    domain_lifecycle_test,
+    InvariantViolation, ValueObject, domain_action_test, domain_actions, domain_decision_test,
+    domain_decisions, domain_invariant_test, domain_invariants, domain_lifecycle_test,
 };
 
 #[derive(BoundedContext)]
@@ -42,24 +41,18 @@ trait RootActions {
     fn activate(&mut self);
 }
 
-#[domain_invariants(aggregate)]
+#[domain_invariants]
 trait AggregateInvariants {
     #[invariant(id = "marked", label = "Marked")]
-    fn marked(candidate: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation>;
+    fn marked(candidate: &TestRoot) -> Option<InvariantViolation>;
 }
 
 #[derive(EntityLifecycle)]
-#[domain(
-    id = "test-lifecycle",
-    label = "Test lifecycle",
-    owner = TestRoot,
-    initial = Draft,
-)]
+#[domain(id = "test-lifecycle", label = "Test lifecycle")]
 enum TestLifecycle {
-    #[domain(id = "draft", label = "Draft")]
-    #[transition(action = RootActions::ACTIVATE, to = Active)]
+    #[state(id = "draft", label = "Draft")]
     Draft,
-    #[domain(id = "active", label = "Active")]
+    #[state(id = "active", label = "Active")]
     Active,
 }
 
@@ -68,18 +61,17 @@ enum TestLifecycle {
 struct TestId(u64);
 
 #[derive(Entity)]
-#[domain(
-    id = "test-root",
-    label = "Test root",
-    owner = TestAggregate,
-    actions = [RootActions],
-    lifecycle = TestLifecycle,
-)]
+#[domain(id = "test-root", label = "Test root")]
 struct TestRoot {
     #[domain(identity)]
     id: TestId,
     marked: bool,
     active: bool,
+}
+
+impl domain::EntityDefinition for TestRoot {
+    type Owner = TestAggregate;
+    type Identity = TestId;
 }
 
 #[derive(Aggregate)]
@@ -172,6 +164,6 @@ fn invariant_tests_keep_the_authored_body() {
 #[domain_lifecycle_test(TestLifecycle)]
 fn lifecycle_tests_keep_the_authored_body() {
     let lifecycle = TestLifecycle::DESCRIPTOR;
-    assert_eq!(lifecycle.initial.local, "draft");
-    assert_eq!(lifecycle.transitions[0].target.local, "active");
+    assert_eq!(lifecycle.states[0].id.local, "draft");
+    assert_eq!(lifecycle.states[1].id.local, "active");
 }

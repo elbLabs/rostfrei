@@ -1,5 +1,0 @@
-error: domain invariant checker methods must be associated functions without a receiver
- --> tests/ui/domain_invariant_contract/receiver.rs:8:14
-  |
-8 |     fn valid(&self) -> Option<domain::InvariantViolation>;
-  |              ^^^^^

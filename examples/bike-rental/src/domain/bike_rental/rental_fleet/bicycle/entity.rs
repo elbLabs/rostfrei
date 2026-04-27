@@ -1,6 +1,6 @@
-use rostfrei::Entity;
+use rostfrei::{Entity, EntityDefinition};
 
-use super::{BicycleCondition, BicycleId, BicycleRentalLifecycle, BicycleStatus};
+use super::{BicycleCondition, BicycleId, BicycleStatus};
 use crate::domain::rental_fleet::RentalFleetAggregate;
 
 #[allow(
@@ -8,16 +8,7 @@ use crate::domain::rental_fleet::RentalFleetAggregate;
     reason = "bicycle_id is the canonical domain identity name"
 )]
 #[derive(Entity, Debug)]
-#[domain(
-    id = "bicycle",
-    label = "Bicycle",
-    owner = RentalFleetAggregate,
-    actions = [
-        super::mark_rented::MarkRentedAction,
-        super::mark_available::MarkAvailableAction
-    ],
-    lifecycle = BicycleRentalLifecycle
-)]
+#[domain(id = "bicycle", label = "Bicycle")]
 pub struct Bicycle {
     #[domain(identity)]
     pub(super) bicycle_id: BicycleId,
@@ -25,6 +16,11 @@ pub struct Bicycle {
     pub(super) status: BicycleStatus,
     #[domain(value_object)]
     pub(super) condition: BicycleCondition,
+}
+
+impl EntityDefinition for Bicycle {
+    type Owner = RentalFleetAggregate;
+    type Identity = BicycleId;
 }
 
 impl Bicycle {

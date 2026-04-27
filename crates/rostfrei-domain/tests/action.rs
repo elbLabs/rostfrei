@@ -14,12 +14,17 @@ struct Inbox;
 struct MailboxId(u64);
 
 #[derive(Entity)]
-#[domain(id = "mailbox-root", label = "Mailbox", owner = Mailbox)]
+#[domain(id = "mailbox-root", label = "Mailbox")]
 struct MailboxRoot {
     #[domain(identity)]
     id: MailboxId,
     name: String,
     archived: bool,
+}
+
+impl domain::EntityDefinition for MailboxRoot {
+    type Owner = Mailbox;
+    type Identity = MailboxId;
 }
 
 #[derive(Aggregate)]
@@ -133,16 +138,16 @@ impl contracts::MailTransferActions for MailTransfer {
 struct MessageId(u64);
 
 #[derive(Entity)]
-#[domain(
-    id = "message",
-    label = "Message",
-    owner = Mailbox,
-    actions = [restricted_contracts::MessageActions]
-)]
+#[domain(id = "message", label = "Message")]
 struct Message {
     #[domain(identity)]
     id: MessageId,
     read: bool,
+}
+
+impl domain::EntityDefinition for Message {
+    type Owner = Mailbox;
+    type Identity = MessageId;
 }
 
 #[derive(DomainError)]
@@ -219,7 +224,7 @@ fn preserves_descriptor_shape_and_source_order() {
         <Mailbox as contracts::MailboxArchivalActions>::__DOMAIN_ACTIONS,
     ];
     let transfer_contracts = <MailTransfer as DomainServiceType>::ACTION_CONTRACTS;
-    let message_contracts = <Message as EntityType>::ACTION_CONTRACTS;
+    let message_contracts = [<Message as restricted_contracts::MessageActions>::__DOMAIN_ACTIONS];
     let counter_contracts = <Counter as ValueObjectType>::ACTION_CONTRACTS;
 
     assert_eq!(mailbox_contracts.len(), 2);

@@ -29,10 +29,15 @@ impl domain::AggregateDefinition for ReferenceAggregate {
 }
 
 #[derive(Entity)]
-#[domain(id = "reference-root", label = "Reference root", owner = ReferenceAggregate)]
+#[domain(id = "reference-root", label = "Reference root")]
 struct ReferenceRoot {
     #[domain(identity)]
     id: ReferenceIdentity,
+}
+
+impl domain::EntityDefinition for ReferenceRoot {
+    type Owner = ReferenceAggregate;
+    type Identity = ReferenceIdentity;
 }
 
 #[derive(DecisionOutcome)]

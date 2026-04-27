@@ -86,6 +86,13 @@ invariant attachment and automatic invariant fanout; those relationships are
 intentionally absent until Rostfrei can derive or validate them without manual
 lists.
 
+The Entity-specific declaration, lifecycle, and invariant contracts were
+subsequently replaced by
+[ADR 0019](0019-explicit-entity-definition-and-owner-independent-tags.md).
+Its explicit `EntityDefinition`, owner-independent lifecycle and invariant
+metadata, and absence of implicit entity capability projection supersede this
+ADR's entity attachments and owned lifecycle/invariant model relationships.
+
 ## Consequences
 
 rostfrei has one source of truth for domain identity, structure, event

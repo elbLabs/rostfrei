@@ -11,10 +11,15 @@ struct Context;
 struct Id(u8);
 
 #[derive(Entity)]
-#[domain(id = "root", label = "Root", owner = Owner)]
+#[domain(id = "root", label = "Root")]
 pub struct Root {
     #[domain(identity)]
     id: Id,
+}
+
+impl domain::EntityDefinition for Root {
+    type Owner = Owner;
+    type Identity = Id;
 }
 
 #[derive(DomainIdentity)]
@@ -22,10 +27,15 @@ pub struct Root {
 struct OtherId(u8);
 
 #[derive(Entity)]
-#[domain(id = "other-root", label = "Other root", owner = Other)]
+#[domain(id = "other-root", label = "Other root")]
 struct OtherRoot {
     #[domain(identity)]
     id: OtherId,
+}
+
+impl domain::EntityDefinition for OtherRoot {
+    type Owner = Other;
+    type Identity = OtherId;
 }
 
 #[derive(Aggregate)]

@@ -1,10 +1,11 @@
-#![allow(unused, non_snake_case)]
+use domain::{InvariantDescriptor, domain_invariants};
 
-use domain::domain_invariants;
+#[domain_invariants]
+trait Rules {
+    const __DOMAIN_INVARIANTS: &'static [InvariantDescriptor] = &[];
 
-#[domain_invariants(entity)]
-trait Invariants {
-    const __DOMAIN_INVARIANTS: ();
+    #[invariant(id = "valid", label = "Valid")]
+    fn valid();
 }
 
 fn main() {}

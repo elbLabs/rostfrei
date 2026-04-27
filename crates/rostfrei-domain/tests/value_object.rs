@@ -14,10 +14,15 @@ struct Inbox;
 struct MailboxId(u64);
 
 #[derive(Entity)]
-#[domain(id = "mailbox-root", label = "Mailbox", owner = Mailbox)]
+#[domain(id = "mailbox-root", label = "Mailbox")]
 struct MailboxRoot {
     #[domain(identity)]
     id: MailboxId,
+}
+
+impl domain::EntityDefinition for MailboxRoot {
+    type Owner = Mailbox;
+    type Identity = MailboxId;
 }
 
 #[derive(Aggregate)]
@@ -75,12 +80,17 @@ struct CategorySelection {
 struct CatalogEntryId(u64);
 
 #[derive(Entity)]
-#[domain(id = "catalog-entry", label = "Catalog entry", owner = Mailbox)]
+#[domain(id = "catalog-entry", label = "Catalog entry")]
 struct CatalogEntry {
     #[domain(identity)]
     id: CatalogEntryId,
     #[domain(value_object)]
     kinds: Vec<Option<CategoryKind>>,
+}
+
+impl domain::EntityDefinition for CatalogEntry {
+    type Owner = Mailbox;
+    type Identity = CatalogEntryId;
 }
 
 #[domain_actions(value_object)]

@@ -6,7 +6,7 @@ fn composed_domain_model_builds() {
 }
 
 #[test]
-fn omits_unattached_aggregate_contracts_and_projects_the_bicycle_lifecycle() {
+fn omits_unattached_capabilities_and_lifecycle_metadata() {
     let model = crate::domain::model::domain_model().expect("comparison domain model should build");
     assert!(
         model["actions"]
@@ -24,19 +24,5 @@ fn omits_unattached_aggregate_contracts_and_projects_the_bicycle_lifecycle() {
         .iter()
         .find(|entity| entity["id"]["local"] == "bicycle")
         .expect("bicycle entity should be projected");
-    assert_eq!(bicycle["lifecycle"]["id"], "rental-status");
-    assert_eq!(
-        bicycle["lifecycle"]["states"],
-        json!([
-            { "id": "available", "label": "Available" },
-            { "id": "rented", "label": "Rented" }
-        ])
-    );
-    assert_eq!(
-        bicycle["lifecycle"]["transitions"]
-            .as_array()
-            .expect("lifecycle transitions should be an array")
-            .len(),
-        2
-    );
+    assert_eq!(bicycle["lifecycle"], json!(null));
 }

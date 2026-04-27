@@ -24,16 +24,16 @@ trait WorkRootActions {
 }
 
 #[derive(Entity)]
-#[domain(
-    id = "work-root",
-    label = "Work root",
-    owner = Work,
-    actions = [WorkRootActions]
-)]
+#[domain(id = "work-root", label = "Work root")]
 pub struct WorkRoot {
     #[domain(identity)]
     id: WorkId,
     active: bool,
+}
+
+impl domain::EntityDefinition for WorkRoot {
+    type Owner = Work;
+    type Identity = WorkId;
 }
 
 impl WorkRootActions for WorkRoot {
@@ -377,7 +377,6 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
             .map(|action| action["id"]["local"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "inspect-work",
             "new-receipt",
             "available",
             "coordinate",
@@ -392,7 +391,6 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
             .map(|action| action["id"]["owner"]["kind"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "entity",
             "valueObject",
             "domainService",
             "domainService",

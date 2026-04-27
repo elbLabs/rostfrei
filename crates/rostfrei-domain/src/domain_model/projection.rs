@@ -5,7 +5,7 @@ use crate::{
     BoundedContextDescriptor, CommandDescriptor, CommandId, DecisionOwnerId, DomainErrorDescriptor,
     DomainErrorId, DomainEventDescriptor, DomainEventId, DomainIdentityDescriptor,
     DomainIdentityId, DomainIdentityType, DomainServiceDescriptor, DomainServiceType,
-    EntityDescriptor, EntityType, InvariantOwnerId, QueryDescriptor, QueryId, QueryInputDescriptor,
+    EntityDefinition, EntityDescriptor, QueryDescriptor, QueryId, QueryInputDescriptor,
     QueryOutputDescriptor, ValueObjectDescriptor, ValueObjectId, ValueObjectType,
     extension::ActionGroupType,
 };
@@ -25,8 +25,6 @@ use super::{
         domain_error_owner as domain_error_owner_id, domain_identity as domain_identity_id,
         entity as entity_id, query as query_id, value_object as value_object_id,
     },
-    invariant_projection::InvariantProjection,
-    lifecycle_action_validation::LifecycleActionInventory,
     value_object_projection,
 };
 
@@ -43,7 +41,6 @@ pub struct DomainModelBuilder {
     actions: ActionProjection,
     decisions: DecisionProjection,
     queries: Vec<(QueryId, Value)>,
-    invariants: InvariantProjection,
     field_references: FieldReferenceCollection,
 }
 
@@ -62,7 +59,6 @@ impl DomainModelBuilder {
             actions: ActionProjection::new(),
             decisions: DecisionProjection::new(),
             queries: Vec::new(),
-            invariants: InvariantProjection::new(),
             field_references: FieldReferenceCollection::new(),
         }
     }
@@ -97,11 +93,6 @@ impl DomainModelBuilder {
         for group in A::DECISION_GROUPS {
             self.decisions.add_group(owner, group)?;
         }
-        let owner = InvariantOwnerId::Aggregate(A::DESCRIPTOR.id);
-        self.invariants.register_owner(owner);
-        for contract in A::INVARIANT_CONTRACTS {
-            self.invariants.add_group(owner, contract)?;
-        }
         for event in <A::Event as AggregateEventSet<A>>::DOMAIN_EVENTS {
             self.add_domain_event(*event)?;
         }
@@ -113,25 +104,11 @@ impl DomainModelBuilder {
         self.field_references.add_entity(descriptor);
     }
 
-    pub fn add_entity_type<E: EntityType>(&mut self) -> Result<(), DomainModelError> {
-        self.entities
-            .add_with_lifecycle(E::DESCRIPTOR, E::LIFECYCLE)?;
+    pub fn add_entity_type<E: EntityDefinition>(&mut self) -> Result<(), DomainModelError> {
+        self.entities.add(E::DESCRIPTOR);
         self.field_references.add_entity(E::DESCRIPTOR);
-        let owner = ActionOwnerId::Entity(E::DESCRIPTOR.id);
-        self.actions.register_owner(owner);
-        for contract in E::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract)?;
-        }
-        let owner = DecisionOwnerId::Entity(E::DESCRIPTOR.id);
-        self.decisions.register_owner(owner);
-        for group in E::DECISION_GROUPS {
-            self.decisions.add_group(owner, group)?;
-        }
-        let owner = InvariantOwnerId::Entity(E::DESCRIPTOR.id);
-        self.invariants.register_owner(owner);
-        for contract in E::INVARIANT_CONTRACTS {
-            self.invariants.add_group(owner, contract)?;
-        }
+        self.actions
+            .register_owner(ActionOwnerId::Entity(E::DESCRIPTOR.id));
         Ok(())
     }
 
@@ -206,11 +183,6 @@ impl DomainModelBuilder {
         self.actions.register_owner(owner);
         for contract in V::ACTION_CONTRACTS {
             self.actions.add_group(owner, contract)?;
-        }
-        let owner = InvariantOwnerId::ValueObject(V::DESCRIPTOR.id);
-        self.invariants.register_owner(owner);
-        for contract in V::INVARIANT_CONTRACTS {
-            self.invariants.add_group(owner, contract)?;
         }
         Ok(())
     }
@@ -337,12 +309,6 @@ impl DomainModelBuilder {
             self.value_objects.iter().map(|(id, _)| *id).collect(),
         );
         self.actions.validate_references(&inventory)?;
-        let lifecycle_action_inventory = LifecycleActionInventory::new(
-            self.actions.attached_ids().collect(),
-            self.actions.extension_ids().collect(),
-        );
-        self.entities
-            .validate_lifecycle_actions(&lifecycle_action_inventory)?;
         let decision_inventory =
             DecisionReferenceInventory::new(self.value_objects.iter().map(|(id, _)| *id).collect());
         self.decisions.validate_references(&decision_inventory)?;
@@ -367,7 +333,7 @@ impl DomainModelBuilder {
             "actions": self.actions.into_values(),
             "decisions": self.decisions.into_values(),
             "queries": self.queries.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
-            "invariants": self.invariants.into_values(),
+            "invariants": [],
         }))
     }
 }

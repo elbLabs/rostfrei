@@ -2,7 +2,7 @@
 
 use domain::{
     ActionInputDescriptor, ActionOutputDescriptor, DomainError, DomainErrorType, DomainIdentity,
-    Entity, EntityType, ScalarType, ValueObject, ValueObjectType, domain_actions, domain_model,
+    Entity, ScalarType, ValueObject, ValueObjectType, domain_actions, domain_model,
 };
 
 pub mod contracts {
@@ -50,18 +50,18 @@ struct Planning;
 struct TaskId(u64);
 
 #[derive(Entity)]
-#[domain(
-    id = "task",
-    label = "Task",
-    owner = Project,
-    actions = [TaskInspection, contracts::TaskWorkflow]
-)]
+#[domain(id = "task", label = "Task")]
 struct Task {
     #[domain(identity)]
     id: TaskId,
     title: String,
     complete: bool,
     revision: u32,
+}
+
+impl domain::EntityDefinition for Task {
+    type Owner = Project;
+    type Identity = TaskId;
 }
 
 #[derive(domain::Aggregate)]
@@ -130,11 +130,16 @@ impl UnlistedTaskActions for Task {
 struct CommentId(u64);
 
 #[derive(Entity)]
-#[domain(id = "comment", label = "Comment", owner = Project, actions = [])]
+#[domain(id = "comment", label = "Comment")]
 struct Comment {
     #[domain(identity)]
     id: CommentId,
     body: String,
+}
+
+impl domain::EntityDefinition for Comment {
+    type Owner = Project;
+    type Identity = CommentId;
 }
 
 fn task() -> Task {
@@ -170,7 +175,10 @@ fn ordinary_trait_implementations_run_with_supported_receivers_and_arities() {
 
 #[test]
 fn entity_action_contracts_preserve_list_and_trait_source_order() {
-    let contracts = <Task as EntityType>::ACTION_CONTRACTS;
+    let contracts = [
+        <Task as TaskInspection>::__DOMAIN_ACTIONS,
+        <Task as contracts::TaskWorkflow>::__DOMAIN_ACTIONS,
+    ];
     assert_eq!(contracts.len(), 2);
     assert_eq!(
         contracts[0]
@@ -225,12 +233,10 @@ fn entity_action_contracts_preserve_list_and_trait_source_order() {
             .collect::<Vec<_>>(),
         ["revision"]
     );
-
-    assert!(<Comment as EntityType>::ACTION_CONTRACTS.is_empty());
 }
 
 #[test]
-fn domain_model_automatically_projects_only_listed_entity_action_traits() {
+fn domain_model_does_not_implicitly_project_entity_action_traits() {
     let model = domain_model! {
         contexts: [Planning],
         aggregates: [Project],
@@ -245,28 +251,7 @@ fn domain_model_automatically_projects_only_listed_entity_action_traits() {
     .expect("entity action domain model should be valid");
 
     let actions = model["actions"].as_array().unwrap();
-    assert_eq!(
-        actions
-            .iter()
-            .map(|action| action["id"]["local"].as_str().unwrap())
-            .collect::<Vec<_>>(),
-        [
-            "is-complete",
-            "title",
-            "title-history",
-            "rename",
-            "complete",
-            "reject"
-        ]
-    );
-    assert!(actions.iter().all(|action| {
-        action["id"]["owner"]["kind"] == "entity" && action["id"]["owner"]["id"]["local"] == "task"
-    }));
-    assert!(
-        actions
-            .iter()
-            .all(|action| action["id"]["local"] != "revision")
-    );
+    assert!(actions.is_empty());
 
     let model_without_task = domain_model! {
         contexts: [Planning],

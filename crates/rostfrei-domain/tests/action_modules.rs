@@ -10,12 +10,17 @@ mod domain {
     pub struct TaxonomyId(pub(crate) u64);
 
     #[derive(Entity)]
-    #[domain(id = "taxonomy-root", label = "Taxonomy", owner = ServiceTaxonomy)]
+    #[domain(id = "taxonomy-root", label = "Taxonomy")]
     pub struct TaxonomyRoot {
         #[domain(identity)]
         pub(crate) id: TaxonomyId,
         pub(crate) published: bool,
         pub(crate) deprecated: bool,
+    }
+
+    impl domain::EntityDefinition for TaxonomyRoot {
+        type Owner = ServiceTaxonomy;
+        type Identity = TaxonomyId;
     }
 
     #[derive(Aggregate)]

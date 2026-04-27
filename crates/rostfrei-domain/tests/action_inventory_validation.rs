@@ -134,15 +134,15 @@ trait EntityActions {
 }
 
 #[derive(Entity)]
-#[domain(
-    id = "inventory-entity",
-    label = "Inventory entity",
-    owner = InventoryAggregate,
-    actions = [EntityActions]
-)]
+#[domain(id = "inventory-entity", label = "Inventory entity")]
 pub struct InventoryEntity {
     #[domain(identity)]
     id: InventoryEntityIdentity,
+}
+
+impl domain::EntityDefinition for InventoryEntity {
+    type Owner = InventoryAggregate;
+    type Identity = InventoryEntityIdentity;
 }
 
 impl AggregateActions for InventoryAggregate {
@@ -313,15 +313,15 @@ trait OrderedAttachedActions {
 }
 
 #[derive(Entity)]
-#[domain(
-    id = "ordered-entity",
-    label = "Ordered entity",
-    owner = InventoryAggregate,
-    actions = [OrderedAttachedActions]
-)]
+#[domain(id = "ordered-entity", label = "Ordered entity")]
 struct OrderedEntity {
     #[domain(identity)]
     id: OrderedEntityIdentity,
+}
+
+impl domain::EntityDefinition for OrderedEntity {
+    type Owner = InventoryAggregate;
+    type Identity = OrderedEntityIdentity;
 }
 
 impl OrderedAttachedActions for OrderedEntity {
@@ -516,7 +516,7 @@ fn accepts_references_added_after_all_owner_actions_are_registered() {
     let model = builder.finish().unwrap();
 
     let actions = model["actions"].as_array().unwrap();
-    assert_eq!(actions.len(), 3);
+    assert_eq!(actions.len(), 2);
 }
 
 #[test]
@@ -553,59 +553,6 @@ fn domain_service_reports_missing_error() {
             reference: DomainModelReference::DomainError(Box::new(SERVICE_ERROR_ID)),
             location: "error".to_owned(),
             inventory_key: "errors",
-        }
-    );
-}
-
-#[test]
-fn entity_reports_missing_value_object_input() {
-    let mut builder = DomainModelBuilder::new();
-    builder.add_entity_type::<InventoryEntity>().unwrap();
-
-    let error = builder.finish().unwrap_err();
-    let action_id = ActionId {
-        owner: ActionOwnerId::Entity(ENTITY_ID),
-        local: "entity-action",
-    };
-
-    assert_eq!(
-        error.to_string(),
-        violation(action_id, INPUT_VALUE_ID, "input", "value_objects")
-    );
-    assert_eq!(
-        error,
-        DomainModelError::ActionReferenceInventoryViolation {
-            action_id: Box::new(action_id),
-            reference: DomainModelReference::ValueObject(Box::new(INPUT_VALUE_ID)),
-            location: "input".to_owned(),
-            inventory_key: "value_objects",
-        }
-    );
-}
-
-#[test]
-fn entity_reports_missing_value_object_output() {
-    let mut builder = DomainModelBuilder::new();
-    builder.add_entity_type::<InventoryEntity>().unwrap();
-    builder.add_value_object(InputValue::DESCRIPTOR);
-
-    let error = builder.finish().unwrap_err();
-    let action_id = ActionId {
-        owner: ActionOwnerId::Entity(ENTITY_ID),
-        local: "entity-action",
-    };
-
-    assert_eq!(
-        error.to_string(),
-        violation(action_id, OUTPUT_VALUE_ID, "output", "value_objects")
-    );
-    assert_eq!(
-        error,
-        DomainModelError::ActionReferenceInventoryViolation {
-            action_id: Box::new(action_id),
-            reference: DomainModelReference::ValueObject(Box::new(OUTPUT_VALUE_ID)),
-            location: "output".to_owned(),
-            inventory_key: "value_objects",
         }
     );
 }
@@ -834,33 +781,6 @@ fn reports_descriptor_failures_in_input_output_error_order() {
             reference: DomainModelReference::DomainError(Box::new(MISSING_ERROR_ID)),
             location: "error".to_owned(),
             inventory_key: "errors",
-        }
-    );
-}
-
-#[test]
-fn validates_attached_actions_before_extensions() {
-    let mut builder = DomainModelBuilder::new();
-    builder.add_entity_type::<OrderedEntity>().unwrap();
-    builder.add_action_extension::<OrderedExtension>().unwrap();
-
-    let error = builder.finish().unwrap_err();
-    let action_id = ActionId {
-        owner: ActionOwnerId::Entity(ORDERED_ENTITY_ID),
-        local: "attached-missing",
-    };
-
-    assert_eq!(
-        error.to_string(),
-        violation(action_id, ORDERED_INPUT_ID, "input", "value_objects")
-    );
-    assert_eq!(
-        error,
-        DomainModelError::ActionReferenceInventoryViolation {
-            action_id: Box::new(action_id),
-            reference: DomainModelReference::ValueObject(Box::new(ORDERED_INPUT_ID)),
-            location: "input".to_owned(),
-            inventory_key: "value_objects",
         }
     );
 }

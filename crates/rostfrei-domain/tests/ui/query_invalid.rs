@@ -9,7 +9,7 @@ struct Catalog;
 struct Id(u64);
 
 #[derive(Entity)]
-#[domain(id = "root", label = "Root", owner = Model)]
+#[domain(id = "root", label = "Root")]
 struct Root { #[domain(identity)] id: Id }
 
 #[derive(Aggregate)]
@@ -20,6 +20,11 @@ impl domain::AggregateDefinition for Model {
     type Context = Catalog;
     type Root = Root;
     type Event = ModelEvents;
+}
+
+impl domain::EntityDefinition for Root {
+    type Owner = Model;
+    type Identity = Id;
 }
 
 #[derive(domain::AggregateEvents)]
