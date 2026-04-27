@@ -259,6 +259,6 @@ async fn processor_rejects_tampered_identity_and_bus_bounds_payloads() -> TestRe
         )?)
         .await
         .expect_err("oversized command payload should fail");
-    assert_eq!(error.kind(), CommandBusErrorKind::Encoding);
+    assert_eq!(error.kind(), CommandBusErrorKind::PayloadTooLarge);
     Ok(())
 }

@@ -1,0 +1,5 @@
+error: query version must be greater than zero
+ --> tests/ui/fail/query_zero_version.rs:7:15
+  |
+7 |     version = 0,
+  |               ^

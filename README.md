@@ -7,12 +7,14 @@ keeps domain aggregates independent from persistence, serialization, and brokers
 while providing a compiled domain model, strict execution, developer tooling,
 and NATS JetStream adapters at the application edge.
 
-The workspace contains eleven framework crates plus the bike-rental example
+The workspace contains twelve framework crates plus the bike-rental example
 Cargo package:
 
-- `rostfrei`: application facade for the compiled domain model, typed command
-  and integration-event buses, event-sourcing runtime, registry, and public
-  macros.
+- `rostfrei`: application facade for the compiled domain model, typed command,
+  query, and integration-event buses, event-sourcing runtime, registry, and
+  public macros.
+- `rostfrei-http`: explicitly mounted standard HTTP GET query and POST command
+  routes backed by the shared runtime registry and application buses.
 - `rostfrei-tracer`: explicitly registered read-only simulation,
   isolated test execution, separately authorized production dispatch, bounded
   in-memory operation traces, and an optional authenticated HTTP/SSE adapter.
@@ -24,10 +26,10 @@ Cargo package:
   behavior contracts.
 - `rostfrei-domain-runtime`: stream-aware aggregate initialization, event
   application, and runtime registration for compiled domain types.
-- `rostfrei-registry`: explicit command metadata, domain modules, and
+- `rostfrei-registry`: explicit command and query metadata, domain modules, and
   deterministic runtime registration.
-- `rostfrei-macros`: low-level `CommandDefinition` and `Module` derives for
-  direct registry and kernel users.
+- `rostfrei-macros`: low-level `CommandDefinition`, `QueryDefinition`, and
+  `Module` derives for direct registry and kernel users.
 - `rostfrei-messaging-core`: transport-neutral commands, integration events,
   queries, envelopes, and delivery contracts.
 - `rostfrei-nats`: command and integration-event bus adapters, NATS messaging,
