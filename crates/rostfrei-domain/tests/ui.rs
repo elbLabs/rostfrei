@@ -160,7 +160,6 @@ fn checks_domain_decision_contracts() {
     cases.compile_fail("tests/ui/domain_decision_contract/decision_outcome_unsupported_payload.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/duplicate_decision_id.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/generic_method.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/missing_implementation.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/missing_output.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/mutable_input.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/nested_reference_input.rs");

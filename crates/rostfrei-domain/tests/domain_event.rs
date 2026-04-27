@@ -20,14 +20,22 @@ struct MailboxRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "mailbox",
-    label = "Mailbox",
-    context = Inbox,
-    root = MailboxRoot,
-    events = [MailboxCreated, MessageReceived, MailboxRenamed]
-)]
+#[domain(id = "mailbox", label = "Mailbox")]
 struct Mailbox;
+
+impl domain::AggregateDefinition for Mailbox {
+    type Context = Inbox;
+    type Root = MailboxRoot;
+    type Event = MailboxEvents;
+}
+
+#[allow(dead_code)]
+#[derive(domain::AggregateEvents)]
+enum MailboxEvents {
+    Event0(MailboxCreated),
+    Event1(MessageReceived),
+    Event2(MailboxRenamed),
+}
 
 #[derive(DomainEvent)]
 #[domain(id = "mailbox-created", label = "Mailbox created")]
@@ -50,7 +58,7 @@ struct MailboxRenamed {
 #[test]
 fn derives_domain_event_descriptor() {
     assert_eq!(
-        MailboxCreated::DESCRIPTOR,
+        <MailboxCreated as DomainEventType<Mailbox>>::DESCRIPTOR,
         DomainEventDescriptor {
             id: DomainEventId {
                 aggregate: AggregateId {
@@ -64,9 +72,18 @@ fn derives_domain_event_descriptor() {
             fields: &[],
         }
     );
-    assert_eq!(MailboxCreated::LOCAL_ID, "mailbox-created");
-    assert_eq!(MailboxCreated::SCHEMA_VERSION, 1);
-    assert_eq!(MessageReceived::SCHEMA_VERSION, 2);
+    assert_eq!(
+        <MailboxCreated as DomainEventType<Mailbox>>::LOCAL_ID,
+        "mailbox-created"
+    );
+    assert_eq!(
+        <MailboxCreated as DomainEventType<Mailbox>>::SCHEMA_VERSION,
+        1
+    );
+    assert_eq!(
+        <MessageReceived as DomainEventType<Mailbox>>::SCHEMA_VERSION,
+        2
+    );
 }
 
 #[test]

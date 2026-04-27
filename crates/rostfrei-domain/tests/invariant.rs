@@ -49,14 +49,14 @@ struct ProductRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "product",
-    label = "Product",
-    context = Catalog,
-    root = ProductRoot,
-    invariants = [InventoryBounds, AllocationBounds]
-)]
+#[domain(id = "product", label = "Product")]
 struct Product;
+
+impl domain::AggregateDefinition for Product {
+    type Context = Catalog;
+    type Root = ProductRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 impl InventoryBounds for Product {
     fn stock_nonnegative(candidate: &ProductRoot) -> Option<InvariantViolation> {
@@ -77,6 +77,23 @@ impl AllocationBounds for Product {
     fn available_nonnegative(candidate: &ProductRoot) -> Option<InvariantViolation> {
         (candidate.stock < candidate.reserved)
             .then(|| InvariantViolation::new("available", "must be nonnegative"))
+    }
+}
+
+fn validate_product(candidate: &ProductRoot) -> Result<(), Vec<InvariantViolation>> {
+    let violations = [
+        <Product as InventoryBounds>::stock_nonnegative(candidate),
+        <Product as InventoryBounds>::reserved_nonnegative(candidate),
+        <Product as AllocationBounds>::reservation_within_stock(candidate),
+        <Product as AllocationBounds>::available_nonnegative(candidate),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(violations)
     }
 }
 
@@ -138,7 +155,7 @@ impl SkuBounds for Sku {
 }
 
 mod change_inventory_action {
-    use super::{InvariantOwnerType, InvariantViolation, Product, ProductRoot};
+    use super::{InvariantViolation, ProductRoot, validate_product};
 
     #[derive(Debug, Eq, PartialEq)]
     pub enum ChangeInventoryError {
@@ -156,8 +173,7 @@ mod change_inventory_action {
             let mut candidate = current.clone();
             candidate.stock = stock;
             candidate.reserved = reserved;
-            <Product as InvariantOwnerType>::validate_invariants(&candidate)
-                .map_err(Self::translate_violations)?;
+            validate_product(&candidate).map_err(Self::translate_violations)?;
             *current = candidate;
             Ok(())
         }
@@ -204,10 +220,7 @@ fn exposes_the_candidate_type_and_owner_kind_for_each_supported_owner() {
 
 #[test]
 fn returns_ok_or_a_nonempty_error_for_every_owner_kind() {
-    assert_eq!(
-        <Product as InvariantOwnerType>::validate_invariants(&product(5, 2)),
-        Ok(())
-    );
+    assert_eq!(validate_product(&product(5, 2)), Ok(()));
     assert_eq!(
         <Line as InvariantOwnerType>::validate_invariants(&Line {
             id: LineId(1),
@@ -221,7 +234,7 @@ fn returns_ok_or_a_nonempty_error_for_every_owner_kind() {
     );
 
     let invalid_results = [
-        <Product as InvariantOwnerType>::validate_invariants(&product(-3, -1)),
+        validate_product(&product(-3, -1)),
         <Line as InvariantOwnerType>::validate_invariants(&Line {
             id: LineId(1),
             quantity: 0,
@@ -240,7 +253,7 @@ fn returns_ok_or_a_nonempty_error_for_every_owner_kind() {
 #[test]
 fn collects_all_violations_in_attachment_then_method_source_order() {
     assert_eq!(
-        <Product as InvariantOwnerType>::validate_invariants(&product(-3, -1)),
+        validate_product(&product(-3, -1)),
         Err(vec![
             InvariantViolation::new("stock", "must be nonnegative"),
             InvariantViolation::new("reserved", "must be nonnegative"),

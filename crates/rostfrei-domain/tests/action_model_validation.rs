@@ -62,13 +62,14 @@ impl AttachedActions for BoundaryEntity {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "boundary",
-    label = "Boundary",
-    context = Validation,
-    root = BoundaryEntity
-)]
+#[domain(id = "boundary", label = "Boundary")]
 struct BoundaryAggregate;
+
+impl domain::AggregateDefinition for BoundaryAggregate {
+    type Context = Validation;
+    type Root = BoundaryEntity;
+    type Event = domain::NoDomainEvents;
+}
 
 struct WrongOwnerExtension;
 

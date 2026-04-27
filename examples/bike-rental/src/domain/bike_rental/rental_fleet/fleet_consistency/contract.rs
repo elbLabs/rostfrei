@@ -1,11 +1,12 @@
 use rostfrei::{InvariantOwnerType, InvariantViolation, domain_invariants};
 
 #[allow(
+    dead_code,
     non_snake_case,
-    reason = "domain_invariants currently generates a doc-hidden uppercase method"
+    reason = "the invariant remains an explicit contract while aggregate fanout is deferred; domain_invariants also generates a doc-hidden uppercase method"
 )]
 #[domain_invariants(aggregate)]
-pub(in crate::domain::bike_rental::rental_fleet) trait FleetConsistency {
+pub(in crate::domain) trait FleetConsistency {
     #[invariant(
         id = "unique-bicycle-identities",
         label = "Bicycle identities are unique"

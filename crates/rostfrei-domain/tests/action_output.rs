@@ -5,7 +5,6 @@ use domain::{
     DomainEventType, DomainIdentity, DomainService, Entity, ScalarType, ValueObject,
     ValueObjectType, domain_actions, domain_model,
 };
-use serde_json::json;
 
 #[derive(BoundedContext)]
 #[domain(id = "operations", label = "Operations")]
@@ -28,15 +27,19 @@ pub struct MailboxRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "mailbox",
-    label = "Mailbox",
-    context = Operations,
-    root = MailboxRoot,
-    actions = [MailboxOutputActions],
-    events = [MailboxOpened]
-)]
+#[domain(id = "mailbox", label = "Mailbox")]
 pub struct Mailbox;
+
+impl domain::AggregateDefinition for Mailbox {
+    type Context = Operations;
+    type Root = MailboxRoot;
+    type Event = MailboxEvents;
+}
+
+#[derive(domain::AggregateEvents)]
+pub enum MailboxEvents {
+    Event0(MailboxOpened),
+}
 
 #[derive(DomainIdentity)]
 #[domain(owner = DeliveryRoot)]
@@ -50,14 +53,19 @@ pub struct DeliveryRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "delivery",
-    label = "Delivery",
-    context = Operations,
-    root = DeliveryRoot,
-    events = [DeliveryStarted]
-)]
+#[domain(id = "delivery", label = "Delivery")]
 pub struct Delivery;
+
+impl domain::AggregateDefinition for Delivery {
+    type Context = Operations;
+    type Root = DeliveryRoot;
+    type Event = DeliveryEvents;
+}
+
+#[derive(domain::AggregateEvents)]
+pub enum DeliveryEvents {
+    Event0(DeliveryStarted),
+}
 
 #[derive(ValueObject)]
 #[domain(
@@ -182,15 +190,6 @@ pub struct CoordinationDenied;
 
 #[domain_actions(domain_service)]
 pub trait CoordinatorOutputActions {
-    #[action(id = "mailbox-event", label = "Mailbox event")]
-    fn mailbox_event() -> MailboxOpened;
-
-    #[action(id = "nested-delivery-events", label = "Nested delivery events")]
-    fn nested_delivery_events() -> Vec<Option<Vec<DeliveryStarted>>>;
-
-    #[action(id = "fallible-event", label = "Fallible event")]
-    fn fallible_event() -> std::result::Result<MailboxOpened, CoordinationDenied>;
-
     #[action(id = "unit", label = "Unit")]
     fn unit();
 
@@ -202,18 +201,6 @@ pub trait CoordinatorOutputActions {
 }
 
 impl CoordinatorOutputActions for Coordinator {
-    fn mailbox_event() -> MailboxOpened {
-        MailboxOpened
-    }
-
-    fn nested_delivery_events() -> Vec<Option<Vec<DeliveryStarted>>> {
-        vec![Some(vec![DeliveryStarted])]
-    }
-
-    fn fallible_event() -> std::result::Result<MailboxOpened, CoordinationDenied> {
-        Ok(MailboxOpened)
-    }
-
     fn unit() {}
 
     fn scalar() -> bool {
@@ -275,18 +262,24 @@ fn permits_owned_events_and_existing_output_kinds() {
     let coordinator_actions = <Coordinator as CoordinatorOutputActions>::__DOMAIN_ACTIONS;
     let mailbox_root_actions = <MailboxRoot as MailboxRootOutputActions>::__DOMAIN_ACTIONS;
     let receipt_actions = <Receipt as ReceiptOutputActions>::__DOMAIN_ACTIONS;
-    let event = ActionOutputDescriptor::DomainEvent(MailboxOpened::DESCRIPTOR.id);
+    let event = ActionOutputDescriptor::DomainEvent(
+        <MailboxOpened as DomainEventType<Mailbox>>::DESCRIPTOR.id,
+    );
     assert_eq!(mailbox_actions[0].output, Some(event));
     assert_eq!(
         mailbox_actions[1].output,
         Some(ActionOutputDescriptor::Optional(
-            &ActionOutputDescriptor::DomainEvent(MailboxOpened::DESCRIPTOR.id),
+            &ActionOutputDescriptor::DomainEvent(
+                <MailboxOpened as DomainEventType<Mailbox>>::DESCRIPTOR.id,
+            ),
         ))
     );
     assert_eq!(
         mailbox_actions[2].output,
         Some(ActionOutputDescriptor::List(
-            &ActionOutputDescriptor::DomainEvent(MailboxOpened::DESCRIPTOR.id),
+            &ActionOutputDescriptor::DomainEvent(
+                <MailboxOpened as DomainEventType<Mailbox>>::DESCRIPTOR.id,
+            ),
         ))
     );
     assert!(matches!(
@@ -307,23 +300,13 @@ fn permits_owned_events_and_existing_output_kinds() {
     assert_eq!(mailbox_actions[8].output, None);
     assert_eq!(mailbox_actions[9].output, None);
 
-    assert_eq!(coordinator_actions[0].output, Some(event));
+    assert_eq!(coordinator_actions[0].output, None);
     assert!(matches!(
         coordinator_actions[1].output,
-        Some(ActionOutputDescriptor::List(_))
-    ));
-    assert_eq!(coordinator_actions[2].output, Some(event));
-    assert_eq!(
-        coordinator_actions[2].error,
-        Some(CoordinationDenied::DESCRIPTOR.id)
-    );
-    assert_eq!(coordinator_actions[3].output, None);
-    assert!(matches!(
-        coordinator_actions[4].output,
         Some(ActionOutputDescriptor::Scalar(ScalarType::Bool))
     ));
     assert!(matches!(
-        coordinator_actions[5].output,
+        coordinator_actions[2].output,
         Some(ActionOutputDescriptor::ValueObject(_))
     ));
     assert_eq!(mailbox_root_actions[0].output, None);
@@ -341,7 +324,7 @@ fn permits_owned_events_and_existing_output_kinds() {
 }
 
 #[test]
-fn preserves_event_output_json() {
+fn projects_only_explicitly_attached_non_aggregate_actions() {
     let model = domain_model! {
         contexts: [Operations],
         aggregates: [Mailbox, Delivery],
@@ -357,36 +340,6 @@ fn preserves_event_output_json() {
     .expect("action output domain model should be valid");
 
     assert_eq!(
-        model["actions"][0]["output"],
-        json!({
-            "kind": "domainEvent",
-            "id": {
-                "aggregate": { "context": "operations", "local": "mailbox" },
-                "local": "mailbox-opened",
-            },
-        })
-    );
-    assert_eq!(
-        model["actions"][3]["output"],
-        json!({
-            "kind": "optional",
-            "value": {
-                "kind": "list",
-                "element": {
-                    "kind": "optional",
-                    "value": {
-                        "kind": "domainEvent",
-                        "id": {
-                            "aggregate": { "context": "operations", "local": "mailbox" },
-                            "local": "mailbox-opened",
-                        },
-                    },
-                },
-            },
-        })
-    );
-    assert_eq!(model["actions"][4]["error"]["local"], "mailbox-denied");
-    assert_eq!(
         model["actions"]
             .as_array()
             .unwrap()
@@ -394,31 +347,14 @@ fn preserves_event_output_json() {
             .map(|action| action["id"]["local"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "event",
-            "optional-event",
-            "event-list",
-            "nested-events",
-            "fallible-event",
-            "unit",
-            "scalar",
-            "value-object",
-            "optional-unit",
-            "nested-unit",
             "unit",
             "scalar",
             "value-object",
             "new",
             "replace",
-            "mailbox-event",
-            "nested-delivery-events",
-            "fallible-event",
             "unit",
             "scalar",
             "value-object",
         ]
-    );
-    assert_eq!(
-        model["actions"][16]["output"]["element"]["value"]["element"]["id"]["local"],
-        "delivery-started"
     );
 }

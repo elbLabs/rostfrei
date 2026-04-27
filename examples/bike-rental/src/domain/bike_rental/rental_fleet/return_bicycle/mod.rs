@@ -6,7 +6,6 @@ mod execute;
 mod handler;
 mod rejection;
 
-pub(super) use action::ReturnBicycleActionContract;
 pub use action::ReturnBicycleActions;
 pub use command::ReturnBicycle;
 pub use event::BicycleReturned;

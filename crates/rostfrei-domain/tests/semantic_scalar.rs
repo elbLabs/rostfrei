@@ -57,14 +57,19 @@ struct Revision {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "documents",
-    label = "Documents",
-    context = SemanticScalars,
-    root = DocumentRoot,
-    events = [DocumentCorrelated]
-)]
+#[domain(id = "documents", label = "Documents")]
 struct Documents;
+
+impl domain::AggregateDefinition for Documents {
+    type Context = SemanticScalars;
+    type Root = DocumentRoot;
+    type Event = DocumentsEvents;
+}
+
+#[derive(domain::AggregateEvents)]
+enum DocumentsEvents {
+    Event0(DocumentCorrelated),
+}
 
 #[derive(ValueObject)]
 #[domain(id = "external-reference", label = "External reference", owner = SemanticScalars)]
@@ -110,13 +115,14 @@ struct ContradictoryRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "contradictory-documents",
-    label = "Contradictory documents",
-    context = SemanticScalars,
-    root = ContradictoryRoot
-)]
+#[domain(id = "contradictory-documents", label = "Contradictory documents")]
 struct ContradictoryDocuments;
+
+impl domain::AggregateDefinition for ContradictoryDocuments {
+    type Context = SemanticScalars;
+    type Root = ContradictoryRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 impl DomainIdentityType for ContradictoryId {
     type Owner = ContradictoryRoot;

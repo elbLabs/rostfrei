@@ -18,8 +18,14 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "model", label = "Model", context = Catalog, root = Root)]
+#[domain(id = "model", label = "Model")]
 struct Model;
+
+impl domain::AggregateDefinition for Model {
+    type Context = Catalog;
+    type Root = Root;
+    type Event = domain::NoDomainEvents;
+}
 
 #[domain_queries(group = MetadataQueries)]
 impl Model {

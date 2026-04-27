@@ -1,7 +1,9 @@
 use super::InvariantOwnerType;
-use crate::AggregateType;
+use crate::{AggregateDefinition, AggregateType};
 
 pub trait AggregateInvariantOwnerType:
-    AggregateType + InvariantOwnerType<Candidate = <Self as AggregateType>::Root>
+    AggregateType
+    + AggregateDefinition
+    + InvariantOwnerType<Candidate = <Self as AggregateDefinition>::Root>
 {
 }

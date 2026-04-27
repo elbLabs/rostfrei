@@ -83,16 +83,16 @@ struct TestRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "test-aggregate",
-    label = "Test aggregate",
-    context = Testing,
-    root = TestRoot,
-    actions = [AggregateActions],
-    decisions = [TestDecisions],
-    invariants = [AggregateInvariants],
-)]
+#[domain(id = "test-aggregate", label = "Test aggregate")]
 struct TestAggregate;
+
+impl domain::AggregateDefinition for TestAggregate {
+    type Context = Testing;
+    type Root = TestRoot;
+    type Event = domain::NoDomainEvents;
+}
+
+impl domain::__private::AttachedDecisionGroup<TestDecisions> for TestAggregate {}
 
 #[domain_decisions(aggregate, group = TestDecisions)]
 impl TestAggregate {
@@ -164,8 +164,8 @@ fn decision_tests_keep_the_authored_body() {
 #[domain_invariant_test(<TestAggregate as AggregateInvariants>::MARKED)]
 fn invariant_tests_keep_the_authored_body() {
     assert_eq!(
-        <TestAggregate as InvariantOwnerType>::validate_invariants(&root()),
-        Err(vec![InvariantViolation::new("marked", "must be marked")])
+        <TestAggregate as AggregateInvariants>::marked(&root()),
+        Some(InvariantViolation::new("marked", "must be marked"))
     );
 }
 

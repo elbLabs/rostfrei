@@ -64,7 +64,7 @@ fn add_raised_event_predicates(
         .filter(|event| event_keys.insert(event.to_token_stream().to_string()))
     {
         let predicate: WherePredicate = syn::parse2(
-            quote_spanned! {event.span()=> #event: #domain_path::DomainEventType<Owner = Self>},
+            quote_spanned! {event.span()=> #event: #domain_path::DomainEventType<Self>},
         )?;
         item.generics.make_where_clause().predicates.push(predicate);
     }
@@ -84,7 +84,7 @@ fn add_root_predicate(
         ));
     };
     let predicate: WherePredicate = syn::parse2(
-        quote_spanned! {root.span()=> Self: #domain_path::AggregateType<Root = #root>},
+        quote_spanned! {root.span()=> Self: #domain_path::AggregateDefinition<Root = #root>},
     )?;
     item.generics.make_where_clause().predicates.push(predicate);
     Ok(())

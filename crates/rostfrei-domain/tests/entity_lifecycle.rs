@@ -51,8 +51,14 @@ struct Task {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "task-list", label = "Task list", context = Planning, root = Task)]
+#[domain(id = "task-list", label = "Task list")]
 struct TaskList;
+
+impl domain::AggregateDefinition for TaskList {
+    type Context = Planning;
+    type Root = Task;
+    type Event = domain::NoDomainEvents;
+}
 
 enum TaskLifecycleMetadata {
     Draft,

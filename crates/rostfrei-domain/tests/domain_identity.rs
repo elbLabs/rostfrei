@@ -19,8 +19,14 @@ struct MailboxRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "mailbox", label = "Mailbox", context = Mail, root = MailboxRoot)]
+#[domain(id = "mailbox", label = "Mailbox")]
 struct Mailbox;
+
+impl domain::AggregateDefinition for Mailbox {
+    type Context = Mail;
+    type Root = MailboxRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 const fn assert_domain_identity<T: DomainIdentityType>() {}
 

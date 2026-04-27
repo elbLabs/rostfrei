@@ -4,8 +4,8 @@ use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
     Aggregate, AggregateType, BoundedContext, Command, DomainError, DomainErrorType, DomainEvent,
-    DomainEventType, DomainIdentity, DomainModelError, Entity, ValueObject, ValueObjectType,
-    domain_actions, domain_model,
+    DomainEventType, DomainIdentity, Entity, ValueObject, ValueObjectType, domain_actions,
+    domain_model,
 };
 
 #[derive(BoundedContext)]
@@ -45,15 +45,19 @@ impl AccountRootActions for AccountRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "account",
-    label = "Account",
-    context = Accounts,
-    root = AccountRoot,
-    actions = [contracts::AccountLifecycle, contracts::AccountMaintenance],
-    events = [AccountChanged]
-)]
+#[domain(id = "account", label = "Account")]
 pub struct Account;
+
+impl domain::AggregateDefinition for Account {
+    type Context = Accounts;
+    type Root = AccountRoot;
+    type Event = AccountEvents;
+}
+
+#[derive(domain::AggregateEvents)]
+pub enum AccountEvents {
+    Event0(AccountChanged),
+}
 
 #[derive(Command)]
 #[domain(id = "rename-account", label = "Rename account", owner = Account)]
@@ -189,14 +193,14 @@ pub struct UnlistedRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "unlisted",
-    label = "Unlisted",
-    context = Accounts,
-    root = UnlistedRoot,
-    actions = [UnlistedActions]
-)]
+#[domain(id = "unlisted", label = "Unlisted")]
 pub struct UnlistedAggregate;
+
+impl domain::AggregateDefinition for UnlistedAggregate {
+    type Context = Accounts;
+    type Root = UnlistedRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[domain_actions(aggregate)]
 pub trait UnlistedActions {
@@ -224,13 +228,14 @@ struct OmittedActionsRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "omitted-actions",
-    label = "Omitted actions",
-    context = Accounts,
-    root = OmittedActionsRoot
-)]
+#[domain(id = "omitted-actions", label = "Omitted actions")]
 struct OmittedActionsAggregate;
+
+impl domain::AggregateDefinition for OmittedActionsAggregate {
+    type Context = Accounts;
+    type Root = OmittedActionsRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(DomainIdentity)]
 #[domain(owner = EmptyActionsRoot)]
@@ -248,14 +253,14 @@ struct EmptyActionsRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "empty-actions",
-    label = "Empty actions",
-    context = Accounts,
-    root = EmptyActionsRoot,
-    actions = []
-)]
+#[domain(id = "empty-actions", label = "Empty actions")]
 struct EmptyActionsAggregate;
+
+impl domain::AggregateDefinition for EmptyActionsAggregate {
+    type Context = Accounts;
+    type Root = EmptyActionsRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(DomainIdentity)]
 #[domain(owner = DuplicateRoot)]
@@ -269,14 +274,14 @@ pub struct DuplicateRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "duplicate",
-    label = "Duplicate",
-    context = Accounts,
-    root = DuplicateRoot,
-    actions = [FirstDuplicateActions, SecondDuplicateActions]
-)]
+#[domain(id = "duplicate", label = "Duplicate")]
 pub struct DuplicateAggregate;
+
+impl domain::AggregateDefinition for DuplicateAggregate {
+    type Context = Accounts;
+    type Root = DuplicateRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[domain_actions(aggregate)]
 pub trait FirstDuplicateActions {
@@ -328,8 +333,11 @@ fn public_aggregate_contracts_are_invocable_with_concrete_and_aliased_roots() {
 }
 
 #[test]
-fn aggregate_action_contracts_preserve_attachment_and_method_order_and_descriptors() {
-    let contracts = <Account as AggregateType>::ACTION_CONTRACTS;
+fn aggregate_action_contracts_preserve_method_order_and_descriptors() {
+    let contracts = [
+        <Account as contracts::AccountLifecycle>::__DOMAIN_ACTIONS,
+        <Account as contracts::AccountMaintenance>::__DOMAIN_ACTIONS,
+    ];
     assert_eq!(contracts.len(), 2);
     assert_eq!(
         contracts[0]
@@ -350,7 +358,7 @@ fn aggregate_action_contracts_preserve_attachment_and_method_order_and_descripto
     assert_eq!(
         contracts[0][0].output,
         Some(ActionOutputDescriptor::DomainEvent(
-            AccountChanged::DESCRIPTOR.id
+            <AccountChanged as DomainEventType<Account>>::DESCRIPTOR.id
         ))
     );
     assert_eq!(contracts[0][0].error, None);
@@ -363,7 +371,7 @@ fn aggregate_action_contracts_preserve_attachment_and_method_order_and_descripto
     assert_eq!(
         contracts[0][1].output,
         Some(ActionOutputDescriptor::DomainEvent(
-            AccountChanged::DESCRIPTOR.id
+            <AccountChanged as DomainEventType<Account>>::DESCRIPTOR.id
         ))
     );
     assert_eq!(contracts[0][1].error, Some(AccountDenied::DESCRIPTOR.id));
@@ -381,7 +389,7 @@ fn aggregate_action_contracts_preserve_attachment_and_method_order_and_descripto
 }
 
 #[test]
-fn model_projects_attached_then_extension_actions_and_omits_unlisted_contracts() {
+fn model_projects_explicit_extensions_and_non_aggregate_attachments() {
     let model = domain_model! {
         contexts: [Accounts],
         aggregates: [Account, OmittedActionsAggregate, EmptyActionsAggregate],
@@ -402,19 +410,10 @@ fn model_projects_attached_then_extension_actions_and_omits_unlisted_contracts()
             .iter()
             .map(|action| action["id"]["local"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        [
-            "open",
-            "rename",
-            "freeze",
-            "revision",
-            "touch-root",
-            "extension"
-        ]
+        ["touch-root", "extension"]
     );
-    assert_eq!(actions[0]["id"]["owner"]["kind"], "aggregate");
-    assert_eq!(actions[3]["id"]["owner"]["kind"], "aggregate");
-    assert_eq!(actions[4]["id"]["owner"]["kind"], "entity");
-    assert_eq!(actions[5]["id"]["owner"]["kind"], "aggregate");
+    assert_eq!(actions[0]["id"]["owner"]["kind"], "entity");
+    assert_eq!(actions[1]["id"]["owner"]["kind"], "aggregate");
     assert!(actions.iter().all(|action| {
         action["id"]["local"] != "implemented-only" && action["id"]["local"] != "unlisted-action"
     }));
@@ -428,8 +427,8 @@ fn model_projects_attached_then_extension_actions_and_omits_unlisted_contracts()
 }
 
 #[test]
-fn rejects_duplicate_action_id_across_attached_aggregate_traits() {
-    let error = domain_model! {
+fn unattached_duplicate_aggregate_traits_are_not_registered() {
+    let model = domain_model! {
         contexts: [],
         aggregates: [DuplicateAggregate],
         entities: [],
@@ -440,22 +439,13 @@ fn rejects_duplicate_action_id_across_attached_aggregate_traits() {
         errors: [],
         query_groups: [],
     }
-    .expect_err("duplicate attached aggregate actions should be rejected");
-    let id = ActionId {
-        owner: ActionOwnerId::Aggregate(DuplicateAggregate::DESCRIPTOR.id),
-        local: "duplicate",
-    };
-
-    assert_eq!(
-        error,
-        DomainModelError::DuplicateActionId { id: Box::new(id) }
-    );
-    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
+    .expect("unattached aggregate action traits do not enter the model");
+    assert!(model["actions"].as_array().unwrap().is_empty());
 }
 
 #[test]
-fn rejects_duplicate_action_id_between_attached_and_extension_groups() {
-    let error = domain_model! {
+fn extension_is_registered_when_same_named_contract_is_unattached() {
+    let model = domain_model! {
         contexts: [],
         aggregates: [Account],
         entities: [],
@@ -467,15 +457,6 @@ fn rejects_duplicate_action_id_between_attached_and_extension_groups() {
         action_extensions: [DuplicateAccountExtensionActions],
         query_groups: [],
     }
-    .expect_err("an extension duplicating an attached aggregate action should be rejected");
-    let id = ActionId {
-        owner: ActionOwnerId::Aggregate(Account::DESCRIPTOR.id),
-        local: "open",
-    };
-
-    assert_eq!(
-        error,
-        DomainModelError::DuplicateActionId { id: Box::new(id) }
-    );
-    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
+    .expect("unattached action traits do not conflict with explicit extensions");
+    assert_eq!(model["actions"][0]["id"]["local"], "open");
 }

@@ -68,14 +68,14 @@ pub trait AttachedActions {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "extension-owner",
-    label = "Extension owner",
-    context = Extensions,
-    root = ExtensionRoot,
-    actions = [AttachedActions]
-)]
+#[domain(id = "extension-owner", label = "Extension owner")]
 pub struct ExtensionOwner;
+
+impl domain::AggregateDefinition for ExtensionOwner {
+    type Context = Extensions;
+    type Root = ExtensionRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 impl AttachedActions for ExtensionOwner {
     fn attached(_root: &mut ExtensionRoot) {}
@@ -274,7 +274,6 @@ fn accepts_extensions_for_every_registered_action_owner_kind() {
     assert_eq!(
         action_locals(&model).unwrap(),
         [
-            "attached",
             "extension-one",
             "extension-two",
             "entity-extension",
@@ -301,12 +300,7 @@ fn extensions_follow_attached_contracts_and_preserve_extension_order() {
 
     assert_eq!(
         action_locals(&model).unwrap(),
-        [
-            "attached",
-            "extension-one",
-            "extension-two",
-            "extension-three",
-        ]
+        ["extension-one", "extension-two", "extension-three",]
     );
 }
 
@@ -416,25 +410,15 @@ fn rejects_duplicate_action_id_within_one_extension_slice() {
 }
 
 #[test]
-fn rejects_duplicate_action_id_against_an_attached_contract() {
+fn permits_an_extension_when_the_same_unattached_contract_is_not_registered() {
     let mut builder = DomainModelBuilder::new();
     builder
         .add_aggregate_type::<ExtensionOwner>()
         .expect("extension owner should register");
 
-    let id = ActionId {
-        owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
-        local: "attached",
-    };
-    let error = builder
+    builder
         .add_action_extension::<AttachedDuplicateExtension>()
-        .expect_err("an extension duplicating an attached action should be rejected");
-
-    assert_eq!(
-        error,
-        DomainModelError::DuplicateActionId { id: Box::new(id) }
-    );
-    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
+        .expect("unattached contracts do not participate in model registration");
 }
 
 #[test]
@@ -467,12 +451,7 @@ fn domain_model_accepts_optional_action_extensions_and_still_allows_omission() {
 
     assert_eq!(
         action_locals(&extended).unwrap(),
-        [
-            "attached",
-            "extension-one",
-            "extension-two",
-            "extension-three",
-        ]
+        ["extension-one", "extension-two", "extension-three",]
     );
-    assert_eq!(action_locals(&omitted).unwrap(), ["attached"]);
+    assert!(action_locals(&omitted).unwrap().is_empty());
 }

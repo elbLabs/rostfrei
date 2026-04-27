@@ -13,8 +13,19 @@ struct Id(u64);
 struct Root { #[domain(identity)] id: Id }
 
 #[derive(Aggregate)]
-#[domain(id = "model", label = "Model", context = Catalog, root = Root, events = [Event])]
+#[domain(id = "model", label = "Model")]
 struct Model;
+
+impl domain::AggregateDefinition for Model {
+    type Context = Catalog;
+    type Root = Root;
+    type Event = ModelEvents;
+}
+
+#[derive(domain::AggregateEvents)]
+enum ModelEvents {
+    Event0(Event),
+}
 
 #[derive(ValueObject)]
 #[domain(id = "filter", label = "Filter", owner = Model)]

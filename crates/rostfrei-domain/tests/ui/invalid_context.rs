@@ -14,7 +14,13 @@ struct MailboxRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "mailbox", label = "Mailbox", context = Inbox, root = MailboxRoot)]
+#[domain(id = "mailbox", label = "Mailbox")]
 struct Mailbox;
+
+impl domain::AggregateDefinition for Mailbox {
+    type Context = Inbox;
+    type Root = MailboxRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 fn main() {}

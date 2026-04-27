@@ -33,14 +33,14 @@ mod shadowed {
     }
 
     #[derive(domain::Aggregate)]
-    #[domain(
-        id = "owner",
-        label = "Owner",
-        context = Context,
-        root = Root,
-        invariants = [Invariants]
-    )]
-    pub(crate) struct Owner;
+#[domain(id = "owner", label = "Owner")]
+pub(crate) struct Owner;
+
+impl domain::AggregateDefinition for Owner {
+    type Context = Context;
+    type Root = Root;
+    type Event = domain::NoDomainEvents;
+}
 
     impl Invariants for Owner {
         fn valid(

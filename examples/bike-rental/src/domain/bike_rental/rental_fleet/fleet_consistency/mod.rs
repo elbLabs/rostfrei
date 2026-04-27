@@ -1,4 +1,4 @@
 mod contract;
 mod evaluate;
 
-pub(super) use contract::FleetConsistency;
+pub(in crate::domain) use contract::FleetConsistency;

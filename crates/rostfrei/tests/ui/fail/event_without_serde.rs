@@ -19,15 +19,20 @@ struct Root {
 #[rostfrei(id = "event", label = "Event")]
 struct Event;
 
+#[derive(rostfrei::AggregateEvents)]
+enum Events {
+    Event(Event),
+}
+
 #[derive(rostfrei::Aggregate)]
-#[rostfrei(
-    id = "aggregate",
-    label = "Aggregate",
-    context = Context,
-    root = Root,
-    events = [Event]
-)]
+#[rostfrei(id = "aggregate", label = "Aggregate")]
 struct Aggregate;
+
+impl rostfrei::AggregateDefinition for Aggregate {
+    type Context = Context;
+    type Root = Root;
+    type Event = Events;
+}
 
 impl Initialize<Aggregate> for Root {
     fn initialize(_: &rostfrei::StreamId) -> Self { Self { id: Id(1) } }

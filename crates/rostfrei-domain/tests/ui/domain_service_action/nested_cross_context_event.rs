@@ -22,8 +22,19 @@ struct OrderRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "order", label = "Order", context = Orders, root = OrderRoot, events = [Placed])]
+#[domain(id = "order", label = "Order")]
 struct Order;
+
+impl domain::AggregateDefinition for Order {
+    type Context = Orders;
+    type Root = OrderRoot;
+    type Event = OrderEvents;
+}
+
+#[derive(domain::AggregateEvents)]
+enum OrderEvents {
+    Event0(Placed),
+}
 
 #[derive(DomainEvent)]
 #[domain(id = "placed", label = "Placed")]

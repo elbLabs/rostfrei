@@ -85,16 +85,21 @@ struct BalanceObserved {
     balance: i64,
 }
 
+#[derive(rostfrei::AggregateEvents)]
+enum AccountEvents {
+    MoneyDeposited(MoneyDeposited),
+    BalanceObserved(BalanceObserved),
+}
+
 #[derive(rostfrei::Aggregate)]
-#[rostfrei(
-    id = "account",
-    label = "Account",
-    context = Banking,
-    root = Account,
-    actions = [account_actions::AccountActionContract],
-    events = [MoneyDeposited, BalanceObserved]
-)]
+#[rostfrei(id = "account", label = "Account")]
 struct AccountAggregate;
+
+impl rostfrei::AggregateDefinition for AccountAggregate {
+    type Context = Banking;
+    type Root = Account;
+    type Event = AccountEvents;
+}
 
 impl Initialize<AccountAggregate> for Account {
     fn initialize(stream_id: &StreamId) -> Self {
@@ -420,23 +425,24 @@ async fn command_rejection_discards_events_raised_by_an_action() {
 
 #[test]
 fn executable_actions_model_every_event_type_they_may_raise() {
-    let actions = <AccountAggregate as rostfrei::AggregateType>::ACTION_CONTRACTS[0];
+    let actions = <AccountAggregate as account_actions::AccountActionContract>::
+        __DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE;
 
     assert_eq!(actions.len(), 3);
     assert!(actions.iter().all(|action| action.output.is_none()));
     assert_eq!(
         actions[0].raises,
-        &[<MoneyDeposited as rostfrei::DomainEventType>::DESCRIPTOR.id]
+        &[<MoneyDeposited as rostfrei::DomainEventType<AccountAggregate>>::DESCRIPTOR.id]
     );
     assert_eq!(
         actions[1].raises,
-        &[<BalanceObserved as rostfrei::DomainEventType>::DESCRIPTOR.id]
+        &[<BalanceObserved as rostfrei::DomainEventType<AccountAggregate>>::DESCRIPTOR.id]
     );
     assert_eq!(
         actions[2].raises,
         &[
-            <MoneyDeposited as rostfrei::DomainEventType>::DESCRIPTOR.id,
-            <BalanceObserved as rostfrei::DomainEventType>::DESCRIPTOR.id,
+            <MoneyDeposited as rostfrei::DomainEventType<AccountAggregate>>::DESCRIPTOR.id,
+            <BalanceObserved as rostfrei::DomainEventType<AccountAggregate>>::DESCRIPTOR.id,
         ]
     );
 }
@@ -472,7 +478,7 @@ async fn generated_json_replay_fails_closed() {
 }
 
 #[tokio::test]
-async fn custom_codec_remains_an_explicit_override_without_naming_the_generated_enum() {
+async fn custom_codec_remains_an_explicit_override_for_the_authored_event_enum() {
     let stream = stream("custom-account").expect("valid custom codec stream fixture");
     let executor = Executor::with_codec(InMemoryEventStore::new(), TextEventCodec);
     let outcome = executor
@@ -495,7 +501,7 @@ async fn custom_codec_remains_an_explicit_override_without_naming_the_generated_
 }
 
 #[test]
-fn domain_model_projects_attached_events_once_in_aggregate_declaration_order() {
+fn domain_model_projects_event_set_once_in_enum_declaration_order() {
     let model = rostfrei::domain_model! {
         contexts: [Banking],
         aggregates: [AccountAggregate],

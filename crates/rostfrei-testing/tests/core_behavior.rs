@@ -318,20 +318,25 @@ struct AutomaticAccountRoot {
     balance: i64,
 }
 
-#[derive(domain::Aggregate)]
-#[domain(
-    id = "automatic-account",
-    label = "Automatic account",
-    context = AutomaticAccounts,
-    root = AutomaticAccountRoot,
-    events = [MoneyDeposited]
-)]
-struct AutomaticAccountDefinition;
-
 #[derive(Clone, Debug, Deserialize, domain::DomainEvent, Eq, PartialEq, Serialize)]
 #[domain(id = "money-deposited", label = "Money deposited", schema_version = 2)]
 struct MoneyDeposited {
     amount: i64,
+}
+
+#[derive(domain::AggregateEvents)]
+enum AutomaticAccountEvents {
+    MoneyDeposited(MoneyDeposited),
+}
+
+#[derive(domain::Aggregate)]
+#[domain(id = "automatic-account", label = "Automatic account")]
+struct AutomaticAccountDefinition;
+
+impl domain::AggregateDefinition for AutomaticAccountDefinition {
+    type Context = AutomaticAccounts;
+    type Root = AutomaticAccountRoot;
+    type Event = AutomaticAccountEvents;
 }
 
 impl Initialize<AutomaticAccountDefinition> for AutomaticAccountRoot {

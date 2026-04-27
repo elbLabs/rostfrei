@@ -24,8 +24,14 @@ struct CatalogRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "catalog", label = "Catalog", context = Catalog, root = CatalogRoot)]
+#[domain(id = "catalog", label = "Catalog")]
 struct CatalogAggregate;
+
+impl domain::AggregateDefinition for CatalogAggregate {
+    type Context = Catalog;
+    type Root = CatalogRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(ValueObject, Clone)]
 #[domain(id = "filter", label = "Filter", owner = CatalogAggregate)]

@@ -93,13 +93,14 @@ struct WorkItem {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "work-queue",
-    label = "Work queue",
-    context = Operations,
-    root = WorkItem
-)]
+#[domain(id = "work-queue", label = "Work queue")]
 struct WorkQueue;
+
+impl domain::AggregateDefinition for WorkQueue {
+    type Context = Operations;
+    type Root = WorkItem;
+    type Event = domain::NoDomainEvents;
+}
 
 impl WorkItemActions for WorkItem {
     fn activate(&mut self) {}

@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate as DomainAggregate, AggregateType, BoundedContext, Command, CommandType, DomainEvent,
-    DomainIdentity, Entity, JsonCommandPayload,
+    Aggregate as DomainAggregate, AggregateDefinition, AggregateEvents, AggregateType,
+    BoundedContext, Command, CommandType, DomainEvent, DomainIdentity, Entity, JsonCommandPayload,
 };
 use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance, CommandHandler};
 use rostfrei_domain_runtime::{Apply, Initialize, domain_module};
@@ -26,14 +26,19 @@ struct CatalogRoot {
 }
 
 #[derive(DomainAggregate)]
-#[domain(
-    id = "catalog",
-    label = "Catalog",
-    context = Catalog,
-    root = CatalogRoot,
-    events = [CatalogOpened]
-)]
+#[domain(id = "catalog", label = "Catalog")]
 struct CatalogAggregate;
+
+impl AggregateDefinition for CatalogAggregate {
+    type Context = Catalog;
+    type Root = CatalogRoot;
+    type Event = CatalogEvents;
+}
+
+#[derive(AggregateEvents)]
+enum CatalogEvents {
+    Opened(CatalogOpened),
+}
 
 #[derive(Command)]
 #[domain(

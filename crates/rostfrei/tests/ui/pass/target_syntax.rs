@@ -71,16 +71,20 @@ mod aggregate_actions {
     }
 }
 
+#[derive(rostfrei::AggregateEvents)]
+enum AccountEvents {
+    MoneyDeposited(MoneyDeposited),
+}
+
 #[derive(rostfrei::Aggregate)]
-#[rostfrei(
-    id = "account",
-    label = "Account",
-    context = Banking,
-    root = Account,
-    actions = [aggregate_actions::AccountAggregateActionContract],
-    events = [MoneyDeposited]
-)]
+#[rostfrei(id = "account", label = "Account")]
 struct AccountAggregate;
+
+impl rostfrei::AggregateDefinition for AccountAggregate {
+    type Context = Banking;
+    type Root = Account;
+    type Event = AccountEvents;
+}
 
 use aggregate_actions::AccountAggregateActions as _;
 

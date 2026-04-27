@@ -58,15 +58,20 @@ struct TestEvent {
     value: String,
 }
 
+#[derive(rostfrei::AggregateEvents)]
+enum TestEvents {
+    TestEvent(TestEvent),
+}
+
 #[derive(rostfrei::Aggregate)]
-#[rostfrei(
-    id = "consumer",
-    label = "Consumer",
-    context = TestContext,
-    root = TestRoot,
-    events = [TestEvent]
-)]
+#[rostfrei(id = "consumer", label = "Consumer")]
 struct TestAggregate;
+
+impl rostfrei::AggregateDefinition for TestAggregate {
+    type Context = TestContext;
+    type Root = TestRoot;
+    type Event = TestEvents;
+}
 
 impl Initialize<TestAggregate> for TestRoot {
     fn initialize(stream_id: &StreamId) -> Self {

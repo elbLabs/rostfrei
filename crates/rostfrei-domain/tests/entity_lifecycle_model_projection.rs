@@ -123,14 +123,17 @@ impl BoundedContextType for ProjectionContext {
 struct TodoList;
 
 impl AggregateType for TodoList {
-    type Context = ProjectionContext;
-    type Root = Todo;
-
     const DESCRIPTOR: AggregateDescriptor = AggregateDescriptor {
         id: AGGREGATE_ID,
         label: "Todo list",
         root: ENTITY_ID,
     };
+}
+
+impl domain::AggregateDefinition for TodoList {
+    type Context = ProjectionContext;
+    type Root = Todo;
+    type Event = domain::NoDomainEvents;
 }
 
 struct Todo;

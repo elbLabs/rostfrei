@@ -21,14 +21,14 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "owner",
-    label = "Owner",
-    context = Context,
-    root = Root,
-    decisions = [OwnerDecisions]
-)]
+#[domain(id = "owner", label = "Owner")]
 struct Owner;
+
+impl domain::AggregateDefinition for Owner {
+    type Context = Context;
+    type Root = Root;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(ValueObject, Debug, Eq, PartialEq)]
 #[domain(id = "output", label = "Output", owner = Owner)]

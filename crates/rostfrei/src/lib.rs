@@ -43,7 +43,9 @@ pub use rostfrei_core::{
     RecordedEvent, SimulationDecision, SimulationError, SimulationOutcome, StreamId, StreamVersion,
     TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
 };
-pub use rostfrei_domain_runtime::{AggregateRuntime, Apply, Initialize, domain_module};
+pub use rostfrei_domain_runtime::{
+    AggregateEventRuntime, AggregateRuntime, Apply, Initialize, domain_module,
+};
 pub use rostfrei_macros::QueryDefinition;
 pub use rostfrei_messaging_core::{
     ApplicationErrorCode, ApplicationName, BoundedContext, BoundedContextName, CallerMetadata,

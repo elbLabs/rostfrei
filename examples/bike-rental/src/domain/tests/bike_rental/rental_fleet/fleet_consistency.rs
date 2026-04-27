@@ -1,5 +1,4 @@
-use rostfrei::InvariantOwnerType;
-
+use crate::domain::bike_rental::rental_fleet::fleet_consistency::FleetConsistency;
 use crate::domain::rental_fleet::{
     Bicycle, BicycleCondition, BicycleId, BicycleStatus, FleetId, RentalFleet, RentalFleetAggregate,
 };
@@ -23,10 +22,9 @@ fn rejects_duplicate_bicycle_identities() {
         ],
     );
 
-    let violations = <RentalFleetAggregate as InvariantOwnerType>::validate_invariants(&fleet)
-        .expect_err("duplicate bicycle identities should violate fleet consistency");
+    let violation = <RentalFleetAggregate as FleetConsistency>::unique_bicycle_identities(&fleet)
+        .expect("duplicate bicycle identities should violate fleet consistency");
 
-    assert_eq!(violations.len(), 1);
-    assert_eq!(violations[0].path, "bicycles");
-    assert_eq!(violations[0].reason, "bicycle identities must be unique");
+    assert_eq!(violation.path, "bicycles");
+    assert_eq!(violation.reason, "bicycle identities must be unique");
 }

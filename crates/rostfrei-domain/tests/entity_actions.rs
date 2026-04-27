@@ -65,8 +65,14 @@ struct Task {
 }
 
 #[derive(domain::Aggregate)]
-#[domain(id = "project", label = "Project", context = Planning, root = Task)]
+#[domain(id = "project", label = "Project")]
 struct Project;
+
+impl domain::AggregateDefinition for Project {
+    type Context = Planning;
+    type Root = Task;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(ValueObject, Debug, Eq, PartialEq)]
 #[domain(id = "title", label = "Title", owner = Task)]

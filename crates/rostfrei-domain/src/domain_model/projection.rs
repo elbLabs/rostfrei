@@ -1,12 +1,13 @@
 use serde_json::{Value, json};
 
 use crate::{
-    ActionOwnerId, AggregateDescriptor, AggregateId, AggregateType, BoundedContextDescriptor,
-    CommandDescriptor, CommandId, DecisionOwnerId, DomainErrorDescriptor, DomainErrorId,
-    DomainEventDescriptor, DomainEventId, DomainIdentityDescriptor, DomainIdentityId,
-    DomainIdentityType, DomainServiceDescriptor, DomainServiceType, EntityDescriptor, EntityType,
-    InvariantOwnerId, QueryDescriptor, QueryId, QueryInputDescriptor, QueryOutputDescriptor,
-    ValueObjectDescriptor, ValueObjectId, ValueObjectType, extension::ActionGroupType,
+    ActionOwnerId, AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId,
+    BoundedContextDescriptor, CommandDescriptor, CommandId, DecisionOwnerId, DomainErrorDescriptor,
+    DomainErrorId, DomainEventDescriptor, DomainEventId, DomainIdentityDescriptor,
+    DomainIdentityId, DomainIdentityType, DomainServiceDescriptor, DomainServiceType,
+    EntityDescriptor, EntityType, InvariantOwnerId, QueryDescriptor, QueryId, QueryInputDescriptor,
+    QueryOutputDescriptor, ValueObjectDescriptor, ValueObjectId, ValueObjectType,
+    extension::ActionGroupType,
 };
 
 use super::{
@@ -84,7 +85,7 @@ impl DomainModelBuilder {
         ));
     }
 
-    pub fn add_aggregate_type<A: AggregateType>(&mut self) -> Result<(), DomainModelError> {
+    pub fn add_aggregate_type<A: AggregateDefinition>(&mut self) -> Result<(), DomainModelError> {
         self.add_aggregate(A::DESCRIPTOR);
         let owner = ActionOwnerId::Aggregate(A::DESCRIPTOR.id);
         self.actions.register_owner(owner);
@@ -101,7 +102,7 @@ impl DomainModelBuilder {
         for contract in A::INVARIANT_CONTRACTS {
             self.invariants.add_group(owner, contract)?;
         }
-        for event in A::DOMAIN_EVENTS {
+        for event in <A::Event as AggregateEventSet<A>>::DOMAIN_EVENTS {
             self.add_domain_event(*event)?;
         }
         Ok(())

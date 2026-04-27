@@ -1,5 +1,0 @@
-error: expected square brackets
-  --> tests/ui/aggregate_action/malformed_actions_list.rs:13:15
-   |
-13 |     actions = Actions
-   |               ^^^^^^^

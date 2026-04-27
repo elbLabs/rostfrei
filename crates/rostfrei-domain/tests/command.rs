@@ -26,14 +26,14 @@ pub struct CatalogRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "catalog",
-    label = "Catalog",
-    context = Catalog,
-    root = CatalogRoot,
-    actions = [CatalogActions]
-)]
+#[domain(id = "catalog", label = "Catalog")]
 pub struct CatalogAggregate;
+
+impl domain::AggregateDefinition for CatalogAggregate {
+    type Context = Catalog;
+    type Root = CatalogRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(ValueObject)]
 #[domain(id = "status", label = "Status", owner = Catalog)]

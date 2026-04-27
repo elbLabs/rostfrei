@@ -14,7 +14,7 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     let value_object_owner = assemble_value_object_owner(domain_path, name);
     let domain_error_owner = assemble_domain_error_owner(domain_path, name);
     let command_owner = assemble_command_owner(domain_path, name);
-    let invariant_owner = assemble_invariant_owner(domain_path, name, attributes);
+    let invariant_owner = assemble_invariant_owner(domain_path, name);
     let aggregate_invariant_owner = assemble_aggregate_invariant_owner(domain_path, name);
     quote! {
         #aggregate_type
@@ -31,56 +31,15 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     }
 }
 
-fn assemble_invariant_owner(
-    domain_path: &Path,
-    name: &Ident,
-    attributes: &Attributes,
-) -> TokenStream {
-    let invariants = &attributes.invariants;
-    let validate_invariants = if invariants.is_empty() {
-        quote! {
-            fn validate_invariants(
-                _candidate: &Self::Candidate,
-            ) -> ::core::result::Result<
-                (),
-                ::std::vec::Vec<#domain_path::InvariantViolation>,
-            > {
-                ::core::result::Result::Ok(())
-            }
-        }
-    } else {
-        quote! {
-            fn validate_invariants(
-                candidate: &Self::Candidate,
-            ) -> ::core::result::Result<
-                (),
-                ::std::vec::Vec<#domain_path::InvariantViolation>,
-            > {
-                let mut violations = ::std::vec::Vec::new();
-                #(
-                    <Self as #invariants>::__DOMAIN_INVARIANTS_APPEND_VIOLATIONS(
-                        candidate,
-                        &mut violations,
-                    );
-                )*
-                if violations.is_empty() {
-                    ::core::result::Result::Ok(())
-                } else {
-                    ::core::result::Result::Err(violations)
-                }
-            }
-        }
-    };
-
+fn assemble_invariant_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
         impl #domain_path::InvariantOwnerType for #name {
-            type Candidate = <Self as #domain_path::AggregateType>::Root;
+            type Candidate = <Self as #domain_path::AggregateDefinition>::Root;
             const INVARIANT_OWNER_ID: #domain_path::InvariantOwnerId =
                 #domain_path::InvariantOwnerId::Aggregate(
                     <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
                 );
 
-            #validate_invariants
         }
     }
 }

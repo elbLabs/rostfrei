@@ -31,25 +31,35 @@ struct SecondRoot {
 #[rostfrei(id = "shared", label = "Shared")]
 struct SharedEvent;
 
-#[derive(rostfrei::Aggregate)]
-#[rostfrei(
-    id = "first",
-    label = "First",
-    context = Context,
-    root = FirstRoot,
-    events = [SharedEvent]
-)]
-struct FirstAggregate;
+#[derive(rostfrei::AggregateEvents)]
+enum FirstEvents {
+    Shared(SharedEvent),
+}
 
 #[derive(rostfrei::Aggregate)]
-#[rostfrei(
-    id = "second",
-    label = "Second",
-    context = Context,
-    root = SecondRoot,
-    events = [SharedEvent]
-)]
+#[rostfrei(id = "first", label = "First")]
+struct FirstAggregate;
+
+impl rostfrei::AggregateDefinition for FirstAggregate {
+    type Context = Context;
+    type Root = FirstRoot;
+    type Event = FirstEvents;
+}
+
+#[derive(rostfrei::AggregateEvents)]
+enum SecondEvents {
+    Shared(SharedEvent),
+}
+
+#[derive(rostfrei::Aggregate)]
+#[rostfrei(id = "second", label = "Second")]
 struct SecondAggregate;
+
+impl rostfrei::AggregateDefinition for SecondAggregate {
+    type Context = Context;
+    type Root = SecondRoot;
+    type Event = SecondEvents;
+}
 
 impl Initialize<FirstAggregate> for FirstRoot {
     fn initialize(_: &rostfrei::StreamId) -> Self { Self { id: FirstId(1) } }
