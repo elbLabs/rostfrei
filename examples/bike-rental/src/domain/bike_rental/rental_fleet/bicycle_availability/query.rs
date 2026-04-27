@@ -1,18 +1,10 @@
-use rostfrei::{ValueObject, domain_queries};
+use rostfrei::domain_queries;
 
-use super::assess_rental_eligibility::RentalEligibilityOutcome;
-use super::{BicycleId, RentalFleet, RentalFleetAggregate};
-
-#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
-#[domain(
-    id = "bicycle-availability",
-    label = "Bicycle availability",
-    owner = RentalFleetAggregate
-)]
-pub enum BicycleAvailability {
-    Available,
-    Unavailable,
-}
+use super::BicycleAvailability;
+use crate::domain::bike_rental::rental_fleet::{
+    BicycleId, RentalFleet, RentalFleetAggregate,
+    assess_rental_eligibility::RentalEligibilityOutcome,
+};
 
 #[domain_queries(group = BicycleAvailabilityQueries)]
 impl RentalFleetAggregate {
