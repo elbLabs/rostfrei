@@ -1,4 +1,4 @@
-use rostfrei::{AggregateInstance, Apply, DomainEvent, ValueObject};
+use rostfrei::{Apply, DomainEvent, ValueObject};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -35,6 +35,10 @@ impl ImportRentalFleetInput {
     pub const fn new(bicycles: Vec<ImportedBicycle>) -> Self {
         Self { bicycles }
     }
+
+    pub(super) fn into_bicycles(self) -> Vec<ImportedBicycle> {
+        self.bicycles
+    }
 }
 
 #[derive(DomainEvent, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -44,16 +48,6 @@ pub struct RentalFleetImported {
     pub fleet_id: FleetId,
     #[domain(value_object)]
     pub bicycles: Vec<ImportedBicycle>,
-}
-
-pub(super) fn import_rental_fleet(
-    aggregate: &mut AggregateInstance<RentalFleetAggregate>,
-    input: ImportRentalFleetInput,
-) {
-    aggregate.raise(RentalFleetImported {
-        fleet_id: aggregate.state().fleet_id.clone(),
-        bicycles: input.bicycles,
-    });
 }
 
 impl Apply<RentalFleetImported> for RentalFleet {
