@@ -13,6 +13,10 @@ code already expresses, or that Rostfrei cannot prove. In particular, an
 attached action can claim that it raises an event without the action
 implementation necessarily doing so.
 
+Action-level `raises` claims were retained temporarily during this separation
+and are removed by
+[ADR 0023](0023-aggregate-event-sets-authorize-raising.md).
+
 Aggregate runtime execution still needs three concrete type relationships:
 the bounded context, aggregate root, and closed event representation. Those
 relationships are executable Rust contracts and should remain compiler
@@ -101,6 +105,10 @@ contracts. Domain Service actions no longer use aggregate-owned Domain Events
 as modeled outputs because their signatures do not identify the owning
 Aggregate, and Rostfrei has no runtime consumer for that descriptive
 relationship.
+
+ADR 0023 supersedes the remaining action event-output generation described
+above. Aggregate event sets now authorize concrete `raise` conversions without
+projecting action-to-event metadata.
 
 Aggregate-derived application types contribute no action, decision, or
 invariant attachments to compiled domain models. The low-level `AggregateType`

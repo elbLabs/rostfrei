@@ -11,8 +11,6 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DomainModelReference {
     DomainIdentity(Box<DomainIdentityId>),
-    DomainEvent(Box<DomainEventId>),
-    DomainError(Box<DomainErrorId>),
     ValueObject(Box<ValueObjectId>),
     Entity(Box<EntityId>),
     Aggregate(Box<AggregateId>),
@@ -32,18 +30,9 @@ pub enum DomainModelError {
     DuplicateActionId {
         id: Box<ActionId>,
     },
-    ActionReferenceInventoryViolation {
+    ActionErrorInventoryViolation {
         action_id: Box<ActionId>,
-        reference: DomainModelReference,
-        location: String,
-        inventory_key: &'static str,
-    },
-    ActionRaisedEventOwnerNotAggregate {
-        action_id: Box<ActionId>,
-    },
-    ActionRaisedEventOwnerMismatch {
-        action_id: Box<ActionId>,
-        event_id: Box<DomainEventId>,
+        error_id: Box<DomainErrorId>,
     },
     UnregisteredDecisionOwner {
         owner: Box<DecisionOwnerId>,
@@ -90,19 +79,10 @@ impl fmt::Display for DomainModelError {
                 write!(formatter, "action descriptor owner mismatch: {id:?}")
             }
             Self::DuplicateActionId { id } => write!(formatter, "duplicate ActionId: {id:?}"),
-            Self::ActionReferenceInventoryViolation {
+            Self::ActionErrorInventoryViolation {
                 action_id,
-                reference,
-                location,
-                inventory_key,
-            } => fmt_action_reference(formatter, action_id, reference, location, inventory_key),
-            Self::ActionRaisedEventOwnerNotAggregate { action_id: id } => {
-                fmt_raised_owner(formatter, id, None)
-            }
-            Self::ActionRaisedEventOwnerMismatch {
-                action_id,
-                event_id,
-            } => fmt_raised_owner(formatter, action_id, Some(event_id)),
+                error_id,
+            } => fmt_action_error(formatter, action_id, error_id),
             Self::UnregisteredDecisionOwner { owner } => fmt_unregistered_owner(formatter, owner),
             Self::DecisionDescriptorOwnerMismatch { id } => fmt_decision_owner(formatter, id),
             Self::DuplicateDecisionId { id } => write!(formatter, "duplicate DecisionId: {id:?}"),
@@ -160,34 +140,14 @@ fn fmt_empty_decision(formatter: &mut fmt::Formatter<'_>, decision_id: &Decision
     )
 }
 
-fn fmt_raised_owner(
+fn fmt_action_error(
     formatter: &mut fmt::Formatter<'_>,
     action_id: &ActionId,
-    event_id: Option<&DomainEventId>,
-) -> fmt::Result {
-    match event_id {
-        None => write!(
-            formatter,
-            "Action raised-event owner violation: action {action_id:?} is not owned by an Aggregate"
-        ),
-        Some(event_id) => write!(
-            formatter,
-            "Action raised-event owner violation: action {action_id:?} declares event {event_id:?} owned by another Aggregate"
-        ),
-    }
-}
-
-fn fmt_action_reference(
-    formatter: &mut fmt::Formatter<'_>,
-    action_id: &ActionId,
-    reference: &DomainModelReference,
-    location: &str,
-    inventory_key: &str,
+    error_id: &DomainErrorId,
 ) -> fmt::Result {
     write!(
         formatter,
-        "Action reference inventory violation: action {action_id:?} references missing {} at descriptor location `{location}`; add it to domain_model! inventory key `{inventory_key}`",
-        ReferenceDebug(reference)
+        "Action error inventory violation: action {action_id:?} references missing {error_id:?}; add it to domain_model! inventory key `errors`"
     )
 }
 
@@ -210,8 +170,6 @@ impl fmt::Display for ReferenceDebug<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             DomainModelReference::DomainIdentity(id) => write!(formatter, "{id:?}"),
-            DomainModelReference::DomainEvent(id) => write!(formatter, "{id:?}"),
-            DomainModelReference::DomainError(id) => write!(formatter, "{id:?}"),
             DomainModelReference::ValueObject(id) => write!(formatter, "{id:?}"),
             DomainModelReference::Entity(id) => write!(formatter, "{id:?}"),
             DomainModelReference::Aggregate(id) => write!(formatter, "{id:?}"),

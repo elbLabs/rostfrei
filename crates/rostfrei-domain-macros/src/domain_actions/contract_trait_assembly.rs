@@ -124,11 +124,6 @@ fn assemble_descriptor(domain_path: &Path, action: &AssembledAction<'_>) -> Toke
         || quote!(None),
         |error| quote!(Some(<#error as #domain_path::DomainErrorType>::DESCRIPTOR.id)),
     );
-    let raises = action
-        .action
-        .raises
-        .iter()
-        .map(|event| quote!(<#event as #domain_path::DomainEventType<Self>>::DESCRIPTOR.id));
     quote! {
         #domain_path::ActionDescriptor {
             id: #domain_path::ActionId {
@@ -136,7 +131,6 @@ fn assemble_descriptor(domain_path: &Path, action: &AssembledAction<'_>) -> Toke
                 local: #id,
             },
             label: #label,
-            raises: &[#(#raises),*],
             error: #error,
         }
     }

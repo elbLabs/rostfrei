@@ -3,11 +3,9 @@ use serde_json::{Value, json};
 use crate::{ActionDescriptor, ActionId, ActionOwnerId};
 
 use super::{
-    action_reference_validation::{self, ActionReferenceInventory},
+    action_error_validation::{self, ActionErrorInventory},
     error::DomainModelError,
-    id_projection::{
-        action as action_id, domain_error as domain_error_id, domain_event as domain_event_id,
-    },
+    id_projection::{action as action_id, domain_error as domain_error_id},
 };
 
 pub(super) struct ActionProjection {
@@ -51,11 +49,11 @@ impl ActionProjection {
         Ok(())
     }
 
-    pub(super) fn validate_references(
+    pub(super) fn validate_errors(
         &self,
-        inventory: &ActionReferenceInventory,
+        inventory: &ActionErrorInventory,
     ) -> Result<(), DomainModelError> {
-        action_reference_validation::validate(
+        action_error_validation::validate(
             self.actions
                 .iter()
                 .chain(&self.extensions)
@@ -143,7 +141,6 @@ fn action(descriptor: &ActionDescriptor) -> Value {
     json!({
         "id": action_id(descriptor.id),
         "label": descriptor.label,
-        "raises": descriptor.raises.iter().copied().map(domain_event_id).collect::<Vec<_>>(),
         "error": descriptor.error.map(domain_error_id),
     })
 }

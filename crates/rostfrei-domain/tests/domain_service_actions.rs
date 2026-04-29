@@ -211,7 +211,6 @@ impl ActionGroupType for WorkExtensionActions {
             local: "work-extension",
         },
         label: "Work extension",
-        raises: &[],
         error: None,
     }];
 }
@@ -227,7 +226,6 @@ impl ActionGroupType for DuplicateCoordinatorExtensionActions {
             local: "available",
         },
         label: "Duplicate available",
-        raises: &[],
         error: None,
     }];
 }

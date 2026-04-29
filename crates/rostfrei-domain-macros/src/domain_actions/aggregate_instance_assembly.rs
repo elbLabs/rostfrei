@@ -1,7 +1,5 @@
-use std::collections::HashSet;
-
 use proc_macro2::TokenStream;
-use quote::{ToTokens as _, quote};
+use quote::quote;
 use syn::{Ident, ItemTrait, Path};
 
 use super::action::Action;
@@ -37,20 +35,6 @@ pub fn assemble(
             #error
         }
     });
-    let mut event_keys = HashSet::new();
-    let event_bounds = actions
-        .iter()
-        .flat_map(|action| &action.action.raises)
-        .filter(|event| event_keys.insert(event.to_token_stream().to_string()))
-        .map(|event| {
-            quote! {
-                #event: #domain_path::DomainEventType<__RostfreiAggregate>
-                    + ::core::convert::Into<
-                        <__RostfreiAggregate as #runtime_path::__private::Aggregate>::Event
-                    >,
-            }
-        });
-
     Ok(quote! {
         #visibility trait #instance_trait {
             #(#methods)*
@@ -62,7 +46,6 @@ pub fn assemble(
                 + #runtime_path::AggregateRuntime,
             #runtime_path::__private::AggregateInstance<__RostfreiAggregate>: #instance_trait,
             #(#action_bounds)*
-            #(#event_bounds)*
         {}
     })
 }

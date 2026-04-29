@@ -30,7 +30,6 @@ const fn action(owner: ActionOwnerId, local: &'static str) -> ActionDescriptor {
     ActionDescriptor {
         id: ActionId { owner, local },
         label: local,
-        raises: &[],
         error: None,
     }
 }

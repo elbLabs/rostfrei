@@ -1,5 +1,0 @@
-error: missing raises
- --> tests/ui/fail/action_missing_raises.rs:3:5
-  |
-3 |     #[action(id = "deposit", label = "Deposit")]
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

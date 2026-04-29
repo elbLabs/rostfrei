@@ -1,4 +1,4 @@
-use crate::{DomainErrorId, DomainEventId};
+use crate::DomainErrorId;
 
 use super::ActionId;
 
@@ -6,6 +6,5 @@ use super::ActionId;
 pub struct ActionDescriptor {
     pub id: ActionId,
     pub label: &'static str,
-    pub raises: &'static [DomainEventId],
     pub error: Option<DomainErrorId>,
 }

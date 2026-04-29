@@ -58,10 +58,10 @@ Executable aggregate Actions use `&mut self`, domain-specific input, and
 `()`/`Result<(), DomainError>` outcomes.
 `domain_actions(aggregate(instance = ...))` generates the trait implemented for
 `AggregateInstance`; Action implementations explicitly call `self.raise(...)`
-zero or more times. `raises = [...]` declares possible event types for the
-compiled model, while the Aggregate's `events = [...]` remains the executable
-event inventory. Commands remain an application boundary and map their payloads
-into one or more Action inputs rather than being passed to Actions directly.
+zero or more times. Event membership and raising authorization are governed by
+the aggregate's authored event set; actions do not repeat possible event types.
+Commands remain an application boundary and map their payloads into one or more
+Action inputs rather than being passed to Actions directly.
 
 `Command` derives the runtime command definition from its owner, local ID,
 and schema version. Registering a command runtime binding inserts that descriptor
@@ -103,6 +103,11 @@ subsequently simplified by
 [ADR 0021](0021-slim-value-objects-and-ordinary-dtos.md). Value objects now
 carry semantic ID and label metadata only; ordinary action/query DTOs are not
 promoted into the compiled domain model.
+
+Action-level event claims were subsequently removed by
+[ADR 0023](0023-aggregate-event-sets-authorize-raising.md). The aggregate event
+set is the sole authority for membership, conversion, execution, and replay;
+actions no longer declare or project `raises` lists.
 
 ## Consequences
 

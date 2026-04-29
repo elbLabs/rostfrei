@@ -132,24 +132,15 @@ mod account_actions {
 
     #[rostfrei::domain_actions(aggregate(instance = AccountActions))]
     pub trait AccountActionContract {
-        #[action(
-            id = "deposit",
-            label = "Deposit money",
-            raises = [MoneyDeposited]
-        )]
+        #[action(id = "deposit", label = "Deposit money")]
         fn deposit(&mut self, input: i64);
 
-        #[action(
-            id = "observe-balance",
-            label = "Observe balance",
-            raises = [BalanceObserved]
-        )]
+        #[action(id = "observe-balance", label = "Observe balance")]
         fn observe_balance(&mut self);
 
         #[action(
             id = "deposit-and-observe",
-            label = "Deposit money and observe balance",
-            raises = [MoneyDeposited, BalanceObserved]
+            label = "Deposit money and observe balance"
         )]
         fn deposit_and_observe(&mut self, input: i64);
     }
@@ -319,7 +310,7 @@ fn metadata(stream_id: &StreamId, operation: &str) -> TestResult<ExecutionMetada
 }
 
 #[tokio::test]
-async fn command_composes_generated_actions_and_replays_their_events() {
+async fn registered_events_execute_and_replay_through_the_authored_event_set() {
     let stream = stream("account-1").expect("valid account stream fixture");
     let executor = Executor::new(InMemoryEventStore::new());
 
@@ -381,7 +372,7 @@ async fn command_composes_generated_actions_and_replays_their_events() {
 }
 
 #[test]
-fn executable_action_can_raise_multiple_declared_event_types() {
+fn executable_action_can_raise_multiple_registered_event_types() {
     let mut aggregate = AggregateInstance::<AccountAggregate>::new(
         stream("multi-event-action").expect("valid multi-event action stream fixture"),
     );
@@ -424,29 +415,6 @@ async fn command_rejection_discards_events_raised_by_an_action() {
             .await
             .expect("load rejected stream")
             .is_empty()
-    );
-}
-
-#[test]
-fn executable_actions_model_every_event_type_they_may_raise() {
-    let actions = <AccountAggregate as account_actions::AccountActionContract>::
-        __DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE;
-
-    assert_eq!(actions.len(), 3);
-    assert_eq!(
-        actions[0].raises,
-        &[<MoneyDeposited as rostfrei::DomainEventType<AccountAggregate>>::DESCRIPTOR.id]
-    );
-    assert_eq!(
-        actions[1].raises,
-        &[<BalanceObserved as rostfrei::DomainEventType<AccountAggregate>>::DESCRIPTOR.id]
-    );
-    assert_eq!(
-        actions[2].raises,
-        &[
-            <MoneyDeposited as rostfrei::DomainEventType<AccountAggregate>>::DESCRIPTOR.id,
-            <BalanceObserved as rostfrei::DomainEventType<AccountAggregate>>::DESCRIPTOR.id,
-        ]
     );
 }
 

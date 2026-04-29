@@ -215,7 +215,6 @@ fn preserves_descriptor_shape_and_source_order() {
                 local: "rename",
             },
             label: "Rename mailbox",
-            raises: &[],
             error: None,
         }
     );
