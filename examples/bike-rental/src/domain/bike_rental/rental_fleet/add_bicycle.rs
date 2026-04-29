@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{
-    Bicycle, BicycleCondition, BicycleId, BicycleStatus, FleetId, RentalFleet, RentalFleetAggregate,
+    Bicycle, BicycleCondition, BicycleId, BicycleStatus, FleetId, RentalFleet, RentalFleetActions,
+    RentalFleetAggregate,
 };
 
 #[derive(Command, Clone, Debug, Eq, PartialEq)]
@@ -27,17 +28,7 @@ pub struct BicycleAdded {
     pub condition: BicycleCondition,
 }
 
-pub(super) fn add_bicycle(aggregate: &mut AggregateInstance<RentalFleetAggregate>) {
-    let fleet_id = aggregate.state().fleet_id.clone();
-    let bicycle_id = allocate_bicycle_id(aggregate.state());
-    aggregate.raise(BicycleAdded {
-        fleet_id,
-        bicycle_id,
-        condition: BicycleCondition::Serviceable,
-    });
-}
-
-fn allocate_bicycle_id(root: &RentalFleet) -> BicycleId {
+pub(super) fn allocate_bicycle_id(root: &RentalFleet) -> BicycleId {
     let mut sequence = root.bicycles.len();
     loop {
         let seed = format!(
@@ -65,7 +56,7 @@ impl CommandHandler<AddBicycle> for RentalFleetAggregate {
         _command: &AddBicycle,
         aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        add_bicycle(aggregate);
+        aggregate.add_bicycle();
         Ok(())
     }
 }

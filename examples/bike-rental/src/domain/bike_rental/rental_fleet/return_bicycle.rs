@@ -3,7 +3,7 @@ use rostfrei::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{BicycleId, BicycleStatus, FleetId, RentalFleet, RentalFleetAggregate};
+use super::{BicycleId, FleetId, RentalFleet, RentalFleetActions, RentalFleetAggregate};
 
 #[derive(Command, Clone, Debug, Eq, PartialEq)]
 #[domain(
@@ -42,28 +42,6 @@ pub struct BicycleNotRented {
     pub bicycle_id: BicycleId,
 }
 
-pub(super) fn return_bicycle(
-    aggregate: &mut AggregateInstance<RentalFleetAggregate>,
-    input: &BicycleId,
-) -> Result<(), BicycleNotRented> {
-    let root = aggregate.state();
-    let rented = root
-        .bicycles
-        .iter()
-        .any(|bicycle| bicycle.bicycle_id() == input && bicycle.status() == BicycleStatus::Rented);
-    if !rented {
-        return Err(BicycleNotRented {
-            bicycle_id: input.clone(),
-        });
-    }
-    let fleet_id = root.fleet_id.clone();
-    aggregate.raise(BicycleReturned {
-        fleet_id,
-        bicycle_id: input.clone(),
-    });
-    Ok(())
-}
-
 impl CommandHandler<ReturnBicycle> for RentalFleetAggregate {
     type Rejection = <ReturnBicycle as CommandType>::Rejection;
 
@@ -71,7 +49,7 @@ impl CommandHandler<ReturnBicycle> for RentalFleetAggregate {
         command: &ReturnBicycle,
         aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        return_bicycle(aggregate, &command.bicycle_id)
+        aggregate.return_bicycle(command.bicycle_id.clone())
     }
 }
 
