@@ -22,7 +22,7 @@ use bike_rental::{
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
-    Aggregate, AppendOutcome, Command, CommandExecutionError, ContentFingerprint, DomainErrorType,
+    Aggregate, AppendOutcome, Command, CommandExecutionError, ContentFingerprint, DomainError,
     EventBatch, EventHistory, EventStore, EventStoreError, EventTransaction, ExecutionMetadata,
     Executor, ExpectedVersion, InMemoryEventStore, JsonCommandPayload, JsonErrorPayload,
     OperationId, StreamAggregateId, StreamAggregateType, StreamId, TransactionAppendOutcome,
@@ -254,7 +254,7 @@ where
 
 fn local_rejection<Error>(error: &Error) -> Result<CommandRejection, CommandTransportError>
 where
-    Error: DomainErrorType + JsonErrorPayload,
+    Error: DomainError + JsonErrorPayload,
 {
     let descriptor = Error::DESCRIPTOR;
     Ok(CommandRejection::new(

@@ -8,7 +8,7 @@ use domain::__private::DomainModelBuilder;
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, Aggregate, AggregateType, BoundedContext,
-    DomainErrorId, DomainErrorOwnerId, DomainIdentity, Entity,
+    DomainErrorId, DomainIdentity, Entity,
 };
 
 #[derive(BoundedContext)]
@@ -51,10 +51,7 @@ impl ActionGroupType for MissingError {
             local: "missing-error",
         },
         label: "Missing error",
-        error: Some(DomainErrorId {
-            owner: DomainErrorOwnerId::Aggregate(Owner::DESCRIPTOR.id),
-            local: "missing",
-        }),
+        error: Some(DomainErrorId("missing")),
     }];
 }
 

@@ -3,8 +3,7 @@
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, Aggregate, AggregateType, BoundedContext, Command,
-    DomainError, DomainErrorType, DomainEvent, DomainIdentity, Entity, domain_actions,
-    domain_model,
+    DomainError, DomainEvent, DomainIdentity, Entity, domain_actions, domain_model,
 };
 
 #[derive(BoundedContext)]
@@ -71,7 +70,6 @@ pub struct AccountChanged;
 #[domain(
     id = "account-denied",
     label = "Account denied",
-    owner = Account,
     code = "ACCOUNT_DENIED",
     message = "The account change was denied."
 )]

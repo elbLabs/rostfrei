@@ -1,7 +1,7 @@
 use domain::DomainError;
 
 #[derive(DomainError)]
-#[domain(id = "denied", label = "Denied", owner = Owner, code = "DENIED", message = "Denied.")]
+#[domain(id = "denied", label = "Denied", code = "DENIED", message = "Denied.")]
 struct Denied {
     #[domain(field)]
     value: String,

@@ -42,9 +42,7 @@ pub use decision::{
     DecisionOutcomeType, DecisionOwnerId, DecisionOwnerType, DecisionReference,
     EntityDecisionOwnerType,
 };
-pub use domain_error::{
-    DomainErrorDescriptor, DomainErrorId, DomainErrorOwnerId, DomainErrorOwnerType, DomainErrorType,
-};
+pub use domain_error::{DomainError, DomainErrorDescriptor, DomainErrorId};
 pub use domain_event::{
     DomainEventDefinition, DomainEventDefinitionType, DomainEventDescriptor, DomainEventId,
     DomainEventType,
@@ -103,7 +101,7 @@ macro_rules! domain_model {
             $(builder.add_entity_type::<$entity>()?;)*
             $(builder.add_value_object_type::<$value_object>()?;)*
             $(builder.add_domain_service_type::<$service>()?;)*
-            $(builder.add_domain_error(<$error as $crate::DomainErrorType>::DESCRIPTOR);)*
+            $(builder.add_domain_error(<$error as $crate::DomainError>::DESCRIPTOR)?;)*
             $($(builder.add_action_extension::<$action_extension>()?;)*)?
             $(builder.add_queries(<$query_group as $crate::QueryGroupType>::QUERIES)?;)*
             Ok(())

@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use crate::{
     ActionId, ActionOwnerId, AggregateId, DecisionId, DecisionOutcomeId, DecisionOwnerId,
-    DomainErrorId, DomainErrorOwnerId, DomainIdentityId, EntityId, QueryId, ValueObjectId,
+    DomainErrorId, DomainIdentityId, EntityId, QueryId, ValueObjectId,
 };
 
 pub(super) fn action(id: ActionId) -> Value {
@@ -58,31 +58,7 @@ pub(super) fn aggregate(id: AggregateId) -> Value {
 }
 
 pub(super) fn domain_error(id: DomainErrorId) -> Value {
-    json!({ "owner": domain_error_owner(id.owner), "local": id.local })
-}
-
-pub(super) fn domain_error_owner(id: DomainErrorOwnerId) -> Value {
-    match id {
-        DomainErrorOwnerId::DomainService(id) => json!({
-            "kind": "domainService",
-            "id": {
-                "context": id.context.0,
-                "local": id.local,
-            },
-        }),
-        DomainErrorOwnerId::Aggregate(id) => json!({
-            "kind": "aggregate",
-            "id": aggregate(id),
-        }),
-        DomainErrorOwnerId::Entity(id) => json!({
-            "kind": "entity",
-            "id": entity(id),
-        }),
-        DomainErrorOwnerId::ValueObject(id) => json!({
-            "kind": "valueObject",
-            "id": value_object(id),
-        }),
-    }
+    Value::String(id.0.to_owned())
 }
 
 pub(super) fn domain_identity(id: DomainIdentityId) -> Value {

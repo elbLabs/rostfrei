@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate, BoundedContext, Command, DomainError, DomainErrorType, DomainEvent,
-    DomainEventDefinitionType, DomainIdentity, Entity, EntityType, FieldKind, FieldWrapper,
-    ScalarType, SemanticScalar, SemanticScalarDescriptor, domain_model,
+    Aggregate, BoundedContext, Command, DomainError, DomainEvent, DomainEventDefinitionType,
+    DomainIdentity, Entity, EntityType, FieldKind, FieldWrapper, ScalarType, SemanticScalar,
+    SemanticScalarDescriptor, domain_model,
 };
 use serde_json::json;
 
@@ -96,7 +96,6 @@ struct DocumentCorrelated {
 #[domain(
     id = "document-correlation-rejected",
     label = "Document correlation rejected",
-    owner = Documents,
     code = "DOCUMENT_CORRELATION_REJECTED",
     message = "The document correlation was rejected."
 )]
