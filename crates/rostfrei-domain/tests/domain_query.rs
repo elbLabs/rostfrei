@@ -108,7 +108,6 @@ fn projects_queries_and_identities_to_exact_json() {
         entities: [CatalogRoot],
         value_objects: [],
         services: [],
-        commands: [],
         errors: [],
 
         query_groups: [CatalogQueries],
@@ -142,7 +141,7 @@ impl QueryGroupType for DuplicateQueries {
 fn rejects_duplicate_query_ids_across_groups() {
     let error = domain_model! {
         contexts: [], aggregates: [], entities: [],value_objects: [],
-        services: [], commands: [], errors: [],
+        services: [], errors: [],
         query_groups: [CatalogQueries, DuplicateQueries],
     }
     .expect_err("duplicate query IDs should be rejected");

@@ -2,8 +2,8 @@ use serde_json::{Value, json};
 
 use crate::{
     ActionOwnerId, AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId,
-    BoundedContextDescriptor, CommandDescriptor, CommandId, DecisionOwnerId, DomainErrorDescriptor,
-    DomainErrorId, DomainEventDescriptor, DomainEventId, DomainIdentityId, DomainServiceDescriptor,
+    BoundedContextDescriptor, DecisionOwnerId, DomainErrorDescriptor, DomainErrorId,
+    DomainEventDescriptor, DomainEventId, DomainIdentityId, DomainServiceDescriptor,
     DomainServiceType, EntityDefinition, EntityDescriptor, QueryDescriptor, QueryId, ValueObject,
     ValueObjectDescriptor, ValueObjectId, extension::ActionGroupType,
 };
@@ -18,9 +18,9 @@ use super::{
     field_reference_collection::FieldReferenceCollection,
     field_reference_validation::{self, FieldReferenceInventory},
     id_projection::{
-        aggregate as aggregate_id, command as command_id,
-        domain_error_owner as domain_error_owner_id, domain_identity as domain_identity_id,
-        entity as entity_id, query as query_id, value_object as value_object_id,
+        aggregate as aggregate_id, domain_error_owner as domain_error_owner_id,
+        domain_identity as domain_identity_id, entity as entity_id, query as query_id,
+        value_object as value_object_id,
     },
 };
 
@@ -31,7 +31,6 @@ pub struct DomainModelBuilder {
     domain_identities: Vec<(DomainIdentityId, Value)>,
     value_objects: Vec<(ValueObjectId, Value)>,
     domain_services: Vec<Value>,
-    commands: Vec<(CommandId, Value)>,
     domain_events: Vec<(DomainEventId, Value)>,
     domain_errors: Vec<(DomainErrorId, Value)>,
     actions: ActionProjection,
@@ -49,7 +48,6 @@ impl DomainModelBuilder {
             domain_identities: Vec::new(),
             value_objects: Vec::new(),
             domain_services: Vec::new(),
-            commands: Vec::new(),
             domain_events: Vec::new(),
             domain_errors: Vec::new(),
             actions: ActionProjection::new(),
@@ -194,24 +192,6 @@ impl DomainModelBuilder {
         Ok(())
     }
 
-    pub fn add_command(&mut self, descriptor: CommandDescriptor) -> Result<(), DomainModelError> {
-        if self.commands.iter().any(|(id, _)| *id == descriptor.id) {
-            return Err(DomainModelError::DuplicateCommandId {
-                id: Box::new(descriptor.id),
-            });
-        }
-        self.commands.push((
-            descriptor.id,
-            json!({
-                "id": command_id(descriptor.id),
-                "label": descriptor.label,
-                "fields": field_projection::fields(descriptor.fields),
-            }),
-        ));
-        self.field_references.add_command(descriptor);
-        Ok(())
-    }
-
     pub fn add_domain_error(&mut self, descriptor: DomainErrorDescriptor) {
         self.domain_errors.push((
             descriptor.id,
@@ -274,7 +254,6 @@ impl DomainModelBuilder {
             "domainIdentities": self.domain_identities.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "valueObjects": self.value_objects.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "domainServices": self.domain_services,
-            "commands": self.commands.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "domainEvents": self.domain_events.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "domainErrors": self.domain_errors.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "actions": self.actions.into_values(),

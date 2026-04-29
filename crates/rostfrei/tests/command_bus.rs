@@ -88,25 +88,13 @@ impl Apply<BalanceObserved> for Account {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Command)]
-#[domain(
-    id = "credit-account",
-    label = "Credit account",
-    owner = AccountAggregate,
-    json,
-    runtime
-)]
+#[domain(id = "credit-account", label = "Credit account")]
 struct CreditAccount {
     amount: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Command)]
-#[domain(
-    id = "observe-balance",
-    label = "Observe balance",
-    owner = AccountAggregate,
-    json,
-    runtime
-)]
+#[domain(id = "observe-balance", label = "Observe balance")]
 struct ObserveBalance;
 
 impl CommandHandler<CreditAccount> for AccountAggregate {
@@ -144,8 +132,8 @@ fn context() -> TestResult<rostfrei_messaging_core::BoundedContext> {
 fn registered_processor(store: InMemoryEventStore) -> TestResult<CommandProcessor> {
     let store: Arc<dyn EventStore> = Arc::new(store);
     let mut processor = CommandProcessor::new(store);
-    processor.register::<CreditAccount, _>(InfallibleCommandRejectionMapper)?;
-    processor.register::<ObserveBalance, _>(InfallibleCommandRejectionMapper)?;
+    processor.register::<AccountAggregate, CreditAccount>(InfallibleCommandRejectionMapper)?;
+    processor.register::<AccountAggregate, ObserveBalance>(InfallibleCommandRejectionMapper)?;
     Ok(processor)
 }
 
@@ -166,9 +154,14 @@ async fn registered_command_types_dispatch_without_command_name_branching() -> T
     let bus = CommandBus::new(context()?, erased);
 
     let credit = bus
-        .dispatch(request("credit-1", CreditAccount { amount: 7 })?)
+        .dispatch::<AccountAggregate, CreditAccount>(request(
+            "credit-1",
+            CreditAccount { amount: 7 },
+        )?)
         .await?;
-    let observed = bus.dispatch(request("observe-1", ObserveBalance)?).await?;
+    let observed = bus
+        .dispatch::<AccountAggregate, ObserveBalance>(request("observe-1", ObserveBalance)?)
+        .await?;
     assert!(matches!(
         credit.response().outcome(),
         CommandResponseOutcome::Accepted
@@ -209,12 +202,12 @@ fn encoding_is_canonical_and_identity_is_stable() -> TestResult {
     let timestamp = MessageTimestamp::from_unix_milliseconds(1_000)?;
     let correlation = CorrelationId::new("canonical-correlation")?;
 
-    let first = bus.encode(
+    let first = bus.encode::<AccountAggregate, CreditAccount>(
         request("canonical-command", CreditAccount { amount: 7 })?
             .with_correlation_id(correlation.clone())
             .with_created_at(timestamp),
     )?;
-    let second = bus.encode(
+    let second = bus.encode::<AccountAggregate, CreditAccount>(
         request("canonical-command", CreditAccount { amount: 7 })?
             .with_correlation_id(correlation)
             .with_created_at(timestamp),
@@ -245,7 +238,10 @@ async fn processor_rejects_tampered_identity_and_bus_bounds_payloads() -> TestRe
     let adapter = Arc::new(InMemoryMessagingAdapter::new(Arc::clone(&processor)));
     let erased: Arc<dyn CommandMessageAdapter> = adapter;
     let bus = CommandBus::new(context()?, erased);
-    let encoded = bus.encode(request("tampered-command", CreditAccount { amount: 4 })?)?;
+    let encoded = bus.encode::<AccountAggregate, CreditAccount>(request(
+        "tampered-command",
+        CreditAccount { amount: 4 },
+    )?)?;
     let tampered = EncodedCommand::from_delivery(
         encoded.address().clone(),
         MessageId::new("different-message-id")?,

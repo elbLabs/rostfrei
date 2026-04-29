@@ -33,7 +33,7 @@ pub use aggregate::{
     NoDomainEvents,
 };
 pub use bounded_context::{BoundedContextDescriptor, BoundedContextId, BoundedContextType};
-pub use command::{CommandDescriptor, CommandId, CommandOwnerId, CommandOwnerType, CommandType};
+pub use command::{Command, CommandDescriptor};
 #[doc(hidden)]
 pub use decision::AttachedDecisionGroup;
 pub use decision::{
@@ -93,7 +93,6 @@ macro_rules! domain_model {
         entities: [$($entity:ty),* $(,)?],
         value_objects: [$($value_object:ty),* $(,)?],
         services: [$($service:ty),* $(,)?],
-        commands: [$($command:ty),* $(,)?],
         errors: [$($error:ty),* $(,)?],
         $(action_extensions: [$($action_extension:ty),* $(,)?],)?
         query_groups: [$($query_group:ty),* $(,)?] $(,)?
@@ -104,7 +103,6 @@ macro_rules! domain_model {
             $(builder.add_entity_type::<$entity>()?;)*
             $(builder.add_value_object_type::<$value_object>()?;)*
             $(builder.add_domain_service_type::<$service>()?;)*
-            $(builder.add_command(<$command as $crate::CommandType>::DESCRIPTOR)?;)*
             $(builder.add_domain_error(<$error as $crate::DomainErrorType>::DESCRIPTOR);)*
             $($(builder.add_action_extension::<$action_extension>()?;)*)?
             $(builder.add_queries(<$query_group as $crate::QueryGroupType>::QUERIES)?;)*

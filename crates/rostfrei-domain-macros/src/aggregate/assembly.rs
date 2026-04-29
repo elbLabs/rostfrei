@@ -12,7 +12,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     let decision_owner = assemble_decision_owner(domain_path, name);
     let aggregate_decision_owner = assemble_aggregate_decision_owner(domain_path, name);
     let domain_error_owner = assemble_domain_error_owner(domain_path, name);
-    let command_owner = assemble_command_owner(domain_path, name);
     quote! {
         #aggregate_type
         #action_owner
@@ -21,20 +20,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
         #decision_owner
         #aggregate_decision_owner
         #domain_error_owner
-        #command_owner
-    }
-}
-
-fn assemble_command_owner(domain_path: &Path, name: &Ident) -> TokenStream {
-    quote! {
-        impl #domain_path::CommandOwnerType for #name {
-            const COMMAND_OWNER_ID: #domain_path::CommandOwnerId =
-                #domain_path::CommandOwnerId::Aggregate(
-                    <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
-                );
-            const COMMAND_NAMESPACE: &'static str =
-                <Self as #domain_path::AggregateType>::DESCRIPTOR.id.context.0;
-        }
     }
 }
 

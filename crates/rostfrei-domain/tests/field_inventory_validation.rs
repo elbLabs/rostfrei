@@ -5,7 +5,7 @@
 
 use domain::__private::DomainModelBuilder;
 use domain::{
-    AggregateId, BoundedContextId, CommandDescriptor, CommandId, CommandOwnerId, DomainIdentityId,
+    AggregateId, BoundedContextId, DomainEventDescriptor, DomainEventId, DomainIdentityId,
     EntityId, FieldDescriptor, FieldKind, FieldValue,
 };
 
@@ -27,13 +27,14 @@ const MISSING_AGGREGATE: AggregateId = AggregateId {
     local: "missing",
 };
 
-fn command(field: FieldKind) -> CommandDescriptor {
-    CommandDescriptor {
-        id: CommandId {
-            owner: CommandOwnerId::Aggregate(AGGREGATE),
-            local: "inspect",
+fn event(field: FieldKind) -> DomainEventDescriptor {
+    DomainEventDescriptor {
+        id: DomainEventId {
+            aggregate: AGGREGATE,
+            local: "inspected",
         },
-        label: "Inspect",
+        label: "Inspected",
+        schema_version: 1,
         fields: Box::leak(Box::new([FieldDescriptor {
             name: "reference",
             value: FieldValue {
@@ -47,8 +48,8 @@ fn command(field: FieldKind) -> CommandDescriptor {
 fn rejects(field: FieldKind, expected: &str) {
     let mut builder = DomainModelBuilder::new();
     builder
-        .add_command(command(field))
-        .expect("fixture command should register");
+        .add_domain_event(event(field))
+        .expect("fixture event should register");
     let error = builder
         .finish()
         .expect_err("missing field reference should be rejected");

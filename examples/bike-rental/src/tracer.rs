@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
-use rostfrei::{DomainRegistry, EventHistory, RegistrationError, domain_module};
+use rostfrei::{DomainRegistry, EventHistory, RegistrationError};
 use rostfrei_tracer::{CommandInputField, CommandInputOption, CommandInputOptions, TracerBuilder};
 
 use crate::rental_fleet::{
-    AddBicycle, BicycleCondition, BicycleStatus, RentBicycle, RentalFleet, ReturnBicycle,
+    AddBicycle, BicycleCondition, BicycleStatus, RentBicycle, RentalFleet, RentalFleetAggregate,
+    ReturnBicycle,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RentBicycleInputOptions;
 
-impl CommandInputOptions<RentBicycle> for RentBicycleInputOptions {
+impl CommandInputOptions<RentalFleetAggregate, RentBicycle> for RentBicycleInputOptions {
     fn fields(&self, state: &RentalFleet) -> Vec<CommandInputField> {
         let bicycles = state
             .bicycles()
@@ -34,7 +35,7 @@ impl CommandInputOptions<RentBicycle> for RentBicycleInputOptions {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ReturnBicycleInputOptions;
 
-impl CommandInputOptions<ReturnBicycle> for ReturnBicycleInputOptions {
+impl CommandInputOptions<RentalFleetAggregate, ReturnBicycle> for ReturnBicycleInputOptions {
     fn fields(&self, state: &RentalFleet) -> Vec<CommandInputField> {
         let bicycles = state
             .bicycles()
@@ -52,14 +53,10 @@ impl CommandInputOptions<ReturnBicycle> for ReturnBicycleInputOptions {
     }
 }
 
-domain_module! {
-    pub struct BikeRentalRuntimeModule {
-        commands: [RentBicycle, ReturnBicycle, AddBicycle],
-    }
-}
-
 pub fn builder(history: Arc<dyn EventHistory>) -> Result<TracerBuilder, RegistrationError> {
     let mut registry = DomainRegistry::new();
-    registry.register_module::<BikeRentalRuntimeModule>()?;
+    registry.register_command::<RentalFleetAggregate, RentBicycle>()?;
+    registry.register_command::<RentalFleetAggregate, ReturnBicycle>()?;
+    registry.register_command::<RentalFleetAggregate, AddBicycle>()?;
     Ok(TracerBuilder::new(history, registry))
 }

@@ -91,7 +91,6 @@ fn compiles_explicit_domain_model_to_json() {
         entities: [MailboxRoot],
         value_objects: [EmailAddress],
         services: [MailTransfer],
-        commands: [],
         errors: [TransferDenied],
         query_groups: [],
     }
@@ -180,7 +179,6 @@ fn compiles_explicit_domain_model_to_json() {
                     },
                 },
             }],
-            "commands": [],
             "domainEvents": [{
                 "id": {
                     "aggregate": {
@@ -234,7 +232,6 @@ fn supports_empty_declaration_lists() {
         entities: [],
         value_objects: [],
         services: [],
-        commands: [],
         errors: [],
         query_groups: [],
     }

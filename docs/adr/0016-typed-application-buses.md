@@ -19,6 +19,10 @@ bus and processor path.
 decoding, stream and execution-metadata construction, aggregate execution, and
 stable accepted or rejected command responses. Adding a command registers a
 typed binding; processors and adapters do not branch on command-name strings.
+The handler-linked pairing and registration syntax are refined by
+[ADR 0024](0024-handler-linked-commands.md): processors and typed bus calls name
+both aggregate and command, while `CommandHandler<C> for A` supplies the sole
+authored aggregate and rejection relationship.
 `InMemoryMessagingAdapter` implements command and integration-event adapter
 capabilities for local execution and contract tests.
 

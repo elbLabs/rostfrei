@@ -88,7 +88,6 @@ fn derives_owner_independent_state_metadata_without_model_projection() {
         entities: [WorkItem],
         value_objects: [],
         services: [],
-        commands: [],
         errors: [],
         query_groups: [],
     }

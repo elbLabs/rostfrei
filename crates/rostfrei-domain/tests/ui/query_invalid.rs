@@ -36,8 +36,8 @@ enum ModelEvents {
 struct Filter(String);
 
 #[derive(Command)]
-#[domain(id = "command", label = "Command", owner = Model)]
-struct Command;
+#[domain(id = "command", label = "Command")]
+struct CommandDto;
 
 #[derive(DomainEvent)]
 #[domain(id = "event", label = "Event")]

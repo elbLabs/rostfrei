@@ -1,7 +1,7 @@
 error: no rules expected `action_groups`
-  --> tests/ui/action_extension/domain_model_action_groups.rs:12:9
+  --> tests/ui/action_extension/domain_model_action_groups.rs:11:9
    |
-12 |         action_groups: [],
+11 |         action_groups: [],
    |         ^^^^^^^^^^^^^ no rules expected this token in macro call
    |
 note: while trying to match `query_groups`

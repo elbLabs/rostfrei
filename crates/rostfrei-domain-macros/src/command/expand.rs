@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use syn::DeriveInput;
 
-use super::{assembly, attributes::Attributes, input, runtime, validation};
+use super::{assembly, attributes::Attributes, input, validation};
 
 pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     let syntax_fields = input::extract(input)?;
@@ -9,24 +9,11 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     let attributes = Attributes::parse(&input.attrs)?;
     validation::validate(&attributes, &fields)?;
     let domain_path = crate::helper::domain_api_path::resolve()?;
-    let descriptor = assembly::assemble(
+    Ok(assembly::assemble(
         &domain_path,
         &input.ident,
         &attributes,
         &fields,
         syntax_fields,
-    );
-    let runtime = if attributes.runtime {
-        runtime::assemble(
-            &crate::helper::runtime_api_path::resolve()?,
-            &input.ident,
-            &attributes,
-        )
-    } else {
-        TokenStream::new()
-    };
-    Ok(quote::quote! {
-        #descriptor
-        #runtime
-    })
+    ))
 }

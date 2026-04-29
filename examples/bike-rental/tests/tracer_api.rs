@@ -22,11 +22,11 @@ use bike_rental::{
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
-    Aggregate, AppendOutcome, CommandDefinition, CommandExecutionError, ContentFingerprint,
-    DomainErrorType, EventBatch, EventHistory, EventStore, EventStoreError, EventTransaction,
-    ExecutionMetadata, Executor, ExpectedVersion, InMemoryEventStore, JsonCommandPayload,
-    JsonErrorPayload, OperationId, StreamAggregateId, StreamAggregateType, StreamId,
-    TransactionAppendOutcome, TransactionReceipt,
+    Aggregate, AppendOutcome, Command, CommandExecutionError, ContentFingerprint, DomainErrorType,
+    EventBatch, EventHistory, EventStore, EventStoreError, EventTransaction, ExecutionMetadata,
+    Executor, ExpectedVersion, InMemoryEventStore, JsonCommandPayload, JsonErrorPayload,
+    OperationId, StreamAggregateId, StreamAggregateType, StreamId, TransactionAppendOutcome,
+    TransactionReceipt,
 };
 use rostfrei_core::{StreamDirectory, StreamSummary};
 use rostfrei_messaging_core::CorrelationId;
@@ -183,7 +183,7 @@ where
         )
         .with_correlation_id(correlation_id);
         let outcome = match (invocation.command(), invocation.schema_version()) {
-            (RentBicycle::COMMAND_NAME, RentBicycle::SCHEMA_VERSION) => {
+            (RentBicycle::LOCAL_ID, RentBicycle::SCHEMA_VERSION) => {
                 let command = RentBicycle::decode_json(invocation.payload()).map_err(|error| {
                     local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                 })?;
@@ -198,7 +198,7 @@ where
                     Err(error) => return Err(local_execution_error(error)),
                 }
             }
-            (ReturnBicycle::COMMAND_NAME, ReturnBicycle::SCHEMA_VERSION) => {
+            (ReturnBicycle::LOCAL_ID, ReturnBicycle::SCHEMA_VERSION) => {
                 let command =
                     ReturnBicycle::decode_json(invocation.payload()).map_err(|error| {
                         local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
@@ -214,7 +214,7 @@ where
                     Err(error) => return Err(local_execution_error(error)),
                 }
             }
-            (AddBicycle::COMMAND_NAME, AddBicycle::SCHEMA_VERSION) => {
+            (AddBicycle::LOCAL_ID, AddBicycle::SCHEMA_VERSION) => {
                 let command = AddBicycle::decode_json(invocation.payload()).map_err(|error| {
                     local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                 })?;
@@ -305,14 +305,20 @@ async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
         .with_test_fixture("demo-fleet", test_reset)
         .with_test_repository(test_repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
-    builder.register_json::<RentBicycle>().unwrap();
-    builder.register_json::<ReturnBicycle>().unwrap();
-    builder.register_json::<AddBicycle>().unwrap();
     builder
-        .register_input_options::<RentBicycle, _>(RentBicycleInputOptions)
+        .register_json::<RentalFleetAggregate, RentBicycle>()
         .unwrap();
     builder
-        .register_input_options::<ReturnBicycle, _>(ReturnBicycleInputOptions)
+        .register_json::<RentalFleetAggregate, ReturnBicycle>()
+        .unwrap();
+    builder
+        .register_json::<RentalFleetAggregate, AddBicycle>()
+        .unwrap();
+    builder
+        .register_input_options::<RentalFleetAggregate, RentBicycle, _>(RentBicycleInputOptions)
+        .unwrap();
+    builder
+        .register_input_options::<RentalFleetAggregate, ReturnBicycle, _>(ReturnBicycleInputOptions)
         .unwrap();
     (builder.build().unwrap(), test_store, production_store)
 }

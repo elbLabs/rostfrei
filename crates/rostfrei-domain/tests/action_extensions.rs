@@ -392,7 +392,6 @@ fn domain_model_accepts_optional_action_extensions_and_still_allows_omission() {
         entities: [],
         value_objects: [],
         services: [],
-        commands: [],
         errors: [],
         action_extensions: [FirstAggregateExtension, SecondAggregateExtension],
         query_groups: [],
@@ -404,7 +403,6 @@ fn domain_model_accepts_optional_action_extensions_and_still_allows_omission() {
         entities: [],
         value_objects: [],
         services: [],
-        commands: [],
         errors: [],
         query_groups: [],
     }

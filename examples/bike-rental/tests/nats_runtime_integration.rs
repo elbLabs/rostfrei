@@ -30,7 +30,7 @@ use bike_rental::{
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
-    Aggregate, CommandDefinition, EventHistory, OperationId, RecordedEvent, StreamAggregateId,
+    Aggregate, Command, EventHistory, OperationId, RecordedEvent, StreamAggregateId,
     integration_message_id,
 };
 use rostfrei_messaging_core::{CausationId, IntegrationEventEnvelope, SchemaVersion};
@@ -167,9 +167,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             .with_test_fixture("demo-fleet", test_reset)
             .with_test_repository(test_repository)
             .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
-        builder.register_json::<RentBicycle>()?;
-        builder.register_json::<ReturnBicycle>()?;
-        builder.register_json::<AddBicycle>()?;
+        builder.register_json::<RentalFleetAggregate, RentBicycle>()?;
+        builder.register_json::<RentalFleetAggregate, ReturnBicycle>()?;
+        builder.register_json::<RentalFleetAggregate, AddBicycle>()?;
         let tracer = builder.build()?;
         let correlation_worker = test_runtime
             .start_correlation_observer(tracer.correlation_observer(OperationMode::Test))
@@ -296,7 +296,7 @@ async fn run_isolation_test(
             invocation(
                 "test-rent",
                 "test-rent-correlation",
-                RentBicycle::COMMAND_NAME,
+                RentBicycle::LOCAL_ID,
                 RentBicycle::SCHEMA_VERSION,
                 json!({"bicycle_id": "bike-42"}),
             )?,
@@ -336,7 +336,7 @@ async fn run_isolation_test(
             invocation(
                 "production-add",
                 "production-add-correlation",
-                AddBicycle::COMMAND_NAME,
+                AddBicycle::LOCAL_ID,
                 AddBicycle::SCHEMA_VERSION,
                 json!({}),
             )?,
@@ -396,7 +396,7 @@ async fn run_isolation_test(
             invocation(
                 "test-rent-after-reset",
                 "test-rent-after-reset-correlation",
-                RentBicycle::COMMAND_NAME,
+                RentBicycle::LOCAL_ID,
                 RentBicycle::SCHEMA_VERSION,
                 json!({"bicycle_id": "bike-42"}),
             )?,
@@ -424,7 +424,7 @@ async fn run_isolation_test(
             invocation(
                 "production-rent-after-test-reset",
                 "production-rent-after-test-reset-correlation",
-                RentBicycle::COMMAND_NAME,
+                RentBicycle::LOCAL_ID,
                 RentBicycle::SCHEMA_VERSION,
                 json!({"bicycle_id": "bike-42"}),
             )?,

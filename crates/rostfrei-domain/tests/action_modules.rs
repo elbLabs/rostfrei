@@ -77,7 +77,6 @@ mod model {
             entities: [TaxonomyRoot],
             value_objects: [],
             services: [],
-            commands: [],
             errors: [],
             action_extensions: [],
             query_groups: [],

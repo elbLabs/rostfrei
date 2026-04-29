@@ -3,9 +3,9 @@
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, Aggregate, AggregateType, BoundedContext, Command,
-    CommandOwnerId, CommandType, DomainError, DomainErrorOwnerId, DomainErrorType, DomainEvent,
-    DomainIdentity, DomainModelError, DomainService, DomainServiceType, Entity, ValueObject,
-    domain_actions, domain_model,
+    DomainError, DomainErrorOwnerId, DomainErrorType, DomainEvent, DomainIdentity,
+    DomainModelError, DomainService, DomainServiceType, Entity, ValueObject, domain_actions,
+    domain_model,
 };
 
 #[derive(BoundedContext)]
@@ -77,7 +77,7 @@ pub struct WorkStarted;
 pub struct Receipt(u64);
 
 #[derive(Command, Clone, Copy, Debug, Eq, PartialEq)]
-#[domain(id = "coordinate-work", label = "Coordinate work", owner = Coordinator)]
+#[domain(id = "coordinate-work", label = "Coordinate work")]
 pub struct CoordinateWork;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -275,10 +275,7 @@ fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() 
             .collect::<Vec<_>>(),
         ["receipt"]
     );
-    assert_eq!(
-        CoordinateWork::DESCRIPTOR.id.owner,
-        CommandOwnerId::DomainService(Coordinator::DESCRIPTOR.id)
-    );
+    assert_eq!(CoordinateWork::DESCRIPTOR.local_id, "coordinate-work");
     assert_eq!(
         CoordinationFailed::DESCRIPTOR.id.owner,
         DomainErrorOwnerId::DomainService(Coordinator::DESCRIPTOR.id)
@@ -305,7 +302,6 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
         entities: [WorkRoot],
         value_objects: [Receipt],
         services: [Coordinator, OmittedActionsService, EmptyActionsService],
-        commands: [CoordinateWork],
         errors: [CoordinationFailed],
         action_extensions: [WorkExtensionActions],
         query_groups: [],
@@ -354,7 +350,6 @@ fn rejects_duplicate_action_id_across_attached_domain_service_contracts() {
         entities: [],
         value_objects: [],
         services: [DuplicateService],
-        commands: [],
         errors: [],
         query_groups: [],
     }
@@ -379,7 +374,6 @@ fn rejects_duplicate_action_id_between_attached_and_extension_domain_service_gro
         entities: [],
         value_objects: [],
         services: [Coordinator],
-        commands: [],
         errors: [],
         action_extensions: [DuplicateCoordinatorExtensionActions],
         query_groups: [],
