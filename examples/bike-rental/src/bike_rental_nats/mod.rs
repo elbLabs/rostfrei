@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rostfrei::{
     Command, CommandBindingRegistrationError, CommandBus, CommandMessageAdapter, CommandProcessor,
-    CommittedDomainEvent, CommittedEventContext, DomainEventDefinitionType, DomainEventDispatcher,
+    CommittedDomainEvent, CommittedEventContext, DomainEvent, DomainEventDispatcher,
     DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind,
     DomainEventRegistrationError, EncodedIntegrationMessage, EventStore, EventStoreError,
     InfallibleCommandRejectionMapper, IntegrationEvent, IntegrationEventBus,
@@ -788,7 +788,7 @@ impl BikeRentalNatsRuntime {
             IntegrationEventBus::new(self.config.context.clone(), integration_adapter);
         let mut dispatcher = DomainEventDispatcher::new();
         dispatcher.register::<RentalFleetAggregate, BicycleRented, _>(
-            BicycleRented::DEFINITION.id,
+            BicycleRented::LOCAL_ID,
             Arc::new(BicycleRentedIntegrationMapper::new(integration_bus)),
         )?;
         let domain_consumer = NatsDomainEventConsumer::connect(

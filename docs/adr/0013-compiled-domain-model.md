@@ -114,6 +114,11 @@ inventory were subsequently replaced by
 authored relationship, and registry, processor, bus, and tracer APIs name the
 aggregate-command pair explicitly.
 
+The standalone event-definition API was subsequently removed by
+[ADR 0026](0026-semantic-domain-events.md). `DomainEvent` directly exposes
+local semantic and wire metadata, while `AggregateEvents` remains responsible
+for owned descriptors and runtime membership.
+
 Domain-error ownership and optional JSON generation were subsequently removed
 by [ADR 0025](0025-owner-independent-domain-errors.md). Errors keep their
 stable public code and message, while action return types and command handlers

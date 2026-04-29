@@ -100,6 +100,10 @@ aggregate explicitly, for example:
 <BicycleAdded as DomainEventType<RentalFleetAggregate>>::DESCRIPTOR
 ```
 
+[ADR 0026](0026-semantic-domain-events.md) subsequently makes `DomainEvent`
+the direct API for owner-independent local metadata. The aggregate-parameterized
+descriptor remains the membership projection supplied by `AggregateEvents`.
+
 Aggregate event sets generate event outputs only for Aggregate action
 contracts. Domain Service actions no longer use aggregate-owned Domain Events
 as modeled outputs because their signatures do not identify the owning

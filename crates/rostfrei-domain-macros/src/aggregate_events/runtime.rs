@@ -52,7 +52,7 @@ pub fn assemble(
 
     quote! {
         const _: () = #runtime_path::__private::assert_unique_event_ids(&[
-            #(<#events as #domain_path::DomainEventDefinitionType>::DEFINITION.id,)*
+            #(<#events as #domain_path::DomainEvent>::LOCAL_ID,)*
         ]);
 
         #(#conversions)*
@@ -62,7 +62,7 @@ pub fn assemble(
                 match self {
                     #(
                         Self::#variant_names(_) =>
-                            <#events as #domain_path::DomainEventDefinitionType>::DEFINITION.id,
+                            <#events as #domain_path::DomainEvent>::LOCAL_ID,
                     )*
                 }
             }
@@ -71,7 +71,7 @@ pub fn assemble(
                 match self {
                     #(
                         Self::#variant_names(_) =>
-                            <#events as #domain_path::DomainEventDefinitionType>::DEFINITION.schema_version,
+                            <#events as #domain_path::DomainEvent>::SCHEMA_VERSION,
                     )*
                 }
             }
@@ -98,10 +98,10 @@ pub fn assemble(
             > {
                 #(
                     if recorded.event_type()
-                        == <#events as #domain_path::DomainEventDefinitionType>::DEFINITION.id
+                        == <#events as #domain_path::DomainEvent>::LOCAL_ID
                     {
                         let expected =
-                            <#events as #domain_path::DomainEventDefinitionType>::DEFINITION.schema_version;
+                            <#events as #domain_path::DomainEvent>::SCHEMA_VERSION;
                         if recorded.schema_version() != expected {
                             return ::core::result::Result::Err(
                                 #runtime_path::__private::core::EventCodecError::new(

@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate, BoundedContext, Command, DomainError, DomainEvent, DomainEventDefinitionType,
-    DomainIdentity, Entity, EntityType, FieldKind, FieldWrapper, ScalarType, SemanticScalar,
-    SemanticScalarDescriptor, domain_model,
+    Aggregate, BoundedContext, Command, DomainError, DomainEvent, DomainIdentity, Entity,
+    EntityType, FieldKind, FieldWrapper, ScalarType, SemanticScalar, SemanticScalarDescriptor,
+    domain_model,
 };
 use serde_json::json;
 
@@ -125,7 +125,7 @@ fn describes_semantic_fields_and_nested_wrappers() {
 
     let semantic_kinds = [
         CorrelateDocument::DESCRIPTOR.fields[0].value.kind,
-        DocumentCorrelated::DEFINITION.fields[0].value.kind,
+        DocumentCorrelated::FIELDS[0].value.kind,
         DocumentCorrelationRejected::DESCRIPTOR.fields[0].value.kind,
     ];
     assert!(

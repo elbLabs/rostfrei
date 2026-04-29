@@ -45,3 +45,8 @@ unregistered events fail compilation at `AggregateInstance::raise`.
 Event membership cannot drift between an action attachment and the aggregate
 codec because there is no second list. Tooling loses speculative action/event
 relationships and retains the stronger, compiler-checked aggregate event set.
+
+The event declaration side of this relationship is simplified by
+[ADR 0026](0026-semantic-domain-events.md): semantic local metadata lives on
+`DomainEvent`, while this ADR's event set continues to supply aggregate
+membership and runtime behavior.

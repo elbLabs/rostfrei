@@ -12,7 +12,7 @@ use crate::{
     rental_fleet::{BicycleId, BicycleRented, RentBicycle, RentalFleetAggregate},
 };
 use rostfrei::{
-    CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest, DomainEventDefinitionType,
+    CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest, DomainEvent,
     DomainEventDispatchOutcome, DomainEventDispatcher, DynamicCommandRequest, EventStore,
     InMemoryEventStore, InMemoryMessagingAdapter, IntegrationEventBus, IntegrationMessageAdapter,
     JsonDomainRejectionMapper, OperationId,
@@ -334,7 +334,7 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
     let integration_bus = IntegrationEventBus::new(config.context().clone(), integration_adapter);
     let mut dispatcher = DomainEventDispatcher::new();
     dispatcher.register::<RentalFleetAggregate, BicycleRented, _>(
-        BicycleRented::DEFINITION.id,
+        BicycleRented::LOCAL_ID,
         Arc::new(BicycleRentedIntegrationMapper::new(integration_bus)),
     )?;
 
