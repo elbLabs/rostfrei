@@ -14,7 +14,7 @@ use rostfrei::{
 use rostfrei_messaging_core::{
     ApplicationName, BoundedContext, CommandAddress, CommandRejectionClassification, ConsumeError,
     ConsumerConfig, ContractError, DeliveryDisposition, IntegrationEventAddress, MessageDelivery,
-    MessageHandler, QuarantineReason, RetryDelay,
+    MessageHandler, QuarantineReason, RetryDelay, TrafficScope,
 };
 use rostfrei_nats::{
     ApplicationMessagingConfig, CorrelatedMessage, CorrelatedMessageFamily,
@@ -49,6 +49,7 @@ use crate::{
 mod tests;
 
 pub const BOUNDED_CONTEXT_NAME: &str = "bike-rental";
+pub const APPLICATION_NAME: &str = "bike-rental";
 pub const BICYCLE_RENTAL_STARTED_EVENT_NAME: &str = "bicycle-rental-started";
 const BICYCLE_RENTAL_STARTED_SCHEMA_VERSION: u32 = 1;
 const DOMAIN_EVENT_PUBLISHER_PURPOSE: &str = "bicycle-rental-started-publisher";
@@ -83,6 +84,8 @@ pub enum BikeRentalNatsError {
     Nats(#[from] NatsError),
     #[error("environment variable `{name}` must be a positive integer byte count, got `{value}`")]
     ResourceLimitEnvironment { name: &'static str, value: String },
+    #[error("only a test-scoped NATS runtime can be reset")]
+    ResetRequiresTestScope,
     #[error(transparent)]
     Seed(#[from] SeedError),
 }
@@ -248,16 +251,43 @@ pub struct BikeRentalNatsConfig {
 
 impl BikeRentalNatsConfig {
     pub fn new(application: &str) -> Result<Self, BikeRentalNatsError> {
-        Self::new_with_resource_limits(application, BikeRentalNatsResourceLimits::default())
+        Self::new_in_scope(
+            application,
+            TrafficScope::Normal,
+            BikeRentalNatsResourceLimits::default(),
+        )
+    }
+
+    pub fn new_test(application: &str) -> Result<Self, BikeRentalNatsError> {
+        Self::new_in_scope(
+            application,
+            TrafficScope::Test,
+            BikeRentalNatsResourceLimits::default(),
+        )
     }
 
     pub fn new_with_resource_limits(
         application: &str,
         resource_limits: BikeRentalNatsResourceLimits,
     ) -> Result<Self, BikeRentalNatsError> {
+        Self::new_in_scope(application, TrafficScope::Normal, resource_limits)
+    }
+
+    pub fn new_test_with_resource_limits(
+        application: &str,
+        resource_limits: BikeRentalNatsResourceLimits,
+    ) -> Result<Self, BikeRentalNatsError> {
+        Self::new_in_scope(application, TrafficScope::Test, resource_limits)
+    }
+
+    fn new_in_scope(
+        application: &str,
+        traffic_scope: TrafficScope,
+        resource_limits: BikeRentalNatsResourceLimits,
+    ) -> Result<Self, BikeRentalNatsError> {
         let application = ApplicationName::new(application)?;
-        let context = application.bounded_context(BOUNDED_CONTEXT_NAME)?;
-        let messaging = ApplicationMessagingConfig::new(&application)?
+        let context = application.bounded_context_in_scope(traffic_scope, BOUNDED_CONTEXT_NAME)?;
+        let messaging = ApplicationMessagingConfig::new_in_scope(&application, traffic_scope)?
             .with_max_bytes(resource_limits.messaging_stream_max_bytes())?;
         let event_store = NatsEventStoreConfig::for_bounded_context(&context)?
             .with_storage_limits(
@@ -576,9 +606,23 @@ impl BikeRentalNatsRuntime {
         connection: NatsConnection,
         application: &str,
     ) -> Result<Self, BikeRentalNatsError> {
-        Self::provision_with_resource_limits(
+        Self::provision_in_scope(
             connection,
             application,
+            TrafficScope::Normal,
+            BikeRentalNatsResourceLimits::default(),
+        )
+        .await
+    }
+
+    pub async fn provision_test(
+        connection: NatsConnection,
+        application: &str,
+    ) -> Result<Self, BikeRentalNatsError> {
+        Self::provision_in_scope(
+            connection,
+            application,
+            TrafficScope::Test,
             BikeRentalNatsResourceLimits::default(),
         )
         .await
@@ -589,7 +633,37 @@ impl BikeRentalNatsRuntime {
         application: &str,
         resource_limits: BikeRentalNatsResourceLimits,
     ) -> Result<Self, BikeRentalNatsError> {
-        let config = BikeRentalNatsConfig::new_with_resource_limits(application, resource_limits)?;
+        Self::provision_in_scope(
+            connection,
+            application,
+            TrafficScope::Normal,
+            resource_limits,
+        )
+        .await
+    }
+
+    pub async fn provision_test_with_resource_limits(
+        connection: NatsConnection,
+        application: &str,
+        resource_limits: BikeRentalNatsResourceLimits,
+    ) -> Result<Self, BikeRentalNatsError> {
+        Self::provision_in_scope(connection, application, TrafficScope::Test, resource_limits).await
+    }
+
+    async fn provision_in_scope(
+        connection: NatsConnection,
+        application: &str,
+        traffic_scope: TrafficScope,
+        resource_limits: BikeRentalNatsResourceLimits,
+    ) -> Result<Self, BikeRentalNatsError> {
+        let config = match traffic_scope {
+            TrafficScope::Normal => {
+                BikeRentalNatsConfig::new_with_resource_limits(application, resource_limits)?
+            }
+            TrafficScope::Test => {
+                BikeRentalNatsConfig::new_test_with_resource_limits(application, resource_limits)?
+            }
+        };
         config.provision(&connection).await?;
         let store = config.connect_store(&connection).await?;
         let messaging = Arc::new(
@@ -774,9 +848,10 @@ impl BikeRentalNatsRuntime {
         &self,
         observer: CorrelationObserver,
     ) -> Result<JoinHandle<()>, BikeRentalNatsError> {
-        let nats_observer = NatsCorrelationObserver::new(
+        let nats_observer = NatsCorrelationObserver::new_in_scope(
             self.connection.client().clone(),
             self.config.application().clone(),
+            self.config.context().traffic_scope(),
         )
         .with_streams(
             self.config.event_store().stream_name(),
@@ -831,6 +906,9 @@ impl BikeRentalNatsRuntime {
     }
 
     async fn reset_scope(&self) -> Result<(), BikeRentalNatsError> {
+        if self.config.context().traffic_scope() != TrafficScope::Test {
+            return Err(BikeRentalNatsError::ResetRequiresTestScope);
+        }
         let _scope = Arc::clone(&self.scope_gate).write_owned().await;
         self.stop_workers_in_scope().await;
         self.delete_resources().await?;

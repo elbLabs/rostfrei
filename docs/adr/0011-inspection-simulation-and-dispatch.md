@@ -45,10 +45,10 @@ are directly simulatable; commands involving external effects require a future
 execution-journal seam and cannot be represented as safely simulated until that
 contract exists.
 
-Local, test, and production deployments can use the same NATS dispatch adapter.
-They differ in application scope and resource lifecycle: tests use unique
-application-scoped JetStream resources and delete their streams after the run,
-while production uses stable operator-owned resources.
+Local Test and Dispatch can use the same NATS dispatch adapter. As refined by
+ADR 0018, they share one canonical application identity but use disjoint traffic
+scopes and JetStream resources. Tests delete only their derived test streams,
+while normal Dispatch uses stable operator-owned resources.
 
 The durable response narrows but does not eliminate the execution-to-response
 gap. A worker reconciles a matching retained response before aggregate execution,

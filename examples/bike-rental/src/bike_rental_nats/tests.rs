@@ -3,8 +3,9 @@
 use std::{error::Error, sync::Arc};
 
 use super::{
-    BicycleRentalStarted, BicycleRentalStartedHandler, BicycleRentedIntegrationMapper,
-    BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
+    APPLICATION_NAME, BicycleRentalStarted, BicycleRentalStartedHandler,
+    BicycleRentedIntegrationMapper, BikeRentalCommand, BikeRentalNatsConfig,
+    BikeRentalNatsResourceLimits,
 };
 use crate::{
     demo::{demo_stream, seed_demo},
@@ -52,19 +53,20 @@ fn command_bus(
 }
 
 #[test]
-fn nats_configuration_uses_stable_application_scoped_resources() -> TestResult {
-    let config = BikeRentalNatsConfig::new("bike-rental-demo")?;
+fn nats_configuration_derives_normal_and_test_resources_from_one_application() -> TestResult {
+    let config = BikeRentalNatsConfig::new(APPLICATION_NAME)?;
+    let test = BikeRentalNatsConfig::new_test(APPLICATION_NAME)?;
 
     assert_eq!(
         config
             .command_route(BikeRentalCommand::RentBicycle)
             .address()
             .as_str(),
-        "bike-rental-demo.command.bike-rental.rent-bicycle"
+        "bike-rental.command.bike-rental.rent-bicycle"
     );
     assert_eq!(
         config.messaging().topology().command_stream().as_str(),
-        "BIKE_RENTAL_DEMO_COMMANDS"
+        "BIKE_RENTAL_COMMANDS"
     );
     assert_eq!(
         config
@@ -72,11 +74,11 @@ fn nats_configuration_uses_stable_application_scoped_resources() -> TestResult {
             .topology()
             .command_response_stream()
             .as_str(),
-        "BIKE_RENTAL_DEMO_COMMAND_RESPONSES"
+        "BIKE_RENTAL_COMMAND_RESPONSES"
     );
     assert_eq!(
         config.event_store().stream_name(),
-        "BIKE_RENTAL_DEMO__BIKE_RENTAL_DOMAIN_EVENTS"
+        "BIKE_RENTAL__BIKE_RENTAL_DOMAIN_EVENTS"
     );
     assert_eq!(
         config
@@ -84,7 +86,7 @@ fn nats_configuration_uses_stable_application_scoped_resources() -> TestResult {
             .consumer()
             .durable_name()
             .as_str(),
-        "bike-rental-demo--bike-rental--rent-bicycle--v1"
+        "bike-rental--bike-rental--rent-bicycle--v1"
     );
     assert_eq!(
         config
@@ -92,7 +94,51 @@ fn nats_configuration_uses_stable_application_scoped_resources() -> TestResult {
             .consumer()
             .durable_name()
             .as_str(),
-        "bike-rental-demo--bike-rental--bicycle-rental-started-consumer--v1"
+        "bike-rental--bike-rental--bicycle-rental-started-consumer--v1"
+    );
+    assert_eq!(test.application(), config.application());
+    assert_eq!(
+        test.command_route(BikeRentalCommand::RentBicycle)
+            .address()
+            .as_str(),
+        "bike-rental.test.command.bike-rental.rent-bicycle"
+    );
+    assert_eq!(
+        test.messaging().topology().command_stream().as_str(),
+        "BIKE_RENTAL__TEST_COMMANDS"
+    );
+    assert_eq!(
+        test.messaging()
+            .topology()
+            .command_response_stream()
+            .as_str(),
+        "BIKE_RENTAL__TEST_COMMAND_RESPONSES"
+    );
+    assert_eq!(
+        test.messaging()
+            .topology()
+            .integration_event_stream()
+            .as_str(),
+        "BIKE_RENTAL__TEST_INTEGRATION_EVENTS"
+    );
+    assert_eq!(
+        test.messaging().topology().quarantine_stream().as_str(),
+        "BIKE_RENTAL__TEST_QUARANTINE"
+    );
+    assert_eq!(
+        test.event_store().stream_name(),
+        "BIKE_RENTAL__TEST__BIKE_RENTAL_DOMAIN_EVENTS"
+    );
+    assert_eq!(
+        test.event_store().subject_prefix(),
+        "bike-rental.test.domain.bike-rental"
+    );
+    assert_eq!(
+        test.command_route(BikeRentalCommand::RentBicycle)
+            .consumer()
+            .durable_name()
+            .as_str(),
+        "bike-rental--test--bike-rental--rent-bicycle--v1"
     );
     Ok(())
 }

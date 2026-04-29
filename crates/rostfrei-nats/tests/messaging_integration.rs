@@ -313,6 +313,7 @@ async fn stream_message_count(
 struct ApplicationScopeGuardResults {
     policy_verification: Result<(), error::NatsError>,
     cross_application_publish: Result<NatsPublishAck, error::NatsError>,
+    cross_traffic_scope_publish: Result<NatsPublishAck, error::NatsError>,
 }
 
 async fn application_scope_guard_results(
@@ -334,9 +335,22 @@ async fn application_scope_guard_results(
     let cross_application_publish = publisher
         .publish_command_with_ack(cross_application, Duration::from_secs(5))
         .await;
+    let test_context = fixture
+        .context
+        .application()
+        .test_bounded_context("messaging")?;
+    let cross_traffic_scope = OutboundMessage::new(
+        test_context.command_address("publish")?,
+        message_id("cross-traffic-scope")?,
+        br#"{"ok":true}"#.to_vec(),
+    )?;
+    let cross_traffic_scope_publish = publisher
+        .publish_command_with_ack(cross_traffic_scope, Duration::from_secs(5))
+        .await;
     Ok(ApplicationScopeGuardResults {
         policy_verification,
         cross_application_publish,
+        cross_traffic_scope_publish,
     })
 }
 
@@ -372,6 +386,10 @@ async fn puback_confirms_stream_sequence_duplicate_and_owned_headers() {
     ));
     assert!(matches!(
         scope_guards.cross_application_publish,
+        Err(error::NatsError::InvalidMessage)
+    ));
+    assert!(matches!(
+        scope_guards.cross_traffic_scope_publish,
         Err(error::NatsError::InvalidMessage)
     ));
 
@@ -538,6 +556,35 @@ async fn publish_disposition_commands(
     Ok(quarantine_id)
 }
 
+fn assert_consumer_rejects_test_scope(
+    fixture: &Fixture,
+    factory: &NatsConsumerFactory,
+) -> TestResult<()> {
+    let test_context = fixture
+        .context
+        .application()
+        .test_bounded_context("messaging")?;
+    let test_config = ConsumerConfig::new(
+        test_context.consumer_name("consume", 1)?,
+        test_context.durable_name("consume", 1)?,
+        test_context.command_address("consume")?,
+        Duration::from_secs(10),
+        Duration::from_secs(5),
+        4,
+        3,
+    )?;
+    let Err(scope_error) = <NatsConsumerFactory as MessageConsumerFactory<CommandAddress>>::create(
+        factory,
+        test_config,
+    ) else {
+        return Err("normal consumer factory accepted test traffic".into());
+    };
+    if scope_error.kind() != rostfrei_messaging_core::ConsumeErrorKind::InvalidConfiguration {
+        return Err("normal consumer factory returned the wrong scope error".into());
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() {
     let Some(url) = test_url() else {
@@ -557,6 +604,8 @@ async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() 
         fixture.connection.jetstream().clone(),
         fixture.topology.clone(),
     );
+    assert_consumer_rejects_test_scope(&fixture, &factory)
+        .expect("normal consumer factory rejects test traffic");
     let consumer = <NatsConsumerFactory as MessageConsumerFactory<CommandAddress>>::create(
         &factory,
         provisioned.config,
@@ -648,6 +697,7 @@ impl RoundTripHandler {
 struct QueryServerSetup {
     server: query::NatsQueryServer,
     invalid_scope: Result<(), QueryServerError>,
+    invalid_traffic_scope: Result<(), QueryServerError>,
 }
 
 async fn query_server_setup(fixture: &Fixture) -> TestResult<QueryServerSetup> {
@@ -661,9 +711,20 @@ async fn query_server_setup(fixture: &Fixture) -> TestResult<QueryServerSetup> {
         Arc::new(RoundTripHandler::new()?),
     )
     .await;
+    let invalid_traffic_scope = <query::NatsQueryServer as QueryServer<Value, Value>>::run(
+        &server,
+        fixture
+            .context
+            .application()
+            .test_bounded_context("messaging")?
+            .query_address("roundtrip")?,
+        Arc::new(RoundTripHandler::new()?),
+    )
+    .await;
     Ok(QueryServerSetup {
         server,
         invalid_scope,
+        invalid_traffic_scope,
     })
 }
 
@@ -673,6 +734,60 @@ async fn publish_malformed_query(fixture: &Fixture, address: &QueryAddress) -> T
         .client()
         .publish(address.as_str().to_owned(), b"not-json".to_vec().into())
         .await?;
+    Ok(())
+}
+
+async fn assert_query_scope_guards(
+    fixture: &Fixture,
+    setup: &QueryServerSetup,
+    requester: &query::NatsQueryRequester,
+) -> TestResult<()> {
+    let Err(invalid_application) = &setup.invalid_scope else {
+        return Err("query server accepted another application".into());
+    };
+    if invalid_application.kind() != QueryServerErrorKind::InvalidConfiguration {
+        return Err("query server returned the wrong application-scope error".into());
+    }
+    let Err(invalid_traffic_scope) = &setup.invalid_traffic_scope else {
+        return Err("query server accepted test traffic".into());
+    };
+    if invalid_traffic_scope.kind() != QueryServerErrorKind::InvalidConfiguration {
+        return Err("query server returned the wrong traffic-scope error".into());
+    }
+
+    let invalid_application = <query::NatsQueryRequester as QueryRequester<Value, Value>>::request(
+        requester,
+        &QueryAddress::new("other", "messaging", "roundtrip")?,
+        query_request(message_id("cross-application-query")?, json!({}))?,
+        QueryOptions::new(Duration::from_secs(3), 64 * 1024)?,
+    )
+    .await;
+    let Err(invalid_application) = invalid_application else {
+        return Err("query requester accepted another application".into());
+    };
+    if invalid_application.kind() != QueryRequestErrorKind::Rejected {
+        return Err("query requester returned the wrong application-scope error".into());
+    }
+
+    let test_address = fixture
+        .context
+        .application()
+        .test_bounded_context("messaging")?
+        .query_address("roundtrip")?;
+    let invalid_traffic_scope =
+        <query::NatsQueryRequester as QueryRequester<Value, Value>>::request(
+            requester,
+            &test_address,
+            query_request(message_id("cross-traffic-scope-query")?, json!({}))?,
+            QueryOptions::new(Duration::from_secs(3), 64 * 1024)?,
+        )
+        .await;
+    let Err(invalid_traffic_scope) = invalid_traffic_scope else {
+        return Err("query requester accepted test traffic".into());
+    };
+    if invalid_traffic_scope.kind() != QueryRequestErrorKind::Rejected {
+        return Err("query requester returned the wrong traffic-scope error".into());
+    }
     Ok(())
 }
 
@@ -702,13 +817,12 @@ async fn core_nats_query_roundtrip_preserves_errors_and_does_not_touch_jetstream
     let query_server = query_server_setup(&fixture)
         .await
         .expect("query server setup and invalid-scope observation");
-    let invalid_server_scope = query_server
-        .invalid_scope
-        .expect_err("query server must reject another application");
-    assert_eq!(
-        invalid_server_scope.kind(),
-        QueryServerErrorKind::InvalidConfiguration
-    );
+    let requester = fixture
+        .connection
+        .query_requester(fixture.context.application());
+    assert_query_scope_guards(&fixture, &query_server, &requester)
+        .await
+        .expect("query adapters reject cross-scope traffic");
     let server = query_server.server;
     let server_address = address.clone();
     let round_trip_handler = Arc::new(RoundTripHandler::new().expect("roundtrip query handler"));
@@ -726,26 +840,6 @@ async fn core_nats_query_roundtrip_preserves_errors_and_does_not_touch_jetstream
     publish_malformed_query(&fixture, &address)
         .await
         .expect("publish malformed query");
-    let requester = fixture
-        .connection
-        .query_requester(fixture.context.application());
-    let invalid_request_scope =
-        <query::NatsQueryRequester as QueryRequester<Value, Value>>::request(
-            &requester,
-            &QueryAddress::new("other", "messaging", "roundtrip").expect("other query address"),
-            query_request(
-                message_id("cross-application-query").expect("cross-application query id"),
-                json!({}),
-            )
-            .expect("cross-application query request"),
-            QueryOptions::new(Duration::from_secs(3), 64 * 1024).expect("query options"),
-        )
-        .await
-        .expect_err("query requester must reject another application");
-    assert_eq!(
-        invalid_request_scope.kind(),
-        QueryRequestErrorKind::Rejected
-    );
     let success = requester
         .request(
             &address,

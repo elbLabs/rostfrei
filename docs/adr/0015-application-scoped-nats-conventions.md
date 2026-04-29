@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Accepted. Extended by ADR 0018 for the derived test traffic scope.
 
 ## Decision
 
@@ -15,6 +15,7 @@ Messaging addresses follow these conventions:
 
 ```text
 <application>.command.<bounded-context>.<name>
+<application>.command-response.<bounded-context>.<opaque-response-digest>
 <application>.integration.<bounded-context>.<name>
 <application>.query.<bounded-context>.<name>
 ```
@@ -32,13 +33,16 @@ Private domain-event storage includes both scopes in its subject prefix:
 <application>.domain.<bounded-context>.aggregate.<opaque-aggregate-digest>
 ```
 
-The application name deterministically derives three JetStream stream names and
+The application name deterministically derives four JetStream stream names and
 their subject filters. The bounded context deterministically derives one
 authoritative domain-event stream:
 
 ```text
 <APPLICATION>_COMMANDS
   <application>.command.>
+
+<APPLICATION>_COMMAND_RESPONSES
+  <application>.command-response.>
 
 <APPLICATION>_INTEGRATION_EVENTS
   <application>.integration.>
