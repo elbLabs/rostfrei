@@ -1,8 +1,8 @@
 error[E0050]: method `rename` has 1 parameter but the declaration in trait `Actions::rename` has 2
-  --> tests/ui/entity_action/wrong_signature.rs:30:15
+  --> tests/ui/entity_action/wrong_signature.rs:29:15
    |
 10 |     fn rename(&self, input: u8);
    |               ---------------- trait requires 2 parameters
 ...
-30 |     fn rename(&self) {}
+29 |     fn rename(&self) {}
    |               ^^^^^ expected 2 parameters, found 1

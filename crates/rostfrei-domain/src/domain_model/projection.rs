@@ -3,11 +3,10 @@ use serde_json::{Value, json};
 use crate::{
     ActionOwnerId, AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId,
     BoundedContextDescriptor, CommandDescriptor, CommandId, DecisionOwnerId, DomainErrorDescriptor,
-    DomainErrorId, DomainEventDescriptor, DomainEventId, DomainIdentityDescriptor,
-    DomainIdentityId, DomainIdentityType, DomainServiceDescriptor, DomainServiceType,
-    EntityDefinition, EntityDescriptor, QueryDescriptor, QueryId, QueryInputDescriptor,
-    QueryOutputDescriptor, ValueObjectDescriptor, ValueObjectId, ValueObjectType,
-    extension::ActionGroupType,
+    DomainErrorId, DomainEventDescriptor, DomainEventId, DomainIdentityId, DomainServiceDescriptor,
+    DomainServiceType, EntityDefinition, EntityDescriptor, QueryDescriptor, QueryId,
+    QueryInputDescriptor, QueryOutputDescriptor, ValueObjectDescriptor, ValueObjectId,
+    ValueObjectType, extension::ActionGroupType,
 };
 
 use super::{
@@ -99,65 +98,32 @@ impl DomainModelBuilder {
         Ok(())
     }
 
-    pub fn add_entity(&mut self, descriptor: EntityDescriptor) {
+    pub fn add_entity(&mut self, descriptor: EntityDescriptor) -> Result<(), DomainModelError> {
+        self.add_domain_identity(descriptor.identity.identity)?;
         self.entities.add(descriptor);
         self.field_references.add_entity(descriptor);
+        Ok(())
     }
 
     pub fn add_entity_type<E: EntityDefinition>(&mut self) -> Result<(), DomainModelError> {
-        self.entities.add(E::DESCRIPTOR);
-        self.field_references.add_entity(E::DESCRIPTOR);
+        self.add_entity(E::DESCRIPTOR)?;
         self.actions
             .register_owner(ActionOwnerId::Entity(E::DESCRIPTOR.id));
         Ok(())
     }
 
-    pub fn add_domain_identity(
-        &mut self,
-        descriptor: DomainIdentityDescriptor,
-    ) -> Result<(), DomainModelError> {
-        self.add_domain_identity_descriptor(descriptor, None)
-    }
-
-    pub fn add_domain_identity_type<I: DomainIdentityType>(
-        &mut self,
-    ) -> Result<(), DomainModelError> {
-        if let Some(semantic_scalar) = I::SEMANTIC_SCALAR
-            && I::DESCRIPTOR.scalar != semantic_scalar.representation
-        {
-            return Err(
-                DomainModelError::DomainIdentitySemanticScalarRepresentationMismatch {
-                    canonical: I::DESCRIPTOR.scalar,
-                    semantic: semantic_scalar.representation,
-                },
-            );
-        }
-        self.add_domain_identity_descriptor(I::DESCRIPTOR, I::SEMANTIC_SCALAR)
-    }
-
-    fn add_domain_identity_descriptor(
-        &mut self,
-        descriptor: DomainIdentityDescriptor,
-        semantic_scalar: Option<crate::SemanticScalarDescriptor>,
-    ) -> Result<(), DomainModelError> {
+    fn add_domain_identity(&mut self, id: DomainIdentityId) -> Result<(), DomainModelError> {
         if self
             .domain_identities
             .iter()
-            .any(|(id, _)| *id == descriptor.id)
+            .any(|(registered, _)| *registered == id)
         {
-            return Err(DomainModelError::DuplicateDomainIdentityId {
-                id: Box::new(descriptor.id),
-            });
+            return Err(DomainModelError::DuplicateDomainIdentityId { id: Box::new(id) });
         }
-        let scalar = semantic_scalar.map_or_else(
-            || scalar_value(descriptor.scalar),
-            field_projection::semantic_scalar_value,
-        );
         self.domain_identities.push((
-            descriptor.id,
+            id,
             json!({
-                "id": domain_identity_id(descriptor.id),
-                "scalar": scalar,
+                "id": domain_identity_id(id),
             }),
         ));
         Ok(())
@@ -366,10 +332,6 @@ fn query_output(descriptor: QueryOutputDescriptor) -> Value {
             json!({ "kind": "list", "element": query_output(*element) })
         }
     }
-}
-
-fn scalar_value(scalar: crate::ScalarType) -> Value {
-    Value::String(field_projection::scalar_name(scalar).to_owned())
 }
 
 impl Default for DomainModelBuilder {

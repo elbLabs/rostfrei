@@ -4,7 +4,7 @@ use std::convert::Infallible;
 
 use domain::{
     Aggregate, AggregateType, BoundedContext, Command, CommandOwnerId, CommandType, DomainIdentity,
-    DomainIdentityType, DomainModelError, DomainService, Entity, FieldKind, FieldWrapper,
+    DomainModelError, DomainService, Entity, EntityType, FieldKind, FieldWrapper,
     JsonCommandPayload, JsonErrorPayload, ValueObject, ValueObjectType, domain_actions,
     domain_model,
 };
@@ -15,7 +15,6 @@ use serde_json::{Value, json};
 pub struct Catalog;
 
 #[derive(DomainIdentity)]
-#[domain(owner = CatalogRoot)]
 pub struct ProductId(u64);
 
 #[derive(Entity)]
@@ -152,7 +151,7 @@ fn describes_structural_command_fields() {
     );
     assert_eq!(
         fields[0].value.kind,
-        FieldKind::DomainIdentity(ProductId::DESCRIPTOR.id)
+        FieldKind::DomainIdentity(CatalogRoot::DESCRIPTOR.identity.identity)
     );
     assert!(
         matches!(fields[1].value.kind, FieldKind::ValueObject(id) if id == Status::DESCRIPTOR.id)
@@ -169,7 +168,6 @@ fn inventories_aggregate_and_domain_service_commands() {
         contexts: [Catalog],
         aggregates: [CatalogAggregate],
         entities: [CatalogRoot],
-        identities: [ProductId],
         value_objects: [Status],
         services: [CatalogSync],
         commands: [ChangeStatus, SyncCatalog],
@@ -251,7 +249,6 @@ fn rejects_duplicate_command_ids_deterministically() {
         contexts: [],
         aggregates: [],
         entities: [],
-        identities: [],
         value_objects: [],
         services: [],
         commands: [ChangeStatus, ChangeStatus],

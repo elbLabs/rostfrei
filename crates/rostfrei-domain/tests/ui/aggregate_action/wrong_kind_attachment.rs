@@ -5,7 +5,6 @@ use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, domain_actions};
 struct Context;
 
 #[derive(DomainIdentity)]
-#[domain(owner = Item)]
 struct Id(u8);
 
 #[domain_actions(aggregate)]

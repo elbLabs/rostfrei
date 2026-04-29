@@ -28,7 +28,6 @@ trait AllocationBounds {
 }
 
 #[derive(Clone, DomainIdentity)]
-#[domain(owner = ProductRoot)]
 struct ProductId(u64);
 
 #[derive(Clone, Entity)]
@@ -101,7 +100,6 @@ trait LineBounds {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = Line)]
 struct LineId(u64);
 
 #[derive(Entity)]

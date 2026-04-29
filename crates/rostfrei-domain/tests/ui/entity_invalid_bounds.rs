@@ -31,7 +31,6 @@ impl domain::AggregateDefinition for PlainIdAggregate {
 struct MissingAggregate;
 
 #[derive(DomainIdentity)]
-#[domain(owner = MissingOwnerRoot)]
 struct ValidId(u64);
 
 #[derive(Entity)]

@@ -13,7 +13,6 @@ struct Decisions;
 struct Context;
 
 #[derive(DomainIdentity)]
-#[domain(owner = Root)]
 struct RootId(u8);
 
 #[derive(Entity)]

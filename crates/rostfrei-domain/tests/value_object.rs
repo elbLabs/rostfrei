@@ -10,7 +10,6 @@ use domain::{
 struct Inbox;
 
 #[derive(DomainIdentity)]
-#[domain(owner = MailboxRoot)]
 struct MailboxId(u64);
 
 #[derive(Entity)]
@@ -76,7 +75,6 @@ struct CategorySelection {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = CatalogEntry)]
 struct CatalogEntryId(u64);
 
 #[derive(Entity)]
@@ -269,7 +267,6 @@ fn enum_value_objects_compose_in_fields_and_project_to_json() {
         contexts: [Inbox],
         aggregates: [Mailbox],
         entities: [MailboxRoot, CatalogEntry],
-        identities: [MailboxId, CatalogEntryId],
         value_objects: [CategoryKind, CategorySelection],
         services: [],
         commands: [],

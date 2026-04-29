@@ -1,19 +1,19 @@
 error[E0271]: type mismatch resolving `<Denied as DomainErrorType>::Owner == Owner`
-  --> tests/ui/aggregate_action/wrong_error_owner.rs:77:6
+  --> tests/ui/aggregate_action/wrong_error_owner.rs:75:6
    |
-77 | impl Actions for Owner {
+75 | impl Actions for Owner {
    |      ^^^^^^^ type mismatch resolving `<Denied as DomainErrorType>::Owner == Owner`
    |
 note: expected this to be `Owner`
-  --> tests/ui/aggregate_action/wrong_error_owner.rs:55:13
+  --> tests/ui/aggregate_action/wrong_error_owner.rs:53:13
    |
-55 |     owner = Other,
+53 |     owner = Other,
    |             ^^^^^
 note: required by a bound in `Actions`
-  --> tests/ui/aggregate_action/wrong_error_owner.rs:61:1
+  --> tests/ui/aggregate_action/wrong_error_owner.rs:59:1
    |
-61 | #[domain_actions(aggregate)]
+59 | #[domain_actions(aggregate)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
-62 | pub trait Actions {
+60 | pub trait Actions {
    |           ------- required by a bound in this trait
    = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

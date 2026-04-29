@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate, AggregateType, BoundedContext, DomainIdentity, DomainIdentityType, Entity,
-    EntityType, FieldKind, FieldWrapper, ScalarType, ValueObject, ValueObjectType,
+    Aggregate, AggregateType, BoundedContext, DomainIdentity, Entity, EntityType, FieldKind,
+    FieldWrapper, ScalarType, ValueObject, ValueObjectType,
 };
 
 #[derive(BoundedContext)]
@@ -10,11 +10,9 @@ use domain::{
 struct Catalog;
 
 #[derive(DomainIdentity)]
-#[domain(owner = ProductRoot)]
 struct ProductId(u64);
 
 #[derive(DomainIdentity)]
-#[domain(owner = Part)]
 struct PartId(u64);
 
 #[derive(ValueObject)]
@@ -109,7 +107,7 @@ fn describes_entity_roles_wrappers_order_and_raw_names() {
     );
     assert_eq!(
         fields[0].value.kind,
-        FieldKind::DomainIdentity(ProductId::DESCRIPTOR.id)
+        FieldKind::DomainIdentity(ProductRoot::DESCRIPTOR.identity.identity)
     );
     assert_eq!(fields[1].value.kind, FieldKind::Scalar(ScalarType::Bool));
     assert!(matches!(fields[2].value.kind, FieldKind::Entity(id) if id == Part::DESCRIPTOR.id));
@@ -137,7 +135,7 @@ fn describes_value_object_shapes_composition_and_all_scalars() {
     assert_eq!(fields[0].name, "product_id");
     assert_eq!(
         fields[0].value.kind,
-        FieldKind::DomainIdentity(ProductId::DESCRIPTOR.id)
+        FieldKind::DomainIdentity(ProductRoot::DESCRIPTOR.identity.identity)
     );
     assert_eq!(fields[1].name, "type");
     assert!(

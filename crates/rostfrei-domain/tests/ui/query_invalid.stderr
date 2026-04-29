@@ -1,78 +1,78 @@
 error: query root must be an immutable reference without an explicit lifetime
-  --> tests/ui/query_invalid.rs:56:31
+  --> tests/ui/query_invalid.rs:55:31
    |
-56 |     pub fn mutable_root(root: &mut Root) -> bool { true }
+55 |     pub fn mutable_root(root: &mut Root) -> bool { true }
    |                               ^^^^^^^^^
 
 error: query parameter must be a simple identifier named `root`
-  --> tests/ui/query_invalid.rs:59:21
+  --> tests/ui/query_invalid.rs:58:21
    |
-59 |     pub fn bad_name(candidate: &Root) -> bool { true }
+58 |     pub fn bad_name(candidate: &Root) -> bool { true }
    |                     ^^^^^^^^^
 
 error: queries must be associated functions without a receiver
-  --> tests/ui/query_invalid.rs:62:21
+  --> tests/ui/query_invalid.rs:61:21
    |
-62 |     pub fn receiver(&self) -> bool { true }
+61 |     pub fn receiver(&self) -> bool { true }
    |                     ^^^^^
 
 error: queries must be public
-  --> tests/ui/query_invalid.rs:53:1
+  --> tests/ui/query_invalid.rs:52:1
    |
-53 | #[domain_queries(group = InvalidQueries)]
+52 | #[domain_queries(group = InvalidQueries)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `domain_queries` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: query input must be an immutable reference without an explicit lifetime
-  --> tests/ui/query_invalid.rs:68:44
+  --> tests/ui/query_invalid.rs:67:44
    |
-68 |     pub fn owned_input(root: &Root, input: String) -> bool { true }
+67 |     pub fn owned_input(root: &Root, input: String) -> bool { true }
    |                                            ^^^^^^
 
 error: queries accept at most one input parameter
-  --> tests/ui/query_invalid.rs:71:48
+  --> tests/ui/query_invalid.rs:70:48
    |
-71 |     pub fn excess(root: &Root, input: &String, extra: &String) -> bool { true }
+70 |     pub fn excess(root: &Root, input: &String, extra: &String) -> bool { true }
    |                                                ^^^^^^^^^^^^^^
 
 error: queries require an owned output
-  --> tests/ui/query_invalid.rs:53:1
+  --> tests/ui/query_invalid.rs:52:1
    |
-53 | #[domain_queries(group = InvalidQueries)]
+52 | #[domain_queries(group = InvalidQueries)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `domain_queries` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: queries require a non-unit owned output
-  --> tests/ui/query_invalid.rs:77:38
+  --> tests/ui/query_invalid.rs:76:38
    |
-77 |     pub fn reference(root: &Root) -> &String { todo!() }
+76 |     pub fn reference(root: &Root) -> &String { todo!() }
    |                                      ^^^^^^^
 
 error: domain_queries requires at least one query
-  --> tests/ui/query_invalid.rs:95:1
+  --> tests/ui/query_invalid.rs:94:1
    |
-95 | #[domain_queries(group = Empty)]
+94 | #[domain_queries(group = Empty)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `domain_queries` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Plain: AggregateType` is not satisfied
-  --> tests/ui/query_invalid.rs:99:6
+  --> tests/ui/query_invalid.rs:98:6
    |
-99 | impl Plain {
+98 | impl Plain {
    |      ^^^^^ unsatisfied trait bound
    |
 help: the trait `AggregateType` is not implemented for `Plain`
-  --> tests/ui/query_invalid.rs:51:1
+  --> tests/ui/query_invalid.rs:50:1
    |
-51 | struct Plain;
+50 | struct Plain;
    | ^^^^^^^^^^^^
 help: the trait `AggregateType` is implemented for `Model`
-  --> tests/ui/query_invalid.rs:15:10
+  --> tests/ui/query_invalid.rs:14:10
    |
-15 | #[derive(Aggregate)]
+14 | #[derive(Aggregate)]
    |          ^^^^^^^^^
 note: required by a bound in `domain::QueryGroupType::Owner`
   --> src/domain_query/group_type.rs
@@ -82,70 +82,70 @@ note: required by a bound in `domain::QueryGroupType::Owner`
    = note: this error originates in the derive macro `Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Plain: AggregateDefinition` is not satisfied
-   --> tests/ui/query_invalid.rs:101:12
+   --> tests/ui/query_invalid.rs:100:12
     |
-101 |     pub fn plain(root: &Root) -> bool { true }
+100 |     pub fn plain(root: &Root) -> bool { true }
     |            ^^^^^ unsatisfied trait bound
     |
 help: the trait `AggregateDefinition` is not implemented for `Plain`
-   --> tests/ui/query_invalid.rs:51:1
+   --> tests/ui/query_invalid.rs:50:1
     |
- 51 | struct Plain;
+ 50 | struct Plain;
     | ^^^^^^^^^^^^
 help: the trait `AggregateDefinition` is implemented for `Model`
-   --> tests/ui/query_invalid.rs:19:1
+   --> tests/ui/query_invalid.rs:18:1
     |
- 19 | impl domain::AggregateDefinition for Model {
+ 18 | impl domain::AggregateDefinition for Model {
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error[E0277]: the trait bound `Plain: AggregateType` is not satisfied
-  --> tests/ui/query_invalid.rs:99:6
+  --> tests/ui/query_invalid.rs:98:6
    |
-99 | impl Plain {
+98 | impl Plain {
    |      ^^^^^ unsatisfied trait bound
    |
 help: the trait `AggregateType` is not implemented for `Plain`
-  --> tests/ui/query_invalid.rs:51:1
+  --> tests/ui/query_invalid.rs:50:1
    |
-51 | struct Plain;
+50 | struct Plain;
    | ^^^^^^^^^^^^
 help: the trait `AggregateType` is implemented for `Model`
-  --> tests/ui/query_invalid.rs:15:10
+  --> tests/ui/query_invalid.rs:14:10
    |
-15 | #[derive(Aggregate)]
+14 | #[derive(Aggregate)]
    |          ^^^^^^^^^
    = note: this error originates in the derive macro `Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Plain: AggregateDefinition` is not satisfied
-   --> tests/ui/query_invalid.rs:99:6
+   --> tests/ui/query_invalid.rs:98:6
     |
- 99 | impl Plain {
+ 98 | impl Plain {
     |      ^^^^^ unsatisfied trait bound
     |
 help: the trait `AggregateDefinition` is not implemented for `Plain`
-   --> tests/ui/query_invalid.rs:51:1
+   --> tests/ui/query_invalid.rs:50:1
     |
- 51 | struct Plain;
+ 50 | struct Plain;
     | ^^^^^^^^^^^^
 help: the trait `AggregateDefinition` is implemented for `Model`
-   --> tests/ui/query_invalid.rs:19:1
+   --> tests/ui/query_invalid.rs:18:1
     |
- 19 | impl domain::AggregateDefinition for Model {
+ 18 | impl domain::AggregateDefinition for Model {
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `assert_owner`
-   --> tests/ui/query_invalid.rs:98:1
+   --> tests/ui/query_invalid.rs:97:1
     |
- 98 | #[domain_queries(group = Unsupported)]
+ 97 | #[domain_queries(group = Unsupported)]
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `assert_owner`
 ...
-101 |     pub fn plain(root: &Root) -> bool { true }
+100 |     pub fn plain(root: &Root) -> bool { true }
     |            ----- required by a bound in this function
     = note: this error originates in the attribute macro `domain_queries` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 warning: unused variable: `root`
-   --> tests/ui/query_invalid.rs:101:18
+   --> tests/ui/query_invalid.rs:100:18
     |
-101 |     pub fn plain(root: &Root) -> bool { true }
+100 |     pub fn plain(root: &Root) -> bool { true }
     |                  ^^^^ help: if this is intentional, prefix it with an underscore: `_root`
     |
     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default

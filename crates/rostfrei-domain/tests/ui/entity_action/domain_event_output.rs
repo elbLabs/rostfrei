@@ -13,7 +13,6 @@ trait Actions {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = Item)]
 struct Id(u8);
 
 #[derive(Entity)]

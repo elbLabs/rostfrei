@@ -11,7 +11,6 @@ use serde_json::json;
 pub struct Inbox;
 
 #[derive(DomainIdentity)]
-#[domain(owner = MailboxRoot)]
 pub struct MailboxId(u64);
 
 #[derive(Entity)]
@@ -90,7 +89,6 @@ fn compiles_explicit_domain_model_to_json() {
         contexts: [Inbox],
         aggregates: [Mailbox],
         entities: [MailboxRoot],
-        identities: [MailboxId],
         value_objects: [EmailAddress],
         services: [MailTransfer],
         commands: [],
@@ -194,7 +192,6 @@ fn compiles_explicit_domain_model_to_json() {
                         "local": "mailbox-root",
                     },
                 },
-                "scalar": "u64",
             }],
             "commands": [],
             "domainEvents": [{
@@ -248,7 +245,6 @@ fn supports_empty_declaration_lists() {
         contexts: [],
         aggregates: [],
         entities: [],
-        identities: [],
         value_objects: [],
         services: [],
         commands: [],

@@ -35,7 +35,6 @@ enum WorkItemLifecycle {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = WorkItem)]
 struct WorkItemId(u64);
 
 #[derive(Entity)]
@@ -87,7 +86,6 @@ fn derives_owner_independent_state_metadata_without_model_projection() {
         contexts: [Operations],
         aggregates: [WorkQueue],
         entities: [WorkItem],
-        identities: [WorkItemId],
         value_objects: [],
         services: [],
         commands: [],

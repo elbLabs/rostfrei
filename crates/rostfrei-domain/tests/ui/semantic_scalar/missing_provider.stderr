@@ -3,9 +3,3 @@ error: expected `=`
   |
 7 | struct MissingField(#[domain(scalar)] Custom);
   |                                    ^
-
-error: expected `=`
-  --> tests/ui/semantic_scalar/missing_provider.rs:10:32
-   |
-10 | #[domain(owner = Entity, scalar)]
-   |                                ^

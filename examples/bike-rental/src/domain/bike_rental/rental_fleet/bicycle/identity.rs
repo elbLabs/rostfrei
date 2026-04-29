@@ -1,12 +1,9 @@
 use rostfrei::DomainIdentity;
 use serde::{Deserialize, Serialize};
 
-use super::Bicycle;
-
 #[derive(
     DomainIdentity, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Ord, PartialOrd, Serialize,
 )]
-#[domain(owner = Bicycle)]
 #[serde(try_from = "String")]
 pub struct BicycleId(String);
 

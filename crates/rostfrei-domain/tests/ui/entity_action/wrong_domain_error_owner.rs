@@ -13,7 +13,6 @@ trait Actions {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = Item)]
 struct ItemId(u8);
 
 #[derive(Entity)]
@@ -35,7 +34,6 @@ impl Actions for Item {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = Other)]
 struct OtherId(u8);
 
 #[derive(Entity)]

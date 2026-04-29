@@ -89,3 +89,8 @@ Executable relationships remain compiler checked where Rust has an explicit
 type contract. Descriptive vocabularies remain reusable without claiming an
 attachment that the framework cannot prove. Compiled domain models no longer
 imply entity capabilities, invariant inventories, or lifecycle projection.
+
+The identity side of `EntityDefinition` is refined by
+[ADR 0020](0020-slim-domain-identities.md), which makes `DomainIdentity` a
+metadata-free marker discovered through its entity rather than a separate
+compiled-model inventory.

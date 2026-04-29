@@ -1,13 +1,13 @@
 error[E0271]: type mismatch resolving `<WrongError as DomainErrorType>::Owner == Item`
-  --> tests/ui/entity_action/wrong_domain_error_owner.rs:31:6
+  --> tests/ui/entity_action/wrong_domain_error_owner.rs:30:6
    |
-31 | impl Actions for Item {
+30 | impl Actions for Item {
    |      ^^^^^^^ type mismatch resolving `<WrongError as DomainErrorType>::Owner == Item`
    |
 note: expected this to be `Item`
-  --> tests/ui/entity_action/wrong_domain_error_owner.rs:57:13
+  --> tests/ui/entity_action/wrong_domain_error_owner.rs:55:13
    |
-57 |     owner = Other,
+55 |     owner = Other,
    |             ^^^^^
 note: required by a bound in `Actions`
   --> tests/ui/entity_action/wrong_domain_error_owner.rs:9:1

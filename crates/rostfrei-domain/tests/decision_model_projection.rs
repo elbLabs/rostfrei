@@ -18,7 +18,6 @@ struct EntityProjectionDecisions;
 struct ProjectionContext;
 
 #[derive(DomainIdentity)]
-#[domain(owner = ProjectionRoot)]
 struct ProjectionIdentity(u64);
 
 #[derive(Aggregate)]
@@ -124,7 +123,6 @@ fn projected_model() -> Result<Value, DomainModelError> {
         contexts: [ProjectionContext],
         aggregates: [ProjectionAggregate],
         entities: [ProjectionRoot],
-        identities: [ProjectionIdentity],
         value_objects: [ProjectionInput, ProjectionOutput, ProjectionReason],
         services: [],
         commands: [],
@@ -184,7 +182,6 @@ struct SecondDuplicateGroup;
 struct DuplicateContext;
 
 #[derive(DomainIdentity)]
-#[domain(owner = DuplicateRoot)]
 struct DuplicateIdentity(u64);
 
 #[derive(Entity)]
@@ -247,7 +244,6 @@ const EMPTY_OUTCOME_DECISIONS: &[DecisionDescriptor] = &[DecisionDescriptor {
 struct EmptyOutcomeGroup;
 
 #[derive(DomainIdentity)]
-#[domain(owner = EmptyOutcomeRoot)]
 struct EmptyOutcomeIdentity(u64);
 
 #[derive(Entity)]
@@ -308,7 +304,6 @@ const DUPLICATE_OUTCOME_DECISIONS: &[DecisionDescriptor] = &[DecisionDescriptor 
 struct DuplicateOutcomeGroup;
 
 #[derive(DomainIdentity)]
-#[domain(owner = DuplicateOutcomeRoot)]
 struct DuplicateOutcomeIdentity(u64);
 
 #[derive(Entity)]

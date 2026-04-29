@@ -1,5 +1,5 @@
 use domain::{
-    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainIdentity, DomainIdentityType,
+    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainIdentity, DomainIdentityId,
     Entity, EntityDescriptor, EntityId, EntityType, FieldDescriptor, FieldKind, FieldValue,
     IdentityDescriptor, ScalarType,
 };
@@ -9,7 +9,6 @@ use domain::{
 struct Inbox;
 
 #[derive(DomainIdentity)]
-#[domain(owner = MailboxRoot)]
 struct MailboxId(u64);
 
 #[derive(Entity)]
@@ -50,13 +49,17 @@ fn derives_entity_descriptor_with_identity_field() {
             label: "Mailbox",
             identity: IdentityDescriptor {
                 field: "id",
-                identity: MailboxId::DESCRIPTOR.id,
+                identity: DomainIdentityId {
+                    owner: MailboxRoot::DESCRIPTOR.id,
+                },
             },
             fields: &[
                 FieldDescriptor {
                     name: "id",
                     value: FieldValue {
-                        kind: FieldKind::DomainIdentity(MailboxId::DESCRIPTOR.id),
+                        kind: FieldKind::DomainIdentity(DomainIdentityId {
+                            owner: MailboxRoot::DESCRIPTOR.id,
+                        }),
                         wrappers: &[],
                     },
                 },

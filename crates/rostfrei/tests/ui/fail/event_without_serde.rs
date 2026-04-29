@@ -5,7 +5,6 @@ use rostfrei::{Apply, Initialize};
 struct Context;
 
 #[derive(rostfrei::DomainIdentity)]
-#[rostfrei(owner = Root)]
 struct Id(u64);
 
 #[derive(rostfrei::Entity)]

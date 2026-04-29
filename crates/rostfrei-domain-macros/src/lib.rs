@@ -114,7 +114,7 @@ pub fn derive_aggregate_events(input: TokenStream) -> TokenStream {
         .into()
 }
 
-#[proc_macro_derive(DomainIdentity, attributes(domain, rostfrei))]
+#[proc_macro_derive(DomainIdentity)]
 pub fn derive_domain_identity(input: TokenStream) -> TokenStream {
     domain_identity::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)

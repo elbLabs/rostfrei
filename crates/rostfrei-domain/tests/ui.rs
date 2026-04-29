@@ -187,15 +187,11 @@ fn checks_tagged_value_objects() {
 fn checks_semantic_scalars() {
     let cases = trybuild::TestCases::new();
     cases.pass("tests/ui/semantic_scalar/field_provider.rs");
-    cases.pass("tests/ui/semantic_scalar/identity_provider.rs");
-    cases.pass("tests/ui/semantic_scalar/canonical_identity.rs");
     cases.compile_fail("tests/ui/semantic_scalar/missing_provider.rs");
     cases.compile_fail("tests/ui/semantic_scalar/malformed_provider.rs");
     cases.compile_fail("tests/ui/semantic_scalar/generic_provider.rs");
     cases.compile_fail("tests/ui/semantic_scalar/duplicate_conflicting_roles.rs");
-    cases.compile_fail("tests/ui/semantic_scalar/identity_field_attribute.rs");
     cases.compile_fail("tests/ui/semantic_scalar/field_provider_type_mismatch.rs");
-    cases.compile_fail("tests/ui/semantic_scalar/identity_provider_type_mismatch.rs");
 }
 
 #[test]

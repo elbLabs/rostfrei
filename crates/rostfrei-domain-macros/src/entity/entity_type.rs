@@ -21,28 +21,29 @@ pub fn assemble(
     quote! {
         impl #domain_path::EntityType for #name {
             const LOCAL_ID: &'static str = #id;
-            const DESCRIPTOR: #domain_path::EntityDescriptor =
-                #domain_path::EntityDescriptor {
-                    id: #domain_path::EntityId {
+            const DESCRIPTOR: #domain_path::EntityDescriptor = {
+                let id = #domain_path::EntityId {
                         aggregate: <<Self as #domain_path::EntityDefinition>::Owner as
                             #domain_path::AggregateType>::DESCRIPTOR.id,
                         local: #id,
-                    },
+                };
+                #domain_path::EntityDescriptor {
+                    id,
                     label: #label,
                     identity: #domain_path::IdentityDescriptor {
                         field: #identity_name,
-                        identity: <<Self as #domain_path::EntityDefinition>::Identity as
-                            #domain_path::DomainIdentityType>::DESCRIPTOR.id,
+                        identity: #domain_path::DomainIdentityId { owner: id },
                     },
                     fields: #fields,
-                };
+                }
+            };
         }
 
         const _: () = {
             fn assert_identity_field<Identity>()
             where
                 #name: #domain_path::EntityDefinition<Identity = Identity>,
-                Identity: #domain_path::DomainIdentityType<Owner = #name>,
+                Identity: #domain_path::DomainIdentity,
             {
             }
             let _ = assert_identity_field::<#identity_type>;

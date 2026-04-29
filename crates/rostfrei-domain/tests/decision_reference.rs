@@ -15,7 +15,6 @@ struct ReferenceDecisions;
 struct ReferenceContext;
 
 #[derive(DomainIdentity)]
-#[domain(owner = ReferenceRoot)]
 struct ReferenceIdentity(u64);
 
 #[derive(Aggregate)]

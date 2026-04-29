@@ -13,7 +13,6 @@ use domain::{
 pub struct Accounts;
 
 #[derive(DomainIdentity)]
-#[domain(owner = AccountRoot)]
 pub struct AccountId(u64);
 
 #[derive(Entity)]
@@ -182,7 +181,6 @@ impl ActionGroupType for DuplicateAccountExtensionActions {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = UnlistedRoot)]
 pub struct UnlistedId(u64);
 
 #[derive(Entity)]
@@ -218,7 +216,6 @@ impl UnlistedActions for UnlistedAggregate {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = OmittedActionsRoot)]
 struct OmittedActionsId(u64);
 
 #[derive(Entity)]
@@ -244,7 +241,6 @@ impl domain::AggregateDefinition for OmittedActionsAggregate {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = EmptyActionsRoot)]
 struct EmptyActionsId(u64);
 
 #[derive(Entity)]
@@ -270,7 +266,6 @@ impl domain::AggregateDefinition for EmptyActionsAggregate {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = DuplicateRoot)]
 pub struct DuplicateId(u64);
 
 #[derive(Entity)]
@@ -406,7 +401,6 @@ fn model_projects_explicit_extensions_and_non_aggregate_attachments() {
         contexts: [Accounts],
         aggregates: [Account, OmittedActionsAggregate, EmptyActionsAggregate],
         entities: [AccountRoot],
-        identities: [AccountId],
         value_objects: [RenameAccountInput],
         services: [],
         commands: [RenameAccount],
@@ -443,7 +437,6 @@ fn unattached_duplicate_aggregate_traits_are_not_registered() {
         contexts: [],
         aggregates: [DuplicateAggregate],
         entities: [],
-        identities: [],
         value_objects: [],
         services: [],
         commands: [],
@@ -460,7 +453,6 @@ fn extension_is_registered_when_same_named_contract_is_unattached() {
         contexts: [],
         aggregates: [Account],
         entities: [],
-        identities: [],
         value_objects: [],
         services: [],
         commands: [],

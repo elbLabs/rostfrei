@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate, AggregateType, BoundedContext, BoundedContextId, DomainIdentity, DomainIdentityType,
-    Entity, FieldDescriptor, FieldKind, FieldValue, FieldWrapper, ScalarType, SemanticScalar,
+    Aggregate, AggregateType, BoundedContext, BoundedContextId, DomainIdentity, Entity, EntityType,
+    FieldDescriptor, FieldKind, FieldValue, FieldWrapper, ScalarType, SemanticScalar,
     SemanticScalarDescriptor, ValueObject, ValueObjectDescriptor, ValueObjectId,
     ValueObjectOwnerId, ValueObjectShapeDescriptor, ValueObjectType, ValueObjectVariantDescriptor,
     ValueObjectVariantShapeDescriptor, domain_model,
@@ -28,7 +28,6 @@ impl SemanticScalar for ExternalCodeScalar {
 struct TaggedValues;
 
 #[derive(DomainIdentity)]
-#[domain(owner = RecordRoot)]
 struct RecordId(u64);
 
 #[derive(Entity)]
@@ -128,7 +127,9 @@ fn describes_mixed_tagged_enum_exactly() {
                                 FieldDescriptor {
                                     name: "identity",
                                     value: FieldValue {
-                                        kind: FieldKind::DomainIdentity(RecordId::DESCRIPTOR.id),
+                                        kind: FieldKind::DomainIdentity(
+                                            RecordRoot::DESCRIPTOR.identity.identity,
+                                        ),
                                         wrappers: &[],
                                     },
                                 },
@@ -171,7 +172,6 @@ fn projects_tagged_enum_variant_shapes_exactly() {
         contexts: [TaggedValues],
         aggregates: [Records],
         entities: [RecordRoot],
-        identities: [RecordId],
         value_objects: [NestedValue, MixedValue],
         services: [],
         commands: [],

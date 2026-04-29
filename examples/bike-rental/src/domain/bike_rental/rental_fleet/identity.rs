@@ -1,12 +1,9 @@
 use rostfrei::{DomainIdentity, StreamAggregateId};
 use serde::{Deserialize, Serialize};
 
-use super::RentalFleet;
-
 #[derive(
     DomainIdentity, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Ord, PartialOrd, Serialize,
 )]
-#[domain(owner = RentalFleet)]
 #[serde(try_from = "String")]
 pub struct FleetId(String);
 

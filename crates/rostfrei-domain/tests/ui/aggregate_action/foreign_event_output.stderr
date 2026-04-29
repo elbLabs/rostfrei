@@ -1,29 +1,29 @@
 error[E0271]: type mismatch resolving `<Owner as AggregateDefinition>::Event == OtherEvents`
-  --> tests/ui/aggregate_action/foreign_event_output.rs:76:6
+  --> tests/ui/aggregate_action/foreign_event_output.rs:74:6
    |
-76 | impl Actions for Owner {
+74 | impl Actions for Owner {
    |      ^^^^^^^ type mismatch resolving `<Owner as AggregateDefinition>::Event == OtherEvents`
    |
 note: expected this to be `OtherEvents`
-  --> tests/ui/aggregate_action/foreign_event_output.rs:73:18
+  --> tests/ui/aggregate_action/foreign_event_output.rs:71:18
    |
-73 |     type Event = domain::NoDomainEvents;
+71 |     type Event = domain::NoDomainEvents;
    |                  ^^^^^^^^^^^^^^^^^^^^^^
 note: required for `Changed` to implement `ActionOutputType<domain::__private::AggregateActionOutput<Owner>>`
-  --> tests/ui/aggregate_action/foreign_event_output.rs:53:12
+  --> tests/ui/aggregate_action/foreign_event_output.rs:51:12
    |
-51 | #[derive(domain::AggregateEvents)]
+49 | #[derive(domain::AggregateEvents)]
    |          ----------------------- type parameter would need to implement `ActionOutputType<domain::__private::AggregateActionOutput<Owner>>`
-52 | enum OtherEvents {
-53 |     Event0(Changed),
+50 | enum OtherEvents {
+51 |     Event0(Changed),
    |            ^^^^^^^
    = help: consider manually implementing `ActionOutputType<domain::__private::AggregateActionOutput<Owner>>` to avoid undesired bounds
    = note: associated types for the current `impl` cannot be restricted in `where` clauses
 note: required by a bound in `Actions`
-  --> tests/ui/aggregate_action/foreign_event_output.rs:60:1
+  --> tests/ui/aggregate_action/foreign_event_output.rs:58:1
    |
-60 | #[domain_actions(aggregate)]
+58 | #[domain_actions(aggregate)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
-61 | pub trait Actions {
+59 | pub trait Actions {
    |           ------- required by a bound in this trait
    = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

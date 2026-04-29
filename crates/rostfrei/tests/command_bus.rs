@@ -23,7 +23,6 @@ type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 struct Ledger;
 
 #[derive(DomainIdentity)]
-#[domain(owner = Account)]
 #[allow(dead_code)]
 struct AccountId(String);
 

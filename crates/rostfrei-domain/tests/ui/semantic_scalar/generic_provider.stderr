@@ -3,9 +3,3 @@ error: scalar provider must be a direct, non-generic type path
   |
 7 | struct GenericField(#[domain(scalar = Provider<u64>)] Custom);
   |                              ^^^^^^^^^^^^^^^^^^^^^^
-
-error: DomainIdentity scalar provider must be a direct, non-generic type path
-  --> tests/ui/semantic_scalar/generic_provider.rs:10:26
-   |
-10 | #[domain(owner = Entity, scalar = Provider<u64>)]
-   |                          ^^^^^^^^^^^^^^^^^^^^^^

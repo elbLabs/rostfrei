@@ -47,7 +47,6 @@ const fn action(owner: ActionOwnerId, local: &'static str) -> ActionDescriptor {
 pub struct Extensions;
 
 #[derive(DomainIdentity)]
-#[domain(owner = ExtensionRoot)]
 pub struct ExtensionRootId(u64);
 
 #[derive(Entity)]
@@ -249,9 +248,6 @@ fn accepts_extensions_for_every_registered_action_owner_kind() {
         .add_entity_type::<ExtensionRoot>()
         .expect("extension root should register");
     builder
-        .add_domain_identity_type::<ExtensionRootId>()
-        .expect("extension root identity should register");
-    builder
         .add_value_object_type::<ExtensionValue>()
         .expect("extension value should register");
     builder
@@ -428,7 +424,6 @@ fn domain_model_accepts_optional_action_extensions_and_still_allows_omission() {
         contexts: [],
         aggregates: [ExtensionOwner],
         entities: [],
-        identities: [],
         value_objects: [],
         services: [],
         commands: [],
@@ -441,7 +436,6 @@ fn domain_model_accepts_optional_action_extensions_and_still_allows_omission() {
         contexts: [],
         aggregates: [ExtensionOwner],
         entities: [],
-        identities: [],
         value_objects: [],
         services: [],
         commands: [],

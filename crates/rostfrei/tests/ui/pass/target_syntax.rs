@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 struct Banking;
 
 #[derive(rostfrei::DomainIdentity)]
-#[rostfrei(owner = Account)]
 struct AccountId(String);
 
 #[derive(rostfrei::Entity)]

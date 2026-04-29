@@ -1,35 +1,35 @@
 error: duplicate query id
-  --> tests/ui/query_metadata.rs:42:18
+  --> tests/ui/query_metadata.rs:41:18
    |
-42 |     #[query(id = "duplicate", label = "Two")]
+41 |     #[query(id = "duplicate", label = "Two")]
    |                  ^^^^^^^^^^^
 
 error: id must be nonempty lowercase kebab-case using ASCII letters and digits
-  --> tests/ui/query_metadata.rs:47:18
+  --> tests/ui/query_metadata.rs:46:18
    |
-47 |     #[query(id = "Bad_Id", label = "Invalid")]
+46 |     #[query(id = "Bad_Id", label = "Invalid")]
    |                  ^^^^^^^^
 
 error: label must not be empty
-  --> tests/ui/query_metadata.rs:52:35
+  --> tests/ui/query_metadata.rs:51:35
    |
-52 |     #[query(id = "blank", label = " ")]
+51 |     #[query(id = "blank", label = " ")]
    |                                   ^^^
 
 error: queries cannot be async, unsafe, extern, variadic, generic, or have where clauses
-  --> tests/ui/query_metadata.rs:58:9
+  --> tests/ui/query_metadata.rs:57:9
    |
-58 |     pub async fn asynchronous(root: &Root) -> bool {
+57 |     pub async fn asynchronous(root: &Root) -> bool {
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error: queries cannot be async, unsafe, extern, variadic, generic, or have where clauses
-  --> tests/ui/query_metadata.rs:63:9
+  --> tests/ui/query_metadata.rs:62:9
    |
-63 |     pub fn generic<T>(root: &Root) -> bool {
+62 |     pub fn generic<T>(root: &Root) -> bool {
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error: duplicate domain_queries argument `group`
-  --> tests/ui/query_metadata.rs:68:31
+  --> tests/ui/query_metadata.rs:67:31
    |
-68 | #[domain_queries(group = One, group = Two)]
+67 | #[domain_queries(group = One, group = Two)]
    |                               ^^^^^

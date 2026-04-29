@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 struct Context;
 
 #[derive(rostfrei::DomainIdentity)]
-#[rostfrei(owner = FirstRoot)]
 struct FirstId(u64);
 
 #[derive(rostfrei::Entity)]
@@ -22,7 +21,6 @@ impl rostfrei::EntityDefinition for FirstRoot {
 }
 
 #[derive(rostfrei::DomainIdentity)]
-#[rostfrei(owner = SecondRoot)]
 struct SecondId(u64);
 
 #[derive(rostfrei::Entity)]
