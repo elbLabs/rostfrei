@@ -119,6 +119,11 @@ The standalone event-definition API was subsequently removed by
 local semantic and wire metadata, while `AggregateEvents` remains responsible
 for owned descriptors and runtime membership.
 
+Domain-service context and action attachment were subsequently separated by
+[ADR 0027](0027-explicit-domain-service-definitions.md). A matching
+`DomainServiceDefinition` supplies the context, while service action groups are
+projected only through explicit model action extensions.
+
 Domain-error ownership and optional JSON generation were subsequently removed
 by [ADR 0025](0025-owner-independent-domain-errors.md). Errors keep their
 stable public code and message, while action return types and command handlers

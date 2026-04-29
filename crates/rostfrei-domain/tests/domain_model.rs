@@ -71,8 +71,12 @@ impl MailboxClosingActions for Mailbox {
 struct EmailAddress(String);
 
 #[derive(DomainService)]
-#[domain(id = "mail-transfer", label = "Mail transfer", context = Inbox)]
+#[domain(id = "mail-transfer", label = "Mail transfer")]
 struct MailTransfer;
+
+impl domain::DomainServiceDefinition for MailTransfer {
+    type Context = Inbox;
+}
 
 #[derive(DomainEvent)]
 #[domain(id = "mailbox-opened", label = "Mailbox opened")]

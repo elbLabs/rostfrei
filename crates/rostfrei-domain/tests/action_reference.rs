@@ -1,6 +1,6 @@
 use domain::{
     ActionId, ActionOwnerId, ActionOwnerType, ActionReference, AggregateId, BoundedContext,
-    BoundedContextId, DomainService, DomainServiceType, domain_actions,
+    BoundedContextId, DomainService, domain_actions,
 };
 use std::{collections::HashSet, fmt::Debug, hash::Hash, mem::size_of};
 
@@ -15,13 +15,12 @@ pub trait GeneratedReferenceActions {
 }
 
 #[derive(DomainService)]
-#[domain(
-    id = "reference-service",
-    label = "Reference service",
-    context = ReferenceContext,
-    actions = [GeneratedReferenceActions]
-)]
+#[domain(id = "reference-service", label = "Reference service")]
 struct ReferenceService;
+
+impl domain::DomainServiceDefinition for ReferenceService {
+    type Context = ReferenceContext;
+}
 
 impl GeneratedReferenceActions for ReferenceService {
     fn execute() {}
@@ -57,10 +56,10 @@ const SECONDARY_REFERENCE: ActionReference<SecondaryOwner> =
 const fn assert_reference_traits<T: Copy + Clone + Debug + Eq + Hash>() {}
 
 #[test]
-fn generated_reference_matches_attached_action_descriptor() {
+fn generated_reference_matches_contract_action_descriptor() {
     assert_eq!(
         GENERATED_REFERENCE.id(),
-        <ReferenceService as DomainServiceType>::ACTION_CONTRACTS[0][0].id
+        <ReferenceService as GeneratedReferenceActions>::__DOMAIN_ACTIONS[0].id
     );
 }
 

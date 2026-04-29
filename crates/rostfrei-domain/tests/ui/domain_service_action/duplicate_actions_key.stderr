@@ -1,5 +1,0 @@
-error: duplicate actions
-  --> tests/ui/domain_service_action/duplicate_actions_key.rs:12:5
-   |
-12 |     actions = [Actions]
-   |     ^^^^^^^

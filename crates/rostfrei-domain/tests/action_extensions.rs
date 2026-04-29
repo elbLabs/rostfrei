@@ -74,12 +74,12 @@ impl AttachedActions for ExtensionOwner {
 }
 
 #[derive(DomainService)]
-#[domain(
-    id = "extension-service",
-    label = "Extension service",
-    context = Extensions
-)]
+#[domain(id = "extension-service", label = "Extension service")]
 struct ExtensionService;
+
+impl domain::DomainServiceDefinition for ExtensionService {
+    type Context = Extensions;
+}
 
 struct FirstAggregateExtension;
 

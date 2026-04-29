@@ -157,9 +157,6 @@ impl DomainModelBuilder {
         self.add_domain_service(S::DESCRIPTOR);
         let owner = ActionOwnerId::DomainService(S::DESCRIPTOR.id);
         self.actions.register_owner(owner);
-        for contract in S::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract)?;
-        }
         Ok(())
     }
 

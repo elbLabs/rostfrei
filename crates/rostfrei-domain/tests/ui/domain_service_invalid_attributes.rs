@@ -1,27 +1,23 @@
 use domain::DomainService;
 
 #[derive(DomainService)]
-#[domain(label = "Missing id", context = Context)]
+#[domain(label = "Missing id")]
 struct MissingId;
 
 #[derive(DomainService)]
-#[domain(id = "missing-label", context = Context)]
+#[domain(id = "missing-label")]
 struct MissingLabel;
 
 #[derive(DomainService)]
-#[domain(id = "missing-context", label = "Missing context")]
-struct MissingContext;
-
-#[derive(DomainService)]
-#[domain(id = "Invalid", label = "Invalid", context = Context)]
+#[domain(id = "Invalid", label = "Invalid")]
 struct InvalidId;
 
 #[derive(DomainService)]
-#[domain(id = "blank-label", label = " ", context = Context)]
+#[domain(id = "blank-label", label = " ")]
 struct BlankLabel;
 
 #[derive(DomainService)]
-#[domain(id = "unsupported", label = "Unsupported", context = Context, owner = Context)]
+#[domain(id = "unsupported", label = "Unsupported", context = Context)]
 struct Unsupported;
 
 fn main() {}

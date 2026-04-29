@@ -11,8 +11,12 @@ pub trait Actions {
 }
 
 #[derive(DomainService)]
-#[domain(id = "service", label = "Service", context = Tests, actions = [Actions])]
+#[domain(id = "service", label = "Service")]
 struct Service;
+
+impl domain::DomainServiceDefinition for Service {
+    type Context = Tests;
+}
 
 impl Actions for Service {
     fn run() {}
