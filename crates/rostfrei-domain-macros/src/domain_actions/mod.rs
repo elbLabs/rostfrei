@@ -15,7 +15,8 @@ mod trait_attributes;
 mod trait_input;
 mod trait_validation;
 mod validation;
-mod value_object_trait_assembly;
-mod value_object_trait_validation;
 
 pub use expand::expand;
+
+#[cfg(test)]
+mod tests;

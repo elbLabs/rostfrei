@@ -1,16 +1,7 @@
-use rostfrei::ValueObject;
-
 use super::ImportedBicycle;
-use crate::domain::rental_fleet::RentalFleetAggregate;
 
-#[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
-#[domain(
-    id = "import-rental-fleet-input",
-    label = "Import rental fleet input",
-    owner = RentalFleetAggregate
-)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ImportRentalFleetInput {
-    #[domain(value_object)]
     pub(super) bicycles: Vec<ImportedBicycle>,
 }
 

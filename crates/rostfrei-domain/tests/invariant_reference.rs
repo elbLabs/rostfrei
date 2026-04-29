@@ -1,14 +1,7 @@
 #![allow(non_snake_case, clippy::clone_on_copy)]
 
-use domain::{
-    BoundedContext, InvariantId, InvariantReference, InvariantViolation, ValueObject,
-    domain_invariants,
-};
+use domain::{InvariantId, InvariantReference, InvariantViolation, ValueObject, domain_invariants};
 use std::{collections::HashSet, fmt::Debug, hash::Hash, mem::size_of};
-
-#[derive(BoundedContext)]
-#[domain(id = "reference-context", label = "Reference context")]
-struct ReferenceContext;
 
 #[domain_invariants]
 trait GeneratedReferenceInvariants {
@@ -17,7 +10,7 @@ trait GeneratedReferenceInvariants {
 }
 
 #[derive(ValueObject)]
-#[domain(id = "reference-value", label = "Reference value", owner = ReferenceContext)]
+#[domain(id = "reference-value", label = "Reference value")]
 struct ReferenceValue(bool);
 
 impl GeneratedReferenceInvariants for ReferenceValue {

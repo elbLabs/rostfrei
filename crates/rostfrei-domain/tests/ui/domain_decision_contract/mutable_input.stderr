@@ -1,5 +1,0 @@
-error: decision parameters cannot use mutable references; use `&T` or owned `T`
-  --> tests/ui/domain_decision_contract/mutable_input.rs:11:22
-   |
-11 |     fn decide(input: &mut Input) -> Outcome {
-   |                      ^^^^^^^^^^

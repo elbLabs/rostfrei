@@ -3,9 +3,8 @@
 use domain::DecisionOutcome;
 use domain::{
     Aggregate, AggregateId, AggregateType, BoundedContext, BoundedContextId, DecisionGroupType,
-    DecisionInputDescriptor, DecisionOutcomeShapeDescriptor, DecisionOutcomeType,
-    DecisionOutcomeValueDescriptor, DecisionOwnerId, DecisionOwnerType, DomainIdentity, Entity,
-    EntityId, EntityType, ScalarType, ValueObject, ValueObjectType, domain_decisions,
+    DecisionOutcomeType, DecisionOwnerId, DecisionOwnerType, DomainIdentity, Entity, EntityId,
+    EntityType, domain_decisions,
 };
 
 struct AffordabilityDecisions;
@@ -46,21 +45,17 @@ impl domain::EntityDefinition for ApplicationRoot {
     type Identity = ApplicationId;
 }
 
-#[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
-#[domain(id = "approval-evidence", label = "Approval evidence", owner = LoanApplication)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ApprovalEvidence {
     rationale: String,
 }
 
-#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
-#[domain(id = "decision-denial", label = "Decision denial", owner = LoanApplication)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DecisionDenial {
     Unaffordable,
     IdentityNotVerified,
 }
 
-#[derive(ValueObject)]
-#[domain(id = "classification", label = "Classification", owner = LoanApplication)]
 struct Classification(String);
 
 #[derive(DecisionOutcome, Debug, Eq, PartialEq)]
@@ -261,72 +256,32 @@ fn generated_descriptors_preserve_group_method_and_outcome_order() {
             .collect::<Vec<_>>(),
         ["ready", "approved", "declined"]
     );
-    assert_eq!(outcomes[0].shape, DecisionOutcomeShapeDescriptor::Unit);
     assert_eq!(
-        outcomes[1].shape,
-        DecisionOutcomeShapeDescriptor::Tuple {
-            fields: &[
-                DecisionOutcomeValueDescriptor::ValueObject(ApprovalEvidence::DESCRIPTOR.id),
-                DecisionOutcomeValueDescriptor::Scalar(ScalarType::Bool),
-                DecisionOutcomeValueDescriptor::Scalar(ScalarType::U16),
-            ],
-        }
-    );
-    let DecisionOutcomeShapeDescriptor::Struct { fields } = outcomes[2].shape else {
-        panic!("declined should retain its named struct shape");
-    };
-    assert_eq!(
-        fields.iter().map(|field| field.name).collect::<Vec<_>>(),
-        ["denial", "retryable", "rank"]
-    );
-    assert_eq!(
-        fields.iter().map(|field| field.value).collect::<Vec<_>>(),
-        [
-            DecisionOutcomeValueDescriptor::ValueObject(DecisionDenial::DESCRIPTOR.id),
-            DecisionOutcomeValueDescriptor::Scalar(ScalarType::Bool),
-            DecisionOutcomeValueDescriptor::Scalar(ScalarType::U8),
-        ]
+        outcomes
+            .iter()
+            .map(|outcome| outcome.label)
+            .collect::<Vec<_>>(),
+        ["Ready", "Approved", "Declined"]
     );
 }
 
 #[test]
-fn owned_and_borrowed_inputs_have_equivalent_descriptor_metadata() {
+fn ordinary_owned_and_borrowed_inputs_do_not_add_descriptor_metadata() {
     let routing = <routing::RoutingDecisions as DecisionGroupType>::DECISIONS;
-    assert_eq!(routing[0].parameters.len(), 1);
-    assert_eq!(routing[0].parameters, routing[1].parameters);
-    assert_eq!(routing[0].parameters[0].name, "type");
-    assert_eq!(
-        routing[0].parameters[0].input,
-        DecisionInputDescriptor::ValueObject(Classification::DESCRIPTOR.id)
-    );
+    assert_eq!(routing[0].id.local, "classify-owned");
+    assert_eq!(routing[1].id.local, "classify-borrowed");
 }
 
 #[test]
-fn field_cfg_filters_tuple_and_struct_metadata_and_type_assertions() {
+fn field_cfg_does_not_affect_semantic_outcome_metadata() {
     let outcomes = <CfgFieldOutcome as DecisionOutcomeType>::OUTCOMES;
 
     assert_eq!(outcomes.len(), 2);
     assert_eq!(
-        outcomes[0].shape,
-        DecisionOutcomeShapeDescriptor::Tuple {
-            fields: &[
-                DecisionOutcomeValueDescriptor::Scalar(ScalarType::U8),
-                DecisionOutcomeValueDescriptor::Scalar(ScalarType::Bool),
-            ],
-        }
-    );
-    let DecisionOutcomeShapeDescriptor::Struct { fields } = outcomes[1].shape else {
-        panic!("cfg-filtered named fields should retain a struct shape");
-    };
-    assert_eq!(
-        fields.iter().map(|field| field.name).collect::<Vec<_>>(),
-        ["first", "last"]
-    );
-    assert_eq!(
-        fields.iter().map(|field| field.value).collect::<Vec<_>>(),
-        [
-            DecisionOutcomeValueDescriptor::Scalar(ScalarType::U16),
-            DecisionOutcomeValueDescriptor::Scalar(ScalarType::Bool),
-        ]
+        outcomes
+            .iter()
+            .map(|outcome| outcome.local_id)
+            .collect::<Vec<_>>(),
+        ["tuple", "struct"]
     );
 }

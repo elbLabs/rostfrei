@@ -30,6 +30,7 @@ fn value(descriptor: &FieldDescriptor) -> Value {
         FieldKind::AggregateReference(id) => {
             json!({ "kind": "aggregateReference", "aggregate": aggregate_id(id) })
         }
+        FieldKind::Opaque => json!({ "kind": "opaque" }),
     };
     for wrapper in descriptor.value.wrappers.iter().rev() {
         value = match wrapper {

@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use syn::{ItemTrait, Path};
 
 use super::action::Action;
-use super::contract_trait_assembly::{self, Configuration, OutputPolicy};
+use super::contract_trait_assembly::{self, Configuration};
 
 pub fn assemble(
     domain_path: &Path,
@@ -15,9 +15,6 @@ pub fn assemble(
         actions,
         Configuration {
             owner_supertrait: syn::parse_quote!(#domain_path::DomainServiceActionOwnerType),
-            output_policy: OutputPolicy::Declared(syn::parse_quote!(
-                #domain_path::__private::DomainServiceActionOutput
-            )),
             owner_predicate: None,
         },
     )

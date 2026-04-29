@@ -1,5 +1,0 @@
-error: expected square brackets
- --> tests/ui/value_object_action/malformed_actions_list.rs:7:66
-  |
-7 | #[domain(id = "name", label = "Name", owner = Context, actions = Actions)]
-  |                                                                  ^^^^^^^

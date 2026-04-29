@@ -94,3 +94,8 @@ The identity side of `EntityDefinition` is refined by
 [ADR 0020](0020-slim-domain-identities.md), which makes `DomainIdentity` a
 metadata-free marker discovered through its entity rather than a separate
 compiled-model inventory.
+
+Value-object declarations and operation-specific DTOs are separated by
+[ADR 0021](0021-slim-value-objects-and-ordinary-dtos.md). Semantic value
+objects retain ID and label metadata, while action inputs and query outputs are
+ordinary Rust types with no inferred model shape.

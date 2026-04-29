@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use crate::{ActionId, ActionOwnerId};
 
-use super::{aggregate, domain_service, entity, value_object};
+use super::{aggregate, domain_service, entity};
 
 pub(super) fn project(id: ActionId) -> Value {
     json!({
@@ -21,9 +21,6 @@ fn owner(id: ActionOwnerId) -> Value {
         }
         ActionOwnerId::Entity(id) => {
             json!({ "kind": "entity", "id": entity::project(id) })
-        }
-        ActionOwnerId::ValueObject(id) => {
-            json!({ "kind": "valueObject", "id": value_object::project(id) })
         }
     }
 }

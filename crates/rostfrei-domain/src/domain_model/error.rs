@@ -60,11 +60,6 @@ pub enum DomainModelError {
     DuplicateDecisionOutcomeId {
         id: Box<DecisionOutcomeId>,
     },
-    DecisionReferenceInventoryViolation {
-        decision_id: Box<DecisionId>,
-        value_object_id: Box<ValueObjectId>,
-        location: String,
-    },
     FieldReferenceInventoryViolation {
         reference: DomainModelReference,
         location: String,
@@ -115,11 +110,6 @@ impl fmt::Display for DomainModelError {
                 fmt_empty_decision(formatter, decision_id)
             }
             Self::DuplicateDecisionOutcomeId { id } => fmt_duplicate_outcome(formatter, id),
-            Self::DecisionReferenceInventoryViolation {
-                decision_id,
-                value_object_id,
-                location,
-            } => fmt_decision_reference(formatter, decision_id, value_object_id, location),
             Self::FieldReferenceInventoryViolation {
                 reference,
                 location,
@@ -198,18 +188,6 @@ fn fmt_action_reference(
         formatter,
         "Action reference inventory violation: action {action_id:?} references missing {} at descriptor location `{location}`; add it to domain_model! inventory key `{inventory_key}`",
         ReferenceDebug(reference)
-    )
-}
-
-fn fmt_decision_reference(
-    formatter: &mut fmt::Formatter<'_>,
-    decision_id: &DecisionId,
-    value_object_id: &ValueObjectId,
-    location: &str,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "Decision reference inventory violation: decision {decision_id:?} references missing {value_object_id:?} at descriptor location `{location}`; add it to domain_model! inventory key `value_objects`"
     )
 }
 

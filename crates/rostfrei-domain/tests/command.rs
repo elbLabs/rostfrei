@@ -5,8 +5,7 @@ use std::convert::Infallible;
 use domain::{
     Aggregate, AggregateType, BoundedContext, Command, CommandOwnerId, CommandType, DomainIdentity,
     DomainModelError, DomainService, Entity, EntityType, FieldKind, FieldWrapper,
-    JsonCommandPayload, JsonErrorPayload, ValueObject, ValueObjectType, domain_actions,
-    domain_model,
+    JsonCommandPayload, JsonErrorPayload, ValueObject, domain_actions, domain_model,
 };
 use serde_json::{Value, json};
 
@@ -40,7 +39,7 @@ impl domain::AggregateDefinition for CatalogAggregate {
 }
 
 #[derive(ValueObject)]
-#[domain(id = "status", label = "Status", owner = Catalog)]
+#[domain(id = "status", label = "Status")]
 pub struct Status(String);
 
 #[derive(Command)]
@@ -180,16 +179,13 @@ fn inventories_aggregate_and_domain_service_commands() {
     assert_eq!(model["commands"][0]["id"]["owner"]["kind"], "aggregate");
     assert_eq!(model["commands"][1]["id"]["owner"]["kind"], "domainService");
     assert_eq!(model["commands"][1]["id"]["local"], "sync-catalog");
-    assert_eq!(
-        model["actions"][0]["input"]["id"],
-        model["valueObjects"][0]["id"]
-    );
+    assert_eq!(model["actions"].as_array().unwrap().len(), 2);
     assert!(
         model["actions"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|action| action["input"]["kind"] == "valueObject")
+            .all(|action| action.get("input").is_none() && action.get("output").is_none())
     );
 }
 

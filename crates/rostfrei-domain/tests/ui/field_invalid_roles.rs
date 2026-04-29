@@ -28,7 +28,7 @@ impl domain::EntityDefinition for Unsupported {
 }
 
 #[derive(ValueObject)]
-#[domain(id = "bad", label = "Bad", owner = Owner)]
+#[domain(id = "bad", label = "Bad")]
 struct EntityInValueObject(#[domain(entity)] Other);
 
 fn main() {}

@@ -1,17 +1,17 @@
 error[E0271]: type mismatch resolving `<U64Scalar as SemanticScalar>::Value == String`
-  --> tests/ui/semantic_scalar/field_provider_type_mismatch.rs:23:35
+  --> tests/ui/semantic_scalar/field_provider_type_mismatch.rs:17:35
    |
-23 | struct Mismatch(#[domain(scalar = U64Scalar)] String);
+17 | struct Mismatch(#[domain(scalar = U64Scalar)] String);
    |                                   ^^^^^^^^^ type mismatch resolving `<U64Scalar as SemanticScalar>::Value == String`
    |
 note: expected this to be `std::string::String`
-  --> tests/ui/semantic_scalar/field_provider_type_mismatch.rs:8:18
+  --> tests/ui/semantic_scalar/field_provider_type_mismatch.rs:6:18
    |
- 8 |     type Value = u64;
+ 6 |     type Value = u64;
    |                  ^^^
 note: required by a bound in `assert_semantic_scalar`
-  --> tests/ui/semantic_scalar/field_provider_type_mismatch.rs:21:10
+  --> tests/ui/semantic_scalar/field_provider_type_mismatch.rs:15:10
    |
-21 | #[derive(ValueObject)]
+15 | #[derive(DomainEvent)]
    |          ^^^^^^^^^^^ required by this bound in `assert_semantic_scalar`
-   = note: this error originates in the derive macro `ValueObject` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the derive macro `DomainEvent` (in Nightly builds, run with -Z macro-backtrace for more info)

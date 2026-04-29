@@ -11,4 +11,5 @@ pub enum FieldKind {
     Entity(EntityId),
     ValueObject(ValueObjectId),
     AggregateReference(AggregateId),
+    Opaque,
 }

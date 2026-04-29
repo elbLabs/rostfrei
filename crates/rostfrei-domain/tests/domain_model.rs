@@ -67,7 +67,7 @@ impl MailboxClosingActions for Mailbox {
 }
 
 #[derive(ValueObject)]
-#[domain(id = "email-address", label = "Email address", owner = Inbox)]
+#[domain(id = "email-address", label = "Email address")]
 struct EmailAddress(String);
 
 #[derive(DomainService)]
@@ -155,28 +155,15 @@ fn compiles_explicit_domain_model_to_json() {
                             "kind": "list",
                             "element": {
                                 "kind": "valueObject",
-                                "id": {
-                                    "owner": { "kind": "boundedContext", "id": "inbox" },
-                                    "local": "email-address",
-                                },
+                                "id": "email-address",
                             },
                         },
                     },
                 }],
             }],
             "valueObjects": [{
-                "id": {
-                    "owner": {
-                        "kind": "boundedContext",
-                        "id": "inbox",
-                    },
-                    "local": "email-address",
-                },
+                "id": "email-address",
                 "label": "Email address",
-                "fields": [{
-                    "name": "0",
-                    "value": { "kind": "scalar", "scalar": "string" },
-                }],
             }],
             "domainServices": [{
                 "id": {

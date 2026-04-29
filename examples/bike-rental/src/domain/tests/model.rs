@@ -29,6 +29,23 @@ fn omits_unattached_capabilities_and_lifecycle_metadata() {
     assert_eq!(identities[0]["id"]["owner"]["local"], "rental-fleet-root");
     assert_eq!(identities[1]["id"]["owner"]["local"], "bicycle");
 
+    assert_eq!(
+        model["valueObjects"],
+        json!([
+            { "id": "bicycle-status", "label": "Bicycle status" },
+            { "id": "bicycle-condition", "label": "Bicycle condition" }
+        ])
+    );
+
+    let availability = model["queries"]
+        .as_array()
+        .expect("queries should be an array")
+        .iter()
+        .find(|query| query["id"]["local"] == "bicycle-availability")
+        .expect("bicycle availability query should be projected");
+    assert!(availability.get("input").is_none());
+    assert!(availability.get("output").is_none());
+
     let bicycle = model["entities"]
         .as_array()
         .expect("entities should be an array")

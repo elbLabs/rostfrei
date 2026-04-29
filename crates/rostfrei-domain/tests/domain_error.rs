@@ -35,7 +35,7 @@ impl domain::AggregateDefinition for Mailbox {
 }
 
 #[derive(ValueObject)]
-#[domain(id = "subject", label = "Subject", owner = Mailbox)]
+#[domain(id = "subject", label = "Subject")]
 struct Subject(String);
 
 #[derive(DomainService)]
@@ -143,10 +143,7 @@ fn derives_descriptors_for_each_owner() {
     assert_eq!(
         SubjectBlank::DESCRIPTOR,
         descriptor(
-            DomainErrorOwnerId::ValueObject(ValueObjectId {
-                owner: domain::ValueObjectOwnerId::Aggregate(aggregate),
-                local: "subject",
-            }),
+            DomainErrorOwnerId::ValueObject(ValueObjectId("subject")),
             "subject-blank",
             "Subject blank",
             "SUBJECT_BLANK",

@@ -11,7 +11,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     let aggregate_action_owner = assemble_aggregate_action_owner(domain_path, name);
     let decision_owner = assemble_decision_owner(domain_path, name);
     let aggregate_decision_owner = assemble_aggregate_decision_owner(domain_path, name);
-    let value_object_owner = assemble_value_object_owner(domain_path, name);
     let domain_error_owner = assemble_domain_error_owner(domain_path, name);
     let command_owner = assemble_command_owner(domain_path, name);
     quote! {
@@ -21,7 +20,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
         #aggregate_action_owner
         #decision_owner
         #aggregate_decision_owner
-        #value_object_owner
         #domain_error_owner
         #command_owner
     }
@@ -85,17 +83,6 @@ fn assemble_domain_error_owner(domain_path: &Path, name: &Ident) -> TokenStream 
         impl #domain_path::DomainErrorOwnerType for #name {
             const DOMAIN_ERROR_OWNER_ID: #domain_path::DomainErrorOwnerId =
                 #domain_path::DomainErrorOwnerId::Aggregate(
-                    <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
-                );
-        }
-    }
-}
-
-fn assemble_value_object_owner(domain_path: &Path, name: &Ident) -> TokenStream {
-    quote! {
-        impl #domain_path::ValueObjectOwnerType for #name {
-            const VALUE_OBJECT_OWNER_ID: #domain_path::ValueObjectOwnerId =
-                #domain_path::ValueObjectOwnerId::Aggregate(
                     <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
                 );
         }

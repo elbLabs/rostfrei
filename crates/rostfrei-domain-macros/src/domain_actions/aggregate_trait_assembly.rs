@@ -6,7 +6,7 @@ use syn::spanned::Spanned;
 use syn::{Ident, ItemTrait, Path, WherePredicate};
 
 use super::action::Action;
-use super::contract_trait_assembly::{self, Configuration, OutputPolicy};
+use super::contract_trait_assembly::{self, Configuration};
 use super::signature::ParsedSignature;
 
 pub fn assemble(
@@ -40,9 +40,6 @@ pub fn assemble(
         actions,
         Configuration {
             owner_supertrait: syn::parse_quote!(#domain_path::AggregateActionOwnerType),
-            output_policy: OutputPolicy::Declared(syn::parse_quote!(
-                #domain_path::__private::AggregateActionOutput
-            )),
             owner_predicate: (!has_instance).then_some(add_root_predicate),
         },
     )?;

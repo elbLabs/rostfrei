@@ -24,10 +24,9 @@ pub mod extension {
 }
 
 pub use action::{
-    ActionDescriptor, ActionId, ActionInputDescriptor, ActionInputType, ActionOutputDescriptor,
-    ActionOutputType, ActionOwnerId, ActionOwnerType, ActionReference, AggregateActionOwnerType,
-    DomainServiceActionOwnerType, EntityActionOwnerType, InternalActionOwnerType,
-    PublicActionOwnerType, ValueObjectActionOwnerType,
+    ActionDescriptor, ActionId, ActionOwnerId, ActionOwnerType, ActionReference,
+    AggregateActionOwnerType, DomainServiceActionOwnerType, EntityActionOwnerType,
+    InternalActionOwnerType, PublicActionOwnerType,
 };
 pub use aggregate::{
     AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId, AggregateType,
@@ -39,11 +38,9 @@ pub use command::{CommandDescriptor, CommandId, CommandOwnerId, CommandOwnerType
 pub use decision::AttachedDecisionGroup;
 pub use decision::{
     AggregateDecisionOwnerType, DecisionDescriptor, DecisionGroupType, DecisionId,
-    DecisionImplementationDescriptor, DecisionInputDescriptor, DecisionInputType,
-    DecisionOutcomeDescriptor, DecisionOutcomeId, DecisionOutcomeNamedFieldDescriptor,
-    DecisionOutcomeShapeDescriptor, DecisionOutcomeType, DecisionOutcomeValueDescriptor,
-    DecisionOutcomeValueType, DecisionOwnerId, DecisionOwnerType, DecisionParameterDescriptor,
-    DecisionReference, EntityDecisionOwnerType,
+    DecisionImplementationDescriptor, DecisionOutcomeDescriptor, DecisionOutcomeId,
+    DecisionOutcomeType, DecisionOwnerId, DecisionOwnerType, DecisionReference,
+    EntityDecisionOwnerType,
 };
 pub use domain_error::{
     DomainErrorDescriptor, DomainErrorId, DomainErrorOwnerId, DomainErrorOwnerType, DomainErrorType,
@@ -56,10 +53,7 @@ pub use domain_identity::{DomainIdentity, DomainIdentityId};
 #[doc(hidden)]
 pub use domain_identity::{DomainIdentityDescriptor, DomainIdentityType};
 pub use domain_model::{DomainModelError, DomainModelReference};
-pub use domain_query::{
-    QueryDescriptor, QueryGroupType, QueryId, QueryInputDescriptor, QueryInputType,
-    QueryOutputDescriptor, QueryOutputType,
-};
+pub use domain_query::{QueryDescriptor, QueryGroupType, QueryId};
 pub use domain_service::{DomainServiceDescriptor, DomainServiceId, DomainServiceType};
 pub use domain_test::{DomainTestDescriptor, DomainTestSubject};
 pub use entity::{EntityDefinition, EntityDescriptor, EntityId, EntityType, IdentityDescriptor};
@@ -79,18 +73,10 @@ pub use rostfrei_domain_macros::{
     domain_actions, domain_decision_test, domain_decisions, domain_invariant_test,
     domain_invariants, domain_lifecycle_test, domain_queries,
 };
-pub use value_object::{
-    ValueObjectDescriptor, ValueObjectId, ValueObjectOwnerId, ValueObjectOwnerType,
-    ValueObjectShapeDescriptor, ValueObjectType, ValueObjectVariantDescriptor,
-    ValueObjectVariantShapeDescriptor,
-};
+pub use value_object::{ValueObject, ValueObjectDescriptor, ValueObjectId};
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::action::output::{
-        AggregateActionOutput, DomainServiceActionOutput, EntityActionOutput, SameType,
-        ValueObjectActionOutput,
-    };
     pub use crate::decision::AttachedDecisionGroup;
     pub use crate::domain_identity::{DomainIdentityDescriptor, DomainIdentityType};
     pub use crate::domain_model::{DomainModelBuilder, try_build};

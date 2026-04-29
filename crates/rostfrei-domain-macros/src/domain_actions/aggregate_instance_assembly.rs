@@ -30,15 +30,10 @@ pub fn assemble(
     });
     let action_bounds = actions.iter().map(|action| {
         let signature = action.signature;
-        let input = signature
-            .input
-            .as_ref()
-            .map(|input| quote!(#input: #domain_path::ActionInputType<__RostfreiAggregate>,));
         let error = signature.error.as_ref().map(
             |error| quote!(#error: #domain_path::DomainErrorType<Owner = __RostfreiAggregate>,),
         );
         quote! {
-            #input
             #error
         }
     });

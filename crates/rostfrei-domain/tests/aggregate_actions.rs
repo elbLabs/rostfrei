@@ -2,9 +2,8 @@
 
 use domain::extension::ActionGroupType;
 use domain::{
-    ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
-    Aggregate, AggregateType, BoundedContext, Command, DomainError, DomainErrorType, DomainEvent,
-    DomainEventType, DomainIdentity, Entity, ValueObject, ValueObjectType, domain_actions,
+    ActionDescriptor, ActionId, ActionOwnerId, Aggregate, AggregateType, BoundedContext, Command,
+    DomainError, DomainErrorType, DomainEvent, DomainIdentity, Entity, domain_actions,
     domain_model,
 };
 
@@ -62,8 +61,6 @@ pub enum AccountEvents {
 #[domain(id = "rename-account", label = "Rename account", owner = Account)]
 pub struct RenameAccount;
 
-#[derive(ValueObject)]
-#[domain(id = "rename-account-input", label = "Rename account input", owner = Account)]
 pub struct RenameAccountInput;
 
 #[derive(DomainEvent, Debug, Eq, PartialEq)]
@@ -155,8 +152,6 @@ impl ActionGroupType for AccountExtensionActions {
             local: "extension",
         },
         label: "Account extension action",
-        input: None,
-        output: None,
         raises: &[],
         error: None,
     }];
@@ -173,8 +168,6 @@ impl ActionGroupType for DuplicateAccountExtensionActions {
             local: "open",
         },
         label: "Duplicate open",
-        input: None,
-        output: None,
         raises: &[],
         error: None,
     }];
@@ -361,26 +354,9 @@ fn aggregate_action_contracts_preserve_method_order_and_descriptors() {
         ["freeze", "revision"]
     );
 
-    assert_eq!(contracts[0][0].input, None);
-    assert_eq!(
-        contracts[0][0].output,
-        Some(ActionOutputDescriptor::DomainEvent(
-            <AccountChanged as DomainEventType<Account>>::DESCRIPTOR.id
-        ))
-    );
+    assert!(contracts[0][0].raises.is_empty());
     assert_eq!(contracts[0][0].error, None);
-    assert_eq!(
-        contracts[0][1].input,
-        Some(ActionInputDescriptor::ValueObject(
-            RenameAccountInput::DESCRIPTOR.id
-        ))
-    );
-    assert_eq!(
-        contracts[0][1].output,
-        Some(ActionOutputDescriptor::DomainEvent(
-            <AccountChanged as DomainEventType<Account>>::DESCRIPTOR.id
-        ))
-    );
+    assert!(contracts[0][1].raises.is_empty());
     assert_eq!(contracts[0][1].error, Some(AccountDenied::DESCRIPTOR.id));
 
     let implemented_only = <Account as contracts::ImplementedOnly>::__DOMAIN_ACTIONS;
@@ -401,7 +377,7 @@ fn model_projects_explicit_extensions_and_non_aggregate_attachments() {
         contexts: [Accounts],
         aggregates: [Account, OmittedActionsAggregate, EmptyActionsAggregate],
         entities: [AccountRoot],
-        value_objects: [RenameAccountInput],
+        value_objects: [],
         services: [],
         commands: [RenameAccount],
         errors: [AccountDenied],

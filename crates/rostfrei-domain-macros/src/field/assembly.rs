@@ -38,7 +38,7 @@ pub fn assemble_assertions_with_path(
         const _: () = {
             fn assert_identity<T: #domain_path::__private::DomainIdentityType>() {}
             fn assert_entity<T, O>() where T: #domain_path::EntityDefinition<Owner = O>, O: #domain_path::AggregateType {}
-            fn assert_value_object<T: #domain_path::ValueObjectType>() {}
+            fn assert_value_object<T: #domain_path::ValueObject>() {}
             fn assert_semantic_scalar<P, V>()
             where
                 P: #domain_path::SemanticScalar<Value = V>,
@@ -70,7 +70,7 @@ fn assemble_assertion(field: &Field, owner: Option<&TypePath>) -> syn::Result<To
         Role::SemanticScalar(provider) => {
             quote!(assert_semantic_scalar::<#provider, #base>();)
         }
-        Role::Scalar(_) => quote!(),
+        Role::Scalar(_) | Role::Opaque => quote!(),
     };
     Ok(assertion)
 }
@@ -88,10 +88,9 @@ fn assemble_kind(domain_path: &Path, field: &Field) -> TokenStream {
             }))
         }
         Role::ValueObject => {
-            quote!(#domain_path::FieldKind::ValueObject(#domain_path::ValueObjectId {
-                owner: <<#base as #domain_path::ValueObjectType>::Owner as #domain_path::ValueObjectOwnerType>::VALUE_OBJECT_OWNER_ID,
-                local: <#base as #domain_path::ValueObjectType>::LOCAL_ID,
-            }))
+            quote!(#domain_path::FieldKind::ValueObject(
+                <#base as #domain_path::ValueObject>::DESCRIPTOR.id,
+            ))
         }
         Role::AggregateReference(target) => {
             quote!(#domain_path::FieldKind::AggregateReference(<#target as #domain_path::AggregateType>::DESCRIPTOR.id))
@@ -103,6 +102,7 @@ fn assemble_kind(domain_path: &Path, field: &Field) -> TokenStream {
             let scalar = scalar_tokens(domain_path, scalar);
             quote!(#domain_path::FieldKind::Scalar(#scalar))
         }
+        Role::Opaque => quote!(#domain_path::FieldKind::Opaque),
     }
 }
 

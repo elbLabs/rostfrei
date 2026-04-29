@@ -1,5 +1,0 @@
-error: value object transformations require a consuming self receiver
- --> tests/ui/value_object_action/mut_borrowed_receiver.rs:6:18
-  |
-6 |     fn normalize(&mut self) -> Self;
-  |                  ^^^^^^^^^

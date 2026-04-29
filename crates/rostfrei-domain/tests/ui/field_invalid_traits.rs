@@ -78,7 +78,7 @@ impl domain::EntityDefinition for Wrong {
 }
 
 #[derive(ValueObject)]
-#[domain(id = "wrong-value", label = "Wrong value", owner = Context)]
+#[domain(id = "wrong-value", label = "Wrong value")]
 struct WrongValue(#[domain(value_object)] Plain);
 
 fn main() {}

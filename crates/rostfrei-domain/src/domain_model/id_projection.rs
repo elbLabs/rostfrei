@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use crate::{
     ActionId, ActionOwnerId, AggregateId, CommandId, CommandOwnerId, DecisionId, DecisionOutcomeId,
     DecisionOwnerId, DomainErrorId, DomainErrorOwnerId, DomainEventId, DomainIdentityId, EntityId,
-    QueryId, ValueObjectId, ValueObjectOwnerId,
+    QueryId, ValueObjectId,
 };
 
 pub(super) fn action(id: ActionId) -> Value {
@@ -26,10 +26,6 @@ pub(super) fn action_owner(id: ActionOwnerId) -> Value {
         ActionOwnerId::Entity(id) => json!({
             "kind": "entity",
             "id": entity(id),
-        }),
-        ActionOwnerId::ValueObject(id) => json!({
-            "kind": "valueObject",
-            "id": value_object(id),
         }),
     }
 }
@@ -114,10 +110,7 @@ pub(super) fn query(id: QueryId) -> Value {
 }
 
 pub(super) fn value_object(id: ValueObjectId) -> Value {
-    json!({
-        "owner": value_object_owner(id.owner),
-        "local": id.local,
-    })
+    Value::String(id.0.to_owned())
 }
 
 fn command_owner(id: CommandOwnerId) -> Value {
@@ -129,23 +122,6 @@ fn command_owner(id: CommandOwnerId) -> Value {
         CommandOwnerId::DomainService(id) => json!({
             "kind": "domainService",
             "id": { "context": id.context.0, "local": id.local },
-        }),
-    }
-}
-
-fn value_object_owner(id: ValueObjectOwnerId) -> Value {
-    match id {
-        ValueObjectOwnerId::BoundedContext(id) => json!({
-            "kind": "boundedContext",
-            "id": id.0,
-        }),
-        ValueObjectOwnerId::Aggregate(id) => json!({
-            "kind": "aggregate",
-            "id": aggregate(id),
-        }),
-        ValueObjectOwnerId::Entity(id) => json!({
-            "kind": "entity",
-            "id": entity(id),
         }),
     }
 }

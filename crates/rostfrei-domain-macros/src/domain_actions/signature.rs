@@ -3,7 +3,6 @@ use syn::{FnArg, GenericArgument, Pat, PathArguments, ReturnType, Signature, Typ
 
 pub struct ParsedSignature {
     pub root: Option<Type>,
-    pub input: Option<Type>,
     pub output: Type,
     pub error: Option<Type>,
 }
@@ -45,38 +44,6 @@ pub fn parse_domain_service(signature: &Signature) -> syn::Result<ParsedSignatur
         ));
     }
     let input = parse_business_inputs(signature.inputs.iter(), "domain service")?;
-    Ok(parsed(None, input, signature))
-}
-
-pub fn parse_value_object(signature: &Signature) -> syn::Result<ParsedSignature> {
-    let input = match signature.inputs.first() {
-        Some(FnArg::Receiver(receiver)) if receiver.colon_token.is_some() => {
-            return Err(syn::Error::new_spanned(
-                receiver,
-                "value object action contract methods do not support typed receivers",
-            ));
-        }
-        Some(FnArg::Receiver(receiver)) if receiver.reference.is_some() => {
-            return Err(syn::Error::new_spanned(
-                receiver,
-                "value object transformations require a consuming self receiver",
-            ));
-        }
-        Some(FnArg::Receiver(_)) => parse_business_inputs(
-            signature.inputs.iter().skip(1),
-            "value object transformation",
-        )?,
-        _ => {
-            let input = parse_business_inputs(signature.inputs.iter(), "value object constructor")?;
-            if input.is_none() {
-                return Err(syn::Error::new_spanned(
-                    &signature.inputs,
-                    "value object constructors require exactly one input parameter",
-                ));
-            }
-            input
-        }
-    };
     Ok(parsed(None, input, signature))
 }
 
@@ -207,7 +174,7 @@ fn validate_pattern(pattern: &Pat, expected: &str) -> syn::Result<()> {
     Ok(())
 }
 
-fn parsed(root: Option<Type>, input: Option<Type>, signature: &Signature) -> ParsedSignature {
+fn parsed(root: Option<Type>, _input: Option<Type>, signature: &Signature) -> ParsedSignature {
     let output = match &signature.output {
         ReturnType::Default => syn::parse_quote_spanned!(signature.span()=> ()),
         ReturnType::Type(_, output) => (**output).clone(),
@@ -215,7 +182,6 @@ fn parsed(root: Option<Type>, input: Option<Type>, signature: &Signature) -> Par
     let (output, error) = split_result(output);
     ParsedSignature {
         root,
-        input,
         output,
         error,
     }

@@ -9,5 +9,5 @@ error[E0432]: unresolved import `domain::ActionGroupType`
 help: a similar name exists in the module
   |
 1 - use domain::ActionGroupType;
-1 + use domain::ActionInputType;
+1 + use domain::DecisionGroupType;
   |

@@ -59,17 +59,10 @@ fn validated_queries(queries: &[Query]) -> syn::Result<Vec<AssemblyQuery<'_>>> {
 fn descriptor(domain_path: &Path, owner: &TypePath, query: &AssemblyQuery<'_>) -> TokenStream {
     let id = &query.query.id;
     let label = &query.query.label;
-    let input = query.signature.input.as_ref().map_or_else(
-        || quote!(None),
-        |input| quote!(Some(<#input as #domain_path::QueryInputType<#owner>>::DESCRIPTOR)),
-    );
-    let output = &query.signature.output;
     quote! {
         #domain_path::QueryDescriptor {
             id: #domain_path::QueryId { aggregate: <#owner as #domain_path::AggregateType>::DESCRIPTOR.id, local: #id },
             label: #label,
-            input: #input,
-            output: <#output as #domain_path::QueryOutputType<#owner>>::DESCRIPTOR,
         }
     }
 }

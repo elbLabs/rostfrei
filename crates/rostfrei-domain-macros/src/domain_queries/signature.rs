@@ -2,8 +2,6 @@ use syn::{FnArg, Pat, ReturnType, Signature, Type, Visibility};
 
 pub struct ParsedSignature {
     pub root: Type,
-    pub input: Option<Type>,
-    pub output: Type,
 }
 
 pub fn parse(signature: &Signature, visibility: &Visibility) -> syn::Result<ParsedSignature> {
@@ -32,7 +30,7 @@ pub fn parse(signature: &Signature, visibility: &Visibility) -> syn::Result<Pars
         ));
     }
     let root = borrowed(root_input, "root", "query root")?;
-    let input = signature
+    let _input = signature
         .inputs
         .iter()
         .nth(1)
@@ -52,11 +50,7 @@ pub fn parse(signature: &Signature, visibility: &Visibility) -> syn::Result<Pars
             "queries require a non-unit owned output",
         ));
     }
-    Ok(ParsedSignature {
-        root,
-        input,
-        output: (**output).clone(),
-    })
+    Ok(ParsedSignature { root })
 }
 
 fn borrowed(input: &FnArg, name: &str, subject: &str) -> syn::Result<Type> {

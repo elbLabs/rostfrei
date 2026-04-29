@@ -32,7 +32,7 @@ enum ModelEvents {
 }
 
 #[derive(ValueObject)]
-#[domain(id = "filter", label = "Filter", owner = Model)]
+#[domain(id = "filter", label = "Filter")]
 struct Filter(String);
 
 #[derive(Command)]

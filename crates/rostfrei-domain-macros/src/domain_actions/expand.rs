@@ -4,8 +4,7 @@ use syn::{Item, ItemTrait};
 use super::{
     aggregate_trait_assembly, aggregate_trait_validation, contract_arguments,
     domain_service_trait_assembly, domain_service_trait_validation, public_trait_input,
-    trait_assembly, trait_attributes, trait_input, trait_validation, value_object_trait_assembly,
-    value_object_trait_validation,
+    trait_assembly, trait_attributes, trait_input, trait_validation,
 };
 
 pub fn expand(args: TokenStream, tokens: TokenStream) -> syn::Result<TokenStream> {
@@ -25,7 +24,6 @@ fn expand_trait(args: TokenStream, item: ItemTrait) -> syn::Result<TokenStream> 
             expand_aggregate_trait(item, arguments.instance_trait.as_ref())
         }
         contract_arguments::ContractKind::Entity => expand_entity_trait(item),
-        contract_arguments::ContractKind::ValueObject => expand_value_object_trait(item),
         contract_arguments::ContractKind::DomainService => expand_domain_service_trait(item),
     }
 }
@@ -37,15 +35,6 @@ fn expand_entity_trait(item: ItemTrait) -> syn::Result<TokenStream> {
     trait_validation::validate(&item.items, &mut actions)?;
     let domain_path = crate::helper::domain_api_path::resolve()?;
     trait_assembly::assemble(&domain_path, item, &actions)
-}
-
-fn expand_value_object_trait(item: ItemTrait) -> syn::Result<TokenStream> {
-    let mut item = trait_input::validate(item)?;
-    let mut actions =
-        trait_attributes::extract(&mut item.items, trait_attributes::RaisesPolicy::Forbidden)?;
-    value_object_trait_validation::validate(&item.items, &mut actions)?;
-    let domain_path = crate::helper::domain_api_path::resolve()?;
-    value_object_trait_assembly::assemble(&domain_path, item, &actions)
 }
 
 fn expand_aggregate_trait(

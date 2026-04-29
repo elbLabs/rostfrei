@@ -1,4 +1,4 @@
-error: unknown domain action contract kind `repository`; expected `aggregate`, `domain_service`, `entity`, or `value_object`
+error: unknown domain action contract kind `repository`; expected `aggregate`, `domain_service`, or `entity`
  --> tests/ui/domain_action_contract/unknown_kind.rs:3:18
   |
 3 | #[domain_actions(repository)]

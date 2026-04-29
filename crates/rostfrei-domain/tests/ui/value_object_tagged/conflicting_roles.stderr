@@ -1,5 +1,0 @@
-error: field supports at most one domain role
-  --> tests/ui/value_object_tagged/conflicting_roles.rs:12:30
-   |
-12 |     Value(#[domain(identity, value_object)] Plain),
-   |                              ^^^^^^^^^^^^

@@ -2,7 +2,6 @@ use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, ActionOwnerType, Aggregate, AggregateType,
     BoundedContext, BoundedContextId, DomainError, DomainIdentity, DomainService, DomainServiceId,
     DomainServiceType, Entity, EntityId, EntityType, ValueObject, ValueObjectId,
-    ValueObjectOwnerId, ValueObjectType,
 };
 
 #[derive(BoundedContext)]
@@ -77,15 +76,6 @@ pub mod restricted_contracts {
 
         #[action(id = "set-read", label = "Set read")]
         fn set_read(&mut self, input: bool) -> Result<(), super::MessageDenied>;
-    }
-
-    #[domain_actions(value_object)]
-    pub(super) trait CounterActions {
-        #[action(id = "new", label = "New counter")]
-        fn new(input: u8) -> Self;
-
-        #[action(id = "increment", label = "Increment counter")]
-        fn increment(self, input: u8) -> std::result::Result<Self, super::CounterDenied>;
     }
 }
 
@@ -164,34 +154,15 @@ impl restricted_contracts::MessageActions for Message {
 }
 
 #[derive(ValueObject, Debug, PartialEq)]
-#[domain(
-    id = "counter",
-    label = "Counter",
-    owner = Mailbox,
-    actions = [restricted_contracts::CounterActions]
-)]
+#[domain(id = "counter", label = "Counter")]
 struct Counter(u8);
-
-#[derive(DomainError)]
-#[domain(id = "counter-denied", label = "Counter denied", owner = Counter, code = "COUNTER_DENIED", message = "Counter denied.")]
-struct CounterDenied;
-
-impl restricted_contracts::CounterActions for Counter {
-    fn new(input: u8) -> Self {
-        Self(input)
-    }
-
-    fn increment(self, input: u8) -> std::result::Result<Self, CounterDenied> {
-        self.0.checked_add(input).map(Self).ok_or(CounterDenied)
-    }
-}
 
 #[test]
 fn supports_owner_specific_action_signatures() {
     use contracts::{
         MailTransferActions as _, MailboxArchivalActions as _, MailboxManagementActions as _,
     };
-    use restricted_contracts::{CounterActions as _, MessageActions as _};
+    use restricted_contracts::MessageActions as _;
 
     let mut root = MailboxRoot {
         id: MailboxId(1),
@@ -212,7 +183,7 @@ fn supports_owner_specific_action_signatures() {
     assert!(!message.is_read());
     assert!(matches!(message.set_read(true), Ok(())));
     assert_eq!(message.id.0, 2);
-    assert!(matches!(Counter::new(1).increment(2), Ok(Counter(3))));
+    assert_eq!(Counter(3), Counter(3));
 }
 
 #[test]
@@ -223,19 +194,16 @@ fn preserves_descriptor_shape_and_source_order() {
     ];
     let transfer_contracts = <MailTransfer as DomainServiceType>::ACTION_CONTRACTS;
     let message_contracts = [<Message as restricted_contracts::MessageActions>::__DOMAIN_ACTIONS];
-    let counter_contracts = <Counter as ValueObjectType>::ACTION_CONTRACTS;
 
     assert_eq!(mailbox_contracts.len(), 2);
     assert_eq!(transfer_contracts.len(), 1);
     assert_eq!(message_contracts.len(), 1);
-    assert_eq!(counter_contracts.len(), 1);
     assert_eq!(mailbox_contracts[0].len(), 1);
     assert_eq!(mailbox_contracts[0][0].id.local, "rename");
     assert_eq!(mailbox_contracts[1][0].id.local, "archive");
     assert_eq!(transfer_contracts[0][0].id.local, "available");
     assert_eq!(transfer_contracts[0][1].id.local, "transfer");
     assert_eq!(message_contracts[0].len(), 2);
-    assert_eq!(counter_contracts[0].len(), 2);
     assert_eq!(
         mailbox_contracts[0][0],
         ActionDescriptor {
@@ -247,10 +215,6 @@ fn preserves_descriptor_shape_and_source_order() {
                 local: "rename",
             },
             label: "Rename mailbox",
-            input: Some(domain::ActionInputDescriptor::Scalar(
-                domain::ScalarType::String,
-            )),
-            output: None,
             raises: &[],
             error: None,
         }
@@ -272,10 +236,6 @@ fn uses_the_owner_descriptor_id_for_each_owner_kind() {
         ActionOwnerId::Entity(Message::DESCRIPTOR.id)
     );
     assert_eq!(
-        Counter::ACTION_OWNER_ID,
-        ActionOwnerId::ValueObject(Counter::DESCRIPTOR.id)
-    );
-    assert_eq!(
         MailTransfer::DESCRIPTOR.id,
         DomainServiceId {
             context: BoundedContextId("inbox"),
@@ -289,11 +249,5 @@ fn uses_the_owner_descriptor_id_for_each_owner_kind() {
             local: "message"
         }
     );
-    assert_eq!(
-        Counter::DESCRIPTOR.id,
-        ValueObjectId {
-            owner: ValueObjectOwnerId::Aggregate(Mailbox::DESCRIPTOR.id),
-            local: "counter"
-        }
-    );
+    assert_eq!(Counter::DESCRIPTOR.id, ValueObjectId("counter"));
 }

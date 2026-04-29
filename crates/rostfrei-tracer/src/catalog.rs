@@ -133,7 +133,7 @@ pub fn build_catalog(
                 .modeled_command()
                 .map_or(descriptor.command_name, |command| command.id.local),
         );
-        let payload_template = payload_template(&fields, domain_model);
+        let payload_template = payload_template(&fields);
         let context = contexts
             .entry(context_id.clone())
             .or_insert_with(|| ContextBuilder {
@@ -293,46 +293,24 @@ fn model_command_fields(
         .unwrap_or_default()
 }
 
-fn payload_template(fields: &[Value], model: Option<&Value>) -> Value {
+fn payload_template(fields: &[Value]) -> Value {
     let mut payload = Map::new();
     for field in fields {
         let Some(name) = field.get("name").and_then(Value::as_str) else {
             continue;
         };
-        let value = field
-            .get("value")
-            .map_or(Value::Null, |value| value_template(value, model));
+        let value = field.get("value").map_or(Value::Null, value_template);
         payload.insert(name.to_owned(), value);
     }
     Value::Object(payload)
 }
 
-fn value_template(value: &Value, model: Option<&Value>) -> Value {
+fn value_template(value: &Value) -> Value {
     match value.get("kind").and_then(Value::as_str) {
         Some("scalar") => scalar_template(value.get("scalar")),
         Some("list") => Value::Array(Vec::new()),
-        Some("valueObject") => value_object_template(value.get("id"), model),
         _ => Value::Null,
     }
-}
-
-fn value_object_template(id: Option<&Value>, model: Option<&Value>) -> Value {
-    let Some(value_object) = model
-        .and_then(|model| model.get("valueObjects"))
-        .and_then(Value::as_array)
-        .and_then(|objects| objects.iter().find(|object| object.get("id") == id))
-    else {
-        return Value::Null;
-    };
-    if let Some(fields) = value_object.get("fields").and_then(Value::as_array) {
-        return payload_template(fields, model);
-    }
-    value_object
-        .get("variants")
-        .and_then(Value::as_array)
-        .and_then(|variants| variants.first())
-        .cloned()
-        .unwrap_or(Value::Null)
 }
 
 fn scalar_template(scalar: Option<&Value>) -> Value {
@@ -370,12 +348,21 @@ mod tests {
                 }
             }
         });
-        let model = json!({
-            "domainIdentities": [{
-                "id": identity["id"]
-            }]
+        assert_eq!(value_template(&identity), Value::Null);
+    }
+
+    #[test]
+    fn value_object_payload_templates_do_not_invent_a_shape() {
+        let value_object = json!({
+            "kind": "valueObject",
+            "id": { "context": "banking", "local": "amount" }
         });
 
-        assert_eq!(value_template(&identity, Some(&model)), Value::Null);
+        assert_eq!(value_template(&value_object), Value::Null);
+    }
+
+    #[test]
+    fn opaque_dto_payload_templates_do_not_invent_a_shape() {
+        assert_eq!(value_template(&json!({ "kind": "opaque" })), Value::Null);
     }
 }

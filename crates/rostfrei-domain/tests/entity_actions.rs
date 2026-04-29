@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 
 use domain::{
-    ActionInputDescriptor, ActionOutputDescriptor, DomainError, DomainErrorType, DomainIdentity,
-    Entity, ScalarType, ValueObject, ValueObjectType, domain_actions, domain_model,
+    DomainError, DomainErrorType, DomainIdentity, Entity, ValueObject, domain_actions, domain_model,
 };
 
 pub mod contracts {
@@ -74,7 +73,7 @@ impl domain::AggregateDefinition for Project {
 }
 
 #[derive(ValueObject, Debug, Eq, PartialEq)]
-#[domain(id = "title", label = "Title", owner = Task)]
+#[domain(id = "title", label = "Title")]
 struct Title(String);
 
 #[derive(DomainError, Debug, Eq, PartialEq)]
@@ -193,34 +192,7 @@ fn entity_action_contracts_preserve_list_and_trait_source_order() {
         ["rename", "complete", "reject"]
     );
 
-    assert_eq!(contracts[0][0].input, None);
-    assert_eq!(
-        contracts[0][0].output,
-        Some(ActionOutputDescriptor::Scalar(ScalarType::Bool))
-    );
-    assert_eq!(
-        contracts[0][1].output,
-        Some(ActionOutputDescriptor::ValueObject(Title::DESCRIPTOR.id))
-    );
-    assert_eq!(
-        contracts[0][2].output,
-        Some(ActionOutputDescriptor::Optional(
-            &ActionOutputDescriptor::List(&ActionOutputDescriptor::ValueObject(
-                Title::DESCRIPTOR.id,
-            )),
-        ))
-    );
-    assert_eq!(
-        contracts[1][0].input,
-        Some(ActionInputDescriptor::ValueObject(Title::DESCRIPTOR.id))
-    );
-    assert_eq!(
-        contracts[1][0].output,
-        Some(ActionOutputDescriptor::ValueObject(Title::DESCRIPTOR.id))
-    );
     assert_eq!(contracts[1][0].error, None);
-    assert_eq!(contracts[1][1].input, None);
-    assert_eq!(contracts[1][1].output, None);
     assert_eq!(contracts[1][2].error, Some(TaskRejected::DESCRIPTOR.id));
 
     let unlisted = <Task as UnlistedTaskActions>::__DOMAIN_ACTIONS;
