@@ -1,5 +1,3 @@
-mod action_error_validation;
-mod action_projection;
 mod decision_projection;
 mod entity_projection;
 mod error;

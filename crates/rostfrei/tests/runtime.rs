@@ -130,35 +130,41 @@ impl Apply<BalanceObserved> for Account {
 mod account_actions {
     use super::{AccountAggregate, AggregateInstance, BalanceObserved, MoneyDeposited};
 
-    #[rostfrei::domain_actions(aggregate(instance = AccountActions))]
-    pub trait AccountActionContract {
-        #[action(id = "deposit", label = "Deposit money")]
+    #[rostfrei::domain_action(id = "deposit", label = "Deposit money")]
+    pub trait DepositAction {
         fn deposit(&mut self, input: i64);
-
-        #[action(id = "observe-balance", label = "Observe balance")]
-        fn observe_balance(&mut self);
-
-        #[action(
-            id = "deposit-and-observe",
-            label = "Deposit money and observe balance"
-        )]
-        fn deposit_and_observe(&mut self, input: i64);
     }
 
-    impl AccountActions for AggregateInstance<AccountAggregate> {
+    impl DepositAction for AggregateInstance<AccountAggregate> {
         fn deposit(&mut self, input: i64) {
             self.raise(MoneyDeposited { amount: input });
         }
+    }
 
+    #[rostfrei::domain_action(id = "observe-balance", label = "Observe balance")]
+    pub trait ObserveBalanceAction {
+        fn observe_balance(&mut self);
+    }
+
+    impl ObserveBalanceAction for AggregateInstance<AccountAggregate> {
         fn observe_balance(&mut self) {
             self.raise(BalanceObserved {
                 balance: self.state().balance,
             });
         }
+    }
 
+    #[rostfrei::domain_action(
+        id = "deposit-and-observe",
+        label = "Deposit money and observe balance"
+    )]
+    pub trait DepositAndObserveAction {
+        fn deposit_and_observe(&mut self, input: i64);
+    }
+
+    impl DepositAndObserveAction for AggregateInstance<AccountAggregate> {
         fn deposit_and_observe(&mut self, input: i64) {
             self.raise(MoneyDeposited { amount: input });
-
             self.raise(BalanceObserved {
                 balance: self.state().balance,
             });
@@ -166,7 +172,9 @@ mod account_actions {
     }
 }
 
-use account_actions::AccountActions as _;
+use account_actions::{
+    DepositAction as _, DepositAndObserveAction as _, ObserveBalanceAction as _,
+};
 
 struct DepositAndObserve {
     account_id: &'static str,

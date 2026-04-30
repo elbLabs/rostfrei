@@ -1,0 +1,5 @@
+error: missing label
+ --> tests/ui/domain_action/invalid_metadata.rs:3:17
+  |
+3 | #[domain_action(id = "missing-label")]
+  |                 ^^^^^^^^^^^^^^^^^^^^

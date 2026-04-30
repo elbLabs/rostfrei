@@ -2,7 +2,7 @@
 
 use domain::{
     Aggregate, BoundedContext, DomainError, DomainEvent, DomainIdentity, DomainService, Entity,
-    ValueObject, domain_actions, domain_model,
+    ValueObject, domain_model,
 };
 use serde_json::json;
 
@@ -40,30 +40,6 @@ impl domain::AggregateDefinition for Mailbox {
 #[derive(domain::AggregateEvents)]
 pub enum MailboxEvents {
     Event0(MailboxOpened),
-}
-
-#[domain_actions(aggregate)]
-pub trait MailboxOpeningActions {
-    #[action(id = "open", label = "Open mailbox")]
-    fn open(root: &mut MailboxRoot);
-}
-
-impl MailboxOpeningActions for Mailbox {
-    fn open(root: &mut MailboxRoot) {
-        let _ = root;
-    }
-}
-
-#[domain_actions(aggregate)]
-pub trait MailboxClosingActions {
-    #[action(id = "close", label = "Close mailbox")]
-    fn close(root: &mut MailboxRoot);
-}
-
-impl MailboxClosingActions for Mailbox {
-    fn close(root: &mut MailboxRoot) {
-        let _ = root;
-    }
 }
 
 #[derive(ValueObject)]
@@ -214,11 +190,10 @@ fn compiles_explicit_domain_model_to_json() {
         })
     );
 
-    let mut root = MailboxRoot {
+    let root = MailboxRoot {
         id: MailboxId(1),
         address: None,
     };
-    Mailbox::open(&mut root);
     let address = EmailAddress("team@example.com".to_owned());
     assert_eq!(root.id.0, 1);
     assert_eq!(address.0, "team@example.com");

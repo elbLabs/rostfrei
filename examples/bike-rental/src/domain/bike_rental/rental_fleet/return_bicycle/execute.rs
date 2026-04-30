@@ -1,9 +1,9 @@
 use rostfrei::AggregateInstance;
 
-use super::{BicycleNotRented, BicycleReturned, ReturnBicycleActions};
+use super::{BicycleNotRented, BicycleReturned, ReturnBicycleAction};
 use crate::domain::rental_fleet::{BicycleId, BicycleStatus, RentalFleetAggregate};
 
-impl ReturnBicycleActions for AggregateInstance<RentalFleetAggregate> {
+impl ReturnBicycleAction for AggregateInstance<RentalFleetAggregate> {
     fn return_bicycle(&mut self, input: BicycleId) -> Result<(), BicycleNotRented> {
         let root = self.state();
         let rented = root.bicycles.iter().any(|bicycle| {

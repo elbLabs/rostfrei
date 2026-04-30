@@ -21,13 +21,12 @@ impl rostfrei::EntityDefinition for Account {
     type Identity = AccountId;
 }
 
-#[rostfrei::domain_actions(entity)]
-trait AccountActions {
-    #[action(id = "reset", label = "Reset")]
+#[rostfrei::domain_action(id = "reset", label = "Reset")]
+trait ResetAccountAction {
     fn reset(&mut self);
 }
 
-impl AccountActions for Account {
+impl ResetAccountAction for Account {
     fn reset(&mut self) {
         self.balance = 0;
     }
@@ -46,13 +45,12 @@ struct MoneyDeposited {
 mod aggregate_actions {
     use super::{AccountAggregate, AggregateInstance, MoneyDeposited};
 
-    #[rostfrei::domain_actions(aggregate(instance = AccountAggregateActions))]
-    pub trait AccountAggregateActionContract {
-        #[action(id = "deposit", label = "Deposit")]
+    #[rostfrei::domain_action(id = "deposit", label = "Deposit")]
+    pub trait DepositAction {
         fn deposit(&mut self, input: i64);
     }
 
-    impl AccountAggregateActions for AggregateInstance<AccountAggregate> {
+    impl DepositAction for AggregateInstance<AccountAggregate> {
         fn deposit(&mut self, input: i64) {
             self.raise(MoneyDeposited { amount: input });
         }
@@ -73,8 +71,6 @@ impl rostfrei::AggregateDefinition for AccountAggregate {
     type Root = Account;
     type Event = AccountEvents;
 }
-
-use aggregate_actions::AccountAggregateActions as _;
 
 impl Initialize<AccountAggregate> for Account {
     fn initialize(stream_id: &rostfrei::StreamId) -> Self {
@@ -100,19 +96,21 @@ impl CommandHandler<Deposit> for AccountAggregate {
         command: &Deposit,
         aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
+        use aggregate_actions::DepositAction as _;
         aggregate.deposit(command.0);
         Ok(())
     }
 }
 
-#[rostfrei::domain_action_test(<Account as AccountActions>::RESET)]
+#[rostfrei::domain_action_test(<Account as ResetAccountAction>::DESCRIPTOR)]
 fn facade_domain_test_support_items_are_available() {}
 
 #[rostfrei::domain_action_test(
-    <AccountAggregate as aggregate_actions::AccountAggregateActionContract>::DEPOSIT
+    <AggregateInstance<AccountAggregate> as aggregate_actions::DepositAction>::DESCRIPTOR
 )]
 fn facade_executable_aggregate_action_is_the_test_subject() {}
 
 fn main() {
     let _executor = rostfrei::Executor::new(rostfrei::InMemoryEventStore::new());
+    let _reset: fn(&mut Account) = <Account as ResetAccountAction>::reset;
 }

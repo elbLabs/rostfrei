@@ -5,7 +5,7 @@ mod execute;
 mod imported_bicycle;
 mod input;
 
-pub use action::ImportRentalFleetActions;
+pub use action::ImportRentalFleetAction;
 pub use event::RentalFleetImported;
 pub use imported_bicycle::ImportedBicycle;
 pub use input::ImportRentalFleetInput;

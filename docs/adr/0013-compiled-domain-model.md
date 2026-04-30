@@ -56,12 +56,12 @@ event representations are not part of normal application syntax.
 
 Executable aggregate Actions use `&mut self`, domain-specific input, and
 `()`/`Result<(), DomainError>` outcomes.
-`domain_actions(aggregate(instance = ...))` generates the trait implemented for
-`AggregateInstance`; Action implementations explicitly call `self.raise(...)`
-zero or more times. Event membership and raising authorization are governed by
-the aggregate's authored event set; actions do not repeat possible event types.
-Commands remain an application boundary and map their payloads into one or more
-Action inputs rather than being passed to Actions directly.
+`domain_action` preserves a singular ordinary trait implemented directly for
+its real aggregate instance, entity, or service receiver. Implementations call
+`self.raise(...)` zero or more times where applicable. Event membership and
+raising authorization are governed by the aggregate's authored event set.
+Commands remain an application boundary and map their payloads into ordinary
+action method arguments.
 
 `Command` derives owner-independent local ID, label, schema version, field, and
 JSON payload metadata. The handler implementation supplies its aggregate and
@@ -120,9 +120,12 @@ local semantic and wire metadata, while `AggregateEvents` remains responsible
 for owned descriptors and runtime membership.
 
 Domain-service context and action attachment were subsequently separated by
-[ADR 0027](0027-explicit-domain-service-definitions.md). A matching
-`DomainServiceDefinition` supplies the context, while service action groups are
-projected only through explicit model action extensions.
+[ADR 0027](0027-explicit-domain-service-definitions.md): a matching
+`DomainServiceDefinition` supplies the context. The remaining plural action
+groups, owner kinds, extensions, and model projection were then removed by
+[ADR 0028](0028-trait-preserving-singular-domain-actions.md). Actions are now
+singular ordinary traits with direct implementations and owner-independent
+metadata.
 
 Domain-error ownership and optional JSON generation were subsequently removed
 by [ADR 0025](0025-owner-independent-domain-errors.md). Errors keep their

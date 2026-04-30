@@ -2,7 +2,7 @@ use std::convert::Infallible;
 
 use rostfrei::{AggregateInstance, CommandHandler};
 
-use super::{AddBicycle, AddBicycleActions};
+use super::{AddBicycle, AddBicycleAction as _};
 use crate::domain::rental_fleet::RentalFleetAggregate;
 
 impl CommandHandler<AddBicycle> for RentalFleetAggregate {

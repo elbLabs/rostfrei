@@ -1,12 +1,12 @@
 use proc_macro::TokenStream;
 use syn::{DeriveInput, Error, parse_macro_input};
 
+mod action;
 mod aggregate;
 mod aggregate_events;
 mod bounded_context;
 mod command;
 mod decision_outcome;
-mod domain_actions;
 mod domain_decisions;
 mod domain_error;
 mod domain_event;
@@ -22,8 +22,8 @@ mod helper;
 mod value_object;
 
 #[proc_macro_attribute]
-pub fn domain_actions(args: TokenStream, input: TokenStream) -> TokenStream {
-    domain_actions::expand(args.into(), input.into())
+pub fn domain_action(args: TokenStream, input: TokenStream) -> TokenStream {
+    action::expand(&args.into(), input.into())
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

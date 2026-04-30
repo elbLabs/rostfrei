@@ -3,7 +3,7 @@
 use domain::DecisionOutcome;
 use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle, EntityLifecycleType,
-    InvariantViolation, ValueObject, domain_action_test, domain_actions, domain_decision_test,
+    InvariantViolation, ValueObject, domain_action, domain_action_test, domain_decision_test,
     domain_decisions, domain_invariant_test, domain_invariants, domain_lifecycle_test,
 };
 
@@ -29,16 +29,9 @@ enum TestDecisionOutcome {
 
 struct TestDecisions;
 
-#[domain_actions(aggregate)]
-pub trait AggregateActions {
-    #[action(id = "mark", label = "Mark")]
+#[domain_action(id = "mark", label = "Mark")]
+pub trait MarkAction {
     fn mark(root: &mut TestRoot, input: bool);
-}
-
-#[domain_actions(entity)]
-trait RootActions {
-    #[action(id = "activate", label = "Activate")]
-    fn activate(&mut self);
 }
 
 #[domain_invariants]
@@ -97,15 +90,9 @@ impl TestAggregate {
     }
 }
 
-impl AggregateActions for TestAggregate {
+impl MarkAction for TestAggregate {
     fn mark(root: &mut TestRoot, input: bool) {
         root.marked = input;
-    }
-}
-
-impl RootActions for TestRoot {
-    fn activate(&mut self) {
-        self.active = true;
     }
 }
 
@@ -131,17 +118,17 @@ fn cfg_disabled_domain_test_does_not_resolve_its_subject() {}
 #[cfg_attr(all(), cfg(any()))]
 fn nested_cfg_disabled_domain_test_does_not_resolve_its_subject() {}
 
-#[domain_action_test(<TestAggregate as AggregateActions>::MARK)]
+#[domain_action_test(<TestAggregate as MarkAction>::DESCRIPTOR)]
 fn action_tests_keep_the_authored_body() {
     let mut root = root();
     TestAggregate::mark(&mut root, true);
     assert!(root.marked);
 }
 
-#[domain_action_test(<TestAggregate as AggregateActions>::MARK)]
+#[domain_action_test(<TestAggregate as MarkAction>::DESCRIPTOR)]
 fn case_distinct_test_name() {}
 
-#[domain_action_test(<TestAggregate as AggregateActions>::MARK)]
+#[domain_action_test(<TestAggregate as MarkAction>::DESCRIPTOR)]
 fn CASE_DISTINCT_TEST_NAME() {}
 
 #[domain_decision_test(TestAggregate::ACCEPT)]

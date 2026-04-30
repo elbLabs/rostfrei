@@ -1,7 +1,6 @@
 mod action;
 mod aggregate;
 mod decision;
-mod domain_service;
 mod entity;
 mod invariant;
 mod lifecycle;

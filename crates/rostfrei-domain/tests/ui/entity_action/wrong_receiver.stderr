@@ -1,5 +1,0 @@
-error: domain action contract methods require an &self or &mut self receiver
- --> tests/ui/entity_action/wrong_receiver.rs:6:15
-  |
-6 |     fn rename(self);
-  |               ^^^^

@@ -7,7 +7,7 @@ use rostfrei::{
 use thiserror::Error;
 
 use crate::rental_fleet::{
-    self, BicycleCondition, BicycleId, BicycleStatus, ImportRentalFleetActions,
+    self, BicycleCondition, BicycleId, BicycleStatus, ImportRentalFleetAction as _,
     ImportRentalFleetInput, ImportedBicycle, RentalFleetAggregate,
 };
 

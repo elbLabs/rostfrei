@@ -1,22 +1,16 @@
 use proc_macro2::{Ident, Span, TokenStream};
-use quote::{format_ident, quote_spanned};
+use quote::quote_spanned;
 use syn::ext::IdentExt;
 use syn::spanned::Spanned;
-use syn::{ExprPath, Path, PathArguments, Type, TypePath};
+use syn::{Expr, ExprPath, Path, PathArguments, Type, TypePath};
 
 use super::DomainTestKind;
 
 pub(super) enum DomainTestSubjectInput {
-    Action(TypedSubject),
+    Action(Expr),
     Decision(DecisionSubject),
     Invariant(TypedSubject),
     Lifecycle(TypePath),
-}
-
-#[derive(Clone, Copy)]
-enum TypedSubjectKind {
-    Action,
-    Invariant,
 }
 
 pub(super) struct TypedSubject {
@@ -35,18 +29,22 @@ pub(super) struct DecisionSubject {
 impl DomainTestSubjectInput {
     pub(super) fn parse(kind: DomainTestKind, args: TokenStream) -> syn::Result<Self> {
         match kind {
-            DomainTestKind::Action => parse_typed(kind, args).map(Self::Action),
+            DomainTestKind::Action => parse_action(args).map(Self::Action),
             DomainTestKind::Decision => parse_decision(args).map(Self::Decision),
             DomainTestKind::Invariant => parse_typed(kind, args).map(Self::Invariant),
-            DomainTestKind::Lifecycle => parse_lifecycle(args).map(Self::Lifecycle),
+            DomainTestKind::Lifecycle => parse_type(args, "lifecycle").map(Self::Lifecycle),
         }
     }
 
     pub(super) fn assemble(&self, domain_path: &Path) -> TokenStream {
         match self {
-            Self::Action(subject) => subject.assemble(domain_path, TypedSubjectKind::Action),
+            Self::Action(descriptor) => quote_spanned! {descriptor.span()=>
+                #domain_path::DomainTestSubject::Action(
+                    (#descriptor).id
+                )
+            },
             Self::Decision(subject) => subject.assemble(domain_path),
-            Self::Invariant(subject) => subject.assemble(domain_path, TypedSubjectKind::Invariant),
+            Self::Invariant(subject) => subject.assemble(domain_path),
             Self::Lifecycle(lifecycle) => quote_spanned! {lifecycle.path.span()=>
                 #domain_path::DomainTestSubject::Lifecycle(
                     <#lifecycle as #domain_path::EntityLifecycleType>::DESCRIPTOR.id
@@ -56,33 +54,17 @@ impl DomainTestSubjectInput {
     }
 }
 
+fn parse_action(args: TokenStream) -> syn::Result<Expr> {
+    syn::parse2(args).map_err(|error| {
+        syn::Error::new(
+            error.span(),
+            "action tests require exactly one action descriptor expression",
+        )
+    })
+}
+
 impl TypedSubject {
-    fn assemble(&self, domain_path: &Path, kind: TypedSubjectKind) -> TokenStream {
-        if matches!(kind, TypedSubjectKind::Invariant) {
-            return self.assemble_invariant(domain_path);
-        }
-        let owner = &self.owner;
-        let trait_path = &self.trait_path;
-        let span = self.span;
-        let marker = format_ident!("__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE");
-        let descriptor = format_ident!("ActionDescriptor");
-        let reference = format_ident!("ActionReference");
-        let variant = format_ident!("Action");
-        let subject = "ACTION";
-        let hidden_reference = hidden_reference(subject, &self.reference);
-
-        quote_spanned! {span=>
-            {
-                let _: &'static [#domain_path::#descriptor] =
-                    <#owner as #trait_path>::#marker;
-                let reference: #domain_path::#reference<#owner> =
-                    <#owner as #trait_path>::#hidden_reference;
-                #domain_path::DomainTestSubject::#variant(reference.id())
-            }
-        }
-    }
-
-    fn assemble_invariant(&self, domain_path: &Path) -> TokenStream {
+    fn assemble(&self, domain_path: &Path) -> TokenStream {
         let owner = &self.owner;
         let trait_path = &self.trait_path;
         let hidden_reference = hidden_reference("INVARIANT", &self.reference);
@@ -158,20 +140,20 @@ fn parse_typed(kind: DomainTestKind, args: TokenStream) -> syn::Result<TypedSubj
     })
 }
 
-fn parse_lifecycle(args: TokenStream) -> syn::Result<TypePath> {
-    let lifecycle: TypePath = syn::parse2(args).map_err(|error| {
+fn parse_type(args: TokenStream, kind: &str) -> syn::Result<TypePath> {
+    let subject: TypePath = syn::parse2(args).map_err(|error| {
         syn::Error::new(
             error.span(),
-            "lifecycle tests require exactly one lifecycle type path",
+            format!("{kind} tests require exactly one {kind} type path"),
         )
     })?;
-    if lifecycle.qself.is_some() {
+    if subject.qself.is_some() {
         return Err(syn::Error::new_spanned(
-            lifecycle,
-            "lifecycle tests require an unqualified lifecycle type path",
+            subject,
+            format!("{kind} tests require an unqualified {kind} type path"),
         ));
     }
-    Ok(lifecycle)
+    Ok(subject)
 }
 
 fn parse_decision(args: TokenStream) -> syn::Result<DecisionSubject> {
@@ -233,15 +215,10 @@ fn reference_shape_error(kind: DomainTestKind, tokens: impl quote::ToTokens) -> 
 
 fn typed_reference_message(kind: DomainTestKind, exactly: bool) -> String {
     let amount = if exactly { "exactly one " } else { "an " };
-    match kind {
-        DomainTestKind::Invariant => format!(
-            "invariant tests require {amount}implementor-qualified reference in the form `<Type as TraitPath>::CANONICAL_REFERENCE`"
-        ),
-        _ => format!(
-            "{} tests require {amount}owner-qualified reference in the form `<Owner as TraitPath>::CANONICAL_REFERENCE`",
-            kind.name(),
-        ),
-    }
+    format!(
+        "{} tests require {amount}implementor-qualified reference in the form `<Type as TraitPath>::CANONICAL_REFERENCE`",
+        kind.name()
+    )
 }
 
 fn validate_canonical_reference(kind: DomainTestKind, reference: &Ident) -> syn::Result<()> {
@@ -284,4 +261,33 @@ fn hidden_reference(subject: &str, reference: &Ident) -> Ident {
         &format!("__DOMAIN_{subject}_REFERENCE_{}", reference.unraw()),
         reference.span(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+
+    use super::{DomainTestKind, DomainTestSubjectInput};
+
+    #[test]
+    fn action_subject_accepts_an_explicit_descriptor_expression() {
+        let subject = DomainTestSubjectInput::parse(
+            DomainTestKind::Action,
+            quote!(<Actor as RentBicycleAction>::DESCRIPTOR),
+        )
+        .expect("descriptor expression");
+        let output = subject.assemble(&syn::parse_quote!(::domain)).to_string();
+
+        assert!(output.contains("< Actor as RentBicycleAction > :: DESCRIPTOR"));
+        assert!(output.contains(". id"));
+        assert!(!output.contains("ActionReference"));
+    }
+
+    #[test]
+    fn action_subject_rejects_missing_descriptor_expression() {
+        let error = DomainTestSubjectInput::parse(DomainTestKind::Action, quote!())
+            .err()
+            .expect("empty action subject");
+        assert!(error.to_string().contains("descriptor expression"));
+    }
 }

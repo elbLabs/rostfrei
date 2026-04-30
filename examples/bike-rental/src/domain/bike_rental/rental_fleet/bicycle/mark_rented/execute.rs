@@ -1,5 +1,7 @@
-use super::super::{Bicycle, BicycleStatus};
-use super::MarkRentedAction;
+use super::{
+    super::{Bicycle, BicycleStatus},
+    MarkRentedAction,
+};
 
 impl MarkRentedAction for Bicycle {
     fn mark_rented(&mut self) {

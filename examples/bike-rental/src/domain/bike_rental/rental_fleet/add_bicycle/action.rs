@@ -1,7 +1,6 @@
-use rostfrei::domain_actions;
+use rostfrei::domain_action;
 
-#[domain_actions(aggregate(instance = AddBicycleActions))]
-pub trait AddBicycleActionContract {
-    #[action(id = "add-bicycle", label = "Add bicycle")]
+#[domain_action(id = "add-bicycle", label = "Add bicycle")]
+pub trait AddBicycleAction {
     fn add_bicycle(&mut self);
 }

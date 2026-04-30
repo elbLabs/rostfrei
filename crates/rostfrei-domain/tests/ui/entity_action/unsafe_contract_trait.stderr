@@ -1,5 +1,0 @@
-error: domain action contract traits cannot be unsafe
- --> tests/ui/entity_action/unsafe_contract_trait.rs:4:1
-  |
-4 | unsafe trait Actions {
-  | ^^^^^^

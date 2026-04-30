@@ -17,9 +17,8 @@ were already the executable sources of truth.
 Action metadata contains no `raises` declaration:
 
 ```rust
-#[domain_actions(aggregate(instance = RentalFleetActions))]
+#[domain_action(id = "rent-bicycle", label = "Rent bicycle")]
 trait RentalFleetActionContract {
-    #[action(id = "rent-bicycle", label = "Rent bicycle")]
     fn rent_bicycle(&mut self, input: BicycleId) -> Result<(), BicycleUnavailable>;
 }
 ```
@@ -45,6 +44,10 @@ unregistered events fail compilation at `AggregateInstance::raise`.
 Event membership cannot drift between an action attachment and the aggregate
 codec because there is no second list. Tooling loses speculative action/event
 relationships and retains the stronger, compiler-checked aggregate event set.
+
+[ADR 0028](0028-trait-preserving-singular-domain-actions.md) subsequently
+removes plural action groups and owner metadata while preserving this direct
+raising behavior on ordinary trait implementations.
 
 The event declaration side of this relationship is simplified by
 [ADR 0026](0026-semantic-domain-events.md): semantic local metadata lives on

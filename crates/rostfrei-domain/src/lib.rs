@@ -19,15 +19,7 @@ mod invariant;
 mod json_wire;
 mod value_object;
 
-pub mod extension {
-    pub use crate::action::ActionGroupType;
-}
-
-pub use action::{
-    ActionDescriptor, ActionId, ActionOwnerId, ActionOwnerType, ActionReference,
-    AggregateActionOwnerType, DomainServiceActionOwnerType, EntityActionOwnerType,
-    InternalActionOwnerType, PublicActionOwnerType,
-};
+pub use action::{ActionDescriptor, ActionId};
 pub use aggregate::{
     AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId, AggregateType,
     NoDomainEvents,
@@ -66,8 +58,8 @@ pub use invariant::{InvariantDescriptor, InvariantId, InvariantReference, Invari
 pub use json_wire::{JsonCommandPayload, JsonErrorPayload};
 pub use rostfrei_domain_macros::{
     Aggregate, AggregateEvents, BoundedContext, Command, DecisionOutcome, DomainError, DomainEvent,
-    DomainIdentity, DomainService, Entity, EntityLifecycle, ValueObject, domain_action_test,
-    domain_actions, domain_decision_test, domain_decisions, domain_invariant_test,
+    DomainIdentity, DomainService, Entity, EntityLifecycle, ValueObject, domain_action,
+    domain_action_test, domain_decision_test, domain_decisions, domain_invariant_test,
     domain_invariants, domain_lifecycle_test, domain_queries,
 };
 pub use value_object::{ValueObject, ValueObjectDescriptor, ValueObjectId};
@@ -91,7 +83,6 @@ macro_rules! domain_model {
         value_objects: [$($value_object:ty),* $(,)?],
         services: [$($service:ty),* $(,)?],
         errors: [$($error:ty),* $(,)?],
-        $(action_extensions: [$($action_extension:ty),* $(,)?],)?
         query_groups: [$($query_group:ty),* $(,)?] $(,)?
     } => {{
         $crate::__private::try_build(|builder| {
@@ -101,7 +92,6 @@ macro_rules! domain_model {
             $(builder.add_value_object_type::<$value_object>()?;)*
             $(builder.add_domain_service_type::<$service>()?;)*
             $(builder.add_domain_error(<$error as $crate::DomainError>::DESCRIPTOR)?;)*
-            $($(builder.add_action_extension::<$action_extension>()?;)*)?
             $(builder.add_queries(<$query_group as $crate::QueryGroupType>::QUERIES)?;)*
             Ok(())
         })

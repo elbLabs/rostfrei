@@ -1,5 +1,0 @@
-error: executable aggregate actions must return () or Result<(), DomainError>
- --> tests/ui/fail/action_returns_event.rs:6:39
-  |
-6 |     fn deposit(&mut self, input: i64) -> MoneyDeposited;
-  |                                       ^^^^^^^^^^^^^^^^^
