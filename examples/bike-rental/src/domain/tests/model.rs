@@ -33,14 +33,7 @@ fn omits_unattached_capabilities_and_lifecycle_metadata() {
         ])
     );
 
-    let availability = model["queries"]
-        .as_array()
-        .expect("queries should be an array")
-        .iter()
-        .find(|query| query["id"]["local"] == "bicycle-availability")
-        .expect("bicycle availability query should be projected");
-    assert!(availability.get("input").is_none());
-    assert!(availability.get("output").is_none());
+    assert_eq!(model["queries"], json!([]));
 
     let bicycle = model["entities"]
         .as_array()

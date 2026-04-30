@@ -6,10 +6,11 @@
 use bike_rental::{
     demo::{demo_stream, seed_demo},
     rental_fleet::{
-        self, AddBicycleAction as _, BicycleAdded, BicycleAvailability, BicycleCondition,
-        BicycleId, BicycleNotRented, BicycleRented, BicycleReturned, BicycleStatus,
-        BicycleUnavailable, FleetId, ImportedBicycle, RentBicycle, RentBicycleAction as _,
-        RentalFleetAggregate, RentalFleetImported, ReturnBicycleAction as _,
+        self, AddBicycleAction as _, BicycleAdded, BicycleAvailability,
+        BicycleAvailabilityQuery as _, BicycleCondition, BicycleId, BicycleNotRented,
+        BicycleRented, BicycleReturned, BicycleStatus, BicycleUnavailable, FleetId,
+        ImportedBicycle, RentBicycle, RentBicycleAction as _, RentalFleetAggregate,
+        RentalFleetImported, ReturnBicycleAction as _,
     },
 };
 use rostfrei::{
@@ -48,7 +49,7 @@ fn rents_an_available_serviceable_bicycle() {
     assert_eq!(event.bicycle_id, bicycle_id);
     assert_eq!(fleet.state().bicycles()[0].status(), BicycleStatus::Rented);
     assert_eq!(
-        RentalFleetAggregate::bicycle_availability(fleet.state(), &event.bicycle_id),
+        fleet.state().bicycle_availability(&event.bicycle_id),
         Some(BicycleAvailability::Unavailable)
     );
 }
@@ -84,7 +85,7 @@ fn returns_a_rented_bicycle_and_rejects_a_second_return() {
         BicycleStatus::Available
     );
     assert_eq!(
-        RentalFleetAggregate::bicycle_availability(fleet.state(), &event.bicycle_id),
+        fleet.state().bicycle_availability(&event.bicycle_id),
         Some(BicycleAvailability::Available)
     );
     assert_eq!(
@@ -109,7 +110,7 @@ fn adds_serviceable_bicycles_with_generated_unique_ids() {
     assert_eq!(event.condition, BicycleCondition::Serviceable);
     assert_eq!(fleet.state().bicycles().len(), 2);
     assert_eq!(
-        RentalFleetAggregate::bicycle_availability(fleet.state(), &event.bicycle_id),
+        fleet.state().bicycle_availability(&event.bicycle_id),
         Some(BicycleAvailability::Available)
     );
     fleet.add_bicycle();

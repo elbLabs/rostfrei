@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use crate::{
     AggregateId, DecisionId, DecisionOutcomeId, DecisionOwnerId, DomainErrorId, DomainEventId,
-    DomainIdentityId, EntityId, QueryId, ValueObjectId,
+    DomainIdentityId, EntityId, ValueObjectId,
 };
 
 /// A domain-model descriptor reference involved in an inventory validation failure.
@@ -48,9 +48,6 @@ pub enum DomainModelError {
     DuplicateDomainErrorId {
         id: Box<DomainErrorId>,
     },
-    DuplicateQueryId {
-        id: Box<QueryId>,
-    },
 }
 
 impl fmt::Display for DomainModelError {
@@ -73,7 +70,6 @@ impl fmt::Display for DomainModelError {
             }
             Self::DuplicateDomainEventId { id } => fmt_duplicate(formatter, "DomainEventId", id),
             Self::DuplicateDomainErrorId { id } => fmt_duplicate(formatter, "DomainErrorId", id),
-            Self::DuplicateQueryId { id } => write!(formatter, "duplicate QueryId: {id:?}"),
         }
     }
 }

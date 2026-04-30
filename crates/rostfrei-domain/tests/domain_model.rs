@@ -77,7 +77,6 @@ fn compiles_explicit_domain_model_to_json() {
         value_objects: [EmailAddress],
         services: [MailTransfer],
         errors: [TransferDenied],
-        query_groups: [],
     }
     .expect("explicit domain model should be valid");
 
@@ -208,7 +207,6 @@ fn supports_empty_declaration_lists() {
         value_objects: [],
         services: [],
         errors: [],
-        query_groups: [],
     }
     .expect("empty domain model should be valid");
 

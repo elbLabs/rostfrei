@@ -89,7 +89,6 @@ fn derives_owner_independent_state_metadata_without_model_projection() {
         value_objects: [],
         services: [],
         errors: [],
-        query_groups: [],
     }
     .expect("entity lifecycle model projection should succeed");
 

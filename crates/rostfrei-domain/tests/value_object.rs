@@ -20,7 +20,6 @@ fn projects_only_id_and_label() {
         value_objects: [Subject, DeliveryState],
         services: [],
         errors: [],
-        query_groups: [],
     }
     .expect("minimal value objects should project");
 

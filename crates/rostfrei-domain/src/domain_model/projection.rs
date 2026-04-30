@@ -4,8 +4,8 @@ use crate::{
     AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId,
     BoundedContextDescriptor, DecisionOwnerId, DomainErrorDescriptor, DomainErrorId,
     DomainEventDescriptor, DomainEventId, DomainIdentityId, DomainServiceDescriptor,
-    DomainServiceType, EntityDefinition, EntityDescriptor, QueryDescriptor, QueryId, ValueObject,
-    ValueObjectDescriptor, ValueObjectId,
+    DomainServiceType, EntityDefinition, EntityDescriptor, ValueObject, ValueObjectDescriptor,
+    ValueObjectId,
 };
 
 use super::{
@@ -17,7 +17,7 @@ use super::{
     field_reference_validation::{self, FieldReferenceInventory},
     id_projection::{
         aggregate as aggregate_id, domain_error as domain_error_id,
-        domain_identity as domain_identity_id, entity as entity_id, query as query_id,
+        domain_identity as domain_identity_id, entity as entity_id,
         value_object as value_object_id,
     },
 };
@@ -32,7 +32,6 @@ pub struct DomainModelBuilder {
     domain_events: Vec<(DomainEventId, Value)>,
     domain_errors: Vec<(DomainErrorId, Value)>,
     decisions: DecisionProjection,
-    queries: Vec<(QueryId, Value)>,
     field_references: FieldReferenceCollection,
 }
 
@@ -48,7 +47,6 @@ impl DomainModelBuilder {
             domain_events: Vec::new(),
             domain_errors: Vec::new(),
             decisions: DecisionProjection::new(),
-            queries: Vec::new(),
             field_references: FieldReferenceCollection::new(),
         }
     }
@@ -202,27 +200,6 @@ impl DomainModelBuilder {
         Ok(())
     }
 
-    pub fn add_queries(
-        &mut self,
-        descriptors: &'static [QueryDescriptor],
-    ) -> Result<(), DomainModelError> {
-        for descriptor in descriptors {
-            if self.queries.iter().any(|(id, _)| *id == descriptor.id) {
-                return Err(DomainModelError::DuplicateQueryId {
-                    id: Box::new(descriptor.id),
-                });
-            }
-            self.queries.push((
-                descriptor.id,
-                json!({
-                    "id": query_id(descriptor.id),
-                    "label": descriptor.label,
-                }),
-            ));
-        }
-        Ok(())
-    }
-
     pub fn finish(self) -> Result<Value, DomainModelError> {
         let field_inventory = FieldReferenceInventory::new(
             self.domain_identities.iter().map(|(id, _)| *id).collect(),
@@ -243,7 +220,7 @@ impl DomainModelBuilder {
             "domainErrors": self.domain_errors.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "actions": [],
             "decisions": self.decisions.into_values(),
-            "queries": self.queries.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
+            "queries": [],
             "invariants": [],
         }))
     }

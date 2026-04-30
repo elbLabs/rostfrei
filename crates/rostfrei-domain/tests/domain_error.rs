@@ -170,7 +170,6 @@ fn rejects_duplicate_owner_independent_error_ids() {
         value_objects: [],
         services: [],
         errors: [TransferDenied, DuplicateTransferDenied],
-        query_groups: [],
     }
     .expect_err("duplicate domain error IDs must be rejected");
 

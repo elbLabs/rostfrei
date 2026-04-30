@@ -55,6 +55,10 @@ the explicit semantic metadata contract for decision result vocabularies, with
 its payload simplification specified by
 [ADR 0022](0022-semantic-decision-outcomes-and-ordinary-payloads.md).
 
+[ADR 0029](0029-trait-preserving-singular-domain-queries.md) subsequently
+makes each query a singular ordinary trait implemented directly for its
+aggregate root and removes query-group model registration altogether.
+
 The typed filesystem treats semantic value-object declarations as leaf tags in
 their owning domain module. Plain `input.rs` and `output.rs` files are valid
 companions in action and query directories and do not require a Rostfrei
