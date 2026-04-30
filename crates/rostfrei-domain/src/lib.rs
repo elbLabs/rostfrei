@@ -26,13 +26,8 @@ pub use aggregate::{
 };
 pub use bounded_context::{BoundedContextDescriptor, BoundedContextId, BoundedContextType};
 pub use command::{Command, CommandDescriptor};
-#[doc(hidden)]
-pub use decision::AttachedDecisionGroup;
 pub use decision::{
-    AggregateDecisionOwnerType, DecisionDescriptor, DecisionGroupType, DecisionId,
-    DecisionImplementationDescriptor, DecisionOutcomeDescriptor, DecisionOutcomeId,
-    DecisionOutcomeType, DecisionOwnerId, DecisionOwnerType, DecisionReference,
-    EntityDecisionOwnerType,
+    DecisionDescriptor, DecisionId, DecisionOutcomeDescriptor, DecisionOutcomeType,
 };
 pub use domain_error::{DomainError, DomainErrorDescriptor, DomainErrorId};
 pub use domain_event::{DomainEvent, DomainEventDescriptor, DomainEventId, DomainEventType};
@@ -54,19 +49,18 @@ pub use field::{
     FieldDescriptor, FieldKind, FieldValue, FieldWrapper, ScalarType, SemanticScalar,
     SemanticScalarDescriptor,
 };
-pub use invariant::{InvariantDescriptor, InvariantId, InvariantReference, InvariantViolation};
+pub use invariant::{InvariantDescriptor, InvariantId, InvariantViolation};
 pub use json_wire::{JsonCommandPayload, JsonErrorPayload};
 pub use rostfrei_domain_macros::{
     Aggregate, AggregateEvents, BoundedContext, Command, DecisionOutcome, DomainError, DomainEvent,
     DomainIdentity, DomainService, Entity, EntityLifecycle, ValueObject, domain_action,
-    domain_action_test, domain_decision_test, domain_decisions, domain_invariant_test,
-    domain_invariants, domain_lifecycle_test, domain_query,
+    domain_action_test, domain_decision, domain_decision_test, domain_invariant,
+    domain_invariant_test, domain_lifecycle_test, domain_query,
 };
 pub use value_object::{ValueObject, ValueObjectDescriptor, ValueObjectId};
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::decision::AttachedDecisionGroup;
     pub use crate::domain_identity::{DomainIdentityDescriptor, DomainIdentityType};
     pub use crate::domain_model::{DomainModelBuilder, try_build};
     pub use crate::domain_test::emit_domain_test_metadata as emit_domain_test_descriptor;

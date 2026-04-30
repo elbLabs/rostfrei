@@ -1,5 +1,0 @@
-error: missing id
- --> tests/ui/domain_invariant_contract/missing_invariant_id.rs:5:5
-  |
-5 |     #[invariant(label = "Valid")]
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

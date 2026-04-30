@@ -1,9 +1,11 @@
 use crate::domain::rental_fleet::{
     BicycleCondition, BicycleStatus, RentalFleetAggregate,
-    assess_rental_eligibility::RentalEligibilityOutcome,
+    assess_rental_eligibility::{RentalEligibilityDecision, RentalEligibilityOutcome},
 };
 
-#[test]
+#[rostfrei::domain_decision_test(
+    <RentalFleetAggregate as RentalEligibilityDecision>::DESCRIPTOR
+)]
 fn returns_first_class_outcomes() {
     assert_eq!(
         RentalFleetAggregate::assess_rental_eligibility(

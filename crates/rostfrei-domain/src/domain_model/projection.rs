@@ -2,14 +2,12 @@ use serde_json::{Value, json};
 
 use crate::{
     AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId,
-    BoundedContextDescriptor, DecisionOwnerId, DomainErrorDescriptor, DomainErrorId,
-    DomainEventDescriptor, DomainEventId, DomainIdentityId, DomainServiceDescriptor,
-    DomainServiceType, EntityDefinition, EntityDescriptor, ValueObject, ValueObjectDescriptor,
-    ValueObjectId,
+    BoundedContextDescriptor, DomainErrorDescriptor, DomainErrorId, DomainEventDescriptor,
+    DomainEventId, DomainIdentityId, DomainServiceDescriptor, DomainServiceType, EntityDefinition,
+    EntityDescriptor, ValueObject, ValueObjectDescriptor, ValueObjectId,
 };
 
 use super::{
-    decision_projection::DecisionProjection,
     entity_projection::EntityProjection,
     error::DomainModelError,
     field_projection,
@@ -31,7 +29,6 @@ pub struct DomainModelBuilder {
     domain_services: Vec<Value>,
     domain_events: Vec<(DomainEventId, Value)>,
     domain_errors: Vec<(DomainErrorId, Value)>,
-    decisions: DecisionProjection,
     field_references: FieldReferenceCollection,
 }
 
@@ -46,7 +43,6 @@ impl DomainModelBuilder {
             domain_services: Vec::new(),
             domain_events: Vec::new(),
             domain_errors: Vec::new(),
-            decisions: DecisionProjection::new(),
             field_references: FieldReferenceCollection::new(),
         }
     }
@@ -71,11 +67,6 @@ impl DomainModelBuilder {
 
     pub fn add_aggregate_type<A: AggregateDefinition>(&mut self) -> Result<(), DomainModelError> {
         self.add_aggregate(A::DESCRIPTOR);
-        let owner = DecisionOwnerId::Aggregate(A::DESCRIPTOR.id);
-        self.decisions.register_owner(owner);
-        for group in A::DECISION_GROUPS {
-            self.decisions.add_group(owner, group)?;
-        }
         for event in <A::Event as AggregateEventSet<A>>::DOMAIN_EVENTS {
             self.add_domain_event(*event)?;
         }
@@ -219,7 +210,7 @@ impl DomainModelBuilder {
             "domainEvents": self.domain_events.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "domainErrors": self.domain_errors.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "actions": [],
-            "decisions": self.decisions.into_values(),
+            "decisions": [],
             "queries": [],
             "invariants": [],
         }))

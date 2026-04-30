@@ -47,3 +47,7 @@ Rust design requires them without adding metadata solely for Rostfrei.
 Compiled-model consumers must stop expecting Decision `parameters` and outcome
 `shape` fields. Rostfrei deliberately does not provide a transport schema for
 Decision calls or outcome payloads.
+
+[ADR 0030](0030-singular-decisions-invariants-and-tests.md) subsequently
+removes Decision groups, ownership, and projection. `DecisionOutcome` remains
+the independent semantic enum contract described here.

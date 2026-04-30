@@ -1,5 +1,0 @@
-error: domain_invariants may only be applied to a trait
- --> tests/ui/domain_invariant_contract/non_trait_target.rs:4:1
-  |
-4 | struct Rules;
-  | ^^^^^^^^^^^^^

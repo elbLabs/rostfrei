@@ -1,0 +1,5 @@
+error: duplicate outcome local id
+ --> tests/ui/decision_outcome/duplicate_id.rs:7:20
+  |
+7 |     #[outcome(id = "same", label = "Second")]
+  |                    ^^^^^^

@@ -2,20 +2,12 @@ use std::io::{self, Write};
 
 use serde_json::json;
 
-use crate::{
-    ActionId, AggregateId, BoundedContextId, DecisionId, DecisionOwnerId, EntityLifecycleId,
-    InvariantId,
-};
+use crate::{ActionId, DecisionId, EntityLifecycleId, InvariantId};
 
 use super::{DomainTestDescriptor, DomainTestSubject, emitter, projection};
 
-const CONTEXT: BoundedContextId = BoundedContextId("sales");
-const AGGREGATE: AggregateId = AggregateId {
-    context: CONTEXT,
-    local: "order",
-};
 #[test]
-fn projects_subjects_with_model_id_shapes() {
+fn projects_global_subject_ids_consistently() {
     let cases = [
         (
             DomainTestSubject::Action(ActionId("submit")),
@@ -25,19 +17,10 @@ fn projects_subjects_with_model_id_shapes() {
             }),
         ),
         (
-            DomainTestSubject::Decision(DecisionId {
-                owner: DecisionOwnerId::Aggregate(AGGREGATE),
-                local: "can-submit",
-            }),
+            DomainTestSubject::Decision(DecisionId("can-submit")),
             json!({
                 "kind": "decision",
-                "id": {
-                    "owner": {
-                        "kind": "aggregate",
-                        "id": { "context": "sales", "local": "order" },
-                    },
-                    "local": "can-submit",
-                },
+                "id": "can-submit",
             }),
         ),
         (

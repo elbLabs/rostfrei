@@ -6,6 +6,9 @@ Accepted.
 
 The parameter and outcome-payload modeling described by the original decision
 is superseded by [ADR 0022](0022-semantic-decision-outcomes-and-ordinary-payloads.md).
+Decision groups, attachments, owner metadata, projection, and generated test
+references are superseded by
+[ADR 0030](0030-singular-decisions-invariants-and-tests.md).
 
 ## Context
 

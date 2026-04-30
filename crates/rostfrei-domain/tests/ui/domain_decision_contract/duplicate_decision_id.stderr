@@ -1,5 +1,0 @@
-error: duplicate decision id
-  --> tests/ui/domain_decision_contract/duplicate_decision_id.rs:14:21
-   |
-14 |     #[decision(id = "decide", label = "Second")]
-   |                     ^^^^^^^^

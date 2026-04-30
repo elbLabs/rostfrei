@@ -6,18 +6,18 @@ mod aggregate;
 mod aggregate_events;
 mod bounded_context;
 mod command;
+mod decision;
 mod decision_outcome;
-mod domain_decisions;
 mod domain_error;
 mod domain_event;
 mod domain_identity;
-mod domain_invariants;
 mod domain_service;
 mod domain_test;
 mod entity;
 mod entity_lifecycle;
 mod field;
 mod helper;
+mod invariant;
 mod query;
 mod value_object;
 
@@ -29,15 +29,15 @@ pub fn domain_action(args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn domain_decisions(args: TokenStream, input: TokenStream) -> TokenStream {
-    domain_decisions::expand(args.into(), input.into())
+pub fn domain_decision(args: TokenStream, input: TokenStream) -> TokenStream {
+    decision::expand(&args.into(), input.into())
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
 #[proc_macro_attribute]
-pub fn domain_invariants(args: TokenStream, input: TokenStream) -> TokenStream {
-    domain_invariants::expand(args.into(), input.into())
+pub fn domain_invariant(args: TokenStream, input: TokenStream) -> TokenStream {
+    invariant::expand(&args.into(), input.into())
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

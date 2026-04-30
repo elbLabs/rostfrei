@@ -1,7 +1,7 @@
 use super::{BicycleAvailability, BicycleAvailabilityQuery};
 use crate::domain::bike_rental::rental_fleet::{
     BicycleId, RentalFleet, RentalFleetAggregate,
-    assess_rental_eligibility::RentalEligibilityOutcome,
+    assess_rental_eligibility::{RentalEligibilityDecision as _, RentalEligibilityOutcome},
 };
 
 impl BicycleAvailabilityQuery for RentalFleet {

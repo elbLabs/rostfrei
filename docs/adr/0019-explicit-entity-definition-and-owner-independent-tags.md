@@ -85,6 +85,10 @@ owner, initial-state, and transition metadata and use `#[state(...)]` on
 variants. Invariant contracts must use argument-free `#[domain_invariants]` and
 ordinary method signatures.
 
+[ADR 0030](0030-singular-decisions-invariants-and-tests.md) subsequently
+replaces plural invariant contracts with one `#[domain_invariant(id, label)]`
+trait and a direct aggregate/entity implementation.
+
 Executable relationships remain compiler checked where Rust has an explicit
 type contract. Descriptive vocabularies remain reusable without claiming an
 attachment that the framework cannot prove. Compiled domain models no longer
