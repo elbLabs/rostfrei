@@ -1,4 +1,4 @@
-# ADR 0011: Inspection, simulation, and dispatch are separate capabilities
+# ADR 0010: Inspection, simulation, and dispatch are separate capabilities
 
 ## Status
 

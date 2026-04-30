@@ -1,4 +1,4 @@
-# ADR 0013: Durable post-commit domain-event handlers
+# ADR 0012: Durable post-commit domain-event handlers
 
 ## Status
 

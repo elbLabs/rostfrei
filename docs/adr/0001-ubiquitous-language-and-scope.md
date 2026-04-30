@@ -3,7 +3,7 @@
 ## Status
 
 Accepted; application and NATS naming ownership partially superseded by ADR
-0015.
+0014.
 
 ## Decision
 
@@ -35,13 +35,13 @@ rostfrei does not provide conventional state persistence through its
 aggregate abstraction. It also does not initially provide handler discovery,
 workflows, reactions, projection orchestration, schema generation, or execution
 journals. Procedural domain macros and explicit runtime registration are now
-implemented as described by ADRs 0010 and 0014.
+implemented as described by ADRs 0009 and 0013.
 
 ## Consequences
 
 Application code invokes an aggregate executor rather than a raw event-store
 adapter. Product names, environment variables, and deployment-specific
-overrides do not belong in rostfrei. ADR 0015 assigns normal application-scoped
+overrides do not belong in rostfrei. ADR 0014 assigns normal application-scoped
 subject and stream-name derivation to rostfrei. Documentation and APIs qualify
 the word `event` as domain event or integration event, and qualify `stream` as
 aggregate stream or JetStream stream whenever the shorter term would be

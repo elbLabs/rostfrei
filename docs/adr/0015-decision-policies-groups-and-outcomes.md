@@ -1,4 +1,4 @@
-# ADR 0016: Decision policies, groups, and outcomes
+# ADR 0015: Decision policies, groups, and outcomes
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-[ADR 0014](0014-compiled-domain-model.md) established Decisions as inherent
+[ADR 0013](0013-compiled-domain-model.md) established Decisions as inherent
 Aggregate- or Entity-owned Rust behavior in the compiled domain model. The initial contract allowed one attached
 Decision block per owner, modeled `Result<T, E>` as output and error, and treated
 its two branches as accepted and denied.
@@ -17,7 +17,7 @@ closed set of equally meaningful business outcomes. It also rejected immutable
 borrows even though borrowing changes Rust call mechanics rather than domain
 metadata.
 
-This ADR refines the Decision-specific parts of ADR 0014. It does not change
+This ADR refines the Decision-specific parts of ADR 0013. It does not change
 Action, command-execution, or Domain Error result contracts.
 
 ## Decision
