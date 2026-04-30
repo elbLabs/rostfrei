@@ -1,4 +1,4 @@
-# ADR 0010: Domain descriptors and automatic generated registration
+# ADR 0009: Domain descriptors and automatic generated registration
 
 ## Status
 
@@ -38,7 +38,7 @@ registered command descriptors. Registration uses deterministic storage and does
 not use `inventory`, linker-time collection, global mutable state, or runtime
 reflection.
 
-ADR 0014 subsequently absorbed the richer compiled domain model into rostfrei.
+ADR 0013 subsequently absorbed the richer compiled domain model into rostfrei.
 Model-backed commands now retain their structural domain descriptor when
 registered through `rostfrei-domain-runtime`. Tracer can deserialize and simulate
 explicitly bound commands, while Test and Dispatch use an explicitly configured

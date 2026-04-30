@@ -1,4 +1,4 @@
-# ADR 0017: Typed application buses own business message preparation
+# ADR 0016: Typed application buses own business message preparation
 
 ## Status
 

@@ -1,4 +1,4 @@
-# ADR 0014: Compiled domain model
+# ADR 0013: Compiled domain model
 
 ## Status
 
@@ -72,7 +72,7 @@ attached to explicit inherent aggregate or entity impl blocks.
 
 The Decision-specific attachment, signature, outcome, testing, and model shape
 contracts were subsequently refined by
-[ADR 0016](0016-decision-policies-groups-and-outcomes.md). Its explicit groups
+[ADR 0015](0015-decision-policies-groups-and-outcomes.md). Its explicit groups
 and `DecisionOutcome` enum contract supersede earlier single-block and
 `Result`-shaped Decision details without superseding the rest of this ADR.
 
