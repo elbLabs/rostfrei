@@ -4,6 +4,7 @@ mod command_bus;
 mod in_memory_messaging;
 mod integration_event;
 mod integration_event_bus;
+mod query_bus;
 
 pub use command_bus::{
     CommandBindingRegistrationError, CommandBus, CommandBusError, CommandBusErrorKind,
@@ -25,6 +26,11 @@ pub use integration_event_bus::{
     IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationEventPublication,
     IntegrationMessageAdapter, integration_message_id,
 };
+pub use query_bus::{
+    DynamicQueryRequest, EncodedQuery, InMemoryQueryAdapter, QueryBindingRegistrationError,
+    QueryBus, QueryBusError, QueryBusErrorKind, QueryMessageAdapter, QueryProcessor,
+    QueryProcessorHandler, QueryRequest, RoutedQuery, RoutedQueryError,
+};
 pub use rostfrei_core::{
     Aggregate, AggregateId as StreamAggregateId, AggregateInstance,
     AggregateType as StreamAggregateType, AppendOutcome, CommandExecutionError, CommandHandler,
@@ -38,18 +44,24 @@ pub use rostfrei_core::{
     TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
 };
 pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};
+pub use rostfrei_macros::QueryDefinition;
 pub use rostfrei_messaging_core::{
+    ApplicationErrorCode, ApplicationName, BoundedContext, BoundedContextName, CallerMetadata,
     CausationId, CommandAddress, CommandPublisher, CommandRejection,
     CommandRejectionClassification, CommandResponse, CommandResponseOutcome, CommandResponseReader,
     CorrelationId, DurableName, IntegrationEventEnvelope, MessageId, MessageTimestamp,
+    QueryAddress, QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryOptions,
+    QueryOutcome, QueryRequest as QueryHandlerRequest, QueryRequestError, QueryRequestErrorKind,
+    QueryResponse, QueryResult, QueryServer, TraceContext, TrafficScope,
 };
 pub use rostfrei_registry::{
     CommandDefinition, CommandDescriptor as CommandRegistrationDescriptor, DomainRegistry,
-    RegistrationError,
+    QueryDefinition, QueryDescriptor as QueryRegistrationDescriptor, RegistrationError,
 };
 
 #[doc(hidden)]
 pub mod __private {
     pub use domain::__private::{emit_domain_test_descriptor, serde, serde_json};
     pub use rostfrei_domain_runtime as domain_runtime;
+    pub use rostfrei_registry as registry;
 }

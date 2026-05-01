@@ -1,4 +1,4 @@
-use rostfrei_macros::{Module, QueryDefinition};
+use rostfrei_macros::QueryDefinition;
 
 #[derive(QueryDefinition)]
 #[rostfrei(
@@ -11,11 +11,6 @@ struct FindProduct {
     product_id: String,
 }
 
-#[derive(Module)]
-#[rostfrei(name = "catalog", queries(FindProduct))]
-struct Catalog;
-
 fn main() {
     let _ = <FindProduct as zs_registry::QueryDefinition>::descriptor();
-    let _ = <Catalog as zs_registry::DomainModule>::descriptor();
 }

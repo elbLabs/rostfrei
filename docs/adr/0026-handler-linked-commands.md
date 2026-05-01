@@ -1,4 +1,4 @@
-# ADR 0024: Handler-linked commands
+# ADR 0026: Handler-linked commands
 
 ## Status
 
@@ -73,6 +73,6 @@ The compiler checks the aggregate, command, and rejection relationship at the
 handler implementation. Registry and catalog identities remain fully scoped,
 while duplicate handwritten relationship declarations disappear.
 
-Under [ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md), custom
+Under [ADR 0033](0033-entity-identity-accessor-and-opaque-fields.md), custom
 Command fields such as `BicycleId` carry no use-site role tag and are described
 as opaque without changing JSON encoding.

@@ -1,4 +1,4 @@
-# ADR 0027: Explicit domain service definitions
+# ADR 0029: Explicit domain service definitions
 
 ## Status
 
@@ -50,7 +50,7 @@ Service identity and context remain compiler checked without making action
 projection implicit. Tooling can enforce the minimal filesystem relationship
 deterministically.
 
-[ADR 0028](0028-trait-preserving-singular-domain-actions.md) removes action
+[ADR 0030](0030-trait-preserving-singular-domain-actions.md) removes action
 extensions and action owner kinds altogether. The service definition and
 filesystem location remain, while a nested service action is a singular
 owner-independent trait whose conceptual owner is inferred from nesting.

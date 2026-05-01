@@ -1,4 +1,4 @@
-# ADR 0026: Semantic domain events
+# ADR 0028: Semantic domain events
 
 ## Status
 
@@ -49,6 +49,6 @@ The runtime wire contract is unchanged: event execution still applies
 immediately, persisted records retain the declared schema version and canonical
 JSON bytes, and replay decodes through the aggregate event set.
 
-[ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md) removes identity
+[ADR 0033](0033-entity-identity-accessor-and-opaque-fields.md) removes identity
 and Value Object field-role tags from Events. Custom payload fields become
 opaque descriptor values while their persisted JSON contract is unchanged.

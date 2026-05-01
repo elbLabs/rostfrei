@@ -1,4 +1,4 @@
-# ADR 0025: Owner-independent domain errors
+# ADR 0027: Owner-independent domain errors
 
 ## Status
 
@@ -56,6 +56,6 @@ metadata for errors. JSON encoding and runtime rejection behavior remain
 available by default, while the compiler checks each executable relationship
 where the error type is actually used.
 
-[ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md) removes identity
+[ADR 0033](0033-entity-identity-accessor-and-opaque-fields.md) removes identity
 and Value Object field tags from Domain Errors. Custom rejection fields are
 opaque metadata without changing their JSON payload behavior.

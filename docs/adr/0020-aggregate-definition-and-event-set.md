@@ -1,4 +1,4 @@
-# ADR 0018: Separate aggregate identity, definition, and event set
+# ADR 0020: Separate aggregate identity, definition, and event set
 
 ## Status
 
@@ -15,7 +15,7 @@ implementation necessarily doing so.
 
 Action-level `raises` claims were retained temporarily during this separation
 and are removed by
-[ADR 0023](0023-aggregate-event-sets-authorize-raising.md).
+[ADR 0025](0025-aggregate-event-sets-authorize-raising.md).
 
 Aggregate runtime execution still needs three concrete type relationships:
 the bounded context, aggregate root, and closed event representation. Those
@@ -74,7 +74,7 @@ or validate without manual lists.
 
 Entity declarations and owner-independent lifecycle and invariant tags follow
 the same separation principle in
-[ADR 0019](0019-explicit-entity-definition-and-owner-independent-tags.md).
+[ADR 0021](0021-explicit-entity-definition-and-owner-independent-tags.md).
 
 ## Consequences
 
@@ -100,7 +100,7 @@ aggregate explicitly, for example:
 <BicycleAdded as DomainEventType<RentalFleetAggregate>>::DESCRIPTOR
 ```
 
-[ADR 0026](0026-semantic-domain-events.md) subsequently makes `DomainEvent`
+[ADR 0028](0028-semantic-domain-events.md) subsequently makes `DomainEvent`
 the direct API for owner-independent local metadata. The aggregate-parameterized
 descriptor remains the membership projection supplied by `AggregateEvents`.
 

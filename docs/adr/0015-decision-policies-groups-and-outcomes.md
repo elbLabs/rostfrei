@@ -5,10 +5,10 @@
 Accepted.
 
 The parameter and outcome-payload modeling described by the original decision
-is superseded by [ADR 0022](0022-semantic-decision-outcomes-and-ordinary-payloads.md).
+is superseded by [ADR 0024](0024-semantic-decision-outcomes-and-ordinary-payloads.md).
 Decision groups, attachments, owner metadata, projection, and generated test
 references are superseded by
-[ADR 0030](0030-singular-decisions-invariants-and-tests.md).
+[ADR 0032](0032-singular-decisions-invariants-and-tests.md).
 
 ## Context
 
@@ -57,7 +57,7 @@ is attached to. Projection preserves owner inventory order, group attachment
 order, and Decision source order within each group. Groups are an organizational
 Rust mechanism and are not projected into compiled model JSON.
 
-[ADR 0018](0018-aggregate-definition-and-event-set.md) subsequently removed
+[ADR 0020](0020-aggregate-definition-and-event-set.md) subsequently removed
 Aggregate decision attachment. Aggregate-owned Decision contracts remain
 ordinary typed Rust behavior, but are not projected into the compiled model
 until Rostfrei has a relationship it can derive or validate without a manual

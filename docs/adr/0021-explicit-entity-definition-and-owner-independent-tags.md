@@ -1,4 +1,4 @@
-# ADR 0019: Explicit entity definitions and owner-independent tags
+# ADR 0021: Explicit entity definitions and owner-independent tags
 
 ## Status
 
@@ -88,7 +88,7 @@ owner, initial-state, and transition metadata and use `#[state(...)]` on
 variants. Invariant contracts must use argument-free `#[domain_invariants]` and
 ordinary method signatures.
 
-[ADR 0030](0030-singular-decisions-invariants-and-tests.md) subsequently
+[ADR 0032](0032-singular-decisions-invariants-and-tests.md) subsequently
 replaces plural invariant contracts with one `#[domain_invariant(id, label)]`
 trait and a direct aggregate/entity implementation.
 
@@ -98,15 +98,15 @@ attachment that the framework cannot prove. Compiled domain models no longer
 imply entity capabilities, invariant inventories, or lifecycle projection.
 
 The identity side of `EntityDefinition` is refined by
-[ADR 0020](0020-slim-domain-identities.md), which makes `DomainIdentity` a
+[ADR 0022](0022-slim-domain-identities.md), which makes `DomainIdentity` a
 metadata-free marker discovered through its entity rather than a separate
 compiled-model inventory.
 
 Value-object declarations and operation-specific DTOs are separated by
-[ADR 0021](0021-slim-value-objects-and-ordinary-dtos.md). Semantic value
+[ADR 0023](0023-slim-value-objects-and-ordinary-dtos.md). Semantic value
 objects retain ID and label metadata, while action inputs and query outputs are
 ordinary Rust types with no inferred model shape.
 
-[ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md) subsequently
+[ADR 0033](0033-entity-identity-accessor-and-opaque-fields.md) subsequently
 makes the `EntityDefinition::identity` accessor authoritative and removes
 identity and Value Object field-role tags.

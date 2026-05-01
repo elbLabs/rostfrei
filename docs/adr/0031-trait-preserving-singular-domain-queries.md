@@ -1,4 +1,4 @@
-# ADR 0029: Trait-preserving singular domain queries
+# ADR 0031: Trait-preserving singular domain queries
 
 ## Status
 

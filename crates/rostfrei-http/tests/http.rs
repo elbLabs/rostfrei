@@ -1,6 +1,6 @@
 #![allow(clippy::panic_in_result_fn)]
 
-use std::{error::Error, sync::Arc};
+use std::{convert::Infallible, error::Error, sync::Arc};
 
 use async_trait::async_trait;
 use axum::{
@@ -10,8 +10,8 @@ use axum::{
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
-    Aggregate, ApplicationErrorCode, ApplicationName, CommandBus, CommandBusError,
-    CommandBusErrorKind, CommandBusObserver, CommandBusReceipt, CommandDefinition,
+    Aggregate, AggregateInstance, ApplicationErrorCode, ApplicationName, Command, CommandBus,
+    CommandBusError, CommandBusErrorKind, CommandBusObserver, CommandBusReceipt, CommandHandler,
     CommandMessageAdapter, CommandPublication, DomainRegistry, EncodedCommand,
     InMemoryQueryAdapter, MessageId, QueryDefinition, QueryErrorClassification, QueryErrorPayload,
     QueryHandler, QueryHandlerRequest, QueryMessageAdapter, QueryOptions, QueryProcessor, StreamId,
@@ -37,13 +37,19 @@ impl Aggregate for ProductAggregate {
     fn apply(_state: &mut Self::State, _event: &Self::Event) {}
 }
 
+#[derive(Command, Debug, Deserialize, Serialize)]
+#[domain(id = "update-product", label = "Update product")]
 struct UpdateProduct;
 
-impl CommandDefinition for UpdateProduct {
-    type Aggregate = ProductAggregate;
+impl CommandHandler<UpdateProduct> for ProductAggregate {
+    type Rejection = Infallible;
 
-    const COMMAND_NAME: &'static str = "update-product";
-    const SCHEMA_VERSION: u32 = 1;
+    fn handle(
+        _command: &UpdateProduct,
+        _aggregate: &mut AggregateInstance<Self>,
+    ) -> Result<(), Self::Rejection> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, QueryDefinition, Serialize)]
@@ -139,7 +145,7 @@ fn app_with_config(config: HttpApiConfig) -> TestResult<Router> {
     let query_bus = rostfrei::QueryBus::new(context, query_adapter);
 
     let mut registry = DomainRegistry::new();
-    registry.register_command::<UpdateProduct>()?;
+    registry.register_command::<ProductAggregate, UpdateProduct>()?;
     registry.register_query::<FindProduct>()?;
     Ok(router(Arc::new(registry), command_bus, query_bus, config))
 }
