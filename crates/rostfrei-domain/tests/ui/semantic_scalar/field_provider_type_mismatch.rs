@@ -17,3 +17,4 @@ impl SemanticScalar for U64Scalar {
 struct Mismatch(#[domain(scalar = U64Scalar)] String);
 
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();

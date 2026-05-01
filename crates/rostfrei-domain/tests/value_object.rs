@@ -52,3 +52,4 @@ fn derives_owner_independent_semantic_descriptors() {
     let _ = DeliveryState::Pending;
     let _ = DeliveryState::Delivered;
 }
+rostfrei_domain_macros::__install_test_macro_support!();

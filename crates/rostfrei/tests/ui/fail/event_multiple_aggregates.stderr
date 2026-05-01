@@ -1,4 +1,4 @@
-error[E0119]: conflicting implementations of trait `DomainEventType<_>` for type `SharedEvent`
+error[E0119]: conflicting implementations of trait `rostfrei::DomainEventType<_>` for type `SharedEvent`
   --> tests/ui/fail/event_multiple_aggregates.rs:59:10
    |
 44 | #[derive(rostfrei::AggregateEvents)]

@@ -117,3 +117,4 @@ fn main() {
     let _executor = rostfrei::Executor::new(rostfrei::InMemoryEventStore::new());
     let _reset: fn(&mut Account) = <Account as ResetAccountAction>::reset;
 }
+rostfrei::install_macro_support!();

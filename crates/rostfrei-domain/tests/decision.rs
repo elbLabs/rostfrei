@@ -63,3 +63,4 @@ fn decision_outcomes_retain_intrinsic_ordered_metadata() {
     assert_eq!(outcomes[1].local_id, "rejected");
     assert_eq!(outcomes[1].label, "Rejected");
 }
+rostfrei_domain_macros::__install_test_macro_support!();

@@ -238,3 +238,4 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
         }])
     );
 }
+rostfrei_domain_macros::__install_test_macro_support!();

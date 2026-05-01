@@ -557,3 +557,4 @@ async fn replay_error(
         }),
     }
 }
+rostfrei::install_macro_support!();

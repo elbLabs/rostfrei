@@ -27,3 +27,4 @@ impl domain::EntityDefinition for Unsupported {
 struct EntityInValueObject(#[domain(entity)] Other);
 
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();

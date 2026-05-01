@@ -127,3 +127,4 @@ fn describes_explicit_roles_opaque_fields_wrappers_and_raw_names() {
     );
     assert_eq!(fields[5].value.kind, FieldKind::Opaque);
 }
+rostfrei_domain_macros::__install_test_macro_support!();

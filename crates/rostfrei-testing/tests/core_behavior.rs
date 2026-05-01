@@ -1411,3 +1411,20 @@ async fn append_raw_version(
         })?;
     Ok(())
 }
+#[doc(hidden)]
+pub mod __rostfrei_macro_support {
+    pub use domain::*;
+    pub use rostfrei_domain_runtime::*;
+
+    macro_rules! __runtime {
+        ($($tokens:tt)*) => {
+            $($tokens)*
+        };
+    }
+    pub(crate) use __runtime;
+
+    pub mod __private {
+        pub use domain::__private::*;
+        pub use rostfrei_domain_runtime::__private::{assert_unique_event_ids, core};
+    }
+}

@@ -18,3 +18,4 @@ fn main() {
     assert_eq!(descriptor.id, InvariantId("valid"));
     assert!(Candidate.validate().is_none());
 }
+rostfrei_domain_macros::__install_test_macro_support!();

@@ -58,3 +58,4 @@ impl Apply<SecondEvent> for Root {
 }
 
 fn main() {}
+rostfrei::install_macro_support!();

@@ -12,3 +12,4 @@ enum Workflow {
 const _: domain::EntityLifecycleDescriptor = Workflow::DESCRIPTOR;
 
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();

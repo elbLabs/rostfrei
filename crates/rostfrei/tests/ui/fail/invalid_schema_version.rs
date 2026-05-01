@@ -3,3 +3,4 @@
 struct Event;
 
 fn main() {}
+rostfrei::install_macro_support!();

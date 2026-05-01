@@ -1,0 +1,3 @@
+[workspace]
+members = ["renamed-facade", "dev-poison", "optional-poison"]
+resolver = "3"

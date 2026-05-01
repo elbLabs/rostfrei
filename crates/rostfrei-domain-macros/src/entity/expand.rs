@@ -9,7 +9,7 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     crate::helper::id::validate(&attributes.id)?;
     crate::helper::label::validate(&attributes.label)?;
     let fields = crate::field::extract(source_fields)?;
-    let domain_path = crate::helper::domain_api_path::resolve()?;
+    let domain_path = crate::helper::domain_api_path::resolve();
     Ok(assembly::assemble(
         &domain_path,
         &input.ident,

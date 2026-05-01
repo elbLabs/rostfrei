@@ -88,3 +88,4 @@ impl Apply<SharedEvent> for SecondRoot {
 }
 
 fn main() {}
+rostfrei::install_macro_support!();

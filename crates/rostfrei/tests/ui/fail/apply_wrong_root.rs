@@ -51,3 +51,4 @@ impl Apply<Event> for WrongRoot {
 }
 
 fn main() {}
+rostfrei::install_macro_support!();
