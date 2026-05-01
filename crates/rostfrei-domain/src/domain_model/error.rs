@@ -1,6 +1,9 @@
 use std::{error::Error, fmt};
 
-use crate::{AggregateId, DomainErrorId, DomainEventId, DomainIdentityId, EntityId};
+use crate::{
+    AggregateId, BoundedContextId, DomainErrorId, DomainEventId, DomainIdentityId, DomainServiceId,
+    EntityId, ValueObjectId,
+};
 
 /// A domain-model descriptor reference involved in an inventory validation failure.
 #[non_exhaustive]
@@ -19,8 +22,23 @@ pub enum DomainModelError {
         location: String,
         inventory_key: &'static str,
     },
+    DuplicateBoundedContextId {
+        id: Box<BoundedContextId>,
+    },
+    DuplicateAggregateId {
+        id: Box<AggregateId>,
+    },
+    DuplicateEntityId {
+        id: Box<EntityId>,
+    },
     DuplicateDomainIdentityId {
         id: Box<DomainIdentityId>,
+    },
+    DuplicateValueObjectId {
+        id: Box<ValueObjectId>,
+    },
+    DuplicateDomainServiceId {
+        id: Box<DomainServiceId>,
     },
     DuplicateDomainEventId {
         id: Box<DomainEventId>,
@@ -38,8 +56,17 @@ impl fmt::Display for DomainModelError {
                 location,
                 inventory_key,
             } => fmt_field_reference(formatter, reference, location, inventory_key),
+            Self::DuplicateBoundedContextId { id } => {
+                fmt_duplicate(formatter, "BoundedContextId", id)
+            }
+            Self::DuplicateAggregateId { id } => fmt_duplicate(formatter, "AggregateId", id),
+            Self::DuplicateEntityId { id } => fmt_duplicate(formatter, "EntityId", id),
             Self::DuplicateDomainIdentityId { id } => {
                 fmt_duplicate(formatter, "DomainIdentityId", id)
+            }
+            Self::DuplicateValueObjectId { id } => fmt_duplicate(formatter, "ValueObjectId", id),
+            Self::DuplicateDomainServiceId { id } => {
+                fmt_duplicate(formatter, "DomainServiceId", id)
             }
             Self::DuplicateDomainEventId { id } => fmt_duplicate(formatter, "DomainEventId", id),
             Self::DuplicateDomainErrorId { id } => fmt_duplicate(formatter, "DomainErrorId", id),
