@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `Root: Apply<Event>` is not satisfied
-  --> tests/ui/fail/apply_wrong_root.rs:34:10
+  --> tests/ui/fail/apply_wrong_root.rs:35:10
    |
-34 | #[derive(rostfrei::Aggregate)]
+35 | #[derive(rostfrei::Aggregate)]
    |          ^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `Apply<Event>` is not implemented for `Root`
@@ -10,16 +10,16 @@ help: the trait `Apply<Event>` is not implemented for `Root`
 13 | struct Root {
    | ^^^^^^^^^^^
 help: the trait `Apply<Event>` is implemented for `WrongRoot`
-  --> tests/ui/fail/apply_wrong_root.rs:48:1
+  --> tests/ui/fail/apply_wrong_root.rs:49:1
    |
-48 | impl Apply<Event> for WrongRoot {
+49 | impl Apply<Event> for WrongRoot {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required for `Events` to implement `AggregateEventRuntime<Aggregate>`
-  --> tests/ui/fail/apply_wrong_root.rs:30:6
+  --> tests/ui/fail/apply_wrong_root.rs:31:6
    |
-29 | #[derive(rostfrei::AggregateEvents)]
+30 | #[derive(rostfrei::AggregateEvents)]
    |          ------------------------- type parameter would need to implement `AggregateEventRuntime<Aggregate>`
-30 | enum Events {
+31 | enum Events {
    |      ^^^^^^
    = help: consider manually implementing `AggregateEventRuntime<Aggregate>` to avoid undesired bounds
    = note: this error originates in the derive macro `rostfrei::Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)

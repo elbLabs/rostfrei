@@ -1,4 +1,4 @@
-use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, ValueObject};
+use domain::{Aggregate, BoundedContext, DomainIdentity, Entity};
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -18,13 +18,16 @@ struct Plain;
 #[derive(Entity)]
 #[domain(id = "root", label = "Root")]
 struct Root {
-    #[domain(identity)]
     id: Id,
 }
 
 impl domain::EntityDefinition for Root {
     type Owner = First;
     type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]
@@ -40,13 +43,16 @@ impl domain::AggregateDefinition for First {
 #[derive(Entity)]
 #[domain(id = "other-root", label = "Other root")]
 struct OtherRoot {
-    #[domain(identity)]
     id: OtherId,
 }
 
 impl domain::EntityDefinition for OtherRoot {
     type Owner = Second;
     type Identity = OtherId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]
@@ -62,11 +68,9 @@ impl domain::AggregateDefinition for Second {
 #[derive(Entity)]
 #[domain(id = "wrong", label = "Wrong")]
 struct Wrong {
-    #[domain(identity)]
     id: WrongId,
     #[domain(entity)]
     other: OtherRoot,
-    #[domain(value_object)]
     plain_value: Plain,
     #[domain(aggregate_ref = Plain)]
     reference: Plain,
@@ -75,10 +79,10 @@ struct Wrong {
 impl domain::EntityDefinition for Wrong {
     type Owner = First;
     type Identity = WrongId;
-}
 
-#[derive(ValueObject)]
-#[domain(id = "wrong-value", label = "Wrong value")]
-struct WrongValue(#[domain(value_object)] Plain);
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
+}
 
 fn main() {}

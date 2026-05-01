@@ -22,13 +22,16 @@ struct Id(u64);
 #[derive(Entity)]
 #[domain(id = "other-root", label = "Other")]
 struct OtherRoot {
-    #[domain(identity)]
     id: Id,
 }
 
 impl domain::EntityDefinition for OtherRoot {
     type Owner = OtherAggregate;
     type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]

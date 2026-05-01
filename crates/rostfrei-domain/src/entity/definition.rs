@@ -5,4 +5,6 @@ use crate::{AggregateType, DomainIdentity};
 pub trait EntityDefinition: EntityType {
     type Owner: AggregateType;
     type Identity: DomainIdentity;
+
+    fn identity(&self) -> &Self::Identity;
 }

@@ -40,13 +40,16 @@ struct WorkItemId(u64);
 #[derive(Entity)]
 #[domain(id = "work-item", label = "Work item")]
 struct WorkItem {
-    #[domain(identity)]
     id: WorkItemId,
 }
 
 impl domain::EntityDefinition for WorkItem {
     type Owner = WorkQueue;
     type Identity = WorkItemId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]

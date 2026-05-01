@@ -2,10 +2,7 @@ use serde_json::{Value, json};
 
 use crate::{FieldDescriptor, FieldKind, FieldWrapper, ScalarType, SemanticScalarDescriptor};
 
-use super::id_projection::{
-    aggregate as aggregate_id, domain_identity as domain_identity_id, entity as entity_id,
-    value_object as value_object_id,
-};
+use super::id_projection::{aggregate as aggregate_id, entity as entity_id};
 
 pub fn fields(descriptors: &'static [FieldDescriptor]) -> Value {
     descriptors.iter().map(field).collect()
@@ -22,11 +19,7 @@ fn value(descriptor: &FieldDescriptor) -> Value {
     let mut value = match descriptor.value.kind {
         FieldKind::Scalar(scalar_type) => scalar(scalar_type),
         FieldKind::SemanticScalar(descriptor) => semantic_scalar(descriptor),
-        FieldKind::DomainIdentity(id) => {
-            json!({ "kind": "identity", "id": domain_identity_id(id) })
-        }
         FieldKind::Entity(id) => json!({ "kind": "entity", "id": entity_id(id) }),
-        FieldKind::ValueObject(id) => json!({ "kind": "valueObject", "id": value_object_id(id) }),
         FieldKind::AggregateReference(id) => {
             json!({ "kind": "aggregateReference", "aggregate": aggregate_id(id) })
         }

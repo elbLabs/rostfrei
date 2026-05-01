@@ -35,10 +35,7 @@ fn entity(descriptor: EntityDescriptor) -> Value {
     json!({
         "id": entity_id(descriptor.id),
         "label": descriptor.label,
-        "identity": {
-            "field": descriptor.identity.field,
-            "id": domain_identity_id(descriptor.identity.identity),
-        },
+        "identity": domain_identity_id(descriptor.identity),
         "fields": field_projection::fields(descriptor.fields),
     })
 }

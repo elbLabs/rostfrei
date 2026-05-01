@@ -6,17 +6,8 @@ struct Id(u64);
 struct Other;
 
 #[derive(Entity)]
-#[domain(id = "bad", label = "Bad", owner = Owner)]
-struct Duplicate {
-    #[domain(identity, value_object)]
-    id: Id,
-}
-}
-
-#[derive(Entity)]
 #[domain(id = "bad", label = "Bad")]
 struct Unsupported {
-    #[domain(identity)]
     id: Id,
     #[domain(owns)]
     value: String,
@@ -25,6 +16,10 @@ struct Unsupported {
 impl domain::EntityDefinition for Unsupported {
     type Owner = Owner;
     type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(ValueObject)]

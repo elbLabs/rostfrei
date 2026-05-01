@@ -57,7 +57,6 @@ struct TestId(u64);
 #[derive(Entity)]
 #[domain(id = "test-root", label = "Test root")]
 struct TestRoot {
-    #[domain(identity)]
     id: TestId,
     marked: bool,
     active: bool,
@@ -66,6 +65,10 @@ struct TestRoot {
 impl domain::EntityDefinition for TestRoot {
     type Owner = TestAggregate;
     type Identity = TestId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]

@@ -287,18 +287,6 @@ fn field_kind(kind: domain::FieldKind) -> Value {
                 "representation": scalar_name(descriptor.representation),
             }
         }),
-        domain::FieldKind::DomainIdentity(id) => json!({
-            "kind": "identity",
-            "id": {
-                "owner": {
-                    "aggregate": {
-                        "context": id.owner.aggregate.context.0,
-                        "local": id.owner.aggregate.local,
-                    },
-                    "local": id.owner.local,
-                }
-            }
-        }),
         domain::FieldKind::Entity(id) => json!({
             "kind": "entity",
             "id": {
@@ -309,9 +297,6 @@ fn field_kind(kind: domain::FieldKind) -> Value {
                 "local": id.local,
             }
         }),
-        domain::FieldKind::ValueObject(id) => {
-            json!({ "kind": "valueObject", "id": id.0 })
-        }
         domain::FieldKind::AggregateReference(id) => json!({
             "kind": "aggregateReference",
             "aggregate": { "context": id.context.0, "local": id.local }

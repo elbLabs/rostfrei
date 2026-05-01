@@ -41,5 +41,14 @@ fn omits_unattached_capabilities_and_lifecycle_metadata() {
         .iter()
         .find(|entity| entity["id"]["local"] == "bicycle")
         .expect("bicycle entity should be projected");
+    assert!(bicycle["identity"].get("field").is_none());
+    assert_eq!(bicycle["identity"]["owner"]["local"], "bicycle");
+    assert!(
+        bicycle["fields"]
+            .as_array()
+            .expect("bicycle fields should be an array")
+            .iter()
+            .all(|field| field["value"]["kind"] == "opaque")
+    );
     assert_eq!(bicycle["lifecycle"], json!(null));
 }

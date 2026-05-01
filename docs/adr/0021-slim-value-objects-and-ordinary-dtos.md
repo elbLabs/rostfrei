@@ -78,3 +78,8 @@ The compiled model becomes intentionally smaller and no longer claims to be a
 Rust DTO schema. Domain concepts retain stable IDs and labels, while operation
 payload evolution remains governed by ordinary Rust types and boundary-specific
 serialization or schema contracts.
+
+[ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md) removes Value
+Object use-site field tags as well. A field whose custom Rust type is not
+otherwise classified is represented as opaque rather than as a semantic Value
+Object reference.

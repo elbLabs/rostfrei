@@ -9,7 +9,6 @@ struct Tuple(Id);
 #[derive(Entity)]
 #[domain(id = "generic", label = "Generic")]
 struct Generic<T> {
-    #[domain(identity)]
     id: T,
 }
 

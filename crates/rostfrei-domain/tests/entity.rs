@@ -1,7 +1,7 @@
 use domain::{
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainIdentity, DomainIdentityId,
-    Entity, EntityDescriptor, EntityId, EntityType, FieldDescriptor, FieldKind, FieldValue,
-    IdentityDescriptor, ScalarType,
+    Entity, EntityDefinition, EntityDescriptor, EntityId, EntityType, FieldDescriptor, FieldKind,
+    FieldValue, ScalarType,
 };
 
 #[derive(BoundedContext)]
@@ -14,7 +14,6 @@ struct MailboxId(u64);
 #[derive(Entity)]
 #[domain(id = "mailbox-root", label = "Mailbox")]
 struct MailboxRoot {
-    #[domain(identity)]
     r#id: MailboxId,
     message_count: usize,
 }
@@ -22,6 +21,10 @@ struct MailboxRoot {
 impl domain::EntityDefinition for MailboxRoot {
     type Owner = Mailbox;
     type Identity = MailboxId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]
@@ -35,7 +38,7 @@ impl domain::AggregateDefinition for Mailbox {
 }
 
 #[test]
-fn derives_entity_descriptor_with_identity_field() {
+fn derives_entity_descriptor_with_identity_metadata() {
     assert_eq!(
         MailboxRoot::DESCRIPTOR,
         EntityDescriptor {
@@ -47,19 +50,14 @@ fn derives_entity_descriptor_with_identity_field() {
                 local: "mailbox-root",
             },
             label: "Mailbox",
-            identity: IdentityDescriptor {
-                field: "id",
-                identity: DomainIdentityId {
-                    owner: MailboxRoot::DESCRIPTOR.id,
-                },
+            identity: DomainIdentityId {
+                owner: MailboxRoot::DESCRIPTOR.id,
             },
             fields: &[
                 FieldDescriptor {
                     name: "id",
                     value: FieldValue {
-                        kind: FieldKind::DomainIdentity(DomainIdentityId {
-                            owner: MailboxRoot::DESCRIPTOR.id,
-                        }),
+                        kind: FieldKind::Opaque,
                         wrappers: &[],
                     },
                 },
@@ -78,6 +76,7 @@ fn derives_entity_descriptor_with_identity_field() {
         r#id: MailboxId(1),
         message_count: 2,
     };
+    assert_eq!(root.identity().0, 1);
     assert_eq!(root.r#id.0, 1);
     assert_eq!(root.message_count, 2);
 }

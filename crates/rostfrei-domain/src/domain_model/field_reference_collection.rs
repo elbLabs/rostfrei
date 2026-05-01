@@ -2,14 +2,12 @@ use std::fmt;
 
 use crate::{
     DomainErrorDescriptor, DomainErrorId, DomainEventDescriptor, DomainEventId, EntityDescriptor,
-    EntityId, FieldDescriptor, FieldKind, ValueObjectId,
+    EntityId, FieldDescriptor, FieldKind,
 };
 
 #[derive(Clone, Copy)]
 pub(super) enum FieldReference {
-    DomainIdentity(crate::DomainIdentityId),
     Entity(EntityId),
-    ValueObject(ValueObjectId),
     Aggregate(crate::AggregateId),
 }
 
@@ -95,9 +93,7 @@ impl FieldReferenceCollection {
         for field in fields {
             let reference = match field.value.kind {
                 FieldKind::Scalar(_) | FieldKind::SemanticScalar(_) | FieldKind::Opaque => continue,
-                FieldKind::DomainIdentity(id) => FieldReference::DomainIdentity(id),
                 FieldKind::Entity(id) => FieldReference::Entity(id),
-                FieldKind::ValueObject(id) => FieldReference::ValueObject(id),
                 FieldKind::AggregateReference(id) => FieldReference::Aggregate(id),
             };
             self.records.push(FieldReferenceRecord {

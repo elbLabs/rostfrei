@@ -10,17 +10,18 @@ use crate::domain::rental_fleet::RentalFleetAggregate;
 #[derive(Entity, Debug)]
 #[domain(id = "bicycle", label = "Bicycle")]
 pub struct Bicycle {
-    #[domain(identity)]
     pub(super) bicycle_id: BicycleId,
-    #[domain(value_object)]
     pub(super) status: BicycleStatus,
-    #[domain(value_object)]
     pub(super) condition: BicycleCondition,
 }
 
 impl EntityDefinition for Bicycle {
     type Owner = RentalFleetAggregate;
     type Identity = BicycleId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.bicycle_id
+    }
 }
 
 impl Bicycle {

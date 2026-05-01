@@ -37,7 +37,6 @@ struct RevisionId(u64);
 #[derive(Entity)]
 #[domain(id = "document-root", label = "Document")]
 struct DocumentRoot {
-    #[domain(identity)]
     id: DocumentId,
     #[domain(scalar = UuidScalar)]
     correlation_id: foreign::Uuid,
@@ -49,18 +48,25 @@ struct DocumentRoot {
 impl domain::EntityDefinition for DocumentRoot {
     type Owner = Documents;
     type Identity = DocumentId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Entity)]
 #[domain(id = "revision", label = "Revision")]
 struct Revision {
-    #[domain(identity)]
     id: RevisionId,
 }
 
 impl domain::EntityDefinition for Revision {
     type Owner = Documents;
     type Identity = RevisionId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]
@@ -153,16 +159,7 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
         json!([{
             "name": "id",
             "value": {
-                "kind": "identity",
-                "id": {
-                    "owner": {
-                        "aggregate": {
-                            "context": "semantic-scalars",
-                            "local": "documents",
-                        },
-                        "local": "document-root",
-                    },
-                },
+                "kind": "opaque",
             },
         }, {
             "name": "correlation_id",

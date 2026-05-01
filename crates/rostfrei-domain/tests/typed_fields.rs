@@ -33,24 +33,25 @@ struct Metadata;
 #[derive(Entity)]
 #[domain(id = "part", label = "Part")]
 struct Part {
-    #[domain(identity)]
     id: PartId,
 }
 
 impl domain::EntityDefinition for Part {
     type Owner = Product;
     type Identity = PartId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Entity)]
 #[domain(id = "product-root", label = "Product")]
 struct ProductRoot {
-    #[domain(identity)]
     r#id: ProductId,
     active: bool,
     #[domain(entity)]
     parts: Vec<Option<Part>>,
-    #[domain(value_object)]
     details: Option<Vec<Details>>,
     #[domain(aggregate_ref = Product)]
     parent: Option<ProductId>,
@@ -60,6 +61,10 @@ struct ProductRoot {
 impl domain::EntityDefinition for ProductRoot {
     type Owner = Product;
     type Identity = ProductId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]
@@ -99,25 +104,20 @@ struct Scalars(
 struct Marker;
 
 #[test]
-fn describes_entity_roles_wrappers_order_and_raw_names() {
+fn describes_explicit_roles_opaque_fields_wrappers_and_raw_names() {
     let fields = ProductRoot::DESCRIPTOR.fields;
     assert_eq!(
         fields.iter().map(|field| field.name).collect::<Vec<_>>(),
         ["id", "active", "parts", "details", "parent", "metadata"]
     );
-    assert_eq!(
-        fields[0].value.kind,
-        FieldKind::DomainIdentity(ProductRoot::DESCRIPTOR.identity.identity)
-    );
+    assert_eq!(fields[0].value.kind, FieldKind::Opaque);
     assert_eq!(fields[1].value.kind, FieldKind::Scalar(ScalarType::Bool));
     assert!(matches!(fields[2].value.kind, FieldKind::Entity(id) if id == Part::DESCRIPTOR.id));
     assert_eq!(
         fields[2].value.wrappers,
         &[FieldWrapper::List, FieldWrapper::Optional]
     );
-    assert!(
-        matches!(fields[3].value.kind, FieldKind::ValueObject(id) if id == Details::DESCRIPTOR.id)
-    );
+    assert_eq!(fields[3].value.kind, FieldKind::Opaque);
     assert_eq!(
         fields[3].value.wrappers,
         &[FieldWrapper::Optional, FieldWrapper::List]

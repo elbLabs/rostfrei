@@ -1,63 +1,86 @@
 error: field must use a supported scalar or direct domain type
-  --> tests/ui/field_invalid_shapes.rs:26:12
+  --> tests/ui/field_invalid_shapes.rs:28:12
    |
-26 |     value: &'static str,
+28 |     value: &'static str,
    |            ^^^^^^^^^^^^
 
 error: field must use a supported scalar or direct domain type
-  --> tests/ui/field_invalid_shapes.rs:39:12
+  --> tests/ui/field_invalid_shapes.rs:44:12
    |
-39 |     value: [u8; 4],
+44 |     value: [u8; 4],
    |            ^^^^^^^
 
 error: field must use a supported scalar or direct domain type
-  --> tests/ui/field_invalid_shapes.rs:52:12
+  --> tests/ui/field_invalid_shapes.rs:60:12
    |
-52 |     value: (u8, u8),
+60 |     value: (u8, u8),
    |            ^^^^^^^^
 
 error: field base type must be direct and non-generic
-  --> tests/ui/field_invalid_shapes.rs:65:12
+  --> tests/ui/field_invalid_shapes.rs:76:12
    |
-65 |     value: std::collections::HashMap<String, String>,
+76 |     value: std::collections::HashMap<String, String>,
    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error: field base type must be direct and non-generic
-  --> tests/ui/field_invalid_shapes.rs:78:12
+  --> tests/ui/field_invalid_shapes.rs:92:12
    |
-78 |     value: collections::Vec<u8>,
+92 |     value: collections::Vec<u8>,
    |            ^^^^^^^^^^^^^^^^^^^^
 
 error: Vec and Option require exactly one plain type argument
-  --> tests/ui/field_invalid_shapes.rs:91:18
-   |
-91 |     value: Option<u8, u16>,
-   |                  ^^^^^^^^^
+   --> tests/ui/field_invalid_shapes.rs:108:18
+    |
+108 |     value: Option<u8, u16>,
+    |                  ^^^^^^^^^
 
 error[E0107]: enum takes 1 generic argument but 2 generic arguments were supplied
-  --> tests/ui/field_invalid_shapes.rs:91:12
-   |
-91 |     value: Option<u8, u16>,
-   |            ^^^^^^   ----- help: remove the unnecessary generic argument
-   |            |
-   |            expected 1 generic argument
-   |
+   --> tests/ui/field_invalid_shapes.rs:108:12
+    |
+108 |     value: Option<u8, u16>,
+    |            ^^^^^^   ----- help: remove the unnecessary generic argument
+    |            |
+    |            expected 1 generic argument
+    |
 note: enum defined here, with 1 generic parameter: `T`
-  --> $RUST/core/src/option.rs
-   |
-   | pub enum Option<T> {
-   |          ^^^^^^ -
+   --> $RUST/core/src/option.rs
+    |
+    | pub enum Option<T> {
+    |          ^^^^^^ -
 
 error[E0277]: the trait bound `Reference: EntityType` is not satisfied
-  --> tests/ui/field_invalid_shapes.rs:29:35
+  --> tests/ui/field_invalid_shapes.rs:35:5
    |
-29 | impl domain::EntityDefinition for Reference {
+35 |     fn identity(&self) -> &Self::Identity {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `Reference`
+  --> tests/ui/field_invalid_shapes.rs:26:1
+   |
+26 | struct Reference {
+   | ^^^^^^^^^^^^^^^^
+help: the trait `EntityType` is implemented for `UntaggedCustom`
+  --> tests/ui/field_invalid_shapes.rs:8:10
+   |
+ 8 | #[derive(Entity)]
+   |          ^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Reference: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:31:35
+   |
+31 | impl domain::EntityDefinition for Reference {
    |                                   ^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `EntityType` is not implemented for `Reference`
-  --> tests/ui/field_invalid_shapes.rs:23:1
+  --> tests/ui/field_invalid_shapes.rs:26:1
    |
-23 | struct Reference {
+26 | struct Reference {
    | ^^^^^^^^^^^^^^^^
 help: the trait `EntityType` is implemented for `UntaggedCustom`
   --> tests/ui/field_invalid_shapes.rs:8:10
@@ -72,15 +95,38 @@ note: required by a bound in `EntityDefinition`
    = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Array: EntityType` is not satisfied
-  --> tests/ui/field_invalid_shapes.rs:42:35
+  --> tests/ui/field_invalid_shapes.rs:51:5
    |
-42 | impl domain::EntityDefinition for Array {
+51 |     fn identity(&self) -> &Self::Identity {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `Array`
+  --> tests/ui/field_invalid_shapes.rs:42:1
+   |
+42 | struct Array {
+   | ^^^^^^^^^^^^
+help: the trait `EntityType` is implemented for `UntaggedCustom`
+  --> tests/ui/field_invalid_shapes.rs:8:10
+   |
+ 8 | #[derive(Entity)]
+   |          ^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Array: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:47:35
+   |
+47 | impl domain::EntityDefinition for Array {
    |                                   ^^^^^ unsatisfied trait bound
    |
 help: the trait `EntityType` is not implemented for `Array`
-  --> tests/ui/field_invalid_shapes.rs:36:1
+  --> tests/ui/field_invalid_shapes.rs:42:1
    |
-36 | struct Array {
+42 | struct Array {
    | ^^^^^^^^^^^^
 help: the trait `EntityType` is implemented for `UntaggedCustom`
   --> tests/ui/field_invalid_shapes.rs:8:10
@@ -95,15 +141,38 @@ note: required by a bound in `EntityDefinition`
    = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Tuple: EntityType` is not satisfied
-  --> tests/ui/field_invalid_shapes.rs:55:35
+  --> tests/ui/field_invalid_shapes.rs:67:5
    |
-55 | impl domain::EntityDefinition for Tuple {
+67 |     fn identity(&self) -> &Self::Identity {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `Tuple`
+  --> tests/ui/field_invalid_shapes.rs:58:1
+   |
+58 | struct Tuple {
+   | ^^^^^^^^^^^^
+help: the trait `EntityType` is implemented for `UntaggedCustom`
+  --> tests/ui/field_invalid_shapes.rs:8:10
+   |
+ 8 | #[derive(Entity)]
+   |          ^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Tuple: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:63:35
+   |
+63 | impl domain::EntityDefinition for Tuple {
    |                                   ^^^^^ unsatisfied trait bound
    |
 help: the trait `EntityType` is not implemented for `Tuple`
-  --> tests/ui/field_invalid_shapes.rs:49:1
+  --> tests/ui/field_invalid_shapes.rs:58:1
    |
-49 | struct Tuple {
+58 | struct Tuple {
    | ^^^^^^^^^^^^
 help: the trait `EntityType` is implemented for `UntaggedCustom`
   --> tests/ui/field_invalid_shapes.rs:8:10
@@ -118,15 +187,38 @@ note: required by a bound in `EntityDefinition`
    = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Map: EntityType` is not satisfied
-  --> tests/ui/field_invalid_shapes.rs:68:35
+  --> tests/ui/field_invalid_shapes.rs:83:5
    |
-68 | impl domain::EntityDefinition for Map {
+83 |     fn identity(&self) -> &Self::Identity {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `Map`
+  --> tests/ui/field_invalid_shapes.rs:74:1
+   |
+74 | struct Map {
+   | ^^^^^^^^^^
+help: the trait `EntityType` is implemented for `UntaggedCustom`
+  --> tests/ui/field_invalid_shapes.rs:8:10
+   |
+ 8 | #[derive(Entity)]
+   |          ^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Map: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:79:35
+   |
+79 | impl domain::EntityDefinition for Map {
    |                                   ^^^ unsatisfied trait bound
    |
 help: the trait `EntityType` is not implemented for `Map`
-  --> tests/ui/field_invalid_shapes.rs:62:1
+  --> tests/ui/field_invalid_shapes.rs:74:1
    |
-62 | struct Map {
+74 | struct Map {
    | ^^^^^^^^^^
 help: the trait `EntityType` is implemented for `UntaggedCustom`
   --> tests/ui/field_invalid_shapes.rs:8:10
@@ -141,15 +233,38 @@ note: required by a bound in `EntityDefinition`
    = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `NonCanonical: EntityType` is not satisfied
-  --> tests/ui/field_invalid_shapes.rs:81:35
+  --> tests/ui/field_invalid_shapes.rs:99:5
    |
-81 | impl domain::EntityDefinition for NonCanonical {
+99 |     fn identity(&self) -> &Self::Identity {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `NonCanonical`
+  --> tests/ui/field_invalid_shapes.rs:90:1
+   |
+90 | struct NonCanonical {
+   | ^^^^^^^^^^^^^^^^^^^
+help: the trait `EntityType` is implemented for `UntaggedCustom`
+  --> tests/ui/field_invalid_shapes.rs:8:10
+   |
+ 8 | #[derive(Entity)]
+   |          ^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `NonCanonical: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:95:35
+   |
+95 | impl domain::EntityDefinition for NonCanonical {
    |                                   ^^^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `EntityType` is not implemented for `NonCanonical`
-  --> tests/ui/field_invalid_shapes.rs:75:1
+  --> tests/ui/field_invalid_shapes.rs:90:1
    |
-75 | struct NonCanonical {
+90 | struct NonCanonical {
    | ^^^^^^^^^^^^^^^^^^^
 help: the trait `EntityType` is implemented for `UntaggedCustom`
   --> tests/ui/field_invalid_shapes.rs:8:10
@@ -164,24 +279,47 @@ note: required by a bound in `EntityDefinition`
    = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `MalformedWrapper: EntityType` is not satisfied
-  --> tests/ui/field_invalid_shapes.rs:94:35
-   |
-94 | impl domain::EntityDefinition for MalformedWrapper {
-   |                                   ^^^^^^^^^^^^^^^^ unsatisfied trait bound
-   |
+   --> tests/ui/field_invalid_shapes.rs:115:5
+    |
+115 |     fn identity(&self) -> &Self::Identity {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+    |
 help: the trait `EntityType` is not implemented for `MalformedWrapper`
-  --> tests/ui/field_invalid_shapes.rs:88:1
-   |
-88 | struct MalformedWrapper {
-   | ^^^^^^^^^^^^^^^^^^^^^^^
+   --> tests/ui/field_invalid_shapes.rs:106:1
+    |
+106 | struct MalformedWrapper {
+    | ^^^^^^^^^^^^^^^^^^^^^^^
 help: the trait `EntityType` is implemented for `UntaggedCustom`
-  --> tests/ui/field_invalid_shapes.rs:8:10
-   |
- 8 | #[derive(Entity)]
-   |          ^^^^^^
+   --> tests/ui/field_invalid_shapes.rs:8:10
+    |
+  8 | #[derive(Entity)]
+    |          ^^^^^^
 note: required by a bound in `EntityDefinition`
-  --> src/entity/definition.rs
-   |
-   | pub trait EntityDefinition: EntityType {
-   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
-   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
+   --> src/entity/definition.rs
+    |
+    | pub trait EntityDefinition: EntityType {
+    |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+    = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `MalformedWrapper: EntityType` is not satisfied
+   --> tests/ui/field_invalid_shapes.rs:111:35
+    |
+111 | impl domain::EntityDefinition for MalformedWrapper {
+    |                                   ^^^^^^^^^^^^^^^^ unsatisfied trait bound
+    |
+help: the trait `EntityType` is not implemented for `MalformedWrapper`
+   --> tests/ui/field_invalid_shapes.rs:106:1
+    |
+106 | struct MalformedWrapper {
+    | ^^^^^^^^^^^^^^^^^^^^^^^
+help: the trait `EntityType` is implemented for `UntaggedCustom`
+   --> tests/ui/field_invalid_shapes.rs:8:10
+    |
+  8 | #[derive(Entity)]
+    |          ^^^^^^
+note: required by a bound in `EntityDefinition`
+   --> src/entity/definition.rs
+    |
+    | pub trait EntityDefinition: EntityType {
+    |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+    = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)

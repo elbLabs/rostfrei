@@ -74,7 +74,7 @@ impl DomainModelBuilder {
     }
 
     pub fn add_entity(&mut self, descriptor: EntityDescriptor) -> Result<(), DomainModelError> {
-        self.add_domain_identity(descriptor.identity.identity)?;
+        self.add_domain_identity(descriptor.identity)?;
         self.entities.add(descriptor);
         self.field_references.add_entity(descriptor);
         Ok(())
@@ -193,9 +193,7 @@ impl DomainModelBuilder {
 
     pub fn finish(self) -> Result<Value, DomainModelError> {
         let field_inventory = FieldReferenceInventory::new(
-            self.domain_identities.iter().map(|(id, _)| *id).collect(),
             self.entities.ids().collect(),
-            self.value_objects.iter().map(|(id, _)| *id).collect(),
             self.aggregates.iter().map(|(id, _)| *id).collect(),
         );
         field_reference_validation::validate(self.field_references.iter(), &field_inventory)?;

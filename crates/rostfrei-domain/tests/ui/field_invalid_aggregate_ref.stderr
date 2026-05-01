@@ -1,19 +1,36 @@
 error: expected `=`
-  --> tests/ui/field_invalid_aggregate_ref.rs:14:27
+  --> tests/ui/field_invalid_aggregate_ref.rs:13:27
    |
-14 |     #[domain(aggregate_ref)]
+13 |     #[domain(aggregate_ref)]
    |                           ^
 
 error: aggregate_ref target must be a direct, non-generic type path
-  --> tests/ui/field_invalid_aggregate_ref.rs:28:14
+  --> tests/ui/field_invalid_aggregate_ref.rs:30:14
    |
-28 |     #[domain(aggregate_ref = Vec<Target>)]
+30 |     #[domain(aggregate_ref = Vec<Target>)]
    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error[E0277]: the trait bound `MissingValue: EntityType` is not satisfied
-  --> tests/ui/field_invalid_aggregate_ref.rs:18:35
+  --> tests/ui/field_invalid_aggregate_ref.rs:21:5
    |
-18 | impl domain::EntityDefinition for MissingValue {
+21 |     fn identity(&self) -> &Self::Identity {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `MissingValue`
+  --> tests/ui/field_invalid_aggregate_ref.rs:11:1
+   |
+11 | struct MissingValue {
+   | ^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+
+error[E0277]: the trait bound `MissingValue: EntityType` is not satisfied
+  --> tests/ui/field_invalid_aggregate_ref.rs:17:35
+   |
+17 | impl domain::EntityDefinition for MissingValue {
    |                                   ^^^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `EntityType` is not implemented for `MissingValue`
@@ -28,15 +45,32 @@ note: required by a bound in `EntityDefinition`
    |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
 
 error[E0277]: the trait bound `GenericTarget: EntityType` is not satisfied
-  --> tests/ui/field_invalid_aggregate_ref.rs:32:35
+  --> tests/ui/field_invalid_aggregate_ref.rs:38:5
    |
-32 | impl domain::EntityDefinition for GenericTarget {
+38 |     fn identity(&self) -> &Self::Identity {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `GenericTarget`
+  --> tests/ui/field_invalid_aggregate_ref.rs:28:1
+   |
+28 | struct GenericTarget {
+   | ^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+
+error[E0277]: the trait bound `GenericTarget: EntityType` is not satisfied
+  --> tests/ui/field_invalid_aggregate_ref.rs:34:35
+   |
+34 | impl domain::EntityDefinition for GenericTarget {
    |                                   ^^^^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `EntityType` is not implemented for `GenericTarget`
-  --> tests/ui/field_invalid_aggregate_ref.rs:25:1
+  --> tests/ui/field_invalid_aggregate_ref.rs:28:1
    |
-25 | struct GenericTarget {
+28 | struct GenericTarget {
    | ^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `EntityDefinition`
   --> src/entity/definition.rs

@@ -30,7 +30,6 @@ struct AccountId(String);
 #[domain(id = "account", label = "Account")]
 #[allow(dead_code)]
 struct Account {
-    #[domain(identity)]
     id: AccountId,
     balance: i64,
 }
@@ -38,6 +37,10 @@ struct Account {
 impl rostfrei::EntityDefinition for Account {
     type Owner = AccountAggregate;
     type Identity = AccountId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, DomainEvent)]

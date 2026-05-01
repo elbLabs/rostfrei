@@ -10,6 +10,5 @@ use crate::domain::rental_fleet::BicycleId;
     message = "The requested bicycle is not currently rented."
 )]
 pub struct BicycleNotRented {
-    #[domain(identity)]
     pub bicycle_id: BicycleId,
 }

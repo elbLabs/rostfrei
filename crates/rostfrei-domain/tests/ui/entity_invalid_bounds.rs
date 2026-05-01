@@ -9,13 +9,16 @@ struct PlainId(u64);
 #[derive(Entity)]
 #[domain(id = "plain-id-root", label = "Plain Id")]
 struct PlainIdRoot {
-    #[domain(identity)]
     id: PlainId,
 }
 
 impl domain::EntityDefinition for PlainIdRoot {
     type Owner = PlainIdAggregate;
     type Identity = PlainId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]
@@ -36,13 +39,16 @@ struct ValidId(u64);
 #[derive(Entity)]
 #[domain(id = "missing-owner-root", label = "Missing Owner")]
 struct MissingOwnerRoot {
-    #[domain(identity)]
     id: ValidId,
 }
 
 impl domain::EntityDefinition for MissingOwnerRoot {
     type Owner = MissingAggregate;
     type Identity = ValidId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 fn main() {}

@@ -1,10 +1,45 @@
-error: unexpected closing delimiter: `}`
-  --> tests/ui/field_invalid_roles.rs:14:1
+error: unsupported field domain attribute
+  --> tests/ui/field_invalid_roles.rs:12:14
    |
-10 | struct Duplicate {
-   |                  - this opening brace...
-...
-13 | }
-   | - ...matches this closing brace
-14 | }
-   | ^ unexpected closing delimiter
+12 |     #[domain(owns)]
+   |              ^^^^
+
+error: ValueObject domain attributes are only supported on the type declaration
+  --> tests/ui/field_invalid_roles.rs:27:28
+   |
+27 | struct EntityInValueObject(#[domain(entity)] Other);
+   |                            ^^^^^^^^^^^^^^^^^
+
+error[E0277]: the trait bound `Unsupported: EntityType` is not satisfied
+  --> tests/ui/field_invalid_roles.rs:20:5
+   |
+20 |     fn identity(&self) -> &Self::Identity {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `Unsupported`
+  --> tests/ui/field_invalid_roles.rs:10:1
+   |
+10 | struct Unsupported {
+   | ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+
+error[E0277]: the trait bound `Unsupported: EntityType` is not satisfied
+  --> tests/ui/field_invalid_roles.rs:16:35
+   |
+16 | impl domain::EntityDefinition for Unsupported {
+   |                                   ^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `Unsupported`
+  --> tests/ui/field_invalid_roles.rs:10:1
+   |
+10 | struct Unsupported {
+   | ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`

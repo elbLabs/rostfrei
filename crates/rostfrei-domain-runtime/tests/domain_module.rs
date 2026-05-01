@@ -19,7 +19,6 @@ struct CatalogId(u64);
 #[derive(Entity)]
 #[domain(id = "catalog-root", label = "Catalog")]
 struct CatalogRoot {
-    #[domain(identity)]
     id: CatalogId,
     opened: bool,
 }
@@ -27,6 +26,23 @@ struct CatalogRoot {
 impl domain::EntityDefinition for CatalogRoot {
     type Owner = CatalogAggregate;
     type Identity = CatalogId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
+}
+
+#[test]
+fn generic_runtime_code_can_read_an_entity_identity() {
+    fn identity_of<E: domain::EntityDefinition>(entity: &E) -> &E::Identity {
+        entity.identity()
+    }
+
+    let root = CatalogRoot {
+        id: CatalogId(7),
+        opened: false,
+    };
+    assert_eq!(identity_of(&root).0, 7);
 }
 
 #[derive(DomainAggregate)]

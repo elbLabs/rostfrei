@@ -1,11 +1,11 @@
 error: DomainEvent cannot contain Entity fields
-  --> tests/ui/event_error_invalid_fields.rs:38:12
+  --> tests/ui/event_error_invalid_fields.rs:41:12
    |
-38 |     child: Child,
+41 |     child: Child,
    |            ^^^^^
 
 error: DomainError cannot contain Entity fields
-  --> tests/ui/event_error_invalid_fields.rs:45:12
+  --> tests/ui/event_error_invalid_fields.rs:48:12
    |
-45 |     child: Child,
+48 |     child: Child,
    |            ^^^^^

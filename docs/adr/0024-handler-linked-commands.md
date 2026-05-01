@@ -24,7 +24,6 @@ non-default schema version:
 #[derive(Command)]
 #[domain(id = "rent-bicycle", label = "Rent bicycle")]
 pub struct RentBicycle {
-    #[domain(identity)]
     bicycle_id: BicycleId,
 }
 ```
@@ -73,3 +72,7 @@ bindings require explicit aggregate-command pairing.
 The compiler checks the aggregate, command, and rejection relationship at the
 handler implementation. Registry and catalog identities remain fully scoped,
 while duplicate handwritten relationship declarations disappear.
+
+Under [ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md), custom
+Command fields such as `BicycleId` carry no use-site role tag and are described
+as opaque without changing JSON encoding.

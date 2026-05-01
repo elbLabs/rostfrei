@@ -16,15 +16,17 @@ pub struct MailboxId(u64);
 #[derive(Entity)]
 #[domain(id = "mailbox-root", label = "Mailbox")]
 pub struct MailboxRoot {
-    #[domain(identity)]
     id: MailboxId,
-    #[domain(value_object)]
     address: Option<Vec<EmailAddress>>,
 }
 
 impl domain::EntityDefinition for MailboxRoot {
     type Owner = Mailbox;
     type Identity = MailboxId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]
@@ -111,24 +113,15 @@ fn compiles_explicit_domain_model_to_json() {
                 },
                 "label": "Mailbox",
                 "identity": {
-                    "field": "id",
-                    "id": {
-                        "owner": {
-                            "aggregate": { "context": "inbox", "local": "mailbox" },
-                            "local": "mailbox-root",
-                        },
+                    "owner": {
+                        "aggregate": { "context": "inbox", "local": "mailbox" },
+                        "local": "mailbox-root",
                     },
                 },
                 "fields": [{
                     "name": "id",
                     "value": {
-                        "kind": "identity",
-                        "id": {
-                            "owner": {
-                                "aggregate": { "context": "inbox", "local": "mailbox" },
-                                "local": "mailbox-root",
-                            },
-                        },
+                        "kind": "opaque",
                     },
                 }, {
                     "name": "address",
@@ -137,8 +130,7 @@ fn compiles_explicit_domain_model_to_json() {
                         "value": {
                             "kind": "list",
                             "element": {
-                                "kind": "valueObject",
-                                "id": "email-address",
+                                "kind": "opaque",
                             },
                         },
                     },
