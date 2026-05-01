@@ -61,16 +61,23 @@ fn fixture_error(context: &'static str, error: impl fmt::Display) -> TestError {
 struct Banking;
 
 #[derive(rostfrei::DomainIdentity)]
-#[rostfrei(owner = Account)]
 struct AccountId(String);
 
 #[derive(rostfrei::Entity)]
-#[rostfrei(id = "account", label = "Account", owner = AccountAggregate)]
+#[rostfrei(id = "account", label = "Account")]
 struct Account {
-    #[rostfrei(identity)]
     id: AccountId,
     balance: i64,
     observed_balance: i64,
+}
+
+impl rostfrei::EntityDefinition for Account {
+    type Owner = AccountAggregate;
+    type Identity = AccountId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, rostfrei::DomainEvent)]
@@ -85,16 +92,21 @@ struct BalanceObserved {
     balance: i64,
 }
 
+#[derive(rostfrei::AggregateEvents)]
+enum AccountEvents {
+    MoneyDeposited(MoneyDeposited),
+    BalanceObserved(BalanceObserved),
+}
+
 #[derive(rostfrei::Aggregate)]
-#[rostfrei(
-    id = "account",
-    label = "Account",
-    context = Banking,
-    root = Account,
-    actions = [account_actions::AccountActionContract],
-    events = [MoneyDeposited, BalanceObserved]
-)]
+#[rostfrei(id = "account", label = "Account")]
 struct AccountAggregate;
+
+impl rostfrei::AggregateDefinition for AccountAggregate {
+    type Context = Banking;
+    type Root = Account;
+    type Event = AccountEvents;
+}
 
 impl Initialize<AccountAggregate> for Account {
     fn initialize(stream_id: &StreamId) -> Self {
@@ -121,44 +133,41 @@ impl Apply<BalanceObserved> for Account {
 mod account_actions {
     use super::{AccountAggregate, AggregateInstance, BalanceObserved, MoneyDeposited};
 
-    #[rostfrei::domain_actions(aggregate(instance = AccountActions))]
-    pub trait AccountActionContract {
-        #[action(
-            id = "deposit",
-            label = "Deposit money",
-            raises = [MoneyDeposited]
-        )]
+    #[rostfrei::domain_action(id = "deposit", label = "Deposit money")]
+    pub trait DepositAction {
         fn deposit(&mut self, input: i64);
-
-        #[action(
-            id = "observe-balance",
-            label = "Observe balance",
-            raises = [BalanceObserved]
-        )]
-        fn observe_balance(&mut self);
-
-        #[action(
-            id = "deposit-and-observe",
-            label = "Deposit money and observe balance",
-            raises = [MoneyDeposited, BalanceObserved]
-        )]
-        fn deposit_and_observe(&mut self, input: i64);
     }
 
-    impl AccountActions for AggregateInstance<AccountAggregate> {
+    impl DepositAction for AggregateInstance<AccountAggregate> {
         fn deposit(&mut self, input: i64) {
             self.raise(MoneyDeposited { amount: input });
         }
+    }
 
+    #[rostfrei::domain_action(id = "observe-balance", label = "Observe balance")]
+    pub trait ObserveBalanceAction {
+        fn observe_balance(&mut self);
+    }
+
+    impl ObserveBalanceAction for AggregateInstance<AccountAggregate> {
         fn observe_balance(&mut self) {
             self.raise(BalanceObserved {
                 balance: self.state().balance,
             });
         }
+    }
 
+    #[rostfrei::domain_action(
+        id = "deposit-and-observe",
+        label = "Deposit money and observe balance"
+    )]
+    pub trait DepositAndObserveAction {
+        fn deposit_and_observe(&mut self, input: i64);
+    }
+
+    impl DepositAndObserveAction for AggregateInstance<AccountAggregate> {
         fn deposit_and_observe(&mut self, input: i64) {
             self.raise(MoneyDeposited { amount: input });
-
             self.raise(BalanceObserved {
                 balance: self.state().balance,
             });
@@ -166,7 +175,9 @@ mod account_actions {
     }
 }
 
-use account_actions::AccountActions as _;
+use account_actions::{
+    DepositAction as _, DepositAndObserveAction as _, ObserveBalanceAction as _,
+};
 
 struct DepositAndObserve {
     account_id: &'static str,
@@ -310,7 +321,7 @@ fn metadata(stream_id: &StreamId, operation: &str) -> TestResult<ExecutionMetada
 }
 
 #[tokio::test]
-async fn command_composes_generated_actions_and_replays_their_events() {
+async fn registered_events_execute_and_replay_through_the_authored_event_set() {
     let stream = stream("account-1").expect("valid account stream fixture");
     let executor = Executor::new(InMemoryEventStore::new());
 
@@ -372,7 +383,7 @@ async fn command_composes_generated_actions_and_replays_their_events() {
 }
 
 #[test]
-fn executable_action_can_raise_multiple_declared_event_types() {
+fn executable_action_can_raise_multiple_registered_event_types() {
     let mut aggregate = AggregateInstance::<AccountAggregate>::new(
         stream("multi-event-action").expect("valid multi-event action stream fixture"),
     );
@@ -419,29 +430,6 @@ async fn command_rejection_discards_events_raised_by_an_action() {
 }
 
 #[test]
-fn executable_actions_model_every_event_type_they_may_raise() {
-    let actions = <AccountAggregate as rostfrei::AggregateType>::ACTION_CONTRACTS[0];
-
-    assert_eq!(actions.len(), 3);
-    assert!(actions.iter().all(|action| action.output.is_none()));
-    assert_eq!(
-        actions[0].raises,
-        &[<MoneyDeposited as rostfrei::DomainEventType>::DESCRIPTOR.id]
-    );
-    assert_eq!(
-        actions[1].raises,
-        &[<BalanceObserved as rostfrei::DomainEventType>::DESCRIPTOR.id]
-    );
-    assert_eq!(
-        actions[2].raises,
-        &[
-            <MoneyDeposited as rostfrei::DomainEventType>::DESCRIPTOR.id,
-            <BalanceObserved as rostfrei::DomainEventType>::DESCRIPTOR.id,
-        ]
-    );
-}
-
-#[test]
 fn compiled_aggregate_stream_type_includes_its_bounded_context() {
     assert_eq!(
         <AccountAggregate as RuntimeAggregate>::aggregate_type().as_ref(),
@@ -472,7 +460,7 @@ async fn generated_json_replay_fails_closed() {
 }
 
 #[tokio::test]
-async fn custom_codec_remains_an_explicit_override_without_naming_the_generated_enum() {
+async fn custom_codec_remains_an_explicit_override_for_the_authored_event_enum() {
     let stream = stream("custom-account").expect("valid custom codec stream fixture");
     let executor = Executor::with_codec(InMemoryEventStore::new(), TextEventCodec);
     let outcome = executor
@@ -495,21 +483,24 @@ async fn custom_codec_remains_an_explicit_override_without_naming_the_generated_
 }
 
 #[test]
-fn domain_model_projects_attached_events_once_in_aggregate_declaration_order() {
+fn domain_model_projects_event_set_once_in_enum_declaration_order() {
     let model = rostfrei::domain_model! {
         contexts: [Banking],
         aggregates: [AccountAggregate],
         entities: [Account],
-        identities: [AccountId],
         value_objects: [],
         services: [],
-        commands: [],
         errors: [],
-        query_groups: [],
     }
     .expect("runtime test domain model projection");
     let events = model["domainEvents"].as_array().expect("domain events");
 
+    let identities = model["domainIdentities"]
+        .as_array()
+        .expect("domain identities");
+    assert_eq!(identities.len(), 1);
+    assert!(identities[0].get("scalar").is_none());
+    assert_eq!(identities[0]["id"]["owner"]["local"], "account");
     assert_eq!(events.len(), 2);
     assert_eq!(events[0]["id"]["local"], "money-deposited");
     assert_eq!(events[0]["schemaVersion"], 2);
@@ -566,3 +557,4 @@ async fn replay_error(
         }),
     }
 }
+rostfrei::install_macro_support!();

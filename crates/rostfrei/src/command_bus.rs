@@ -6,7 +6,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use domain::{CommandType, DomainErrorType, JsonCommandPayload, JsonErrorPayload};
+use domain::{DomainError, JsonCommandPayload, JsonErrorPayload};
 use rostfrei_core::{
     Aggregate, AggregateId, AggregateType, CommandExecutionError, CommandHandler, CommandOutcome,
     ContentFingerprint, Event, EventStore, EventStoreErrorKind, ExecutionMetadata, Executor,
@@ -447,38 +447,38 @@ impl CommandBus {
         self.adapter.maximum_payload_len()
     }
 
-    pub async fn dispatch<C>(
+    pub async fn dispatch<A, C>(
         &self,
         request: CommandRequest<C>,
     ) -> Result<CommandBusReceipt, CommandBusError>
     where
-        C: CommandDefinition
-            + CommandType<Owner = <C as CommandDefinition>::Aggregate>
-            + JsonCommandPayload,
+        A: Aggregate + CommandHandler<C>,
+        C: CommandDefinition<A> + JsonCommandPayload,
     {
-        self.dispatch_observed(request, Arc::new(IgnoreCommandPublications))
+        self.dispatch_observed::<A, C>(request, Arc::new(IgnoreCommandPublications))
             .await
     }
 
-    pub async fn dispatch_observed<C>(
+    pub async fn dispatch_observed<A, C>(
         &self,
         request: CommandRequest<C>,
         observer: Arc<dyn CommandBusObserver>,
     ) -> Result<CommandBusReceipt, CommandBusError>
     where
-        C: CommandDefinition
-            + CommandType<Owner = <C as CommandDefinition>::Aggregate>
-            + JsonCommandPayload,
+        A: Aggregate + CommandHandler<C>,
+        C: CommandDefinition<A> + JsonCommandPayload,
     {
-        let encoded = self.encode(request)?;
+        let encoded = self.encode::<A, C>(request)?;
         self.adapter.dispatch(encoded, observer).await
     }
 
-    pub fn encode<C>(&self, request: CommandRequest<C>) -> Result<EncodedCommand, CommandBusError>
+    pub fn encode<A, C>(
+        &self,
+        request: CommandRequest<C>,
+    ) -> Result<EncodedCommand, CommandBusError>
     where
-        C: CommandDefinition
-            + CommandType<Owner = <C as CommandDefinition>::Aggregate>
-            + JsonCommandPayload,
+        A: Aggregate + CommandHandler<C>,
+        C: CommandDefinition<A> + JsonCommandPayload,
     {
         let payload = request
             .command
@@ -486,11 +486,11 @@ impl CommandBus {
             .map_err(CommandBusError::encoding)?;
         self.encode_dynamic(DynamicCommandRequest {
             operation_id: request.operation_id,
-            aggregate_type: AggregateType::new(C::Aggregate::aggregate_type().into_owned())
+            aggregate_type: AggregateType::new(A::aggregate_type().into_owned())
                 .map_err(|error| CommandBusError::encoding(error.to_string()))?,
             aggregate_id: request.aggregate_id,
-            command: C::COMMAND_NAME.to_owned(),
-            schema_version: <C as CommandDefinition>::SCHEMA_VERSION,
+            command: C::LOCAL_ID.to_owned(),
+            schema_version: C::SCHEMA_VERSION,
             payload,
             correlation_id: request.correlation_id,
             causation_id: request.causation_id,
@@ -692,7 +692,7 @@ impl JsonDomainRejectionMapper {
 
 impl<R> CommandRejectionMapper<R> for JsonDomainRejectionMapper
 where
-    R: DomainErrorType + JsonErrorPayload,
+    R: DomainError + JsonErrorPayload,
 {
     fn map(&self, rejection: &R) -> Result<CommandRejection, String> {
         let descriptor = R::DESCRIPTOR;
@@ -726,23 +726,19 @@ trait ErasedCommandBinding: Send + Sync {
     ) -> Result<CommandResponseOutcome, BindingError>;
 }
 
-struct TypedCommandBinding<C, M> {
+struct TypedCommandBinding<A, C, M> {
     rejection_mapper: M,
-    marker: std::marker::PhantomData<fn() -> C>,
+    marker: std::marker::PhantomData<fn() -> (A, C)>,
 }
 
 #[async_trait]
-impl<C, M> ErasedCommandBinding for TypedCommandBinding<C, M>
+impl<A, C, M> ErasedCommandBinding for TypedCommandBinding<A, C, M>
 where
-    C: CommandDefinition
-        + CommandType<Owner = <C as CommandDefinition>::Aggregate>
-        + JsonCommandPayload
-        + Send
-        + Sync,
-    C::Aggregate: CommandHandler<C>,
-    <C::Aggregate as Aggregate>::State: Send,
-    <C::Aggregate as Aggregate>::Event: Event + Send,
-    M: CommandRejectionMapper<<C::Aggregate as CommandHandler<C>>::Rejection> + 'static,
+    A: Aggregate + CommandHandler<C> + 'static,
+    C: CommandDefinition<A> + JsonCommandPayload + Send + Sync,
+    A::State: Send,
+    A::Event: Event + Send,
+    M: CommandRejectionMapper<<A as CommandHandler<C>>::Rejection> + 'static,
 {
     async fn execute(
         &self,
@@ -752,7 +748,7 @@ where
     ) -> Result<CommandResponseOutcome, BindingError> {
         let command = C::decode_json(payload).map_err(BindingError::InvalidPayload)?;
         match Executor::new(store)
-            .execute::<C::Aggregate, C>(metadata, &command)
+            .execute::<A, C>(metadata, &command)
             .await
             .map_err(BindingError::Execution)?
         {
@@ -839,37 +835,28 @@ impl CommandProcessor {
         }
     }
 
-    pub fn register<C, M>(
+    pub fn register<A, C>(
         &mut self,
-        rejection_mapper: M,
+        rejection_mapper: impl CommandRejectionMapper<<A as CommandHandler<C>>::Rejection> + 'static,
     ) -> Result<&mut Self, CommandBindingRegistrationError>
     where
-        C: CommandDefinition
-            + CommandType<Owner = <C as CommandDefinition>::Aggregate>
-            + JsonCommandPayload
-            + Send
-            + Sync,
-        C::Aggregate: CommandHandler<C>,
-        <C::Aggregate as Aggregate>::State: Send,
-        <C::Aggregate as Aggregate>::Event: Event + Send,
-        M: CommandRejectionMapper<<C::Aggregate as CommandHandler<C>>::Rejection> + 'static,
+        A: Aggregate + CommandHandler<C> + 'static,
+        C: CommandDefinition<A> + JsonCommandPayload + Send + Sync,
+        A::State: Send,
+        A::Event: Event + Send,
     {
-        let aggregate_type = C::Aggregate::aggregate_type().into_owned();
-        let key = CommandBindingKey::new(
-            &aggregate_type,
-            C::COMMAND_NAME,
-            <C as CommandDefinition>::SCHEMA_VERSION,
-        );
+        let aggregate_type = A::aggregate_type().into_owned();
+        let key = CommandBindingKey::new(&aggregate_type, C::LOCAL_ID, C::SCHEMA_VERSION);
         if self.bindings.contains_key(&key) {
             return Err(CommandBindingRegistrationError::Duplicate {
                 aggregate_type,
-                command: C::COMMAND_NAME,
-                schema_version: <C as CommandDefinition>::SCHEMA_VERSION,
+                command: C::LOCAL_ID,
+                schema_version: C::SCHEMA_VERSION,
             });
         }
         self.bindings.insert(
             key,
-            Arc::new(TypedCommandBinding::<C, M> {
+            Arc::new(TypedCommandBinding::<A, C, _> {
                 rejection_mapper,
                 marker: std::marker::PhantomData,
             }),

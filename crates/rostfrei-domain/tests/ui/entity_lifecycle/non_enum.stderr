@@ -1,5 +1,5 @@
 error: EntityLifecycle only supports non-generic fieldless enums
  --> tests/ui/entity_lifecycle/non_enum.rs:5:8
   |
-5 | struct Lifecycle;
-  |        ^^^^^^^^^
+5 | struct Workflow;
+  |        ^^^^^^^^

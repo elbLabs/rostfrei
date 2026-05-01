@@ -1,8 +1,0 @@
-error[E0046]: not all trait items implemented, missing: `archive`
-  --> tests/ui/aggregate_action/incomplete_trait_implementation.rs:37:1
-   |
-24 |     fn archive(root: &mut Root);
-   |     ---------------------------- `archive` from trait
-...
-37 | impl Actions for Owner {
-   | ^^^^^^^^^^^^^^^^^^^^^^ missing `archive` in implementation

@@ -56,25 +56,98 @@ event representations are not part of normal application syntax.
 
 Executable aggregate Actions use `&mut self`, domain-specific input, and
 `()`/`Result<(), DomainError>` outcomes.
-`domain_actions(aggregate(instance = ...))` generates the trait implemented for
-`AggregateInstance`; Action implementations explicitly call `self.raise(...)`
-zero or more times. `raises = [...]` declares possible event types for the
-compiled model, while the Aggregate's `events = [...]` remains the executable
-event inventory. Commands remain an application boundary and map their payloads
-into one or more Action inputs rather than being passed to Actions directly.
+`domain_action` preserves a singular ordinary trait implemented directly for
+its real aggregate instance, entity, or service receiver. Implementations call
+`self.raise(...)` zero or more times where applicable. Event membership and
+raising authorization are governed by the aggregate's authored event set.
+Commands remain an application boundary and map their payloads into ordinary
+action method arguments.
 
-`Command` derives the runtime command definition from its owner, local ID,
-and schema version. Registering a command runtime binding inserts that descriptor
-into the registry when it is not already present. `domain_module!` remains an
-optional grouping mechanism, not a prerequisite for command registration and
-not a declaration of every modeled domain capability. Decision metadata is
-attached to explicit inherent aggregate or entity impl blocks.
+`Command` derives owner-independent local ID, label, schema version, field, and
+JSON payload metadata. The handler implementation supplies its aggregate and
+rejection relationship. Runtime registration explicitly pairs the aggregate
+and command. Decision metadata is attached to explicit inherent aggregate or
+entity impl blocks.
 
 The Decision-specific attachment, signature, outcome, testing, and model shape
 contracts were subsequently refined by
 [ADR 0015](0015-decision-policies-groups-and-outcomes.md). Its explicit groups
 and `DecisionOutcome` enum contract supersede earlier single-block and
 `Result`-shaped Decision details without superseding the rest of this ADR.
+
+The Aggregate-specific declaration and event-membership contracts were
+subsequently replaced by
+[ADR 0020](0020-aggregate-definition-and-event-set.md). Its explicit
+`AggregateDefinition` implementation and authored `AggregateEvents` enum
+supersede this ADR's `events = [...]` attachment and generated hidden event
+representation. ADR 0018 also supersedes aggregate-level action, decision, and
+invariant attachment and automatic invariant fanout; those relationships are
+intentionally absent until Rostfrei can derive or validate them without manual
+lists.
+
+The Entity-specific declaration, lifecycle, and invariant contracts were
+subsequently replaced by
+[ADR 0021](0021-explicit-entity-definition-and-owner-independent-tags.md).
+Its explicit `EntityDefinition`, owner-independent lifecycle and invariant
+metadata, and absence of implicit entity capability projection supersede this
+ADR's entity attachments and owned lifecycle/invariant model relationships.
+
+Domain identity ownership, representation, and model discovery were
+subsequently simplified by [ADR 0022](0022-slim-domain-identities.md). Identity
+newtypes are marker-derived and discovered through `EntityDefinition`; they no
+longer have a separate model inventory or inferred scalar metadata.
+
+Value-object ownership, shape projection, and operation DTO contracts were
+subsequently simplified by
+[ADR 0023](0023-slim-value-objects-and-ordinary-dtos.md). Value objects now
+carry semantic ID and label metadata only; ordinary action/query DTOs are not
+promoted into the compiled domain model.
+
+Action-level event claims were subsequently removed by
+[ADR 0025](0025-aggregate-event-sets-authorize-raising.md). The aggregate event
+set is the sole authority for membership, conversion, execution, and replay;
+actions no longer declare or project `raises` lists.
+
+Command ownership, rejection, runtime registration, and compiled-model
+inventory were subsequently replaced by
+[ADR 0026](0026-handler-linked-commands.md). `CommandHandler<C> for A` is the
+authored relationship, and registry, processor, bus, and tracer APIs name the
+aggregate-command pair explicitly.
+
+The standalone event-definition API was subsequently removed by
+[ADR 0028](0028-semantic-domain-events.md). `DomainEvent` directly exposes
+local semantic and wire metadata, while `AggregateEvents` remains responsible
+for owned descriptors and runtime membership.
+
+Domain-service context and action attachment were subsequently separated by
+[ADR 0029](0029-explicit-domain-service-definitions.md): a matching
+`DomainServiceDefinition` supplies the context. The remaining plural action
+groups, owner kinds, extensions, and model projection were then removed by
+[ADR 0030](0030-trait-preserving-singular-domain-actions.md). Actions are now
+singular ordinary traits with direct implementations and owner-independent
+metadata.
+
+Plural query groups and model registration were subsequently removed by
+[ADR 0031](0031-trait-preserving-singular-domain-queries.md). Queries are
+singular ordinary traits implemented directly for the enclosing aggregate's
+declared root.
+
+Decision groups, plural invariant contracts, and generated test references were
+subsequently removed by
+[ADR 0032](0032-singular-decisions-invariants-and-tests.md). Decisions and
+Invariants are singular traits with direct aggregate/entity implementations,
+and tests name the concrete implementor/trait descriptor.
+
+Entity identity field selection and identity/Value Object use-site tags were
+subsequently removed by
+[ADR 0033](0033-entity-identity-accessor-and-opaque-fields.md).
+`EntityDefinition::identity` is authoritative and unclassified custom fields
+are projected as opaque.
+
+Domain-error ownership and optional JSON generation were subsequently removed
+by [ADR 0027](0027-owner-independent-domain-errors.md). Errors keep their
+stable public code and message, while action return types and command handlers
+establish usage relationships and JSON rejection payloads are always available.
 
 ## Consequences
 

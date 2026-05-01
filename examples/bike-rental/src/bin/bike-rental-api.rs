@@ -2,7 +2,7 @@ use std::{env, path::PathBuf, sync::Arc};
 
 use bike_rental::{
     APPLICATION_NAME, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime, domain_model,
-    rental_fleet::{AddBicycle, RentBicycle, ReturnBicycle},
+    rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
     tracer::{self, RentBicycleInputOptions, ReturnBicycleInputOptions},
 };
 use rostfrei::EventHistory;
@@ -61,11 +61,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_test_fixture("demo-fleet", test_reset)
         .with_test_repository(test_repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
-    builder.register_json::<RentBicycle>()?;
-    builder.register_json::<ReturnBicycle>()?;
-    builder.register_json::<AddBicycle>()?;
-    builder.register_input_options::<RentBicycle, _>(RentBicycleInputOptions)?;
-    builder.register_input_options::<ReturnBicycle, _>(ReturnBicycleInputOptions)?;
+    builder.register_json::<RentalFleetAggregate, RentBicycle>()?;
+    builder.register_json::<RentalFleetAggregate, ReturnBicycle>()?;
+    builder.register_json::<RentalFleetAggregate, AddBicycle>()?;
+    builder
+        .register_input_options::<RentalFleetAggregate, RentBicycle, _>(RentBicycleInputOptions)?;
+    builder.register_input_options::<RentalFleetAggregate, ReturnBicycle, _>(
+        ReturnBicycleInputOptions,
+    )?;
     let tracer = builder.build()?;
     let mut test_correlation_observer = test_runtime
         .start_correlation_observer(tracer.correlation_observer(OperationMode::Test))

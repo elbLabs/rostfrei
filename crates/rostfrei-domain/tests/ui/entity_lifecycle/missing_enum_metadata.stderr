@@ -1,5 +1,7 @@
-error: missing initial
- --> tests/ui/entity_lifecycle/missing_enum_metadata.rs:4:1
+error: missing domain attribute
+ --> tests/ui/entity_lifecycle/missing_enum_metadata.rs:3:10
   |
-4 | #[domain(id = "workflow", label = "Workflow", owner = Todo)]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3 | #[derive(EntityLifecycle)]
+  |          ^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `EntityLifecycle` (in Nightly builds, run with -Z macro-backtrace for more info)

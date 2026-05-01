@@ -6,8 +6,15 @@ error: missing domain attribute
   |
   = note: this error originates in the derive macro `BoundedContext` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error: missing context
- --> tests/ui/missing_attributes.rs:7:1
+error[E0277]: the trait bound `Mailbox: domain::AggregateDefinition` is not satisfied
+ --> tests/ui/missing_attributes.rs:6:10
   |
-7 | #[domain(id = "mailbox", label = "Mailbox")]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+6 | #[derive(Aggregate)]
+  |          ^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `domain::AggregateDefinition` is not implemented for `Mailbox`
+ --> tests/ui/missing_attributes.rs:8:1
+  |
+8 | struct Mailbox;
+  | ^^^^^^^^^^^^^^
+  = note: this error originates in the derive macro `Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)

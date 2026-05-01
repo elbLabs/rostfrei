@@ -42,14 +42,21 @@ type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 struct TestContext;
 
 #[derive(rostfrei::DomainIdentity)]
-#[rostfrei(owner = TestRoot)]
 struct TestId(String);
 
 #[derive(rostfrei::Entity)]
-#[rostfrei(id = "consumer", label = "Consumer", owner = TestAggregate)]
+#[rostfrei(id = "consumer", label = "Consumer")]
 struct TestRoot {
-    #[rostfrei(identity)]
     id: TestId,
+}
+
+impl rostfrei::EntityDefinition for TestRoot {
+    type Owner = TestAggregate;
+    type Identity = TestId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, rostfrei::DomainEvent)]
@@ -58,15 +65,20 @@ struct TestEvent {
     value: String,
 }
 
+#[derive(rostfrei::AggregateEvents)]
+enum TestEvents {
+    TestEvent(TestEvent),
+}
+
 #[derive(rostfrei::Aggregate)]
-#[rostfrei(
-    id = "consumer",
-    label = "Consumer",
-    context = TestContext,
-    root = TestRoot,
-    events = [TestEvent]
-)]
+#[rostfrei(id = "consumer", label = "Consumer")]
 struct TestAggregate;
+
+impl rostfrei::AggregateDefinition for TestAggregate {
+    type Context = TestContext;
+    type Root = TestRoot;
+    type Event = TestEvents;
+}
 
 impl Initialize<TestAggregate> for TestRoot {
     fn initialize(stream_id: &StreamId) -> Self {
@@ -1021,3 +1033,4 @@ fn unique_suffix() -> TestResult<String> {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     Ok(format!("{}-{nanos}", std::process::id()))
 }
+rostfrei::install_macro_support!();

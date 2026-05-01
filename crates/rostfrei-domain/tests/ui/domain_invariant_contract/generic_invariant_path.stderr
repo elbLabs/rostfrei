@@ -1,5 +1,0 @@
-error: invariant paths cannot contain generic arguments
-  --> tests/ui/domain_invariant_contract/generic_invariant_path.rs:13:29
-   |
-13 |     invariants = [Invariants<u8>]
-   |                             ^^^^

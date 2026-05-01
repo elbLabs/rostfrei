@@ -1,5 +1,0 @@
-error: `__DOMAIN_INVARIANTS` is reserved by domain_invariants
- --> tests/ui/domain_invariant_contract/reserved_descriptors.rs:7:5
-  |
-7 |     const __DOMAIN_INVARIANTS: ();
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

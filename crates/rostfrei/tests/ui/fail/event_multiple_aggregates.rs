@@ -6,50 +6,70 @@ use serde::{Deserialize, Serialize};
 struct Context;
 
 #[derive(rostfrei::DomainIdentity)]
-#[rostfrei(owner = FirstRoot)]
 struct FirstId(u64);
 
 #[derive(rostfrei::Entity)]
-#[rostfrei(id = "first", label = "First", owner = FirstAggregate)]
+#[rostfrei(id = "first", label = "First")]
 struct FirstRoot {
-    #[rostfrei(identity)]
     id: FirstId,
 }
 
+impl rostfrei::EntityDefinition for FirstRoot {
+    type Owner = FirstAggregate;
+    type Identity = FirstId;
+
+    fn identity(&self) -> &Self::Identity { &self.id }
+}
+
 #[derive(rostfrei::DomainIdentity)]
-#[rostfrei(owner = SecondRoot)]
 struct SecondId(u64);
 
 #[derive(rostfrei::Entity)]
-#[rostfrei(id = "second", label = "Second", owner = SecondAggregate)]
+#[rostfrei(id = "second", label = "Second")]
 struct SecondRoot {
-    #[rostfrei(identity)]
     id: SecondId,
+}
+
+impl rostfrei::EntityDefinition for SecondRoot {
+    type Owner = SecondAggregate;
+    type Identity = SecondId;
+
+    fn identity(&self) -> &Self::Identity { &self.id }
 }
 
 #[derive(Deserialize, Serialize, rostfrei::DomainEvent)]
 #[rostfrei(id = "shared", label = "Shared")]
 struct SharedEvent;
 
-#[derive(rostfrei::Aggregate)]
-#[rostfrei(
-    id = "first",
-    label = "First",
-    context = Context,
-    root = FirstRoot,
-    events = [SharedEvent]
-)]
-struct FirstAggregate;
+#[derive(rostfrei::AggregateEvents)]
+enum FirstEvents {
+    Shared(SharedEvent),
+}
 
 #[derive(rostfrei::Aggregate)]
-#[rostfrei(
-    id = "second",
-    label = "Second",
-    context = Context,
-    root = SecondRoot,
-    events = [SharedEvent]
-)]
+#[rostfrei(id = "first", label = "First")]
+struct FirstAggregate;
+
+impl rostfrei::AggregateDefinition for FirstAggregate {
+    type Context = Context;
+    type Root = FirstRoot;
+    type Event = FirstEvents;
+}
+
+#[derive(rostfrei::AggregateEvents)]
+enum SecondEvents {
+    Shared(SharedEvent),
+}
+
+#[derive(rostfrei::Aggregate)]
+#[rostfrei(id = "second", label = "Second")]
 struct SecondAggregate;
+
+impl rostfrei::AggregateDefinition for SecondAggregate {
+    type Context = Context;
+    type Root = SecondRoot;
+    type Event = SecondEvents;
+}
 
 impl Initialize<FirstAggregate> for FirstRoot {
     fn initialize(_: &rostfrei::StreamId) -> Self { Self { id: FirstId(1) } }
@@ -68,3 +88,4 @@ impl Apply<SharedEvent> for SecondRoot {
 }
 
 fn main() {}
+rostfrei::install_macro_support!();

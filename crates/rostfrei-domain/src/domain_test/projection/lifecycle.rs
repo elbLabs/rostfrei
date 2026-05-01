@@ -1,12 +1,7 @@
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::EntityLifecycleId;
 
-use super::entity;
-
 pub(super) fn project(id: EntityLifecycleId) -> Value {
-    json!({
-        "owner": entity::project(id.owner),
-        "local": id.local,
-    })
+    Value::String(id.0.to_owned())
 }

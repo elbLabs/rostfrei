@@ -1,15 +1,14 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate, BoundedContext, Command, CommandType, DomainError, DomainErrorType, DomainEvent,
-    DomainEventDefinitionType, DomainIdentity, DomainIdentityDescriptor, DomainIdentityId,
-    DomainIdentityType, DomainModelError, Entity, EntityType, FieldKind, FieldWrapper, ScalarType,
-    SemanticScalar, SemanticScalarDescriptor, ValueObject, ValueObjectType, domain_model,
+    Aggregate, BoundedContext, Command, DomainError, DomainEvent, DomainIdentity, Entity,
+    EntityType, FieldKind, FieldWrapper, ScalarType, SemanticScalar, SemanticScalarDescriptor,
+    domain_model,
 };
 use serde_json::json;
 
 mod foreign {
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
     pub struct Uuid(pub [u8; 16]);
 }
 
@@ -30,17 +29,14 @@ impl SemanticScalar for UuidScalar {
 struct SemanticScalars;
 
 #[derive(DomainIdentity)]
-#[domain(owner = DocumentRoot, scalar = UuidScalar)]
 struct DocumentId(foreign::Uuid);
 
 #[derive(DomainIdentity)]
-#[domain(owner = Revision)]
 struct RevisionId(u64);
 
 #[derive(Entity)]
-#[domain(id = "document-root", label = "Document", owner = Documents)]
+#[domain(id = "document-root", label = "Document")]
 struct DocumentRoot {
-    #[domain(identity)]
     id: DocumentId,
     #[domain(scalar = UuidScalar)]
     correlation_id: foreign::Uuid,
@@ -49,32 +45,47 @@ struct DocumentRoot {
     title: String,
 }
 
+impl domain::EntityDefinition for DocumentRoot {
+    type Owner = Documents;
+    type Identity = DocumentId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
+}
+
 #[derive(Entity)]
-#[domain(id = "revision", label = "Revision", owner = Documents)]
+#[domain(id = "revision", label = "Revision")]
 struct Revision {
-    #[domain(identity)]
     id: RevisionId,
 }
 
+impl domain::EntityDefinition for Revision {
+    type Owner = Documents;
+    type Identity = RevisionId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
+}
+
 #[derive(Aggregate)]
-#[domain(
-    id = "documents",
-    label = "Documents",
-    context = SemanticScalars,
-    root = DocumentRoot,
-    events = [DocumentCorrelated]
-)]
+#[domain(id = "documents", label = "Documents")]
 struct Documents;
 
-#[derive(ValueObject)]
-#[domain(id = "external-reference", label = "External reference", owner = SemanticScalars)]
-struct ExternalReference {
-    #[domain(scalar = UuidScalar)]
-    value: foreign::Uuid,
+impl domain::AggregateDefinition for Documents {
+    type Context = SemanticScalars;
+    type Root = DocumentRoot;
+    type Event = DocumentsEvents;
+}
+
+#[derive(domain::AggregateEvents)]
+enum DocumentsEvents {
+    Event0(DocumentCorrelated),
 }
 
 #[derive(Command)]
-#[domain(id = "correlate-document", label = "Correlate document", owner = Documents)]
+#[domain(id = "correlate-document", label = "Correlate document")]
 struct CorrelateDocument {
     #[domain(scalar = UuidScalar)]
     correlation_id: foreign::Uuid,
@@ -91,49 +102,12 @@ struct DocumentCorrelated {
 #[domain(
     id = "document-correlation-rejected",
     label = "Document correlation rejected",
-    owner = Documents,
     code = "DOCUMENT_CORRELATION_REJECTED",
     message = "The document correlation was rejected."
 )]
 struct DocumentCorrelationRejected {
     #[domain(scalar = UuidScalar)]
     correlation_id: foreign::Uuid,
-}
-
-struct ContradictoryId(foreign::Uuid);
-
-#[derive(Entity)]
-#[domain(id = "contradictory-root", label = "Contradictory", owner = ContradictoryDocuments)]
-struct ContradictoryRoot {
-    #[domain(identity)]
-    id: ContradictoryId,
-}
-
-#[derive(Aggregate)]
-#[domain(
-    id = "contradictory-documents",
-    label = "Contradictory documents",
-    context = SemanticScalars,
-    root = ContradictoryRoot
-)]
-struct ContradictoryDocuments;
-
-impl DomainIdentityType for ContradictoryId {
-    type Owner = ContradictoryRoot;
-
-    const DESCRIPTOR: DomainIdentityDescriptor = DomainIdentityDescriptor {
-        id: DomainIdentityId {
-            owner: domain::EntityId {
-                aggregate: domain::AggregateId {
-                    context: domain::BoundedContextId("semantic-scalars"),
-                    local: "contradictory-documents",
-                },
-                local: "contradictory-root",
-            },
-        },
-        scalar: ScalarType::U64,
-    };
-    const SEMANTIC_SCALAR: Option<SemanticScalarDescriptor> = Some(UuidScalar::DESCRIPTOR);
 }
 
 #[test]
@@ -156,13 +130,8 @@ fn describes_semantic_fields_and_nested_wrappers() {
     assert_eq!(fields[3].value.kind, FieldKind::Scalar(ScalarType::String));
 
     let semantic_kinds = [
-        match ExternalReference::DESCRIPTOR.shape {
-            domain::ValueObjectShapeDescriptor::Struct { fields } => Some(fields[0].value.kind),
-            _ => None,
-        }
-        .expect("ExternalReference should have a struct descriptor"),
         CorrelateDocument::DESCRIPTOR.fields[0].value.kind,
-        DocumentCorrelated::DEFINITION.fields[0].value.kind,
+        DocumentCorrelated::FIELDS[0].value.kind,
         DocumentCorrelationRejected::DESCRIPTOR.fields[0].value.kind,
     ];
     assert!(
@@ -173,27 +142,15 @@ fn describes_semantic_fields_and_nested_wrappers() {
 }
 
 #[test]
-fn describes_semantic_identity_representation_without_changing_identity_descriptor() {
-    assert_eq!(DocumentId::DESCRIPTOR.scalar, ScalarType::String);
-    assert_eq!(DocumentId::SEMANTIC_SCALAR, Some(UuidScalar::DESCRIPTOR));
-
-    assert_eq!(RevisionId::DESCRIPTOR.scalar, ScalarType::U64);
-    assert_eq!(RevisionId::SEMANTIC_SCALAR, None);
-}
-
-#[test]
 #[allow(clippy::too_many_lines)]
 fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
     let model = domain_model! {
         contexts: [SemanticScalars],
         aggregates: [Documents],
         entities: [DocumentRoot, Revision],
-        identities: [DocumentId, RevisionId],
-        value_objects: [ExternalReference],
+        value_objects: [],
         services: [],
-        commands: [CorrelateDocument],
         errors: [DocumentCorrelationRejected],
-        query_groups: [],
     }
     .expect("semantic scalar model projection should succeed");
 
@@ -202,16 +159,7 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
         json!([{
             "name": "id",
             "value": {
-                "kind": "identity",
-                "id": {
-                    "owner": {
-                        "aggregate": {
-                            "context": "semantic-scalars",
-                            "local": "documents",
-                        },
-                        "local": "document-root",
-                    },
-                },
+                "kind": "opaque",
             },
         }, {
             "name": "correlation_id",
@@ -262,7 +210,6 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
             },
         },
     });
-    assert_eq!(model["commands"][0]["fields"][0], semantic_field);
     assert_eq!(model["domainEvents"][0]["fields"][0], semantic_field);
     assert_eq!(model["domainErrors"][0]["fields"][0], semantic_field);
 
@@ -278,12 +225,6 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
                     "local": "document-root",
                 },
             },
-            "scalar": {
-                "kind": "semantic",
-                "id": "uuid",
-                "label": "UUID",
-                "representation": "string",
-            },
         }, {
             "id": {
                 "owner": {
@@ -294,35 +235,7 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
                     "local": "revision",
                 },
             },
-            "scalar": "u64",
         }])
     );
 }
-
-#[test]
-fn rejects_contradictory_manual_identity_scalar_metadata() {
-    let error = domain_model! {
-        contexts: [SemanticScalars],
-        aggregates: [ContradictoryDocuments],
-        entities: [ContradictoryRoot],
-        identities: [ContradictoryId],
-        value_objects: [],
-        services: [],
-        commands: [],
-        errors: [],
-        query_groups: [],
-    }
-    .expect_err("contradictory semantic scalar metadata should be rejected");
-
-    assert_eq!(
-        error,
-        DomainModelError::DomainIdentitySemanticScalarRepresentationMismatch {
-            canonical: ScalarType::U64,
-            semantic: ScalarType::String,
-        }
-    );
-    assert_eq!(
-        error.to_string(),
-        "assertion `left == right` failed: DomainIdentity semantic scalar representation must match its canonical scalar descriptor\n  left: U64\n right: String"
-    );
-}
+rostfrei_domain_macros::__install_test_macro_support!();

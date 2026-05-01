@@ -12,7 +12,7 @@ use crate::{
     rental_fleet::{BicycleId, BicycleRented, RentBicycle, RentalFleetAggregate},
 };
 use rostfrei::{
-    CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest, DomainEventDefinitionType,
+    CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest, DomainEvent,
     DomainEventDispatchOutcome, DomainEventDispatcher, DynamicCommandRequest, EventStore,
     InMemoryEventStore, InMemoryMessagingAdapter, IntegrationEventBus, IntegrationMessageAdapter,
     JsonDomainRejectionMapper, OperationId,
@@ -28,7 +28,7 @@ type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 fn processor(store: InMemoryEventStore) -> TestResult<CommandProcessor> {
     let store: Arc<dyn EventStore> = Arc::new(store);
     let mut processor = CommandProcessor::new(store);
-    processor.register::<RentBicycle, _>(JsonDomainRejectionMapper::new(
+    processor.register::<RentalFleetAggregate, RentBicycle>(JsonDomainRejectionMapper::new(
         CommandRejectionClassification::Conflict,
     ))?;
     Ok(processor)
@@ -173,7 +173,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
     let causation = CausationId::new("incoming-rental-request")?;
 
     let first = first_bus
-        .dispatch(
+        .dispatch::<RentalFleetAggregate, RentBicycle>(
             request("rent-bike-42", "bike-42")?
                 .with_correlation_id(correlation.clone())
                 .with_causation_id(causation.clone()),
@@ -186,7 +186,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
     ));
 
     let duplicate = first_bus
-        .dispatch(
+        .dispatch::<RentalFleetAggregate, RentBicycle>(
             request("rent-bike-42", "bike-42")?
                 .with_correlation_id(correlation.clone())
                 .with_causation_id(causation.clone()),
@@ -209,7 +209,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
     )?)));
     let replay_bus = command_bus(&config, replay_adapter);
     let replay = replay_bus
-        .dispatch(
+        .dispatch::<RentalFleetAggregate, RentBicycle>(
             request("rent-bike-42", "bike-42")?
                 .with_correlation_id(correlation.clone())
                 .with_causation_id(causation.clone()),
@@ -236,7 +236,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
     )?)));
     let rejected_bus = command_bus(&config, rejected_adapter);
     let rejected = rejected_bus
-        .dispatch(request("rent-bike-42-again", "bike-42")?)
+        .dispatch::<RentalFleetAggregate, RentBicycle>(request("rent-bike-42-again", "bike-42")?)
         .await?;
     let CommandResponseOutcome::Rejected(rejection) = rejected.response().outcome() else {
         return Err("the second rental should be rejected".into());
@@ -250,7 +250,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
     );
 
     let conflict = rejected_bus
-        .dispatch(request("rent-bike-42", "bike-99")?)
+        .dispatch::<RentalFleetAggregate, RentBicycle>(request("rent-bike-42", "bike-99")?)
         .await?;
     let CommandResponseOutcome::Rejected(rejection) = conflict.response().outcome() else {
         return Err("operation identity reuse should be rejected".into());
@@ -322,7 +322,7 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
     )?)));
     let bus = command_bus(&config, Arc::clone(&adapter));
     let command = bus
-        .dispatch(
+        .dispatch::<RentalFleetAggregate, RentBicycle>(
             request("integration-rental", "bike-42")?
                 .with_correlation_id(CorrelationId::new("integration-correlation")?),
         )
@@ -334,7 +334,7 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
     let integration_bus = IntegrationEventBus::new(config.context().clone(), integration_adapter);
     let mut dispatcher = DomainEventDispatcher::new();
     dispatcher.register::<RentalFleetAggregate, BicycleRented, _>(
-        BicycleRented::DEFINITION.id,
+        BicycleRented::LOCAL_ID,
         Arc::new(BicycleRentedIntegrationMapper::new(integration_bus)),
     )?;
 

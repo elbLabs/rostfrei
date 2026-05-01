@@ -1,7 +1,0 @@
-error: unexpected end of input, domain invariant contract kind is required; expected `aggregate`, `entity`, or `value_object`
- --> tests/ui/domain_invariant_contract/missing_macro_kind.rs:5:1
-  |
-5 | #[domain_invariants]
-  | ^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: this error originates in the attribute macro `domain_invariants` (in Nightly builds, run with -Z macro-backtrace for more info)

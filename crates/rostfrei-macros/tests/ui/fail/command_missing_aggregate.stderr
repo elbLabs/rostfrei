@@ -1,5 +1,0 @@
-error: missing `aggregate` in `rostfrei` attribute
- --> tests/ui/fail/command_missing_aggregate.rs:5:8
-  |
-5 | struct OpenAccount;
-  |        ^^^^^^^^^^^

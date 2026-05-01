@@ -1,5 +1,0 @@
-error: value object transformation actions accept at most one business input; group multiple values into one type
- --> tests/ui/value_object_action/excess_transformation_input.rs:6:37
-  |
-6 |     fn replace(self, input: String, extra: String) -> Self;
-  |                                     ^^^^^^^^^^^^^

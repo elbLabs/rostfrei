@@ -3,9 +3,8 @@
 use domain::DecisionOutcome;
 use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle, EntityLifecycleType,
-    InvariantOwnerType, InvariantViolation, ValueObject, domain_action_test, domain_actions,
-    domain_decision_test, domain_decisions, domain_invariant_test, domain_invariants,
-    domain_lifecycle_test,
+    InvariantViolation, ValueObject, domain_action, domain_action_test, domain_decision,
+    domain_decision_test, domain_invariant, domain_invariant_test, domain_lifecycle_test,
 };
 
 #[derive(BoundedContext)]
@@ -13,11 +12,11 @@ use domain::{
 struct Testing;
 
 #[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
-#[domain(id = "decision-input", label = "Decision input", owner = TestAggregate)]
+#[domain(id = "decision-input", label = "Decision input")]
 struct DecisionInput(bool);
 
 #[derive(ValueObject, Debug, Eq, PartialEq)]
-#[domain(id = "decision-output", label = "Decision output", owner = TestAggregate)]
+#[domain(id = "decision-output", label = "Decision output")]
 struct DecisionOutput(bool);
 
 #[derive(DecisionOutcome, Debug, Eq, PartialEq)]
@@ -28,76 +27,62 @@ enum TestDecisionOutcome {
     Rejected,
 }
 
-struct TestDecisions;
-
-#[domain_actions(aggregate)]
-pub trait AggregateActions {
-    #[action(id = "mark", label = "Mark")]
+#[domain_action(id = "mark", label = "Mark")]
+pub trait MarkAction {
     fn mark(root: &mut TestRoot, input: bool);
 }
 
-#[domain_actions(entity)]
-trait RootActions {
-    #[action(id = "activate", label = "Activate")]
-    fn activate(&mut self);
+#[domain_invariant(id = "marked", label = "Marked")]
+trait MarkedInvariant {
+    fn marked(candidate: &TestRoot) -> Option<InvariantViolation>;
 }
 
-#[domain_invariants(aggregate)]
-trait AggregateInvariants {
-    #[invariant(id = "marked", label = "Marked")]
-    fn marked(candidate: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation>;
+#[domain_decision(id = "accept", label = "Accept")]
+trait AcceptDecision {
+    fn accept(input: DecisionInput) -> TestDecisionOutcome;
 }
 
 #[derive(EntityLifecycle)]
-#[domain(
-    id = "test-lifecycle",
-    label = "Test lifecycle",
-    owner = TestRoot,
-    initial = Draft,
-)]
+#[domain(id = "test-lifecycle", label = "Test lifecycle")]
 enum TestLifecycle {
-    #[domain(id = "draft", label = "Draft")]
-    #[transition(action = RootActions::ACTIVATE, to = Active)]
+    #[state(id = "draft", label = "Draft")]
     Draft,
-    #[domain(id = "active", label = "Active")]
+    #[state(id = "active", label = "Active")]
     Active,
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = TestRoot)]
 struct TestId(u64);
 
 #[derive(Entity)]
-#[domain(
-    id = "test-root",
-    label = "Test root",
-    owner = TestAggregate,
-    actions = [RootActions],
-    lifecycle = TestLifecycle,
-)]
+#[domain(id = "test-root", label = "Test root")]
 struct TestRoot {
-    #[domain(identity)]
     id: TestId,
     marked: bool,
     active: bool,
 }
 
+impl domain::EntityDefinition for TestRoot {
+    type Owner = TestAggregate;
+    type Identity = TestId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
+}
+
 #[derive(Aggregate)]
-#[domain(
-    id = "test-aggregate",
-    label = "Test aggregate",
-    context = Testing,
-    root = TestRoot,
-    actions = [AggregateActions],
-    decisions = [TestDecisions],
-    invariants = [AggregateInvariants],
-)]
+#[domain(id = "test-aggregate", label = "Test aggregate")]
 struct TestAggregate;
 
-#[domain_decisions(aggregate, group = TestDecisions)]
-impl TestAggregate {
-    #[decision(id = "accept", label = "Accept")]
-    const fn accept(input: DecisionInput) -> TestDecisionOutcome {
+impl domain::AggregateDefinition for TestAggregate {
+    type Context = Testing;
+    type Root = TestRoot;
+    type Event = domain::NoDomainEvents;
+}
+
+impl AcceptDecision for TestAggregate {
+    fn accept(input: DecisionInput) -> TestDecisionOutcome {
         if input.0 {
             TestDecisionOutcome::Accepted(DecisionOutput(true))
         } else {
@@ -106,19 +91,13 @@ impl TestAggregate {
     }
 }
 
-impl AggregateActions for TestAggregate {
+impl MarkAction for TestAggregate {
     fn mark(root: &mut TestRoot, input: bool) {
         root.marked = input;
     }
 }
 
-impl RootActions for TestRoot {
-    fn activate(&mut self) {
-        self.active = true;
-    }
-}
-
-impl AggregateInvariants for TestAggregate {
+impl MarkedInvariant for TestAggregate {
     fn marked(candidate: &TestRoot) -> Option<InvariantViolation> {
         (!candidate.marked).then(|| InvariantViolation::new("marked", "must be marked"))
     }
@@ -140,20 +119,20 @@ fn cfg_disabled_domain_test_does_not_resolve_its_subject() {}
 #[cfg_attr(all(), cfg(any()))]
 fn nested_cfg_disabled_domain_test_does_not_resolve_its_subject() {}
 
-#[domain_action_test(<TestAggregate as AggregateActions>::MARK)]
+#[domain_action_test(<TestAggregate as MarkAction>::DESCRIPTOR)]
 fn action_tests_keep_the_authored_body() {
     let mut root = root();
     TestAggregate::mark(&mut root, true);
     assert!(root.marked);
 }
 
-#[domain_action_test(<TestAggregate as AggregateActions>::MARK)]
+#[domain_action_test(<TestAggregate as MarkAction>::DESCRIPTOR)]
 fn case_distinct_test_name() {}
 
-#[domain_action_test(<TestAggregate as AggregateActions>::MARK)]
+#[domain_action_test(<TestAggregate as MarkAction>::DESCRIPTOR)]
 fn CASE_DISTINCT_TEST_NAME() {}
 
-#[domain_decision_test(TestAggregate::ACCEPT)]
+#[domain_decision_test(<TestAggregate as AcceptDecision>::DESCRIPTOR)]
 fn decision_tests_keep_the_authored_body() {
     assert_eq!(
         TestAggregate::accept(DecisionInput(true)),
@@ -161,17 +140,18 @@ fn decision_tests_keep_the_authored_body() {
     );
 }
 
-#[domain_invariant_test(<TestAggregate as AggregateInvariants>::MARKED)]
+#[domain_invariant_test(<TestAggregate as MarkedInvariant>::DESCRIPTOR)]
 fn invariant_tests_keep_the_authored_body() {
     assert_eq!(
-        <TestAggregate as InvariantOwnerType>::validate_invariants(&root()),
-        Err(vec![InvariantViolation::new("marked", "must be marked")])
+        <TestAggregate as MarkedInvariant>::marked(&root()),
+        Some(InvariantViolation::new("marked", "must be marked"))
     );
 }
 
 #[domain_lifecycle_test(TestLifecycle)]
 fn lifecycle_tests_keep_the_authored_body() {
     let lifecycle = TestLifecycle::DESCRIPTOR;
-    assert_eq!(lifecycle.initial.local, "draft");
-    assert_eq!(lifecycle.transitions[0].target.local, "active");
+    assert_eq!(lifecycle.states[0].id.local, "draft");
+    assert_eq!(lifecycle.states[1].id.local, "active");
 }
+rostfrei_domain_macros::__install_test_macro_support!();

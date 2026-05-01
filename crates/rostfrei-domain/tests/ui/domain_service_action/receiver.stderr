@@ -1,5 +1,0 @@
-error: domain service action contract methods must be associated functions without a receiver
- --> tests/ui/domain_service_action/receiver.rs:6:16
-  |
-6 |     fn execute(&self);
-  |                ^^^^^

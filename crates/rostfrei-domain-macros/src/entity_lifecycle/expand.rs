@@ -11,11 +11,9 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         name: input.ident,
         id: attributes.id,
         label: attributes.label,
-        owner: attributes.owner,
-        initial: attributes.initial,
         states,
     };
     super::validation::validate(&lifecycle)?;
-    let domain_path = crate::helper::domain_api_path::resolve()?;
+    let domain_path = crate::helper::domain_api_path::resolve();
     Ok(super::assembly::assemble(&domain_path, &lifecycle))
 }

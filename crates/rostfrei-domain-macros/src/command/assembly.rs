@@ -14,33 +14,16 @@ pub fn assemble(
 ) -> TokenStream {
     let id = &attributes.id;
     let label = &attributes.label;
-    let owner = &attributes.owner;
     let schema_version = &attributes.schema_version;
-    let rejection = attributes.rejection.as_ref().map_or_else(
-        || quote!(::core::convert::Infallible),
-        |rejection| quote!(#rejection),
-    );
     let descriptors = crate::field::assemble_descriptors_with_path(domain_path, fields);
     let assertions = crate::field::assemble_assertions_with_path(domain_path, name, None, fields);
-    let json_codec = attributes
-        .json
-        .then(|| assemble_json_codec(domain_path, name, fields, syntax_fields));
+    let json_codec = assemble_json_codec(domain_path, name, fields, syntax_fields);
     quote! {
-        impl #domain_path::CommandType for #name {
-            type Owner = #owner;
-            type Rejection = #rejection;
-
+        impl #domain_path::Command for #name {
             const LOCAL_ID: &'static str = #id;
+            const LABEL: &'static str = #label;
+            const FIELDS: &'static [#domain_path::FieldDescriptor] = #descriptors;
             const SCHEMA_VERSION: u32 = #schema_version;
-            const DESCRIPTOR: #domain_path::CommandDescriptor =
-                #domain_path::CommandDescriptor {
-                    id: #domain_path::CommandId {
-                        owner: <#owner as #domain_path::CommandOwnerType>::COMMAND_OWNER_ID,
-                        local: Self::LOCAL_ID,
-                    },
-                    label: #label,
-                    fields: #descriptors,
-                };
         }
 
         #assertions

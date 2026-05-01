@@ -1,6 +1,4 @@
-use domain::{
-    BoundedContext, ScalarType, SemanticScalar, SemanticScalarDescriptor, ValueObject,
-};
+use domain::{DomainEvent, ScalarType, SemanticScalar, SemanticScalarDescriptor};
 
 struct U64Scalar;
 
@@ -14,12 +12,9 @@ impl SemanticScalar for U64Scalar {
     };
 }
 
-#[derive(BoundedContext)]
-#[domain(id = "context", label = "Context")]
-struct Context;
-
-#[derive(ValueObject)]
-#[domain(id = "mismatch", label = "Mismatch", owner = Context)]
+#[derive(DomainEvent)]
+#[domain(id = "mismatch", label = "Mismatch")]
 struct Mismatch(#[domain(scalar = U64Scalar)] String);
 
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();

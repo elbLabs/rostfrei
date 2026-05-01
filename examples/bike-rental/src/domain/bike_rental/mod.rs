@@ -1,7 +1,4 @@
-use rostfrei::BoundedContext;
-
+mod context;
 pub mod rental_fleet;
 
-#[derive(BoundedContext)]
-#[domain(id = "bike-rental", label = "Bike Rental")]
-pub struct BikeRental;
+pub use context::BikeRental;

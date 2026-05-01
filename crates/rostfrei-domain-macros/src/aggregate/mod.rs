@@ -1,7 +1,6 @@
 mod aggregate_type;
 mod assembly;
 mod attributes;
-mod events;
 mod expand;
 mod input;
 mod runtime;

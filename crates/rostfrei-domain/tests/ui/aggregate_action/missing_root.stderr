@@ -1,5 +1,0 @@
-error: aggregate actions require a first `root: &mut RootType` parameter
- --> tests/ui/aggregate_action/missing_root.rs:6:8
-  |
-6 |     fn change();
-  |        ^^^^^^

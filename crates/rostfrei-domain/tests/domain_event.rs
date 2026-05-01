@@ -1,7 +1,6 @@
 use domain::{
-    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainEvent,
-    DomainEventDefinitionType, DomainEventDescriptor, DomainEventId, DomainEventType,
-    DomainIdentity, Entity,
+    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainEvent, DomainEventDescriptor,
+    DomainEventId, DomainEventType, DomainIdentity, Entity,
 };
 
 #[derive(BoundedContext)]
@@ -9,25 +8,40 @@ use domain::{
 struct Inbox;
 
 #[derive(DomainIdentity)]
-#[domain(owner = MailboxRoot)]
 struct MailboxId(u64);
 
 #[derive(Entity)]
-#[domain(id = "mailbox-root", label = "Mailbox", owner = Mailbox)]
+#[domain(id = "mailbox-root", label = "Mailbox")]
 struct MailboxRoot {
-    #[domain(identity)]
     id: MailboxId,
 }
 
+impl domain::EntityDefinition for MailboxRoot {
+    type Owner = Mailbox;
+    type Identity = MailboxId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
+}
+
 #[derive(Aggregate)]
-#[domain(
-    id = "mailbox",
-    label = "Mailbox",
-    context = Inbox,
-    root = MailboxRoot,
-    events = [MailboxCreated, MessageReceived, MailboxRenamed]
-)]
+#[domain(id = "mailbox", label = "Mailbox")]
 struct Mailbox;
+
+impl domain::AggregateDefinition for Mailbox {
+    type Context = Inbox;
+    type Root = MailboxRoot;
+    type Event = MailboxEvents;
+}
+
+#[allow(dead_code)]
+#[derive(domain::AggregateEvents)]
+enum MailboxEvents {
+    Event0(MailboxCreated),
+    Event1(MessageReceived),
+    Event2(MailboxRenamed),
+}
 
 #[derive(DomainEvent)]
 #[domain(id = "mailbox-created", label = "Mailbox created")]
@@ -50,7 +64,7 @@ struct MailboxRenamed {
 #[test]
 fn derives_domain_event_descriptor() {
     assert_eq!(
-        MailboxCreated::DESCRIPTOR,
+        <MailboxCreated as DomainEventType<Mailbox>>::DESCRIPTOR,
         DomainEventDescriptor {
             id: DomainEventId {
                 aggregate: AggregateId {
@@ -64,16 +78,16 @@ fn derives_domain_event_descriptor() {
             fields: &[],
         }
     );
-    assert_eq!(MailboxCreated::LOCAL_ID, "mailbox-created");
-    assert_eq!(MailboxCreated::SCHEMA_VERSION, 1);
-    assert_eq!(MessageReceived::SCHEMA_VERSION, 2);
+    assert_eq!(<MailboxCreated as DomainEvent>::LOCAL_ID, "mailbox-created");
+    assert_eq!(<MailboxCreated as DomainEvent>::SCHEMA_VERSION, 1);
+    assert_eq!(<MessageReceived as DomainEvent>::SCHEMA_VERSION, 2);
 }
 
 #[test]
 fn describes_event_fields() {
-    assert_eq!(MailboxRenamed::DEFINITION.fields[0].name, "name");
+    assert_eq!(MailboxRenamed::FIELDS[0].name, "name");
     assert_eq!(
-        MailboxRenamed::DEFINITION.fields[0].value.kind,
+        MailboxRenamed::FIELDS[0].value.kind,
         domain::FieldKind::Scalar(domain::ScalarType::String)
     );
 }
@@ -90,3 +104,4 @@ fn supports_all_struct_shapes() {
     assert_eq!(renamed.name, "Primary");
     assert_eq!(root.id.0, 1);
 }
+rostfrei_domain_macros::__install_test_macro_support!();

@@ -10,12 +10,8 @@ pub fn parse(attributes: &[Attribute]) -> Result<Option<Role>> {
     {
         attribute.parse_nested_meta(|meta| {
             let has_arguments = meta.input.peek(Token![=]) || meta.input.peek(token::Paren);
-            let parsed = if meta.path.is_ident("identity") && !has_arguments {
-                Role::Identity
-            } else if meta.path.is_ident("entity") && !has_arguments {
+            let parsed = if meta.path.is_ident("entity") && !has_arguments {
                 Role::Entity
-            } else if meta.path.is_ident("value_object") && !has_arguments {
-                Role::ValueObject
             } else if meta.path.is_ident("aggregate_ref") {
                 let target = meta.value()?.parse::<TypePath>()?;
                 if !is_direct_non_generic(&target) {
@@ -32,10 +28,7 @@ pub fn parse(attributes: &[Attribute]) -> Result<Option<Role>> {
                     );
                 }
                 Role::SemanticScalar(provider)
-            } else if meta.path.is_ident("identity")
-                || meta.path.is_ident("entity")
-                || meta.path.is_ident("value_object")
-            {
+            } else if meta.path.is_ident("entity") {
                 return Err(meta.error("field role does not accept a value or arguments"));
             } else {
                 return Err(meta.error("unsupported field domain attribute"));

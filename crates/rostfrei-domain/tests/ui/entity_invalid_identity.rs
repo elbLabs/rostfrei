@@ -1,50 +1,61 @@
-use domain::{DomainIdentity, Entity};
+use domain::{Aggregate, BoundedContext, DomainIdentity, Entity};
+
+#[derive(BoundedContext)]
+#[domain(id = "context", label = "Context")]
+struct Context;
 
 #[derive(DomainIdentity)]
 struct Id(u64);
 
+#[derive(DomainIdentity)]
+struct OtherId(u64);
+
 #[derive(Entity)]
-#[domain(id = "missing", label = "Missing", owner = Owner)]
-struct Missing {
+#[domain(id = "missing-accessor", label = "Missing accessor")]
+struct MissingAccessor {
     id: Id,
 }
 
-#[derive(Entity)]
-#[domain(id = "multiple", label = "Multiple", owner = Owner)]
-struct Multiple {
-    #[domain(identity)]
-    first: Id,
-    #[domain(identity)]
-    second: Id,
+impl domain::EntityDefinition for MissingAccessor {
+    type Owner = MissingAccessorAggregate;
+    type Identity = Id;
+}
+
+#[derive(Aggregate)]
+#[domain(id = "missing-accessor", label = "Missing accessor")]
+struct MissingAccessorAggregate;
+
+impl domain::AggregateDefinition for MissingAccessorAggregate {
+    type Context = Context;
+    type Root = MissingAccessor;
+    type Event = domain::NoDomainEvents;
 }
 
 #[derive(Entity)]
-#[domain(id = "unsupported", label = "Unsupported", owner = Owner)]
-struct Unsupported {
-    #[domain(primary)]
+#[domain(id = "wrong-accessor", label = "Wrong accessor")]
+struct WrongAccessor {
     id: Id,
+    other_id: OtherId,
 }
 
-#[derive(Entity)]
-#[domain(id = "syntax", label = "Syntax", owner = Owner)]
-struct Syntax {
-    #[domain(identity = true)]
-    id: Id,
+impl domain::EntityDefinition for WrongAccessor {
+    type Owner = WrongAccessorAggregate;
+    type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.other_id
+    }
 }
 
-#[derive(Entity)]
-#[domain(id = "duplicate", label = "Duplicate", owner = Owner)]
-struct Duplicate {
-    #[domain(identity)]
-    #[domain(identity)]
-    id: Id,
-}
+#[derive(Aggregate)]
+#[domain(id = "wrong-accessor", label = "Wrong accessor")]
+struct WrongAccessorAggregate;
 
-#[derive(Entity)]
-#[domain(id = "wrapped", label = "Wrapped", owner = Owner)]
-struct Wrapped {
-    #[domain(identity)]
-    id: Option<Id>,
+impl domain::AggregateDefinition for WrongAccessorAggregate {
+    type Context = Context;
+    type Root = WrongAccessor;
+    type Event = domain::NoDomainEvents;
 }
 
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();

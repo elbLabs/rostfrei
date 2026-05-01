@@ -1,7 +1,6 @@
 use domain::{
-    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainError, DomainErrorDescriptor,
-    DomainErrorId, DomainErrorOwnerId, DomainErrorType, DomainIdentity, DomainService,
-    DomainServiceId, Entity, EntityId, JsonErrorPayload, ValueObject, ValueObjectId,
+    Aggregate, BoundedContext, DomainError, DomainErrorDescriptor, DomainErrorId, DomainIdentity,
+    DomainModelError, Entity, JsonErrorPayload, ValueObject, domain_model,
 };
 use serde_json::json;
 
@@ -10,42 +9,71 @@ use serde_json::json;
 struct Inbox;
 
 #[derive(DomainIdentity)]
-#[domain(owner = MailboxRoot)]
 struct MailboxId(u64);
 
 #[derive(Entity)]
-#[domain(id = "mailbox-root", label = "Mailbox", owner = Mailbox)]
+#[domain(id = "mailbox-root", label = "Mailbox")]
 struct MailboxRoot {
-    #[domain(identity)]
     id: MailboxId,
 }
 
+impl domain::EntityDefinition for MailboxRoot {
+    type Owner = Mailbox;
+    type Identity = MailboxId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
+}
+
 #[derive(Aggregate)]
-#[domain(id = "mailbox", label = "Mailbox", context = Inbox, root = MailboxRoot)]
+#[domain(id = "mailbox", label = "Mailbox")]
 struct Mailbox;
 
+impl domain::AggregateDefinition for Mailbox {
+    type Context = Inbox;
+    type Root = MailboxRoot;
+    type Event = domain::NoDomainEvents;
+}
+
 #[derive(ValueObject)]
-#[domain(id = "subject", label = "Subject", owner = Mailbox)]
+#[domain(id = "subject", label = "Subject")]
 struct Subject(String);
 
-#[derive(DomainService)]
-#[domain(id = "mail-transfer", label = "Mail transfer", context = Inbox)]
-struct MailTransfer;
-
 #[derive(DomainError)]
-#[domain(id = "transfer-denied", label = "Transfer denied", owner = MailTransfer, code = "TRANSFER_DENIED", message = "Mail transfer was denied.")]
+#[domain(
+    id = "transfer-denied",
+    label = "Transfer denied",
+    code = "TRANSFER_DENIED",
+    message = "Mail transfer was denied."
+)]
 struct TransferDenied;
 
 #[derive(DomainError)]
-#[domain(id = "mailbox-closed", label = "Mailbox closed", owner = Mailbox, code = "MAILBOX_CLOSED", message = "The mailbox is closed.")]
+#[domain(
+    id = "mailbox-closed",
+    label = "Mailbox closed",
+    code = "MAILBOX_CLOSED",
+    message = "The mailbox is closed."
+)]
 struct MailboxClosed(String);
 
 #[derive(DomainError)]
-#[domain(id = "message-limit", label = "Message limit", owner = MailboxRoot, code = "MESSAGE_LIMIT", message = "The message limit was reached.")]
+#[domain(
+    id = "message-limit",
+    label = "Message limit",
+    code = "MESSAGE_LIMIT",
+    message = "The message limit was reached."
+)]
 struct MessageLimit(u64, u64);
 
 #[derive(DomainError)]
-#[domain(id = "subject-blank", label = "Subject blank", owner = Subject, code = "SUBJECT_BLANK", message = "The subject must not be blank.", json)]
+#[domain(
+    id = "subject-blank",
+    label = "Subject blank",
+    code = "SUBJECT_BLANK",
+    message = "The subject must not be blank."
+)]
 struct SubjectBlank {
     supplied: String,
 }
@@ -67,7 +95,6 @@ fn generated_json_errors_preserve_canonical_code_and_message() {
 }
 
 const fn descriptor(
-    owner: DomainErrorOwnerId,
     local: &'static str,
     label: &'static str,
     code: &'static str,
@@ -75,7 +102,7 @@ const fn descriptor(
     fields: &'static [domain::FieldDescriptor],
 ) -> DomainErrorDescriptor {
     DomainErrorDescriptor {
-        id: DomainErrorId { owner, local },
+        id: DomainErrorId(local),
         label,
         code,
         message,
@@ -84,23 +111,10 @@ const fn descriptor(
 }
 
 #[test]
-fn derives_descriptors_for_each_owner() {
-    let context = BoundedContextId("inbox");
-    let aggregate = AggregateId {
-        context,
-        local: "mailbox",
-    };
-    let entity = EntityId {
-        aggregate,
-        local: "mailbox-root",
-    };
+fn derives_owner_independent_descriptors() {
     assert_eq!(
         TransferDenied::DESCRIPTOR,
         descriptor(
-            DomainErrorOwnerId::DomainService(DomainServiceId {
-                context,
-                local: "mail-transfer",
-            }),
             "transfer-denied",
             "Transfer denied",
             "TRANSFER_DENIED",
@@ -111,7 +125,6 @@ fn derives_descriptors_for_each_owner() {
     assert_eq!(
         MailboxClosed::DESCRIPTOR,
         descriptor(
-            DomainErrorOwnerId::Aggregate(aggregate),
             "mailbox-closed",
             "Mailbox closed",
             "MAILBOX_CLOSED",
@@ -122,7 +135,6 @@ fn derives_descriptors_for_each_owner() {
     assert_eq!(
         MessageLimit::DESCRIPTOR,
         descriptor(
-            DomainErrorOwnerId::Entity(entity),
             "message-limit",
             "Message limit",
             "MESSAGE_LIMIT",
@@ -133,10 +145,6 @@ fn derives_descriptors_for_each_owner() {
     assert_eq!(
         SubjectBlank::DESCRIPTOR,
         descriptor(
-            DomainErrorOwnerId::ValueObject(ValueObjectId {
-                owner: domain::ValueObjectOwnerId::Aggregate(aggregate),
-                local: "subject",
-            }),
             "subject-blank",
             "Subject blank",
             "SUBJECT_BLANK",
@@ -145,6 +153,35 @@ fn derives_descriptors_for_each_owner() {
         )
     );
     assert_eq!(TransferDenied::LOCAL_ID, "transfer-denied");
+}
+
+#[derive(DomainError)]
+#[domain(
+    id = "transfer-denied",
+    label = "Duplicate transfer denied",
+    code = "TRANSFER_DENIED_AGAIN",
+    message = "Duplicate."
+)]
+struct DuplicateTransferDenied;
+
+#[test]
+fn rejects_duplicate_owner_independent_error_ids() {
+    let error = domain_model! {
+        contexts: [],
+        aggregates: [],
+        entities: [],
+        value_objects: [],
+        services: [],
+        errors: [TransferDenied, DuplicateTransferDenied],
+    }
+    .expect_err("duplicate domain error IDs must be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateDomainErrorId {
+            id: Box::new(DomainErrorId("transfer-denied")),
+        }
+    );
 }
 
 #[test]
@@ -169,3 +206,4 @@ fn supports_all_struct_shapes() {
     assert_eq!(root.id.0, 1);
     assert_eq!(subject.0, "Hello");
 }
+rostfrei_domain_macros::__install_test_macro_support!();

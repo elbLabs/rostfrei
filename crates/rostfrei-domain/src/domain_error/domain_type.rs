@@ -1,8 +1,17 @@
-use super::{DomainErrorDescriptor, DomainErrorOwnerType};
+use super::{DomainErrorDescriptor, DomainErrorId};
+use crate::FieldDescriptor;
 
-pub trait DomainErrorType: 'static {
-    type Owner: DomainErrorOwnerType;
-
+pub trait DomainError: 'static {
     const LOCAL_ID: &'static str;
-    const DESCRIPTOR: DomainErrorDescriptor;
+    const LABEL: &'static str;
+    const CODE: &'static str;
+    const MESSAGE: &'static str;
+    const FIELDS: &'static [FieldDescriptor];
+    const DESCRIPTOR: DomainErrorDescriptor = DomainErrorDescriptor {
+        id: DomainErrorId(Self::LOCAL_ID),
+        label: Self::LABEL,
+        code: Self::CODE,
+        message: Self::MESSAGE,
+        fields: Self::FIELDS,
+    };
 }

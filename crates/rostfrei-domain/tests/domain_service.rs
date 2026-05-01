@@ -1,6 +1,6 @@
 use domain::{
-    BoundedContext, BoundedContextId, DomainService, DomainServiceDescriptor, DomainServiceId,
-    DomainServiceType,
+    BoundedContext, BoundedContextId, DomainService, DomainServiceDefinition,
+    DomainServiceDescriptor, DomainServiceId, DomainServiceType,
 };
 
 #[derive(BoundedContext)]
@@ -8,8 +8,12 @@ use domain::{
 struct Inbox;
 
 #[derive(DomainService)]
-#[domain(id = "mail-transfer", label = "Mail transfer", context = Inbox)]
+#[domain(id = "mail-transfer", label = "Mail transfer")]
 struct MailTransfer;
+
+impl DomainServiceDefinition for MailTransfer {
+    type Context = Inbox;
+}
 
 #[test]
 fn derives_domain_service_descriptor() {
@@ -24,3 +28,4 @@ fn derives_domain_service_descriptor() {
         }
     );
 }
+rostfrei_domain_macros::__install_test_macro_support!();

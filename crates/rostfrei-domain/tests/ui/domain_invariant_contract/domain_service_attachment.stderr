@@ -1,5 +1,0 @@
-error: unsupported domain attribute
-  --> tests/ui/domain_invariant_contract/domain_service_attachment.rs:13:5
-   |
-13 |     invariants = [Invariants]
-   |     ^^^^^^^^^^

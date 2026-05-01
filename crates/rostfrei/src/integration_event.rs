@@ -1,6 +1,6 @@
 use std::any::Any;
 
-use rostfrei_core::{Aggregate, AggregateId, OperationId};
+use rostfrei_core::{Aggregate, AggregateId, CommandHandler, OperationId};
 use rostfrei_messaging_core::{CausationId, DurableName, IntegrationEventEnvelope};
 use rostfrei_registry::CommandDefinition;
 use thiserror::Error;
@@ -32,9 +32,10 @@ impl CommandContext {
         Self::default()
     }
 
-    pub fn issue<C>(&mut self, aggregate_id: AggregateId, command: C)
+    pub fn issue<A, C>(&mut self, aggregate_id: AggregateId, command: C)
     where
-        C: CommandDefinition + JsonCommandPayload + Send + Sync,
+        A: Aggregate + CommandHandler<C>,
+        C: CommandDefinition<A> + JsonCommandPayload + Send + Sync,
     {
         self.issued_count = self.issued_count.saturating_add(1);
         if self.issued_count != 1 {
@@ -46,10 +47,10 @@ impl CommandContext {
             .map_err(CommandContextError::Encoding)
             .and_then(|payload| {
                 RoutedAggregateCommand::new(
-                    C::Aggregate::aggregate_type().into_owned(),
+                    A::aggregate_type().into_owned(),
                     aggregate_id.as_str(),
-                    C::COMMAND_NAME,
-                    <C as CommandDefinition>::SCHEMA_VERSION,
+                    C::LOCAL_ID,
+                    C::SCHEMA_VERSION,
                     payload,
                 )
                 .map_err(CommandContextError::InvalidCommand)

@@ -1,5 +1,0 @@
-error: DomainIdentity fields do not support domain attributes
- --> tests/ui/semantic_scalar/identity_field_attribute.rs:7:16
-  |
-7 | struct Invalid(#[domain(scalar = Provider)] Custom);
-  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -3,13 +3,13 @@ use std::{env, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rostfrei::{
-    CommandBindingRegistrationError, CommandBus, CommandDefinition, CommandMessageAdapter,
-    CommandProcessor, CommittedDomainEvent, CommittedEventContext, DomainEventDefinitionType,
-    DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, DomainEventRegistrationError, EncodedIntegrationMessage,
-    EventStore, EventStoreError, InfallibleCommandRejectionMapper, IntegrationEvent,
-    IntegrationEventBus, IntegrationEventBusError, IntegrationEventBusErrorKind,
-    IntegrationMessageAdapter, JsonDomainRejectionMapper,
+    Command, CommandBindingRegistrationError, CommandBus, CommandMessageAdapter, CommandProcessor,
+    CommittedDomainEvent, CommittedEventContext, DomainEvent, DomainEventDispatcher,
+    DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind,
+    DomainEventRegistrationError, EncodedIntegrationMessage, EventStore, EventStoreError,
+    InfallibleCommandRejectionMapper, IntegrationEvent, IntegrationEventBus,
+    IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationMessageAdapter,
+    JsonDomainRejectionMapper,
 };
 use rostfrei_messaging_core::{
     ApplicationName, BoundedContext, CommandAddress, CommandRejectionClassification, ConsumeError,
@@ -185,17 +185,17 @@ pub enum BikeRentalCommand {
 impl BikeRentalCommand {
     pub const fn command_name(self) -> &'static str {
         match self {
-            Self::RentBicycle => RentBicycle::COMMAND_NAME,
-            Self::ReturnBicycle => ReturnBicycle::COMMAND_NAME,
-            Self::AddBicycle => AddBicycle::COMMAND_NAME,
+            Self::RentBicycle => RentBicycle::LOCAL_ID,
+            Self::ReturnBicycle => ReturnBicycle::LOCAL_ID,
+            Self::AddBicycle => AddBicycle::LOCAL_ID,
         }
     }
 
     pub const fn schema_version(self) -> u32 {
         match self {
-            Self::RentBicycle => <RentBicycle as CommandDefinition>::SCHEMA_VERSION,
-            Self::ReturnBicycle => <ReturnBicycle as CommandDefinition>::SCHEMA_VERSION,
-            Self::AddBicycle => <AddBicycle as CommandDefinition>::SCHEMA_VERSION,
+            Self::RentBicycle => RentBicycle::SCHEMA_VERSION,
+            Self::ReturnBicycle => ReturnBicycle::SCHEMA_VERSION,
+            Self::AddBicycle => AddBicycle::SCHEMA_VERSION,
         }
     }
 }
@@ -730,13 +730,13 @@ impl BikeRentalNatsRuntime {
     fn command_processor(&self) -> Result<Arc<CommandProcessor>, BikeRentalNatsError> {
         let event_store: Arc<dyn EventStore> = Arc::new(self.store.clone());
         let mut processor = CommandProcessor::new(event_store);
-        processor.register::<RentBicycle, _>(JsonDomainRejectionMapper::new(
+        processor.register::<RentalFleetAggregate, RentBicycle>(JsonDomainRejectionMapper::new(
             CommandRejectionClassification::Conflict,
         ))?;
-        processor.register::<ReturnBicycle, _>(JsonDomainRejectionMapper::new(
-            CommandRejectionClassification::Conflict,
-        ))?;
-        processor.register::<AddBicycle, _>(InfallibleCommandRejectionMapper)?;
+        processor.register::<RentalFleetAggregate, ReturnBicycle>(
+            JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
+        )?;
+        processor.register::<RentalFleetAggregate, AddBicycle>(InfallibleCommandRejectionMapper)?;
         Ok(Arc::new(processor))
     }
 
@@ -788,7 +788,7 @@ impl BikeRentalNatsRuntime {
             IntegrationEventBus::new(self.config.context.clone(), integration_adapter);
         let mut dispatcher = DomainEventDispatcher::new();
         dispatcher.register::<RentalFleetAggregate, BicycleRented, _>(
-            BicycleRented::DEFINITION.id,
+            BicycleRented::LOCAL_ID,
             Arc::new(BicycleRentedIntegrationMapper::new(integration_bus)),
         )?;
         let domain_consumer = NatsDomainEventConsumer::connect(

@@ -22,15 +22,9 @@ pub fn extract(fields: &Fields) -> Result<Vec<Field>> {
                 },
             );
             let (wrappers, base) = shape::parse(&field.ty)?;
-            let role = match role::parse(&field.attrs)? {
-                Some(role) => role,
-                None => super::ir::Role::Scalar(scalar::classify(&base).ok_or_else(|| {
-                    syn::Error::new_spanned(
-                        &field.ty,
-                        "custom domain fields require an explicit domain role",
-                    )
-                })?),
-            };
+            let role = role::parse(&field.attrs)?.unwrap_or_else(|| {
+                scalar::classify(&base).map_or(super::ir::Role::Opaque, super::ir::Role::Scalar)
+            });
             Ok(Field {
                 name,
                 member,

@@ -1,18 +1,21 @@
 use super::DomainEventDescriptor;
-use crate::{AggregateType, DomainEventDefinitionType, DomainEventId};
+use crate::{AggregateType, DomainEventId, FieldDescriptor};
 
-pub trait DomainEventType: DomainEventDefinitionType {
-    type Owner: AggregateType;
+pub trait DomainEvent: 'static {
+    const LOCAL_ID: &'static str;
+    const LABEL: &'static str;
+    const FIELDS: &'static [FieldDescriptor];
+    const SCHEMA_VERSION: u32 = 1;
+}
 
-    const LOCAL_ID: &'static str = Self::DEFINITION.id;
-    const SCHEMA_VERSION: u32 = Self::DEFINITION.schema_version;
+pub trait DomainEventType<A: AggregateType>: DomainEvent {
     const DESCRIPTOR: DomainEventDescriptor = DomainEventDescriptor {
         id: DomainEventId {
-            aggregate: <Self::Owner as AggregateType>::DESCRIPTOR.id,
-            local: Self::DEFINITION.id,
+            aggregate: A::DESCRIPTOR.id,
+            local: Self::LOCAL_ID,
         },
-        label: Self::DEFINITION.label,
-        schema_version: Self::DEFINITION.schema_version,
-        fields: Self::DEFINITION.fields,
+        label: Self::LABEL,
+        schema_version: Self::SCHEMA_VERSION,
+        fields: Self::FIELDS,
     };
 }

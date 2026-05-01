@@ -19,78 +19,46 @@ mod invariant;
 mod json_wire;
 mod value_object;
 
-pub mod extension {
-    pub use crate::action::ActionGroupType;
-}
-
-pub use action::{
-    ActionDescriptor, ActionId, ActionInputDescriptor, ActionInputType, ActionOutputDescriptor,
-    ActionOutputType, ActionOwnerId, ActionOwnerType, ActionReference, AggregateActionOwnerType,
-    DomainServiceActionOwnerType, EntityActionOwnerType, InternalActionOwnerType,
-    PublicActionOwnerType, ValueObjectActionOwnerType,
+pub use action::{ActionDescriptor, ActionId};
+pub use aggregate::{
+    AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId, AggregateType,
+    NoDomainEvents,
 };
-pub use aggregate::{AggregateDescriptor, AggregateId, AggregateType};
 pub use bounded_context::{BoundedContextDescriptor, BoundedContextId, BoundedContextType};
-pub use command::{CommandDescriptor, CommandId, CommandOwnerId, CommandOwnerType, CommandType};
-#[doc(hidden)]
-pub use decision::AttachedDecisionGroup;
+pub use command::{Command, CommandDescriptor};
 pub use decision::{
-    AggregateDecisionOwnerType, DecisionDescriptor, DecisionGroupType, DecisionId,
-    DecisionImplementationDescriptor, DecisionInputDescriptor, DecisionInputType,
-    DecisionOutcomeDescriptor, DecisionOutcomeId, DecisionOutcomeNamedFieldDescriptor,
-    DecisionOutcomeShapeDescriptor, DecisionOutcomeType, DecisionOutcomeValueDescriptor,
-    DecisionOutcomeValueType, DecisionOwnerId, DecisionOwnerType, DecisionParameterDescriptor,
-    DecisionReference, EntityDecisionOwnerType,
+    DecisionDescriptor, DecisionId, DecisionOutcomeDescriptor, DecisionOutcomeType,
 };
-pub use domain_error::{
-    DomainErrorDescriptor, DomainErrorId, DomainErrorOwnerId, DomainErrorOwnerType, DomainErrorType,
-};
-pub use domain_event::{
-    DomainEventDefinition, DomainEventDefinitionType, DomainEventDescriptor, DomainEventId,
-    DomainEventType,
-};
-pub use domain_identity::{DomainIdentityDescriptor, DomainIdentityId, DomainIdentityType};
+pub use domain_error::{DomainError, DomainErrorDescriptor, DomainErrorId};
+pub use domain_event::{DomainEvent, DomainEventDescriptor, DomainEventId, DomainEventType};
+pub use domain_identity::{DomainIdentity, DomainIdentityId};
 pub use domain_model::{DomainModelError, DomainModelReference};
-pub use domain_query::{
-    QueryDescriptor, QueryGroupType, QueryId, QueryInputDescriptor, QueryInputType,
-    QueryOutputDescriptor, QueryOutputType,
+pub use domain_query::{QueryDescriptor, QueryId};
+pub use domain_service::{
+    DomainServiceDefinition, DomainServiceDescriptor, DomainServiceId, DomainServiceType,
 };
-pub use domain_service::{DomainServiceDescriptor, DomainServiceId, DomainServiceType};
 pub use domain_test::{DomainTestDescriptor, DomainTestSubject};
-pub use entity::{EntityDescriptor, EntityId, EntityType, IdentityDescriptor};
+pub use entity::{EntityDefinition, EntityDescriptor, EntityId, EntityType};
 pub use entity_lifecycle::{
     EntityLifecycleDescriptor, EntityLifecycleId, EntityLifecycleStateDescriptor,
-    EntityLifecycleStateId, EntityLifecycleTransitionDescriptor, EntityLifecycleType,
+    EntityLifecycleStateId, EntityLifecycleType,
 };
 pub use field::{
     FieldDescriptor, FieldKind, FieldValue, FieldWrapper, ScalarType, SemanticScalar,
     SemanticScalarDescriptor,
 };
-pub use invariant::{
-    AggregateInvariantOwnerType, EntityInvariantOwnerType, InvariantDescriptor, InvariantId,
-    InvariantOwnerId, InvariantOwnerType, InvariantReference, InvariantViolation,
-    ValueObjectInvariantOwnerType,
-};
+pub use invariant::{InvariantDescriptor, InvariantId, InvariantViolation};
 pub use json_wire::{JsonCommandPayload, JsonErrorPayload};
 pub use rostfrei_domain_macros::{
-    Aggregate, BoundedContext, Command, DecisionOutcome, DomainError, DomainEvent, DomainIdentity,
-    DomainService, Entity, EntityLifecycle, ValueObject, domain_action_test, domain_actions,
-    domain_decision_test, domain_decisions, domain_invariant_test, domain_invariants,
-    domain_lifecycle_test, domain_queries,
+    Aggregate, AggregateEvents, BoundedContext, Command, DecisionOutcome, DomainError, DomainEvent,
+    DomainIdentity, DomainService, Entity, EntityLifecycle, ValueObject, domain_action,
+    domain_action_test, domain_decision, domain_decision_test, domain_invariant,
+    domain_invariant_test, domain_lifecycle_test, domain_query,
 };
-pub use value_object::{
-    ValueObjectDescriptor, ValueObjectId, ValueObjectOwnerId, ValueObjectOwnerType,
-    ValueObjectShapeDescriptor, ValueObjectType, ValueObjectVariantDescriptor,
-    ValueObjectVariantShapeDescriptor,
-};
+pub use value_object::{ValueObject, ValueObjectDescriptor, ValueObjectId};
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::action::output::{
-        AggregateActionOutput, DomainServiceActionOutput, EntityActionOutput, SameType,
-        ValueObjectActionOutput,
-    };
-    pub use crate::decision::AttachedDecisionGroup;
     pub use crate::domain_model::{DomainModelBuilder, try_build};
     pub use crate::domain_test::emit_domain_test_metadata as emit_domain_test_descriptor;
     pub use serde;
@@ -103,25 +71,17 @@ macro_rules! domain_model {
         contexts: [$($context:ty),* $(,)?],
         aggregates: [$($aggregate:ty),* $(,)?],
         entities: [$($entity:ty),* $(,)?],
-        identities: [$($identity:ty),* $(,)?],
         value_objects: [$($value_object:ty),* $(,)?],
         services: [$($service:ty),* $(,)?],
-        commands: [$($command:ty),* $(,)?],
-        errors: [$($error:ty),* $(,)?],
-        $(action_extensions: [$($action_extension:ty),* $(,)?],)?
-        query_groups: [$($query_group:ty),* $(,)?] $(,)?
+        errors: [$($error:ty),* $(,)?] $(,)?
     } => {{
         $crate::__private::try_build(|builder| {
-            $(builder.add_bounded_context(<$context as $crate::BoundedContextType>::DESCRIPTOR);)*
+            $(builder.add_bounded_context(<$context as $crate::BoundedContextType>::DESCRIPTOR)?;)*
             $(builder.add_aggregate_type::<$aggregate>()?;)*
             $(builder.add_entity_type::<$entity>()?;)*
-            $(builder.add_domain_identity_type::<$identity>()?;)*
             $(builder.add_value_object_type::<$value_object>()?;)*
             $(builder.add_domain_service_type::<$service>()?;)*
-            $(builder.add_command(<$command as $crate::CommandType>::DESCRIPTOR)?;)*
-            $(builder.add_domain_error(<$error as $crate::DomainErrorType>::DESCRIPTOR);)*
-            $($(builder.add_action_extension::<$action_extension>()?;)*)?
-            $(builder.add_queries(<$query_group as $crate::QueryGroupType>::QUERIES)?;)*
+            $(builder.add_domain_error(<$error as $crate::DomainError>::DESCRIPTOR)?;)*
             Ok(())
         })
     }};

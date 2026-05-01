@@ -1,48 +1,35 @@
 use serde_json::{Value, json};
 
 use crate::{
-    ActionOwnerId, AggregateDescriptor, AggregateId, AggregateType, BoundedContextDescriptor,
-    CommandDescriptor, CommandId, DecisionOwnerId, DomainErrorDescriptor, DomainErrorId,
-    DomainEventDescriptor, DomainEventId, DomainIdentityDescriptor, DomainIdentityId,
-    DomainIdentityType, DomainServiceDescriptor, DomainServiceType, EntityDescriptor, EntityType,
-    InvariantOwnerId, QueryDescriptor, QueryId, QueryInputDescriptor, QueryOutputDescriptor,
-    ValueObjectDescriptor, ValueObjectId, ValueObjectType, extension::ActionGroupType,
+    AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId,
+    BoundedContextDescriptor, BoundedContextId, DomainErrorDescriptor, DomainErrorId,
+    DomainEventDescriptor, DomainEventId, DomainIdentityId, DomainServiceDescriptor,
+    DomainServiceId, DomainServiceType, EntityDefinition, EntityDescriptor, ValueObject,
+    ValueObjectDescriptor, ValueObjectId,
 };
 
 use super::{
-    action_projection::ActionProjection,
-    action_reference_validation::ActionReferenceInventory,
-    decision_projection::DecisionProjection,
-    decision_reference_validation::DecisionReferenceInventory,
     entity_projection::EntityProjection,
     error::DomainModelError,
     field_projection,
     field_reference_collection::FieldReferenceCollection,
     field_reference_validation::{self, FieldReferenceInventory},
     id_projection::{
-        aggregate as aggregate_id, command as command_id,
-        domain_error_owner as domain_error_owner_id, domain_identity as domain_identity_id,
-        entity as entity_id, query as query_id, value_object as value_object_id,
+        aggregate as aggregate_id, domain_error as domain_error_id,
+        domain_identity as domain_identity_id, entity as entity_id,
+        value_object as value_object_id,
     },
-    invariant_projection::InvariantProjection,
-    lifecycle_action_validation::LifecycleActionInventory,
-    value_object_projection,
 };
 
 pub struct DomainModelBuilder {
-    bounded_contexts: Vec<Value>,
+    bounded_contexts: Vec<(BoundedContextId, Value)>,
     aggregates: Vec<(AggregateId, Value)>,
     entities: EntityProjection,
     domain_identities: Vec<(DomainIdentityId, Value)>,
     value_objects: Vec<(ValueObjectId, Value)>,
-    domain_services: Vec<Value>,
-    commands: Vec<(CommandId, Value)>,
+    domain_services: Vec<(DomainServiceId, Value)>,
     domain_events: Vec<(DomainEventId, Value)>,
     domain_errors: Vec<(DomainErrorId, Value)>,
-    actions: ActionProjection,
-    decisions: DecisionProjection,
-    queries: Vec<(QueryId, Value)>,
-    invariants: InvariantProjection,
     field_references: FieldReferenceCollection,
 }
 
@@ -55,25 +42,48 @@ impl DomainModelBuilder {
             domain_identities: Vec::new(),
             value_objects: Vec::new(),
             domain_services: Vec::new(),
-            commands: Vec::new(),
             domain_events: Vec::new(),
             domain_errors: Vec::new(),
-            actions: ActionProjection::new(),
-            decisions: DecisionProjection::new(),
-            queries: Vec::new(),
-            invariants: InvariantProjection::new(),
             field_references: FieldReferenceCollection::new(),
         }
     }
 
-    pub fn add_bounded_context(&mut self, descriptor: BoundedContextDescriptor) {
-        self.bounded_contexts.push(json!({
-            "id": descriptor.id.0,
-            "label": descriptor.label,
-        }));
+    pub fn add_bounded_context(
+        &mut self,
+        descriptor: BoundedContextDescriptor,
+    ) -> Result<(), DomainModelError> {
+        if contains_id(&self.bounded_contexts, descriptor.id) {
+            return Err(DomainModelError::DuplicateBoundedContextId {
+                id: Box::new(descriptor.id),
+            });
+        }
+        self.bounded_contexts.push((
+            descriptor.id,
+            json!({
+                "id": descriptor.id.0,
+                "label": descriptor.label,
+            }),
+        ));
+        Ok(())
     }
 
-    pub fn add_aggregate(&mut self, descriptor: AggregateDescriptor) {
+    pub fn add_aggregate(
+        &mut self,
+        descriptor: AggregateDescriptor,
+    ) -> Result<(), DomainModelError> {
+        self.validate_aggregate_id(descriptor.id)?;
+        self.insert_aggregate(descriptor);
+        Ok(())
+    }
+
+    fn validate_aggregate_id(&self, id: AggregateId) -> Result<(), DomainModelError> {
+        if contains_id(&self.aggregates, id) {
+            return Err(DomainModelError::DuplicateAggregateId { id: Box::new(id) });
+        }
+        Ok(())
+    }
+
+    fn insert_aggregate(&mut self, descriptor: AggregateDescriptor) {
         self.aggregates.push((
             descriptor.id,
             json!({
@@ -84,171 +94,138 @@ impl DomainModelBuilder {
         ));
     }
 
-    pub fn add_aggregate_type<A: AggregateType>(&mut self) -> Result<(), DomainModelError> {
-        self.add_aggregate(A::DESCRIPTOR);
-        let owner = ActionOwnerId::Aggregate(A::DESCRIPTOR.id);
-        self.actions.register_owner(owner);
-        for contract in A::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract)?;
-        }
-        let owner = DecisionOwnerId::Aggregate(A::DESCRIPTOR.id);
-        self.decisions.register_owner(owner);
-        for group in A::DECISION_GROUPS {
-            self.decisions.add_group(owner, group)?;
-        }
-        let owner = InvariantOwnerId::Aggregate(A::DESCRIPTOR.id);
-        self.invariants.register_owner(owner);
-        for contract in A::INVARIANT_CONTRACTS {
-            self.invariants.add_group(owner, contract)?;
-        }
-        for event in A::DOMAIN_EVENTS {
-            self.add_domain_event(*event)?;
+    pub fn add_aggregate_type<A: AggregateDefinition>(&mut self) -> Result<(), DomainModelError> {
+        let descriptor = A::DESCRIPTOR;
+        let events = <A::Event as AggregateEventSet<A>>::DOMAIN_EVENTS;
+        self.validate_aggregate_id(descriptor.id)?;
+        self.validate_domain_event_batch(events)?;
+
+        self.insert_aggregate(descriptor);
+        for event in events {
+            self.insert_domain_event(*event);
         }
         Ok(())
     }
 
-    pub fn add_entity(&mut self, descriptor: EntityDescriptor) {
-        self.entities.add(descriptor);
-        self.field_references.add_entity(descriptor);
-    }
-
-    pub fn add_entity_type<E: EntityType>(&mut self) -> Result<(), DomainModelError> {
-        self.entities
-            .add_with_lifecycle(E::DESCRIPTOR, E::LIFECYCLE)?;
-        self.field_references.add_entity(E::DESCRIPTOR);
-        let owner = ActionOwnerId::Entity(E::DESCRIPTOR.id);
-        self.actions.register_owner(owner);
-        for contract in E::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract)?;
-        }
-        let owner = DecisionOwnerId::Entity(E::DESCRIPTOR.id);
-        self.decisions.register_owner(owner);
-        for group in E::DECISION_GROUPS {
-            self.decisions.add_group(owner, group)?;
-        }
-        let owner = InvariantOwnerId::Entity(E::DESCRIPTOR.id);
-        self.invariants.register_owner(owner);
-        for contract in E::INVARIANT_CONTRACTS {
-            self.invariants.add_group(owner, contract)?;
-        }
-        Ok(())
-    }
-
-    pub fn add_domain_identity(
-        &mut self,
-        descriptor: DomainIdentityDescriptor,
-    ) -> Result<(), DomainModelError> {
-        self.add_domain_identity_descriptor(descriptor, None)
-    }
-
-    pub fn add_domain_identity_type<I: DomainIdentityType>(
-        &mut self,
-    ) -> Result<(), DomainModelError> {
-        if let Some(semantic_scalar) = I::SEMANTIC_SCALAR
-            && I::DESCRIPTOR.scalar != semantic_scalar.representation
-        {
-            return Err(
-                DomainModelError::DomainIdentitySemanticScalarRepresentationMismatch {
-                    canonical: I::DESCRIPTOR.scalar,
-                    semantic: semantic_scalar.representation,
-                },
-            );
-        }
-        self.add_domain_identity_descriptor(I::DESCRIPTOR, I::SEMANTIC_SCALAR)
-    }
-
-    fn add_domain_identity_descriptor(
-        &mut self,
-        descriptor: DomainIdentityDescriptor,
-        semantic_scalar: Option<crate::SemanticScalarDescriptor>,
-    ) -> Result<(), DomainModelError> {
-        if self
-            .domain_identities
-            .iter()
-            .any(|(id, _)| *id == descriptor.id)
-        {
-            return Err(DomainModelError::DuplicateDomainIdentityId {
+    pub fn add_entity(&mut self, descriptor: EntityDescriptor) -> Result<(), DomainModelError> {
+        if self.entities.contains(descriptor.id) {
+            return Err(DomainModelError::DuplicateEntityId {
                 id: Box::new(descriptor.id),
             });
         }
-        let scalar = semantic_scalar.map_or_else(
-            || scalar_value(descriptor.scalar),
-            field_projection::semantic_scalar_value,
-        );
+        self.validate_domain_identity_id(descriptor.identity)?;
+
+        self.insert_domain_identity(descriptor.identity);
+        self.entities.add(descriptor);
+        self.field_references.add_entity(descriptor);
+        Ok(())
+    }
+
+    pub fn add_entity_type<E: EntityDefinition>(&mut self) -> Result<(), DomainModelError> {
+        self.add_entity(E::DESCRIPTOR)
+    }
+
+    fn validate_domain_identity_id(&self, id: DomainIdentityId) -> Result<(), DomainModelError> {
+        if contains_id(&self.domain_identities, id) {
+            return Err(DomainModelError::DuplicateDomainIdentityId { id: Box::new(id) });
+        }
+        Ok(())
+    }
+
+    fn insert_domain_identity(&mut self, id: DomainIdentityId) {
         self.domain_identities.push((
+            id,
+            json!({
+                "id": domain_identity_id(id),
+            }),
+        ));
+    }
+
+    pub fn add_value_object(
+        &mut self,
+        descriptor: ValueObjectDescriptor,
+    ) -> Result<(), DomainModelError> {
+        if contains_id(&self.value_objects, descriptor.id) {
+            return Err(DomainModelError::DuplicateValueObjectId {
+                id: Box::new(descriptor.id),
+            });
+        }
+        let value = json!({
+            "id": value_object_id(descriptor.id),
+            "label": descriptor.label,
+        });
+        self.value_objects.push((descriptor.id, value));
+        Ok(())
+    }
+
+    pub fn add_value_object_type<V: ValueObject>(&mut self) -> Result<(), DomainModelError> {
+        self.add_value_object(V::DESCRIPTOR)
+    }
+
+    pub fn add_domain_service(
+        &mut self,
+        descriptor: DomainServiceDescriptor,
+    ) -> Result<(), DomainModelError> {
+        if contains_id(&self.domain_services, descriptor.id) {
+            return Err(DomainModelError::DuplicateDomainServiceId {
+                id: Box::new(descriptor.id),
+            });
+        }
+        self.domain_services.push((
             descriptor.id,
             json!({
-                "id": domain_identity_id(descriptor.id),
-                "scalar": scalar,
+                "id": {
+                    "context": descriptor.id.context.0,
+                    "local": descriptor.id.local,
+                },
+                "label": descriptor.label,
             }),
         ));
         Ok(())
     }
 
-    pub fn add_value_object(&mut self, descriptor: ValueObjectDescriptor) {
-        self.add_value_object_descriptor(descriptor);
-        self.field_references.add_value_object(descriptor);
-    }
-
-    fn add_value_object_descriptor(&mut self, descriptor: ValueObjectDescriptor) {
-        let mut value = json!({
-            "id": value_object_id(descriptor.id),
-            "label": descriptor.label,
-        });
-        value_object_projection::apply_shape(&mut value, descriptor.shape);
-        self.value_objects.push((descriptor.id, value));
-    }
-
-    pub fn add_value_object_type<V: ValueObjectType>(&mut self) -> Result<(), DomainModelError> {
-        self.add_value_object(V::DESCRIPTOR);
-        let owner = ActionOwnerId::ValueObject(V::DESCRIPTOR.id);
-        self.actions.register_owner(owner);
-        for contract in V::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract)?;
-        }
-        let owner = InvariantOwnerId::ValueObject(V::DESCRIPTOR.id);
-        self.invariants.register_owner(owner);
-        for contract in V::INVARIANT_CONTRACTS {
-            self.invariants.add_group(owner, contract)?;
-        }
-        Ok(())
-    }
-
-    pub fn add_domain_service(&mut self, descriptor: DomainServiceDescriptor) {
-        self.domain_services.push(json!({
-            "id": {
-                "context": descriptor.id.context.0,
-                "local": descriptor.id.local,
-            },
-            "label": descriptor.label,
-        }));
-    }
-
     pub fn add_domain_service_type<S: DomainServiceType>(
         &mut self,
     ) -> Result<(), DomainModelError> {
-        self.add_domain_service(S::DESCRIPTOR);
-        let owner = ActionOwnerId::DomainService(S::DESCRIPTOR.id);
-        self.actions.register_owner(owner);
-        for contract in S::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract)?;
-        }
-        Ok(())
+        self.add_domain_service(S::DESCRIPTOR)
     }
 
     pub fn add_domain_event(
         &mut self,
         descriptor: DomainEventDescriptor,
     ) -> Result<(), DomainModelError> {
-        if self
-            .domain_events
-            .iter()
-            .any(|(id, _)| *id == descriptor.id)
-        {
-            return Err(DomainModelError::DuplicateDomainEventId {
-                id: Box::new(descriptor.id),
-            });
+        self.validate_domain_event_id(descriptor.id)?;
+        self.insert_domain_event(descriptor);
+        Ok(())
+    }
+
+    fn validate_domain_event_id(&self, id: DomainEventId) -> Result<(), DomainModelError> {
+        if contains_id(&self.domain_events, id) {
+            return Err(DomainModelError::DuplicateDomainEventId { id: Box::new(id) });
         }
+        Ok(())
+    }
+
+    fn validate_domain_event_batch(
+        &self,
+        descriptors: &[DomainEventDescriptor],
+    ) -> Result<(), DomainModelError> {
+        for (index, descriptor) in descriptors.iter().enumerate() {
+            self.validate_domain_event_id(descriptor.id)?;
+            if descriptors
+                .iter()
+                .take(index)
+                .any(|registered| registered.id == descriptor.id)
+            {
+                return Err(DomainModelError::DuplicateDomainEventId {
+                    id: Box::new(descriptor.id),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_domain_event(&mut self, descriptor: DomainEventDescriptor) {
         self.domain_events.push((
             descriptor.id,
             json!({
@@ -262,35 +239,25 @@ impl DomainModelBuilder {
             }),
         ));
         self.field_references.add_domain_event(descriptor);
-        Ok(())
     }
 
-    pub fn add_command(&mut self, descriptor: CommandDescriptor) -> Result<(), DomainModelError> {
-        if self.commands.iter().any(|(id, _)| *id == descriptor.id) {
-            return Err(DomainModelError::DuplicateCommandId {
+    pub fn add_domain_error(
+        &mut self,
+        descriptor: DomainErrorDescriptor,
+    ) -> Result<(), DomainModelError> {
+        if self
+            .domain_errors
+            .iter()
+            .any(|(id, _)| *id == descriptor.id)
+        {
+            return Err(DomainModelError::DuplicateDomainErrorId {
                 id: Box::new(descriptor.id),
             });
         }
-        self.commands.push((
-            descriptor.id,
-            json!({
-                "id": command_id(descriptor.id),
-                "label": descriptor.label,
-                "fields": field_projection::fields(descriptor.fields),
-            }),
-        ));
-        self.field_references.add_command(descriptor);
-        Ok(())
-    }
-
-    pub fn add_domain_error(&mut self, descriptor: DomainErrorDescriptor) {
         self.domain_errors.push((
             descriptor.id,
             json!({
-                "id": {
-                    "owner": domain_error_owner_id(descriptor.id.owner),
-                    "local": descriptor.id.local,
-                },
+                "id": domain_error_id(descriptor.id),
                 "label": descriptor.label,
                 "code": descriptor.code,
                 "message": descriptor.message,
@@ -298,111 +265,39 @@ impl DomainModelBuilder {
             }),
         ));
         self.field_references.add_domain_error(descriptor);
-    }
-
-    pub fn add_action_extension<G: ActionGroupType>(&mut self) -> Result<(), DomainModelError> {
-        let owner = <G::Owner as crate::ActionOwnerType>::ACTION_OWNER_ID;
-        self.actions.add_extension(owner, G::ACTIONS)
-    }
-
-    pub fn add_queries(
-        &mut self,
-        descriptors: &'static [QueryDescriptor],
-    ) -> Result<(), DomainModelError> {
-        for descriptor in descriptors {
-            if self.queries.iter().any(|(id, _)| *id == descriptor.id) {
-                return Err(DomainModelError::DuplicateQueryId {
-                    id: Box::new(descriptor.id),
-                });
-            }
-            self.queries.push((
-                descriptor.id,
-                json!({
-                    "id": query_id(descriptor.id),
-                    "label": descriptor.label,
-                    "input": descriptor.input.map(query_input),
-                    "output": query_output(descriptor.output),
-                }),
-            ));
-        }
         Ok(())
     }
 
     pub fn finish(self) -> Result<Value, DomainModelError> {
-        let inventory = ActionReferenceInventory::new(
-            self.domain_identities.iter().map(|(id, _)| *id).collect(),
-            self.domain_events.iter().map(|(id, _)| *id).collect(),
-            self.domain_errors.iter().map(|(id, _)| *id).collect(),
-            self.value_objects.iter().map(|(id, _)| *id).collect(),
-        );
-        self.actions.validate_references(&inventory)?;
-        let lifecycle_action_inventory = LifecycleActionInventory::new(
-            self.actions.attached_ids().collect(),
-            self.actions.extension_ids().collect(),
-        );
-        self.entities
-            .validate_lifecycle_actions(&lifecycle_action_inventory)?;
-        let decision_inventory =
-            DecisionReferenceInventory::new(self.value_objects.iter().map(|(id, _)| *id).collect());
-        self.decisions.validate_references(&decision_inventory)?;
         let field_inventory = FieldReferenceInventory::new(
-            self.domain_identities.iter().map(|(id, _)| *id).collect(),
             self.entities.ids().collect(),
-            self.value_objects.iter().map(|(id, _)| *id).collect(),
             self.aggregates.iter().map(|(id, _)| *id).collect(),
         );
         field_reference_validation::validate(self.field_references.iter(), &field_inventory)?;
 
         Ok(json!({
-            "boundedContexts": self.bounded_contexts,
+            "boundedContexts": into_values(self.bounded_contexts),
             "aggregates": self.aggregates.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "entities": self.entities.into_values(),
             "domainIdentities": self.domain_identities.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "valueObjects": self.value_objects.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
-            "domainServices": self.domain_services,
-            "commands": self.commands.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
+            "domainServices": into_values(self.domain_services),
             "domainEvents": self.domain_events.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "domainErrors": self.domain_errors.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
-            "actions": self.actions.into_values(),
-            "decisions": self.decisions.into_values(),
-            "queries": self.queries.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
-            "invariants": self.invariants.into_values(),
+            "actions": [],
+            "decisions": [],
+            "queries": [],
+            "invariants": [],
         }))
     }
 }
 
-fn query_input(descriptor: QueryInputDescriptor) -> Value {
-    match descriptor {
-        QueryInputDescriptor::Scalar(scalar) => field_projection::scalar(scalar),
-        QueryInputDescriptor::ValueObject(id) => {
-            json!({ "kind": "valueObject", "id": value_object_id(id) })
-        }
-        QueryInputDescriptor::DomainIdentity(id) => {
-            json!({ "kind": "domainIdentity", "id": domain_identity_id(id) })
-        }
-    }
+fn contains_id<I: Copy + Eq>(entries: &[(I, Value)], id: I) -> bool {
+    entries.iter().any(|(registered, _)| *registered == id)
 }
 
-fn query_output(descriptor: QueryOutputDescriptor) -> Value {
-    match descriptor {
-        QueryOutputDescriptor::Scalar(scalar) => field_projection::scalar(scalar),
-        QueryOutputDescriptor::ValueObject(id) => {
-            json!({ "kind": "valueObject", "id": value_object_id(id) })
-        }
-        QueryOutputDescriptor::DomainIdentity(id) => {
-            json!({ "kind": "domainIdentity", "id": domain_identity_id(id) })
-        }
-        QueryOutputDescriptor::Optional(value) => {
-            json!({ "kind": "optional", "value": query_output(*value) })
-        }
-        QueryOutputDescriptor::List(element) => {
-            json!({ "kind": "list", "element": query_output(*element) })
-        }
-    }
-}
-
-fn scalar_value(scalar: crate::ScalarType) -> Value {
-    Value::String(field_projection::scalar_name(scalar).to_owned())
+fn into_values<I>(entries: Vec<(I, Value)>) -> Vec<Value> {
+    entries.into_iter().map(|(_, value)| value).collect()
 }
 
 impl Default for DomainModelBuilder {

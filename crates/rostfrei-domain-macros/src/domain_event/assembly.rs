@@ -14,19 +14,22 @@ pub fn assemble(
 ) -> TokenStream {
     let id = &attributes.id;
     let label = &attributes.label;
-    let schema_version = &attributes.schema_version;
+    let schema_version = attributes.schema_version.as_ref().and_then(|version| {
+        version
+            .base10_parse::<u32>()
+            .ok()
+            .filter(|version| *version > 1)
+            .map(|_| quote!(const SCHEMA_VERSION: u32 = #version;))
+    });
     let assertions = crate::field::assemble_assertions_with_path(domain_path, name, None, fields);
     let fields = crate::field::assemble_descriptors_with_path(domain_path, fields);
 
     quote! {
-        impl #domain_path::DomainEventDefinitionType for #name {
-            const DEFINITION: #domain_path::DomainEventDefinition =
-                #domain_path::DomainEventDefinition {
-                    id: #id,
-                    label: #label,
-                    schema_version: #schema_version,
-                    fields: #fields,
-                };
+        impl #domain_path::DomainEvent for #name {
+            const LOCAL_ID: &'static str = #id;
+            const LABEL: &'static str = #label;
+            const FIELDS: &'static [#domain_path::FieldDescriptor] = #fields;
+            #schema_version
         }
 
         #assertions

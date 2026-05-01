@@ -1,10 +1,9 @@
-use proc_macro2::Span;
 use syn::{Attribute, LitInt, LitStr, Result};
 
 pub struct Attributes {
     pub id: LitStr,
     pub label: LitStr,
-    pub schema_version: LitInt,
+    pub schema_version: Option<LitInt>,
 }
 
 impl Attributes {
@@ -39,7 +38,6 @@ impl Attributes {
         })?;
         let id = id.ok_or_else(|| syn::Error::new_spanned(domain, "missing id"))?;
         let label = label.ok_or_else(|| syn::Error::new_spanned(domain, "missing label"))?;
-        let schema_version = schema_version.unwrap_or_else(|| LitInt::new("1", Span::call_site()));
         Ok(Self {
             id,
             label,

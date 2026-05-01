@@ -10,3 +10,4 @@ pub use bike_rental_nats::{
     BikeRentalNatsConfig, BikeRentalNatsError, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
 };
 pub use domain::{BikeRental, domain_model, rental_fleet};
+rostfrei::install_macro_support!();

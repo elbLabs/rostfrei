@@ -1,21 +1,19 @@
-# React + TypeScript + Vite + shadcn/ui
+# Rostfrei website
 
-This is a template for a new Vite project with React, TypeScript, and shadcn/ui.
+The static Rostfrei project site documents the reference domain structure and
+the current semantic macro surface.
 
-## Adding components
-
-To add components to your app, run the following command:
-
-```bash
-npx shadcn@latest add button
+```sh
+pnpm install --frozen-lockfile
+pnpm run dev
 ```
 
-This will place the ui components in the `src/components` directory.
+Before committing website changes, run:
 
-## Using components
-
-To use the components in your app, import them as follows:
-
-```tsx
-import { Button } from "@/components/ui/button"
+```sh
+pnpm run typecheck
+pnpm run lint
+pnpm run build
 ```
+
+GitHub Pages builds the site through `.github/workflows/deploy-website.yml`.

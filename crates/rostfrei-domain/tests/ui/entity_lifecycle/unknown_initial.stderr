@@ -1,5 +1,0 @@
-error: unknown initial lifecycle state `Missing`
- --> tests/ui/entity_lifecycle/unknown_initial.rs:4:71
-  |
-4 | #[domain(id = "workflow", label = "Workflow", owner = Todo, initial = Missing)]
-  |                                                                       ^^^^^^^
