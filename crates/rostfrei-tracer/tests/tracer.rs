@@ -3201,7 +3201,7 @@ async fn behavioral_schema_and_validation_are_hypermedia_driven() {
         .unwrap();
     assert_eq!(catalog.status(), StatusCode::OK);
     let catalog = json_body(catalog).await;
-    assert_eq!(catalog["catalogVersion"], 4);
+    assert_eq!(catalog["catalogVersion"], 1);
     assert_eq!(
         catalog["testScenario"]["fixturesHref"],
         "/test-scenario/fixtures"

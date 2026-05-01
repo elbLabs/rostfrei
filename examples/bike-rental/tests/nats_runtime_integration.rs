@@ -663,6 +663,7 @@ async fn run_isolation_test(
     test_runtime: &BikeRentalNatsRuntime,
     production_runtime: &BikeRentalNatsRuntime,
 ) -> TestResult {
+    let fixture = demo_fixture()?;
     ensure(
         test_runtime.config().application() == production_runtime.config().application(),
         "Test and Dispatch did not preserve one canonical application identity",
@@ -686,7 +687,7 @@ async fn run_isolation_test(
         "Dispatch command unexpectedly used the test subject scope",
     )?;
     ensure(
-        production_runtime.reset().await.is_err(),
+        production_runtime.reset(&fixture).await.is_err(),
         "normal Dispatch resources accepted a destructive test reset",
     )?;
     let test_observer = Arc::new(RecordingObserver::default());

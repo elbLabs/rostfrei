@@ -36,7 +36,7 @@ Use the mode-appropriate token variable and a previously validated URL for later
 
 ## Link Safety
 
-Bootstrap with `GET /catalog`, then follow the root-relative links advertised by Catalog v4 and returned resources. Do not reconstruct routes when an href is available.
+Bootstrap with `GET /catalog`, then follow the root-relative links advertised by Catalog v1 and returned resources. Do not reconstruct routes when an href is available.
 
 Before every authenticated request:
 
@@ -51,9 +51,9 @@ For `{aggregateId}` and every other substituted path segment, UTF-8 encode the v
 
 Use bounded HTTP timeouts. Never use automatic retries for a state-changing `POST`. An ambiguous response does not prove that publication failed.
 
-## Catalog V4
+## Catalog V1
 
-Fetch Catalog v4 before choosing a command. Require `catalogVersion: 4`; stop and explain the unsupported version rather than guessing.
+Fetch Catalog v1 before choosing a command. Require `catalogVersion: 1`; stop and explain the unsupported version rather than guessing.
 
 Use these advertised relations:
 

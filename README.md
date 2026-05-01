@@ -7,7 +7,7 @@ keeps domain aggregates independent from persistence, serialization, and brokers
 while providing a compiled domain model, strict execution, developer tooling,
 and NATS JetStream adapters at the application edge.
 
-The workspace contains thirteen framework crates plus the bike-rental example
+The workspace contains fourteen framework crates plus the bike-rental example
 Cargo package:
 
 - `rostfrei`: application facade for the compiled domain model, typed command,
@@ -26,6 +26,8 @@ Cargo package:
   behavior contracts.
 - `rostfrei-domain-runtime`: stream-aware aggregate initialization, event
   application, and runtime registration for compiled domain types.
+- `rostfrei-fixtures`: named, revisioned domain-event MessageSeries validation
+  and deterministic typed replay into event stores.
 - `rostfrei-structure`: the versioned typed-domain filesystem checker and
   `cargo-rostfrei` command.
 - `rostfrei-registry`: handler-linked command metadata, registered query
