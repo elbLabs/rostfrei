@@ -5,6 +5,10 @@ use rostfrei_registry::{CommandDefinition, DomainRegistry, RegistrationError};
 struct FirstAggregate;
 struct SecondAggregate;
 struct EmptyAggregate;
+struct QualifiedAggregate;
+struct InvalidContextAggregate;
+struct InvalidLocalAggregate;
+struct NestedAggregate;
 
 macro_rules! aggregate {
     ($aggregate:ty, $name:literal) => {
@@ -24,11 +28,17 @@ macro_rules! aggregate {
 aggregate!(FirstAggregate, "first");
 aggregate!(SecondAggregate, "second");
 aggregate!(EmptyAggregate, "");
+aggregate!(QualifiedAggregate, "bike-rental/rental-fleet");
+aggregate!(InvalidContextAggregate, "BikeRental/rental-fleet");
+aggregate!(InvalidLocalAggregate, "bike-rental/RentalFleet");
+aggregate!(NestedAggregate, "bike-rental/group/rental-fleet");
 
 struct Open;
 struct Rename;
 struct EmptyName;
 struct ZeroVersion;
+struct InvalidRoutedName;
+struct LongName;
 
 macro_rules! command {
     ($command:ty, $id:literal, $version:literal) => {
@@ -45,6 +55,12 @@ command!(Open, "open", 1);
 command!(Rename, "rename", 2);
 command!(EmptyName, "", 1);
 command!(ZeroVersion, "zero", 0);
+command!(InvalidRoutedName, "Open", 1);
+command!(
+    LongName,
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    1
+);
 
 macro_rules! handler {
     ($aggregate:ty, $command:ty, $rejection:ty) => {
@@ -67,6 +83,12 @@ handler!(FirstAggregate, EmptyName, ());
 handler!(FirstAggregate, ZeroVersion, ());
 handler!(SecondAggregate, Open, u8);
 handler!(EmptyAggregate, Open, ());
+handler!(QualifiedAggregate, Open, ());
+handler!(InvalidContextAggregate, Open, ());
+handler!(InvalidLocalAggregate, Open, ());
+handler!(NestedAggregate, Open, ());
+handler!(FirstAggregate, InvalidRoutedName, ());
+handler!(FirstAggregate, LongName, ());
 
 #[test]
 fn paired_registration_builds_runtime_and_modeled_metadata() {
@@ -169,6 +191,79 @@ fn validates_command_and_aggregate_identity() {
         })
     );
     assert_eq!(registry.commands().count(), 0);
+}
+
+#[test]
+fn accepts_qualified_and_legacy_unqualified_aggregate_types() {
+    let mut registry = DomainRegistry::new();
+
+    registry.register_command::<FirstAggregate, Open>().unwrap();
+    registry
+        .register_command::<QualifiedAggregate, Open>()
+        .unwrap();
+
+    assert!(registry.command("first", "open", 1).is_some());
+    assert!(
+        registry
+            .command("bike-rental/rental-fleet", "open", 1)
+            .is_some()
+    );
+}
+
+#[test]
+fn rejects_unroutable_command_names_without_partial_mutation() {
+    let mut registry = DomainRegistry::new();
+
+    assert_eq!(
+        registry.register_command::<FirstAggregate, InvalidRoutedName>(),
+        Err(RegistrationError::InvalidCommandIdentity {
+            command_name: "Open",
+            schema_version: 1,
+            reason: "address name has an invalid format".to_owned(),
+        })
+    );
+    assert_eq!(registry.commands().count(), 0);
+    assert_eq!(registry.aggregates().count(), 0);
+
+    assert_eq!(
+        registry.register_command::<FirstAggregate, LongName>(),
+        Err(RegistrationError::InvalidCommandIdentity {
+            command_name: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            schema_version: 1,
+            reason: "address name is too long".to_owned(),
+        })
+    );
+    assert_eq!(registry.commands().count(), 0);
+    assert_eq!(registry.aggregates().count(), 0);
+}
+
+#[test]
+fn rejects_unroutable_qualified_aggregate_types_without_partial_mutation() {
+    macro_rules! assert_invalid_routing {
+        ($aggregate:ty, $reason:literal) => {
+            let mut registry = DomainRegistry::new();
+            assert_eq!(
+                registry.register_command::<$aggregate, Open>(),
+                Err(RegistrationError::InvalidCommandIdentity {
+                    command_name: "open",
+                    schema_version: 1,
+                    reason: $reason.to_owned(),
+                })
+            );
+            assert_eq!(registry.commands().count(), 0);
+            assert_eq!(registry.aggregates().count(), 0);
+        };
+    }
+
+    assert_invalid_routing!(
+        InvalidContextAggregate,
+        "address context has an invalid format"
+    );
+    assert_invalid_routing!(InvalidLocalAggregate, "address name has an invalid format");
+    assert_invalid_routing!(
+        NestedAggregate,
+        "aggregate type must contain at most one context separator"
+    );
 }
 
 #[test]
