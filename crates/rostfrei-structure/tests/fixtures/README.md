@@ -15,10 +15,13 @@ standalone Cargo packages.
 | `undeclared_file`, `missing_module_file` | `RF006` |
 | `content_*` except `content_valid_role_impls` | `RF007` |
 | `test_mirror_*` except `test_mirror_valid` | `RF008` |
+| `value_object_conventions` | focused `RF001`, `RF003`, `RF004`, and `RF007` |
 
 `valid_domain` demonstrates the agreed hierarchy: bounded context, aggregate,
 nested entity and capability objects, invariant and lifecycle objects, and a
-sibling `tests` tree that mirrors the production domain.
+sibling `tests` tree that mirrors the production domain. It also demonstrates
+context-, aggregate-, and entity-owned Value Object modules plus a behaviorful
+Value Object with action, decision, and invariant capabilities.
 
 The integration tests contain the exact expected diagnostic path for every
 negative fixture. RF009 and RF010 use temporary Cargo workspaces because those

@@ -2,6 +2,7 @@ mod aggregate;
 mod bicycle;
 mod bicycle_availability;
 mod event_set;
+mod fleet_name;
 mod fleet_consistency;
 mod identity;
 mod initialize;
@@ -11,6 +12,7 @@ mod root;
 
 pub use aggregate::RentalFleetAggregate;
 pub use bicycle::{Bicycle, BicycleId, BicycleRentalStatus, BicycleStatus};
+pub use fleet_name::FleetName;
 pub use identity::FleetId;
 pub use rent_bicycle::{BicycleRented, BicycleUnavailable, RentBicycle};
 pub use root::RentalFleet;
