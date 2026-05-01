@@ -5,10 +5,11 @@ compiled domain metadata without depending on a production application:
 
 - `RentalFleetAggregate` owns the fleet and its bicycles;
 - `RentBicycle`, `ReturnBicycle`, and `AddBicycle` are public aggregate commands;
-- `AssessRentalEligibility` is a Rust decision;
-- bicycle added, rented, and returned events describe successful transitions;
-- unavailable, not-rented, and duplicate-bicycle errors describe rejections; and
-- `BicycleAvailabilityQueries` exposes a read-only availability query.
+- `RentalEligibilityDecision` is a Rust decision;
+- fleet-imported, bicycle-added, rented, and returned events describe successful transitions;
+- unavailable and not-rented errors describe command rejections;
+- `FleetConsistency` detects duplicate bicycle identities; and
+- `BicycleAvailabilityQuery` exposes a read-only availability query.
 
 Print the compiled domain model:
 

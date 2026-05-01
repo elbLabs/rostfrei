@@ -88,6 +88,18 @@ The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual decisions are
 recorded in [`docs/adr`](docs/adr).
 
+## Macro setup
+
+Crates that declare Rostfrei domain types install macro support once at their
+crate root:
+
+```rust
+rostfrei::install_macro_support!();
+```
+
+The generated crate-local bridge keeps macro expansion deterministic without
+adding technical path arguments to individual domain declarations.
+
 ## Development
 
 The repository pins Rust 1.98 with Clippy and rustfmt through

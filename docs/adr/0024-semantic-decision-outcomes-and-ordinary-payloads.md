@@ -2,11 +2,11 @@
 
 ## Status
 
-Accepted.
+Accepted; declaration and projection mechanics superseded by ADR 0032.
 
 ## Context
 
-[ADR 0016](0016-decision-policies-groups-and-outcomes.md) introduced typed
+[ADR 0015](0015-decision-policies-groups-and-outcomes.md) introduced typed
 Decision inputs and detailed outcome payload descriptors. Those descriptors
 classified parameters and enum fields as scalars or Value Objects and projected
 their Rust shapes into the compiled domain model.
