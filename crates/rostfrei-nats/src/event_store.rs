@@ -956,6 +956,17 @@ impl EventStore for NatsEventStore {
                 )));
             }
         }
+        if payloads.len() != recorded.len() {
+            return Err(corrupt(
+                "encoded event count does not match the recorded batch",
+            ));
+        }
+        let events = recorded
+            .events()
+            .iter()
+            .zip(payloads)
+            .map(|(event, payload)| (event.event_id().as_str().to_owned(), payload))
+            .collect();
         let recorded_count = u64::try_from(recorded.len())
             .map_err(|_| invalid("event batch count cannot be represented"))?;
         let batch_id = new_atomic_batch_id(&self.context.client(), batch.commit_id());
@@ -966,7 +977,7 @@ impl EventStore for NatsEventStore {
             history.last_subject_stream_sequence,
             &batch_id,
             batch.correlation_id().map(CorrelationId::as_str),
-            payloads,
+            events,
         )
         .await
         {
@@ -1093,7 +1104,12 @@ impl EventStore for NatsEventStore {
                 transaction_offset,
                 transaction_event_count,
             )?;
-            for (index, payload) in payloads.into_iter().enumerate() {
+            if payloads.len() != participant.recorded.len() {
+                return Err(corrupt(
+                    "encoded transaction event count does not match the recorded batch",
+                ));
+            }
+            for (index, (event, payload)) in participant.recorded.iter().zip(payloads).enumerate() {
                 if payload.len() > self.config.max_event_bytes() {
                     return Err(invalid(format!(
                         "encoded event exceeds the configured {}-byte limit",
@@ -1102,6 +1118,7 @@ impl EventStore for NatsEventStore {
                 }
                 messages.push(AtomicPublishMessage {
                     subject: subject.clone(),
+                    message_id: Some(event.event_id().as_str().to_owned()),
                     payload,
                     expected_last_subject_sequence: (index == 0)
                         .then_some(participant.last_subject_stream_sequence),
@@ -1142,6 +1159,7 @@ impl EventStore for NatsEventStore {
                     transaction.operation_id().as_str(),
                     ordinal,
                 ),
+                message_id: None,
                 payload,
                 expected_last_subject_sequence: Some(participant.last_subject_stream_sequence),
                 expectation_subject: Some(guarded_subject),
@@ -1160,6 +1178,7 @@ impl EventStore for NatsEventStore {
             subject: self
                 .config
                 .transaction_subject(&primary_stream_id, transaction.operation_id().as_str()),
+            message_id: None,
             payload: receipt_payload,
             expected_last_subject_sequence: Some(0),
             expectation_subject: None,
@@ -1474,6 +1493,7 @@ struct TransactionGuardWire {
 
 struct AtomicPublishMessage {
     subject: String,
+    message_id: Option<String>,
     payload: Vec<u8>,
     expected_last_subject_sequence: Option<u64>,
     expectation_subject: Option<String>,
@@ -2037,13 +2057,14 @@ async fn publish_atomic_batch(
     expected_last_subject_sequence: u64,
     batch_id: &str,
     correlation_id: Option<&str>,
-    payloads: Vec<Vec<u8>>,
+    events: Vec<(String, Vec<u8>)>,
 ) -> Result<AtomicPublishAck, AtomicBatchPublishError> {
-    let messages = payloads
+    let messages = events
         .into_iter()
         .enumerate()
-        .map(|(index, payload)| AtomicPublishMessage {
+        .map(|(index, (message_id, payload))| AtomicPublishMessage {
             subject: subject.to_owned(),
+            message_id: Some(message_id),
             payload,
             expected_last_subject_sequence: (index == 0).then_some(expected_last_subject_sequence),
             expectation_subject: None,
@@ -2074,6 +2095,9 @@ async fn publish_atomic_messages(
         headers.insert(NATS_BATCH_SEQUENCE, one_based_sequence.to_string());
         if let Some(correlation_id) = correlation_id {
             headers.insert(CORRELATION_ID_HEADER, correlation_id);
+        }
+        if let Some(message_id) = atomic.message_id {
+            headers.insert("Nats-Msg-Id", message_id);
         }
         if index == 0 {
             headers.insert(NATS_EXPECTED_STREAM, config.stream_name());

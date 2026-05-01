@@ -20,16 +20,17 @@ use rostfrei_core::{
     AggregateInstance, CommandHandler, EventHistory, EventStoreError, EventStoreErrorKind,
     InMemoryEventStore, RecordedEvent, StreamId,
 };
+use rostfrei_messaging_core::MessageSeries;
 use rostfrei_registry::DomainRegistry;
 use rostfrei_tracer::{
     CommandInvocation, CommandPublication, CommandReceipt, CommandRejection, CommandTransport,
     CommandTransportError, CommandTransportErrorKind, CommandTransportObserver, CorrelationError,
-    CorrelationEventKind, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
-    IntegrationEventObservation, OperationMode, RuntimeRegistrationError, SimulationRequest,
-    SubmissionError, SubscriptionError, TestDefinition, TestDefinitionCollection,
-    TestDefinitionRevision, TestReportStatus, TestRepository, TestRepositoryError,
-    TestScenarioReset, TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
-    command_execution_fingerprint,
+    CorrelationEventKind, DiscoveryError, ExposeTracePayloadsForLocalDevelopment, Fixture,
+    IntegrationEventObservation, MessageSeriesCaptureError, OperationMode,
+    RuntimeRegistrationError, SimulationRequest, SubmissionError, SubscriptionError,
+    TestDefinition, TestDefinitionCollection, TestDefinitionRevision, TestReportStatus,
+    TestRepository, TestRepositoryError, TestScenarioReset, TestScenarioResetError,
+    TracePayloadPolicy, Tracer, TracerBuilder, command_execution_fingerprint,
 };
 #[cfg(feature = "http")]
 use rostfrei_tracer::{
@@ -396,6 +397,7 @@ async fn http_catalog_omits_dispatch_without_a_dispatch_capability() {
 }
 
 #[tokio::test]
+#[allow(clippy::unwrap_used, reason = "test timeout fixtures must parse")]
 async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
     let tracer = tracer(1);
 
@@ -414,6 +416,18 @@ async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
         tracer.operation("redacted-accepted").await,
         Err(SubmissionError::NotFound)
     );
+    assert!(matches!(
+        tracer
+            .operation_message_series(
+                "redacted-accepted",
+                "1s".parse().unwrap(),
+                "1ms".parse().unwrap(),
+            )
+            .await,
+        Err(MessageSeriesCaptureError::Operation(
+            SubmissionError::NotFound
+        ))
+    ));
     let (rejected, rejected_trace) =
         terminal_operation_with_trace(&tracer, "redacted-rejected").await;
     assert_eq!(rejected["result"]["rejection"], json!({ "redacted": true }));
@@ -1321,6 +1335,461 @@ async fn correlation_sse_uses_the_capability_for_its_environment() {
     assert_eq!(accepted.headers()["cache-control"], "private, no-store");
 }
 
+#[cfg(feature = "http")]
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    clippy::unwrap_used,
+    reason = "test HTTP setup and decoding must succeed"
+)]
+async fn operation_message_series_uses_mode_capabilities_and_reports_fidelity() {
+    const DISPATCH_TOKEN: &str = "dispatch-message-series-capability";
+    let tracer = transported_tracer(
+        Some(Arc::new(FakeTransport::accepted("series-test", false))),
+        Some(Arc::new(FakeTransport::accepted("series-dispatch", false))),
+        false,
+    );
+    let test = tracer
+        .submit_test(
+            AGGREGATE_TYPE,
+            "aggregate-1",
+            COMMAND_NAME,
+            simulation_request(false),
+            Some("message-series-test"),
+        )
+        .await
+        .unwrap();
+    terminal_operation(&tracer, &test.operation_id).await;
+    let correlated = IntegrationEventObservation::new(
+        "series-integration",
+        "test-event-published",
+        1,
+        "test.integration.test-event-published",
+    )
+    .with_causation_id("series-test-command")
+    .with_payload(json!({ "sensitive": true }));
+    let observer = tracer.correlation_observer(OperationMode::Test);
+    observer
+        .observe_integration_event(&test.correlation_id, correlated.clone())
+        .await
+        .unwrap();
+    observer
+        .observe_integration_event(&test.correlation_id, correlated)
+        .await
+        .unwrap();
+
+    let dispatch = tracer
+        .submit_dispatch(
+            AGGREGATE_TYPE,
+            "aggregate-1",
+            COMMAND_NAME,
+            simulation_request(false),
+            Some("message-series-dispatch"),
+        )
+        .await
+        .unwrap();
+    terminal_operation(&tracer, &dispatch.operation_id).await;
+    let preview = tracer
+        .submit_simulation(
+            AGGREGATE_TYPE,
+            "aggregate-1",
+            COMMAND_NAME,
+            simulation_request(false),
+            Some("message-series-preview"),
+        )
+        .await
+        .unwrap();
+    terminal_operation(&tracer, &preview.operation_id).await;
+
+    assert_eq!(
+        test.message_series_href,
+        format!("/operations/{}/message-series", test.operation_id)
+    );
+    let app = http::router(
+        tracer,
+        HttpConfig::new(API_TOKEN)
+            .unwrap()
+            .with_dispatch_token(DISPATCH_TOKEN)
+            .unwrap(),
+    );
+    let test_path = format!("{}?within=1s&settleFor=1ms", test.message_series_href);
+    let dispatch_path = format!("{}?within=1s&settleFor=1ms", dispatch.message_series_href);
+
+    let unauthorized = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&test_path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let wrong_test_capability = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&test_path)
+                .header("authorization", format!("Bearer {DISPATCH_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong_test_capability.status(), StatusCode::FORBIDDEN);
+
+    let wrong_dispatch_capability = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(&dispatch_path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong_dispatch_capability.status(), StatusCode::FORBIDDEN);
+
+    let exact = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(&test_path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(exact.status(), StatusCode::OK);
+    let exact = json_body(exact).await;
+    assert_eq!(exact["operationId"], test.operation_id);
+    assert_eq!(exact["correlationId"], test.correlation_id);
+    assert_eq!(exact["mode"], "test");
+    assert_eq!(exact["capture"]["settled"], true);
+    assert_eq!(exact["capture"]["settledFor"], "1ms");
+    assert_eq!(exact["capture"]["fidelity"], "exact");
+    assert!(exact["capture"].get("note").is_none());
+    assert_eq!(
+        exact["messageSeries"]["messages"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(
+        exact["messageSeries"]["messages"][0]["messageId"],
+        "series-test-command"
+    );
+    assert!(
+        exact["messageSeries"]["messages"][0]
+            .get("payload")
+            .is_none()
+    );
+    assert_eq!(
+        exact["messageSeries"]["messages"][1]["causationId"],
+        "series-test-command"
+    );
+    assert!(
+        exact["messageSeries"]["messages"][1]
+            .get("payload")
+            .is_none()
+    );
+    assert_eq!(
+        exact["messageSeries"]["commandOutcomes"][0]["responseMessageId"],
+        "series-test-response"
+    );
+
+    let accepted_dispatch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(dispatch_path)
+                .header("authorization", format!("Bearer {DISPATCH_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted_dispatch.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(accepted_dispatch).await["capture"]["fidelity"],
+        "exact"
+    );
+
+    let grouped = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(format!(
+                    "{}?within=1s&settleFor=1ms",
+                    preview.message_series_href
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(grouped.status(), StatusCode::OK);
+    let grouped = json_body(grouped).await;
+    assert_eq!(grouped["capture"]["fidelity"], "grouped");
+    assert!(
+        grouped["capture"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("synthetic")
+    );
+    assert_eq!(
+        grouped["messageSeries"]["commandOutcomes"][0]["outcome"]["status"],
+        "accepted"
+    );
+
+    let followed = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(&test.message_series_href)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(followed.status(), StatusCode::OK);
+    assert_eq!(json_body(followed).await["capture"]["settledFor"], "500ms");
+
+    let invalid_timeout = app
+        .oneshot(
+            authorize(Request::builder())
+                .uri(format!(
+                    "{}?within=61s&settleFor=1ms",
+                    preview.message_series_href
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_timeout.status(), StatusCode::BAD_REQUEST);
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test HTTP setup and decoding must succeed"
+)]
+async fn operation_message_series_waits_for_terminal_status_and_correlation_idle() {
+    let (tracer, entered, release) = blocking_tracer(2, 1);
+    let operation = tracer
+        .submit_simulation(
+            AGGREGATE_TYPE,
+            "aggregate-1",
+            COMMAND_NAME,
+            simulation_request(false),
+            Some("settled-message-series"),
+        )
+        .await
+        .unwrap();
+    entered.notified().await;
+    let app = http::router(tracer.clone(), HttpConfig::new(API_TOKEN).unwrap());
+    let path = format!(
+        "{}?within=1s&settleFor=100ms",
+        operation.message_series_href
+    );
+    let capture = tokio::spawn(async move {
+        app.oneshot(
+            authorize(Request::builder())
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    assert!(!capture.is_finished());
+    release.notify_one();
+    terminal_operation(&tracer, &operation.operation_id).await;
+    tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+    tracer
+        .correlation_observer(OperationMode::Simulate)
+        .observe_integration_event(
+            &operation.correlation_id,
+            IntegrationEventObservation::new(
+                "late-series-event",
+                "late-event",
+                1,
+                "test.integration.late-event",
+            ),
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(70)).await;
+    assert!(!capture.is_finished());
+
+    let response = capture.await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["capture"]["settled"], true);
+    assert!(
+        body["messageSeries"]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["messageId"] == "late-series-event")
+    );
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test HTTP setup and decoding must succeed"
+)]
+async fn operation_message_series_timeout_is_unsettled_and_does_not_cancel_execution() {
+    let (tracer, entered, release) = blocking_tracer(2, 1);
+    let operation = tracer
+        .submit_simulation(
+            AGGREGATE_TYPE,
+            "aggregate-1",
+            COMMAND_NAME,
+            simulation_request(false),
+            Some("unsettled-message-series"),
+        )
+        .await
+        .unwrap();
+    entered.notified().await;
+    let app = http::router(tracer.clone(), HttpConfig::new(API_TOKEN).unwrap());
+    let response = app
+        .oneshot(
+            authorize(Request::builder())
+                .uri(format!(
+                    "{}?within=30ms&settleFor=10ms",
+                    operation.message_series_href
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["capture"]["settled"], false);
+    assert_eq!(body["capture"]["fidelity"], "grouped");
+    assert_eq!(
+        tracer
+            .operation(&operation.operation_id)
+            .await
+            .unwrap()
+            .status,
+        rostfrei_tracer::OperationStatus::Running
+    );
+
+    release.notify_one();
+    let completed = terminal_operation(&tracer, &operation.operation_id).await;
+    assert_eq!(completed["status"], "completed");
+}
+
+#[tokio::test]
+#[allow(clippy::unwrap_used, reason = "test capture setup must succeed")]
+async fn active_message_series_capture_prevents_terminal_eviction() {
+    let tracer = tracer(1);
+    submit(&tracer, "captured-operation", json!({ "reject": false })).await;
+    terminal_operation(&tracer, "captured-operation").await;
+    let mut capture = Box::pin(tracer.operation_message_series(
+        "captured-operation",
+        "1s".parse().unwrap(),
+        "200ms".parse().unwrap(),
+    ));
+    assert!(matches!(
+        futures_util::poll!(&mut capture),
+        std::task::Poll::Pending
+    ));
+
+    let blocked = tracer
+        .submit_simulation(
+            AGGREGATE_TYPE,
+            "aggregate-1",
+            COMMAND_NAME,
+            simulation_request(false),
+            Some("replacement-after-capture"),
+        )
+        .await;
+    assert_eq!(blocked, Err(SubmissionError::CapacityExhausted));
+    assert!(capture.await.unwrap().capture.settled);
+
+    submit(
+        &tracer,
+        "replacement-after-capture",
+        json!({ "reject": false }),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[allow(clippy::unwrap_used, reason = "test capture setup must succeed")]
+async fn conflicting_duplicate_message_identity_is_grouped() {
+    let tracer = transported_tracer(
+        Some(Arc::new(FakeTransport::accepted("duplicate-series", false))),
+        None,
+        false,
+    );
+    let operation = tracer
+        .submit_test(
+            AGGREGATE_TYPE,
+            "aggregate-1",
+            COMMAND_NAME,
+            simulation_request(false),
+            Some("duplicate-series"),
+        )
+        .await
+        .unwrap();
+    terminal_operation(&tracer, &operation.operation_id).await;
+    let observer = tracer.correlation_observer(OperationMode::Test);
+    let first = IntegrationEventObservation::new(
+        "duplicate-event",
+        "first-name",
+        1,
+        "test.integration.first-name",
+    )
+    .with_causation_id("duplicate-series-command");
+    observer
+        .observe_integration_event(&operation.correlation_id, first.clone())
+        .await
+        .unwrap();
+    observer
+        .observe_integration_event(&operation.correlation_id, first)
+        .await
+        .unwrap();
+    assert!(
+        observer
+            .observe_integration_event(
+                &operation.correlation_id,
+                IntegrationEventObservation::new(
+                    "duplicate-event",
+                    "conflicting-name",
+                    1,
+                    "test.integration.conflicting-name",
+                )
+                .with_causation_id("duplicate-series-command"),
+            )
+            .await
+            .is_err()
+    );
+
+    let capture = tracer
+        .operation_message_series(
+            &operation.operation_id,
+            "1s".parse().unwrap(),
+            "1ms".parse().unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(capture).unwrap()["capture"]["fidelity"],
+        "grouped"
+    );
+}
+
 #[tokio::test]
 async fn test_and_dispatch_select_separate_transports_with_shared_remote_semantics() {
     let test_transport = FakeTransport::accepted("test", false);
@@ -1789,7 +2258,20 @@ struct NoopReset;
 
 #[async_trait]
 impl TestScenarioReset for NoopReset {
-    async fn reset(&self) -> Result<(), TestScenarioResetError> {
+    async fn reset(&self, _fixture: &Fixture) -> Result<(), TestScenarioResetError> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct RecordingReset {
+    fixture_ids: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl TestScenarioReset for RecordingReset {
+    async fn reset(&self, fixture: &Fixture) -> Result<(), TestScenarioResetError> {
+        self.fixture_ids.lock().await.push(fixture.id().to_owned());
         Ok(())
     }
 }
@@ -1798,7 +2280,7 @@ struct FailOnceReset(AtomicBool);
 
 #[async_trait]
 impl TestScenarioReset for FailOnceReset {
-    async fn reset(&self) -> Result<(), TestScenarioResetError> {
+    async fn reset(&self, _fixture: &Fixture) -> Result<(), TestScenarioResetError> {
         if self.0.swap(true, Ordering::AcqRel) {
             Ok(())
         } else {
@@ -1816,11 +2298,16 @@ struct BlockingReset {
 
 #[async_trait]
 impl TestScenarioReset for BlockingReset {
-    async fn reset(&self) -> Result<(), TestScenarioResetError> {
+    async fn reset(&self, _fixture: &Fixture) -> Result<(), TestScenarioResetError> {
         self.entered.notify_one();
         self.release.notified().await;
         Ok(())
     }
+}
+
+#[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
+fn empty_fixture(id: &str) -> Fixture {
+    Fixture::new(id, format!("{id}-revision"), MessageSeries::new()).unwrap()
 }
 
 #[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
@@ -1831,7 +2318,8 @@ fn resettable_tracer(reset: Arc<dyn TestScenarioReset>) -> Tracer {
         .with_test_event_store(store)
         .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
         .with_dispatch_transport(Arc::new(FakeTransport::accepted("dispatch", false)))
-        .with_test_scenario_reset(reset);
+        .with_test_scenario_reset(reset)
+        .with_default_test_fixture(empty_fixture("default-fixture"));
     builder
         .register_json::<TestAggregate, TestCommand>()
         .unwrap();
@@ -1839,6 +2327,23 @@ fn resettable_tracer(reset: Arc<dyn TestScenarioReset>) -> Tracer {
 }
 
 #[tokio::test]
+async fn standalone_reset_applies_the_default_fixture() {
+    let reset = Arc::new(RecordingReset::default());
+    let tracer = resettable_tracer(reset.clone());
+
+    tracer.reset_test_scenario().await.unwrap();
+
+    assert_eq!(
+        reset.fixture_ids.lock().await.as_slice(),
+        ["default-fixture"]
+    );
+}
+
+#[tokio::test]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test operations and timeout fixtures must succeed"
+)]
 async fn reset_invalidates_test_identities_even_when_the_runtime_reset_fails() {
     for tracer in [
         resettable_tracer(Arc::new(NoopReset)),
@@ -1865,6 +2370,18 @@ async fn reset_invalidates_test_identities_even_when_the_runtime_reset_fails() {
             tracer.correlation_mode(&first.correlation_id),
             Err(CorrelationError::NotFound)
         );
+        assert!(matches!(
+            tracer
+                .operation_message_series(
+                    &first.operation_id,
+                    "1s".parse().unwrap(),
+                    "1ms".parse().unwrap(),
+                )
+                .await,
+            Err(MessageSeriesCaptureError::Operation(
+                SubmissionError::NotFound
+            ))
+        ));
 
         if first_reset.is_err() {
             assert_eq!(
@@ -1950,7 +2467,8 @@ fn reset_requires_test_backing_and_test_transport() {
     let history: Arc<dyn EventHistory> = Arc::new(InMemoryEventStore::new());
     let mut missing_store = builder(Arc::clone(&history))
         .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
-        .with_test_scenario_reset(Arc::clone(&reset));
+        .with_test_scenario_reset(Arc::clone(&reset))
+        .with_default_test_fixture(empty_fixture("default-fixture"));
     missing_store
         .register_json::<TestAggregate, TestCommand>()
         .unwrap();
@@ -1962,7 +2480,8 @@ fn reset_requires_test_backing_and_test_transport() {
     let store = Arc::new(InMemoryEventStore::new());
     let mut missing_transport = builder(history)
         .with_test_event_store(store)
-        .with_test_scenario_reset(reset);
+        .with_test_scenario_reset(reset)
+        .with_default_test_fixture(empty_fixture("default-fixture"));
     missing_transport
         .register_json::<TestAggregate, TestCommand>()
         .unwrap();
@@ -1970,6 +2489,56 @@ fn reset_requires_test_backing_and_test_transport() {
         missing_transport.build(),
         Err(RuntimeRegistrationError::ResetWithoutTestTransport)
     ));
+}
+
+#[test]
+fn fixture_registry_configuration_is_validated_at_build() {
+    let store = Arc::new(InMemoryEventStore::new());
+    let history: Arc<dyn EventHistory> = store.clone();
+    let mut missing_default = builder(history)
+        .with_test_event_store(store)
+        .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
+        .with_test_scenario_reset(Arc::new(NoopReset));
+    missing_default.register_json::<TestCommand>().unwrap();
+    assert!(matches!(
+        missing_default.build(),
+        Err(RuntimeRegistrationError::ResetWithoutDefaultTestFixture)
+    ));
+
+    let store = Arc::new(InMemoryEventStore::new());
+    let history: Arc<dyn EventHistory> = store.clone();
+    let duplicate = empty_fixture("duplicate-fixture");
+    let mut duplicate_fixture = builder(history)
+        .with_test_event_store(store)
+        .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
+        .with_test_scenario_reset(Arc::new(NoopReset))
+        .with_default_test_fixture(duplicate.clone())
+        .with_test_fixture(duplicate);
+    duplicate_fixture.register_json::<TestCommand>().unwrap();
+    assert!(matches!(
+        duplicate_fixture.build(),
+        Err(RuntimeRegistrationError::DuplicateTestFixture { fixture_id })
+            if fixture_id == "duplicate-fixture"
+    ));
+}
+
+#[test]
+fn catalog_lists_all_registered_fixtures_in_id_order() {
+    let store = Arc::new(InMemoryEventStore::new());
+    let history: Arc<dyn EventHistory> = store.clone();
+    let mut builder = builder(history)
+        .with_test_event_store(store)
+        .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
+        .with_test_scenario_reset(Arc::new(NoopReset))
+        .with_default_test_fixture(empty_fixture("z-default"))
+        .with_test_fixture(empty_fixture("a-additional"));
+    builder.register_json::<TestCommand>().unwrap();
+    let tracer = builder.build().unwrap();
+
+    assert_eq!(
+        tracer.catalog().test_scenario.as_ref().unwrap().fixtures,
+        ["a-additional", "z-default"]
+    );
 }
 
 #[derive(Clone)]
@@ -2013,26 +2582,14 @@ impl TestRepository for StaticTestRepository {
     }
 }
 
-fn behavioral_test_definition(outcome: &Value, setup: bool) -> Value {
-    let setup_commands = setup.then(|| {
-        json!({
-            "name": COMMAND_NAME,
-            "schemaVersion": 1,
-            "aggregate": {
-                "type": AGGREGATE_TYPE,
-                "id": "aggregate-1"
-            },
-            "payload": { "reject": false }
-        })
-    });
+fn behavioral_test_definition(outcome: &Value) -> Value {
     let reject = outcome != &json!("accepted");
     json!({
         "schemaVersion": 1,
         "id": "behavioral-test",
         "name": "Behavioral test",
         "setup": {
-            "fixture": "test-fixture",
-            "commands": setup_commands.into_iter().collect::<Vec<_>>()
+            "fixture": "test-fixture"
         },
         "expected": {
             "within": "2s",
@@ -2060,12 +2617,23 @@ fn behavioral_tracer(
     transport: Arc<dyn CommandTransport>,
     repository: Arc<dyn TestRepository>,
 ) -> Tracer {
+    behavioral_tracer_with_reset(transport, repository, Arc::new(NoopReset))
+}
+
+#[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
+fn behavioral_tracer_with_reset(
+    transport: Arc<dyn CommandTransport>,
+    repository: Arc<dyn TestRepository>,
+    reset: Arc<dyn TestScenarioReset>,
+) -> Tracer {
     let store = Arc::new(InMemoryEventStore::new());
     let history: Arc<dyn EventHistory> = store.clone();
     let mut builder = builder(history)
         .with_test_event_store(store)
         .with_test_transport(transport)
-        .with_test_fixture("test-fixture", Arc::new(NoopReset))
+        .with_test_scenario_reset(reset)
+        .with_default_test_fixture(empty_fixture("default-fixture"))
+        .with_test_fixture(empty_fixture("test-fixture"))
         .with_test_repository(repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder
@@ -2074,20 +2642,78 @@ fn behavioral_tracer(
     builder.build().unwrap()
 }
 
+#[test]
+#[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
+fn repository_definitions_are_validated_against_the_fixture_registry() {
+    let mut definition = behavioral_test_definition(&json!("accepted"));
+    definition["setup"]["fixture"] = json!("unregistered-fixture");
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(definition));
+    let store = Arc::new(InMemoryEventStore::new());
+    let history: Arc<dyn EventHistory> = store.clone();
+    let mut builder = builder(history)
+        .with_test_event_store(store)
+        .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
+        .with_test_scenario_reset(Arc::new(NoopReset))
+        .with_default_test_fixture(empty_fixture("default-fixture"))
+        .with_test_repository(repository);
+    builder.register_json::<TestCommand>().unwrap();
+
+    assert!(matches!(
+        builder.build(),
+        Err(RuntimeRegistrationError::InvalidTestDefinition { id, message })
+            if id == "behavioral-test" && message.contains("unregistered-fixture")
+    ));
+}
+
 #[tokio::test]
-async fn behavioral_test_runs_setup_and_subject_through_the_test_transport() {
+async fn behavioral_test_selects_its_fixture_and_only_transports_the_subject() {
     let transport = FakeTransport::accepted("behavioral", false);
     let invocations = Arc::clone(&transport.invocations);
+    let reset = Arc::new(RecordingReset::default());
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
-        behavioral_test_definition(&json!("accepted"), true),
+        behavioral_test_definition(&json!("accepted")),
     ));
-    let tracer = behavioral_tracer(Arc::new(transport), repository);
+    let tracer = behavioral_tracer_with_reset(Arc::new(transport), repository, reset.clone());
 
     let report = tracer.run_test("behavioral-test").await.unwrap();
 
     assert_eq!(report.status, TestReportStatus::Passed);
     assert_eq!(report.revision.as_deref(), Some("test-revision"));
-    assert_eq!(invocations.lock().await.len(), 2);
+    assert_eq!(reset.fixture_ids.lock().await.as_slice(), ["test-fixture"]);
+    assert_eq!(invocations.lock().await.len(), 1);
+}
+
+#[tokio::test]
+#[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
+async fn behavioral_comparison_precedes_default_trace_payload_redaction() {
+    let store = Arc::new(InMemoryEventStore::new());
+    let history: Arc<dyn EventHistory> = store.clone();
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
+        behavioral_test_definition(&json!("accepted")),
+    ));
+    let mut builder = builder(history)
+        .with_test_event_store(store)
+        .with_test_transport(Arc::new(FakeTransport::accepted(
+            "behavioral-redacted",
+            false,
+        )))
+        .with_test_scenario_reset(Arc::new(NoopReset))
+        .with_default_test_fixture(empty_fixture("default-fixture"))
+        .with_test_fixture(empty_fixture("test-fixture"))
+        .with_test_repository(repository);
+    builder.register_json::<TestCommand>().unwrap();
+    let tracer = builder.build().unwrap();
+
+    let report = tracer.run_test("behavioral-test").await.unwrap();
+
+    assert_eq!(report.status, TestReportStatus::Passed);
+    let command = report
+        .observed
+        .messages()
+        .iter()
+        .find(|message| message.is_command())
+        .unwrap();
+    assert_eq!(command.payload(), None);
 }
 
 #[tokio::test]
@@ -2102,7 +2728,7 @@ async fn behavioral_test_accepts_an_expected_business_rejection() {
         ),
     );
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
-        behavioral_test_definition(&json!({ "rejected": { "code": "TEST_REJECTION" } }), false),
+        behavioral_test_definition(&json!({ "rejected": { "code": "TEST_REJECTION" } })),
     ));
     let tracer = behavioral_tracer(Arc::new(transport), repository);
 
@@ -2121,7 +2747,7 @@ async fn behavioral_test_accepts_an_expected_business_rejection() {
     reason = "the test fixture and bounded waits must succeed"
 )]
 async fn behavioral_timeout_cancels_the_command_before_reset() {
-    let mut definition = behavioral_test_definition(&json!("accepted"), false);
+    let mut definition = behavioral_test_definition(&json!("accepted"));
     definition["expected"]["within"] = json!("20ms");
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(definition));
     let tracer = behavioral_tracer(Arc::new(HangingTransport), repository);
@@ -2185,7 +2811,7 @@ async fn behavioral_test_waits_for_correlated_event_expectations() {
         correlation_id: Arc::clone(&correlation_id),
         invoked: Arc::clone(&invoked),
     };
-    let mut definition = behavioral_test_definition(&json!("accepted"), false);
+    let mut definition = behavioral_test_definition(&json!("accepted"));
     definition["expected"]["graphs"][0]["nodes"]
         .as_array_mut()
         .unwrap()
@@ -2242,7 +2868,7 @@ async fn behavioral_deadline_preserves_the_latest_mismatch_diagnostics() {
         correlation_id: Arc::clone(&correlation_id),
         invoked: Arc::clone(&invoked),
     };
-    let mut definition = behavioral_test_definition(&json!("accepted"), false);
+    let mut definition = behavioral_test_definition(&json!("accepted"));
     definition["expected"]["within"] = json!("100ms");
     definition["expected"]["graphs"][0]["nodes"]
         .as_array_mut()
@@ -2305,7 +2931,7 @@ async fn behavioral_observation_failure_terminates_without_waiting_for_within() 
         correlation_id: Arc::clone(&correlation_id),
         invoked: Arc::clone(&invoked),
     };
-    let mut definition = behavioral_test_definition(&json!("accepted"), false);
+    let mut definition = behavioral_test_definition(&json!("accepted"));
     definition["expected"]["within"] = json!("10s");
     definition["expected"]["graphs"][0]["nodes"]
         .as_array_mut()
@@ -2353,7 +2979,7 @@ async fn behavioral_observation_failure_terminates_without_waiting_for_within() 
 #[tokio::test]
 async fn behavioral_invalid_http_documents_return_structured_client_errors() {
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
-        behavioral_test_definition(&json!("accepted"), false),
+        behavioral_test_definition(&json!("accepted")),
     ));
     let tracer = behavioral_tracer(
         Arc::new(FakeTransport::accepted("behavioral-http", false)),
@@ -2394,7 +3020,7 @@ async fn behavioral_invalid_http_documents_return_structured_client_errors() {
         "unsupported-media-type"
     );
 
-    let mut semantic = behavioral_test_definition(&json!("accepted"), false);
+    let mut semantic = behavioral_test_definition(&json!("accepted"));
     semantic["expected"]["graphs"][0]["nodes"][0]["parentKey"] = json!("missing");
     let invalid = app
         .clone()
@@ -2419,7 +3045,7 @@ async fn behavioral_invalid_http_documents_return_structured_client_errors() {
             .starts_with("/expected/")
     );
 
-    let mut unknown = behavioral_test_definition(&json!("accepted"), false);
+    let mut unknown = behavioral_test_definition(&json!("accepted"));
     unknown["expected"]["graphs"][0]["nodes"][0]["name"] = json!("unknown-command");
     let runtime_invalid = app
         .clone()
@@ -2438,7 +3064,7 @@ async fn behavioral_invalid_http_documents_return_structured_client_errors() {
     assert_eq!(runtime_invalid["code"], "invalid-test-definition");
     assert_eq!(runtime_invalid["issues"][0]["code"], "unknown-command");
 
-    let mut invalid_payload = behavioral_test_definition(&json!("accepted"), false);
+    let mut invalid_payload = behavioral_test_definition(&json!("accepted"));
     invalid_payload["expected"]["graphs"][0]["nodes"][0]["payload"]["reject"] =
         json!("not-a-boolean");
     let runtime_invalid = app
@@ -2461,17 +3087,17 @@ async fn behavioral_invalid_http_documents_return_structured_client_errors() {
 
 #[cfg(feature = "http")]
 #[tokio::test]
-async fn behavioral_validation_reports_the_invalid_setup_command_path() {
+async fn behavioral_validation_reports_an_unknown_fixture() {
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
-        behavioral_test_definition(&json!("accepted"), true),
+        behavioral_test_definition(&json!("accepted")),
     ));
     let tracer = behavioral_tracer(
         Arc::new(FakeTransport::accepted("behavioral-http", false)),
         repository,
     );
     let app = http::router(tracer, HttpConfig::new(API_TOKEN).unwrap());
-    let mut definition = behavioral_test_definition(&json!("accepted"), true);
-    definition["setup"]["commands"][0]["aggregate"]["id"] = json!(" aggregate-1");
+    let mut definition = behavioral_test_definition(&json!("accepted"));
+    definition["setup"]["fixture"] = json!("unknown-fixture");
 
     let response = app
         .oneshot(
@@ -2491,9 +3117,9 @@ async fn behavioral_validation_reports_the_invalid_setup_command_path() {
     assert_eq!(
         body["issues"][0],
         json!({
-            "code": "invalid-aggregate-id",
-            "path": "/setup/commands/0/aggregate/id",
-            "message": "test definition `behavioral-test` has an invalid aggregate ID ` aggregate-1` for command `test-command`: aggregate id must not have leading or trailing whitespace"
+            "code": "unknown-fixture",
+            "path": "/setup/fixture",
+            "message": "test definition `behavioral-test` references unknown fixture `unknown-fixture`"
         })
     );
 }
@@ -2502,14 +3128,14 @@ async fn behavioral_validation_reports_the_invalid_setup_command_path() {
 #[tokio::test]
 async fn behavioral_validation_reports_a_command_payload_over_one_mib() {
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
-        behavioral_test_definition(&json!("accepted"), false),
+        behavioral_test_definition(&json!("accepted")),
     ));
     let tracer = behavioral_tracer(
         Arc::new(FakeTransport::accepted("behavioral-http", false)),
         repository,
     );
     let app = http::router(tracer, HttpConfig::new(API_TOKEN).unwrap());
-    let mut definition = behavioral_test_definition(&json!("accepted"), false);
+    let mut definition = behavioral_test_definition(&json!("accepted"));
     let payload = json!({
         "reject": false,
         "padding": "x".repeat(MAX_COMMAND_PAYLOAD_LEN),
@@ -2549,8 +3175,12 @@ async fn behavioral_validation_reports_a_command_payload_over_one_mib() {
 
 #[cfg(feature = "http")]
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one hypermedia journey verifies catalog, fixture, schema, validation, and run links"
+)]
 async fn behavioral_schema_and_validation_are_hypermedia_driven() {
-    let definition = behavioral_test_definition(&json!("accepted"), false);
+    let definition = behavioral_test_definition(&json!("accepted"));
     let repository: Arc<dyn TestRepository> =
         Arc::new(StaticTestRepository::one(definition.clone()));
     let tracer = behavioral_tracer(
@@ -2573,6 +3203,14 @@ async fn behavioral_schema_and_validation_are_hypermedia_driven() {
     let catalog = json_body(catalog).await;
     assert_eq!(catalog["catalogVersion"], 4);
     assert_eq!(
+        catalog["testScenario"]["fixturesHref"],
+        "/test-scenario/fixtures"
+    );
+    assert_eq!(
+        catalog["testScenario"]["fixtures"],
+        json!(["default-fixture", "test-fixture"])
+    );
+    assert_eq!(
         catalog["behavioralTest"],
         json!({
             "schemaHref": "/schemas/behavioral-test-v1",
@@ -2581,6 +3219,50 @@ async fn behavioral_schema_and_validation_are_hypermedia_driven() {
             "definitionsHref": "/tests"
         })
     );
+
+    let fixtures = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(catalog["testScenario"]["fixturesHref"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fixtures.status(), StatusCode::OK);
+    let fixtures = json_body(fixtures).await;
+    assert_eq!(fixtures["items"][0]["id"], "default-fixture");
+    assert_eq!(fixtures["items"][0]["isDefault"], true);
+    assert_eq!(fixtures["items"][1]["id"], "test-fixture");
+    assert_eq!(fixtures["items"][1]["isDefault"], false);
+
+    let fixture = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(fixtures["items"][0]["fixtureHref"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fixture.status(), StatusCode::OK);
+    let fixture = json_body(fixture).await;
+    assert_eq!(fixture["id"], "default-fixture");
+    assert_eq!(fixture["messages"], json!([]));
+    let aggregate = &catalog["contexts"][0]["aggregates"][0];
+    assert_eq!(
+        aggregate["testInstancesHref"],
+        "/contexts/test-context/aggregates/test-aggregate/instances"
+    );
+    assert!(aggregate.get("instancesHref").is_none());
+    let version = &aggregate["commands"][0]["versions"][0];
+    assert_eq!(
+        version["testInputsHrefTemplate"],
+        "/contexts/test-context/aggregates/test-aggregate/{aggregateId}/commands/test-command/schemas/1/inputs"
+    );
+    assert!(version.get("inputsHrefTemplate").is_none());
 
     let schema = app
         .clone()
@@ -2625,7 +3307,7 @@ async fn behavioral_schema_and_validation_are_hypermedia_driven() {
     reason = "the test verifies the complete shared report contract for three run outcomes"
 )]
 async fn inline_and_persisted_behavioral_runs_share_the_report_contract() {
-    let passing = behavioral_test_definition(&json!("accepted"), false);
+    let passing = behavioral_test_definition(&json!("accepted"));
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(passing.clone()));
     let tracer = behavioral_tracer(
         Arc::new(FakeTransport::accepted("behavioral-http", false)),
@@ -2692,7 +3374,7 @@ async fn inline_and_persisted_behavioral_runs_share_the_report_contract() {
     );
 
     let mut failing =
-        behavioral_test_definition(&json!({ "rejected": { "code": "TEST_REJECTION" } }), false);
+        behavioral_test_definition(&json!({ "rejected": { "code": "TEST_REJECTION" } }));
     failing["expected"]["graphs"][0]["nodes"][0]["payload"]["reject"] = json!(false);
     let failed = app
         .clone()

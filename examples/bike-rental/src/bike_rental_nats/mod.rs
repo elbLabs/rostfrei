@@ -10,6 +10,7 @@ use rostfrei::{
     IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationMessageAdapter,
     JsonDomainRejectionMapper,
 };
+use rostfrei_fixtures::{Fixture, FixtureApplyReport, FixtureEventSet};
 use rostfrei_messaging_core::{
     ApplicationName, BoundedContext, CommandAddress, CommandRejectionClassification, ConsumeError,
     ConsumerConfig, ContractError, CorrelationId, DeliveryDisposition, IntegrationEventAddress,
@@ -37,7 +38,7 @@ use tokio::{
 };
 
 use crate::{
-    demo::{SeedError, seed_demo},
+    demo::{DemoFixtureError, apply_fixture as apply_message_series_fixture},
     rental_fleet::{
         AddBicycle, BicycleId, BicycleRented, FleetId, RentBicycle, RentalFleetAggregate,
         ReturnBicycle,
@@ -86,7 +87,7 @@ pub enum BikeRentalNatsError {
     #[error("only a test-scoped NATS runtime can be reset")]
     ResetRequiresTestScope,
     #[error(transparent)]
-    Seed(#[from] SeedError),
+    Fixture(#[from] DemoFixtureError),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -463,11 +464,18 @@ impl IntegrationEvent for BicycleRentalStarted {
 
 pub struct BicycleRentedIntegrationMapper {
     bus: IntegrationEventBus,
+    fixture_events: Arc<RwLock<FixtureEventSet>>,
 }
 
 impl BicycleRentedIntegrationMapper {
-    pub const fn new(bus: IntegrationEventBus) -> Self {
-        Self { bus }
+    pub const fn new(
+        bus: IntegrationEventBus,
+        fixture_events: Arc<RwLock<FixtureEventSet>>,
+    ) -> Self {
+        Self {
+            bus,
+            fixture_events,
+        }
     }
 }
 
@@ -477,6 +485,9 @@ impl DomainEventHandler<BicycleRented> for BicycleRentedIntegrationMapper {
         &self,
         event: &CommittedDomainEvent<'_, BicycleRented>,
     ) -> Result<(), DomainEventHandlerError> {
+        if self.fixture_events.read().await.contains(event.recorded()) {
+            return Ok(());
+        }
         let committed = CommittedEventContext::new(event.recorded())
             .map_err(|error| classify_integration_event_error(&error))?;
         self.bus
@@ -574,6 +585,7 @@ pub struct BikeRentalNatsRuntime {
     messaging: Arc<NatsMessagingAdapter>,
     transport: Arc<ScopedCommandTransport>,
     scope_gate: Arc<RwLock<()>>,
+    fixture_events: Arc<RwLock<FixtureEventSet>>,
     workers: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -702,6 +714,7 @@ impl BikeRentalNatsRuntime {
             messaging,
             transport,
             scope_gate,
+            fixture_events: Arc::new(RwLock::new(FixtureEventSet::default())),
             workers: Mutex::new(Vec::new()),
         })
     }
@@ -718,8 +731,19 @@ impl BikeRentalNatsRuntime {
         self.transport.clone()
     }
 
-    pub async fn seed_demo(&self) -> Result<(), BikeRentalNatsError> {
-        seed_demo(&self.store).await.map_err(Into::into)
+    pub async fn apply_fixture(
+        &self,
+        fixture: &Fixture,
+    ) -> Result<FixtureApplyReport, BikeRentalNatsError> {
+        let new_fixture_events =
+            FixtureEventSet::new(std::slice::from_ref(fixture)).map_err(DemoFixtureError::from)?;
+        let mut fixture_events = self.fixture_events.write().await;
+        fixture_events.extend(new_fixture_events);
+        let result = apply_message_series_fixture(&self.store, fixture)
+            .await
+            .map_err(Into::into);
+        drop(fixture_events);
+        result
     }
 
     pub async fn start_workers(&self) -> Result<(), BikeRentalNatsError> {
@@ -804,7 +828,10 @@ impl BikeRentalNatsRuntime {
         let mut dispatcher = DomainEventDispatcher::new();
         dispatcher.register::<RentalFleetAggregate, BicycleRented, _>(
             BicycleRented::LOCAL_ID,
-            Arc::new(BicycleRentedIntegrationMapper::new(integration_bus)),
+            Arc::new(BicycleRentedIntegrationMapper::new(
+                integration_bus,
+                Arc::clone(&self.fixture_events),
+            )),
         )?;
         let domain_consumer = NatsDomainEventConsumer::connect(
             self.connection.jetstream().clone(),
@@ -921,7 +948,7 @@ impl BikeRentalNatsRuntime {
         Ok(())
     }
 
-    async fn reset_scope(&self) -> Result<(), BikeRentalNatsError> {
+    async fn reset_scope(&self, fixture: &Fixture) -> Result<(), BikeRentalNatsError> {
         if self.config.context().traffic_scope() != TrafficScope::Test {
             return Err(BikeRentalNatsError::ResetRequiresTestScope);
         }
@@ -929,7 +956,7 @@ impl BikeRentalNatsRuntime {
         self.stop_workers_in_scope().await;
         self.delete_resources().await?;
         self.config.provision(&self.connection).await?;
-        self.seed_demo().await?;
+        self.apply_fixture(fixture).await?;
         self.start_workers_in_scope().await
     }
 }
@@ -955,6 +982,12 @@ fn domain_event_observation(
         .map_err(|error| error.to_string())?;
     if event.correlation_id() != Some(message.correlation_id()) {
         return Err("stored event correlation does not match its delivery header".to_owned());
+    }
+    let message_id = message
+        .message_id()
+        .ok_or_else(|| "stored event has no message identity".to_owned())?;
+    if message_id.as_str() != event.event_id().as_str() {
+        return Err("stored event identity does not match its delivery header".to_owned());
     }
     let payload = serde_json::from_slice::<Value>(event.payload())
         .map_err(|error| format!("stored event payload is not valid JSON: {error}"))?;
@@ -1003,6 +1036,7 @@ fn integration_event_observation(
     let message_id = message_id
         .cloned()
         .ok_or_else(|| "integration event has no message identity".to_owned())?;
+    let transport_message_id = message_id.as_str().to_owned();
     let message = EncodedIntegrationMessage::from_delivery(
         address,
         message_id,
@@ -1013,6 +1047,9 @@ fn integration_event_observation(
     let envelope = message
         .decode::<BicycleRentalStarted>()
         .map_err(|error| format!("invalid integration-event envelope: {error}"))?;
+    if envelope.message_id().as_str() != transport_message_id {
+        return Err("integration-event identity does not match its delivery header".to_owned());
+    }
     let causation_id = envelope
         .causation_id()
         .ok_or_else(|| "integration event has no causation identity".to_owned())?
@@ -1032,8 +1069,8 @@ fn integration_event_observation(
 
 #[async_trait]
 impl TestScenarioReset for BikeRentalNatsRuntime {
-    async fn reset(&self) -> Result<(), TestScenarioResetError> {
-        self.reset_scope()
+    async fn reset(&self, fixture: &Fixture) -> Result<(), TestScenarioResetError> {
+        self.reset_scope(fixture)
             .await
             .map_err(|error| TestScenarioResetError::Failed(error.to_string()))
     }

@@ -3,8 +3,7 @@
   "id": "reject-unavailable-bicycle",
   "name": "Reject a maintenance-required bicycle",
   "setup": {
-    "fixture": "demo-fleet",
-    "commands": []
+    "fixture": "demo-fleet"
   },
   "expected": {
     "within": "35s",

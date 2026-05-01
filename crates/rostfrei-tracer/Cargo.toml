@@ -15,6 +15,7 @@ axum = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 rostfrei-core = { path = "../rostfrei-core" }
 rostfrei-domain = { path = "../rostfrei-domain" }
+rostfrei-fixtures = { path = "../rostfrei-fixtures" }
 rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
 rostfrei-registry = { path = "../rostfrei-registry" }
 rostfrei = { path = "../rostfrei" }

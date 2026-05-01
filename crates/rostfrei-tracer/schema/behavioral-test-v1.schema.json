@@ -265,47 +265,6 @@
       ],
       "type": "object"
     },
-    "TestAggregate": {
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "$ref": "#/$defs/NonEmptyBehavioralStringSchema"
-        },
-        "type": {
-          "$ref": "#/$defs/NonEmptyBehavioralStringSchema"
-        }
-      },
-      "required": [
-        "type",
-        "id"
-      ],
-      "type": "object"
-    },
-    "TestCommand": {
-      "additionalProperties": false,
-      "properties": {
-        "aggregate": {
-          "$ref": "#/$defs/TestAggregate"
-        },
-        "name": {
-          "$ref": "#/$defs/NonEmptyBehavioralStringSchema"
-        },
-        "payload": true,
-        "schemaVersion": {
-          "format": "uint32",
-          "maximum": 4294967295,
-          "minimum": 1,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "name",
-        "schemaVersion",
-        "aggregate",
-        "payload"
-      ],
-      "type": "object"
-    },
     "TestDefinitionSchemaVersion": {
       "format": "uint32",
       "maximum": 1,
@@ -321,14 +280,6 @@
     "TestSetup": {
       "additionalProperties": false,
       "properties": {
-        "commands": {
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/TestCommand"
-          },
-          "maxItems": 32,
-          "type": "array"
-        },
         "fixture": {
           "$ref": "#/$defs/NonEmptyBehavioralStringSchema"
         }
@@ -364,17 +315,14 @@
       "$ref": "#/$defs/TestDefinitionSchemaVersion"
     },
     "setup": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/TestSetup"
-        }
-      ]
+      "$ref": "#/$defs/TestSetup"
     }
   },
   "required": [
     "schemaVersion",
     "id",
     "name",
+    "setup",
     "expected"
   ],
   "title": "Rostfrei Tracer Behavioral Test",
