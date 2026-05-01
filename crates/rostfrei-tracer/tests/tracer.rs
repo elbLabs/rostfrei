@@ -261,6 +261,7 @@ impl DomainModule for TestDomainModule {
         ModuleDescriptor {
             module_name: Self::MODULE_NAME,
             commands: vec![TestCommand::descriptor()],
+            queries: Vec::new(),
         }
     }
 }
@@ -274,6 +275,7 @@ impl DomainModule for OtherTestDomainModule {
         ModuleDescriptor {
             module_name: Self::MODULE_NAME,
             commands: vec![OtherTestCommand::descriptor()],
+            queries: Vec::new(),
         }
     }
 }
@@ -594,6 +596,7 @@ impl DomainModule for MismatchedTestDomainModule {
         ModuleDescriptor {
             module_name: Self::MODULE_NAME,
             commands: vec![command],
+            queries: Vec::new(),
         }
     }
 }

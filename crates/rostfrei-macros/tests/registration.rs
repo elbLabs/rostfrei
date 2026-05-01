@@ -1,6 +1,6 @@
-use rostfrei_macros::{CommandDefinition, Module};
+use rostfrei_macros::{CommandDefinition, Module, QueryDefinition};
 use zs_core::{Aggregate, AggregateInstance, CommandHandler, StreamId};
-use zs_registry::{CommandDefinition, DomainRegistry};
+use zs_registry::{CommandDefinition, DomainRegistry, QueryDefinition};
 
 struct Account {
     balance: i64,
@@ -27,9 +27,21 @@ impl Aggregate for Account {
 }
 
 #[derive(CommandDefinition)]
-#[rostfrei(name = "account.deposit", version = 1, aggregate = Account)]
+#[rostfrei(name = "account-deposit", version = 1, aggregate = Account)]
 struct Deposit {
     amount: i64,
+}
+
+#[derive(QueryDefinition)]
+#[rostfrei(
+    context = "accounts",
+    name = "account-balance",
+    version = 1,
+    response = i64
+)]
+#[allow(dead_code)]
+struct AccountBalance {
+    account_id: String,
 }
 
 impl CommandHandler<Deposit> for Account {
@@ -53,17 +65,22 @@ impl CommandHandler<Deposit> for Account {
 }
 
 #[derive(Module)]
-#[rostfrei(name = "accounts", commands(Deposit))]
+#[rostfrei(name = "accounts", commands(Deposit), queries(AccountBalance))]
 struct Accounts;
 
 fn assert_registered_command(command: &zs_registry::CommandDescriptor) {
-    assert_eq!(command.command_name, "account.deposit");
+    assert_eq!(command.command_name, "account-deposit");
     assert_eq!(command.schema_version, 1);
     assert_eq!(command.aggregate_type, "account");
     assert_eq!(
         <Deposit as CommandDefinition>::descriptor().command_name,
-        "account.deposit"
+        "account-deposit"
     );
+}
+
+fn assert_registered_query(query: &zs_registry::QueryDescriptor) {
+    assert_eq!(query.rust_response_type, "i64");
+    assert_eq!(AccountBalance::QUERY_NAME, "account-balance");
 }
 
 #[test]
@@ -73,9 +90,13 @@ fn derived_domain_types_register_and_query_without_state_trait_requirements()
     registry.register_module::<Accounts>()?;
 
     let command = registry
-        .command("account", "account.deposit", 1)
+        .command("account", "account-deposit", 1)
         .ok_or_else(|| std::io::Error::other("derived command should be registered"))?;
 
     assert_registered_command(command);
+    let query = registry
+        .query("accounts", "account-balance", 1)
+        .ok_or_else(|| std::io::Error::other("derived query should be registered"))?;
+    assert_registered_query(query);
     Ok(())
 }

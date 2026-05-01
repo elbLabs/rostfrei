@@ -6,7 +6,7 @@ use domain::{
 };
 use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance, CommandHandler};
 use rostfrei_domain_runtime::{Apply, Initialize, domain_module};
-use rostfrei_registry::{CommandDefinition, DomainRegistry};
+use rostfrei_registry::{CommandDefinition, DomainRegistry, QueryDefinition};
 use serde::{Deserialize, Serialize};
 
 #[derive(BoundedContext)]
@@ -63,6 +63,16 @@ struct RenameCatalog {
     r#type: String,
 }
 
+struct CatalogSummary;
+
+impl QueryDefinition for CatalogSummary {
+    type Response = String;
+
+    const BOUNDED_CONTEXT: &'static str = "catalog";
+    const QUERY_NAME: &'static str = "catalog-summary";
+    const SCHEMA_VERSION: u32 = 1;
+}
+
 #[derive(Deserialize, DomainEvent, Serialize)]
 #[domain(id = "catalog-opened", label = "Catalog opened")]
 struct CatalogOpened;
@@ -107,6 +117,7 @@ impl CommandHandler<OpenCatalog> for CatalogAggregate {
 domain_module! {
     struct CatalogModule {
         commands: [OpenCatalog],
+        queries: [CatalogSummary],
     }
 }
 
@@ -130,6 +141,10 @@ fn registers_runtime_metadata_from_the_command() {
         "catalog/catalog"
     );
     assert_eq!(CatalogAggregate::DESCRIPTOR.id.local, "catalog");
+    assert_eq!(
+        registry.query("catalog", "catalog-summary", 1),
+        Some(&CatalogSummary::descriptor())
+    );
 }
 
 #[test]
