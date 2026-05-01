@@ -1,0 +1,10 @@
+mod aggregate;
+mod bicycle;
+mod duplicate_impl;
+mod event_set;
+mod glob_import;
+mod missing_execute;
+mod qualified_owner;
+mod qualified_trait;
+mod wrong_aggregate;
+mod wrong_trait;

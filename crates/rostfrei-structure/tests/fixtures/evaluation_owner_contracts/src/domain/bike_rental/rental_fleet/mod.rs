@@ -1,0 +1,12 @@
+mod aggregate;
+mod alias_decision_trait;
+mod alias_invariant_owner;
+mod bicycle;
+mod duplicate_invariant;
+mod event_set;
+mod glob_decision;
+mod missing_decision;
+mod qualified_decision_trait;
+mod qualified_invariant_owner;
+mod wrong_aggregate_decision;
+mod wrong_decision_trait;

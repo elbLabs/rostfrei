@@ -1,0 +1,11 @@
+mod aggregate;
+mod alias_root;
+mod alias_trait;
+mod duplicate_impl;
+mod event_set;
+mod glob_import;
+mod missing_execute;
+mod qualified_root;
+mod qualified_trait;
+mod wrong_root;
+mod wrong_trait;
