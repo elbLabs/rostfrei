@@ -559,7 +559,11 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                     assert_rejection_report(&report)?;
                 }
                 if id == "return-rented-bicycle" {
-                    assert_fixture_provenance_was_not_published(&connection, &test_runtime).await?;
+                    assert_fixture_replay_did_not_publish_integration_event(
+                        &connection,
+                        &test_runtime,
+                    )
+                    .await?;
                 }
             }
             Ok(())
@@ -1117,7 +1121,7 @@ async fn wait_for_command_stream_empty(
     }
 }
 
-async fn assert_fixture_provenance_was_not_published(
+async fn assert_fixture_replay_did_not_publish_integration_event(
     connection: &NatsConnection,
     runtime: &BikeRentalNatsRuntime,
 ) -> TestResult {
@@ -1155,7 +1159,7 @@ async fn assert_fixture_provenance_was_not_published(
                     && integration_info.num_pending == 0
                     && integration_info.num_ack_pending == 0
                     && integration_info.ack_floor.stream_sequence == 0,
-                "rented fixture provenance was published as a new integration event",
+                "rented fixture replay published a new integration event",
             )?;
             return Ok(());
         }

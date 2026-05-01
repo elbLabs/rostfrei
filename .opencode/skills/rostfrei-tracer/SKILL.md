@@ -105,7 +105,7 @@ Use a stable idempotency key. If the response is ambiguous, do not create a new 
 
 A standalone reset destroys and deterministically recreates the complete isolated Test scenario. Before POSTing to `testScenario.resetHref`, state that impact and obtain explicit confirmation for that exact reset. Never infer reset consent from an earlier Preview or Test publication.
 
-A registered fixture is a canonical MessageSeries. Reset applies only its domain-event nodes to isolated event streams through the shared MessageSeries engine. Command, command-outcome, and integration-event nodes preserve provenance; reset does not execute or publish them. Explain Given state from the fixture's domain events rather than from its name alone.
+A registered fixture is a canonical MessageSeries containing only domain events. Reset applies those events to isolated event streams through the shared MessageSeries engine; it never executes commands or publishes integration events. Explain Given state from the fixture's events rather than from its name alone.
 
 ### Production Dispatch
 

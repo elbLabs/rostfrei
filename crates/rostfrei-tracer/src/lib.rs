@@ -48,7 +48,7 @@ pub use operation::{
 };
 pub use rostfrei_fixtures::{
     Fixture, FixtureAggregate, FixtureApplyError, FixtureApplyReport,
-    FixtureCodecRegistrationError, FixtureMessage, FixtureValidationError, MessageSeriesEngine,
+    FixtureCodecRegistrationError, FixtureDomainEvent, FixtureValidationError, MessageSeriesEngine,
 };
 pub use runtime::RuntimeRegistrationError;
 pub use service::{

@@ -17,13 +17,12 @@ model used for expected and observed behavior.
 
 ## Decision
 
-A fixture is a named, revisioned `MessageSeries<FixtureMessage>` and is applied
-through the shared `MessageSeriesEngine`.
+A fixture is a named, revisioned `MessageSeries<FixtureDomainEvent>` and is
+applied through the shared `MessageSeriesEngine`.
 
-The engine validates the complete causal topology and typed aggregate history
-before writing. It replays only domain-event nodes into their aggregate streams.
-Command, command-outcome, and integration-event nodes remain in the series as
-provenance and are not executed or published during fixture application.
+The engine validates the complete domain-event causal topology and typed
+aggregate history before writing every event into its aggregate stream. A
+fixture cannot contain commands, command outcomes, or integration events.
 
 Fixture domain events carry explicit stream versions. Event-store identities
 are derived deterministically from the fixture revision and message contents.
@@ -42,12 +41,12 @@ tests apply fixtures through the same engine.
 
 ## Consequences
 
-- Fixture state and its causal provenance are explicit, serializable, and
-  reviewable.
+- Fixture state and causal relationships between its domain events are explicit,
+  serializable, and reviewable.
 - Hidden fixture commands and application-specific seeding paths are removed.
 - Fixture payloads are decoded through registered aggregate event codecs before
   any stream is changed.
-- Non-domain provenance is retained without replaying side effects.
+- Fixture replay cannot execute commands or publish integration events.
 - Reset implementations still own physical resource recreation, but receive the
   exact fixture selected by Tracer.
 - Applications must register every aggregate type referenced by their fixtures.
