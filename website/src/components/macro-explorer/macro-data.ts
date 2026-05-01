@@ -183,9 +183,9 @@ pub struct BicycleId(String);`,
     points: [
       "Struct or enum",
       "ID and label only",
-      "Operation DTOs stay ordinary Rust",
+      "Always declared in value.rs",
     ],
-    file: "src/domain/bike_rental/rental_fleet/bicycle/status.rs",
+    file: "src/domain/bike_rental/rental_fleet/bicycle/status/value.rs",
     authored: `#[derive(ValueObject, Clone, Copy, Debug)]
 #[domain(id = "bicycle-status", label = "Bicycle status")]
 pub enum BicycleStatus {
