@@ -59,10 +59,10 @@ its payload simplification specified by
 makes each query a singular ordinary trait implemented directly for its
 aggregate root and removes query-group model registration altogether.
 
-The typed filesystem treats semantic value-object declarations as leaf tags in
-their owning domain module. Plain `input.rs` and `output.rs` files are valid
-companions in action and query directories and do not require a Rostfrei
-primary declaration.
+The typed-filesystem placement and behavior-ownership convention is refined by
+[ADR 0034](0034-value-object-modules-and-capabilities.md). Plain `input.rs` and
+`output.rs` files remain valid companions in action and query directories and
+do not require a Rostfrei primary declaration.
 
 Tools must not invent schemas or examples for opaque value objects or ordinary
 DTOs. When the tracer catalog encounters a value-object-shaped field without an
