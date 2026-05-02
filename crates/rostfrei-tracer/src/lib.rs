@@ -42,9 +42,9 @@ pub use message_series::{
     compare_message_series, message_series_definition_schema, observed_message_series_schema,
 };
 pub use operation::{
-    CompletedDecision, OperationEvent, OperationEventKind, OperationMode, OperationResult,
-    OperationSnapshot, OperationStatus, OperationSubscription, PredictedDomainEvent,
-    SubscriptionError,
+    CompletedDecision, OperationEvent, OperationEventEvidence, OperationEventEvidenceKind,
+    OperationEventKind, OperationMode, OperationResult, OperationSnapshot, OperationStatus,
+    OperationSubscription, PredictedDomainEvent, SubscriptionError,
 };
 pub use rostfrei_fixtures::{
     Fixture, FixtureAggregate, FixtureApplyError, FixtureApplyReport,
