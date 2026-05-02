@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_nats::{
-    Client, Message,
+    Client, HeaderMap, Message,
     jetstream::{self, consumer, consumer::DeliverPolicy},
 };
 use async_trait::async_trait;
@@ -24,6 +24,7 @@ pub struct CorrelatedMessage {
     correlation_id: CorrelationId,
     family: CorrelatedMessageFamily,
     subject: String,
+    headers: HeaderMap,
     message_id: Option<MessageId>,
     payload: Vec<u8>,
 }
@@ -39,6 +40,10 @@ impl CorrelatedMessage {
 
     pub fn subject(&self) -> &str {
         &self.subject
+    }
+
+    pub const fn headers(&self) -> &HeaderMap {
+        &self.headers
     }
 
     pub const fn message_id(&self) -> Option<&MessageId> {
@@ -334,6 +339,7 @@ fn correlated_message(
         correlation_id,
         family,
         subject: message.subject.to_string(),
+        headers: headers.clone(),
         message_id,
         payload: message.payload.to_vec(),
     })

@@ -5,10 +5,10 @@ use std::{error::Error, sync::Arc};
 use super::{
     APPLICATION_NAME, BicycleRentalStarted, BicycleRentalStartedHandler,
     BicycleRentedIntegrationMapper, BikeRentalCommand, BikeRentalNatsConfig,
-    BikeRentalNatsResourceLimits,
+    BikeRentalNatsResourceLimits, integration_event_observation,
 };
 use crate::{
-    demo::{demo_stream, seed_demo},
+    demo::{apply_demo_fixture, apply_fixture, demo_stream, rented_demo_fixture},
     rental_fleet::{BicycleId, BicycleRented, RentBicycle, RentalFleetAggregate},
 };
 use rostfrei::{
@@ -17,6 +17,7 @@ use rostfrei::{
     InMemoryEventStore, InMemoryMessagingAdapter, IntegrationEventBus, IntegrationMessageAdapter,
     JsonDomainRejectionMapper, OperationId,
 };
+use rostfrei_fixtures::FixtureEventSet;
 use rostfrei_messaging_core::{
     CallerMetadata, CausationId, CommandRejectionClassification, CommandResponseOutcome,
     CorrelationId, DeliveryDisposition, DeliveryInfo, MessageDelivery, MessageHandler, MessageId,
@@ -164,7 +165,7 @@ fn nats_configuration_applies_resource_limits() -> TestResult {
 async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -> TestResult {
     let config = BikeRentalNatsConfig::new("bike-rental-demo")?;
     let store = InMemoryEventStore::new();
-    seed_demo(&store).await?;
+    apply_demo_fixture(&store).await?;
     let first_adapter = Arc::new(InMemoryMessagingAdapter::new(Arc::new(processor(
         store.clone(),
     )?)));
@@ -267,7 +268,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
 async fn dynamic_dispatch_rejects_unknown_commands_and_malformed_payloads() -> TestResult {
     let config = BikeRentalNatsConfig::new("bike-rental-demo")?;
     let store = InMemoryEventStore::new();
-    seed_demo(&store).await?;
+    apply_demo_fixture(&store).await?;
     let adapter = Arc::new(InMemoryMessagingAdapter::new(Arc::new(processor(store)?)));
     let bus = command_bus(&config, adapter);
     let aggregate_type = "bike-rental/rental-fleet";
@@ -316,7 +317,7 @@ async fn dynamic_dispatch_rejects_unknown_commands_and_malformed_payloads() -> T
 async fn post_commit_mapper_publishes_canonical_integration_event_once() -> TestResult {
     let config = BikeRentalNatsConfig::new("bike-rental-demo")?;
     let store = InMemoryEventStore::new();
-    seed_demo(&store).await?;
+    apply_demo_fixture(&store).await?;
     let adapter = Arc::new(InMemoryMessagingAdapter::new(Arc::new(processor(
         store.clone(),
     )?)));
@@ -332,10 +333,16 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
 
     let integration_adapter: Arc<dyn IntegrationMessageAdapter> = adapter.clone();
     let integration_bus = IntegrationEventBus::new(config.context().clone(), integration_adapter);
+    let rented_fixture = rented_demo_fixture()?;
     let mut dispatcher = DomainEventDispatcher::new();
     dispatcher.register::<RentalFleetAggregate, BicycleRented, _>(
         BicycleRented::LOCAL_ID,
-        Arc::new(BicycleRentedIntegrationMapper::new(integration_bus)),
+        Arc::new(BicycleRentedIntegrationMapper::new(
+            integration_bus,
+            Arc::new(tokio::sync::RwLock::new(FixtureEventSet::new(
+                std::slice::from_ref(&rented_fixture),
+            )?)),
+        )),
     )?;
 
     assert_eq!(
@@ -348,6 +355,19 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
     );
     let messages = adapter.integration_messages().await;
     assert_eq!(messages.len(), 1);
+
+    let fixture_store = InMemoryEventStore::new();
+    apply_fixture(&fixture_store, &rented_fixture).await?;
+    let fixture_history = fixture_store.load(&demo_stream()).await?;
+    let fixture_rented = fixture_history
+        .get(1)
+        .ok_or("rented fixture event was not committed")?;
+    assert_eq!(
+        dispatcher.dispatch(fixture_rented).await?,
+        DomainEventDispatchOutcome::Handled
+    );
+    assert_eq!(adapter.integration_messages().await.len(), 1);
+
     let envelope = messages[0].decode::<BicycleRentalStarted>()?;
     assert_eq!(envelope.payload().fleet_id().as_str(), "city-fleet");
     assert_eq!(envelope.payload().bicycle_id().as_str(), "bike-42");
@@ -375,6 +395,50 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
     let message = messages
         .first()
         .ok_or("integration message was not published")?;
+    let message_correlation = message
+        .message()
+        .correlation_id()
+        .ok_or("integration message omitted its correlation ID")?;
+    let observation = integration_event_observation(
+        message.address().as_str(),
+        Some(message.message_id()),
+        message_correlation,
+        message.payload(),
+    )?;
+    assert_eq!(observation.message_id, message.message_id().as_str());
+    assert_eq!(
+        observation.causation_id.as_deref(),
+        Some(rented.event_id().as_str())
+    );
+    assert_eq!(observation.event_type, "bicycle-rental-started");
+    assert_eq!(observation.schema_version, 1);
+    assert_eq!(observation.subject, message.address().as_str());
+    assert_eq!(
+        observation.payload.as_ref(),
+        Some(&json!({
+            "source_event_id": rented.event_id().as_str(),
+            "fleet_id": "city-fleet",
+            "bicycle_id": "bike-42"
+        }))
+    );
+    assert!(
+        integration_event_observation(
+            message.address().as_str(),
+            None,
+            message_correlation,
+            message.payload(),
+        )
+        .is_err()
+    );
+    assert!(
+        integration_event_observation(
+            message.address().as_str(),
+            Some(message.message_id()),
+            &CorrelationId::new("wrong-correlation")?,
+            message.payload(),
+        )
+        .is_err()
+    );
     let delivery_info = DeliveryInfo::new(1, 0, 1, 1)?;
     let valid = MessageDelivery::new_with_transport_context(
         message.address().clone(),
@@ -413,10 +477,20 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
             "message_id".to_owned(),
             serde_json::Value::String(arbitrary_message_id.as_str().to_owned()),
         );
+    let invalid_identity_payload = serde_json::to_vec(&invalid_identity)?;
+    assert!(
+        integration_event_observation(
+            message.address().as_str(),
+            Some(&arbitrary_message_id),
+            message_correlation,
+            &invalid_identity_payload,
+        )
+        .is_err()
+    );
     let invalid_identity = MessageDelivery::new_with_transport_context(
         message.address().clone(),
         arbitrary_message_id,
-        serde_json::to_vec(&invalid_identity)?,
+        invalid_identity_payload,
         CallerMetadata::new(),
         message.message().correlation_id().cloned(),
         None,

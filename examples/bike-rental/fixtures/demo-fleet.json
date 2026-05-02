@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "demo-fleet",
+  "revision": "1",
+  "messages": [
+    {
+      "kind": "domain-event",
+      "messageId": "demo-fleet-imported",
+      "correlationId": "fixture:demo-fleet:1",
+      "name": "rental-fleet-imported",
+      "schemaVersion": 1,
+      "aggregate": {
+        "type": "bike-rental/rental-fleet",
+        "id": "city-fleet"
+      },
+      "streamVersion": 1,
+      "payload": {
+        "fleet_id": "city-fleet",
+        "bicycles": [
+          {
+            "bicycle_id": "bike-42",
+            "status": "available",
+            "condition": "serviceable"
+          },
+          {
+            "bicycle_id": "bike-99",
+            "status": "available",
+            "condition": "maintenance-required"
+          }
+        ]
+      }
+    }
+  ]
+}

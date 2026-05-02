@@ -103,6 +103,7 @@ pub enum OperationResult {
 pub struct OperationSnapshot {
     pub operation_id: String,
     pub correlation_id: String,
+    pub message_series_href: String,
     pub mode: OperationMode,
     pub status: OperationStatus,
     pub command: String,
@@ -213,6 +214,14 @@ struct OperationState {
     publication: Option<(String, bool)>,
 }
 
+pub struct OperationCaptureSnapshot {
+    pub operation_id: String,
+    pub correlation_id: String,
+    pub mode: OperationMode,
+    pub status: OperationStatus,
+    pub latest_event_id: u64,
+}
+
 pub struct OperationRecord {
     mode: OperationMode,
     state: Mutex<OperationState>,
@@ -235,6 +244,10 @@ impl OperationRecord {
             state: Mutex::new(OperationState {
                 fingerprint: operation.fingerprint,
                 snapshot: OperationSnapshot {
+                    message_series_href: format!(
+                        "/operations/{}/message-series",
+                        operation.operation_id
+                    ),
                     operation_id: operation.operation_id,
                     correlation_id: operation.correlation_id,
                     mode: operation.mode,
@@ -293,6 +306,17 @@ impl OperationRecord {
 
     pub async fn snapshot(&self) -> OperationSnapshot {
         self.state.lock().await.snapshot.clone()
+    }
+
+    pub async fn capture_snapshot(&self) -> OperationCaptureSnapshot {
+        let state = self.state.lock().await;
+        OperationCaptureSnapshot {
+            operation_id: state.snapshot.operation_id.clone(),
+            correlation_id: state.snapshot.correlation_id.clone(),
+            mode: state.snapshot.mode,
+            status: state.snapshot.status,
+            latest_event_id: state.snapshot.latest_event_id,
+        }
     }
 
     pub async fn start(&self) {

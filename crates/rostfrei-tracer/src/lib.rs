@@ -12,17 +12,19 @@ pub mod transport;
 #[cfg(feature = "http")]
 pub mod http;
 
+pub use behavioral::behavioral_test_definition_schema as behavioral_test_schema;
 pub use behavioral::{
     FilesystemTestRepository, TestAggregate, TestCommand, TestDefinition, TestDefinitionCollection,
-    TestDefinitionRevision, TestDefinitionSummary, TestExpectationResult, TestGiven, TestOutcome,
-    TestRejection, TestReport, TestReportFailure, TestReportStatus, TestRepository,
-    TestRepositoryError, TestThen, TestTimeout, TestTimeoutParseError, TestTrace, TestWhen,
-    TraceExpectation, outcome_matches, payload_matches_subset, trace_expectation_matches,
+    TestDefinitionError, TestDefinitionRevision, TestDefinitionSummary,
+    TestDefinitionValidationIssue, TestOutcome, TestRejection, TestReport, TestReportStatus,
+    TestRepository, TestRepositoryError, TestSetup, TestTimeout, TestTimeoutParseError, TestTrace,
+    TraceExpectation, behavioral_test_definition_schema, outcome_matches, payload_matches_subset,
+    trace_expectation_matches,
 };
 pub use catalog::{
-    AggregateInstanceCollection, AggregateInstanceSummary, CatalogAggregate, CatalogCommand,
-    CatalogCommandVersion, CatalogContext, CatalogTestRepository, CatalogTestScenario,
-    TracerCatalog,
+    AggregateInstanceCollection, AggregateInstanceSummary, CatalogAggregate, CatalogBehavioralTest,
+    CatalogCommand, CatalogCommandVersion, CatalogContext, CatalogTestRepository,
+    CatalogTestScenario, TestFixtureCollection, TestFixtureSummary, TracerCatalog,
 };
 pub use command_bus::CommandBusTransport;
 pub use correlation::{
@@ -32,22 +34,29 @@ pub use correlation::{
 };
 pub use input::{CommandInputDocument, CommandInputField, CommandInputOption, CommandInputOptions};
 pub use message_series::{
-    ExpectedMessageNode, MessageGraphDefinition, MessageSeriesDefinition,
-    MessageSeriesDefinitionError, MessageSeriesValidationIssue, ObservedCommandOutcome,
-    ObservedMessageNode, ObservedMessageSeries, ObservedMessageSeriesError,
-    ObservedMessageSeriesOutcomeIssue, message_series_definition_schema,
-    observed_message_series_schema,
+    ExpectedCommandFields, ExpectedMessageKind, ExpectedMessageNode, MessageGraphDefinition,
+    MessageSeriesComparison, MessageSeriesComparisonContext, MessageSeriesComparisonDiagnostic,
+    MessageSeriesComparisonStatus, MessageSeriesDefinition, MessageSeriesDefinitionError,
+    MessageSeriesMatch, MessageSeriesValidationIssue, ObservedCommandOutcome, ObservedMessageNode,
+    ObservedMessageSeries, ObservedMessageSeriesError, ObservedMessageSeriesOutcomeIssue,
+    compare_message_series, message_series_definition_schema, observed_message_series_schema,
 };
 pub use operation::{
     CompletedDecision, OperationEvent, OperationEventKind, OperationMode, OperationResult,
     OperationSnapshot, OperationStatus, OperationSubscription, PredictedDomainEvent,
     SubscriptionError,
 };
+pub use rostfrei_fixtures::{
+    Fixture, FixtureAggregate, FixtureApplyError, FixtureApplyReport,
+    FixtureCodecRegistrationError, FixtureDomainEvent, FixtureValidationError, MessageSeriesEngine,
+};
 pub use runtime::RuntimeRegistrationError;
 pub use service::{
     CommandInputError, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
-    MAX_COMMAND_PAYLOAD_LEN, RedactTracePayloads, SimulationRequest, SubmissionError, TestRunError,
-    TestScenarioReset, TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
+    MAX_COMMAND_PAYLOAD_LEN, MessageSeriesCapture, MessageSeriesCaptureError,
+    MessageSeriesFidelity, OperationMessageSeries, RedactTracePayloads, SimulationRequest,
+    SubmissionError, TestDefinitionValidationError, TestRunError, TestScenarioReset,
+    TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
 };
 pub use transport::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandReceipt, CommandRejection,

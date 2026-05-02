@@ -15,18 +15,19 @@ axum = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 rostfrei-core = { path = "../rostfrei-core" }
 rostfrei-domain = { path = "../rostfrei-domain" }
+rostfrei-fixtures = { path = "../rostfrei-fixtures" }
 rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
 rostfrei-registry = { path = "../rostfrei-registry" }
 rostfrei = { path = "../rostfrei" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+futures-util.workspace = true
 http-body-util = "0.1"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

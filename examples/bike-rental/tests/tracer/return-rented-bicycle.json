@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "return-rented-bicycle",
+  "name": "Return a rented bicycle",
+  "setup": {
+    "fixture": "rented-demo-fleet"
+  },
+  "expected": {
+    "within": "35s",
+    "settleFor": "1s",
+    "graphs": [
+      {
+        "nodes": [
+          {
+            "kind": "command",
+            "key": "subject",
+            "name": "return-bicycle",
+            "schemaVersion": 1,
+            "aggregate": {
+              "type": "bike-rental/rental-fleet",
+              "id": "city-fleet"
+            },
+            "payload": {
+              "bicycle_id": "bike-42"
+            },
+            "outcome": "accepted"
+          },
+          {
+            "kind": "domain-event",
+            "key": "bicycle-returned",
+            "parentKey": "subject",
+            "name": "bicycle-returned",
+            "schemaVersion": 1,
+            "payload": {
+              "fleet_id": "city-fleet",
+              "bicycle_id": "bike-42"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
