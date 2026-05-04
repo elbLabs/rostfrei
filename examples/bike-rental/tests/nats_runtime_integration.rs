@@ -39,8 +39,9 @@ use rostfrei::{
     integration_message_id,
 };
 use rostfrei_messaging_core::{
-    CausationId, ConsumerConfig, CorrelationId, IntegrationEventEnvelope, MessageId,
-    OperationId as MessagingOperationId, RetryDelay, SchemaVersion,
+    CausationId, CommandResponse, CommandResponseOutcome, ConsumerConfig, CorrelationId,
+    IntegrationEventEnvelope, MessageId, OperationId as MessagingOperationId, RetryDelay,
+    SchemaVersion,
 };
 use rostfrei_nats::{
     CORRELATION_ID_HEADER, NatsConnection, NatsConnectionConfig, ServerVersion, StreamRetention,
@@ -657,7 +658,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
             &factory,
             reaction_config.clone(),
         )?;
-        let messaging = Arc::new(connection.messaging_adapter(topology));
+        let messaging = Arc::new(connection.messaging_adapter(topology.clone()));
         let command_adapter: Arc<dyn CommandMessageAdapter> = messaging;
         let command_bus = CommandBus::new(context.clone(), command_adapter);
         let reaction_handler = Arc::new(
@@ -690,6 +691,13 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
             "rental command was not accepted",
         )?;
         wait_for_history_len(&runtime, 3).await?;
+        wait_for_consumer_acknowledgement(
+            &connection,
+            topology.integration_event_stream().as_str(),
+            reaction_config.durable_name().as_str(),
+        )
+        .await?;
+        wait_for_command_stream_empty(&connection, &runtime).await?;
 
         let history = runtime.store().load(&demo_stream()).await?;
         ensure(
@@ -707,11 +715,34 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
                     .is_some_and(|id| id.as_str() == "command-reaction-correlation"),
             "integration command mapping did not preserve correlation",
         )?;
+        let mut response_stream = connection
+            .jetstream()
+            .get_stream(topology.command_response_stream().as_str())
+            .await?;
+        let response_sequence = response_stream.info().await?.state.last_sequence;
+        let response = response_stream.get_raw_message(response_sequence).await?;
+        let generated_response: CommandResponse = serde_json::from_slice(&response.payload)?;
         ensure(
-            history[2]
-                .causation_id()
-                .is_some_and(|causation| causation.as_str() != receipt.command_message_id()),
-            "reaction event did not identify its generated command as causation",
+            matches!(
+                generated_response.outcome(),
+                CommandResponseOutcome::Accepted
+            ) && history[2].correlation_id() == Some(generated_response.correlation_id()),
+            "generated command response was not a correlated acceptance",
+        )?;
+        let reaction_causation = history[2]
+            .causation_id()
+            .ok_or_else(|| io::Error::other("reaction event omitted causation"))?;
+        ensure(
+            reaction_causation.as_str() == generated_response.command_message_id().as_str(),
+            "reaction event did not use its generated command as direct causation",
+        )?;
+        let mut quarantine_stream = connection
+            .jetstream()
+            .get_stream(topology.quarantine_stream().as_str())
+            .await?;
+        ensure(
+            quarantine_stream.info().await?.state.messages == 0,
+            "integration command reaction was quarantined",
         )?;
 
         runtime.stop_workers().await;
@@ -1043,6 +1074,25 @@ async fn wait_for_history_len(runtime: &BikeRentalNatsRuntime, expected: usize) 
         }
         if Instant::now() >= deadline {
             return Err(io::Error::other("timed out waiting for aggregate history").into());
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+async fn wait_for_consumer_acknowledgement(
+    connection: &NatsConnection,
+    stream: &str,
+    durable: &str,
+) -> TestResult {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let info = consumer_info(connection, stream, durable).await?;
+        if info.num_pending == 0 && info.num_ack_pending == 0 && info.ack_floor.stream_sequence > 0
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::other("timed out waiting for consumer acknowledgement").into());
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }

@@ -216,6 +216,8 @@ fn encoding_is_canonical_and_identity_is_stable() -> TestResult {
             .with_created_at(timestamp),
     )?;
     assert_eq!(first, second);
+    let wire: serde_json::Value = serde_json::from_slice(first.payload())?;
+    assert!(wire.pointer("/payload/events_caused_by_command").is_none());
 
     let left = command_execution_fingerprint(
         "ledger/account",

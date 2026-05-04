@@ -127,7 +127,8 @@ impl<Mapper> IntegrationEventProcessor<Mapper> {
         let request = CommandRequest::new(operation_id, aggregate_id, command)
             .with_correlation_id(envelope.correlation_id().clone())
             .with_causation_id(causation_id)
-            .with_created_at(envelope.occurred_at());
+            .with_created_at(envelope.occurred_at())
+            .with_events_caused_by_command();
         let receipt = self
             .command_bus
             .dispatch::<Mapper::Aggregate, Mapper::Command>(request)
