@@ -34,6 +34,8 @@ fn omits_unattached_capabilities_and_lifecycle_metadata() {
     );
 
     assert_eq!(model["queries"], json!([]));
+    assert_eq!(model["domainErrors"][2]["id"], "invalid-rental-fleet");
+    assert_eq!(model["domainErrors"][2]["code"], "INVALID_RENTAL_FLEET");
 
     let bicycle = model["entities"]
         .as_array()

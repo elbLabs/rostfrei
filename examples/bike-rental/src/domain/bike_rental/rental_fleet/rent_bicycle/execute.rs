@@ -1,8 +1,8 @@
-use rostfrei::{AggregateInstance, LifecycleState};
+use rostfrei::AggregateInstance;
 
 use super::{BicycleRented, BicycleUnavailable, RentBicycleAction};
 use crate::domain::bike_rental::rental_fleet::{
-    BicycleId, BicycleRentalTransition, RentalFleetAggregate,
+    BicycleId, RentalFleetAggregate,
     assess_rental_eligibility::{RentalEligibilityDecision as _, RentalEligibilityOutcome},
 };
 
@@ -17,16 +17,7 @@ impl RentBicycleAction for AggregateInstance<RentalFleetAggregate> {
                 .ok_or_else(|| BicycleUnavailable {
                     bicycle_id: input.clone(),
                 })?;
-            let _transition = bicycle
-                .status()
-                .evaluate(&BicycleRentalTransition::Rent)
-                .map_err(|_| BicycleUnavailable {
-                    bicycle_id: input.clone(),
-                })?;
-            match RentalFleetAggregate::assess_rental_eligibility(
-                bicycle.status(),
-                bicycle.condition(),
-            ) {
+            match bicycle.assess_rental_eligibility() {
                 RentalEligibilityOutcome::Eligible => BicycleRented {
                     fleet_id: root.fleet_id.clone(),
                     bicycle_id: input,

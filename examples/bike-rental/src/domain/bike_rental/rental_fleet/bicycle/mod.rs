@@ -1,8 +1,7 @@
+pub(in crate::domain) mod assess_rental_eligibility;
 mod condition;
 mod entity;
 mod identity;
-pub(super) mod mark_available;
-pub(super) mod mark_rented;
 mod registration_number;
 mod rental_status;
 

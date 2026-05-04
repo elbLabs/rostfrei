@@ -42,58 +42,6 @@ function directory(
   }
 }
 
-const markRented = directory(
-  "mark-rented",
-  "mark_rented",
-  "src/domain/bike_rental/rental_fleet/bicycle/mark_rented",
-  {
-    role: "Entity action",
-    summary:
-      "A small behavior capability nested directly beneath the Entity it changes.",
-    allowed: [
-      "action.rs contract",
-      "execute.rs implementation",
-      "mod.rs composition",
-    ],
-    guarantee:
-      "The checker binds the action trait implementation to Bicycle from its location.",
-  },
-  [
-    file(
-      "entity-action",
-      "action.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/mark_rented/action.rs",
-      {
-        role: "Action contract",
-        summary: "An ordinary Rust trait with a stable semantic ID and label.",
-        allowed: [
-          "One #[domain_action] trait",
-          "Its method signature",
-          "Imports",
-        ],
-        guarantee:
-          "The trait remains normal Rust and provides a stable structure-checking anchor.",
-      }
-    ),
-    file(
-      "entity-execute",
-      "execute.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/mark_rented/execute.rs",
-      {
-        role: "Entity action implementation",
-        summary: "Implements MarkRentedAction directly for Bicycle.",
-        allowed: [
-          "One matching trait implementation",
-          "Private helpers",
-          "Imports",
-        ],
-        guarantee:
-          "Trait and Entity implementor names must match their neighboring declarations.",
-      }
-    ),
-  ]
-)
-
 const rentalStatus = directory(
   "rental-status",
   "rental_status",
@@ -356,6 +304,73 @@ const registrationNumber = directory(
   ]
 )
 
+const eligibilityDecision = directory(
+  "eligibility-decision",
+  "assess_rental_eligibility",
+  "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility",
+  {
+    role: "Entity decision capability",
+    summary:
+      "Composes lifecycle topology and condition policy into one business outcome.",
+    allowed: ["decision.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
+    guarantee:
+      "Eligibility remains pure and reusable by commands and queries without duplicating lifecycle rules.",
+  },
+  [
+    file(
+      "decision",
+      "decision.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/decision.rs",
+      {
+        role: "Decision contract",
+        summary: "Declares a parameter-free policy query on Bicycle.",
+        allowed: [
+          "One #[domain_decision] trait",
+          "Its method signature",
+          "Imports",
+        ],
+        guarantee:
+          "Decision metadata is global while filesystem placement binds its implementation owner.",
+      }
+    ),
+    file(
+      "outcome",
+      "outcome.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/outcome.rs",
+      {
+        role: "Decision outcome",
+        summary:
+          "Declares the closed, ordered vocabulary returned by the Decision.",
+        allowed: [
+          "One DecisionOutcome enum",
+          "Tagged variants",
+          "Ordinary payload fields",
+        ],
+        guarantee:
+          "Outcome IDs and labels stay stable while every result remains exhaustively handled.",
+      }
+    ),
+    file(
+      "evaluate",
+      "evaluate.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/evaluate.rs",
+      {
+        role: "Entity decision implementation",
+        summary:
+          "Implements the policy for Bicycle by composing its lifecycle and condition.",
+        allowed: [
+          "One matching trait implementation",
+          "Pure lifecycle evaluation",
+          "Condition policy",
+          "Imports",
+        ],
+        guarantee:
+          "The evaluator has no state mutation, event recording, or persistence responsibility.",
+      }
+    ),
+  ]
+)
+
 const bicycle = directory(
   "bicycle",
   "bicycle",
@@ -367,7 +382,7 @@ const bicycle = directory(
     allowed: [
       "entity.rs and identity.rs",
       "Value Object modules",
-      "Lifecycle and action directories",
+      "Lifecycle, decision, and action directories",
     ],
     guarantee:
       "Related concepts stay nested with their owner instead of being flattened into type buckets.",
@@ -407,7 +422,7 @@ const bicycle = directory(
     bicycleCondition,
     registrationNumber,
     rentalStatus,
-    markRented,
+    eligibilityDecision,
   ]
 )
 
@@ -528,19 +543,6 @@ const rentBicycle = directory(
         guarantee: "Code and message remain stable without owner annotations.",
       }
     ),
-    file(
-      "input",
-      "input.rs",
-      "src/domain/bike_rental/rental_fleet/rent_bicycle/input.rs",
-      {
-        role: "Action input",
-        summary:
-          "Keeps an operation-specific DTO separate from semantic Value Objects.",
-        allowed: ["Ordinary Rust input types", "Serialization helpers"],
-        guarantee:
-          "DTO shape remains ordinary Rust and is not projected as a domain concept.",
-      }
-    ),
   ]
 )
 
@@ -597,71 +599,6 @@ const availabilityQuery = directory(
         summary: "Defines the ordinary Rust view returned by the Query.",
         allowed: ["Ordinary output DTOs", "View-specific helpers"],
         guarantee: "A returned view is not mislabeled as a Value Object.",
-      }
-    ),
-  ]
-)
-
-const eligibilityDecision = directory(
-  "eligibility-decision",
-  "assess_rental_eligibility",
-  "src/domain/bike_rental/rental_fleet/assess_rental_eligibility",
-  {
-    role: "Decision capability",
-    summary:
-      "Keeps one pure business decision beside its closed outcome vocabulary.",
-    allowed: ["decision.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
-    guarantee:
-      "Policy evaluation stays separate from state mutation and event recording.",
-  },
-  [
-    file(
-      "decision",
-      "decision.rs",
-      "src/domain/bike_rental/rental_fleet/assess_rental_eligibility/decision.rs",
-      {
-        role: "Decision contract",
-        summary: "An ordinary trait with a stable Decision ID and label.",
-        allowed: [
-          "One #[domain_decision] trait",
-          "Its method signature",
-          "Imports",
-        ],
-        guarantee:
-          "Decision metadata is global and independent of an implementation owner.",
-      }
-    ),
-    file(
-      "outcome",
-      "outcome.rs",
-      "src/domain/bike_rental/rental_fleet/assess_rental_eligibility/outcome.rs",
-      {
-        role: "Decision outcome",
-        summary:
-          "Declares the closed, ordered vocabulary returned by the Decision.",
-        allowed: [
-          "One DecisionOutcome enum",
-          "Tagged variants",
-          "Ordinary payload fields",
-        ],
-        guarantee:
-          "Outcome IDs and labels are stable while payload shapes remain Rust details.",
-      }
-    ),
-    file(
-      "evaluate",
-      "evaluate.rs",
-      "src/domain/bike_rental/rental_fleet/assess_rental_eligibility/evaluate.rs",
-      {
-        role: "Decision implementation",
-        summary: "Implements the policy for the enclosing aggregate type.",
-        allowed: [
-          "One matching trait implementation",
-          "Private helpers",
-          "Imports",
-        ],
-        guarantee:
-          "The evaluator is pure domain behavior with no persistence responsibility.",
       }
     ),
   ]
@@ -812,7 +749,6 @@ const rentalFleet = directory(
     bicycle,
     rentBicycle,
     availabilityQuery,
-    eligibilityDecision,
     fleetInvariant,
   ]
 )

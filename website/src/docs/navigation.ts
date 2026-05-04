@@ -121,6 +121,10 @@ export const docsNavigation = [
         slug: "project-structure/aggregate-decision",
       },
       {
+        title: "Entity decision",
+        slug: "project-structure/entity-decision",
+      },
+      {
         title: "Value-object decision",
         slug: "project-structure/value-object-decision",
       },

@@ -56,7 +56,7 @@ export const projectStructureExamples = {
     files: ["mod.rs", "action.rs", "execute.rs"],
   },
   "entity-action": {
-    root: "mark_rented",
+    root: "change_condition",
     activeFile: "action.rs",
     files: ["mod.rs", "action.rs", "execute.rs"],
   },
@@ -71,6 +71,11 @@ export const projectStructureExamples = {
     files: ["mod.rs", "query.rs", "execute.rs", "output.rs"],
   },
   "aggregate-decision": {
+    root: "plan_fleet_capacity",
+    activeFile: "decision.rs",
+    files: ["mod.rs", "decision.rs", "outcome.rs", "evaluate.rs"],
+  },
+  "entity-decision": {
     root: "assess_rental_eligibility",
     activeFile: "decision.rs",
     files: ["mod.rs", "decision.rs", "outcome.rs", "evaluate.rs"],
