@@ -28,7 +28,6 @@ fn omits_unattached_capabilities_and_lifecycle_metadata() {
     assert_eq!(
         model["valueObjects"],
         json!([
-            { "id": "bicycle-status", "label": "Bicycle status" },
             { "id": "bicycle-condition", "label": "Bicycle condition" },
             { "id": "registration-number", "label": "Registration number" }
         ])

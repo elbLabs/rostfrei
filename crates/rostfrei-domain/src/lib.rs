@@ -41,7 +41,9 @@ pub use domain_test::{DomainTestDescriptor, DomainTestSubject};
 pub use entity::{EntityDefinition, EntityDescriptor, EntityId, EntityType};
 pub use entity_lifecycle::{
     EntityLifecycleDescriptor, EntityLifecycleId, EntityLifecycleStateDescriptor,
-    EntityLifecycleStateId, EntityLifecycleType,
+    EntityLifecycleStateId, EntityLifecycleTransitionId, EntityLifecycleType,
+    InvalidStateTransition, LifecycleState, StateChange, StateTransition,
+    StateTransitionDescriptor,
 };
 pub use field::{
     FieldDescriptor, FieldKind, FieldValue, FieldWrapper, ScalarType, SemanticScalar,
@@ -51,8 +53,8 @@ pub use invariant::{InvariantDescriptor, InvariantId, InvariantViolation};
 pub use json_wire::{JsonCommandPayload, JsonErrorPayload};
 pub use rostfrei_domain_macros::{
     Aggregate, AggregateEvents, BoundedContext, Command, DecisionOutcome, DomainError, DomainEvent,
-    DomainIdentity, DomainService, Entity, EntityLifecycle, ValueObject, domain_action,
-    domain_action_test, domain_decision, domain_decision_test, domain_invariant,
+    DomainIdentity, DomainService, Entity, EntityLifecycle, StateTransition, ValueObject,
+    domain_action, domain_action_test, domain_decision, domain_decision_test, domain_invariant,
     domain_invariant_test, domain_lifecycle_test, domain_query,
 };
 pub use value_object::{ValueObject, ValueObjectDescriptor, ValueObjectId};

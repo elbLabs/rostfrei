@@ -35,6 +35,7 @@ impl RolePolicy {
             "query.rs" => Self::Contract(PrimaryKind::Query),
             "contract.rs" => Self::Contract(PrimaryKind::Invariant),
             "lifecycle.rs" => Self::Declaration(PrimaryKind::Lifecycle),
+            "transition.rs" => Self::Declaration(PrimaryKind::StateTransition),
             "execute.rs" => Self::Execute,
             "handler.rs" => Self::Implementation(Some("CommandHandler")),
             "apply.rs" => Self::Implementation(Some("Apply")),

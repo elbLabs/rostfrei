@@ -1,0 +1,7 @@
+error: missing transition attribute
+ --> tests/ui/state_transition/missing_transition_metadata.rs:3:10
+  |
+3 | #[derive(StateTransition)]
+  |          ^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `StateTransition` (in Nightly builds, run with -Z macro-backtrace for more info)

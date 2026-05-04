@@ -19,6 +19,7 @@ pub enum PrimaryKind {
     Query,
     Invariant,
     Lifecycle,
+    StateTransition,
 }
 
 impl PrimaryKind {
@@ -41,6 +42,7 @@ impl PrimaryKind {
             Self::Query => Some("query.rs"),
             Self::Invariant => Some("contract.rs"),
             Self::Lifecycle => Some("lifecycle.rs"),
+            Self::StateTransition => Some("transition.rs"),
         }
     }
 
@@ -63,6 +65,7 @@ impl PrimaryKind {
             Self::Query => "domain_query",
             Self::Invariant => "domain_invariant",
             Self::Lifecycle => "EntityLifecycle",
+            Self::StateTransition => "StateTransition",
         }
     }
 }

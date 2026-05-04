@@ -1,5 +1,5 @@
 error: EntityLifecycle state variants must be fieldless
- --> tests/ui/entity_lifecycle/fieldful_variant.rs:7:10
+ --> tests/ui/entity_lifecycle/fieldful_variant.rs:8:10
   |
-7 |     Draft(u8),
+8 |     Draft(u8),
   |          ^^^^

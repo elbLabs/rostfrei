@@ -2,8 +2,9 @@
 
 use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle, EntityLifecycleDescriptor,
-    EntityLifecycleId, EntityLifecycleStateDescriptor, EntityLifecycleStateId, EntityLifecycleType,
-    domain_model,
+    EntityLifecycleId, EntityLifecycleStateDescriptor, EntityLifecycleStateId,
+    EntityLifecycleTransitionId, EntityLifecycleType, InvalidStateTransition, LifecycleState,
+    StateChange, StateTransition, domain_model,
 };
 const LIFECYCLE_ID: EntityLifecycleId = EntityLifecycleId("progress");
 const PENDING_ID: EntityLifecycleStateId = EntityLifecycleStateId {
@@ -23,8 +24,9 @@ const COMPLETED_ID: EntityLifecycleStateId = EntityLifecycleStateId {
 #[domain(id = "operations", label = "Operations")]
 struct Operations;
 
-#[derive(EntityLifecycle)]
+#[derive(EntityLifecycle, Clone, Copy, Debug, Eq, PartialEq)]
 #[domain(id = "progress", label = "Work item progress")]
+#[lifecycle(initial = Pending)]
 enum WorkItemLifecycle {
     #[state(id = "pending", label = "Pending")]
     Pending,
@@ -32,6 +34,25 @@ enum WorkItemLifecycle {
     Active,
     #[state(id = "completed", label = "Completed")]
     Completed,
+}
+
+#[derive(StateTransition, Clone, Copy, Debug, Eq, PartialEq)]
+#[transition(state = WorkItemLifecycle)]
+enum WorkItemTransition {
+    #[edge(
+        id = "start",
+        label = "Start",
+        from = Pending,
+        to = Active
+    )]
+    Start,
+    #[edge(
+        id = "complete",
+        label = "Complete",
+        from = Active,
+        to = Completed
+    )]
+    Complete,
 }
 
 #[derive(DomainIdentity)]
@@ -67,6 +88,7 @@ fn derives_owner_independent_state_metadata_without_model_projection() {
     let expected_descriptor = EntityLifecycleDescriptor {
         id: LIFECYCLE_ID,
         label: "Work item progress",
+        initial: PENDING_ID,
         states: &[
             EntityLifecycleStateDescriptor {
                 id: PENDING_ID,
@@ -84,6 +106,8 @@ fn derives_owner_independent_state_metadata_without_model_projection() {
     };
 
     assert_eq!(WorkItemLifecycle::DESCRIPTOR, expected_descriptor);
+    assert_eq!(WorkItemLifecycle::INITIAL, WorkItemLifecycle::Pending);
+    assert_eq!(WorkItemLifecycle::Active.state_id(), ACTIVE_ID);
 
     let model = domain_model! {
         contexts: [Operations],
@@ -97,5 +121,45 @@ fn derives_owner_independent_state_metadata_without_model_projection() {
 
     assert!(model["entities"][0].get("lifecycle").is_none());
     assert!(model["actions"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn derives_executable_state_transitions() {
+    assert_eq!(
+        WorkItemLifecycle::Pending.evaluate(&WorkItemTransition::Start),
+        Ok(StateChange::new(
+            WorkItemLifecycle::Pending,
+            WorkItemLifecycle::Active,
+        ))
+    );
+    assert_eq!(
+        WorkItemLifecycle::Active.evaluate(&WorkItemTransition::Complete),
+        Ok(StateChange::new(
+            WorkItemLifecycle::Active,
+            WorkItemLifecycle::Completed,
+        ))
+    );
+    assert_eq!(
+        WorkItemLifecycle::Completed.evaluate(&WorkItemTransition::Start),
+        Err(InvalidStateTransition::new(
+            COMPLETED_ID,
+            EntityLifecycleTransitionId {
+                lifecycle: LIFECYCLE_ID,
+                local: "start",
+            },
+        ))
+    );
+}
+
+#[test]
+fn derives_stable_transition_descriptors() {
+    let descriptor = WorkItemTransition::Start.descriptor();
+
+    assert_eq!(descriptor.id.lifecycle, LIFECYCLE_ID);
+    assert_eq!(descriptor.id.local, "start");
+    assert_eq!(descriptor.label, "Start");
+    assert_eq!(descriptor.from, WorkItemLifecycle::Pending);
+    assert_eq!(descriptor.to, WorkItemLifecycle::Active);
+    assert_eq!(WorkItemTransition::DESCRIPTORS.len(), 2);
 }
 rostfrei_domain_macros::__install_test_macro_support!();

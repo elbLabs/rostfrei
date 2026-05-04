@@ -5,7 +5,8 @@ use super::ir::Lifecycle;
 pub fn validate(lifecycle: &Lifecycle) -> syn::Result<()> {
     crate::helper::id::validate(&lifecycle.id)?;
     crate::helper::label::validate(&lifecycle.label)?;
-    validate_states(lifecycle)
+    validate_states(lifecycle)?;
+    validate_initial_state(lifecycle)
 }
 
 fn validate_states(lifecycle: &Lifecycle) -> syn::Result<()> {
@@ -24,4 +25,18 @@ fn validate_states(lifecycle: &Lifecycle) -> syn::Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_initial_state(lifecycle: &Lifecycle) -> syn::Result<()> {
+    if lifecycle
+        .states
+        .iter()
+        .any(|state| state.name == lifecycle.initial)
+    {
+        return Ok(());
+    }
+    Err(syn::Error::new_spanned(
+        &lifecycle.initial,
+        "initial lifecycle state must name a declared variant",
+    ))
 }

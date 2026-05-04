@@ -15,7 +15,7 @@ domain_model! {
     contexts: [BikeRental],
     aggregates: [RentalFleetAggregate],
     entities: [RentalFleet, Bicycle],
-    value_objects: [BicycleStatus, BicycleCondition],
+    value_objects: [BicycleCondition, RegistrationNumber],
     services: [FleetPlanning],
     errors: [BicycleUnavailable],
 }

@@ -5,7 +5,6 @@ pub(super) mod mark_available;
 pub(super) mod mark_rented;
 mod registration_number;
 mod rental_status;
-mod status;
 
 pub use condition::BicycleCondition;
 pub use entity::Bicycle;
@@ -14,5 +13,4 @@ pub use registration_number::{
     ChooseRegistrationNumberFormat, NormalizeRegistrationNumber, RegistrationNumber,
     RegistrationNumberFormat, RegistrationNumberValidity,
 };
-pub use rental_status::BicycleRentalLifecycle;
-pub use status::BicycleStatus;
+pub use rental_status::{BicycleRentalTransition, BicycleStatus};

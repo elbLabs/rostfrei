@@ -1,0 +1,7 @@
+error: missing lifecycle attribute
+ --> tests/ui/entity_lifecycle/missing_lifecycle_metadata.rs:3:10
+  |
+3 | #[derive(EntityLifecycle, Clone, Copy, Eq, PartialEq)]
+  |          ^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `EntityLifecycle` (in Nightly builds, run with -Z macro-backtrace for more info)

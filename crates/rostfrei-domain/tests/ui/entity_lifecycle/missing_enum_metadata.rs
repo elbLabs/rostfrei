@@ -1,6 +1,7 @@
 use domain::EntityLifecycle;
 
 #[derive(EntityLifecycle)]
+#[lifecycle(initial = Draft)]
 enum Workflow {
     #[state(id = "draft", label = "Draft")]
     Draft,

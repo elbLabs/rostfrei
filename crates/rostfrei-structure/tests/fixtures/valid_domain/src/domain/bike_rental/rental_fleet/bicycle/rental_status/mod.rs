@@ -1,3 +1,5 @@
 mod lifecycle;
+mod transition;
 
-pub use lifecycle::BicycleRentalStatus;
+pub use lifecycle::BicycleStatus;
+pub use transition::BicycleRentalTransition;

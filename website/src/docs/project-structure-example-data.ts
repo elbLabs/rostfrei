@@ -93,7 +93,7 @@ export const projectStructureExamples = {
   "entity-lifecycle": {
     root: "rental_status",
     activeFile: "lifecycle.rs",
-    files: ["mod.rs", "lifecycle.rs"],
+    files: ["mod.rs", "lifecycle.rs", "transition.rs"],
   },
 } as const satisfies Record<string, ProjectStructureExample>
 

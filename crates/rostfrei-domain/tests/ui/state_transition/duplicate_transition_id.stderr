@@ -1,0 +1,11 @@
+error: duplicate state transition id
+ --> tests/ui/state_transition/duplicate_transition_id.rs:8:17
+  |
+8 |     #[edge(id = "change", label = "Finish", from = Active, to = Done)]
+  |                 ^^^^^^^^
+
+error: the first state transition id is declared here
+ --> tests/ui/state_transition/duplicate_transition_id.rs:6:17
+  |
+6 |     #[edge(id = "change", label = "Start", from = Draft, to = Active)]
+  |                 ^^^^^^^^

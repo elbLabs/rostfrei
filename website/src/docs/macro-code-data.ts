@@ -14,6 +14,7 @@ export const macroExampleNames = [
   "DomainError",
   "DecisionOutcome",
   "EntityLifecycle",
+  "StateTransition",
   "domain_action",
   "domain_query",
   "domain_decision",

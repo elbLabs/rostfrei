@@ -1,0 +1,5 @@
+error: initial lifecycle state must name a declared variant
+ --> tests/ui/entity_lifecycle/unknown_initial_state.rs:5:23
+  |
+5 | #[lifecycle(initial = Missing)]
+  |                       ^^^^^^^

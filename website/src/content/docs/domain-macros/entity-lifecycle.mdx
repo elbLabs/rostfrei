@@ -1,11 +1,13 @@
 # `EntityLifecycle`
 
-Name lifecycle states without inventing behavior. Lifecycle metadata is an ordered vocabulary. Initial state, transitions, and ownership remain intentionally unspecified. Use the enum only to declare recognized states.
+Make the entity's stored state its lifecycle state. The derive adds stable state metadata, an explicit initial state, and the `LifecycleState` implementation used to evaluate typed transitions.
 
 - Fieldless enum
-- Ordered state metadata
-- No transition engine yet
+- One explicit initial state
+- Pure transition evaluation through `LifecycleState`
 
 **Placement:** [Entity lifecycle](/docs/project-structure/entity-lifecycle) — `lifecycle.rs`.
 
 <MacroExample name="EntityLifecycle" />
+
+Pair it with [`StateTransition`](/docs/domain-macros/state-transition). Business guards and side effects remain in ordinary actions, decisions, and event handling.

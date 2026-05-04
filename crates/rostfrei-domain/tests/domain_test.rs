@@ -42,8 +42,9 @@ trait AcceptDecision {
     fn accept(input: DecisionInput) -> TestDecisionOutcome;
 }
 
-#[derive(EntityLifecycle)]
+#[derive(EntityLifecycle, Clone, Copy, Eq, PartialEq)]
 #[domain(id = "test-lifecycle", label = "Test lifecycle")]
+#[lifecycle(initial = Draft)]
 enum TestLifecycle {
     #[state(id = "draft", label = "Draft")]
     Draft,

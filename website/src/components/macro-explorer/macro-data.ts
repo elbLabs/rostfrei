@@ -185,18 +185,18 @@ pub struct BicycleId(String);`,
       "ID and label only",
       "Always declared in value.rs",
     ],
-    file: "src/domain/bike_rental/rental_fleet/bicycle/status/value.rs",
+    file: "src/domain/bike_rental/rental_fleet/bicycle/condition/value.rs",
     authored: `#[derive(ValueObject, Clone, Copy, Debug)]
-#[domain(id = "bicycle-status", label = "Bicycle status")]
-pub enum BicycleStatus {
-    Available,
-    Rented,
+#[domain(id = "bicycle-condition", label = "Bicycle condition")]
+pub enum BicycleCondition {
+    Serviceable,
+    MaintenanceRequired,
 }`,
-    generated: `impl ValueObject for BicycleStatus {
+    generated: `impl ValueObject for BicycleCondition {
     const DESCRIPTOR: ValueObjectDescriptor =
         ValueObjectDescriptor {
-            id: ValueObjectId("bicycle-status"),
-            label: "Bicycle status",
+            id: ValueObjectId("bicycle-condition"),
+            label: "Bicycle condition",
         };
 }`,
   },
@@ -350,30 +350,67 @@ pub enum RentalEligibilityOutcome {
   {
     name: "EntityLifecycle",
     family: "derive",
-    headline: "Name lifecycle states without inventing behavior.",
+    headline: "Make stored state executable.",
     description:
-      "Lifecycle metadata is an ordered vocabulary. Initial state, transitions, and ownership remain intentionally unspecified.",
+      "The entity's actual state enum supplies stable metadata, an explicit initial state, and pure transition evaluation.",
     points: [
       "Fieldless enum",
-      "Ordered state metadata",
-      "No transition engine yet",
+      "Explicit initial state",
+      "LifecycleState implementation",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs",
-    authored: `#[derive(EntityLifecycle)]
+    authored: `#[derive(EntityLifecycle, Clone, Copy, Eq, PartialEq)]
 #[domain(id = "rental-status", label = "Bicycle rental status")]
-pub enum BicycleRentalLifecycle {
+#[lifecycle(initial = Available)]
+pub enum BicycleStatus {
     #[state(id = "available", label = "Available")]
     Available,
     #[state(id = "rented", label = "Rented")]
     Rented,
 }`,
-    generated: `impl EntityLifecycleType for BicycleRentalLifecycle {
+    generated: `impl EntityLifecycleType for BicycleStatus {
     const DESCRIPTOR: EntityLifecycleDescriptor =
         EntityLifecycleDescriptor {
             id: EntityLifecycleId("rental-status"),
             label: "Bicycle rental status",
+            initial: /* available state ID */,
             states: &[/* available, rented */],
         };
+}
+
+impl LifecycleState for BicycleStatus {
+    const INITIAL: Self = Self::Available;
+    fn state_id(self) -> EntityLifecycleStateId { /* … */ }
+}`,
+  },
+  {
+    name: "StateTransition",
+    family: "derive",
+    headline: "Declare one legal edge per trigger.",
+    description:
+      "A transition enum links stable trigger metadata to source and target lifecycle states.",
+    points: [
+      "Fieldless enum",
+      "Typed source and target",
+      "Pure rejection for illegal state",
+    ],
+    file: "src/domain/bike_rental/rental_fleet/bicycle/rental_status/transition.rs",
+    authored: `#[derive(StateTransition)]
+#[transition(state = BicycleStatus)]
+pub enum BicycleRentalTransition {
+    #[edge(id = "rent", label = "Rent", from = Available, to = Rented)]
+    Rent,
+    #[edge(id = "return", label = "Return", from = Rented, to = Available)]
+    Return,
+}`,
+    generated: `impl StateTransition for BicycleRentalTransition {
+    type State = BicycleStatus;
+    const DESCRIPTORS: &'static [StateTransitionDescriptor<Self::State>] =
+        &[/* rent and return edges */];
+
+    fn descriptor(&self) -> &'static StateTransitionDescriptor<Self::State> {
+        /* one descriptor per variant */
+    }
 }`,
   },
   {
@@ -550,7 +587,7 @@ const __DOMAIN_TEST_SUBJECT: DomainTestSubject =
     contexts: [BikeRental],
     aggregates: [RentalFleetAggregate],
     entities: [RentalFleet, Bicycle],
-    value_objects: [BicycleStatus, BicycleCondition],
+    value_objects: [BicycleCondition, RegistrationNumber],
     services: [],
     errors: [BicycleUnavailable, BicycleNotRented],
 }`,
@@ -559,8 +596,8 @@ const __DOMAIN_TEST_SUBJECT: DomainTestSubject =
     builder.add_aggregate_type::<RentalFleetAggregate>()?;
     builder.add_entity_type::<RentalFleet>()?;
     builder.add_entity_type::<Bicycle>()?;
-    builder.add_value_object_type::<BicycleStatus>()?;
     builder.add_value_object_type::<BicycleCondition>()?;
+    builder.add_value_object_type::<RegistrationNumber>()?;
     builder.add_domain_error(BicycleUnavailable::DESCRIPTOR)?;
     builder.add_domain_error(BicycleNotRented::DESCRIPTOR)?;
     Ok(())
