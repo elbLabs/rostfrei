@@ -1,0 +1,64 @@
+[workspace]
+resolver = "3"
+
+[package]
+name = "{{package_name}}"
+default-run = "{{package_name}}"
+version = "0.1.0"
+edition = "2024"
+rust-version = "{{rust_version}}"
+publish = false
+
+[lib]
+name = "{{module_name}}"
+
+[dependencies]
+rostfrei = "{{rostfrei_version}}"
+rostfrei-nats = "{{rostfrei_version}}"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+
+[package.metadata.rostfrei.structure]
+version = 1
+domain-root = "src/domain"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+missing_const_for_fn = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+unreachable = "deny"
+uninhabited_references = "deny"
+use_self = "deny"
+derive_partial_eq_without_eq = "deny"
+tuple_array_conversions = "deny"
+future_not_send = "deny"
+option_if_let_else = "deny"
+redundant_pub_crate = "deny"
+manual_assert = "deny"
+
+significant_drop_in_scrutinee = "deny"
+significant_drop_tightening = "deny"
+string_slice = "deny"
+unchecked_time_subtraction = "deny"
+unimplemented = "deny"
+todo = "deny"
+exit = "deny"
+
+
+arithmetic_side_effects = "deny"
+as_conversions = "deny"
+
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

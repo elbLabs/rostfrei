@@ -1,0 +1,12 @@
+services:
+  nats:
+    image: nats:2.12-alpine
+    command: ["-c", "/etc/nats/nats-server.conf"]
+    ports:
+      - "127.0.0.1:4222:4222"
+    volumes:
+      - ./nats-server.conf:/etc/nats/nats-server.conf:ro
+      - nats-data:/data
+
+volumes:
+  nats-data:
