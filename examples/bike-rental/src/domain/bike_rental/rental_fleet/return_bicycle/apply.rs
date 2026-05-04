@@ -1,7 +1,7 @@
 use rostfrei::Apply;
 
 use super::BicycleReturned;
-use crate::domain::rental_fleet::{BicycleRentalTransition, RentalFleet};
+use crate::domain::rental_fleet::RentalFleet;
 
 impl Apply<BicycleReturned> for RentalFleet {
     fn apply(&mut self, event: &BicycleReturned) {
@@ -10,7 +10,7 @@ impl Apply<BicycleReturned> for RentalFleet {
             .iter_mut()
             .find(|bicycle| bicycle.bicycle_id() == &event.bicycle_id)
         {
-            bicycle.apply_transition(BicycleRentalTransition::Return);
+            bicycle.apply_returned();
         }
     }
 }

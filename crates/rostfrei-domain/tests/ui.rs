@@ -79,8 +79,11 @@ fn checks_state_transition_contracts() {
     cases.pass("tests/ui/state_transition/supported.rs");
     cases.compile_fail("tests/ui/state_transition/non_enum.rs");
     cases.compile_fail("tests/ui/state_transition/missing_transition_metadata.rs");
+    cases.compile_fail("tests/ui/state_transition/missing_variant_transition_metadata.rs");
+    cases.compile_fail("tests/ui/state_transition/duplicate_variant_transition_metadata.rs");
     cases.compile_fail("tests/ui/state_transition/missing_edge_metadata.rs");
     cases.compile_fail("tests/ui/state_transition/duplicate_transition_id.rs");
+    cases.compile_fail("tests/ui/state_transition/duplicate_source_state.rs");
 }
 
 #[test]

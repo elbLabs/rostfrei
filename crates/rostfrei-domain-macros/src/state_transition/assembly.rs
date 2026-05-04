@@ -42,8 +42,16 @@ fn assemble_descriptor(
 ) -> TokenStream {
     let id = &transition.id;
     let label = &transition.label;
-    let from = &transition.from;
-    let to = &transition.to;
+    let edges = transition.edges.iter().map(|edge| {
+        let from = &edge.from;
+        let to = &edge.to;
+        quote! {
+            #domain_path::StateTransitionEdge {
+                from: #state::#from,
+                to: #state::#to,
+            }
+        }
+    });
     quote! {
         #domain_path::StateTransitionDescriptor {
             id: #domain_path::EntityLifecycleTransitionId {
@@ -51,8 +59,7 @@ fn assemble_descriptor(
                 local: #id,
             },
             label: #label,
-            from: #state::#from,
-            to: #state::#to,
+            edges: &[#(#edges),*],
         }
     }
 }

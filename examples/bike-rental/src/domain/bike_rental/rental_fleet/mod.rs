@@ -8,6 +8,7 @@ mod identity;
 mod import_rental_fleet;
 mod initialize;
 mod rent_bicycle;
+mod retire_bicycle;
 mod return_bicycle;
 mod root;
 mod stream;
@@ -28,6 +29,7 @@ pub use import_rental_fleet::{
     RentalFleetImported,
 };
 pub use rent_bicycle::{BicycleRented, BicycleUnavailable, RentBicycle, RentBicycleAction};
+pub use retire_bicycle::{BicycleCannotBeRetired, BicycleRetired, RetireBicycleAction};
 pub use return_bicycle::{BicycleNotRented, BicycleReturned, ReturnBicycle, ReturnBicycleAction};
 pub use root::RentalFleet;
 pub use stream::stream_id;

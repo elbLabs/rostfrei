@@ -5,18 +5,14 @@ use super::BicycleStatus;
 #[derive(StateTransition, Clone, Copy, Debug, Eq, PartialEq)]
 #[transition(state = BicycleStatus)]
 pub enum BicycleRentalTransition {
-    #[edge(
-        id = "rent",
-        label = "Rent",
-        from = Available,
-        to = Rented
-    )]
+    #[transition(id = "rent", label = "Rent")]
+    #[edge(from = Available, to = Rented)]
     Rent,
-    #[edge(
-        id = "return",
-        label = "Return",
-        from = Rented,
-        to = Available
-    )]
+    #[transition(id = "return", label = "Return")]
+    #[edge(from = Rented, to = Available)]
     Return,
+    #[transition(id = "retire", label = "Retire")]
+    #[edge(from = Available, to = Retired)]
+    #[edge(from = Rented, to = Retired)]
+    Retire,
 }

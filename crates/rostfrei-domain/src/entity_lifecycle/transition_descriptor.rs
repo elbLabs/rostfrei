@@ -1,9 +1,8 @@
-use super::EntityLifecycleTransitionId;
+use super::{EntityLifecycleTransitionId, StateTransitionEdge};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct StateTransitionDescriptor<State> {
+pub struct StateTransitionDescriptor<State: 'static> {
     pub id: EntityLifecycleTransitionId,
     pub label: &'static str,
-    pub from: State,
-    pub to: State,
+    pub edges: &'static [StateTransitionEdge<State>],
 }

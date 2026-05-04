@@ -23,6 +23,20 @@ fn evaluates_legal_rental_transitions() {
             BicycleStatus::Available,
         ))
     );
+    assert_eq!(
+        BicycleStatus::Available.evaluate(&BicycleRentalTransition::Retire),
+        Ok(StateChange::new(
+            BicycleStatus::Available,
+            BicycleStatus::Retired,
+        ))
+    );
+    assert_eq!(
+        BicycleStatus::Rented.evaluate(&BicycleRentalTransition::Retire),
+        Ok(StateChange::new(
+            BicycleStatus::Rented,
+            BicycleStatus::Retired,
+        ))
+    );
 }
 
 #[test]
@@ -48,6 +62,24 @@ fn exposes_stable_transition_metadata() {
 
     assert_eq!(descriptor.id.local, "rent");
     assert_eq!(descriptor.label, "Rent");
-    assert_eq!(descriptor.from, BicycleStatus::Available);
-    assert_eq!(descriptor.to, BicycleStatus::Rented);
+    let [edge] = descriptor.edges else {
+        panic!("rent should have one edge");
+    };
+    assert_eq!(edge.from, BicycleStatus::Available);
+    assert_eq!(edge.to, BicycleStatus::Rented);
+}
+
+#[test]
+fn exposes_multiple_edges_for_one_logical_transition() {
+    let descriptor = BicycleRentalTransition::Retire.descriptor();
+
+    assert_eq!(descriptor.id.local, "retire");
+    assert_eq!(descriptor.label, "Retire");
+    let [available, rented] = descriptor.edges else {
+        panic!("retire should have two edges");
+    };
+    assert_eq!(available.from, BicycleStatus::Available);
+    assert_eq!(available.to, BicycleStatus::Retired);
+    assert_eq!(rented.from, BicycleStatus::Rented);
+    assert_eq!(rented.to, BicycleStatus::Retired);
 }

@@ -39,19 +39,12 @@ enum WorkItemLifecycle {
 #[derive(StateTransition, Clone, Copy, Debug, Eq, PartialEq)]
 #[transition(state = WorkItemLifecycle)]
 enum WorkItemTransition {
-    #[edge(
-        id = "start",
-        label = "Start",
-        from = Pending,
-        to = Active
-    )]
+    #[transition(id = "start", label = "Start")]
+    #[edge(from = Pending, to = Active)]
+    #[edge(from = Completed, to = Active)]
     Start,
-    #[edge(
-        id = "complete",
-        label = "Complete",
-        from = Active,
-        to = Completed
-    )]
+    #[transition(id = "complete", label = "Complete")]
+    #[edge(from = Active, to = Completed)]
     Complete,
 }
 
@@ -140,13 +133,21 @@ fn derives_executable_state_transitions() {
         ))
     );
     assert_eq!(
-        WorkItemLifecycle::Completed.evaluate(&WorkItemTransition::Start),
+        WorkItemLifecycle::Completed.evaluate(&WorkItemTransition::Complete),
         Err(InvalidStateTransition::new(
             COMPLETED_ID,
             EntityLifecycleTransitionId {
                 lifecycle: LIFECYCLE_ID,
-                local: "start",
+                local: "complete",
             },
+        ))
+    );
+
+    assert_eq!(
+        WorkItemLifecycle::Completed.evaluate(&WorkItemTransition::Start),
+        Ok(StateChange::new(
+            WorkItemLifecycle::Completed,
+            WorkItemLifecycle::Active,
         ))
     );
 }
@@ -158,8 +159,13 @@ fn derives_stable_transition_descriptors() {
     assert_eq!(descriptor.id.lifecycle, LIFECYCLE_ID);
     assert_eq!(descriptor.id.local, "start");
     assert_eq!(descriptor.label, "Start");
-    assert_eq!(descriptor.from, WorkItemLifecycle::Pending);
-    assert_eq!(descriptor.to, WorkItemLifecycle::Active);
+    let [pending, completed] = descriptor.edges else {
+        panic!("start should have two edges");
+    };
+    assert_eq!(pending.from, WorkItemLifecycle::Pending);
+    assert_eq!(pending.to, WorkItemLifecycle::Active);
+    assert_eq!(completed.from, WorkItemLifecycle::Completed);
+    assert_eq!(completed.to, WorkItemLifecycle::Active);
     assert_eq!(WorkItemTransition::DESCRIPTORS.len(), 2);
 }
 rostfrei_domain_macros::__install_test_macro_support!();

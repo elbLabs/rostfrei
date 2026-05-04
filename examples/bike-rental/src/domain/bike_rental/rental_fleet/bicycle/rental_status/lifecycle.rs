@@ -10,4 +10,6 @@ pub enum BicycleStatus {
     Available,
     #[state(id = "rented", label = "Rented")]
     Rented,
+    #[state(id = "retired", label = "Retired")]
+    Retired,
 }

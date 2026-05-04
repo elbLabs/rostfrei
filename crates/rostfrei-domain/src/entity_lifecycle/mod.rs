@@ -8,6 +8,7 @@ mod state_descriptor;
 mod state_id;
 mod state_transition;
 mod transition_descriptor;
+mod transition_edge;
 mod transition_id;
 
 pub use descriptor::EntityLifecycleDescriptor;
@@ -20,6 +21,7 @@ pub use state_descriptor::EntityLifecycleStateDescriptor;
 pub use state_id::EntityLifecycleStateId;
 pub use state_transition::StateTransition;
 pub use transition_descriptor::StateTransitionDescriptor;
+pub use transition_edge::StateTransitionEdge;
 pub use transition_id::EntityLifecycleTransitionId;
 
 #[cfg(test)]

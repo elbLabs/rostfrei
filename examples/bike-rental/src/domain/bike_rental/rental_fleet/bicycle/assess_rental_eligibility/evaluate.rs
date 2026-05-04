@@ -10,7 +10,7 @@ impl RentalEligibilityDecision for Bicycle {
             .evaluate(&BicycleRentalTransition::Rent)
             .is_err()
         {
-            return RentalEligibilityOutcome::AlreadyRented;
+            return RentalEligibilityOutcome::UnavailableStatus;
         }
         if self.condition() == BicycleCondition::MaintenanceRequired {
             return RentalEligibilityOutcome::MaintenanceRequired;

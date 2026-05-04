@@ -43,7 +43,7 @@ pub use entity_lifecycle::{
     EntityLifecycleDescriptor, EntityLifecycleId, EntityLifecycleStateDescriptor,
     EntityLifecycleStateId, EntityLifecycleTransitionId, EntityLifecycleType,
     InvalidStateTransition, LifecycleState, StateChange, StateTransition,
-    StateTransitionDescriptor,
+    StateTransitionDescriptor, StateTransitionEdge,
 };
 pub use field::{
     FieldDescriptor, FieldKind, FieldValue, FieldWrapper, ScalarType, SemanticScalar,

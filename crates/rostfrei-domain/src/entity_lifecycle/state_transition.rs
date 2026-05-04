@@ -12,13 +12,11 @@ pub trait StateTransition: Sized + 'static {
         current: Self::State,
     ) -> Result<StateChange<Self::State>, InvalidStateTransition> {
         let descriptor = self.descriptor();
-        if current == descriptor.from {
-            Ok(StateChange::new(current, descriptor.to))
-        } else {
-            Err(InvalidStateTransition::new(
-                current.state_id(),
-                descriptor.id,
-            ))
-        }
+        descriptor
+            .edges
+            .iter()
+            .find(|edge| current == edge.from)
+            .map(|edge| StateChange::new(current, edge.to))
+            .ok_or_else(|| InvalidStateTransition::new(current.state_id(), descriptor.id))
     }
 }

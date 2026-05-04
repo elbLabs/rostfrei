@@ -1,11 +1,7 @@
 #[derive(StateTransition)]
 #[transition(state = BicycleStatus)]
 pub enum BicycleRentalTransition {
-    #[edge(
-        id = "rent",
-        label = "Rent",
-        from = Available,
-        to = Rented
-    )]
+    #[transition(id = "rent", label = "Rent")]
+    #[edge(from = Available, to = Rented)]
     Rent,
 }
