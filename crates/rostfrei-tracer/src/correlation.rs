@@ -1555,6 +1555,38 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn observed_events_serialize_causal_identities() {
+        let event = CorrelationEvent {
+            id: 2,
+            correlation_id: "correlation-1".to_owned(),
+            kind: CorrelationEventKind::DomainEvent {
+                message_id: "domain-event-1".to_owned(),
+                causation_id: Some("command-1".to_owned()),
+                event_type: "bicycle-rented".to_owned(),
+                schema_version: 1,
+                aggregate_type: None,
+                aggregate_id: None,
+                stream_version: Some(2),
+                payload: None,
+            },
+        };
+
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            json!({
+                "id": 2,
+                "correlationId": "correlation-1",
+                "type": "domain-event",
+                "messageId": "domain-event-1",
+                "causationId": "command-1",
+                "eventType": "bicycle-rented",
+                "schemaVersion": 1,
+                "streamVersion": 2,
+            })
+        );
+    }
+
     fn test_hub(
         maximum_correlations: usize,
         maximum_events: usize,
