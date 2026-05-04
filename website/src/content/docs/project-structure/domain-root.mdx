@@ -1,0 +1,24 @@
+# Domain root
+
+The domain root is the single entry point for the compiled model. It keeps the model inventory, bounded contexts, and a composition-only module file together under one predictable directory.
+
+- Put one explicit `domain_model!` composition in `model.rs`.
+- Keep each bounded context and its vocabulary in a dedicated directory.
+- Reserve the root `mod.rs` for module declarations and scoped re-exports.
+
+Path: `src/domain`
+
+<ProjectStructureExample name="domain-root">
+
+```rust
+domain_model! {
+    contexts: [BikeRental],
+    aggregates: [RentalFleetAggregate],
+    entities: [RentalFleet, Bicycle],
+    value_objects: [BicycleStatus, BicycleCondition],
+    services: [FleetPlanning],
+    errors: [BicycleUnavailable],
+}
+```
+
+</ProjectStructureExample>

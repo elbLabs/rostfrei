@@ -1,0 +1,22 @@
+# Domain macros
+
+Rostfrei macros attach stable semantic metadata to ordinary Rust types and traits. Start with declarations, then add focused behavior contracts and explicit model composition.
+
+## Declarations
+
+- [`install_macro_support!`](/docs/domain-macros/install-macro-support)
+- [`BoundedContext`](/docs/domain-macros/bounded-context)
+- [`Aggregate`](/docs/domain-macros/aggregate) and [`AggregateEvents`](/docs/domain-macros/aggregate-events)
+- [`Entity`](/docs/domain-macros/entity) and [`DomainIdentity`](/docs/domain-macros/domain-identity)
+- [`ValueObject`](/docs/domain-macros/value-object) and [`DomainService`](/docs/domain-macros/domain-service)
+- [`Command`](/docs/domain-macros/command), [`DomainEvent`](/docs/domain-macros/domain-event), and [`DomainError`](/docs/domain-macros/domain-error)
+- [`DecisionOutcome`](/docs/domain-macros/decision-outcome) and [`EntityLifecycle`](/docs/domain-macros/entity-lifecycle)
+- [`domain_model!`](/docs/domain-macros/domain-model)
+
+## Behaviour
+
+- [`domain_action`](/docs/domain-macros/domain-action)
+- [`domain_query`](/docs/domain-macros/domain-query)
+- [`domain_decision`](/docs/domain-macros/domain-decision)
+- [`domain_invariant`](/docs/domain-macros/domain-invariant)
+- [`domain_*_test`](/docs/domain-macros/domain-tests)

@@ -1,0 +1,22 @@
+# Behaviorful value object
+
+A behaviorful value object keeps one semantic value and all of its focused capabilities together. Actions, decisions, and invariants remain nested with their owner instead of being flattened beside the entity.
+
+- Anchor the value in `value.rs`.
+- Give each capability a named child directory.
+- Keep each child’s contract separate from its implementation.
+
+Path: `src/domain/bike_rental/rental_fleet/bicycle/registration_number`
+
+<ProjectStructureExample name="behaviorful-value-object">
+
+```rust
+#[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
+#[domain(
+    id = "registration-number",
+    label = "Registration number"
+)]
+pub struct RegistrationNumber(String);
+```
+
+</ProjectStructureExample>

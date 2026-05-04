@@ -1,0 +1,11 @@
+# `DomainEvent`
+
+Events describe facts, not owners. An event owns intrinsic wire metadata. AggregateEvents supplies its aggregate membership and runtime codec. Keep the payload focused on the fact that occurred.
+
+- Schema version 1 by default
+- Serializable Rust payload
+- Membership defined once
+
+**Placement:** [Aggregate action](/docs/project-structure/aggregate-action) — `event.rs`.
+
+<MacroExample name="DomainEvent" />

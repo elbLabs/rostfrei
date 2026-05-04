@@ -1,0 +1,27 @@
+# Aggregate
+
+An aggregate directory owns its declaration, root state, event set, identity, initialization, and focused capabilities. `AggregateDefinition` connects the context, root, and closed event vocabulary with compiler-checked types.
+
+- Put the declaration in `aggregate.rs`.
+- Implement `AggregateDefinition` beside the marker type.
+- Keep actions, queries, decisions, and invariants in child directories.
+
+Path: `src/domain/bike_rental/rental_fleet/aggregate.rs`
+
+<ProjectStructureExample name="aggregate">
+
+```rust
+use rostfrei::{Aggregate, AggregateDefinition};
+
+#[derive(Aggregate)]
+#[domain(id = "rental-fleet", label = "Rental fleet")]
+pub struct RentalFleetAggregate;
+
+impl AggregateDefinition for RentalFleetAggregate {
+    type Context = BikeRental;
+    type Root = RentalFleet;
+    type Event = RentalFleetEvent;
+}
+```
+
+</ProjectStructureExample>

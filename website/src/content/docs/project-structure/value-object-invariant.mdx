@@ -1,0 +1,25 @@
+# Value-object invariant
+
+A value-object invariant keeps one validation rule beside the value it protects. The trait names the rule, and a direct implementation evaluates the parent value object without involving its entity.
+
+- Put the contract in `contract.rs`.
+- Implement it for the parent value object in `evaluate.rs`.
+- Return a focused `InvariantViolation` for invalid data.
+
+Path: `src/domain/bike_rental/rental_fleet/bicycle/registration_number/validity`
+
+<ProjectStructureExample name="value-object-invariant">
+
+```rust
+use rostfrei::{InvariantViolation, domain_invariant};
+
+#[domain_invariant(
+    id = "registration-number-validity",
+    label = "Registration number validity"
+)]
+pub trait RegistrationNumberValidity {
+    fn validate(&self) -> Option<InvariantViolation>;
+}
+```
+
+</ProjectStructureExample>

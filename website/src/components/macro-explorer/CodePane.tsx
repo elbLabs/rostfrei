@@ -1,51 +1,8 @@
-import { useState, type ReactNode } from "react"
+import { useState } from "react"
 import { Check, Copy } from "lucide-react"
+import { Highlight, themes } from "prism-react-renderer"
 
 import { Button } from "@/components/ui/button"
-
-const TOKEN_PATTERN =
-  /(\/\/.*|#\[[^\]]+\]|"(?:\\.|[^"\\])*"|\b(?:as|const|enum|fn|for|impl|let|pub|struct|trait|type|where|Self|self|mut|return)\b|\b[A-Z][A-Za-z0-9_]*\b)/g
-
-const RUST_KEYWORDS = new Set([
-  "as",
-  "const",
-  "enum",
-  "fn",
-  "for",
-  "impl",
-  "let",
-  "mut",
-  "pub",
-  "return",
-  "self",
-  "Self",
-  "struct",
-  "trait",
-  "type",
-  "where",
-])
-
-function tokenColor(token: string): string | null {
-  if (token.startsWith("//")) return "text-stone-500"
-  if (token.startsWith("#[")) return "text-amber-300"
-  if (token.startsWith('"')) return "text-orange-300"
-  if (/^[A-Z]/.test(token)) return "text-yellow-100"
-  if (RUST_KEYWORDS.has(token)) return "text-rose-300"
-  return null
-}
-
-function highlightedLine(line: string): ReactNode[] {
-  return line.split(TOKEN_PATTERN).map((token, index) => {
-    const color = tokenColor(token)
-    return color ? (
-      <span className={color} key={`${token}-${index}`}>
-        {token}
-      </span>
-    ) : (
-      token
-    )
-  })
-}
 
 export function CodePane({ code, label }: { code: string; label: string }) {
   const [copied, setCopied] = useState(false)
@@ -77,25 +34,40 @@ export function CodePane({ code, label }: { code: string; label: string }) {
           <span aria-live="polite">{copied ? "Copied" : "Copy"}</span>
         </Button>
       </div>
-      <pre
-        className="h-[470px] max-w-full overflow-auto p-4 font-mono text-[12px] leading-6 text-stone-300 sm:p-6 sm:text-[13px]"
-        tabIndex={0}
-      >
-        <code>
-          {code.split("\n").map((line, index) => (
-            <span className="block min-w-max" key={`${line}-${index}`}>
-              <span
-                aria-hidden="true"
-                className="mr-4 inline-block w-5 text-right text-stone-700 select-none"
-              >
-                {index + 1}
-              </span>
-              {highlightedLine(line)}
-              {"\n"}
-            </span>
-          ))}
-        </code>
-      </pre>
+      <Highlight code={code} language="rust" theme={themes.gruvboxMaterialDark}>
+        {({ className, getLineProps, getTokenProps, style, tokens }) => (
+          <pre
+            aria-label={`${label} Rust source code`}
+            className={`${className} h-117.5 max-w-full overflow-auto p-4 font-mono text-[12px] leading-6 sm:p-6 sm:text-[13px]`}
+            style={{ ...style, backgroundColor: "transparent" }}
+            tabIndex={0}
+          >
+            <code>
+              {tokens.map((line, lineIndex) => (
+                <span
+                  {...getLineProps({ line })}
+                  className="block min-w-max"
+                  key={lineIndex}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="mr-4 inline-block w-5 text-right text-stone-700 select-none"
+                  >
+                    {lineIndex + 1}
+                  </span>
+                  {line.map((token, tokenIndex) => (
+                    <span
+                      {...getTokenProps({ token })}
+                      key={tokenIndex}
+                    />
+                  ))}
+                  {"\n"}
+                </span>
+              ))}
+            </code>
+          </pre>
+        )}
+      </Highlight>
     </div>
   )
 }

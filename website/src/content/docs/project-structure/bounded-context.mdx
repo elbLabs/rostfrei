@@ -1,0 +1,21 @@
+# Bounded context
+
+A bounded context owns one language boundary and contains its aggregate and domain-service modules. Its declaration gives that boundary a stable semantic ID and a human-readable label.
+
+- Declare the context’s stable semantic identity in `context.rs`.
+- Nest all aggregate and domain-service modules below the context directory.
+- Keep behavior out of the context marker and in focused child modules.
+
+Path: `src/domain/bike_rental/context.rs`
+
+<ProjectStructureExample name="bounded-context">
+
+```rust
+use rostfrei::BoundedContext;
+
+#[derive(BoundedContext)]
+#[domain(id = "bike-rental", label = "Bike Rental")]
+pub struct BikeRental;
+```
+
+</ProjectStructureExample>

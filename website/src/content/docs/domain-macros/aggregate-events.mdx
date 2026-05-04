@@ -1,0 +1,11 @@
+# `AggregateEvents`
+
+One closed set owns the stream. The event enum is the single authority for membership, serialization, replay, and Apply dispatch. List every event accepted by the aggregate as one tuple variant.
+
+- One tuple variant per event
+- JSON codec and replay
+- Unregistered events fail to compile
+
+**Placement:** [Aggregate](/docs/project-structure/aggregate) — `event_set.rs`.
+
+<MacroExample name="AggregateEvents" />

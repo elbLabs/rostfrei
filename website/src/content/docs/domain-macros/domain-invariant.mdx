@@ -1,0 +1,11 @@
+# `domain_invariant`
+
+Separate a rule from its evaluation. The contract names one invariant. evaluate.rs supplies its ordinary Rust implementation for the enclosing aggregate or entity. Keep violations explicit in the return type.
+
+- Global semantic ID
+- Arbitrary validation signature
+- InvariantViolation stays explicit
+
+**Placement:** [Aggregate invariant](/docs/project-structure/aggregate-invariant) or [value-object invariant](/docs/project-structure/value-object-invariant) — `contract.rs`.
+
+<MacroExample name="domain_invariant" />
