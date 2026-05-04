@@ -25,21 +25,26 @@ use bike_rental::{
     BicycleRentalStarted, BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
     BikeRentalNatsRuntime,
     demo::{demo_fixture, demo_stream, rented_demo_fixture},
-    rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
+    rental_fleet::{
+        AddBicycle, BicycleRented, BicycleReturned, RentBicycle, RentalFleetAggregate,
+        ReturnBicycle,
+    },
     tracer,
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
-    Aggregate, Command, EventHistory, OperationId, RecordedEvent, StreamAggregateId,
-    command_message_id, command_response_message_id, integration_message_id,
+    Aggregate, Command, CommandBus, CommandMessageAdapter, DomainEvent, EventHistory,
+    IntegrationCommand, IntegrationCommandMapper, IntegrationEventCommandHandler, OperationId,
+    RecordedEvent, StreamAggregateId, command_message_id, command_response_message_id,
+    integration_message_id,
 };
 use rostfrei_messaging_core::{
-    CausationId, CorrelationId, IntegrationEventEnvelope, MessageId,
-    OperationId as MessagingOperationId, SchemaVersion,
+    CausationId, ConsumerConfig, CorrelationId, IntegrationEventEnvelope, MessageId,
+    OperationId as MessagingOperationId, RetryDelay, SchemaVersion,
 };
 use rostfrei_nats::{
     CORRELATION_ID_HEADER, NatsConnection, NatsConnectionConfig, ServerVersion, StreamRetention,
-    connect,
+    connect, provision_durable_consumer,
 };
 use rostfrei_tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
@@ -81,6 +86,28 @@ struct ConsumerSequence {
 impl CommandTransportObserver for RecordingObserver {
     async fn command_published(&self, publication: CommandPublication) {
         self.publications.lock().await.push(publication);
+    }
+}
+
+struct ReturnBicycleAfterRental;
+
+impl IntegrationCommandMapper<BicycleRentalStarted> for ReturnBicycleAfterRental {
+    type Aggregate = RentalFleetAggregate;
+    type Command = ReturnBicycle;
+    type Error = &'static str;
+
+    fn map(
+        &self,
+        event: &BicycleRentalStarted,
+    ) -> Result<IntegrationCommand<Self::Command>, Self::Error> {
+        let fleet_id =
+            StreamAggregateId::new(event.fleet_id().as_str()).map_err(|_| "invalid fleet ID")?;
+        Ok(IntegrationCommand::new(
+            fleet_id,
+            ReturnBicycle {
+                bicycle_id: event.bicycle_id().clone(),
+            },
+        ))
     }
 }
 
@@ -577,6 +604,123 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
     }
     .await;
     let cleanup_result = cleanup(&connection, [&test_config]).await;
+    let drain_result = connection.drain().await;
+
+    result?;
+    cleanup_result?;
+    drain_result?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestResult {
+    let Ok(nats_url) = env::var("ROSTFREI_NATS_URL") else {
+        return Ok(());
+    };
+    let scope = unique_scope()?;
+    let application = format!("{scope}-reaction");
+    let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
+    let config = BikeRentalNatsConfig::new_with_resource_limits(&application, resource_limits)?;
+    let connection = connect(
+        &NatsConnectionConfig::new(format!("{scope}-reaction-integration"), nats_url)
+            .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
+    )
+    .await?;
+
+    let result: TestResult = async {
+        let runtime = Arc::new(
+            BikeRentalNatsRuntime::provision_with_resource_limits(
+                connection.clone(),
+                &application,
+                resource_limits,
+            )
+            .await?,
+        );
+        runtime.apply_fixture(&demo_fixture()?).await?;
+
+        let topology = runtime.config().messaging().topology().clone();
+        let context = runtime.config().context();
+        let route = runtime.config().integration_event_route();
+        let reaction_config = ConsumerConfig::new(
+            context.consumer_name("return-bicycle-after-rental", 1)?,
+            context.durable_name("return-bicycle-after-rental", 1)?,
+            route.address().clone(),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            1,
+            5,
+        )?;
+        provision_durable_consumer(connection.jetstream(), &topology, &reaction_config).await?;
+        let factory = connection.consumer_factory(topology.clone());
+        factory.verify_consumer(&reaction_config).await?;
+        let reaction_consumer = rostfrei_messaging_core::MessageConsumerFactory::create(
+            &factory,
+            reaction_config.clone(),
+        )?;
+        let messaging = Arc::new(connection.messaging_adapter(topology));
+        let command_adapter: Arc<dyn CommandMessageAdapter> = messaging;
+        let command_bus = CommandBus::new(context.clone(), command_adapter);
+        let reaction_handler = Arc::new(
+            IntegrationEventCommandHandler::<BicycleRentalStarted, _>::new(
+                command_bus,
+                reaction_config.durable_name().clone(),
+                RetryDelay::new(Duration::from_millis(100))?,
+                ReturnBicycleAfterRental,
+            ),
+        );
+        let reaction_task =
+            tokio::spawn(async move { reaction_consumer.run(reaction_handler).await });
+        runtime.start_workers().await?;
+
+        let receipt = runtime
+            .transport()
+            .invoke(
+                invocation(
+                    "rent-for-command-reaction",
+                    "command-reaction-correlation",
+                    RentBicycle::LOCAL_ID,
+                    RentBicycle::SCHEMA_VERSION,
+                    json!({"bicycle_id": "bike-42"}),
+                )?,
+                Arc::new(RecordingObserver::default()),
+            )
+            .await?;
+        ensure(
+            matches!(receipt.outcome(), CommandOutcome::Accepted),
+            "rental command was not accepted",
+        )?;
+        wait_for_history_len(&runtime, 3).await?;
+
+        let history = runtime.store().load(&demo_stream()).await?;
+        ensure(
+            history[1].event_type() == BicycleRented::LOCAL_ID,
+            "integration source event was not BicycleRented",
+        )?;
+        ensure(
+            history[2].event_type() == BicycleReturned::LOCAL_ID,
+            "integration reaction did not produce BicycleReturned",
+        )?;
+        ensure(
+            history[1].correlation_id() == history[2].correlation_id()
+                && history[2]
+                    .correlation_id()
+                    .is_some_and(|id| id.as_str() == "command-reaction-correlation"),
+            "integration command mapping did not preserve correlation",
+        )?;
+        ensure(
+            history[2]
+                .causation_id()
+                .is_some_and(|causation| causation.as_str() != receipt.command_message_id()),
+            "reaction event did not identify its generated command as causation",
+        )?;
+
+        runtime.stop_workers().await;
+        reaction_task.abort();
+        let _ = reaction_task.await;
+        Ok(())
+    }
+    .await;
+    let cleanup_result = cleanup(&connection, [&config]).await;
     let drain_result = connection.drain().await;
 
     result?;

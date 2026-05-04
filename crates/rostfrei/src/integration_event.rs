@@ -1,124 +1,55 @@
-use std::any::Any;
+use std::marker::PhantomData;
 
+use async_trait::async_trait;
 use rostfrei_core::{Aggregate, AggregateId, CommandHandler, OperationId};
-use rostfrei_messaging_core::{CausationId, DurableName, IntegrationEventEnvelope};
+use rostfrei_messaging_core::{
+    CausationId, DeliveryDisposition, DurableName, IntegrationEventAddress,
+    IntegrationEventEnvelope, MessageDelivery, MessageHandler, QuarantineReason, RetryDelay,
+};
 use rostfrei_registry::CommandDefinition;
 use thiserror::Error;
 
 use crate::{
-    CommandBus, CommandBusError, CommandBusReceipt, DynamicCommandRequest, JsonCommandPayload,
-    RoutedAggregateCommand, RoutedAggregateCommandError, command_bus::framed_fingerprint,
+    CommandBus, CommandBusError, CommandBusReceipt, CommandRequest, JsonCommandPayload,
+    command_bus::framed_fingerprint,
+    integration_event_bus::{EncodedIntegrationMessage, IntegrationEvent},
 };
 
-/// Maps one incoming integration event to at most one aggregate command.
-pub trait IntegrationEventHandler<E>: Send + Sync {
+/// Maps one incoming integration event to one command for a target aggregate.
+pub trait IntegrationCommandMapper<E>: Send + Sync {
+    type Aggregate: Aggregate + CommandHandler<Self::Command>;
+    type Command: CommandDefinition<Self::Aggregate> + JsonCommandPayload + Send + Sync;
     type Error;
 
-    fn handle(&self, event: &E, commands: &mut CommandContext) -> Result<(), Self::Error>;
+    fn map(&self, event: &E) -> Result<IntegrationCommand<Self::Command>, Self::Error>;
 }
 
-/// Collects a typed command while an integration event is being mapped.
-///
-/// Calling [`Self::issue`] performs no I/O. The processor dispatches only after
-/// the handler returns successfully and exactly one command was issued.
-#[derive(Default)]
-pub struct CommandContext {
-    issued_count: usize,
-    command: Option<Result<IssuedCommand, CommandContextError>>,
-}
-
-impl CommandContext {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn issue<A, C>(&mut self, aggregate_id: AggregateId, command: C)
-    where
-        A: Aggregate + CommandHandler<C>,
-        C: CommandDefinition<A> + JsonCommandPayload + Send + Sync,
-    {
-        self.issued_count = self.issued_count.saturating_add(1);
-        if self.issued_count != 1 {
-            return;
-        }
-
-        let routed = command
-            .encode_json()
-            .map_err(CommandContextError::Encoding)
-            .and_then(|payload| {
-                RoutedAggregateCommand::new(
-                    A::aggregate_type().into_owned(),
-                    aggregate_id.as_str(),
-                    C::LOCAL_ID,
-                    C::SCHEMA_VERSION,
-                    payload,
-                )
-                .map_err(CommandContextError::InvalidCommand)
-            });
-        self.command = Some(routed.map(|routed| IssuedCommand {
-            aggregate_id,
-            command: Box::new(command),
-            routed,
-        }));
-    }
-
-    pub const fn issued_count(&self) -> usize {
-        self.issued_count
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.issued_count == 0
-    }
-
-    pub fn issued_command(&self) -> Option<&RoutedAggregateCommand> {
-        if self.issued_count != 1 {
-            return None;
-        }
-        self.command
-            .as_ref()?
-            .as_ref()
-            .ok()
-            .map(|command| &command.routed)
-    }
-
-    /// Returns a typed view of the issued command for focused mapper tests.
-    pub fn issued<C>(&self) -> Option<(&AggregateId, &C)>
-    where
-        C: 'static,
-    {
-        if self.issued_count != 1 {
-            return None;
-        }
-        let command = self.command.as_ref()?.as_ref().ok()?;
-        Some((&command.aggregate_id, command.command.downcast_ref::<C>()?))
-    }
-
-    fn into_command(self) -> Result<Option<RoutedAggregateCommand>, CommandContextError> {
-        match self.issued_count {
-            0 => Ok(None),
-            1 => self
-                .command
-                .ok_or_else(|| {
-                    CommandContextError::Encoding(
-                        "issued command intent was not recorded".to_owned(),
-                    )
-                })?
-                .map(|command| Some(command.routed)),
-            _ => Err(CommandContextError::MultipleCommands),
-        }
-    }
-}
-
-struct IssuedCommand {
+/// A typed command and the aggregate instance that should receive it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IntegrationCommand<C> {
     aggregate_id: AggregateId,
-    command: Box<dyn Any + Send + Sync>,
-    routed: RoutedAggregateCommand,
+    command: C,
 }
 
-enum CommandContextError {
-    Encoding(String),
-    InvalidCommand(RoutedAggregateCommandError),
-    MultipleCommands,
+impl<C> IntegrationCommand<C> {
+    pub const fn new(aggregate_id: AggregateId, command: C) -> Self {
+        Self {
+            aggregate_id,
+            command,
+        }
+    }
+
+    pub const fn aggregate_id(&self) -> &AggregateId {
+        &self.aggregate_id
+    }
+
+    pub const fn command(&self) -> &C {
+        &self.command
+    }
+
+    pub fn into_parts(self) -> (AggregateId, C) {
+        (self.aggregate_id, self.command)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -144,129 +75,136 @@ impl CompletedIntegrationCommand {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum IntegrationEventOutcome {
-    NoCommand,
-    Completed(Box<CompletedIntegrationCommand>),
-}
-
-impl IntegrationEventOutcome {
-    pub const fn command_message_id(&self) -> Option<&rostfrei_messaging_core::MessageId> {
-        match self {
-            Self::NoCommand => None,
-            Self::Completed(completed) => Some(completed.command_message_id()),
-        }
-    }
-
-    pub const fn publication_duplicate(&self) -> Option<bool> {
-        match self {
-            Self::NoCommand => None,
-            Self::Completed(completed) => Some(completed.publication_duplicate()),
-        }
-    }
-
-    pub const fn response(&self) -> Option<&rostfrei_messaging_core::CommandResponse> {
-        match self {
-            Self::NoCommand => None,
-            Self::Completed(completed) => Some(completed.response()),
-        }
-    }
-}
-
 #[derive(Debug, Error)]
-pub enum IntegrationEventProcessingError<HandlerError> {
-    #[error("integration event handler failed")]
-    Handler(HandlerError),
-    #[error("integration event handler issued more than one command")]
-    MultipleCommands,
-    #[error("issued command could not be encoded: {message}")]
-    CommandEncoding { message: String },
-    #[error(transparent)]
-    InvalidCommand(RoutedAggregateCommandError),
+pub enum IntegrationEventProcessingError<MapperError> {
+    #[error("integration command mapper failed")]
+    Mapper(MapperError),
     #[error("deterministic operation identity could not be built: {0}")]
     MessageIdentity(String),
     #[error("command dispatch failed: {0}")]
     CommandBus(CommandBusError),
 }
 
-/// Dispatches commands produced by an incoming integration-event mapper.
-pub struct IntegrationEventProcessor<Handler> {
+/// Dispatches the command produced by an incoming integration-event mapper.
+pub struct IntegrationEventProcessor<Mapper> {
     command_bus: CommandBus,
     durable_name: DurableName,
-    handler: Handler,
+    mapper: Mapper,
 }
 
-impl<Handler> IntegrationEventProcessor<Handler> {
-    pub const fn new(command_bus: CommandBus, durable_name: DurableName, handler: Handler) -> Self {
+impl<Mapper> IntegrationEventProcessor<Mapper> {
+    pub const fn new(command_bus: CommandBus, durable_name: DurableName, mapper: Mapper) -> Self {
         Self {
             command_bus,
             durable_name,
-            handler,
+            mapper,
         }
     }
 
     pub async fn process<E>(
         &self,
         envelope: &IntegrationEventEnvelope<E>,
-    ) -> Result<IntegrationEventOutcome, IntegrationEventProcessingError<Handler::Error>>
+    ) -> Result<CompletedIntegrationCommand, IntegrationEventProcessingError<Mapper::Error>>
     where
-        Handler: IntegrationEventHandler<E>,
+        Mapper: IntegrationCommandMapper<E>,
         E: Sync,
     {
-        let mut commands = CommandContext::new();
-        self.handler
-            .handle(envelope.payload(), &mut commands)
-            .map_err(IntegrationEventProcessingError::Handler)?;
-        let Some(command) = commands.into_command().map_err(|error| match error {
-            CommandContextError::Encoding(message) => {
-                IntegrationEventProcessingError::CommandEncoding { message }
-            }
-            CommandContextError::InvalidCommand(error) => {
-                IntegrationEventProcessingError::InvalidCommand(error)
-            }
-            CommandContextError::MultipleCommands => {
-                IntegrationEventProcessingError::MultipleCommands
-            }
-        })?
-        else {
-            return Ok(IntegrationEventOutcome::NoCommand);
-        };
-
+        let mapped = self
+            .mapper
+            .map(envelope.payload())
+            .map_err(IntegrationEventProcessingError::Mapper)?;
+        let (aggregate_id, command) = mapped.into_parts();
+        let aggregate_type = <Mapper::Aggregate as Aggregate>::aggregate_type();
         let operation_id = integration_operation_id(
             &self.durable_name,
             envelope.message_id(),
-            command.aggregate_type(),
-            command.aggregate_id(),
+            aggregate_type.as_ref(),
+            aggregate_id.as_str(),
         )
         .map_err(|error| IntegrationEventProcessingError::MessageIdentity(error.to_string()))?;
         let causation_id = CausationId::new(envelope.message_id().as_str())
             .map_err(|error| IntegrationEventProcessingError::MessageIdentity(error.to_string()))?;
-        let request = DynamicCommandRequest::new(
-            operation_id,
-            command.aggregate_type(),
-            AggregateId::new(command.aggregate_id()).map_err(|error| {
-                IntegrationEventProcessingError::CommandBus(CommandBusError::new(
-                    crate::CommandBusErrorKind::Encoding,
-                    error.to_string(),
-                ))
-            })?,
-            command.command(),
-            command.schema_version(),
-            command.payload().clone(),
-        )
-        .map_err(IntegrationEventProcessingError::CommandBus)?
-        .with_correlation_id(envelope.correlation_id().clone())
-        .with_causation_id(causation_id)
-        .with_created_at(envelope.occurred_at());
+        let request = CommandRequest::new(operation_id, aggregate_id, command)
+            .with_correlation_id(envelope.correlation_id().clone())
+            .with_causation_id(causation_id)
+            .with_created_at(envelope.occurred_at());
         let receipt = self
             .command_bus
-            .dispatch_dynamic(request)
+            .dispatch::<Mapper::Aggregate, Mapper::Command>(request)
             .await
             .map_err(IntegrationEventProcessingError::CommandBus)?;
-        Ok(IntegrationEventOutcome::Completed(Box::new(
-            CompletedIntegrationCommand { receipt },
-        )))
+        Ok(CompletedIntegrationCommand { receipt })
     }
+}
+
+/// Adapts a typed integration-command mapping to the transport consumer port.
+pub struct IntegrationEventCommandHandler<E, Mapper> {
+    processor: IntegrationEventProcessor<Mapper>,
+    retry_delay: RetryDelay,
+    marker: PhantomData<fn() -> E>,
+}
+
+impl<E, Mapper> IntegrationEventCommandHandler<E, Mapper> {
+    pub const fn new(
+        command_bus: CommandBus,
+        durable_name: DurableName,
+        retry_delay: RetryDelay,
+        mapper: Mapper,
+    ) -> Self {
+        Self {
+            processor: IntegrationEventProcessor::new(command_bus, durable_name, mapper),
+            retry_delay,
+            marker: PhantomData,
+        }
+    }
+}
+
+#[async_trait]
+impl<E, Mapper> MessageHandler<IntegrationEventAddress>
+    for IntegrationEventCommandHandler<E, Mapper>
+where
+    E: IntegrationEvent,
+    Mapper: IntegrationCommandMapper<E>,
+    Mapper::Error: Send,
+{
+    async fn handle(
+        &self,
+        delivery: MessageDelivery<IntegrationEventAddress>,
+    ) -> DeliveryDisposition {
+        let envelope = EncodedIntegrationMessage::from_delivery(
+            delivery.address().clone(),
+            delivery.message_id().clone(),
+            delivery.payload().to_vec(),
+            delivery.correlation_id().cloned(),
+        )
+        .and_then(|message| message.decode::<E>());
+        let Ok(envelope) = envelope else {
+            return quarantine("invalid integration event envelope");
+        };
+
+        match self.processor.process(&envelope).await {
+            Ok(_) => DeliveryDisposition::Acknowledge,
+            Err(IntegrationEventProcessingError::CommandBus(error))
+                if matches!(
+                    error.kind(),
+                    crate::CommandBusErrorKind::Timeout | crate::CommandBusErrorKind::Unavailable
+                ) =>
+            {
+                DeliveryDisposition::RetryAfter(self.retry_delay)
+            }
+            Err(IntegrationEventProcessingError::Mapper(_)) => {
+                quarantine("integration command mapping failed")
+            }
+            Err(_) => quarantine("integration command mapping produced an invalid command"),
+        }
+    }
+}
+
+fn quarantine(reason: &'static str) -> DeliveryDisposition {
+    QuarantineReason::new(reason).map_or(
+        DeliveryDisposition::Terminate,
+        DeliveryDisposition::Quarantine,
+    )
 }
 
 fn integration_operation_id(

@@ -46,11 +46,24 @@ the dynamic entry point on `CommandBus`. Tracer observes publication and
 terminal responses, but it is not a privileged executor and does not define a
 separate command wire contract.
 
-Integration events are produced only from committed domain events. A
-`DomainEventHandler` maps a concrete committed event to a public integration
-event and publishes it through `IntegrationEventBus`. The source event identity
-defines the integration message identity and causation, so retries are stable.
-Aggregate handlers never publish integration events before commit.
+Integration events are produced only from committed domain events. Application
+code implements `IntegrationEventMapper` for each private event it publishes.
+`IntegrationEventPublisher` supplies the `DomainEventHandler`, and
+`register_integration_event` derives the private event registration from its
+compiled definition. The source event identity defines the integration message
+identity and causation, so retries are stable. Aggregate handlers never publish
+integration events before commit.
+
+A consuming bounded context implements `IntegrationCommandMapper` to map an
+incoming public event to exactly one typed `IntegrationCommand<C>`. The mapped
+value contains the command and its target aggregate ID and performs no messaging
+I/O. `IntegrationEventCommandHandler` owns envelope validation, deterministic
+command identity, correlation and causation propagation, command dispatch, and
+delivery disposition. A terminal command response, including a business
+rejection, acknowledges the integration event. Transient command-bus
+unavailability retries it; malformed envelopes and invalid mappings are
+quarantined. Independent mappings use independent durables and may each produce
+their own command.
 
 ## Consequences
 
@@ -64,3 +77,9 @@ Post-commit publication does not make event storage and integration publication
 atomic. Durable domain-event consumption retries failed publication and stable
 message identities make replay safe, but deployments that require a stronger
 atomic guarantee still need an outbox or equivalent journal.
+
+Application behavior is expressed as two typed transformations: domain event to
+integration event in the publishing context, then integration event to targeted
+command in the consuming context. Redelivery cannot duplicate a command for the
+same mapping durable, while a second durable remains an independent mapping with
+its own operation identity.
