@@ -218,7 +218,7 @@ const chooseRegistrationNumberFormat = directory(
   {
     role: "Value Object policy",
     summary: "Chooses one closed Registration Number format outcome.",
-    allowed: ["policy.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
+    allowed: ["policy.rs", "evaluate.rs", "mod.rs"],
     guarantee:
       "The policy implementation must directly target RegistrationNumber.",
   },
@@ -759,6 +759,102 @@ const rentalFleet = directory(
   ]
 )
 
+const rebalanceFleet = directory(
+  "rebalance-fleet",
+  "rebalance_fleet",
+  "src/domain/bike_rental/fleet_planning/rebalance_fleet",
+  {
+    role: "Domain service action",
+    summary:
+      "Coordinates a fleet-rebalancing operation over domain objects supplied by the caller.",
+    allowed: ["action.rs", "execute.rs", "mod.rs"],
+    guarantee:
+      "The action implementation targets FleetPlanning without introducing infrastructure into the service.",
+  },
+  [
+    file(
+      "rebalance-fleet-action",
+      "action.rs",
+      "src/domain/bike_rental/fleet_planning/rebalance_fleet/action.rs",
+      {
+        role: "Domain service action contract",
+        summary: "Declares RebalanceFleetAction and its semantic ID.",
+        allowed: [
+          "One #[domain_action] trait",
+          "Its method signature",
+          "Imports",
+        ],
+        guarantee:
+          "The service operation remains ordinary callable Rust with domain-shaped inputs.",
+      }
+    ),
+    file(
+      "rebalance-fleet-execute",
+      "execute.rs",
+      "src/domain/bike_rental/fleet_planning/rebalance_fleet/execute.rs",
+      {
+        role: "Domain service action implementation",
+        summary: "Implements rebalancing directly for FleetPlanning.",
+        allowed: [
+          "One matching trait implementation",
+          "Private helpers",
+          "Imports",
+        ],
+        guarantee:
+          "The checker binds the action to the service marker declared in service.rs.",
+      }
+    ),
+  ]
+)
+
+const assessDemand = directory(
+  "assess-demand",
+  "assess_demand",
+  "src/domain/bike_rental/fleet_planning/assess_demand",
+  {
+    role: "Domain service policy",
+    summary:
+      "Assesses supplied demand facts without mutating state or accessing infrastructure.",
+    allowed: ["policy.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
+    guarantee:
+      "The policy implementation targets FleetPlanning and remains independently reusable.",
+  },
+  [
+    file(
+      "assess-demand-policy",
+      "policy.rs",
+      "src/domain/bike_rental/fleet_planning/assess_demand/policy.rs",
+      {
+        role: "Domain service policy contract",
+        summary: "Declares AssessDemandPolicy and its semantic ID.",
+        allowed: [
+          "One #[domain_policy] trait",
+          "Its method signature",
+          "Imports",
+        ],
+        guarantee:
+          "The policy contract stays separate from its outcome vocabulary.",
+      }
+    ),
+    file(
+      "assess-demand-evaluate",
+      "evaluate.rs",
+      "src/domain/bike_rental/fleet_planning/assess_demand/evaluate.rs",
+      {
+        role: "Domain service policy implementation",
+        summary: "Evaluates supplied demand facts directly for FleetPlanning.",
+        allowed: [
+          "One matching trait implementation",
+          "Private helpers",
+          "Imports",
+        ],
+        guarantee:
+          "The evaluator remains pure and cannot silently attach to another domain owner.",
+      }
+    ),
+  ]
+)
+
 const fleetPlanning = directory(
   "fleet-planning",
   "fleet_planning",
@@ -767,9 +863,14 @@ const fleetPlanning = directory(
     role: "Domain service",
     summary:
       "Represents stateless domain behavior that does not belong to one Entity or Aggregate.",
-    allowed: ["service.rs", "Focused service capability directories", "mod.rs"],
+    allowed: [
+      "service.rs",
+      "Action directories",
+      "Policy directories",
+      "mod.rs",
+    ],
     guarantee:
-      "DomainServiceDefinition explicitly binds the service to Bike Rental.",
+      "DomainServiceDefinition binds the service to Bike Rental while its capabilities remain explicit ordinary traits.",
   },
   [
     file(
@@ -788,6 +889,8 @@ const fleetPlanning = directory(
           "Context ownership is compiler-checked without implicit behavior attachments.",
       }
     ),
+    rebalanceFleet,
+    assessDemand,
   ]
 )
 

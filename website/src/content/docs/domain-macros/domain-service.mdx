@@ -1,10 +1,10 @@
 # `DomainService`
 
-Put cross-entity behavior in context. The derive names the service; DomainServiceDefinition supplies the only required relationship. Service behavior remains explicit in the surrounding domain code.
+Give stateless cross-object domain behavior an explicit owner. The derive names the service marker; `DomainServiceDefinition` connects it to one bounded context. Focused Actions and Domain Policies remain ordinary traits in child capability directories.
 
 - Non-generic unit struct
 - Context relationship is explicit
-- No implicit actions
+- No implicit capabilities or infrastructure
 
 **Placement:** [Domain service](/docs/project-structure/domain-service) — `service.rs`.
 

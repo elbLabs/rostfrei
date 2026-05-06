@@ -158,6 +158,7 @@ fn expected_owner<'a>(
     facts: &'a BTreeMap<PathBuf, SourceFileFacts>,
 ) -> Option<&'a str> {
     for (file, kind) in [
+        ("service.rs", PrimaryKind::DomainService),
         ("aggregate.rs", PrimaryKind::Aggregate),
         ("entity.rs", PrimaryKind::Entity),
         ("value.rs", PrimaryKind::ValueObject),
