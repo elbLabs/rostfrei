@@ -137,7 +137,7 @@ export const docsNavigation = [
         slug: "project-structure/value-object-invariant",
       },
       {
-        title: "Entity lifecycle",
+        title: "Lifecycle",
         slug: "project-structure/entity-lifecycle",
       },
     ],

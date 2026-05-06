@@ -25,6 +25,25 @@ fn agreed_domain_structure_is_valid() {
 }
 
 #[test]
+fn lifecycles_may_belong_to_aggregate_roots_or_nested_entities() {
+    let domain_root = fixture_domain("valid_domain");
+    let diagnostics = check_domain_root(&domain_root);
+    let root = fs::read_to_string(domain_root.join("bike_rental/rental_fleet/root.rs"))
+        .expect("aggregate root fixture");
+
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+    assert!(root.contains("status: FleetStatus"));
+    for path in [
+        "bike_rental/rental_fleet/fleet_status/lifecycle.rs",
+        "bike_rental/rental_fleet/fleet_status/transition.rs",
+        "bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs",
+        "bike_rental/rental_fleet/bicycle/rental_status/transition.rs",
+    ] {
+        assert!(domain_root.join(path).is_file(), "missing fixture {path}");
+    }
+}
+
+#[test]
 fn marker_only_identity_files_are_valid_role_declarations() {
     let domain_root = fixture_domain("valid_domain");
     let identity = domain_root.join("bike_rental/rental_fleet/identity.rs");
@@ -568,12 +587,7 @@ fn invalid_structures_emit_the_expected_diagnostic() {
             "bike_rental/rental_fleet/rent_bicycle/bicycle/entity.rs",
         ),
         (
-            "hierarchy_lifecycle_under_aggregate",
-            DiagnosticCode::InvalidStructure,
-            "bike_rental/rental_fleet/rental_status/lifecycle.rs",
-        ),
-        (
-            "hierarchy_lifecycle_under_aggregate",
+            "hierarchy_transition_under_aggregate",
             DiagnosticCode::InvalidStructure,
             "bike_rental/rental_fleet/transition.rs",
         ),

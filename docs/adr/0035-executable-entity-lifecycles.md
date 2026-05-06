@@ -84,7 +84,8 @@ SCXML execution semantics.
 The typed domain structure stores the state declaration in `lifecycle.rs` and
 the transition declaration in the sibling `transition.rs`. The lifecycle
 directory remains anchored by `lifecycle.rs`; `transition.rs` is a companion,
-not a second directory role.
+not a second directory role. Because an aggregate root is an Entity, a
+lifecycle directory may belong directly to an aggregate or to a nested Entity.
 
 ## Consequences
 

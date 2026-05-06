@@ -2,6 +2,7 @@
 #[domain(id = "rental-fleet-root", label = "Rental fleet")]
 pub struct RentalFleet {
     fleet_id: FleetId,
+    status: FleetStatus,
     #[domain(entity)]
     bicycles: Vec<Bicycle>,
 }

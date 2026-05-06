@@ -1,7 +1,8 @@
-# Entity lifecycle
+# Lifecycle
 
-An entity lifecycle keeps the entity's authoritative stored state and legal state changes together. Evaluation is pure: it checks topology while actions, decisions, and events retain business policy and side effects.
+An aggregate root or nested Entity lifecycle keeps its owner's authoritative stored state and legal state changes together. Evaluation is pure: it checks topology while actions, decisions, and events retain business policy and side effects.
 
+- Put the lifecycle directory directly beneath its owning aggregate or nested Entity directory.
 - Put the state enum in `lifecycle.rs` and the transition enum in `transition.rs`.
 - Give every state a stable ID and label.
 - Declare exactly one initial state and one or more source/target edges per transition.
@@ -9,6 +10,8 @@ An entity lifecycle keeps the entity's authoritative stored state and legal stat
 - Keep state-changing actions in separate capability directories.
 
 Path: `src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs`
+
+This example belongs to the nested `Bicycle` Entity. An aggregate-root lifecycle uses the same directory shape directly beneath the aggregate, for example `src/domain/order_management/order/order_status/`.
 
 <ProjectStructureExample name="entity-lifecycle">
 

@@ -47,7 +47,7 @@ const rentalStatus = directory(
   "rental_status",
   "src/domain/bike_rental/rental_fleet/bicycle/rental_status",
   {
-    role: "Entity lifecycle",
+    role: "Lifecycle",
     summary: "Keeps executable state topology beside Bicycle.",
     allowed: ["lifecycle.rs", "transition.rs", "mod.rs"],
     guarantee:
@@ -667,7 +667,7 @@ const rentalFleet = directory(
     allowed: [
       "Aggregate anchor files",
       "Entity directories",
-      "Action, Query, Decision, and Invariant capabilities",
+      "Action, Query, Decision, Invariant, and Lifecycle capabilities",
     ],
     guarantee:
       "Aggregate relationships are explicit in Rust and visible in the filesystem.",

@@ -1,12 +1,12 @@
 # `EntityLifecycle`
 
-Make the entity's stored state its lifecycle state. The derive adds stable state metadata, an explicit initial state, and the `LifecycleState` implementation used to evaluate typed transitions.
+Make an aggregate root's or nested Entity's stored state its lifecycle state. The derive adds stable state metadata, an explicit initial state, and the `LifecycleState` implementation used to evaluate typed transitions.
 
 - Fieldless enum
 - One explicit initial state
 - Pure transition evaluation through `LifecycleState`
 
-**Placement:** [Entity lifecycle](/docs/project-structure/entity-lifecycle) — `lifecycle.rs`.
+**Placement:** [Lifecycle](/docs/project-structure/entity-lifecycle) — `lifecycle.rs` in a lifecycle directory directly beneath the owning aggregate or nested Entity.
 
 <MacroExample name="EntityLifecycle" />
 
