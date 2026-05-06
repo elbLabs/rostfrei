@@ -4,6 +4,10 @@
 
 Accepted.
 
+The reusable `decision` attachment terminology discussed historically below
+is superseded by [ADR 0036](0036-domain-policy-vocabulary.md), which names that
+capability a Domain Policy.
+
 ## Context
 
 The original `Aggregate` derive accepted context, root, action, decision,

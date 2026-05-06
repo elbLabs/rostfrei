@@ -6,7 +6,7 @@ pub(super) enum DirectoryRole {
     Entity,
     ValueObject,
     Action,
-    Decision,
+    Policy,
     Query,
     Invariant,
     Lifecycle,
@@ -21,7 +21,7 @@ const DOMAIN_SERVICE_CHILDREN: &[DirectoryRole] = &[DirectoryRole::Action];
 const AGGREGATE_CHILDREN: &[DirectoryRole] = &[
     DirectoryRole::Entity,
     DirectoryRole::Action,
-    DirectoryRole::Decision,
+    DirectoryRole::Policy,
     DirectoryRole::Query,
     DirectoryRole::Invariant,
     DirectoryRole::Lifecycle,
@@ -29,14 +29,14 @@ const AGGREGATE_CHILDREN: &[DirectoryRole] = &[
 ];
 const ENTITY_CHILDREN: &[DirectoryRole] = &[
     DirectoryRole::Action,
-    DirectoryRole::Decision,
+    DirectoryRole::Policy,
     DirectoryRole::Invariant,
     DirectoryRole::Lifecycle,
     DirectoryRole::ValueObject,
 ];
 const VALUE_OBJECT_CHILDREN: &[DirectoryRole] = &[
     DirectoryRole::Action,
-    DirectoryRole::Decision,
+    DirectoryRole::Policy,
     DirectoryRole::Invariant,
 ];
 
@@ -48,7 +48,7 @@ impl DirectoryRole {
         Self::Entity,
         Self::ValueObject,
         Self::Action,
-        Self::Decision,
+        Self::Policy,
         Self::Query,
         Self::Invariant,
         Self::Lifecycle,
@@ -62,7 +62,7 @@ impl DirectoryRole {
             Self::Entity => "entity.rs",
             Self::ValueObject => "value.rs",
             Self::Action => "action.rs",
-            Self::Decision => "decision.rs",
+            Self::Policy => "policy.rs",
             Self::Query => "query.rs",
             Self::Invariant => "contract.rs",
             Self::Lifecycle => "lifecycle.rs",
@@ -77,7 +77,7 @@ impl DirectoryRole {
             Self::Entity => "entity",
             Self::ValueObject => "value object",
             Self::Action => "action",
-            Self::Decision => "decision",
+            Self::Policy => "policy",
             Self::Query => "query",
             Self::Invariant => "invariant",
             Self::Lifecycle => "lifecycle",
@@ -91,7 +91,7 @@ impl DirectoryRole {
             Self::DomainService => DOMAIN_SERVICE_CHILDREN,
             Self::Entity => ENTITY_CHILDREN,
             Self::ValueObject => VALUE_OBJECT_CHILDREN,
-            Self::Action | Self::Decision | Self::Query | Self::Invariant | Self::Lifecycle => &[],
+            Self::Action | Self::Policy | Self::Query | Self::Invariant | Self::Lifecycle => &[],
         }
     }
 }

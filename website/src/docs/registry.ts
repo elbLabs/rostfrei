@@ -30,8 +30,8 @@ export const docsRegistry = {
     import("@/content/docs/domain-macros/domain-event.mdx"),
   "domain-macros/domain-error": () =>
     import("@/content/docs/domain-macros/domain-error.mdx"),
-  "domain-macros/decision-outcome": () =>
-    import("@/content/docs/domain-macros/decision-outcome.mdx"),
+  "domain-macros/policy-outcome": () =>
+    import("@/content/docs/domain-macros/policy-outcome.mdx"),
   "domain-macros/entity-lifecycle": () =>
     import("@/content/docs/domain-macros/entity-lifecycle.mdx"),
   "domain-macros/state-transition": () =>
@@ -40,8 +40,8 @@ export const docsRegistry = {
     import("@/content/docs/domain-macros/domain-action.mdx"),
   "domain-macros/domain-query": () =>
     import("@/content/docs/domain-macros/domain-query.mdx"),
-  "domain-macros/domain-decision": () =>
-    import("@/content/docs/domain-macros/domain-decision.mdx"),
+  "domain-macros/domain-policy": () =>
+    import("@/content/docs/domain-macros/domain-policy.mdx"),
   "domain-macros/domain-invariant": () =>
     import("@/content/docs/domain-macros/domain-invariant.mdx"),
   "domain-macros/domain-tests": () =>
@@ -72,12 +72,12 @@ export const docsRegistry = {
     import("@/content/docs/project-structure/value-object-action.mdx"),
   "project-structure/query": () =>
     import("@/content/docs/project-structure/query.mdx"),
-  "project-structure/aggregate-decision": () =>
-    import("@/content/docs/project-structure/aggregate-decision.mdx"),
-  "project-structure/entity-decision": () =>
-    import("@/content/docs/project-structure/entity-decision.mdx"),
-  "project-structure/value-object-decision": () =>
-    import("@/content/docs/project-structure/value-object-decision.mdx"),
+  "project-structure/aggregate-policy": () =>
+    import("@/content/docs/project-structure/aggregate-policy.mdx"),
+  "project-structure/entity-policy": () =>
+    import("@/content/docs/project-structure/entity-policy.mdx"),
+  "project-structure/value-object-policy": () =>
+    import("@/content/docs/project-structure/value-object-policy.mdx"),
   "project-structure/aggregate-invariant": () =>
     import("@/content/docs/project-structure/aggregate-invariant.mdx"),
   "project-structure/value-object-invariant": () =>

@@ -35,8 +35,6 @@ mod aggregate;
 mod aggregate_events;
 mod bounded_context;
 mod command;
-mod decision;
-mod decision_outcome;
 mod domain_error;
 mod domain_event;
 mod domain_identity;
@@ -47,6 +45,8 @@ mod entity_lifecycle;
 mod field;
 mod helper;
 mod invariant;
+mod policy;
+mod policy_outcome;
 mod query;
 mod state_transition;
 mod value_object;
@@ -59,8 +59,8 @@ pub fn domain_action(args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn domain_decision(args: TokenStream, input: TokenStream) -> TokenStream {
-    decision::expand(&args.into(), input.into())
+pub fn domain_policy(args: TokenStream, input: TokenStream) -> TokenStream {
+    policy::expand(&args.into(), input.into())
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
@@ -91,9 +91,9 @@ pub fn domain_action_test(args: TokenStream, input: TokenStream) -> TokenStream 
 }
 
 #[proc_macro_attribute]
-pub fn domain_decision_test(args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn domain_policy_test(args: TokenStream, input: TokenStream) -> TokenStream {
     domain_test::expand(
-        domain_test::DomainTestKind::Decision,
+        domain_test::DomainTestKind::Policy,
         args.into(),
         input.into(),
     )
@@ -151,9 +151,9 @@ pub fn derive_domain_identity(input: TokenStream) -> TokenStream {
         .into()
 }
 
-#[proc_macro_derive(DecisionOutcome, attributes(outcome))]
-pub fn derive_decision_outcome(input: TokenStream) -> TokenStream {
-    decision_outcome::expand(&parse_macro_input!(input as DeriveInput))
+#[proc_macro_derive(PolicyOutcome, attributes(outcome))]
+pub fn derive_policy_outcome(input: TokenStream) -> TokenStream {
+    policy_outcome::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

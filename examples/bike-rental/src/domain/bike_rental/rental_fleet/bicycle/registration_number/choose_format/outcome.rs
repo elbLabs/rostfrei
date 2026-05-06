@@ -1,6 +1,6 @@
-use rostfrei::DecisionOutcome;
+use rostfrei::PolicyOutcome;
 
-#[derive(DecisionOutcome, Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(PolicyOutcome, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RegistrationNumberFormat {
     #[outcome(id = "compact", label = "Compact")]
     Compact,

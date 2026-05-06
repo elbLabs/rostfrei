@@ -4,6 +4,10 @@
 
 Accepted.
 
+The reusable Decision terminology used for contextual rules below is
+superseded by [ADR 0036](0036-domain-policy-vocabulary.md), which names those
+rules Domain Policies. Command-scoped Decision retains its original meaning.
+
 ## Context
 
 The original `EntityLifecycle` contract described an ordered vocabulary of

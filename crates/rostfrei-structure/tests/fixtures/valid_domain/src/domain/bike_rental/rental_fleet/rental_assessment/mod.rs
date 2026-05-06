@@ -1,3 +1,3 @@
-mod decision;
+mod policy;
 mod evaluate;
 mod outcome;

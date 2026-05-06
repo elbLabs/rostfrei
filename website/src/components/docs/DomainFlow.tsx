@@ -12,7 +12,7 @@ import {
 } from "@xyflow/react"
 
 type DomainNodeData = {
-  kind: "command" | "decision" | "event" | "rejection"
+  kind: "command" | "policy" | "decision" | "event" | "rejection"
   title: string
   description: string
   input?: boolean
@@ -98,13 +98,25 @@ const initialNodes: DomainNode[] = [
     },
   },
   {
-    id: "decision",
+    id: "policy",
     type: "domain",
-    position: { x: 280, y: 105 },
+    position: { x: 245, y: 105 },
     data: {
-      kind: "decision",
+      kind: "policy",
       title: "Assess eligibility",
       description: "Evaluates the rule without changing state.",
+      input: true,
+      output: "single",
+    },
+  },
+  {
+    id: "decision",
+    type: "domain",
+    position: { x: 490, y: 105 },
+    data: {
+      kind: "decision",
+      title: "Decide rental",
+      description: "Accepts with an event or returns a rejection.",
       input: true,
       output: "branch",
     },
@@ -112,7 +124,7 @@ const initialNodes: DomainNode[] = [
   {
     id: "accepted",
     type: "domain",
-    position: { x: 575, y: 15 },
+    position: { x: 770, y: 15 },
     data: {
       kind: "event",
       title: "Bicycle rented",
@@ -123,7 +135,7 @@ const initialNodes: DomainNode[] = [
   {
     id: "rejected",
     type: "domain",
-    position: { x: 575, y: 205 },
+    position: { x: 770, y: 205 },
     data: {
       kind: "rejection",
       title: "Rental rejected",
@@ -135,8 +147,15 @@ const initialNodes: DomainNode[] = [
 
 const initialEdges: Edge[] = [
   {
-    id: "command-decision",
+    id: "command-policy",
     source: "command",
+    target: "policy",
+    type: "smoothstep",
+    markerEnd: { type: MarkerType.ArrowClosed },
+  },
+  {
+    id: "policy-decision",
+    source: "policy",
     target: "decision",
     type: "smoothstep",
     markerEnd: { type: MarkerType.ArrowClosed },
@@ -172,7 +191,7 @@ export function DomainFlow() {
       </div>
       <div className="h-96 w-full sm:h-105">
         <ReactFlow<DomainNode>
-          aria-label="A command flows into a decision that produces either an accepted event or a rejection"
+          aria-label="A command consults a reusable policy before its decision produces either an accepted event or a rejection"
           colorMode="dark"
           defaultEdges={initialEdges}
           defaultNodes={initialNodes}

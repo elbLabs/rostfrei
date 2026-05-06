@@ -48,8 +48,8 @@ export const docsNavigation = [
           { title: "DomainEvent", slug: "domain-macros/domain-event" },
           { title: "DomainError", slug: "domain-macros/domain-error" },
           {
-            title: "DecisionOutcome",
-            slug: "domain-macros/decision-outcome",
+            title: "PolicyOutcome",
+            slug: "domain-macros/policy-outcome",
           },
           {
             title: "EntityLifecycle",
@@ -68,8 +68,8 @@ export const docsNavigation = [
           { title: "domain_action", slug: "domain-macros/domain-action" },
           { title: "domain_query", slug: "domain-macros/domain-query" },
           {
-            title: "domain_decision",
-            slug: "domain-macros/domain-decision",
+            title: "domain_policy",
+            slug: "domain-macros/domain-policy",
           },
           {
             title: "domain_invariant",
@@ -117,16 +117,16 @@ export const docsNavigation = [
       },
       { title: "Query", slug: "project-structure/query" },
       {
-        title: "Aggregate decision",
-        slug: "project-structure/aggregate-decision",
+        title: "Aggregate policy",
+        slug: "project-structure/aggregate-policy",
       },
       {
-        title: "Entity decision",
-        slug: "project-structure/entity-decision",
+        title: "Entity policy",
+        slug: "project-structure/entity-policy",
       },
       {
-        title: "Value-object decision",
-        slug: "project-structure/value-object-decision",
+        title: "Value-object policy",
+        slug: "project-structure/value-object-policy",
       },
       {
         title: "Aggregate invariant",

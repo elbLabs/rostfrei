@@ -175,7 +175,7 @@ fn compiles_explicit_domain_model_to_json() {
                 "fields": [],
             }],
             "actions": [],
-            "decisions": [],
+            "policies": [],
             "queries": [],
             "invariants": [],
         })

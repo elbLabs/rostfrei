@@ -4,6 +4,10 @@
 
 Accepted.
 
+Reusable-rule terminology and its remaining model collection are superseded
+by [ADR 0036](0036-domain-policy-vocabulary.md): these declarations are Domain
+Policies, and the collection is named `policies`.
+
 ## Decision
 
 rostfrei absorbs the former standalone domain compiler as its canonical,

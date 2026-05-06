@@ -15,7 +15,7 @@ pub(super) fn check(
         .iter()
         .filter(|directory| !directory.starts_with(&tests_root))
     {
-        for kind in [EvaluationKind::Decision, EvaluationKind::Invariant] {
+        for kind in [EvaluationKind::Policy, EvaluationKind::Invariant] {
             let declaration_path = directory.join(kind.declaration_file());
             let Some(declaration) = facts.get(&declaration_path) else {
                 continue;
@@ -212,28 +212,28 @@ fn type_display(reference: &TypeReference) -> Option<String> {
 
 #[derive(Clone, Copy)]
 enum EvaluationKind {
-    Decision,
+    Policy,
     Invariant,
 }
 
 impl EvaluationKind {
     const fn declaration_file(self) -> &'static str {
         match self {
-            Self::Decision => "decision.rs",
+            Self::Policy => "policy.rs",
             Self::Invariant => "contract.rs",
         }
     }
 
     const fn primary(self) -> PrimaryKind {
         match self {
-            Self::Decision => PrimaryKind::Decision,
+            Self::Policy => PrimaryKind::Policy,
             Self::Invariant => PrimaryKind::Invariant,
         }
     }
 
     const fn label(self) -> &'static str {
         match self {
-            Self::Decision => "decision",
+            Self::Policy => "policy",
             Self::Invariant => "invariant",
         }
     }

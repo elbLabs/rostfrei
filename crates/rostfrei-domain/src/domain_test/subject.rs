@@ -1,9 +1,9 @@
-use crate::{ActionId, DecisionId, EntityLifecycleId, InvariantId};
+use crate::{ActionId, EntityLifecycleId, InvariantId, PolicyId};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DomainTestSubject {
     Action(ActionId),
-    Decision(DecisionId),
+    Policy(PolicyId),
     Invariant(InvariantId),
     Lifecycle(EntityLifecycleId),
 }

@@ -1,5 +1,0 @@
-error: DecisionOutcome only supports non-generic enums
- --> tests/ui/decision_outcome/invalid_target.rs:4:8
-  |
-4 | struct NotAnEnum;
-  |        ^^^^^^^^^

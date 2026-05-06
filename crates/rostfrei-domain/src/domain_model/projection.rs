@@ -285,7 +285,7 @@ impl DomainModelBuilder {
             "domainEvents": self.domain_events.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "domainErrors": self.domain_errors.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "actions": [],
-            "decisions": [],
+            "policies": [],
             "queries": [],
             "invariants": [],
         }))

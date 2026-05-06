@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use super::{DomainTestDescriptor, projection};
 
-const PREFIX: &str = "ROSTFREI_DOMAIN_TEST_METADATA_V1\t";
+const PREFIX: &str = "ROSTFREI_DOMAIN_TEST_METADATA_V2\t";
 
 pub fn emit_domain_test_metadata(descriptor: DomainTestDescriptor) -> io::Result<()> {
     let stdout = io::stdout();

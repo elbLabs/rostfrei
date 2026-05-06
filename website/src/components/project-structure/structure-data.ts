@@ -216,22 +216,23 @@ const chooseRegistrationNumberFormat = directory(
   "choose_format",
   "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format",
   {
-    role: "Value Object decision",
+    role: "Value Object policy",
     summary: "Chooses one closed Registration Number format outcome.",
-    allowed: ["decision.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
+    allowed: ["policy.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
     guarantee:
-      "The decision implementation must directly target RegistrationNumber.",
+      "The policy implementation must directly target RegistrationNumber.",
   },
   [
     file(
-      "registration-decision",
-      "decision.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format/decision.rs",
+      "registration-policy",
+      "policy.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format/policy.rs",
       {
-        role: "Value Object decision contract",
-        summary: "Declares ChooseRegistrationNumberFormat and its semantic ID.",
+        role: "Value Object policy contract",
+        summary:
+          "Declares ChooseRegistrationNumberFormatPolicy and its semantic ID.",
         allowed: [
-          "One #[domain_decision] trait",
+          "One #[domain_policy] trait",
           "Its method signature",
           "Imports",
         ],
@@ -243,18 +244,18 @@ const chooseRegistrationNumberFormat = directory(
       "outcome.rs",
       "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format/outcome.rs",
       {
-        role: "Decision outcome",
+        role: "Policy outcome",
         summary: "Defines compact and segmented Registration Number formats.",
-        allowed: ["One DecisionOutcome enum", "Tagged variants", "Imports"],
+        allowed: ["One PolicyOutcome enum", "Tagged variants", "Imports"],
         guarantee: "Outcome IDs and labels remain stable and exhaustive.",
       }
     ),
     file(
-      "registration-decision-evaluate",
+      "registration-policy-evaluate",
       "evaluate.rs",
       "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format/evaluate.rs",
       {
-        role: "Value Object decision implementation",
+        role: "Value Object policy implementation",
         summary: "Evaluates the format directly for RegistrationNumber.",
         allowed: [
           "One matching trait implementation",
@@ -262,7 +263,7 @@ const chooseRegistrationNumberFormat = directory(
           "Imports",
         ],
         guarantee:
-          "The checker binds the decision to the Value Object declared by value.rs.",
+          "The checker binds the policy to the Value Object declared by value.rs.",
       }
     ),
   ]
@@ -275,12 +276,12 @@ const registrationNumber = directory(
   {
     role: "Behaviorful Value Object",
     summary:
-      "Keeps one semantic value and its action, invariant, and decision capabilities together.",
+      "Keeps one semantic value and its action, invariant, and policy capabilities together.",
     allowed: [
       "value.rs",
       "Action directories",
       "Invariant directories",
-      "Decision directories",
+      "Policy directories",
       "mod.rs",
     ],
     guarantee:
@@ -309,33 +310,33 @@ const registrationNumber = directory(
   ]
 )
 
-const eligibilityDecision = directory(
-  "eligibility-decision",
+const eligibilityPolicy = directory(
+  "eligibility-policy",
   "assess_rental_eligibility",
   "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility",
   {
-    role: "Entity decision capability",
+    role: "Entity policy capability",
     summary:
       "Composes lifecycle topology and condition policy into one business outcome.",
-    allowed: ["decision.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
+    allowed: ["policy.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
     guarantee:
       "Eligibility remains pure and reusable by commands and queries without duplicating lifecycle rules.",
   },
   [
     file(
-      "decision",
-      "decision.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/decision.rs",
+      "policy",
+      "policy.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/policy.rs",
       {
-        role: "Decision contract",
+        role: "Policy contract",
         summary: "Declares a parameter-free policy query on Bicycle.",
         allowed: [
-          "One #[domain_decision] trait",
+          "One #[domain_policy] trait",
           "Its method signature",
           "Imports",
         ],
         guarantee:
-          "Decision metadata is global while filesystem placement binds its implementation owner.",
+          "Policy metadata is global while filesystem placement binds its implementation owner.",
       }
     ),
     file(
@@ -343,11 +344,11 @@ const eligibilityDecision = directory(
       "outcome.rs",
       "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/outcome.rs",
       {
-        role: "Decision outcome",
+        role: "Policy outcome",
         summary:
-          "Declares the closed, ordered vocabulary returned by the Decision.",
+          "Declares the closed, ordered vocabulary returned by the policy.",
         allowed: [
-          "One DecisionOutcome enum",
+          "One PolicyOutcome enum",
           "Tagged variants",
           "Ordinary payload fields",
         ],
@@ -360,7 +361,7 @@ const eligibilityDecision = directory(
       "evaluate.rs",
       "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/evaluate.rs",
       {
-        role: "Entity decision implementation",
+        role: "Entity policy implementation",
         summary:
           "Implements the policy for Bicycle by composing its lifecycle and condition.",
         allowed: [
@@ -387,7 +388,7 @@ const bicycle = directory(
     allowed: [
       "entity.rs and identity.rs",
       "Value Object modules",
-      "Lifecycle, decision, and action directories",
+      "Lifecycle, policy, and action directories",
     ],
     guarantee:
       "Related concepts stay nested with their owner instead of being flattened into type buckets.",
@@ -427,7 +428,7 @@ const bicycle = directory(
     bicycleCondition,
     registrationNumber,
     rentalStatus,
-    eligibilityDecision,
+    eligibilityPolicy,
   ]
 )
 
@@ -667,7 +668,7 @@ const rentalFleet = directory(
     allowed: [
       "Aggregate anchor files",
       "Entity directories",
-      "Action, Query, Decision, Invariant, and Lifecycle capabilities",
+      "Action, Query, Policy, Invariant, and Lifecycle capabilities",
     ],
     guarantee:
       "Aggregate relationships are explicit in Rust and visible in the filesystem.",

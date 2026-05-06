@@ -1,10 +1,10 @@
 #![allow(dead_code, non_snake_case, private_bounds, private_interfaces)]
 
-use domain::DecisionOutcome;
+use domain::PolicyOutcome;
 use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle, EntityLifecycleType,
-    InvariantViolation, ValueObject, domain_action, domain_action_test, domain_decision,
-    domain_decision_test, domain_invariant, domain_invariant_test, domain_lifecycle_test,
+    InvariantViolation, ValueObject, domain_action, domain_action_test, domain_invariant,
+    domain_invariant_test, domain_lifecycle_test, domain_policy, domain_policy_test,
 };
 
 #[derive(BoundedContext)]
@@ -12,17 +12,17 @@ use domain::{
 struct Testing;
 
 #[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
-#[domain(id = "decision-input", label = "Decision input")]
-struct DecisionInput(bool);
+#[domain(id = "decision-input", label = "Policy input")]
+struct PolicyInput(bool);
 
 #[derive(ValueObject, Debug, Eq, PartialEq)]
-#[domain(id = "decision-output", label = "Decision output")]
-struct DecisionOutput(bool);
+#[domain(id = "decision-output", label = "Policy output")]
+struct PolicyOutput(bool);
 
-#[derive(DecisionOutcome, Debug, Eq, PartialEq)]
-enum TestDecisionOutcome {
+#[derive(PolicyOutcome, Debug, Eq, PartialEq)]
+enum TestPolicyOutcome {
     #[outcome(id = "accepted", label = "Accepted")]
-    Accepted(DecisionOutput),
+    Accepted(PolicyOutput),
     #[outcome(id = "rejected", label = "Rejected")]
     Rejected,
 }
@@ -37,9 +37,9 @@ trait MarkedInvariant {
     fn marked(candidate: &TestRoot) -> Option<InvariantViolation>;
 }
 
-#[domain_decision(id = "accept", label = "Accept")]
-trait AcceptDecision {
-    fn accept(input: DecisionInput) -> TestDecisionOutcome;
+#[domain_policy(id = "accept", label = "Accept")]
+trait AcceptPolicy {
+    fn accept(input: PolicyInput) -> TestPolicyOutcome;
 }
 
 #[derive(EntityLifecycle, Clone, Copy, Eq, PartialEq)]
@@ -82,12 +82,12 @@ impl domain::AggregateDefinition for TestAggregate {
     type Event = domain::NoDomainEvents;
 }
 
-impl AcceptDecision for TestAggregate {
-    fn accept(input: DecisionInput) -> TestDecisionOutcome {
+impl AcceptPolicy for TestAggregate {
+    fn accept(input: PolicyInput) -> TestPolicyOutcome {
         if input.0 {
-            TestDecisionOutcome::Accepted(DecisionOutput(true))
+            TestPolicyOutcome::Accepted(PolicyOutput(true))
         } else {
-            TestDecisionOutcome::Rejected
+            TestPolicyOutcome::Rejected
         }
     }
 }
@@ -133,11 +133,11 @@ fn case_distinct_test_name() {}
 #[domain_action_test(<TestAggregate as MarkAction>::DESCRIPTOR)]
 fn CASE_DISTINCT_TEST_NAME() {}
 
-#[domain_decision_test(<TestAggregate as AcceptDecision>::DESCRIPTOR)]
-fn decision_tests_keep_the_authored_body() {
+#[domain_policy_test(<TestAggregate as AcceptPolicy>::DESCRIPTOR)]
+fn policy_tests_keep_the_authored_body() {
     assert_eq!(
-        TestAggregate::accept(DecisionInput(true)),
-        TestDecisionOutcome::Accepted(DecisionOutput(true))
+        TestAggregate::accept(PolicyInput(true)),
+        TestPolicyOutcome::Accepted(PolicyOutput(true))
     );
 }
 

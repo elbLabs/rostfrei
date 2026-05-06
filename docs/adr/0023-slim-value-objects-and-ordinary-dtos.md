@@ -4,6 +4,10 @@
 
 Accepted.
 
+The reusable Decision and `DecisionOutcome` terminology discussed historically
+below is superseded by [ADR 0036](0036-domain-policy-vocabulary.md): these are
+now Domain Policy and `PolicyOutcome`.
+
 ## Context
 
 `ValueObject` previously combined a semantic domain tag with ownership,

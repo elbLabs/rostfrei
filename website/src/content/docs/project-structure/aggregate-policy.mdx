@@ -1,0 +1,29 @@
+# Aggregate policy
+
+An aggregate policy keeps a pure business rule beside its closed outcome vocabulary. The contract, outcomes, and evaluation live separately so policy remains reviewable without state mutation or persistence code.
+
+- Declare the trait in `policy.rs`.
+- Define exhaustive outcomes in `outcome.rs`.
+- Implement the policy for the aggregate type in `evaluate.rs`.
+
+Illustrative path: `src/domain/bike_rental/rental_fleet/plan_fleet_capacity`
+
+The bike-rental example's rental-eligibility policy belongs to a Bicycle and is documented as an [Entity policy](/docs/project-structure/entity-policy). This aggregate-level capability is an illustrative shape.
+
+<ProjectStructureExample name="aggregate-policy">
+
+```rust
+use rostfrei::domain_policy;
+
+use super::FleetCapacityOutcome;
+
+#[domain_policy(
+    id = "plan-fleet-capacity",
+    label = "Plan fleet capacity"
+)]
+pub(in crate::domain) trait FleetCapacityPolicy {
+    fn plan_fleet_capacity(&self) -> FleetCapacityOutcome;
+}
+```
+
+</ProjectStructureExample>

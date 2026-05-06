@@ -1,9 +1,9 @@
 use crate::domain::rental_fleet::{
-    ChooseRegistrationNumberFormat, RegistrationNumber, RegistrationNumberFormat,
+    ChooseRegistrationNumberFormatPolicy, RegistrationNumber, RegistrationNumberFormat,
 };
 
-#[rostfrei::domain_decision_test(
-    <RegistrationNumber as ChooseRegistrationNumberFormat>::DESCRIPTOR
+#[rostfrei::domain_policy_test(
+    <RegistrationNumber as ChooseRegistrationNumberFormatPolicy>::DESCRIPTOR
 )]
 fn distinguishes_compact_and_segmented_formats() {
     assert_eq!(
