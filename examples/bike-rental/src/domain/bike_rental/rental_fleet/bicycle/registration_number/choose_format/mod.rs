@@ -1,6 +1,6 @@
-mod decision;
 mod evaluate;
 mod outcome;
+mod policy;
 
-pub use decision::ChooseRegistrationNumberFormat;
 pub use outcome::RegistrationNumberFormat;
+pub use policy::ChooseRegistrationNumberFormatPolicy;

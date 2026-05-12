@@ -4,7 +4,6 @@ mod action;
 mod aggregate;
 mod bounded_context;
 mod command;
-mod decision;
 mod domain_error;
 mod domain_event;
 mod domain_identity;
@@ -17,6 +16,7 @@ mod entity_lifecycle;
 mod field;
 mod invariant;
 mod json_wire;
+mod policy;
 mod value_object;
 
 pub use action::{ActionDescriptor, ActionId};
@@ -26,9 +26,6 @@ pub use aggregate::{
 };
 pub use bounded_context::{BoundedContextDescriptor, BoundedContextId, BoundedContextType};
 pub use command::{Command, CommandDescriptor};
-pub use decision::{
-    DecisionDescriptor, DecisionId, DecisionOutcomeDescriptor, DecisionOutcomeType,
-};
 pub use domain_error::{DomainError, DomainErrorDescriptor, DomainErrorId};
 pub use domain_event::{DomainEvent, DomainEventDescriptor, DomainEventId, DomainEventType};
 pub use domain_identity::{DomainIdentity, DomainIdentityId};
@@ -51,11 +48,12 @@ pub use field::{
 };
 pub use invariant::{InvariantDescriptor, InvariantId, InvariantViolation};
 pub use json_wire::{JsonCommandPayload, JsonErrorPayload};
+pub use policy::{PolicyDescriptor, PolicyId, PolicyOutcomeDescriptor, PolicyOutcomeType};
 pub use rostfrei_domain_macros::{
-    Aggregate, AggregateEvents, BoundedContext, Command, DecisionOutcome, DomainError, DomainEvent,
-    DomainIdentity, DomainService, Entity, EntityLifecycle, StateTransition, ValueObject,
-    domain_action, domain_action_test, domain_decision, domain_decision_test, domain_invariant,
-    domain_invariant_test, domain_lifecycle_test, domain_query,
+    Aggregate, AggregateEvents, BoundedContext, Command, DomainError, DomainEvent, DomainIdentity,
+    DomainService, Entity, EntityLifecycle, PolicyOutcome, StateTransition, ValueObject,
+    domain_action, domain_action_test, domain_invariant, domain_invariant_test,
+    domain_lifecycle_test, domain_policy, domain_policy_test, domain_query,
 };
 pub use value_object::{ValueObject, ValueObjectDescriptor, ValueObjectId};
 

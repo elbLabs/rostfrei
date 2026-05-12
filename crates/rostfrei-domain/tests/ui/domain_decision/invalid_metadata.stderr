@@ -1,5 +1,0 @@
-error: missing label
- --> tests/ui/domain_decision/invalid_metadata.rs:3:19
-  |
-3 | #[domain_decision(id = "missing-label")]
-  |                   ^^^^^^^^^^^^^^^^^^^^

@@ -4,6 +4,10 @@
 
 Accepted.
 
+The reusable-rule vocabulary in this historical decision is superseded by
+[ADR 0036](0036-domain-policy-vocabulary.md): Decision remains the
+command-scoped result, while the capability described here is a Domain Policy.
+
 The parameter and outcome-payload modeling described by the original decision
 is superseded by [ADR 0024](0024-semantic-decision-outcomes-and-ordinary-payloads.md).
 Decision groups, attachments, owner metadata, projection, and generated test

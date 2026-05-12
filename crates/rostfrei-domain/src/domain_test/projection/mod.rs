@@ -1,7 +1,7 @@
 mod action;
-mod decision;
 mod invariant;
 mod lifecycle;
+mod policy;
 
 use serde_json::{Value, json};
 
@@ -13,7 +13,7 @@ pub(super) fn compact(descriptor: DomainTestDescriptor) -> String {
 
 pub(super) fn project(descriptor: DomainTestDescriptor) -> Value {
     json!({
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "package": descriptor.package,
         "target": descriptor.target,
         "test": descriptor.test,
@@ -27,8 +27,8 @@ pub(super) fn project(descriptor: DomainTestDescriptor) -> Value {
 fn subject(subject: DomainTestSubject) -> Value {
     match subject {
         DomainTestSubject::Action(id) => json!({ "kind": "action", "id": action::project(id) }),
-        DomainTestSubject::Decision(id) => {
-            json!({ "kind": "decision", "id": decision::project(id) })
+        DomainTestSubject::Policy(id) => {
+            json!({ "kind": "policy", "id": policy::project(id) })
         }
         DomainTestSubject::Invariant(id) => {
             json!({ "kind": "invariant", "id": invariant::project(id) })

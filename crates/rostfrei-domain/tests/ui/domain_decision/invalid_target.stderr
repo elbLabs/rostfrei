@@ -1,5 +1,0 @@
-error: domain_decision may only be applied to a trait
- --> tests/ui/domain_decision/invalid_target.rs:4:1
-  |
-4 | struct NotATrait;
-  | ^^^^^^^^^^^^^^^^^

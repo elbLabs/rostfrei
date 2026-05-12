@@ -4,6 +4,11 @@
 
 Accepted.
 
+The reusable Decision capability and `decision.rs` terminology discussed
+historically below is superseded by
+[ADR 0036](0036-domain-policy-vocabulary.md): these are Domain Policy and
+`policy.rs`.
+
 ## Context
 
 Value Objects may begin as small semantic types and later acquire meaningful

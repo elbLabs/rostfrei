@@ -1,0 +1,11 @@
+# `PolicyOutcome`
+
+Keep outcomes closed and exhaustive. The enum remains ordinary Rust while each business outcome receives a stable local ID and label. Attach metadata directly to each possible outcome.
+
+- Non-empty enum
+- Ordered outcome metadata
+- Arbitrary Rust payloads
+
+**Placement:** [Aggregate policy](/docs/project-structure/aggregate-policy), [Entity policy](/docs/project-structure/entity-policy), or [value-object policy](/docs/project-structure/value-object-policy) — `outcome.rs`.
+
+<MacroExample name="PolicyOutcome" />

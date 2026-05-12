@@ -10,7 +10,7 @@ fn omits_unattached_capabilities_and_lifecycle_metadata() {
     let model = crate::domain::model::domain_model().expect("comparison domain model should build");
     assert_eq!(model["actions"], json!([]));
     assert_eq!(model["domainServices"], json!([]));
-    assert_eq!(model["decisions"], json!([]));
+    assert_eq!(model["policies"], json!([]));
     assert_eq!(model["invariants"], json!([]));
     assert!(model.get("commands").is_none());
     let identities = model["domainIdentities"]
