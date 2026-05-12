@@ -1,4 +1,5 @@
 import type {
+  Fixture,
   MessageGraphNode,
   TestDefinitionRevision,
   TestDefinitionSummary,
@@ -9,18 +10,21 @@ export const SAMPLE_TESTS: TestDefinitionSummary[] = [
     id: "rent-available-bicycle",
     name: "Rent an available bicycle",
     revision: "local-demo",
+    definitionHref: "/tests/rent-available-bicycle",
     runHref: "/tests/rent-available-bicycle/runs",
   },
   {
     id: "reject-unavailable-bicycle",
-    name: "Reject a maintenance bicycle",
+    name: "Reject a maintenance-required bicycle",
     revision: "local-demo",
+    definitionHref: "/tests/reject-unavailable-bicycle",
     runHref: "/tests/reject-unavailable-bicycle/runs",
   },
   {
     id: "return-rented-bicycle",
     name: "Return a rented bicycle",
     revision: "local-demo",
+    definitionHref: "/tests/return-rented-bicycle",
     runHref: "/tests/return-rented-bicycle/runs",
   },
 ]
@@ -32,37 +36,50 @@ export const SAMPLE_DEFINITIONS: Record<string, TestDefinitionRevision> = {
       schemaVersion: 1,
       id: "rent-available-bicycle",
       name: "Rent an available bicycle",
-      given: { fixture: "demo-fleet" },
-      when: {
-        command: {
-          name: "rent-bicycle",
-          schemaVersion: 1,
-          aggregate: {
-            type: "bike-rental/rental-fleet",
-            id: "city-fleet",
-          },
-          payload: { bicycle_id: "bike-42" },
-        },
-      },
-      then: {
-        outcome: "accepted",
+      setup: { fixture: "demo-fleet" },
+      expected: {
         within: "35s",
-        trace: {
-          contains: [
-            {
-              kind: "domain-event",
-              name: "bicycle-rented",
-              schemaVersion: 1,
-              payload: { fleet_id: "city-fleet", bicycle_id: "bike-42" },
-            },
-            {
-              kind: "integration-event",
-              name: "bicycle-rental-started",
-              schemaVersion: 1,
-              payload: { fleet_id: "city-fleet", bicycle_id: "bike-42" },
-            },
-          ],
-        },
+        settleFor: "1s",
+        graphs: [
+          {
+            nodes: [
+              {
+                kind: "command",
+                key: "subject",
+                name: "rent-bicycle",
+                schemaVersion: 1,
+                aggregate: {
+                  type: "bike-rental/rental-fleet",
+                  id: "city-fleet",
+                },
+                payload: { bicycle_id: "bike-42" },
+                outcome: "accepted",
+              },
+              {
+                kind: "domain-event",
+                key: "bicycle-rented",
+                parentKey: "subject",
+                name: "bicycle-rented",
+                schemaVersion: 1,
+                payload: {
+                  fleet_id: "city-fleet",
+                  bicycle_id: "bike-42",
+                },
+              },
+              {
+                kind: "integration-event",
+                key: "rental-started",
+                parentKey: "bicycle-rented",
+                name: "bicycle-rental-started",
+                schemaVersion: 1,
+                payload: {
+                  fleet_id: "city-fleet",
+                  bicycle_id: "bike-42",
+                },
+              },
+            ],
+          },
+        ],
       },
     },
   },
@@ -71,27 +88,34 @@ export const SAMPLE_DEFINITIONS: Record<string, TestDefinitionRevision> = {
     definition: {
       schemaVersion: 1,
       id: "reject-unavailable-bicycle",
-      name: "Reject a maintenance bicycle",
-      given: { fixture: "demo-fleet" },
-      when: {
-        command: {
-          name: "rent-bicycle",
-          schemaVersion: 1,
-          aggregate: {
-            type: "bike-rental/rental-fleet",
-            id: "city-fleet",
-          },
-          payload: { bicycle_id: "bike-99" },
-        },
-      },
-      then: {
-        outcome: {
-          rejected: {
-            code: "BICYCLE_UNAVAILABLE",
-            payload: { bicycle_id: "bike-99" },
-          },
-        },
+      name: "Reject a maintenance-required bicycle",
+      setup: { fixture: "demo-fleet" },
+      expected: {
         within: "35s",
+        settleFor: "1s",
+        graphs: [
+          {
+            nodes: [
+              {
+                kind: "command",
+                key: "subject",
+                name: "rent-bicycle",
+                schemaVersion: 1,
+                aggregate: {
+                  type: "bike-rental/rental-fleet",
+                  id: "city-fleet",
+                },
+                payload: { bicycle_id: "bike-99" },
+                outcome: {
+                  rejected: {
+                    code: "BICYCLE_UNAVAILABLE",
+                    payload: { bicycle_id: "bike-99" },
+                  },
+                },
+              },
+            ],
+          },
+        ],
       },
     },
   },
@@ -101,74 +125,102 @@ export const SAMPLE_DEFINITIONS: Record<string, TestDefinitionRevision> = {
       schemaVersion: 1,
       id: "return-rented-bicycle",
       name: "Return a rented bicycle",
-      given: {
-        fixture: "demo-fleet",
-        commands: [
+      setup: { fixture: "demo-fleet" },
+      expected: {
+        within: "35s",
+        settleFor: "1s",
+        graphs: [
           {
-            name: "rent-bicycle",
-            schemaVersion: 1,
-            aggregate: {
-              type: "bike-rental/rental-fleet",
-              id: "city-fleet",
-            },
-            payload: { bicycle_id: "bike-42" },
+            nodes: [
+              {
+                kind: "command",
+                key: "subject",
+                name: "return-bicycle",
+                schemaVersion: 1,
+                aggregate: {
+                  type: "bike-rental/rental-fleet",
+                  id: "city-fleet",
+                },
+                payload: { bicycle_id: "bike-42" },
+                outcome: "accepted",
+              },
+              {
+                kind: "domain-event",
+                key: "bicycle-returned",
+                parentKey: "subject",
+                name: "bicycle-returned",
+                schemaVersion: 1,
+                payload: {
+                  fleet_id: "city-fleet",
+                  bicycle_id: "bike-42",
+                },
+              },
+            ],
           },
         ],
-      },
-      when: {
-        command: {
-          name: "return-bicycle",
-          schemaVersion: 1,
-          aggregate: {
-            type: "bike-rental/rental-fleet",
-            id: "city-fleet",
-          },
-          payload: { bicycle_id: "bike-42" },
-        },
-      },
-      then: {
-        outcome: "accepted",
-        within: "35s",
-        trace: {
-          contains: [
-            {
-              kind: "domain-event",
-              name: "bicycle-returned",
-              schemaVersion: 1,
-              payload: { fleet_id: "city-fleet", bicycle_id: "bike-42" },
-            },
-          ],
-        },
       },
     },
   },
 }
 
+export const SAMPLE_FIXTURE: Fixture = {
+  schemaVersion: 1,
+  id: "demo-fleet",
+  revision: "1",
+  messages: [
+    {
+      kind: "domain-event",
+      messageId: "demo-fleet-imported",
+      correlationId: "fixture:demo-fleet:1",
+      name: "rental-fleet-imported",
+      schemaVersion: 1,
+      aggregate: {
+        type: "bike-rental/rental-fleet",
+        id: "city-fleet",
+      },
+      streamVersion: 1,
+      payload: {
+        fleet_id: "city-fleet",
+        bicycles: [
+          {
+            bicycle_id: "bike-42",
+            status: "available",
+            condition: "serviceable",
+          },
+          {
+            bicycle_id: "bike-99",
+            status: "available",
+            condition: "maintenance-required",
+          },
+        ],
+      },
+    },
+  ],
+}
+
 export const SAMPLE_GRAPH: MessageGraphNode[] = [
   {
-    id: "fixture-rent-available-bicycle",
+    id: "fixture-event-0-demo-fleet-imported",
     kind: "domain-event",
-    name: "demo-fleet",
+    name: "rental-fleet-imported",
     schemaVersion: 1,
-    payload: { fixture: "demo-fleet" },
+    payload: SAMPLE_FIXTURE.messages[0].payload,
+    messageId: "demo-fleet-imported",
+    aggregateType: "bike-rental/rental-fleet",
+    aggregateId: "city-fleet",
+    streamVersion: 1,
     context: "fixture",
     status: "accepted",
   },
   {
     id: "command-rent",
-    parentId: "fixture-rent-available-bicycle",
-    hideIncomingEdge: true,
+    parentId: "fixture-event-0-demo-fleet-imported",
+    edgeRelationship: "context",
     kind: "command",
     name: "rent-bicycle",
     schemaVersion: 1,
     payload: { bicycle_id: "bike-42" },
-    response: {
-      decision: "accepted",
-      published: true,
-      duplicate: false,
-      commandMessageId: "cmd_01HZX8B7T7",
-      responseMessageId: "rsp_01HZX8B85C",
-    },
+    response: { status: "accepted", value: null },
     messageId: "cmd_01HZX8B7T7",
     aggregateType: "bike-rental/rental-fleet",
     aggregateId: "city-fleet",

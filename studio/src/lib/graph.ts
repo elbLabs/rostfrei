@@ -1,6 +1,8 @@
 import type {
-  CorrelationEvent,
+  EdgeRelationship,
+  Fixture,
   MessageGraphNode,
+  ObservedCommandOutcome,
   TestDefinition,
   TestReport,
 } from "@/lib/types"
@@ -15,6 +17,7 @@ export interface GraphEdge {
   source: PositionedNode
   target: PositionedNode
   fidelity: "exact" | "grouped"
+  relationship: EdgeRelationship
   context: boolean
 }
 
@@ -95,6 +98,7 @@ export function layoutMessageGraph(nodes: MessageGraphNode[]): GraphLayout {
         source,
         target,
         fidelity: target.edgeFidelity ?? "grouped",
+        relationship: target.edgeRelationship ?? "causation",
         context: Boolean(source.context || target.context),
       },
     ]
@@ -127,182 +131,182 @@ function nearestFreeLane(preferred: number, occupied: Set<number>): number {
   return preferred + occupied.size + 1
 }
 
-export function expectedGraph(definition: TestDefinition): MessageGraphNode[] {
-  const context = fixtureContext(definition, "idle")
-  const command = definition.when.command
-  const root: MessageGraphNode = {
-    id: `preview-command-${definition.id}`,
-    parentId: context.at(-1)?.id,
-    hideIncomingEdge: true,
-    kind: "command",
-    name: command.name,
-    schemaVersion: command.schemaVersion,
-    payload: command.payload,
-    aggregateType: command.aggregate.type,
-    aggregateId: command.aggregate.id,
-    status: "idle",
-  }
-  const expectations = definition.then.trace?.contains ?? []
+export function expectedGraph(
+  definition: TestDefinition,
+  fixture?: Fixture
+): MessageGraphNode[] {
+  const context = fixtureContext("idle", fixture)
+  const expectedNodes = definition.expected.graphs[0]?.nodes ?? []
+  const idsByKey = new Map(
+    expectedNodes.map((node) => [
+      node.key,
+      `expected-${definition.id}-${node.key}`,
+    ])
+  )
 
   return [
-    ...context,
-    root,
-    ...expectations.map<MessageGraphNode>((expectation, index) => ({
-      id: `preview-event-${definition.id}-${index}`,
-      parentId: root.id,
-      edgeFidelity: "grouped",
-      kind: expectation.kind,
-      name: expectation.name,
-      schemaVersion: expectation.schemaVersion,
-      payload: expectation.payload,
-      status: "idle",
-    })),
+    ...context.nodes,
+    ...expectedNodes.map<MessageGraphNode>((node) => {
+      const expectedParentId = node.parentKey
+        ? idsByKey.get(node.parentKey)
+        : undefined
+      const isRoot = !node.parentKey
+      return {
+        id: idsByKey.get(node.key)!,
+        parentId: isRoot ? context.anchorId : expectedParentId,
+        edgeFidelity: expectedParentId ? "exact" : undefined,
+        edgeRelationship:
+          isRoot && context.anchorId ? "context" : undefined,
+        kind: node.kind,
+        name: node.name,
+        schemaVersion: node.schemaVersion,
+        payload: node.payload,
+        aggregateType:
+          node.kind === "command" ? node.aggregate.type : undefined,
+        aggregateId: node.kind === "command" ? node.aggregate.id : undefined,
+        status: "idle",
+      }
+    }),
   ]
 }
 
-export function correlationGraph(
-  events: CorrelationEvent[],
-  definition: TestDefinition,
-  report: TestReport
+export function reportGraph(
+  report: TestReport,
+  fixture?: Fixture
 ): MessageGraphNode[] {
-  const context = fixtureContext(definition, "accepted")
-  const commandEvent = events.find((event) => event.type === "command")
-  const resultEvent = events.find((event) => event.type === "command-result")
-  const result =
-    resultEvent?.type === "command-result" ? resultEvent.result : undefined
-  const commandMessageId = getStringProperty(result, "commandMessageId")
-  const rootId = `operation-${report.operationId}`
-  const command = definition.when.command
-  const root: MessageGraphNode = {
-    id: rootId,
-    parentId: context.at(-1)?.id,
-    hideIncomingEdge: true,
-    kind: "command",
-    name:
-      commandEvent?.type === "command" ? commandEvent.command : command.name,
-    schemaVersion:
-      commandEvent?.type === "command"
-        ? commandEvent.schemaVersion
-        : command.schemaVersion,
-    payload: command.payload,
-    response: result,
-    messageId: commandMessageId,
-    aggregateType:
-      commandEvent?.type === "command"
-        ? commandEvent.aggregateType
-        : command.aggregate.type,
-    aggregateId:
-      commandEvent?.type === "command"
-        ? commandEvent.aggregateId
-        : command.aggregate.id,
-    status:
-      resultEvent?.type === "command-result"
-        ? outcomeStatus(resultEvent.outcome)
-        : "running",
+  const context = fixtureContext("accepted", fixture)
+  const messages = [...report.observed.messages].sort(
+    (left, right) => left.observationOrder - right.observationOrder
+  )
+  const knownIds = new Set(messages.map((message) => message.messageId))
+  const expectedRoot = report.expected.graphs[0]?.nodes.find(
+    (node) => !node.parentKey && node.kind === "command"
+  )
+  const matchedRootId = report.comparison.matches.find(
+    (match) => match.expectedKey === expectedRoot?.key
+  )?.observedMessageId
+  const subject =
+    messages.find((message) => message.messageId === matchedRootId) ??
+    messages.find((message) => message.kind === "command")
+  const outcomes = new Map(
+    report.observed.commandOutcomes.map((outcome) => [
+      outcome.commandMessageId,
+      outcome,
+    ])
+  )
+  if (report.commandOutcome) {
+    outcomes.set(report.commandOutcome.commandMessageId, report.commandOutcome)
   }
 
-  const observedEvents = events.filter(
-    (event) =>
-      event.type === "domain-event" || event.type === "integration-event"
-  )
-  const knownIds = new Set(
-    observedEvents.flatMap((event) =>
-      event.messageId ? [event.messageId] : []
-    )
-  )
-
   return [
-    ...context,
-    root,
-    ...observedEvents.map<MessageGraphNode>((event) => {
-      const id = event.messageId ?? `correlation-event-${event.id}`
-      const causedByCommand =
-        event.causationId !== undefined &&
-        event.causationId === commandMessageId
-      const causedByMessage =
-        event.causationId !== undefined && knownIds.has(event.causationId)
-      const exactParent = causedByCommand || causedByMessage
+    ...context.nodes,
+    ...messages.map<MessageGraphNode>((message) => {
+      const exactParent = message.causationId
+        ? knownIds.has(message.causationId)
+        : false
+      const isSubject = message.messageId === subject?.messageId
+      const fallbackParent =
+        !isSubject && subject ? subject.messageId : context.anchorId
+      const outcome = outcomes.get(message.messageId)
 
       return {
-        id,
-        parentId: causedByCommand
-          ? rootId
-          : causedByMessage
-            ? event.causationId
-            : rootId,
+        id: message.messageId,
+        parentId: exactParent ? message.causationId : fallbackParent,
         edgeFidelity: exactParent ? "exact" : "grouped",
-        kind: event.type,
-        name: event.eventType,
-        schemaVersion: event.schemaVersion,
-        payload: event.payload,
-        messageId: event.messageId,
-        causationId: event.causationId,
-        status: "accepted",
+        edgeRelationship:
+          isSubject && context.anchorId ? "context" : undefined,
+        kind: message.kind,
+        name: message.name,
+        schemaVersion: message.schemaVersion,
+        payload: message.payload,
+        response:
+          message.kind === "command"
+            ? commandResponse(outcome, report, isSubject)
+            : undefined,
+        messageId: message.messageId,
+        causationId: message.causationId,
+        aggregateType: message.aggregate?.type,
+        aggregateId: message.aggregate?.id,
+        status:
+          message.kind === "command"
+            ? commandStatus(outcome, report, isSubject)
+            : "accepted",
       }
     }),
   ]
 }
 
 function fixtureContext(
-  definition: TestDefinition,
-  status: MessageGraphNode["status"]
-): MessageGraphNode[] {
-  const fixtureId = `fixture-${definition.id}`
-  const context: MessageGraphNode[] = [
-    {
-      id: fixtureId,
-      kind: "domain-event",
-      name: definition.given.fixture,
-      schemaVersion: definition.schemaVersion,
-      payload: { fixture: definition.given.fixture },
-      context: "fixture",
-      status,
-    },
-  ]
-  let parentId = fixtureId
-
-  for (const [index, command] of (definition.given.commands ?? []).entries()) {
-    const id = `setup-command-${definition.id}-${index}`
-    context.push({
-      id,
-      parentId,
-      edgeFidelity: "grouped",
-      kind: "command",
-      name: command.name,
-      schemaVersion: command.schemaVersion,
-      payload: command.payload,
-      aggregateType: command.aggregate.type,
-      aggregateId: command.aggregate.id,
-      context: "setup",
-      status,
-    })
-    parentId = id
+  status: MessageGraphNode["status"],
+  fixture?: Fixture
+): { nodes: MessageGraphNode[]; anchorId?: string } {
+  const streams = new Map<string, Fixture["messages"]>()
+  for (const message of fixture?.messages ?? []) {
+    const streamKey = `${message.aggregate.type}\u0000${message.aggregate.id}`
+    const stream = streams.get(streamKey) ?? []
+    stream.push(message)
+    streams.set(streamKey, stream)
   }
 
-  return context
+  const context: MessageGraphNode[] = []
+  let anchorId: string | undefined
+  let anchorDepth = 0
+  for (const [streamIndex, stream] of [...streams.values()].entries()) {
+    stream.sort((left, right) => left.streamVersion - right.streamVersion)
+    let parentId: string | undefined
+    for (const message of stream) {
+      const id = `fixture-event-${streamIndex}-${message.messageId}`
+      context.push({
+        id,
+        parentId,
+        edgeFidelity: "exact",
+        edgeRelationship: parentId ? "stream-order" : undefined,
+        kind: "domain-event",
+        name: message.name,
+        schemaVersion: message.schemaVersion,
+        payload: message.payload,
+        messageId: message.messageId,
+        causationId: message.causationId,
+        aggregateType: message.aggregate.type,
+        aggregateId: message.aggregate.id,
+        streamVersion: message.streamVersion,
+        context: "fixture",
+        status,
+      })
+      parentId = id
+    }
+    if (parentId && stream.length > anchorDepth) {
+      anchorId = parentId
+      anchorDepth = stream.length
+    }
+  }
+
+  return { nodes: context, anchorId }
 }
 
-function outcomeStatus(
-  outcome: TestReport["outcome"]
+function commandStatus(
+  outcome: ObservedCommandOutcome | undefined,
+  report: TestReport,
+  isSubject: boolean
 ): MessageGraphNode["status"] {
-  switch (outcome) {
-    case "accepted":
-      return "accepted"
-    case "rejected":
-      return "rejected"
-    case "failed":
-    case "indeterminate":
-      return "failed"
-    default:
-      return "idle"
+  if (outcome?.outcome.status === "accepted") return "accepted"
+  if (outcome?.outcome.status === "rejected") return "rejected"
+  if (!isSubject) return "accepted"
+  if (
+    report.operation.status === "failed" ||
+    report.operation.status === "indeterminate"
+  ) {
+    return "failed"
   }
+  return report.operation.status === "completed" ? "accepted" : "running"
 }
 
-function getStringProperty(
-  value: unknown,
-  property: string
-): string | undefined {
-  if (typeof value !== "object" || value === null) return undefined
-  const candidate = Reflect.get(value, property)
-  return typeof candidate === "string" ? candidate : undefined
+function commandResponse(
+  outcome: ObservedCommandOutcome | undefined,
+  report: TestReport,
+  isSubject: boolean
+): unknown {
+  if (outcome) return outcome.outcome
+  if (!isSubject) return undefined
+  return report.operation.result ?? report.operation.failure
 }

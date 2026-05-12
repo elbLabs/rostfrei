@@ -11,14 +11,17 @@ import { StudioSidebar } from "@/components/studio-sidebar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { collectCorrelation, getTest, listTests, runTest } from "@/lib/api"
-import { correlationGraph, expectedGraph } from "@/lib/graph"
+import { getFixture, getTest, listTests, runTest } from "@/lib/api"
+import { expectedGraph, reportGraph } from "@/lib/graph"
 import {
   SAMPLE_DEFINITIONS,
+  SAMPLE_FIXTURE,
   SAMPLE_GRAPH,
   SAMPLE_TESTS,
 } from "@/lib/sample-data"
 import type {
+  ExpectedMessageNode,
+  Fixture,
   MessageGraphNode,
   StoredRun,
   TestDefinitionRevision,
@@ -45,6 +48,7 @@ function App() {
   const [definition, setDefinition] = useState<TestDefinitionRevision>(
     SAMPLE_DEFINITIONS["rent-available-bicycle"]
   )
+  const [fixture, setFixture] = useState<Fixture>(SAMPLE_FIXTURE)
   const [nodes, setNodes] = useState<MessageGraphNode[]>(SAMPLE_GRAPH)
   const [runs, setRuns] = useState<StoredRun[]>(readStoredRuns)
   const [running, setRunning] = useState(false)
@@ -67,10 +71,14 @@ function App() {
           return
         }
         const revision = await getTest(selected.id)
+        const canonicalFixture = await getFixture(
+          revision.definition.setup.fixture
+        )
         if (!active) return
         setSelectedTestId(selected.id)
         setDefinition(revision)
-        setNodes(expectedGraph(revision.definition))
+        setFixture(canonicalFixture)
+        setNodes(expectedGraph(revision.definition, canonicalFixture))
       } catch {
         if (!active) return
         setSource("demo")
@@ -89,8 +97,12 @@ function App() {
     if (source === "live") {
       try {
         const revision = await getTest(test.id)
+        const canonicalFixture = await getFixture(
+          revision.definition.setup.fixture
+        )
         setDefinition(revision)
-        setNodes(expectedGraph(revision.definition))
+        setFixture(canonicalFixture)
+        setNodes(expectedGraph(revision.definition, canonicalFixture))
       } catch (selectionError) {
         setError(errorMessage(selectionError))
       }
@@ -98,7 +110,8 @@ function App() {
       const revision = SAMPLE_DEFINITIONS[test.id]
       if (revision) {
         setDefinition(revision)
-        setNodes(expectedGraph(revision.definition))
+        setFixture(SAMPLE_FIXTURE)
+        setNodes(expectedGraph(revision.definition, SAMPLE_FIXTURE))
       }
     }
     if (window.matchMedia("(max-width: 767px)").matches) {
@@ -126,21 +139,7 @@ function App() {
     try {
       if (source === "live") {
         const report = await runTest(selected.runHref)
-        setNodes([])
-        const events = await collectCorrelation(
-          report.correlationId,
-          async (observedEvents) => {
-            setNodes(
-              correlationGraph(observedEvents, definition.definition, report)
-            )
-            await delay(880)
-          }
-        )
-        const observedNodes = correlationGraph(
-          events,
-          definition.definition,
-          report
-        )
+        const observedNodes = reportGraph(report, fixture)
         setNodes(observedNodes)
         storeRun(report, selected.name, observedNodes)
       } else {
@@ -172,7 +171,7 @@ function App() {
       testId: report.testId,
       testName,
       status: report.status,
-      outcome: report.outcome,
+
       createdAt: new Date().toISOString(),
       nodes: observedNodes,
     }
@@ -265,17 +264,16 @@ function App() {
 
           <div className="graph-caption" aria-live="polite">
             <span className="graph-caption-dot" />
-            <span>
-              {nodes.filter((node) => node.context !== "fixture").length}{" "}
-              messages
-            </span>
+            <span>{nodes.length} messages</span>
             <span className="text-white/13">/</span>
             <span>
               {nodes.some(
                 (node) => !node.context && node.edgeFidelity === "grouped"
               )
                 ? "grouped where causation is absent"
-                : "exact causality"}
+                : nodes.some((node) => node.edgeRelationship === "stream-order")
+                  ? "stream order + exact causality"
+                  : "exact causality"}
             </span>
           </div>
 
@@ -306,9 +304,11 @@ async function runDemo(
   const preview =
     definition.definition.id === "rent-available-bicycle"
       ? SAMPLE_GRAPH
-      : expectedGraph(definition.definition)
+      : expectedGraph(definition.definition, SAMPLE_FIXTURE)
+  const expectedRoot = subjectCommand(definition)
   const rootStatus: MessageGraphNode["status"] =
-    definition.definition.then.outcome === "accepted" ? "accepted" : "rejected"
+    expectedRoot?.outcome === "accepted" ? "accepted" : "rejected"
+  const demoResponse = createDemoCommandResponse(definition)
   const subjectIndex = preview.findIndex(
     (node) => node.kind === "command" && !node.context
   )
@@ -316,15 +316,7 @@ async function runDemo(
     ...node,
     status: index === subjectIndex ? rootStatus : "accepted",
     response:
-      index === subjectIndex
-        ? (node.response ??
-          (definition.definition.then.outcome === "accepted"
-            ? { decision: "accepted" }
-            : {
-                decision: "rejected",
-                rejection: definition.definition.then.outcome.rejected,
-              }))
-        : node.response,
+      index === subjectIndex ? (node.response ?? demoResponse) : node.response,
   }))
   render(
     completed.slice(0, subjectIndex + 1).map((node, index) => ({
@@ -341,18 +333,145 @@ async function runDemo(
   return completed
 }
 
+function createDemoCommandResponse(
+  definition: TestDefinitionRevision
+): unknown {
+  const root = subjectCommand(definition)
+  const outcome = root?.outcome
+  if (!outcome || outcome === "accepted") {
+    return { status: "accepted", value: null }
+  }
+
+  const message =
+    outcome.rejected.code === "BICYCLE_UNAVAILABLE"
+      ? "The requested bicycle cannot currently be rented."
+      : "The command was rejected."
+  const payload = outcome.rejected.payload
+  const details =
+    typeof payload === "object" && payload !== null && !Array.isArray(payload)
+      ? payload
+      : payload === undefined
+        ? {}
+        : { payload }
+  return {
+    status: "rejected",
+    value: {
+      classification: "conflict",
+      code: outcome.rejected.code,
+      details,
+      message,
+    },
+  }
+}
+
 function createDemoReport(definition: TestDefinitionRevision): TestReport {
   const identity = crypto.randomUUID()
-  const accepted = definition.definition.then.outcome === "accepted"
+  const operationId = `demo-operation-${identity}`
+  const correlationId = `demo-correlation-${identity}`
+  const expectedRoot = subjectCommand(definition)
+  const accepted = expectedRoot?.outcome === "accepted"
+  const commandOutcome = {
+    responseMessageId: `demo-response-${identity}`,
+    commandMessageId: `demo-command-${identity}`,
+    correlationId,
+    observationOrder: 2,
+    outcome: accepted
+      ? ({ status: "accepted", value: null } as const)
+      : ({
+          status: "rejected",
+          value: {
+            classification: "conflict",
+            code:
+              expectedRoot?.kind === "command" &&
+              expectedRoot.outcome !== "accepted"
+                ? expectedRoot.outcome.rejected.code
+                : "COMMAND_REJECTED",
+            message: "The command was rejected.",
+          },
+        } as const),
+  }
+  const command =
+    expectedRoot?.kind === "command"
+      ? expectedRoot
+      : {
+          name: "unknown-command",
+          schemaVersion: 1,
+          aggregate: { type: "unknown", id: "unknown" },
+          payload: undefined,
+        }
   return {
     runId: `demo-${identity}`,
     testId: definition.definition.id,
     revision: definition.revision,
     status: "passed",
-    operationId: `demo-operation-${identity}`,
-    correlationId: `demo-correlation-${identity}`,
-    outcome: accepted ? "accepted" : "rejected",
+    expected: definition.definition.expected,
+    observed: {
+      messages: [
+        {
+          kind: "command",
+          messageId: commandOutcome.commandMessageId,
+          correlationId,
+          observationOrder: 1,
+          name: command.name,
+          schemaVersion: command.schemaVersion,
+          aggregate: command.aggregate,
+          payload: command.payload,
+        },
+      ],
+      commandOutcomes: [commandOutcome],
+    },
+    comparison: {
+      status: "passed",
+      matches: expectedRoot
+        ? [
+            {
+              expectedKey: expectedRoot.key,
+              observedMessageId: commandOutcome.commandMessageId,
+            },
+          ]
+        : [],
+      diagnostics: [],
+    },
+    commandOutcome,
+    operationId,
+    correlationId,
+    operationHref: `/operations/${operationId}`,
+    operationEventsHref: `/operations/${operationId}/events`,
+    correlationEventsHref: `/correlations/${correlationId}/events`,
+    operation: {
+      operationId,
+      correlationId,
+      operationEventsHref: `/operations/${operationId}/events`,
+      correlationEventsHref: `/correlations/${correlationId}/events`,
+      messageSeriesHref: `/operations/${operationId}/message-series`,
+      events: {
+        kind: "observed",
+        href: `/correlations/${correlationId}/events`,
+      },
+      mode: "test",
+      status: "completed",
+      command: command.name,
+      schemaVersion: command.schemaVersion,
+      aggregateType: command.aggregate.type,
+      aggregateId: command.aggregate.id,
+      latestEventId: 2,
+      result: { decision: accepted ? "accepted" : "rejected" },
+    },
   }
+}
+
+type ExpectedCommandNode = Extract<
+  ExpectedMessageNode,
+  { kind: "command" }
+>
+
+function subjectCommand(
+  revision: TestDefinitionRevision
+): ExpectedCommandNode | undefined {
+  return revision.definition.expected.graphs[0]?.nodes.find(
+    (node): node is ExpectedCommandNode =>
+      node.kind === "command" && !node.parentKey
+  )
 }
 
 function delay(milliseconds: number): Promise<void> {

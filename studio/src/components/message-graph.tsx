@@ -23,6 +23,7 @@ import {
   type EdgeProps,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from "@xyflow/react"
 
 import { Badge } from "@/components/ui/badge"
@@ -45,6 +46,7 @@ type MessageFlowNode = Node<MessageNodeData, "message">
 
 type MessageEdgeData = Record<string, unknown> & {
   fidelity: "exact" | "grouped"
+  relationship: "causation" | "stream-order" | "context"
   context: boolean
   running: boolean
 }
@@ -70,6 +72,10 @@ const DISMISS_MESSAGE_POPUPS_EVENT = "dismiss-message-popups"
 
 export function MessageGraph({ nodes, running }: MessageGraphProps) {
   const layout = useMemo(() => layoutMessageGraph(nodes), [nodes])
+  const [flow, setFlow] = useState<ReactFlowInstance<
+    MessageFlowNode,
+    MessageFlowEdge
+  > | null>(null)
   const flowNodes = useMemo<MessageFlowNode[]>(
     () =>
       layout.nodes.map((node) => ({
@@ -93,10 +99,35 @@ export function MessageGraph({ nodes, running }: MessageGraphProps) {
         target: edge.target.id,
         selectable: false,
         focusable: false,
-        data: { fidelity: edge.fidelity, context: edge.context, running },
+        data: {
+          fidelity: edge.fidelity,
+          relationship: edge.relationship,
+          context: edge.context,
+          running: running && !edge.context,
+        },
       })),
     [layout.edges, running]
   )
+  const subjectCommand = flowNodes.find(
+    (node) => node.data.message.kind === "command" && !node.data.message.context
+  )
+  const subjectCommandId = subjectCommand?.id
+
+  useEffect(() => {
+    if (!flow || !subjectCommandId) return
+    const frame = window.requestAnimationFrame(() => {
+      const node = flow.getNode(subjectCommandId)
+      if (!node) return
+      void flow.fitView({
+        nodes: [node],
+        padding: 0,
+        minZoom: 1,
+        maxZoom: 1,
+        duration: 0,
+      })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [flow, subjectCommandId])
 
   return (
     <section
@@ -121,13 +152,15 @@ export function MessageGraph({ nodes, running }: MessageGraphProps) {
         nodeOrigin={[0.5, 0.5]}
         minZoom={0.25}
         maxZoom={1.8}
-        fitView
+        fitView={Boolean(subjectCommand)}
         fitViewOptions={{
-          padding: 0.28,
-          minZoom: 0.5,
+          nodes: subjectCommand ? [subjectCommand] : undefined,
+          padding: 0,
+          minZoom: 1,
           maxZoom: 1,
-          duration: 450,
+          duration: 0,
         }}
+        onInit={setFlow}
         nodesDraggable={false}
         nodesConnectable={false}
         nodesFocusable={false}
@@ -140,7 +173,6 @@ export function MessageGraph({ nodes, running }: MessageGraphProps) {
         zoomOnScroll
         zoomOnPinch
         zoomOnDoubleClick={false}
-        onlyRenderVisibleElements
         proOptions={{ hideAttribution: true }}
       >
         <GraphControls />
@@ -158,55 +190,21 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
   const Icon = kindIcon[node.kind]
   const label = messageKindLabel(node)
   const [popupOpen, setPopupOpen] = useState(false)
-  const [popupPinned, setPopupPinned] = useState(false)
-  const closeTimer = useRef<number | undefined>(undefined)
-
-  const cancelClose = () => {
-    if (closeTimer.current !== undefined) {
-      window.clearTimeout(closeTimer.current)
-      closeTimer.current = undefined
+  const togglePopup = () => {
+    if (!popupOpen) {
+      window.dispatchEvent(new Event(DISMISS_MESSAGE_POPUPS_EVENT))
     }
-  }
-  const previewPopup = () => {
-    cancelClose()
-    setPopupOpen(true)
-  }
-  const closePreview = () => {
-    if (popupPinned) return
-    cancelClose()
-    closeTimer.current = window.setTimeout(() => setPopupOpen(false), 120)
-  }
-  const togglePinned = () => {
-    cancelClose()
-    if (popupPinned) {
-      setPopupPinned(false)
-      setPopupOpen(false)
-    } else {
-      setPopupPinned(true)
-      setPopupOpen(true)
-    }
+    setPopupOpen((open) => !open)
   }
   const dismissPopup = () => {
-    cancelClose()
-    setPopupPinned(false)
     setPopupOpen(false)
   }
 
   useEffect(() => {
-    const dismiss = () => {
-      if (closeTimer.current !== undefined) {
-        window.clearTimeout(closeTimer.current)
-      }
-      setPopupPinned(false)
-      setPopupOpen(false)
-    }
+    const dismiss = () => setPopupOpen(false)
     window.addEventListener(DISMISS_MESSAGE_POPUPS_EVENT, dismiss)
-    return () => {
+    return () =>
       window.removeEventListener(DISMISS_MESSAGE_POPUPS_EVENT, dismiss)
-      if (closeTimer.current !== undefined) {
-        window.clearTimeout(closeTimer.current)
-      }
-    }
   }, [])
 
   return (
@@ -221,7 +219,8 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
       data-layout-x={node.x}
       data-layout-y={node.y}
       data-context={node.context}
-      style={{ animationDelay: node.parentId ? "600ms" : "0ms" }}
+      data-stream-version={node.streamVersion}
+      data-status={node.status}
     >
       <Handle
         type="target"
@@ -240,22 +239,20 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
             className={cn(
               "message-node nodrag nopan",
               `message-node-${node.kind}`,
-              node.status === "running" && "message-node-running"
+              node.status === "running" && "message-node-running",
+              (node.status === "rejected" || node.status === "failed") &&
+                "message-node-danger"
             )}
             aria-label={`${label} ${node.name}`}
             aria-haspopup="dialog"
             aria-expanded={popupOpen}
-            onPointerEnter={previewPopup}
-            onPointerLeave={closePreview}
-            onFocus={previewPopup}
-            onBlur={closePreview}
             onPointerDown={(event) => {
               event.stopPropagation()
-              if (event.button === 0) togglePinned()
+              if (event.button === 0) togglePopup()
             }}
             onClick={(event) => {
               event.stopPropagation()
-              if (event.detail === 0) togglePinned()
+              if (event.detail === 0) togglePopup()
             }}
           >
             <span className="message-node-glint" />
@@ -263,14 +260,14 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
         </PopoverAnchor>
         <PopoverContent
           data-node-popup
-          data-popup-pinned={popupPinned}
+          data-popup-pinned
           className={cn(
-            node.kind === "command" && "w-[min(380px,calc(100vw-2rem))]"
+            node.kind === "command" && "w-[min(380px,calc(100vw-2rem))]",
+            (node.status === "rejected" || node.status === "failed") &&
+              "payload-glass-danger"
           )}
           side="top"
           align="start"
-          onPointerEnter={cancelClose}
-          onPointerLeave={closePreview}
           onOpenAutoFocus={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => {
@@ -334,7 +331,11 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
                     : "response redacted or unavailable"}
                 </p>
               ) : (
-                <PayloadList payload={node.response} omitTechnicalIdentities />
+                <PayloadList
+                  payload={node.response}
+                  omitTechnicalIdentities
+                  collapseDuplicateRejectionDetails
+                />
               )}
             </div>
           )}
@@ -342,7 +343,10 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
           {node.kind !== "command" && (node.messageId || node.causationId) && (
             <div className="flex gap-1.5 border-t border-white/7 px-3.5 py-2.5">
               {node.messageId && (
-                <CopyIdentityButton label="message ID" value={node.messageId} />
+                <CopyIdentityButton
+                  label={node.context === "fixture" ? "event ID" : "message ID"}
+                  value={node.messageId}
+                />
               )}
               {node.causationId && (
                 <CopyIdentityButton label="cause ID" value={node.causationId} />
@@ -361,9 +365,8 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
 }
 
 function messageKindLabel(node: MessageGraphNode): string {
-  return node.context === "fixture"
-    ? "domain event series"
-    : kindLabel[node.kind]
+  if (node.context === "fixture") return "fixture domain event"
+  return kindLabel[node.kind]
 }
 
 function CopyIdentityButton({
@@ -427,6 +430,7 @@ function MessageEdge({
   data,
 }: EdgeProps<MessageFlowEdge>) {
   const markerId = `message-arrow-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+  const directed = data?.relationship === "causation"
   const [path] = getBezierPath({
     sourceX,
     sourceY,
@@ -438,38 +442,46 @@ function MessageEdge({
   })
 
   return (
-    <g data-graph-edge data-source-id={source} data-target-id={target}>
-      <defs>
-        <marker
-          id={markerId}
-          viewBox="0 0 10 10"
-          refX="9"
-          refY="5"
-          markerWidth="10"
-          markerHeight="10"
-          markerUnits="userSpaceOnUse"
-          orient="auto"
-        >
-          <path
-            d="M 1 1.25 L 9 5 L 1 8.75 L 3.4 5 Z"
-            className={cn(
-              "graph-edge-arrow",
-              data?.context && "graph-edge-arrow-context"
-            )}
-          />
-        </marker>
-      </defs>
+    <g
+      data-graph-edge
+      data-source-id={source}
+      data-target-id={target}
+      data-edge-relationship={data?.relationship}
+    >
+      {directed && (
+        <defs>
+          <marker
+            id={markerId}
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="10"
+            markerHeight="10"
+            markerUnits="userSpaceOnUse"
+            orient="auto"
+          >
+            <path
+              d="M 1 1.25 L 9 5 L 1 8.75 L 3.4 5 Z"
+              className={cn(
+                "graph-edge-arrow",
+                data?.context && "graph-edge-arrow-context"
+              )}
+            />
+          </marker>
+        </defs>
+      )}
       <path
         d={path}
         className={cn(
           "graph-edge",
           data?.fidelity === "grouped" && "graph-edge-grouped",
           data?.context && "graph-edge-context",
+          data?.relationship === "stream-order" && "graph-edge-stream-order",
           data?.running && "graph-edge-running"
         )}
         pathLength="1"
         vectorEffect="non-scaling-stroke"
-        markerEnd={`url(#${markerId})`}
+        markerEnd={directed ? `url(#${markerId})` : undefined}
       />
     </g>
   )
@@ -532,13 +544,18 @@ interface PayloadRow {
 function PayloadList({
   payload,
   omitTechnicalIdentities = false,
+  collapseDuplicateRejectionDetails = false,
 }: {
   payload: unknown
   omitTechnicalIdentities?: boolean
+  collapseDuplicateRejectionDetails?: boolean
 }) {
-  const rows = flattenPayload(payload).filter(
+  let rows = flattenPayload(payload).filter(
     (row) => !omitTechnicalIdentities || !isTechnicalIdentity(row.path)
   )
+  if (collapseDuplicateRejectionDetails) {
+    rows = withoutDuplicateRejectionDetails(rows)
+  }
   return (
     <dl className="payload-list">
       {rows.map((row, index) => (
@@ -549,6 +566,16 @@ function PayloadList({
       ))}
     </dl>
   )
+}
+
+function withoutDuplicateRejectionDetails(rows: PayloadRow[]): PayloadRow[] {
+  const valuesByPath = new Map(rows.map((row) => [row.path, row]))
+  return rows.filter((row) => {
+    const match = /^(rejection\.)?details\.(code|message)$/.exec(row.path)
+    if (!match) return true
+    const primary = valuesByPath.get(`${match[1] ?? ""}${match[2]}`)
+    return primary?.kind !== row.kind || primary.value !== row.value
+  })
 }
 
 function flattenPayload(
