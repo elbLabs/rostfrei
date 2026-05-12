@@ -2,19 +2,21 @@
 
 ## Status
 
-Accepted.
+Superseded for application-facing use by
+[ADR 0016](0016-typed-application-buses.md). Retained as an infrastructure
+contract.
 
 ## Decision
 
-`DomainEventHandler` is the one framework abstraction for application and
-infrastructure side effects caused by committed private domain events. A handler
-receives a typed event together with its existing `RecordedEvent` metadata. It
-runs after aggregate commit, never participates in aggregate decisions, and
-never changes or appends to the originating aggregate stream.
+`DomainEventHandler` is the low-level infrastructure port used to adapt
+committed private domain events to a durable post-commit processor. It is not an
+application extension point. Application code uses dedicated typed
+transformations such as `IntegrationEventMapper`; framework adapters implement
+the handler, publication, retry, and failure-classification mechanics.
 
-Applications register a private event type and handler. The derived JSON event
-codec is selected automatically; registration accepts an explicit codec only as
-an override. Unregistered aggregate/event pairs are intentionally irrelevant and
+Infrastructure registers a private event type and framework handler. The
+derived JSON event codec is selected automatically; registration accepts an
+explicit codec only as an override. Unregistered aggregate/event pairs are intentionally irrelevant and
 are treated as successfully handled without invoking a side effect. Registered
 events are decoded through the aggregate's codec; unsupported schemas, malformed
 payloads, permanently unsupported events, and operator-blocking failures stop
@@ -32,16 +34,16 @@ failure or timeout. Limits retention keeps aggregate replay, other durables,
 future rebuilds, and permanent history independent from consumer
 acknowledgements.
 
-Independent side effects use independent durable consumers. Publishing an
-integration event and updating a read model are application-specific
-`DomainEventHandler` implementations, not separate framework handler kinds.
+Independent side effects use independent durable consumers. Integration-event
+publication and future read-model processing use dedicated application-facing
+mapping contracts backed by framework `DomainEventHandler` adapters.
 NATS messages, subjects, headers, ACK handles, and broker sequence values are
 never exposed to application handlers.
 
 ## Consequences
 
-Handler effects are at-least-once and must be idempotent by committed event
-identity. Public integration-event publication waits for its PubAck before the
+Framework handler effects are at-least-once and must be idempotent by committed
+event identity. Public integration-event publication waits for its PubAck before the
 domain-event delivery is acknowledged. Poison events block their durable until
 an operator repairs the cause or makes an explicit skip decision; rostfrei
 does not automatically quarantine and continue an incomplete projection or

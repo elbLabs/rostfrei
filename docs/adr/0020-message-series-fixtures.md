@@ -39,6 +39,13 @@ starting state is represented by a different fixture MessageSeries.
 API tests, in-memory examples, NATS provisioning, NATS reset, and behavioral
 tests apply fixtures through the same engine.
 
+Fixture events establish aggregate state but never trigger post-commit external
+side effects. Durable consumers still reconstruct and validate the complete
+atomic event transaction before classifying its provenance. Fixture events are
+direct one-event appends, and an exact fixture append is acknowledged without
+being dispatched to integration-event mappings. Multi-stream application
+transactions remain application-originated and are always dispatched in full.
+
 ## Consequences
 
 - Fixture state and causal relationships between its domain events are explicit,
@@ -46,7 +53,8 @@ tests apply fixtures through the same engine.
 - Hidden fixture commands and application-specific seeding paths are removed.
 - Fixture payloads are decoded through registered aggregate event codecs before
   any stream is changed.
-- Fixture replay cannot execute commands or publish integration events.
+- Fixture replay cannot execute commands or publish integration events; this is
+  enforced by durable-consumer infrastructure rather than application mappers.
 - Reset implementations still own physical resource recreation, but receive the
   exact fixture selected by Tracer.
 - Applications must register every aggregate type referenced by their fixtures.

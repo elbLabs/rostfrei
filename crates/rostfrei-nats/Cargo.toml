@@ -18,6 +18,7 @@ tokio.workspace = true
 tracing.workspace = true
 rostfrei = { path = "../rostfrei", version = "0.2.0" }
 rostfrei-core = { path = "../rostfrei-core" }
+rostfrei-fixtures = { path = "../rostfrei-fixtures", version = "0.2.0" }
 rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
 
 [dev-dependencies]

@@ -32,14 +32,14 @@ pub trait IntegrationEventMapper<D>: Send + Sync {
     fn map(&self, event: &CommittedDomainEvent<'_, D>) -> Self::Output;
 }
 
-/// Publishes the integration event produced by an application mapper.
-pub struct IntegrationEventPublisher<M> {
+/// Infrastructure adapter that publishes the integration event produced by an application mapper.
+struct IntegrationEventPublisher<M> {
     bus: IntegrationEventBus,
     mapper: M,
 }
 
 impl<M> IntegrationEventPublisher<M> {
-    pub const fn new(bus: IntegrationEventBus, mapper: M) -> Self {
+    const fn new(bus: IntegrationEventBus, mapper: M) -> Self {
         Self { bus, mapper }
     }
 }

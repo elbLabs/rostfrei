@@ -8,16 +8,16 @@ use super::{
     BikeRentalNatsResourceLimits, integration_event_observation,
 };
 use crate::{
-    demo::{apply_demo_fixture, apply_fixture, demo_stream, rented_demo_fixture},
+    demo::{apply_demo_fixture, demo_stream},
     rental_fleet::{BicycleId, BicycleRented, RentBicycle, RentalFleetAggregate},
 };
 use rostfrei::{
-    CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest, DomainEvent,
-    DomainEventDispatchOutcome, DomainEventDispatcher, DynamicCommandRequest, EventStore,
-    InMemoryEventStore, InMemoryMessagingAdapter, IntegrationEventBus, IntegrationMessageAdapter,
+    CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest, DomainEventDispatcher,
+    DynamicCommandRequest, EventStore, InMemoryEventStore, InMemoryMessagingAdapter,
+    IntegrationEventBus, IntegrationEventDispatcherExt, IntegrationMessageAdapter,
     JsonDomainRejectionMapper, OperationId,
 };
-use rostfrei_fixtures::FixtureEventSet;
+use rostfrei_core::DomainEventDispatchOutcome;
 use rostfrei_messaging_core::{
     CallerMetadata, CausationId, CommandRejectionClassification, CommandResponseOutcome,
     CorrelationId, DeliveryDisposition, DeliveryInfo, MessageDelivery, MessageHandler, MessageId,
@@ -333,16 +333,10 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
 
     let integration_adapter: Arc<dyn IntegrationMessageAdapter> = adapter.clone();
     let integration_bus = IntegrationEventBus::new(config.context().clone(), integration_adapter);
-    let rented_fixture = rented_demo_fixture()?;
     let mut dispatcher = DomainEventDispatcher::new();
-    dispatcher.register::<RentalFleetAggregate, BicycleRented, _>(
-        BicycleRented::LOCAL_ID,
-        Arc::new(BicycleRentedIntegrationMapper::new(
-            integration_bus,
-            Arc::new(tokio::sync::RwLock::new(FixtureEventSet::new(
-                std::slice::from_ref(&rented_fixture),
-            )?)),
-        )),
+    dispatcher.register_integration_event::<RentalFleetAggregate, BicycleRented, _>(
+        integration_bus,
+        BicycleRentedIntegrationMapper,
     )?;
 
     assert_eq!(
@@ -355,18 +349,6 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
     );
     let messages = adapter.integration_messages().await;
     assert_eq!(messages.len(), 1);
-
-    let fixture_store = InMemoryEventStore::new();
-    apply_fixture(&fixture_store, &rented_fixture).await?;
-    let fixture_history = fixture_store.load(&demo_stream()).await?;
-    let fixture_rented = fixture_history
-        .get(1)
-        .ok_or("rented fixture event was not committed")?;
-    assert_eq!(
-        dispatcher.dispatch(fixture_rented).await?,
-        DomainEventDispatchOutcome::Handled
-    );
-    assert_eq!(adapter.integration_messages().await.len(), 1);
 
     let envelope = messages[0].decode::<BicycleRentalStarted>()?;
     assert_eq!(envelope.payload().fleet_id().as_str(), "city-fleet");
