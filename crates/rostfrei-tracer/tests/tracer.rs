@@ -1088,6 +1088,7 @@ async fn correlation_feed_contains_command_domain_integration_and_result_events(
                 1,
                 "test.integration.test-context.test-event-published",
             )
+            .with_causation_id("domain-1")
             .with_payload(json!({ "public": true })),
         )
         .await
@@ -1118,10 +1119,14 @@ async fn correlation_feed_contains_command_domain_integration_and_result_events(
         integration_event.kind,
         CorrelationEventKind::IntegrationEvent {
             ref event_type,
+            ref message_id,
+            ref causation_id,
             payload: None,
             ..
         }
             if event_type == "test-event-published"
+                && message_id == "integration-1"
+                && causation_id.as_deref() == Some("domain-1")
     ));
     assert_eq!(
         tracer
