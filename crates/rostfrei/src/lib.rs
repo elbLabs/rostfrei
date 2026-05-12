@@ -48,12 +48,13 @@ pub use command_bus::{
 pub use domain::*;
 pub use in_memory_messaging::InMemoryMessagingAdapter;
 pub use integration_event::{
-    CommandContext, CompletedIntegrationCommand, IntegrationEventHandler, IntegrationEventOutcome,
-    IntegrationEventProcessingError, IntegrationEventProcessor,
+    CompletedIntegrationCommand, IntegrationCommand, IntegrationCommandMapper,
+    IntegrationEventCommandHandler, IntegrationEventProcessingError, IntegrationEventProcessor,
 };
 pub use integration_event_bus::{
     CommittedEventContext, EncodedIntegrationMessage, IntegrationEvent, IntegrationEventBus,
-    IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationEventPublication,
+    IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationEventDispatcherExt,
+    IntegrationEventMapper, IntegrationEventPublication, IntegrationEventPublisher,
     IntegrationMessageAdapter, integration_message_id,
 };
 pub use query_bus::{
