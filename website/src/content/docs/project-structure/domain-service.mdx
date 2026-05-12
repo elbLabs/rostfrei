@@ -1,10 +1,16 @@
 # Domain service
 
-A domain service holds stateless behavior that does not naturally belong to one entity or aggregate. Its definition explicitly connects the service marker to the enclosing bounded context.
+A domain service owns stateless domain behavior that does not naturally belong to one Aggregate, Entity, or Value Object. Its definition explicitly connects the service marker to the enclosing bounded context.
 
 - Put the service declaration and context definition together in `service.rs`.
-- Nest each focused service capability directory beside that stable anchor.
-- Keep application orchestration and infrastructure outside the domain service.
+- Nest each focused Action or Domain Policy directory beside that stable anchor.
+- Use an Action to coordinate behavior over domain objects supplied by the caller.
+- Use a Domain Policy for a pure interpretation of supplied domain facts.
+- Keep repositories, messaging, persistence, and transaction execution outside the domain service.
+
+The domain service expresses the domain operation. Application or runtime code supplies participating Aggregates and other domain objects, then owns loading and persisting them. The service itself remains stateless and infrastructure-free.
+
+In the example, `rebalance_fleet` is an Action and `assess_demand` is a Domain Policy. Both implementations target `FleetPlanning` directly; neither is attached through the derive.
 
 Path: `src/domain/bike_rental/fleet_planning`
 

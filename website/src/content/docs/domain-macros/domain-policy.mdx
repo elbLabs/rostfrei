@@ -2,10 +2,10 @@
 
 Make policy explicit and reusable. A policy is a singular trait with arbitrary Rust inputs and a closed outcome vocabulary when the domain needs one. Keep the policy signature independent of infrastructure.
 
-- Aggregate or entity implementation
+- Aggregate, Entity, Value Object, or Domain Service implementation
 - No owner metadata
 - No projection group
 
-**Placement:** [Aggregate policy](/docs/project-structure/aggregate-policy), [Entity policy](/docs/project-structure/entity-policy), or [value-object policy](/docs/project-structure/value-object-policy) — `policy.rs`.
+**Placement:** [Aggregate policy](/docs/project-structure/aggregate-policy), [Entity policy](/docs/project-structure/entity-policy), [value-object policy](/docs/project-structure/value-object-policy), or a focused capability below a [Domain service](/docs/project-structure/domain-service) — `policy.rs`.
 
 <MacroExample name="domain_policy" />
