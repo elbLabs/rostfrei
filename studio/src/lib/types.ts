@@ -24,6 +24,7 @@ export interface MessageGraphNode {
   response?: unknown
   messageId?: string
   causationId?: string
+  boundedContext?: string
   aggregateType?: string
   aggregateId?: string
   streamVersion?: number
@@ -77,7 +78,7 @@ interface ExpectedMessageNodeBase {
 export type ExpectedMessageNode =
   | (ExpectedMessageNodeBase & {
       kind: "command"
-      aggregate: AggregateReference
+      context: string
       outcome: ExpectedOutcome
     })
   | (ExpectedMessageNodeBase & {
@@ -125,7 +126,7 @@ interface ObservedMessageBase {
 export type ObservedMessage =
   | (ObservedMessageBase & {
       kind: "command"
-      aggregate: AggregateReference
+      context: string
     })
   | (ObservedMessageBase & {
       kind: "domain-event"
@@ -186,10 +187,9 @@ export interface OperationSnapshot {
   }
   mode: "simulate" | "test" | "dispatch"
   status: "queued" | "running" | "completed" | "failed" | "indeterminate"
+  context: string
   command: string
   schemaVersion: number
-  aggregateType: string
-  aggregateId: string
   latestEventId: number
   result?: unknown
   failure?: {

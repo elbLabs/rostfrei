@@ -2,14 +2,16 @@
 
 use std::{convert::Infallible, error::Error, sync::Arc, time::Duration};
 
+use async_trait::async_trait;
 use rostfrei::{
-    Aggregate, AggregateInstance, Apply, BoundedContext, Command, CommandBus, CommandHandler,
-    CommandMessageAdapter, CommandProcessor, CommandRequest, CommittedDomainEvent, DomainEvent,
-    DomainEventDispatcher, Entity, EventStore, InMemoryEventStore, InMemoryMessagingAdapter,
-    InfallibleCommandRejectionMapper, Initialize, IntegrationCommand, IntegrationCommandMapper,
-    IntegrationEvent, IntegrationEventBus, IntegrationEventCommandHandler,
-    IntegrationEventDispatcherExt, IntegrationEventMapper, IntegrationMessageAdapter, OperationId,
-    RoutedAggregateCommand, StreamAggregateId, StreamAggregateType, StreamId,
+    Aggregate, Apply, BoundedContext, Command, CommandBus, CommandDecision, CommandExecution,
+    CommandHandler, CommandHandlingResult, CommandMessageAdapter, CommandProcessor, CommandRequest,
+    CommittedDomainEvent, DomainEvent, DomainEventDispatcher, Entity, EventStore,
+    InMemoryEventStore, InMemoryMessagingAdapter, InfallibleCommandRejectionMapper, Initialize,
+    IntegrationCommandMapper, IntegrationEvent, IntegrationEventBus,
+    IntegrationEventCommandHandler, IntegrationEventDispatcherExt, IntegrationEventMapper,
+    IntegrationMessageAdapter, OperationId, RoutedCommand, StreamAggregateId, StreamAggregateType,
+    StreamId,
 };
 use rostfrei_messaging_core::{
     ApplicationName, CallerMetadata, CommandEnvelope, CommandResponseOutcome, CorrelationId,
@@ -92,40 +94,56 @@ impl Apply<BalanceObserved> for Account {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Command)]
-#[domain(id = "credit-account", label = "Credit account")]
+#[domain(context = Ledger, id = "credit-account", label = "Credit account")]
 struct CreditAccount {
+    account_id: String,
     amount: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Command)]
-#[domain(id = "observe-balance", label = "Observe balance")]
-struct ObserveBalance;
+#[domain(context = Ledger, id = "observe-balance", label = "Observe balance")]
+struct ObserveBalance {
+    account_id: String,
+}
 
-impl CommandHandler<CreditAccount> for AccountAggregate {
+struct CreditAccountHandler;
+
+#[async_trait]
+impl CommandHandler<CreditAccount> for CreditAccountHandler {
     type Rejection = Infallible;
 
-    fn handle(
+    async fn handle(
+        &self,
         command: &CreditAccount,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.raise(AccountCredited {
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut account = execution
+            .load::<AccountAggregate>(&command.account_id)
+            .await?;
+        account.aggregate_mut().raise(AccountCredited {
             amount: command.amount,
         });
-        Ok(())
+        Ok(CommandDecision::Accepted)
     }
 }
 
-impl CommandHandler<ObserveBalance> for AccountAggregate {
+struct ObserveBalanceHandler;
+
+#[async_trait]
+impl CommandHandler<ObserveBalance> for ObserveBalanceHandler {
     type Rejection = Infallible;
 
-    fn handle(
-        _command: &ObserveBalance,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.raise(BalanceObserved {
-            balance: aggregate.state().balance,
-        });
-        Ok(())
+    async fn handle(
+        &self,
+        command: &ObserveBalance,
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut account = execution
+            .load::<AccountAggregate>(&command.account_id)
+            .await?;
+        let balance = account.aggregate().state().balance;
+        account.aggregate_mut().raise(BalanceObserved { balance });
+        Ok(CommandDecision::Accepted)
     }
 }
 
@@ -161,17 +179,13 @@ impl IntegrationEventMapper<AccountCredited> for AccountCreditedMapper {
 struct ObserveBalanceAfterCredit;
 
 impl IntegrationCommandMapper<AccountWasCredited> for ObserveBalanceAfterCredit {
-    type Aggregate = AccountAggregate;
     type Command = ObserveBalance;
     type Error = &'static str;
 
-    fn map(
-        &self,
-        event: &AccountWasCredited,
-    ) -> Result<IntegrationCommand<Self::Command>, Self::Error> {
-        let aggregate_id =
-            StreamAggregateId::new(&event.account_id).map_err(|_| "invalid account ID")?;
-        Ok(IntegrationCommand::new(aggregate_id, ObserveBalance))
+    fn map(&self, event: &AccountWasCredited) -> Result<Self::Command, Self::Error> {
+        Ok(ObserveBalance {
+            account_id: event.account_id.clone(),
+        })
     }
 }
 
@@ -182,13 +196,28 @@ fn stream_id() -> TestResult<StreamId> {
     ))
 }
 
+fn registered_processor(store: &InMemoryEventStore) -> TestResult<CommandProcessor> {
+    let erased_store: Arc<dyn EventStore> = Arc::new(store.clone());
+    let processor_context = ApplicationName::new("integration-flow-test")?
+        .bounded_context("ledger")?
+        .name()
+        .clone();
+    let mut processor = CommandProcessor::new(processor_context, erased_store);
+    processor.register::<CreditAccount, CreditAccountHandler>(
+        CreditAccountHandler,
+        InfallibleCommandRejectionMapper,
+    )?;
+    processor.register::<ObserveBalance, ObserveBalanceHandler>(
+        ObserveBalanceHandler,
+        InfallibleCommandRejectionMapper,
+    )?;
+    Ok(processor)
+}
+
 #[tokio::test]
 async fn committed_domain_event_drives_integration_command_mapping() -> TestResult {
     let store = InMemoryEventStore::new();
-    let erased_store: Arc<dyn EventStore> = Arc::new(store.clone());
-    let mut processor = CommandProcessor::new(erased_store);
-    processor.register::<AccountAggregate, CreditAccount>(InfallibleCommandRejectionMapper)?;
-    processor.register::<AccountAggregate, ObserveBalance>(InfallibleCommandRejectionMapper)?;
+    let processor = registered_processor(&store)?;
     let adapter = Arc::new(InMemoryMessagingAdapter::new(Arc::new(processor)));
     let context = ApplicationName::new("integration-flow-test")?.bounded_context("ledger")?;
     let command_adapter: Arc<dyn CommandMessageAdapter> = adapter.clone();
@@ -196,11 +225,13 @@ async fn committed_domain_event_drives_integration_command_mapping() -> TestResu
     let correlation_id = CorrelationId::new("credit-correlation")?;
 
     let credit = command_bus
-        .dispatch::<AccountAggregate, CreditAccount>(
+        .dispatch::<CreditAccount>(
             CommandRequest::new(
                 OperationId::new("credit-operation")?,
-                StreamAggregateId::new("account-1")?,
-                CreditAccount { amount: 7 },
+                CreditAccount {
+                    account_id: "account-1".to_owned(),
+                    amount: 7,
+                },
             )
             .with_correlation_id(correlation_id.clone()),
         )
@@ -270,8 +301,7 @@ async fn committed_domain_event_drives_integration_command_mapping() -> TestResu
         wire.pointer("/payload/events_caused_by_command"),
         Some(&serde_json::Value::Bool(true))
     );
-    let envelope: CommandEnvelope<RoutedAggregateCommand> =
-        serde_json::from_slice(generated.payload())?;
+    let envelope: CommandEnvelope<RoutedCommand> = serde_json::from_slice(generated.payload())?;
     assert_eq!(
         envelope.causation_id().map(rostfrei::CausationId::as_str),
         Some(message.message_id().as_str())

@@ -10,4 +10,5 @@ mod rejection;
 pub use action::RentBicycleContract;
 pub use command::RentBicycle;
 pub use event::BicycleRented;
+pub use handler::RentBicycleHandler;
 pub use rejection::BicycleUnavailable;

@@ -1,10 +1,14 @@
 #![allow(dead_code)]
 
+use async_trait::async_trait;
 use domain::{
     Aggregate as DomainAggregate, AggregateDefinition, AggregateEvents, AggregateType,
-    BoundedContext, Command, DomainEvent, DomainIdentity, Entity, JsonCommandPayload,
+    BoundedContext, BoundedContextType, Command, DomainEvent, DomainIdentity, Entity,
+    JsonCommandPayload,
 };
-use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance, CommandHandler};
+use rostfrei_core::{
+    AggregateInstance, CommandDecision, CommandExecution, CommandHandler, CommandHandlingResult,
+};
 use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::{Deserialize, Serialize};
@@ -61,15 +65,15 @@ enum CatalogEvents {
 }
 
 #[derive(Command)]
-#[domain(id = "open-catalog", label = "Open catalog")]
+#[domain(context = Catalog, id = "open-catalog", label = "Open catalog")]
 struct OpenCatalog;
 
 #[derive(Command)]
-#[domain(id = "describe-catalog", label = "Describe catalog")]
+#[domain(context = Catalog, id = "describe-catalog", label = "Describe catalog")]
 struct DescribeCatalog;
 
 #[derive(Debug, Command, Eq, PartialEq)]
-#[domain(id = "rename-catalog", label = "Rename catalog")]
+#[domain(context = Catalog, id = "rename-catalog", label = "Rename catalog")]
 struct RenameCatalog {
     r#type: String,
 }
@@ -104,14 +108,22 @@ impl CatalogRuntimeActions for AggregateInstance<CatalogAggregate> {
     }
 }
 
-impl CommandHandler<OpenCatalog> for CatalogAggregate {
+struct OpenCatalogHandler;
+
+#[async_trait]
+impl CommandHandler<OpenCatalog> for OpenCatalogHandler {
     type Rejection = std::convert::Infallible;
 
-    fn handle(
+    async fn handle(
+        &self,
         command: &OpenCatalog,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.open_catalog(command)
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut aggregate = execution.load::<CatalogAggregate>("catalog").await?;
+        match aggregate.aggregate_mut().open_catalog(command) {
+            Ok(()) => Ok(CommandDecision::Accepted),
+            Err(rejection) => match rejection {},
+        }
     }
 }
 
@@ -119,18 +131,16 @@ impl CommandHandler<OpenCatalog> for CatalogAggregate {
 fn registers_handler_linked_runtime_metadata() {
     let mut registry = DomainRegistry::new();
     registry
-        .register_command::<CatalogAggregate, OpenCatalog>()
+        .register_command::<OpenCatalog, OpenCatalogHandler>()
         .unwrap();
 
-    let descriptor = registry
-        .command("catalog/catalog", "open-catalog", 1)
-        .unwrap();
+    let descriptor = registry.command("catalog", "open-catalog", 1).unwrap();
 
-    assert_eq!(descriptor.aggregate_type, "catalog/catalog");
+    assert_eq!(descriptor.bounded_context, "catalog");
     assert_eq!(descriptor.modeled_command(), &OpenCatalog::DESCRIPTOR);
     assert_eq!(
-        <OpenCatalog as CommandDefinition<CatalogAggregate>>::descriptor().aggregate_type,
-        CatalogAggregate::aggregate_type()
+        <OpenCatalog as CommandDefinition<OpenCatalogHandler>>::descriptor().bounded_context,
+        Catalog::DESCRIPTOR.id.0
     );
     assert_eq!(CatalogAggregate::DESCRIPTOR.id.local, "catalog");
 }

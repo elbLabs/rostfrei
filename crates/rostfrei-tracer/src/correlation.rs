@@ -58,10 +58,9 @@ pub enum CorrelationEventKind {
         causation_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         duplicate: Option<bool>,
+        context: String,
         command: String,
         schema_version: u32,
-        aggregate_type: String,
-        aggregate_id: String,
     },
     DomainEvent {
         message_id: String,
@@ -498,10 +497,9 @@ impl CorrelationHub {
         correlation_id: &str,
         mode: OperationMode,
         operation_id: String,
+        context: String,
         command: String,
         schema_version: u32,
-        aggregate_type: String,
-        aggregate_id: String,
     ) -> Result<(), CorrelationError> {
         validate_correlation_id(correlation_id)?;
         let mut table = self.state.lock().unwrap_or_else(PoisonError::into_inner);
@@ -530,10 +528,9 @@ impl CorrelationHub {
                 message_id: None,
                 causation_id: None,
                 duplicate: None,
+                context,
                 command,
                 schema_version,
-                aggregate_type,
-                aggregate_id,
             },
         )?;
         table.insertion_order.push_back(correlation_id.to_owned());
@@ -552,20 +549,18 @@ impl CorrelationHub {
         message_id: String,
         causation_id: Option<String>,
         duplicate: bool,
+        context: String,
         command: String,
         schema_version: u32,
-        aggregate: TestAggregate,
         payload: Option<Value>,
     ) -> Result<(), CorrelationError> {
-        let aggregate_type = aggregate.aggregate_type.clone();
-        let aggregate_id = aggregate.id.clone();
         let message = ObservedMessageNode::command(
             message_id.clone(),
             correlation_id,
             causation_id.clone(),
             command.clone(),
             schema_version,
-            aggregate,
+            context.clone(),
             payload,
         );
         if self
@@ -582,10 +577,9 @@ impl CorrelationHub {
                 message_id: Some(message_id),
                 causation_id,
                 duplicate: Some(duplicate),
+                context,
                 command,
                 schema_version,
-                aggregate_type,
-                aggregate_id,
             },
         )
         .await
@@ -596,9 +590,9 @@ impl CorrelationHub {
         &self,
         correlation_id: &str,
         message_id: String,
+        context: String,
         command: String,
         schema_version: u32,
-        aggregate: TestAggregate,
         payload: Option<Value>,
     ) -> Result<(), CorrelationError> {
         let message = ObservedMessageNode::command(
@@ -607,7 +601,7 @@ impl CorrelationHub {
             None,
             command,
             schema_version,
-            aggregate,
+            context,
             payload,
         );
         self.observe_message(correlation_id, message)
@@ -1611,10 +1605,9 @@ mod tests {
             correlation_id,
             mode,
             format!("operation-{correlation_id}"),
+            "bike-rental".to_owned(),
             "rent-bicycle".to_owned(),
             1,
-            "bike-rental/rental-fleet".to_owned(),
-            "fleet-1".to_owned(),
         )
         .expect("register correlation");
     }
@@ -1904,10 +1897,6 @@ mod tests {
     async fn command_publications_and_outcomes_are_raw_duplicate_idempotent() {
         let hub = CorrelationHub::new(1);
         register(&hub, "correlation-1");
-        let aggregate = TestAggregate {
-            aggregate_type: "bike-rental/rental-fleet".to_owned(),
-            id: "fleet-1".to_owned(),
-        };
         for _ in 0..2 {
             hub.observe_command(
                 "correlation-1",
@@ -1915,9 +1904,9 @@ mod tests {
                 "command-1".to_owned(),
                 None,
                 false,
+                "bike-rental".to_owned(),
                 "rent-bicycle".to_owned(),
                 1,
-                aggregate.clone(),
                 Some(json!({ "bicycleId": "bike-1" })),
             )
             .await
@@ -1939,7 +1928,7 @@ mod tests {
         assert_eq!(raw.messages().len(), 1);
         assert_eq!(raw.command_outcomes().len(), 1);
         let command = raw.messages().get("command-1").expect("raw command");
-        assert_eq!(command.aggregate(), Some(&aggregate));
+        assert_eq!(command.context(), Some("bike-rental"));
         assert_eq!(command.payload(), Some(&json!({ "bicycleId": "bike-1" })));
 
         let conflict = hub
@@ -1977,15 +1966,13 @@ mod tests {
                 message_id: Some(ref message_id),
                 causation_id: None,
                 duplicate: Some(false),
+                ref context,
                 ref command,
                 schema_version: 1,
-                ref aggregate_type,
-                ref aggregate_id,
             } if operation_id == "operation-1"
                 && message_id == "command-1"
+                && context == "bike-rental"
                 && command == "rent-bicycle"
-                && aggregate_type == "bike-rental/rental-fleet"
-                && aggregate_id == "fleet-1"
         ));
         assert!(hub.subscribe("correlation-1", 2).await.is_ok());
     }
@@ -2195,10 +2182,9 @@ mod tests {
             "correlation-1",
             OperationMode::Test,
             "operation-1".to_owned(),
+            "test-context".to_owned(),
             "test-command".to_owned(),
             1,
-            "test-context/test-aggregate".to_owned(),
-            "aggregate-1".to_owned(),
         )
         .expect("register correlation");
         let mut subscription = hub

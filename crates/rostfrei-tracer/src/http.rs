@@ -96,15 +96,15 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
             get(get_aggregate_instances),
         )
         .route(
-            "/contexts/{context}/aggregates/{aggregate}/{aggregate_id}/commands/{command}/schemas/{schema_version}/inputs",
+            "/contexts/{context}/commands/{command}/schemas/{schema_version}/inputs",
             get(get_command_inputs),
         )
         .route(
-            "/contexts/{context}/aggregates/{aggregate}/{aggregate_id}/commands/{command}/simulate",
+            "/contexts/{context}/commands/{command}/simulate",
             post(submit_simulation),
         )
         .route(
-            "/contexts/{context}/aggregates/{aggregate}/{aggregate_id}/commands/{command}/test",
+            "/contexts/{context}/commands/{command}/test",
             post(submit_test),
         )
         .route("/tests", get(get_tests))
@@ -112,7 +112,10 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
         .route("/tests/{test_id}", get(get_test))
         .route("/tests/{test_id}/runs", post(run_test))
         .route("/test-runs", post(run_inline_test))
-        .route("/schemas/behavioral-test-v1", get(get_behavioral_test_schema))
+        .route(
+            "/schemas/behavioral-test-v2",
+            get(get_behavioral_test_schema),
+        )
         .route("/test-scenario/fixtures", get(get_test_fixtures))
         .route(
             "/test-scenario/fixtures/{fixture_id}",
@@ -129,7 +132,7 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
         ));
     let dispatch_routes = Router::new()
         .route(
-            "/contexts/{context}/aggregates/{aggregate}/{aggregate_id}/commands/{command}/dispatch",
+            "/contexts/{context}/commands/{command}/dispatch",
             post(submit_dispatch),
         )
         .layer(middleware::from_fn_with_state(
@@ -168,8 +171,7 @@ async fn get_catalog(State(state): State<HttpState>) -> Response {
         for version in catalog
             .contexts
             .iter_mut()
-            .flat_map(|context| &mut context.aggregates)
-            .flat_map(|aggregate| &mut aggregate.commands)
+            .flat_map(|context| &mut context.commands)
             .flat_map(|command| &mut command.versions)
         {
             version.dispatch_href_template = None;
@@ -246,7 +248,7 @@ async fn validate_inline_test(
         Json(TestDefinitionValidationResponse {
             valid: true,
             definition,
-            schema_href: "/schemas/behavioral-test-v1",
+            schema_href: "/schemas/behavioral-test-v2",
             run_href: "/test-runs",
         })
         .into_response(),
@@ -302,18 +304,11 @@ async fn get_aggregate_instances(
 
 async fn get_command_inputs(
     State(state): State<HttpState>,
-    Path((context, aggregate, aggregate_id, command, schema_version)): Path<(
-        String,
-        String,
-        String,
-        String,
-        u32,
-    )>,
+    Path((context, command, schema_version)): Path<(String, String, u32)>,
 ) -> Response {
-    let aggregate_type = format!("{context}/{aggregate}");
     match state
         .tracer
-        .command_inputs(&aggregate_type, &aggregate_id, &command, schema_version)
+        .command_inputs(&context, &command, schema_version)
         .await
     {
         Ok(inputs) => no_store(Json(inputs).into_response()),
@@ -346,14 +341,14 @@ async fn authorize_dispatch_request(
 
 async fn submit_simulation(
     State(state): State<HttpState>,
-    Path((context, aggregate, aggregate_id, command)): Path<(String, String, String, String)>,
+    Path((context, command)): Path<(String, String)>,
     headers: HeaderMap,
     request: Result<Json<SimulationRequest>, JsonRejection>,
 ) -> Response {
     submit_command(
         &state.tracer,
         OperationMode::Simulate,
-        (context, aggregate, aggregate_id, command),
+        (context, command),
         &headers,
         request,
     )
@@ -362,7 +357,7 @@ async fn submit_simulation(
 
 async fn submit_test(
     State(state): State<HttpState>,
-    Path(path): Path<(String, String, String, String)>,
+    Path(path): Path<(String, String)>,
     headers: HeaderMap,
     request: Result<Json<SimulationRequest>, JsonRejection>,
 ) -> Response {
@@ -371,7 +366,7 @@ async fn submit_test(
 
 async fn submit_dispatch(
     State(state): State<HttpState>,
-    Path(path): Path<(String, String, String, String)>,
+    Path(path): Path<(String, String)>,
     headers: HeaderMap,
     request: Result<Json<SimulationRequest>, JsonRejection>,
 ) -> Response {
@@ -388,7 +383,7 @@ async fn submit_dispatch(
 async fn submit_command(
     tracer: &Tracer,
     mode: OperationMode,
-    (context, aggregate, aggregate_id, command): (String, String, String, String),
+    (context, command): (String, String),
     headers: &HeaderMap,
     request: Result<Json<SimulationRequest>, JsonRejection>,
 ) -> Response {
@@ -400,39 +395,20 @@ async fn submit_command(
         Ok(value) => value,
         Err(message) => return bad_request(&message),
     };
-    let aggregate_type = format!("{context}/{aggregate}");
     let result = match mode {
         OperationMode::Simulate => {
             tracer
-                .submit_simulation(
-                    &aggregate_type,
-                    &aggregate_id,
-                    &command,
-                    request,
-                    idempotency_key,
-                )
+                .submit_simulation(&context, &command, request, idempotency_key)
                 .await
         }
         OperationMode::Test => {
             tracer
-                .submit_test(
-                    &aggregate_type,
-                    &aggregate_id,
-                    &command,
-                    request,
-                    idempotency_key,
-                )
+                .submit_test(&context, &command, request, idempotency_key)
                 .await
         }
         OperationMode::Dispatch => {
             tracer
-                .submit_dispatch(
-                    &aggregate_type,
-                    &aggregate_id,
-                    &command,
-                    request,
-                    idempotency_key,
-                )
+                .submit_dispatch(&context, &command, request, idempotency_key)
                 .await
         }
     };
@@ -793,9 +769,6 @@ fn runtime_test_definition_error_response(error: &TestDefinitionValidationError)
         TestDefinitionValidationError::InvalidCommandPayload { path, .. } => {
             ("invalid-command-payload", path.as_str())
         }
-        TestDefinitionValidationError::InvalidAggregateId { path, .. } => {
-            ("invalid-aggregate-id", path.as_str())
-        }
         TestDefinitionValidationError::CommandPayloadTooLarge { path, .. } => {
             ("command-payload-too-large", path.as_str())
         }
@@ -852,7 +825,7 @@ fn error_response(error: &SubmissionError) -> Response {
         SubmissionError::ModeUnavailable(_) => {
             (StatusCode::NOT_IMPLEMENTED, "mode-unavailable", false)
         }
-        SubmissionError::InvalidAggregateId(_) | SubmissionError::InvalidOperationId(_) => {
+        SubmissionError::InvalidOperationId(_) => {
             (StatusCode::BAD_REQUEST, "invalid-request", false)
         }
         SubmissionError::InvalidCursor(_) => (StatusCode::BAD_REQUEST, "future-cursor", false),
@@ -1028,9 +1001,6 @@ fn discovery_error_response(error: &DiscoveryError) -> Response {
 fn command_input_error_response(error: &CommandInputError) -> Response {
     let (status, code, retry_after) = match error {
         CommandInputError::UnknownCommand { .. } => (StatusCode::NOT_FOUND, "not-found", false),
-        CommandInputError::InvalidAggregateId(_) => {
-            (StatusCode::BAD_REQUEST, "invalid-request", false)
-        }
         CommandInputError::TestScenarioUnavailable => (
             StatusCode::SERVICE_UNAVAILABLE,
             "test-scenario-unavailable",

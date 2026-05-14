@@ -21,12 +21,12 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint, EventBatch,
     EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind, EventTransaction,
-    ExecutionMetadata, ExpectedVersion, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent,
-    StreamDirectory, StreamId, StreamSummary, StreamVersion, TransactionAppendOutcome,
-    TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
+    ExpectedVersion, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent, StreamDirectory,
+    StreamId, StreamSummary, StreamVersion, TransactionAppendOutcome, TransactionParticipant,
+    TransactionReceipt, TransactionStreamReceipt, derive_commit_id, derive_event_id,
     validate_transaction_item_limit,
 };
-use rostfrei_messaging_core::{CausationId, CorrelationId};
+use rostfrei_messaging_core::{BoundedContextName, CausationId, CorrelationId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -311,10 +311,9 @@ impl NatsEventStore {
         }
         let primary_stream_id = first.recorded.stream_id().clone();
         let materialized = self
-            .load_transaction_receipt_materialized_with_raw_histories(
+            .load_transaction_receipt_for_history(
                 &primary_stream_id,
                 &first.operation_id,
-                true,
                 raw_histories,
             )
             .await?
@@ -376,20 +375,10 @@ impl NatsEventStore {
     fn transaction_participant_has_conflicting_identity(
         history: &History,
         participant: &TransactionParticipant,
-        primary_stream_id: &StreamId,
-        operation_id: &OperationId,
     ) -> Result<bool, EventStoreError> {
         let Some(batch) = participant.batch() else {
             return Ok(false);
         };
-        if participant.stream_id() == primary_stream_id
-            && history
-                .events
-                .iter()
-                .any(|event| event.operation_id() == operation_id)
-        {
-            return Ok(true);
-        }
         match Self::resolve_existing(history, batch) {
             Ok(existing) => Ok(existing.is_some()),
             Err(error) if error.kind() == EventStoreErrorKind::IdentityConflict => Ok(true),
@@ -404,9 +393,9 @@ impl NatsEventStore {
     ) -> Result<AppendOutcome, EventStoreError> {
         let history = self.load_history(stream_id).await?;
         if self
-            .load_transaction_receipt_inner(stream_id, batch.operation_id())
+            .load_transaction_receipt_inner(batch.operation_id())
             .await?
-            .is_some()
+            .is_some_and(|receipt| transaction_receipt_writes_stream(&receipt, stream_id))
         {
             return Err(identity_conflict(
                 "operation identity was already used by an event transaction",
@@ -467,40 +456,62 @@ impl NatsEventStore {
 
     async fn load_transaction_receipt_inner(
         &self,
-        primary_stream_id: &StreamId,
         operation_id: &OperationId,
     ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-        self.load_transaction_receipt_materialized(primary_stream_id, operation_id, false)
+        self.load_transaction_receipt_materialized(operation_id, false)
             .await
             .map(|materialized| materialized.map(|materialized| materialized.receipt))
     }
 
     async fn load_transaction_receipt_materialized(
         &self,
-        primary_stream_id: &StreamId,
         operation_id: &OperationId,
         required: bool,
     ) -> Result<Option<MaterializedTransactionReceipt>, EventStoreError> {
         let mut raw_histories = RawHistoryCache::new();
         self.load_transaction_receipt_materialized_with_raw_histories(
-            primary_stream_id,
             operation_id,
             required,
             &mut raw_histories,
+            TransactionSubjectLayout::Operation,
+        )
+        .await
+    }
+
+    async fn load_transaction_receipt_for_history(
+        &self,
+        legacy_primary_stream_id: &StreamId,
+        operation_id: &OperationId,
+        raw_histories: &mut RawHistoryCache,
+    ) -> Result<Option<MaterializedTransactionReceipt>, EventStoreError> {
+        if let Some(receipt) = self
+            .load_transaction_receipt_materialized_with_raw_histories(
+                operation_id,
+                false,
+                raw_histories,
+                TransactionSubjectLayout::LegacyPrimary(legacy_primary_stream_id),
+            )
+            .await?
+        {
+            return Ok(Some(receipt));
+        }
+        self.load_transaction_receipt_materialized_with_raw_histories(
+            operation_id,
+            true,
+            raw_histories,
+            TransactionSubjectLayout::Operation,
         )
         .await
     }
 
     async fn load_transaction_receipt_materialized_with_raw_histories(
         &self,
-        primary_stream_id: &StreamId,
         operation_id: &OperationId,
         required: bool,
         raw_histories: &mut RawHistoryCache,
+        layout: TransactionSubjectLayout<'_>,
     ) -> Result<Option<MaterializedTransactionReceipt>, EventStoreError> {
-        let subject = self
-            .config
-            .transaction_subject(primary_stream_id, operation_id.as_str());
+        let subject = layout.receipt_subject(&self.config, operation_id.as_str());
         let stream = self
             .context
             .get_stream(self.config.stream_name())
@@ -540,14 +551,23 @@ impl NatsEventStore {
                 "transaction receipt belongs to a different operation",
             ));
         }
-        let receipt = self
-            .materialize_transaction_receipt(decoded, raw_histories)
-            .await?;
-        if receipt.receipt.primary_stream_id() != Some(primary_stream_id) {
-            return Err(corrupt(
-                "transaction receipt belongs to a different primary stream",
-            ));
+        if let TransactionSubjectLayout::LegacyPrimary(primary_stream_id) = layout {
+            let receipt_primary =
+                decoded.content.participants.first().ok_or_else(|| {
+                    corrupt("legacy transaction receipt has no primary participant")
+                })?;
+            if stream_id_from_wire(receipt_primary.stream.clone())? != *primary_stream_id
+                || receipt_primary.event_count == 0
+                || receipt_primary.commit_id.is_none()
+            {
+                return Err(corrupt(
+                    "legacy transaction receipt does not match its primary-derived subject",
+                ));
+            }
         }
+        let receipt = self
+            .materialize_transaction_receipt(decoded, raw_histories, layout)
+            .await?;
         Ok(Some(receipt))
     }
 
@@ -556,6 +576,7 @@ impl NatsEventStore {
         &self,
         decoded: DecodedTransactionReceipt,
         raw_histories: &mut RawHistoryCache,
+        layout: TransactionSubjectLayout<'_>,
     ) -> Result<MaterializedTransactionReceipt, EventStoreError> {
         let DecodedTransactionReceipt {
             batch_id,
@@ -596,12 +617,12 @@ impl NatsEventStore {
             .map(CausationId::new)
             .transpose()
             .map_err(|error| corrupt(format!("invalid transaction causation identity: {error}")))?;
-        if content.participants.first().is_none_or(|participant| {
-            participant.event_count == 0 || participant.commit_id.is_none()
-        }) {
-            return Err(corrupt(
-                "transaction receipt primary participant has no commit",
-            ));
+        if !content
+            .participants
+            .iter()
+            .any(|participant| participant.event_count > 0 && participant.commit_id.is_some())
+        {
+            return Err(corrupt("transaction receipt has no writing participant"));
         }
         let transaction_event_count =
             content
@@ -622,14 +643,6 @@ impl NatsEventStore {
             ));
         }
 
-        let primary_stream_id = stream_id_from_wire(
-            content
-                .participants
-                .first()
-                .ok_or_else(|| corrupt("transaction receipt has no primary participant"))?
-                .stream
-                .clone(),
-        )?;
         let stream = self
             .context
             .get_stream(self.config.stream_name())
@@ -666,7 +679,6 @@ impl NatsEventStore {
                 verify_transaction_guard(
                     &stream,
                     &self.config,
-                    &primary_stream_id,
                     &stream_id,
                     &history,
                     base_version,
@@ -675,6 +687,7 @@ impl NatsEventStore {
                     transaction_event_count,
                     guard_ordinal,
                     batch_start_stream_sequence,
+                    layout,
                 )
                 .await?;
                 guard_ordinal = guard_ordinal
@@ -695,7 +708,10 @@ impl NatsEventStore {
                 "transaction receipt has inconsistent transaction coordinates",
             ));
         }
-        let mut receipt = TransactionReceipt::new(operation_id, fingerprint, streams);
+        let bounded_context = BoundedContextName::new(content.bounded_context)
+            .map_err(|error| corrupt(format!("invalid transaction bounded context: {error}")))?;
+        let mut receipt = TransactionReceipt::new(operation_id, fingerprint, streams)
+            .with_bounded_context(bounded_context);
         if let Some(correlation_id) = correlation_id {
             receipt = receipt.with_correlation_id(correlation_id);
         }
@@ -714,11 +730,8 @@ impl NatsEventStore {
         &self,
         transaction: &EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
-        let primary_stream_id = transaction
-            .primary_stream_id()
-            .ok_or_else(|| invalid("an event transaction must contain at least one participant"))?;
         if let Some(receipt) = self
-            .load_transaction_receipt_inner(primary_stream_id, transaction.operation_id())
+            .load_transaction_receipt_inner(transaction.operation_id())
             .await?
         {
             if transaction_matches_receipt(transaction, &receipt) {
@@ -730,14 +743,9 @@ impl NatsEventStore {
         }
         for participant in transaction.participants() {
             let history = self.load_history(participant.stream_id()).await?;
-            if Self::transaction_participant_has_conflicting_identity(
-                &history,
-                participant,
-                primary_stream_id,
-                transaction.operation_id(),
-            )? {
+            if Self::transaction_participant_has_conflicting_identity(&history, participant)? {
                 let receipt = self
-                    .load_transaction_receipt_inner(primary_stream_id, transaction.operation_id())
+                    .load_transaction_receipt_inner(transaction.operation_id())
                     .await?;
                 return resolve_transaction_identity_after_participant_conflict(
                     transaction,
@@ -753,11 +761,8 @@ impl NatsEventStore {
         transaction: &EventTransaction,
         original: EventStoreError,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
-        let primary_stream_id = transaction
-            .primary_stream_id()
-            .ok_or_else(|| invalid("an event transaction must contain at least one participant"))?;
         let receipt = preserve_original_unavailable(
-            self.load_transaction_receipt_inner(primary_stream_id, transaction.operation_id())
+            self.load_transaction_receipt_inner(transaction.operation_id())
                 .await,
             &original,
         )?;
@@ -781,18 +786,10 @@ impl NatsEventStore {
                 self.load_raw_history(participant.stream_id()).await,
                 &original,
             )?;
-            if Self::transaction_participant_has_conflicting_identity(
-                &history,
-                participant,
-                primary_stream_id,
-                transaction.operation_id(),
-            )? {
+            if Self::transaction_participant_has_conflicting_identity(&history, participant)? {
                 let receipt = preserve_original_unavailable(
-                    self.load_transaction_receipt_inner(
-                        primary_stream_id,
-                        transaction.operation_id(),
-                    )
-                    .await,
+                    self.load_transaction_receipt_inner(transaction.operation_id())
+                        .await,
                     &original,
                 )?;
                 return resolve_transaction_identity_after_participant_conflict(
@@ -900,6 +897,10 @@ impl StreamDirectory for NatsEventStore {
 }
 
 #[async_trait]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the NATS event store keeps its related persistence operations in one trait implementation"
+)]
 impl EventStore for NatsEventStore {
     async fn append(
         &self,
@@ -909,9 +910,9 @@ impl EventStore for NatsEventStore {
     ) -> Result<AppendOutcome, EventStoreError> {
         let history = self.load_history(stream_id).await?;
         if self
-            .load_transaction_receipt_inner(stream_id, batch.operation_id())
+            .load_transaction_receipt_inner(batch.operation_id())
             .await?
-            .is_some()
+            .is_some_and(|receipt| transaction_receipt_writes_stream(&receipt, stream_id))
         {
             return Err(identity_conflict(
                 "operation identity was already used by an event transaction",
@@ -1010,26 +1011,44 @@ impl EventStore for NatsEventStore {
 
     async fn load_transaction_receipt(
         &self,
-        primary_stream_id: &StreamId,
         operation_id: &OperationId,
     ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-        self.load_transaction_receipt_inner(primary_stream_id, operation_id)
-            .await
+        self.load_transaction_receipt_inner(operation_id).await
     }
 
     #[allow(clippy::too_many_lines)]
+    async fn load_transaction_receipt_in_context(
+        &self,
+        bounded_context: &BoundedContextName,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        if bounded_context != self.config.bounded_context() {
+            return Err(invalid(format!(
+                "transaction context `{}` does not match event-store context `{}`",
+                bounded_context.as_str(),
+                self.config.bounded_context().as_str()
+            )));
+        }
+        self.load_transaction_receipt_inner(operation_id).await
+    }
+
     async fn append_transaction(
         &self,
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        if transaction
+            .bounded_context()
+            .is_some_and(|context| context != self.config.bounded_context())
+        {
+            return Err(invalid(format!(
+                "transaction context does not match event-store context `{}`",
+                self.config.bounded_context().as_str()
+            )));
+        }
         validate_transaction_shape(&transaction)?;
         let domain_event_count = validate_transaction_item_limit(&transaction)?;
-        let primary_stream_id = transaction
-            .primary_stream_id()
-            .ok_or_else(|| invalid("an event transaction must contain at least one participant"))?
-            .clone();
         if let Some(receipt) = self
-            .load_transaction_receipt_inner(&primary_stream_id, transaction.operation_id())
+            .load_transaction_receipt_inner(transaction.operation_id())
             .await?
         {
             if transaction_matches_receipt(&transaction, &receipt) {
@@ -1046,14 +1065,9 @@ impl EventStore for NatsEventStore {
         let mut staged = Vec::with_capacity(transaction.participants().len());
         for participant in transaction.participants() {
             let history = self.load_history(participant.stream_id()).await?;
-            if Self::transaction_participant_has_conflicting_identity(
-                &history,
-                participant,
-                &primary_stream_id,
-                transaction.operation_id(),
-            )? {
+            if Self::transaction_participant_has_conflicting_identity(&history, participant)? {
                 let receipt = self
-                    .load_transaction_receipt_inner(&primary_stream_id, transaction.operation_id())
+                    .load_transaction_receipt_inner(transaction.operation_id())
                     .await?;
                 return resolve_transaction_identity_after_participant_conflict(
                     &transaction,
@@ -1154,11 +1168,9 @@ impl EventStore for NatsEventStore {
                 )));
             }
             messages.push(AtomicPublishMessage {
-                subject: self.config.transaction_guard_subject(
-                    &primary_stream_id,
-                    transaction.operation_id().as_str(),
-                    ordinal,
-                ),
+                subject: self
+                    .config
+                    .transaction_guard_subject(transaction.operation_id().as_str(), ordinal),
                 message_id: None,
                 payload,
                 expected_last_subject_sequence: Some(participant.last_subject_stream_sequence),
@@ -1177,7 +1189,7 @@ impl EventStore for NatsEventStore {
         messages.push(AtomicPublishMessage {
             subject: self
                 .config
-                .transaction_subject(&primary_stream_id, transaction.operation_id().as_str()),
+                .transaction_subject(transaction.operation_id().as_str()),
             message_id: None,
             payload: receipt_payload,
             expected_last_subject_sequence: Some(0),
@@ -1222,7 +1234,7 @@ impl EventStore for NatsEventStore {
             ));
         }
         let receipt = self
-            .load_transaction_receipt_inner(&primary_stream_id, transaction.operation_id())
+            .load_transaction_receipt_inner(transaction.operation_id())
             .await?
             .ok_or_else(|| corrupt("published transaction receipt is not visible"))?;
         if !transaction_matches_receipt(&transaction, &receipt) {
@@ -1465,6 +1477,36 @@ struct DecodedTransactionReceipt {
     batch_sequence: usize,
     stream_sequence: u64,
     content: TransactionReceiptContentWire,
+}
+
+#[derive(Clone, Copy)]
+enum TransactionSubjectLayout<'a> {
+    Operation,
+    LegacyPrimary(&'a StreamId),
+}
+
+impl TransactionSubjectLayout<'_> {
+    fn receipt_subject(self, config: &NatsEventStoreConfig, operation_id: &str) -> String {
+        match self {
+            Self::Operation => config.transaction_subject(operation_id),
+            Self::LegacyPrimary(primary_stream_id) => {
+                config.legacy_primary_transaction_subject(primary_stream_id, operation_id)
+            }
+        }
+    }
+
+    fn guard_subject(
+        self,
+        config: &NatsEventStoreConfig,
+        operation_id: &str,
+        ordinal: usize,
+    ) -> String {
+        match self {
+            Self::Operation => config.transaction_guard_subject(operation_id, ordinal),
+            Self::LegacyPrimary(primary_stream_id) => config
+                .legacy_primary_transaction_guard_subject(primary_stream_id, operation_id, ordinal),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1779,13 +1821,9 @@ fn decode_event_inner(
         payload.clone(),
     )
     .map_err(|error| corrupt(format!("invalid stored event envelope: {error}")))?;
-    let metadata = ExecutionMetadata::new(
-        stream_id.clone(),
-        operation_id.clone(),
-        operation_fingerprint,
-    );
-    if metadata.commit_id() != &commit_id
-        || metadata.event_id(wire.event.commit_event_ordinal) != event_id
+    let expected_commit_id = derive_commit_id(&stream_id, &operation_id);
+    if expected_commit_id != commit_id
+        || derive_event_id(&expected_commit_id, wire.event.commit_event_ordinal) != event_id
     {
         return Err(corrupt("stored event has incompatible derived identities"));
     }
@@ -2384,12 +2422,8 @@ fn validate_derived_identities(
     stream_id: &StreamId,
     batch: &EventBatch,
 ) -> Result<(), EventStoreError> {
-    let metadata = ExecutionMetadata::new(
-        stream_id.clone(),
-        batch.operation_id().clone(),
-        batch.operation_fingerprint(),
-    );
-    if batch.commit_id() != metadata.commit_id() {
+    let expected_commit_id = derive_commit_id(stream_id, batch.operation_id());
+    if batch.commit_id() != &expected_commit_id {
         return Err(invalid(
             "commit identity was not derived from the stream and operation identity",
         ));
@@ -2397,7 +2431,7 @@ fn validate_derived_identities(
     for (ordinal, event) in batch.events().iter().enumerate() {
         let ordinal = u32::try_from(ordinal)
             .map_err(|_| invalid("event ordinal exceeds the supported range"))?;
-        if event.event_id() != &metadata.event_id(ordinal) {
+        if event.event_id() != &derive_event_id(&expected_commit_id, ordinal) {
             return Err(invalid(
                 "event identity was not derived from its commit identity and ordinal",
             ));
@@ -2412,15 +2446,7 @@ fn validate_transaction_shape(transaction: &EventTransaction) -> Result<(), Even
             "an event transaction must contain at least one participant",
         ));
     }
-    if transaction
-        .participants()
-        .first()
-        .is_some_and(|participant| participant.batch().is_none())
-    {
-        return Err(invalid(
-            "an event transaction's primary participant must contain an event batch",
-        ));
-    }
+
     let mut streams = HashSet::with_capacity(transaction.participants().len());
     for participant in transaction.participants() {
         if !streams.insert(participant.stream_id()) {
@@ -2689,7 +2715,6 @@ fn materialize_transaction_participant(
 async fn verify_transaction_guard(
     stream: &jetstream::stream::Stream,
     config: &NatsEventStoreConfig,
-    primary_stream_id: &StreamId,
     guarded_stream_id: &StreamId,
     history: &History,
     base_version: StreamVersion,
@@ -2698,6 +2723,7 @@ async fn verify_transaction_guard(
     transaction_event_count: usize,
     guard_ordinal: usize,
     batch_start_stream_sequence: u64,
+    layout: TransactionSubjectLayout<'_>,
 ) -> Result<(), EventStoreError> {
     let batch_ordinal = transaction_event_count
         .checked_add(guard_ordinal)
@@ -2717,8 +2743,7 @@ async fn verify_transaction_guard(
                 "failed to read transaction read guard",
             )
         })?;
-    let expected_subject =
-        config.transaction_guard_subject(primary_stream_id, operation_id.as_str(), guard_ordinal);
+    let expected_subject = layout.guard_subject(config, operation_id.as_str(), guard_ordinal);
     if message.sequence != expected_stream_sequence || message.subject.as_str() != expected_subject
     {
         return Err(corrupt(
@@ -2886,11 +2911,11 @@ fn decode_transaction_receipt(
             "stored transaction receipt belongs to another event store or has no participants",
         ));
     }
-    if wire
+    if !wire
         .receipt
         .participants
-        .first()
-        .is_none_or(|participant| participant.event_count == 0 || participant.commit_id.is_none())
+        .iter()
+        .any(|participant| participant.event_count > 0 && participant.commit_id.is_some())
         || wire
             .receipt
             .participants
@@ -2952,11 +2977,21 @@ fn stream_id_from_wire(wire: StreamIdentityWire) -> Result<StreamId, EventStoreE
     Ok(StreamId::new(aggregate_type, aggregate_id))
 }
 
+fn transaction_receipt_writes_stream(receipt: &TransactionReceipt, stream_id: &StreamId) -> bool {
+    receipt
+        .streams()
+        .iter()
+        .any(|stream| stream.stream_id() == stream_id && !stream.events().is_empty())
+}
+
 fn transaction_matches_receipt(
     transaction: &EventTransaction,
     receipt: &TransactionReceipt,
 ) -> bool {
-    let metadata_matches = transaction.operation_id() == receipt.operation_id()
+    let metadata_matches = transaction
+        .bounded_context()
+        .is_none_or(|context| receipt.bounded_context() == Some(context))
+        && transaction.operation_id() == receipt.operation_id()
         && transaction.operation_fingerprint() == receipt.operation_fingerprint()
         && transaction.correlation_id() == receipt.correlation_id()
         && transaction.causation_id() == receipt.causation_id();
@@ -3253,11 +3288,12 @@ mod tests {
             "fee21a1bfc244307e772580bf87fa36197609b1a31de0e9b133b1d73282aba4d",
         )
         .unwrap();
-        let metadata = ExecutionMetadata::new(stream_id, operation_id.clone(), fingerprint);
-        let event = NewEvent::new(metadata.event_id(0), "opened", 1, b"{}".to_vec()).unwrap();
+        let commit_id = derive_commit_id(&stream_id, &operation_id);
+        let event =
+            NewEvent::new(derive_event_id(&commit_id, 0), "opened", 1, b"{}".to_vec()).unwrap();
         let batch = EventBatch::new(
-            metadata.commit_id().clone(),
-            operation_id,
+            commit_id.clone(),
+            operation_id.clone(),
             fingerprint,
             vec![event.clone()],
         )
@@ -3269,15 +3305,10 @@ mod tests {
             NatsEventStore::resolve_existing(&history, &batch).expect("exact replay"),
             Some(history.events.clone())
         );
-        let changed = EventBatch::new(
-            metadata.commit_id().clone(),
-            metadata.operation_id().clone(),
-            fingerprint,
-            vec![event],
-        )
-        .unwrap()
-        .with_correlation_id(CorrelationId::new("correlation-2").unwrap())
-        .with_causation_id(CausationId::new("causation-1").unwrap());
+        let changed = EventBatch::new(commit_id, operation_id, fingerprint, vec![event])
+            .unwrap()
+            .with_correlation_id(CorrelationId::new("correlation-2").unwrap())
+            .with_causation_id(CausationId::new("causation-1").unwrap());
         assert_eq!(
             NatsEventStore::resolve_existing(&history, &changed)
                 .unwrap_err()
@@ -3292,15 +3323,10 @@ mod tests {
         let stream_id = stream_id();
         let operation_id = OperationId::new("schema-3-operation").unwrap();
         let fingerprint = ContentFingerprint::digest("schema-3-content");
-        let metadata = ExecutionMetadata::new(stream_id.clone(), operation_id.clone(), fingerprint);
-        let event = NewEvent::new(metadata.event_id(0), "opened", 1, b"{}".to_vec()).unwrap();
-        let batch = EventBatch::new(
-            metadata.commit_id().clone(),
-            operation_id,
-            fingerprint,
-            vec![event],
-        )
-        .unwrap();
+        let commit_id = derive_commit_id(&stream_id, &operation_id);
+        let event =
+            NewEvent::new(derive_event_id(&commit_id, 0), "opened", 1, b"{}".to_vec()).unwrap();
+        let batch = EventBatch::new(commit_id, operation_id, fingerprint, vec![event]).unwrap();
         let recorded = record_batch(&stream_id, StreamVersion::ZERO, &batch).unwrap();
         let payload = encode_events(&config, &stream_id, &batch, recorded.events())
             .unwrap()
@@ -3356,15 +3382,10 @@ mod tests {
         let stream_id = stream_id();
         let operation_id = OperationId::new("schema-4-operation").unwrap();
         let fingerprint = ContentFingerprint::digest("schema-4-content");
-        let metadata = ExecutionMetadata::new(stream_id.clone(), operation_id.clone(), fingerprint);
-        let event = NewEvent::new(metadata.event_id(0), "opened", 1, b"{}".to_vec()).unwrap();
-        let batch = EventBatch::new(
-            metadata.commit_id().clone(),
-            operation_id,
-            fingerprint,
-            vec![event],
-        )
-        .unwrap();
+        let commit_id = derive_commit_id(&stream_id, &operation_id);
+        let event =
+            NewEvent::new(derive_event_id(&commit_id, 0), "opened", 1, b"{}".to_vec()).unwrap();
+        let batch = EventBatch::new(commit_id, operation_id, fingerprint, vec![event]).unwrap();
         let recorded = record_batch(&stream_id, StreamVersion::ZERO, &batch).unwrap();
         let payload =
             encode_transaction_events(&config, &stream_id, &batch, recorded.events(), 0, 1)
@@ -3438,28 +3459,37 @@ mod tests {
     }
 
     #[test]
-    fn transaction_receipt_requires_a_primary_commit() {
+    fn transaction_receipt_accepts_a_read_guard_before_a_writer() {
         let config = config();
         let mut content = transaction_receipt_fixture();
-        let primary = content
-            .participants
-            .first_mut()
-            .expect("receipt fixture primary participant");
-        primary.commit_id = None;
-        primary.event_count = 0;
+        content.participants.swap(0, 1);
+        let payload = encode_transaction_receipt(&content).unwrap();
+
+        decode_transaction_receipt(&config, 4, &transaction_receipt_headers("4"), &payload)
+            .expect("a receipt may begin with a read guard");
+    }
+
+    #[test]
+    fn transaction_receipt_requires_at_least_one_writer() {
+        let config = config();
+        let mut content = transaction_receipt_fixture();
+        for participant in &mut content.participants {
+            participant.commit_id = None;
+            participant.event_count = 0;
+        }
         let payload = encode_transaction_receipt(&content).unwrap();
 
         let error =
             decode_transaction_receipt(&config, 3, &transaction_receipt_headers("3"), &payload)
                 .err()
-                .expect("a receipt with no primary commit must be rejected");
+                .expect("a receipt with no writer must be rejected");
 
         assert_eq!(error.kind(), EventStoreErrorKind::CorruptHistory);
         assert!(error.message().contains("participant commit shape"));
     }
 
     #[test]
-    fn transaction_shape_rejects_a_read_only_primary() {
+    fn transaction_shape_accepts_a_read_guard_before_a_writer() {
         let primary = stream_id();
         let secondary = StreamId::new(
             AggregateType::new("Test").unwrap(),
@@ -3467,12 +3497,12 @@ mod tests {
         );
         let operation_id = OperationId::new("read-only-primary").unwrap();
         let fingerprint = ContentFingerprint::digest("read-only-primary");
-        let metadata = ExecutionMetadata::new(secondary.clone(), operation_id.clone(), fingerprint);
+        let commit_id = derive_commit_id(&secondary, &operation_id);
         let batch = EventBatch::new(
-            metadata.commit_id().clone(),
+            commit_id.clone(),
             operation_id.clone(),
             fingerprint,
-            vec![NewEvent::new(metadata.event_id(0), "opened", 1, Vec::new()).unwrap()],
+            vec![NewEvent::new(derive_event_id(&commit_id, 0), "opened", 1, Vec::new()).unwrap()],
         )
         .unwrap();
         let transaction = EventTransaction::new(
@@ -3492,11 +3522,11 @@ mod tests {
             ],
         );
 
+        validate_transaction_shape(&transaction)
+            .expect("a transaction may begin with a read guard");
         assert_eq!(
-            validate_transaction_shape(&transaction)
-                .expect_err("a read-only primary must be rejected")
-                .kind(),
-            EventStoreErrorKind::InvalidRequest
+            validate_transaction_item_limit(&transaction).expect("the transaction has a writer"),
+            1
         );
     }
 
@@ -3509,12 +3539,12 @@ mod tests {
         );
         let operation_id = OperationId::new("transaction-race-operation").unwrap();
         let fingerprint = ContentFingerprint::digest("transaction-race-content");
-        let metadata = ExecutionMetadata::new(secondary.clone(), operation_id.clone(), fingerprint);
+        let commit_id = derive_commit_id(&secondary, &operation_id);
         let batch = EventBatch::new(
-            metadata.commit_id().clone(),
-            operation_id.clone(),
+            commit_id.clone(),
+            operation_id,
             fingerprint,
-            vec![NewEvent::new(metadata.event_id(0), "opened", 1, Vec::new()).unwrap()],
+            vec![NewEvent::new(derive_event_id(&commit_id, 0), "opened", 1, Vec::new()).unwrap()],
         )
         .unwrap();
         let events = record_batch(&secondary, StreamVersion::ZERO, &batch)
@@ -3550,41 +3580,27 @@ mod tests {
             TransactionParticipant::new(secondary.clone(), ExpectedVersion::NoStream, Some(batch));
         let observer = TransactionParticipant::new(secondary, ExpectedVersion::NoStream, None);
         let primary_observer =
-            TransactionParticipant::new(primary.clone(), ExpectedVersion::NoStream, None);
+            TransactionParticipant::new(primary, ExpectedVersion::NoStream, None);
 
         assert!(
-            NatsEventStore::transaction_participant_has_conflicting_identity(
-                &history,
-                &writer,
-                &primary,
-                &operation_id,
-            )
-            .unwrap()
+            NatsEventStore::transaction_participant_has_conflicting_identity(&history, &writer)
+                .unwrap()
         );
         assert!(
             NatsEventStore::transaction_participant_has_conflicting_identity(
                 &transactional_history,
                 &writer,
-                &primary,
-                &operation_id,
             )
             .unwrap()
         );
         assert!(
-            !NatsEventStore::transaction_participant_has_conflicting_identity(
-                &history,
-                &observer,
-                &primary,
-                &operation_id,
-            )
-            .unwrap()
+            !NatsEventStore::transaction_participant_has_conflicting_identity(&history, &observer)
+                .unwrap()
         );
         assert!(
             !NatsEventStore::transaction_participant_has_conflicting_identity(
                 &history,
                 &primary_observer,
-                &primary,
-                &operation_id,
             )
             .unwrap()
         );
@@ -3596,12 +3612,12 @@ mod tests {
         let stream_id = stream_id();
         let operation_id = OperationId::new("provenance-operation").unwrap();
         let fingerprint = ContentFingerprint::digest("provenance-content");
-        let metadata = ExecutionMetadata::new(stream_id.clone(), operation_id.clone(), fingerprint);
+        let commit_id = derive_commit_id(&stream_id, &operation_id);
         let batch = EventBatch::new(
-            metadata.commit_id().clone(),
+            commit_id.clone(),
             operation_id.clone(),
             fingerprint,
-            vec![NewEvent::new(metadata.event_id(0), "opened", 1, Vec::new()).unwrap()],
+            vec![NewEvent::new(derive_event_id(&commit_id, 0), "opened", 1, Vec::new()).unwrap()],
         )
         .unwrap();
         let events = record_batch(&stream_id, StreamVersion::ZERO, &batch)
@@ -3763,15 +3779,15 @@ mod tests {
         let stream_id = stream_id();
         let operation_id = OperationId::new("large-schema-operation").unwrap();
         let fingerprint = ContentFingerprint::digest("large-schema-content");
-        let metadata = ExecutionMetadata::new(stream_id.clone(), operation_id.clone(), fingerprint);
-        let event = NewEvent::new(metadata.event_id(0), "opened", 1, vec![42; 400 * 1024]).unwrap();
-        let batch = EventBatch::new(
-            metadata.commit_id().clone(),
-            operation_id,
-            fingerprint,
-            vec![event],
+        let commit_id = derive_commit_id(&stream_id, &operation_id);
+        let event = NewEvent::new(
+            derive_event_id(&commit_id, 0),
+            "opened",
+            1,
+            vec![42; 400 * 1024],
         )
         .unwrap();
+        let batch = EventBatch::new(commit_id, operation_id, fingerprint, vec![event]).unwrap();
         let recorded = record_batch(&stream_id, StreamVersion::ZERO, &batch).unwrap();
         let subject = config.aggregate_subject(
             stream_id.aggregate_type().as_str(),
@@ -3839,12 +3855,14 @@ mod tests {
         );
         let operation_id = OperationId::new("retry-operation").unwrap();
         let fingerprint = ContentFingerprint::digest("retry-content");
-        let metadata = ExecutionMetadata::new(primary.clone(), operation_id.clone(), fingerprint);
+        let commit_id = derive_commit_id(&primary, &operation_id);
         let batch = EventBatch::new(
-            metadata.commit_id().clone(),
+            commit_id.clone(),
             operation_id.clone(),
             fingerprint,
-            vec![NewEvent::new(metadata.event_id(0), "opened", 1, b"{}".to_vec()).unwrap()],
+            vec![
+                NewEvent::new(derive_event_id(&commit_id, 0), "opened", 1, b"{}".to_vec()).unwrap(),
+            ],
         )
         .unwrap();
         let recorded = record_batch(&primary, StreamVersion::ZERO, &batch).unwrap();

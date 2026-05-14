@@ -5,16 +5,15 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei::{
-    Aggregate as RuntimeAggregate, AggregateInstance, Apply, CommandExecutionError, CommandHandler,
-    CommandOutcome, CommittedDomainEvent, ContentFingerprint, DomainEventDispatcher, EventBatch,
-    EventCodec, EventCodecError, EventCodecErrorKind, EventStore, EventVariant, ExecutionMetadata,
-    Executor, ExpectedVersion, InMemoryEventStore, Initialize, NewEvent, OperationId,
-    RecordedEvent, StreamAggregateId, StreamId,
+    Aggregate as RuntimeAggregate, AggregateInstance, Apply, CommandDecision, CommandExecution,
+    CommandExecutionError, CommandExecutionMetadata, CommandExecutor, CommandHandler,
+    CommandHandlingResult, CommandOutcome, CommittedDomainEvent, ContentFingerprint,
+    DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
+    DomainEventHandlerErrorKind, EventBatch, EventCodecErrorKind, EventStore, EventVariant,
+    ExpectedVersion, InMemoryEventStore, Initialize, NewEvent, OperationId, StreamAggregateId,
+    StreamId,
 };
-use rostfrei_core::{
-    DomainEventDispatchOutcome, DomainEventHandler, DomainEventHandlerError,
-    DomainEventHandlerErrorKind,
-};
+use rostfrei_core::{derive_commit_id, derive_event_id};
 use serde::{Deserialize, Serialize};
 
 type TestResult<T = ()> = Result<T, TestError>;
@@ -187,35 +186,50 @@ struct DepositAndObserve {
     amount: i64,
 }
 
-impl CommandHandler<DepositAndObserve> for AccountAggregate {
+struct AccountCommandHandler;
+
+#[async_trait]
+impl CommandHandler<DepositAndObserve> for AccountCommandHandler {
     type Rejection = &'static str;
 
-    fn handle(
+    async fn handle(
+        &self,
         command: &DepositAndObserve,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        if aggregate.state().id.0 != command.account_id {
-            return Err("stream identity was not used to initialize the aggregate");
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut aggregate = execution
+            .load::<AccountAggregate>(command.account_id)
+            .await?;
+        if aggregate.aggregate().state().id.0 != command.account_id {
+            return Ok(CommandDecision::Rejected(
+                "stream identity was not used to initialize the aggregate",
+            ));
         }
-        aggregate.deposit(command.amount);
-        aggregate.observe_balance();
-        Ok(())
+        aggregate.aggregate_mut().deposit(command.amount);
+        aggregate.aggregate_mut().observe_balance();
+        Ok(CommandDecision::Accepted)
     }
 }
 
 struct DepositThenReject {
+    account_id: &'static str,
     amount: i64,
 }
 
-impl CommandHandler<DepositThenReject> for AccountAggregate {
+#[async_trait]
+impl CommandHandler<DepositThenReject> for AccountCommandHandler {
     type Rejection = &'static str;
 
-    fn handle(
+    async fn handle(
+        &self,
         command: &DepositThenReject,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.deposit(command.amount);
-        Err("deliberate rejection")
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut aggregate = execution
+            .load::<AccountAggregate>(command.account_id)
+            .await?;
+        aggregate.aggregate_mut().deposit(command.amount);
+        Ok(CommandDecision::Rejected("deliberate rejection"))
     }
 }
 
@@ -243,66 +257,6 @@ impl DomainEventHandler<MoneyDeposited> for DepositHandler {
     }
 }
 
-struct TextEventCodec;
-
-impl EventCodec<AccountAggregate> for TextEventCodec {
-    fn encode(
-        &self,
-        event: &<AccountAggregate as RuntimeAggregate>::Event,
-        event_id: rostfrei::EventId,
-    ) -> Result<NewEvent, EventCodecError> {
-        let (event_type, schema_version, payload) =
-            if let Some(event) = EventVariant::<MoneyDeposited>::event(event) {
-                (
-                    "money-deposited",
-                    2,
-                    format!("deposit:{}", event.amount).into_bytes(),
-                )
-            } else if let Some(event) = EventVariant::<BalanceObserved>::event(event) {
-                (
-                    "balance-observed",
-                    1,
-                    format!("observed:{}", event.balance).into_bytes(),
-                )
-            } else {
-                return Err(EventCodecError::new(
-                    EventCodecErrorKind::UnknownEventType,
-                    "unknown generated event variant",
-                ));
-            };
-        NewEvent::new(event_id, event_type, schema_version, payload).map_err(|error| {
-            EventCodecError::new(EventCodecErrorKind::InvalidEnvelope, error.to_string())
-        })
-    }
-
-    fn decode(
-        &self,
-        event: &RecordedEvent,
-    ) -> Result<<AccountAggregate as RuntimeAggregate>::Event, EventCodecError> {
-        let payload = std::str::from_utf8(event.payload()).map_err(|error| {
-            EventCodecError::new(EventCodecErrorKind::MalformedPayload, error.to_string())
-        })?;
-        let value = payload
-            .split_once(':')
-            .and_then(|(_, value)| value.parse::<i64>().ok())
-            .ok_or_else(|| {
-                EventCodecError::new(EventCodecErrorKind::MalformedPayload, "invalid text event")
-            })?;
-        match (event.event_type(), event.schema_version()) {
-            ("money-deposited", 2) => Ok(MoneyDeposited { amount: value }.into()),
-            ("balance-observed", 1) => Ok(BalanceObserved { balance: value }.into()),
-            ("money-deposited" | "balance-observed", _) => Err(EventCodecError::new(
-                EventCodecErrorKind::UnsupportedSchemaVersion,
-                "unsupported text event version",
-            )),
-            _ => Err(EventCodecError::new(
-                EventCodecErrorKind::UnknownEventType,
-                "unknown text event type",
-            )),
-        }
-    }
-}
-
 fn stream(id: &str) -> TestResult<StreamId> {
     let aggregate_type = rostfrei::StreamAggregateType::new(
         <AccountAggregate as RuntimeAggregate>::aggregate_type(),
@@ -313,24 +267,26 @@ fn stream(id: &str) -> TestResult<StreamId> {
     Ok(StreamId::new(aggregate_type, aggregate_id))
 }
 
-fn metadata(stream_id: &StreamId, operation: &str) -> TestResult<ExecutionMetadata> {
+fn metadata(operation: &str) -> TestResult<CommandExecutionMetadata> {
     let operation_id = OperationId::new(operation)
         .map_err(|error| fixture_error("account operation ID", error))?;
-    Ok(ExecutionMetadata::new(
-        stream_id.clone(),
-        operation_id,
-        ContentFingerprint::digest(operation),
-    ))
+    Ok(
+        CommandExecutionMetadata::new(operation_id, ContentFingerprint::digest(operation))
+            .with_bounded_context(
+                rostfrei::BoundedContextName::new("banking")
+                    .map_err(|error| fixture_error("banking context", error))?,
+            ),
+    )
 }
 
 #[tokio::test]
 async fn registered_events_execute_and_replay_through_the_authored_event_set() {
-    let stream = stream("account-1").expect("valid account stream fixture");
-    let executor = Executor::new(InMemoryEventStore::new());
+    let executor = CommandExecutor::new(InMemoryEventStore::new());
 
     let first = executor
-        .execute::<AccountAggregate, _>(
-            metadata(&stream, "deposit-1").expect("valid first deposit metadata fixture"),
+        .execute(
+            &AccountCommandHandler,
+            metadata("deposit-1").expect("valid first deposit metadata fixture"),
             &DepositAndObserve {
                 account_id: "account-1",
                 amount: 7,
@@ -349,8 +305,9 @@ async fn registered_events_execute_and_replay_through_the_authored_event_set() {
     assert_eq!(first.events()[1].payload(), br#"{"balance":7}"#);
 
     let second = executor
-        .execute::<AccountAggregate, _>(
-            metadata(&stream, "deposit-2").expect("valid second deposit metadata fixture"),
+        .execute(
+            &AccountCommandHandler,
+            metadata("deposit-2").expect("valid second deposit metadata fixture"),
             &DepositAndObserve {
                 account_id: "account-1",
                 amount: 3,
@@ -409,12 +366,16 @@ fn executable_action_can_raise_multiple_registered_event_types() {
 async fn command_rejection_discards_events_raised_by_an_action() {
     let stream = stream("rejected-account").expect("valid rejected account stream fixture");
     let store = InMemoryEventStore::new();
-    let executor = Executor::new(store.clone());
+    let executor = CommandExecutor::new(store.clone());
 
     let outcome = executor
-        .execute::<AccountAggregate, _>(
-            metadata(&stream, "rejected-deposit").expect("valid rejected deposit metadata fixture"),
-            &DepositThenReject { amount: 9 },
+        .execute(
+            &AccountCommandHandler,
+            metadata("rejected-deposit").expect("valid rejected deposit metadata fixture"),
+            &DepositThenReject {
+                account_id: "rejected-account",
+                amount: 9,
+            },
         )
         .await
         .expect("domain rejection");
@@ -462,29 +423,6 @@ async fn generated_json_replay_fails_closed() {
     );
 }
 
-#[tokio::test]
-async fn custom_codec_remains_an_explicit_override_for_the_authored_event_enum() {
-    let stream = stream("custom-account").expect("valid custom codec stream fixture");
-    let executor = Executor::with_codec(InMemoryEventStore::new(), TextEventCodec);
-    let outcome = executor
-        .execute::<AccountAggregate, _>(
-            metadata(&stream, "custom-deposit")
-                .expect("valid custom codec execution metadata fixture"),
-            &DepositAndObserve {
-                account_id: "custom-account",
-                amount: 11,
-            },
-        )
-        .await
-        .expect("custom codec execution");
-    let CommandOutcome::Accepted(outcome) = outcome else {
-        panic!("deposit should be accepted");
-    };
-
-    assert_eq!(outcome.events()[0].payload(), b"deposit:11");
-    assert_eq!(outcome.events()[1].payload(), b"observed:11");
-}
-
 #[test]
 fn domain_model_projects_event_set_once_in_enum_declaration_order() {
     let model = rostfrei::domain_model! {
@@ -517,16 +455,17 @@ async fn replay_error(
 ) -> TestResult<EventCodecErrorKind> {
     let stream = stream("invalid-history")?;
     let store = InMemoryEventStore::new();
-    let seed = metadata(&stream, "seed-invalid-history")?;
+    let seed = metadata("seed-invalid-history")?;
+    let commit_id = derive_commit_id(&stream, seed.operation_id());
     let event = NewEvent::new(
-        seed.event_id(0),
+        derive_event_id(&commit_id, 0),
         event_type,
         schema_version,
         payload.to_vec(),
     )
     .map_err(|error| fixture_error("raw replay event", error))?;
     let batch = EventBatch::new(
-        seed.commit_id().clone(),
+        commit_id,
         seed.operation_id().clone(),
         seed.operation_fingerprint(),
         vec![event],
@@ -540,9 +479,10 @@ async fn replay_error(
             message: error.to_string(),
         })?;
 
-    let result = Executor::new(store)
-        .execute::<AccountAggregate, _>(
-            metadata(&stream, "after-invalid-history")?,
+    let result = CommandExecutor::new(store)
+        .execute(
+            &AccountCommandHandler,
+            metadata("after-invalid-history")?,
             &DepositAndObserve {
                 account_id: "invalid-history",
                 amount: 1,

@@ -1,4 +1,8 @@
-use rostfrei::{AggregateInstance, Apply, CommandHandler, Initialize};
+use async_trait::async_trait;
+use rostfrei::{
+    Apply, CommandDecision, CommandHandler, CommandExecution,
+    CommandHandlingResult, Initialize,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(rostfrei::BoundedContext)]
@@ -53,13 +57,20 @@ impl Apply<Registered> for Root {
 }
 
 struct Command;
+struct Handler;
 
-impl CommandHandler<Command> for Aggregate {
+#[async_trait]
+impl CommandHandler<Command> for Handler {
     type Rejection = ();
 
-    fn handle(_: &Command, aggregate: &mut AggregateInstance<Self>) -> Result<(), ()> {
-        aggregate.raise(Unregistered);
-        Ok(())
+    async fn handle(
+        &self,
+        _: &Command,
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut aggregate = execution.load::<Aggregate>("aggregate").await?;
+        aggregate.aggregate_mut().raise(Unregistered);
+        Ok(CommandDecision::Accepted)
     }
 }
 

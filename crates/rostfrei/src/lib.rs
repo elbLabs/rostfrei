@@ -41,15 +41,14 @@ pub use command_bus::{
     CommandBusObserver, CommandBusReceipt, CommandMessageAdapter, CommandProcessor,
     CommandProcessorError, CommandProcessorErrorKind, CommandPublication, CommandRejectionMapper,
     CommandRequest, DynamicCommandRequest, EncodedCommand, InfallibleCommandRejectionMapper,
-    InvalidCommandResponse, JsonDomainRejectionMapper, RoutedAggregateCommand,
-    RoutedAggregateCommandError, command_execution_fingerprint, command_message_id,
-    command_response_message_id,
+    InvalidCommandResponse, JsonDomainRejectionMapper, RoutedCommand, RoutedCommandError,
+    command_execution_fingerprint, command_message_id, command_response_message_id,
 };
 pub use domain::*;
 pub use in_memory_messaging::InMemoryMessagingAdapter;
 pub use integration_event::{
-    CompletedIntegrationCommand, IntegrationCommand, IntegrationCommandMapper,
-    IntegrationEventCommandHandler, IntegrationEventProcessingError, IntegrationEventProcessor,
+    CompletedIntegrationCommand, IntegrationCommandMapper, IntegrationEventCommandHandler,
+    IntegrationEventProcessingError, IntegrationEventProcessor,
 };
 pub use integration_event_bus::{
     CommittedEventContext, EncodedIntegrationMessage, IntegrationEvent, IntegrationEventBus,
@@ -63,15 +62,18 @@ pub use query_bus::{
     QueryProcessorHandler, QueryRequest, RoutedQuery, RoutedQueryError,
 };
 pub use rostfrei_core::{
-    Aggregate, AggregateId as StreamAggregateId, AggregateInstance,
-    AggregateType as StreamAggregateType, AppendOutcome, CommandExecutionError, CommandHandler,
-    CommandOutcome, CommandReceipt, CommandResult, CommittedDomainEvent, ContentFingerprint,
-    DomainEventDispatcher, DomainEventRegistrationError, EventBatch, EventCodec, EventCodecError,
-    EventCodecErrorKind, EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind,
-    EventTransaction, EventVariant, ExecutionMetadata, Executor, ExpectedVersion,
-    InMemoryEventStore, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent,
-    SimulationDecision, SimulationError, SimulationOutcome, StreamId, StreamVersion,
-    TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
+    Aggregate, AggregateCodecs, AggregateId as StreamAggregateId, AggregateInstance,
+    AggregateType as StreamAggregateType, AppendOutcome, CommandDecision, CommandExecution,
+    CommandExecutionError, CommandExecutionMetadata, CommandExecutor, CommandHandler,
+    CommandHandlingResult, CommandOutcome, CommandReceipt, CommandResult, CommittedDomainEvent,
+    ContentFingerprint, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
+    DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError, EventBatch,
+    EventCodec, EventCodecError, EventCodecErrorKind, EventHistory, EventId, EventStore,
+    EventStoreError, EventStoreErrorKind, EventTransaction, EventVariant, ExpectedVersion,
+    InMemoryEventStore, LoadedAggregate, MAX_TRANSACTION_ITEMS, NewEvent, OperationId,
+    RecordedEvent, SimulatedParticipant, SimulationError, SimulationOutcome, StreamId,
+    StreamVersion, TransactionAppendOutcome, TransactionParticipant, TransactionReceipt,
+    TransactionStreamReceipt,
 };
 pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};
 pub use rostfrei_macros::QueryDefinition;

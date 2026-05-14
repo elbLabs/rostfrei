@@ -3,8 +3,8 @@
 use std::convert::Infallible;
 
 use domain::{
-    Aggregate, BoundedContext, Command, DomainIdentity, Entity, FieldKind, FieldWrapper,
-    JsonCommandPayload, JsonErrorPayload, ValueObject,
+    Aggregate, BoundedContext, BoundedContextType, Command, DomainIdentity, Entity, FieldKind,
+    FieldWrapper, JsonCommandPayload, JsonErrorPayload, ValueObject,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -46,7 +46,7 @@ impl domain::AggregateDefinition for CatalogAggregate {
 struct Status(String);
 
 #[derive(Command)]
-#[domain(id = "change-status", label = "Change status")]
+#[domain(context = Catalog, id = "change-status", label = "Change status")]
 struct ChangeStatus {
     target_id: ProductId,
     status: Status,
@@ -54,22 +54,22 @@ struct ChangeStatus {
 }
 
 #[derive(Command)]
-#[domain(id = "sync-catalog", label = "Sync catalog", schema_version = 2)]
+#[domain(context = Catalog, id = "sync-catalog", label = "Sync catalog", schema_version = 2)]
 struct SyncCatalog;
 
 #[derive(Command, Debug, Eq, PartialEq)]
-#[domain(id = "json-change", label = "JSON change")]
+#[domain(context = Catalog, id = "json-change", label = "JSON change")]
 struct JsonChange {
     value: String,
     optional: Option<u32>,
 }
 
 #[derive(Command, Debug, Eq, PartialEq)]
-#[domain(id = "json-tuple", label = "JSON tuple")]
+#[domain(context = Catalog, id = "json-tuple", label = "JSON tuple")]
 struct JsonTuple(String, u32);
 
 #[derive(Command, Debug, Eq, PartialEq)]
-#[domain(id = "json-unit", label = "JSON unit")]
+#[domain(context = Catalog, id = "json-unit", label = "JSON unit")]
 struct JsonUnit;
 
 #[test]
@@ -77,6 +77,7 @@ fn describes_owner_independent_command_fields_and_schema() {
     let descriptor = ChangeStatus::DESCRIPTOR;
     let fields = descriptor.fields;
 
+    assert_eq!(descriptor.bounded_context, Catalog::DESCRIPTOR);
     assert_eq!(descriptor.local_id, "change-status");
     assert_eq!(descriptor.label, "Change status");
     assert_eq!(descriptor.schema_version, 1);

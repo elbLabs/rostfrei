@@ -47,15 +47,19 @@ ownership is rejected by Rust coherence, duplicate local event IDs are rejected
 during compilation, and duplicate projected identities are rejected by model
 assembly.
 
-`Executor::new(store)` and normal committed-event-handler registration select
-the generated JSON codec. `Executor::with_codec` and explicit handler codec
-registration preserve custom DTO, legacy schema, upcasting, Protobuf, and other
-format needs. Unknown event types, unsupported schema versions, and malformed
-payloads fail replay closed.
+`CommandExecutor::new(store)` and normal committed-event-handler registration select
+the generated JSON codec. `CommandExecutor::with_codec::<A, _>` and
+`CommandProcessor::register_codec::<A, _>` select codecs per aggregate type;
+explicit committed-event-handler codec registration does the same for handler
+replay. Together they preserve custom DTO, legacy schema, upcasting, Protobuf, and
+other format needs. `CommandExecutor::rehydrate_with_codec` preserves explicit
+rehydration for custom aggregate event representations that do not implement the
+JSON-oriented `Event` trait. Unknown event types, unsupported schema versions,
+and malformed payloads fail replay closed.
 
 Normal applications depend on the `rostfrei` facade and use `rostfrei::Aggregate`,
 `rostfrei::DomainEvent`, `rostfrei::Apply`, `rostfrei::Initialize`, and
-`rostfrei::Executor` with `#[rostfrei(...)]`. Implementation crates and generated
+`rostfrei::CommandExecutor` with `#[rostfrei(...)]`. Implementation crates and generated
 event representations are not part of normal application syntax.
 
 Executable aggregate Actions use `&mut self`, domain-specific input, and

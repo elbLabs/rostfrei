@@ -12,6 +12,7 @@ pub fn assemble(
     fields: &[Field],
     syntax_fields: &Fields,
 ) -> TokenStream {
+    let context = &attributes.context;
     let id = &attributes.id;
     let label = &attributes.label;
     let schema_version = &attributes.schema_version;
@@ -20,6 +21,8 @@ pub fn assemble(
     let json_codec = assemble_json_codec(domain_path, name, fields, syntax_fields);
     quote! {
         impl #domain_path::Command for #name {
+            type Context = #context;
+
             const LOCAL_ID: &'static str = #id;
             const LABEL: &'static str = #label;
             const FIELDS: &'static [#domain_path::FieldDescriptor] = #descriptors;

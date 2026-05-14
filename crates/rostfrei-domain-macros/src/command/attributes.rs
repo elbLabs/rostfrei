@@ -1,7 +1,8 @@
 use proc_macro2::Span;
-use syn::{Attribute, LitInt, LitStr, Result};
+use syn::{Attribute, LitInt, LitStr, Path as TypePath, Result};
 
 pub struct Attributes {
+    pub context: TypePath,
     pub id: LitStr,
     pub label: LitStr,
     pub schema_version: LitInt,
@@ -10,10 +11,18 @@ pub struct Attributes {
 impl Attributes {
     pub fn parse(attributes: &[Attribute]) -> Result<Self> {
         let domain = crate::helper::domain_attribute::locate(attributes)?;
+        let mut context = None;
         let mut id = None;
         let mut label = None;
         let mut schema_version = None;
         domain.parse_nested_meta(|meta| {
+            if meta.path.is_ident("context") {
+                if context.is_some() {
+                    return Err(meta.error("duplicate context"));
+                }
+                context = Some(meta.value()?.parse::<TypePath>()?);
+                return Ok(());
+            }
             if meta.path.is_ident("id") {
                 if id.is_some() {
                     return Err(meta.error("duplicate id"));
@@ -38,6 +47,7 @@ impl Attributes {
             Err(meta.error("unsupported domain attribute"))
         })?;
         Ok(Self {
+            context: context.ok_or_else(|| syn::Error::new_spanned(domain, "missing context"))?,
             id: id.ok_or_else(|| syn::Error::new_spanned(domain, "missing id"))?,
             label: label.ok_or_else(|| syn::Error::new_spanned(domain, "missing label"))?,
             schema_version: schema_version.unwrap_or_else(|| LitInt::new("1", Span::call_site())),

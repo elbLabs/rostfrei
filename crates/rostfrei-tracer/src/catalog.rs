@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, fmt::Write as _};
 
-use rostfrei_registry::{CommandDescriptor, DomainRegistry};
+use rostfrei_registry::DomainRegistry;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-const CATALOG_VERSION: u32 = 1;
+const CATALOG_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +64,7 @@ pub struct CatalogTestRepository {
 pub struct CatalogContext {
     pub id: String,
     pub label: String,
+    pub commands: Vec<CatalogCommand>,
     pub aggregates: Vec<CatalogAggregate>,
 }
 
@@ -74,7 +75,6 @@ pub struct CatalogAggregate {
     pub label: String,
     pub aggregate_type: String,
     pub test_instances_href: String,
-    pub commands: Vec<CatalogCommand>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -116,13 +116,13 @@ pub struct AggregateInstanceSummary {
 #[derive(Default)]
 struct ContextBuilder {
     label: String,
+    commands: BTreeMap<String, CommandBuilder>,
     aggregates: BTreeMap<String, AggregateBuilder>,
 }
 
 struct AggregateBuilder {
     label: String,
     aggregate_type: String,
-    commands: BTreeMap<String, CommandBuilder>,
 }
 
 #[derive(Default)]
@@ -148,13 +148,9 @@ pub fn build_catalog<'a>(
     test_fixtures.sort();
     let mut contexts = BTreeMap::<String, ContextBuilder>::new();
     for descriptor in registry.commands() {
-        let Some((context_id, aggregate_id)) = http_coordinates(descriptor) else {
-            continue;
-        };
+        let context_id = descriptor.bounded_context.to_owned();
         let context_label =
             model_context_label(domain_model, &context_id).unwrap_or_else(|| context_id.clone());
-        let aggregate_label = model_aggregate_label(domain_model, &context_id, &aggregate_id)
-            .unwrap_or_else(|| aggregate_id.clone());
         let command_label = descriptor.modeled_command().label.to_owned();
         let fields = command_fields(descriptor.modeled_command().fields);
         let payload_template = payload_template(&fields);
@@ -162,17 +158,10 @@ pub fn build_catalog<'a>(
             .entry(context_id.clone())
             .or_insert_with(|| ContextBuilder {
                 label: context_label,
+                commands: BTreeMap::new(),
                 aggregates: BTreeMap::new(),
             });
-        let aggregate = context
-            .aggregates
-            .entry(aggregate_id.clone())
-            .or_insert_with(|| AggregateBuilder {
-                label: aggregate_label,
-                aggregate_type: descriptor.aggregate_type.clone(),
-                commands: BTreeMap::new(),
-            });
-        let command = aggregate
+        let command = context
             .commands
             .entry(descriptor.command_name.to_owned())
             .or_insert_with(|| CommandBuilder {
@@ -185,26 +174,51 @@ pub fn build_catalog<'a>(
             fields,
             payload_template,
             test_inputs_href_template: format!(
-                "/contexts/{context_id}/aggregates/{aggregate_id}/{{aggregateId}}/commands/{}/schemas/{}/inputs",
+                "/contexts/{context_id}/commands/{}/schemas/{}/inputs",
                 descriptor.command_name, descriptor.schema_version
             ),
             simulate_href_template: format!(
-                "/contexts/{context_id}/aggregates/{aggregate_id}/{{aggregateId}}/commands/{}/simulate",
+                "/contexts/{context_id}/commands/{}/simulate",
                 descriptor.command_name
             ),
             test_href_template: test_enabled.then(|| {
                 format!(
-                    "/contexts/{context_id}/aggregates/{aggregate_id}/{{aggregateId}}/commands/{}/test",
+                    "/contexts/{context_id}/commands/{}/test",
                     descriptor.command_name
                 )
             }),
             dispatch_href_template: dispatch_enabled.then(|| {
                 format!(
-                    "/contexts/{context_id}/aggregates/{aggregate_id}/{{aggregateId}}/commands/{}/dispatch",
+                    "/contexts/{context_id}/commands/{}/dispatch",
                     descriptor.command_name
                 )
             }),
         });
+    }
+
+    for aggregate_type in registry.aggregates() {
+        let Some((context_id, aggregate_id)) = aggregate_type.split_once('/') else {
+            continue;
+        };
+        if context_id.is_empty() || aggregate_id.is_empty() || aggregate_id.contains('/') {
+            continue;
+        }
+        let context = contexts
+            .entry(context_id.to_owned())
+            .or_insert_with(|| ContextBuilder {
+                label: model_context_label(domain_model, context_id)
+                    .unwrap_or_else(|| context_id.to_owned()),
+                commands: BTreeMap::new(),
+                aggregates: BTreeMap::new(),
+            });
+        context
+            .aggregates
+            .entry(aggregate_id.to_owned())
+            .or_insert_with(|| AggregateBuilder {
+                label: model_aggregate_label(domain_model, context_id, aggregate_id)
+                    .unwrap_or_else(|| aggregate_id.to_owned()),
+                aggregate_type: aggregate_type.to_owned(),
+            });
     }
 
     TracerCatalog {
@@ -214,40 +228,42 @@ pub fn build_catalog<'a>(
             .map(|(id, context)| CatalogContext {
                 id,
                 label: context.label,
+                commands: context
+                    .commands
+                    .into_iter()
+                    .map(|(id, mut command)| {
+                        command
+                            .versions
+                            .sort_by_key(|version| version.schema_version);
+                        CatalogCommand {
+                            id,
+                            label: command.label,
+                            versions: command.versions,
+                        }
+                    })
+                    .collect(),
                 aggregates: context
                     .aggregates
                     .into_iter()
-                    .map(|(id, aggregate)| CatalogAggregate {
-                        test_instances_href: format!(
-                            "/contexts/{}/aggregates/{id}/instances",
-                            aggregate
-                                .aggregate_type
-                                .split_once('/')
-                                .map_or("", |(context, _)| context)
-                        ),
-                        id,
-                        label: aggregate.label,
-                        aggregate_type: aggregate.aggregate_type,
-                        commands: aggregate
-                            .commands
-                            .into_iter()
-                            .map(|(id, mut command)| {
-                                command
-                                    .versions
-                                    .sort_by_key(|version| version.schema_version);
-                                CatalogCommand {
-                                    id,
-                                    label: command.label,
-                                    versions: command.versions,
-                                }
-                            })
-                            .collect(),
+                    .map(|(id, aggregate)| {
+                        let context_id = aggregate
+                            .aggregate_type
+                            .split_once('/')
+                            .map_or("", |(context, _)| context);
+                        CatalogAggregate {
+                            test_instances_href: format!(
+                                "/contexts/{context_id}/aggregates/{id}/instances"
+                            ),
+                            id,
+                            label: aggregate.label,
+                            aggregate_type: aggregate.aggregate_type,
+                        }
                     })
                     .collect(),
             })
             .collect(),
         behavioral_test: (test_enabled && reset_enabled).then(|| CatalogBehavioralTest {
-            schema_href: "/schemas/behavioral-test-v1".to_owned(),
+            schema_href: "/schemas/behavioral-test-v2".to_owned(),
             validate_href: "/tests/validate".to_owned(),
             run_href: "/test-runs".to_owned(),
             definitions_href: test_repository_enabled.then(|| "/tests".to_owned()),
@@ -281,14 +297,6 @@ fn encode_path_segment(value: &str) -> String {
         }
     }
     encoded
-}
-
-fn http_coordinates(descriptor: &CommandDescriptor) -> Option<(String, String)> {
-    let (context, aggregate) = descriptor.aggregate_type.split_once('/')?;
-    if context.is_empty() || aggregate.is_empty() || aggregate.contains('/') {
-        return None;
-    }
-    Some((context.to_owned(), aggregate.to_owned()))
 }
 
 fn model_context_label(model: Option<&Value>, context: &str) -> Option<String> {

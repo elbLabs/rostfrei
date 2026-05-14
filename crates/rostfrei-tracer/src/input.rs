@@ -1,14 +1,8 @@
-use rostfrei_core::{Aggregate, CommandHandler};
-use rostfrei_registry::CommandDefinition;
 use serde::Serialize;
 use serde_json::Value;
 
-pub trait CommandInputOptions<A, C>: Send + Sync
-where
-    A: Aggregate + CommandHandler<C>,
-    C: CommandDefinition<A>,
-{
-    fn fields(&self, state: &A::State) -> Vec<CommandInputField>;
+pub trait CommandInputOptions<C>: Send + Sync {
+    fn fields(&self) -> Vec<CommandInputField>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Accepted. The aggregate-addressed command route is superseded by
+[ADR 0037](0037-bounded-context-commands-and-unit-of-work.md); the query decision
+remains unchanged.
 
 ## Decision
 
@@ -28,7 +30,7 @@ explicitly mounts a router with a shared `DomainRegistry`, `CommandBus`, and
 
 ```text
 POST /contexts/{context}/queries/{query}/schemas/{schema_version}
-POST /contexts/{context}/aggregates/{aggregate}/{aggregate_id}/commands/{command}/schemas/{schema_version}
+POST /contexts/{context}/commands/{command}/schemas/{schema_version}
 ```
 
 POST query bodies contain the raw query JSON payload and require
@@ -37,7 +39,8 @@ the dynamic query request and query bus, so structured and nested inputs retain
 their exact JSON representation. Query success returns the raw JSON result with
 `200 OK`.
 
-POST command bodies contain the raw command JSON payload. `Idempotency-Key` is
+POST command bodies contain the raw, self-contained command JSON payload,
+including every aggregate ID required by the use case. `Idempotency-Key` is
 mandatory and becomes the command operation ID. Because `CommandBus` waits for
 the terminal durable command response, accepted commands return `200 OK` rather
 than Tracer's asynchronous `202 Accepted` operation representation. Business

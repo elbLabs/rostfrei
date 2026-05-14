@@ -11,5 +11,8 @@ rostfrei-core = { path = "../rostfrei-core" }
 rostfrei-domain = { path = "../rostfrei-domain" }
 rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
 
+[dev-dependencies]
+async-trait.workspace = true
+
 [lints]
 workspace = true

@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted; deployment naming policy partially superseded by ADR 0014.
+Accepted; deployment naming policy partially superseded by ADR 0014 and primary
+transaction receipt addressing superseded by
+[ADR 0037](0037-bounded-context-commands-and-unit-of-work.md).
 
 ## Decision
 
@@ -26,12 +28,14 @@ An event transaction may atomically span multiple aggregate subjects in the
 same JetStream stream. Its ADR-50 batch contains all domain events, one internal
 guard message for each read-only participant, and a final internal transaction
 receipt. A guard applies an expected sequence to another aggregate subject, so
-read-only decisions are protected against write skew. The receipt is addressed
-by primary aggregate stream and operation identity and is the final batch
-message. The primary participant always contributes a commit, so its aggregate
-subject atomically arbitrates reuse of that receipt identity. Aggregate
-consumers filter out internal subjects and use transaction event ordinals to
-deliver only complete domain-event groups.
+read-only decisions are protected against write skew. The final batch message is
+a receipt addressed by operation identity within the configured bounded-context
+store. No participant is primary, and the first participant may be a read guard;
+at least one participant must write. New guard and receipt subjects are
+operation-scoped. Historical primary-stream-derived internal subjects remain
+readable when validating known legacy transaction history. Aggregate consumers
+filter out internal subjects and use transaction event ordinals to deliver only
+complete domain-event groups.
 
 This requires `async-nats` 0.50's `server_2_12` feature and NATS Server 2.12.1
 or newer. Although ADR-50 permits 1,000 items, rostfrei caps an atomic publish at

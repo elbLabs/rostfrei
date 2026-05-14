@@ -4,10 +4,11 @@ This public example models a bicycle rental fleet. It demonstrates rostfrei's
 compiled domain metadata without depending on a production application:
 
 - `RentalFleetAggregate` owns the fleet and its bicycles;
-- `RentBicycle`, `ReturnBicycle`, and `AddBicycle` are public aggregate commands;
+- `RentBicycle`, `ReturnBicycle`, `AddBicycle`, and `TransferBicycle` are self-contained Bike Rental commands;
 - `RetireBicycleAction` demonstrates one logical transition from either available or rented;
 - `RentalEligibilityPolicy` composes bicycle condition policy with the rental lifecycle;
-- bicycle-added, rented, returned, and retired events describe successful domain transitions;
+- bicycle-added, rented, returned, retired, and transferred events describe successful domain
+  transitions;
 - fleet import is a privileged snapshot-restoration boundary that accepts existing lifecycle
   states but validates aggregate invariants before replacement;
 - unavailable and not-rented errors describe command rejections;
@@ -15,6 +16,64 @@ compiled domain metadata without depending on a production application:
 - `RegistrationNumber` is an isolated demonstration of Value Object-local actions, invariants,
   and policies; and
 - `BicycleAvailabilityQuery` exposes a read-only availability query.
+
+## Bounded-context command handlers
+
+Each command payload identifies every fleet it needs and declares `context = BikeRental`.
+Application handler structs use `CommandExecution` to load their participants. Every successful
+load is tracked automatically: aggregates with events become writers and unchanged aggregates
+become read guards when the accepted command writes. For example, `TransferBicycle` contains
+`from_fleet_id`, `bicycle_id`, and `to_fleet_id`:
+
+```rust
+#[async_trait]
+impl CommandHandler<TransferBicycle> for TransferBicycleHandler {
+    type Rejection = BicycleTransferRejected;
+
+    async fn handle(
+        &self,
+        command: &TransferBicycle,
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut source = execution
+            .load::<RentalFleetAggregate>(command.from_fleet_id.as_str())
+            .await?;
+        if let Err(rejection) = BicycleTransfer::validate_route(source.aggregate(), command) {
+            return Ok(CommandDecision::Rejected(rejection));
+        }
+        let mut destination = execution
+            .load::<RentalFleetAggregate>(command.to_fleet_id.as_str())
+            .await?;
+
+        match BicycleTransfer::transfer(
+            source.aggregate_mut(),
+            destination.aggregate_mut(),
+            command,
+        ) {
+            Ok(()) => Ok(CommandDecision::Accepted),
+            Err(rejection) => Ok(CommandDecision::Rejected(rejection)),
+        }
+    }
+}
+```
+
+`BicycleTransfer` remains responsible for the domain behavior: it validates both aggregates before
+changing either one and raises `BicycleTransferredOut` on the source and `BicycleTransferredIn` on
+the destination. The application handler itself raises no events. `CommandExecutor` commits both
+automatically tracked participants in one atomic event-store transaction with both expected stream
+versions, and retries the complete command attempt after a conflict.
+
+All four handlers are registered through the same bounded-context `CommandProcessor`, NATS worker,
+and Tracer paths. `tests/transfer.rs` covers in-memory execution and simulation, direct execution
+against `NatsEventStore`, and a separate end-to-end command transport path from `CommandBus` through
+the NATS worker and `CommandProcessor` to both aggregate streams.
+
+Run the ignored real-NATS transfer tests against NATS Server 2.12.1 or newer:
+
+```sh
+ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
+  cargo test --locked -p bike-rental --test transfer -- --ignored --test-threads=1
+```
 
 Print the compiled domain model:
 
@@ -154,18 +213,20 @@ scenario to its selected fixture before the subject command executes.
 The skill starts from Catalog v1 and follows its advertised links for commands,
 schema versions, isolated test instances, dynamic test inputs, behavioral-test
 definitions, fixture MessageSeries, actions, reset, operations, and finite
-message series. It does not embed bike-rental routes or silently select among
-multiple schema versions.
+message series. Catalog v1 names the discovery representation; it does not make
+Tracer schema-v1 behavioral tests or message-series documents executable. Those
+v1 schema artifacts are offline migration references only. The skill does not
+embed bike-rental routes or silently select among multiple schema versions.
 Values discovered through test links are treated only as isolated Test data and
 are never assumed to exist in production.
 
 For production, make the target and intent explicit:
 
 ```text
-Dispatch RentBicycle schema version 1 to production aggregate city-fleet with
-payload bicycle_id bike-42 and idempotency key prod-rental-2026-09-02-01. Show
-the exact request for confirmation before publishing, then explain the result
-and render its causal Mermaid flow.
+Dispatch RentBicycle schema version 2 to the Bike Rental production context with
+payload fleet_id city-fleet and bicycle_id bike-42, using idempotency key
+prod-rental-2026-09-02-01. Show the exact request for confirmation before
+publishing, then explain the result and render its causal Mermaid flow.
 ```
 
 The agent requires independently supplied production aggregate and payload

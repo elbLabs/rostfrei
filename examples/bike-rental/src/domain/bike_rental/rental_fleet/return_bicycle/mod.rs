@@ -9,4 +9,5 @@ mod rejection;
 pub use action::ReturnBicycleAction;
 pub use command::ReturnBicycle;
 pub use event::BicycleReturned;
+pub use handler::ReturnBicycleHandler;
 pub use rejection::BicycleNotRented;

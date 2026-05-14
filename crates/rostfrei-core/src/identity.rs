@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use rostfrei_messaging_core::{CausationId, CorrelationId};
+use rostfrei_messaging_core::{BoundedContextName, CausationId, CorrelationId};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -196,30 +196,29 @@ const fn checked_hex_offset(value: u8, base: u8) -> Option<u8> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExecutionMetadata {
-    stream_id: StreamId,
+pub struct CommandExecutionMetadata {
+    bounded_context: Option<BoundedContextName>,
     operation_id: OperationId,
     operation_fingerprint: ContentFingerprint,
-    commit_id: CommitId,
     correlation_id: Option<CorrelationId>,
     causation_id: Option<CausationId>,
 }
 
-impl ExecutionMetadata {
-    pub fn new(
-        stream_id: StreamId,
-        operation_id: OperationId,
-        operation_fingerprint: ContentFingerprint,
-    ) -> Self {
-        let commit_id = derive_commit_id(&stream_id, &operation_id);
+impl CommandExecutionMetadata {
+    pub const fn new(operation_id: OperationId, operation_fingerprint: ContentFingerprint) -> Self {
         Self {
-            stream_id,
+            bounded_context: None,
             operation_id,
             operation_fingerprint,
-            commit_id,
             correlation_id: None,
             causation_id: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_bounded_context(mut self, bounded_context: BoundedContextName) -> Self {
+        self.bounded_context = Some(bounded_context);
+        self
     }
 
     #[must_use]
@@ -234,8 +233,8 @@ impl ExecutionMetadata {
         self
     }
 
-    pub const fn stream_id(&self) -> &StreamId {
-        &self.stream_id
+    pub const fn bounded_context(&self) -> Option<&BoundedContextName> {
+        self.bounded_context.as_ref()
     }
 
     pub const fn operation_id(&self) -> &OperationId {
@@ -246,20 +245,12 @@ impl ExecutionMetadata {
         self.operation_fingerprint
     }
 
-    pub const fn commit_id(&self) -> &CommitId {
-        &self.commit_id
-    }
-
     pub const fn correlation_id(&self) -> Option<&CorrelationId> {
         self.correlation_id.as_ref()
     }
 
     pub const fn causation_id(&self) -> Option<&CausationId> {
         self.causation_id.as_ref()
-    }
-
-    pub fn event_id(&self, ordinal: u32) -> EventId {
-        derive_event_id(&self.commit_id, ordinal)
     }
 }
 

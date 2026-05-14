@@ -1,18 +1,26 @@
 use std::convert::Infallible;
 
-use rostfrei::{AggregateInstance, CommandHandler};
+use async_trait::async_trait;
+use rostfrei::{CommandDecision, CommandExecution, CommandHandler, CommandHandlingResult};
 
-use super::{AddBicycle, AddBicycleAction as _};
+use super::{AddBicycle, AddBicycleAction};
 use crate::domain::rental_fleet::RentalFleetAggregate;
 
-impl CommandHandler<AddBicycle> for RentalFleetAggregate {
+pub struct AddBicycleHandler;
+
+#[async_trait]
+impl CommandHandler<AddBicycle> for AddBicycleHandler {
     type Rejection = Infallible;
 
-    fn handle(
-        _command: &AddBicycle,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.add_bicycle();
-        Ok(())
+    async fn handle(
+        &self,
+        command: &AddBicycle,
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut fleet = execution
+            .load::<RentalFleetAggregate>(command.fleet_id.as_str())
+            .await?;
+        fleet.aggregate_mut().add_bicycle();
+        Ok(CommandDecision::Accepted)
     }
 }
