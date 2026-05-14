@@ -78,7 +78,9 @@ durable command, domain-event, or integration-event consumer stops.
 The example uses one canonical application with two disjoint traffic scopes:
 
 - `bike-rental.test.>` is recreated and its default `demo-fleet` MessageSeries
-  fixture is applied on startup and by `POST /test-scenario/reset`;
+  fixture is applied on startup and by `POST /test-scenario/reset`; an explicit
+  registered fixture can be selected with
+  `POST /test-scenario/reset/{fixtureId}`;
 - normal `bike-rental` subjects such as `bike-rental.command.>` persist across
   restarts and are never affected by test reset.
 

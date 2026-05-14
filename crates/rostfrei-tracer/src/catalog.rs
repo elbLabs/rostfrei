@@ -33,6 +33,7 @@ pub struct CatalogBehavioralTest {
 #[serde(rename_all = "camelCase")]
 pub struct CatalogTestScenario {
     pub reset_href: String,
+    pub fixture_reset_href_template: String,
     pub fixtures_href: String,
     pub fixtures: Vec<String>,
 }
@@ -253,6 +254,7 @@ pub fn build_catalog<'a>(
         }),
         test_scenario: reset_enabled.then(|| CatalogTestScenario {
             reset_href: "/test-scenario/reset".to_owned(),
+            fixture_reset_href_template: "/test-scenario/reset/{fixtureId}".to_owned(),
             fixtures_href: "/test-scenario/fixtures".to_owned(),
             fixtures: test_fixtures,
         }),
