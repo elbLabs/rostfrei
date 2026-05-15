@@ -18,26 +18,32 @@ error: missing domain attribute
    |
    = note: this error originates in the derive macro `Command` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error: missing label
+error: missing context
   --> tests/ui/command_invalid.rs:20:1
    |
-20 | #[domain(id = "missing-label")]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+20 | #[domain(id = "missing-context", label = "Missing context")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: missing label
+  --> tests/ui/command_invalid.rs:24:1
+   |
+24 | #[domain(context = Catalog, id = "missing-label")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error: id must be nonempty lowercase kebab-case using ASCII letters and digits
-  --> tests/ui/command_invalid.rs:24:15
+  --> tests/ui/command_invalid.rs:28:34
    |
-24 | #[domain(id = "bad_id", label = "Bad ID")]
-   |               ^^^^^^^^
+28 | #[domain(context = Catalog, id = "bad_id", label = "Bad ID")]
+   |                                  ^^^^^^^^
 
 error: unsupported domain attribute
-  --> tests/ui/command_invalid.rs:28:57
+  --> tests/ui/command_invalid.rs:32:76
    |
-28 | #[domain(id = "invalid-owner", label = "Invalid owner", owner = Catalog)]
-   |                                                         ^^^^^
+32 | #[domain(context = Catalog, id = "invalid-owner", label = "Invalid owner", owner = Catalog)]
+   |                                                                            ^^^^^
 
 error: Command cannot contain Entity fields
-  --> tests/ui/command_invalid.rs:37:12
+  --> tests/ui/command_invalid.rs:41:12
    |
-37 |     child: Child,
+41 |     child: Child,
    |            ^^^^^

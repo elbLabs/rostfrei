@@ -1,7 +1,7 @@
 use std::{mem::size_of, time::Duration};
 
 use async_nats::jetstream::stream::{Config, DiscardPolicy, RetentionPolicy, StorageType};
-use rostfrei_core::{EventStoreError, EventStoreErrorKind, StreamId};
+use rostfrei_core::{EventStoreError, EventStoreErrorKind};
 use rostfrei_messaging_core::{ApplicationName, BoundedContext, BoundedContextName, TrafficScope};
 use sha2::{Digest, Sha256};
 
@@ -178,7 +178,20 @@ impl NatsEventStoreConfig {
         format!("{}.aggregate.*", self.subject_prefix)
     }
 
-    pub fn transaction_subject(&self, primary_stream_id: &StreamId, operation_id: &str) -> String {
+    pub fn transaction_subject(&self, operation_id: &str) -> String {
+        let digest = digest_parts(&[operation_id.as_bytes()]);
+        format!("{}.transaction.{digest}", self.subject_prefix)
+    }
+
+    pub fn transaction_guard_subject(&self, operation_id: &str, ordinal: usize) -> String {
+        format!("{}.guard.{ordinal}", self.transaction_subject(operation_id))
+    }
+
+    pub(crate) fn legacy_primary_transaction_subject(
+        &self,
+        primary_stream_id: &rostfrei_core::StreamId,
+        operation_id: &str,
+    ) -> String {
         let digest = digest_parts(&[
             primary_stream_id.aggregate_type().as_str().as_bytes(),
             primary_stream_id.aggregate_id().as_str().as_bytes(),
@@ -187,15 +200,15 @@ impl NatsEventStoreConfig {
         format!("{}.transaction.{digest}", self.subject_prefix)
     }
 
-    pub fn transaction_guard_subject(
+    pub(crate) fn legacy_primary_transaction_guard_subject(
         &self,
-        primary_stream_id: &StreamId,
+        primary_stream_id: &rostfrei_core::StreamId,
         operation_id: &str,
         ordinal: usize,
     ) -> String {
         format!(
             "{}.guard.{ordinal}",
-            self.transaction_subject(primary_stream_id, operation_id)
+            self.legacy_primary_transaction_subject(primary_stream_id, operation_id)
         )
     }
 
@@ -489,6 +502,33 @@ mod tests {
         assert!(!subject.contains("Account"));
         assert!(!subject.contains("account-123"));
         assert_ne!(subject, config.aggregate_subject("Account", "account-124"));
+    }
+
+    #[test]
+    fn transaction_subject_is_operation_scoped_and_opaque() {
+        let config =
+            NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST").expect("valid config");
+        let subject = config.transaction_subject("operation-123");
+
+        assert_eq!(subject, config.transaction_subject("operation-123"));
+        assert!(subject.starts_with("fast-inbox.domain.commercial-access.transaction."));
+        assert!(!subject.contains("operation-123"));
+        assert_ne!(subject, config.transaction_subject("operation-124"));
+        assert_eq!(
+            config.transaction_guard_subject("operation-123", 2),
+            format!("{subject}.guard.2")
+        );
+
+        let primary = rostfrei_core::StreamId::new(
+            rostfrei_core::AggregateType::new("Account").unwrap(),
+            rostfrei_core::AggregateId::new("account-123").unwrap(),
+        );
+        let legacy = config.legacy_primary_transaction_subject(&primary, "operation-123");
+        assert_ne!(subject, legacy);
+        assert_eq!(
+            config.legacy_primary_transaction_guard_subject(&primary, "operation-123", 2),
+            format!("{legacy}.guard.2")
+        );
     }
 
     #[test]

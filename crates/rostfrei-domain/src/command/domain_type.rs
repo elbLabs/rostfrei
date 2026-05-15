@@ -1,12 +1,15 @@
 use super::CommandDescriptor;
-use crate::FieldDescriptor;
+use crate::{BoundedContextType, FieldDescriptor};
 
 pub trait Command: 'static {
+    type Context: BoundedContextType;
+
     const LOCAL_ID: &'static str;
     const LABEL: &'static str;
     const FIELDS: &'static [FieldDescriptor];
     const SCHEMA_VERSION: u32 = 1;
     const DESCRIPTOR: CommandDescriptor = CommandDescriptor {
+        bounded_context: <Self::Context as BoundedContextType>::DESCRIPTOR,
         local_id: Self::LOCAL_ID,
         label: Self::LABEL,
         fields: Self::FIELDS,

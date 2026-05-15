@@ -1,5 +1,5 @@
 use std::any::type_name;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use rostfrei_core::{Aggregate, CommandHandler};
 use rostfrei_messaging_core::{CommandAddress, QueryAddress};
@@ -7,51 +7,53 @@ use thiserror::Error;
 
 const DIRECT_QUERY_REGISTRATION: &str = "<direct query registration>";
 
-/// Connects an owner-independent domain command to its executable Aggregate.
-pub trait CommandDefinition<A>: domain::Command + Sized + Send + Sync + 'static
+/// Connects a bounded-context command to its application-layer handler.
+pub trait CommandDefinition<H>: domain::Command + Sized + Send + Sync + 'static
 where
-    A: Aggregate + CommandHandler<Self>,
+    H: CommandHandler<Self>,
 {
     fn descriptor() -> CommandDescriptor {
         CommandDescriptor {
+            bounded_context: <Self::Context as domain::BoundedContextType>::DESCRIPTOR
+                .id
+                .0,
             command_name: Self::LOCAL_ID,
             schema_version: Self::SCHEMA_VERSION,
-            aggregate_type: A::aggregate_type().into_owned(),
             rust_command_type: type_name::<Self>(),
-            rust_aggregate_type: type_name::<A>(),
+            rust_handler_type: type_name::<H>(),
             modeled_command: Self::DESCRIPTOR,
         }
     }
 }
 
-impl<A, C> CommandDefinition<A> for C
+impl<H, C> CommandDefinition<H> for C
 where
-    A: Aggregate + CommandHandler<C>,
+    H: CommandHandler<C>,
     C: domain::Command + Sized + Send + Sync + 'static,
 {
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct CommandIdentity {
-    pub aggregate_type: String,
+    pub bounded_context: &'static str,
     pub command_name: &'static str,
     pub schema_version: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandDescriptor {
+    pub bounded_context: &'static str,
     pub command_name: &'static str,
     pub schema_version: u32,
-    pub aggregate_type: String,
     pub rust_command_type: &'static str,
-    pub rust_aggregate_type: &'static str,
+    pub rust_handler_type: &'static str,
     pub modeled_command: domain::CommandDescriptor,
 }
 
 impl CommandDescriptor {
-    pub fn identity(&self) -> CommandIdentity {
+    pub const fn identity(&self) -> CommandIdentity {
         CommandIdentity {
-            aggregate_type: self.aggregate_type.clone(),
+            bounded_context: self.bounded_context,
             command_name: self.command_name,
             schema_version: self.schema_version,
         }
@@ -114,12 +116,28 @@ impl QueryDescriptor {
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum RegistrationError {
+    #[error("aggregate type must not be empty ({rust_aggregate_type})")]
+    EmptyAggregateType { rust_aggregate_type: &'static str },
+    #[error("aggregate type `{aggregate_type}` has an invalid routing identity: {reason}")]
+    InvalidAggregateType {
+        aggregate_type: String,
+        rust_aggregate_type: &'static str,
+        reason: String,
+    },
+    #[error(
+        "aggregate type `{aggregate_type}` from `{attempted_rust_aggregate_type}` is already registered by `{existing_rust_aggregate_type}`"
+    )]
+    DuplicateAggregateType {
+        aggregate_type: String,
+        existing_rust_aggregate_type: &'static str,
+        attempted_rust_aggregate_type: &'static str,
+    },
     #[error("command name must not be empty ({rust_command_type})")]
     EmptyCommandName { rust_command_type: &'static str },
     #[error("command `{command_name}` has schema version zero")]
     ZeroSchemaVersion { command_name: &'static str },
-    #[error("command `{command_name}` version {schema_version} has an empty aggregate type")]
-    EmptyAggregateType {
+    #[error("command `{command_name}` version {schema_version} has an empty bounded context")]
+    EmptyCommandBoundedContext {
         command_name: &'static str,
         schema_version: u32,
     },
@@ -132,10 +150,10 @@ pub enum RegistrationError {
         reason: String,
     },
     #[error(
-        "command `{command_name}` version {schema_version} is already registered for aggregate `{aggregate_type}`"
+        "command `{command_name}` version {schema_version} is already registered in bounded context `{bounded_context}`"
     )]
     DuplicateCommandIdentity {
-        aggregate_type: String,
+        bounded_context: &'static str,
         command_name: &'static str,
         schema_version: u32,
     },
@@ -179,6 +197,11 @@ pub enum RegistrationError {
 }
 
 #[derive(Debug)]
+struct RegisteredAggregate {
+    rust_aggregate_type: &'static str,
+}
+
+#[derive(Debug)]
 struct RegisteredQuery {
     module_name: &'static str,
     descriptor: QueryDescriptor,
@@ -186,9 +209,41 @@ struct RegisteredQuery {
 
 #[derive(Debug, Default)]
 pub struct DomainRegistry {
-    commands: BTreeMap<&'static str, BTreeMap<u32, Vec<CommandDescriptor>>>,
+    aggregates: BTreeMap<String, RegisteredAggregate>,
+    commands: BTreeMap<&'static str, BTreeMap<&'static str, BTreeMap<u32, CommandDescriptor>>>,
     queries: BTreeMap<&'static str, BTreeMap<&'static str, BTreeMap<u32, RegisteredQuery>>>,
-    aggregates: BTreeSet<String>,
+}
+
+fn validate_aggregate_type(
+    aggregate_type: &str,
+    rust_aggregate_type: &'static str,
+) -> Result<(), RegistrationError> {
+    if aggregate_type.trim().is_empty() {
+        return Err(RegistrationError::EmptyAggregateType {
+            rust_aggregate_type,
+        });
+    }
+    let (bounded_context, aggregate) = match aggregate_type.split_once('/') {
+        Some((bounded_context, aggregate)) if !aggregate.contains('/') => {
+            (bounded_context, aggregate)
+        }
+        Some(_) | None => {
+            return Err(RegistrationError::InvalidAggregateType {
+                aggregate_type: aggregate_type.to_owned(),
+                rust_aggregate_type,
+                reason: "aggregate type must be bounded-context-qualified with exactly one context separator"
+                    .to_owned(),
+            });
+        }
+    };
+    if let Err(error) = CommandAddress::new("rostfrei", bounded_context, aggregate) {
+        return Err(RegistrationError::InvalidAggregateType {
+            aggregate_type: aggregate_type.to_owned(),
+            rust_aggregate_type,
+            reason: error.to_string(),
+        });
+    }
+    Ok(())
 }
 
 impl DomainRegistry {
@@ -196,12 +251,40 @@ impl DomainRegistry {
         Self::default()
     }
 
-    pub fn register_command<A, C>(&mut self) -> Result<(), RegistrationError>
+    pub fn register_aggregate<A>(&mut self) -> Result<(), RegistrationError>
     where
-        A: Aggregate + CommandHandler<C>,
-        C: CommandDefinition<A>,
+        A: Aggregate,
     {
-        let command = <C as CommandDefinition<A>>::descriptor();
+        let aggregate_type = A::aggregate_type().into_owned();
+        let rust_aggregate_type = type_name::<A>();
+        validate_aggregate_type(&aggregate_type, rust_aggregate_type)?;
+
+        if let Some(existing) = self.aggregates.get(&aggregate_type) {
+            if existing.rust_aggregate_type == rust_aggregate_type {
+                return Ok(());
+            }
+            return Err(RegistrationError::DuplicateAggregateType {
+                aggregate_type,
+                existing_rust_aggregate_type: existing.rust_aggregate_type,
+                attempted_rust_aggregate_type: rust_aggregate_type,
+            });
+        }
+
+        self.aggregates.insert(
+            aggregate_type,
+            RegisteredAggregate {
+                rust_aggregate_type,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn register_command<C, H>(&mut self) -> Result<(), RegistrationError>
+    where
+        C: CommandDefinition<H>,
+        H: CommandHandler<C>,
+    {
+        let command = <C as CommandDefinition<H>>::descriptor();
         self.validate_command(&command)?;
         self.insert_command(command);
         Ok(())
@@ -214,32 +297,35 @@ impl DomainRegistry {
         Ok(())
     }
 
+    pub fn aggregates(&self) -> impl ExactSizeIterator<Item = &str> + '_ {
+        self.aggregates.keys().map(String::as_str)
+    }
+
     pub fn commands(&self) -> impl Iterator<Item = &CommandDescriptor> {
-        self.commands.values().flat_map(BTreeMap::values).flatten()
+        self.commands
+            .values()
+            .flat_map(BTreeMap::values)
+            .flat_map(BTreeMap::values)
     }
 
     pub fn command(
         &self,
-        aggregate_type: &str,
+        bounded_context: &str,
         command_name: &str,
         schema_version: u32,
     ) -> Option<&CommandDescriptor> {
         self.commands
-            .get(command_name)
+            .get(bounded_context)
+            .and_then(|commands| commands.get(command_name))
             .and_then(|versions| versions.get(&schema_version))
-            .and_then(|registered| {
-                registered
-                    .iter()
-                    .find(|command| command.aggregate_type == aggregate_type)
-            })
     }
 
-    pub fn commands_for_aggregate<'a>(
+    pub fn commands_for_context<'a>(
         &'a self,
-        aggregate_type: &'a str,
+        bounded_context: &'a str,
     ) -> impl Iterator<Item = &'a CommandDescriptor> + 'a {
         self.commands()
-            .filter(move |command| command.aggregate_type == aggregate_type)
+            .filter(move |command| command.bounded_context == bounded_context)
     }
 
     pub fn queries(&self) -> impl Iterator<Item = &QueryDescriptor> {
@@ -271,10 +357,6 @@ impl DomainRegistry {
             .filter(move |query| query.bounded_context == bounded_context)
     }
 
-    pub fn aggregates(&self) -> impl ExactSizeIterator<Item = &str> + '_ {
-        self.aggregates.iter().map(String::as_str)
-    }
-
     fn validate_command(&self, command: &CommandDescriptor) -> Result<(), RegistrationError> {
         if command.command_name.trim().is_empty() {
             return Err(RegistrationError::EmptyCommandName {
@@ -286,27 +368,14 @@ impl DomainRegistry {
                 command_name: command.command_name,
             });
         }
-        if command.aggregate_type.trim().is_empty() {
-            return Err(RegistrationError::EmptyAggregateType {
+        if command.bounded_context.trim().is_empty() {
+            return Err(RegistrationError::EmptyCommandBoundedContext {
                 command_name: command.command_name,
                 schema_version: command.schema_version,
             });
         }
-        let (bounded_context, aggregate) = match command.aggregate_type.split_once('/') {
-            Some((bounded_context, aggregate)) if !aggregate.contains('/') => {
-                (bounded_context, aggregate)
-            }
-            Some(_) => {
-                return Err(RegistrationError::InvalidCommandIdentity {
-                    command_name: command.command_name,
-                    schema_version: command.schema_version,
-                    reason: "aggregate type must contain at most one context separator".to_owned(),
-                });
-            }
-            None => ("registry", command.aggregate_type.as_str()),
-        };
-        if let Err(error) = CommandAddress::new("rostfrei", bounded_context, command.command_name)
-            .and_then(|_| CommandAddress::new("rostfrei", "registry", aggregate))
+        if let Err(error) =
+            CommandAddress::new("rostfrei", command.bounded_context, command.command_name)
         {
             return Err(RegistrationError::InvalidCommandIdentity {
                 command_name: command.command_name,
@@ -316,14 +385,14 @@ impl DomainRegistry {
         }
         if self
             .command(
-                &command.aggregate_type,
+                command.bounded_context,
                 command.command_name,
                 command.schema_version,
             )
             .is_some()
         {
             return Err(RegistrationError::DuplicateCommandIdentity {
-                aggregate_type: command.aggregate_type.clone(),
+                bounded_context: command.bounded_context,
                 command_name: command.command_name,
                 schema_version: command.schema_version,
             });
@@ -375,15 +444,12 @@ impl DomainRegistry {
     }
 
     fn insert_command(&mut self, command: CommandDescriptor) {
-        self.aggregates.insert(command.aggregate_type.clone());
-        let registered = self
-            .commands
+        self.commands
+            .entry(command.bounded_context)
+            .or_default()
             .entry(command.command_name)
             .or_default()
-            .entry(command.schema_version)
-            .or_default();
-        registered.push(command);
-        registered.sort_by(|left, right| left.aggregate_type.cmp(&right.aggregate_type));
+            .insert(command.schema_version, command);
     }
 
     fn insert_query(&mut self, query: QueryDescriptor) {

@@ -17,16 +17,18 @@ use axum::{
 use bike_rental::{
     demo::{apply_fixture, demo_fixture, demo_stream, rented_demo_fixture},
     domain_model,
-    rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
-    tracer::{self, RentBicycleInputOptions, ReturnBicycleInputOptions},
+    rental_fleet::{
+        AddBicycle, AddBicycleHandler, RentBicycle, RentBicycleHandler, ReturnBicycle,
+        ReturnBicycleHandler, TransferBicycle, TransferBicycleHandler,
+    },
+    tracer,
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
-    Aggregate, AppendOutcome, Command, CommandExecutionError, ContentFingerprint, DomainError,
-    EventBatch, EventHistory, EventStore, EventStoreError, EventTransaction, ExecutionMetadata,
-    Executor, ExpectedVersion, InMemoryEventStore, JsonCommandPayload, JsonErrorPayload,
-    OperationId, StreamAggregateId, StreamAggregateType, StreamId, TransactionAppendOutcome,
-    TransactionReceipt,
+    AppendOutcome, Command, CommandExecutionError, CommandExecutionMetadata, CommandExecutor,
+    ContentFingerprint, DomainError, EventBatch, EventHistory, EventStore, EventStoreError,
+    EventTransaction, ExpectedVersion, InMemoryEventStore, JsonCommandPayload, JsonErrorPayload,
+    OperationId, StreamAggregateType, StreamId, TransactionAppendOutcome, TransactionReceipt,
 };
 use rostfrei_core::{StreamDirectory, StreamSummary};
 use rostfrei_messaging_core::CorrelationId;
@@ -95,12 +97,22 @@ impl EventStore for ResettableStore {
 
     async fn load_transaction_receipt(
         &self,
-        primary_stream_id: &StreamId,
         operation_id: &OperationId,
     ) -> Result<Option<TransactionReceipt>, EventStoreError> {
         self.snapshot()
             .await
-            .load_transaction_receipt(primary_stream_id, operation_id)
+            .load_transaction_receipt(operation_id)
+            .await
+    }
+
+    async fn load_transaction_receipt_in_context(
+        &self,
+        bounded_context: &rostfrei::BoundedContextName,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        self.snapshot()
+            .await
+            .load_transaction_receipt_in_context(bounded_context, operation_id)
             .await
     }
 
@@ -150,20 +162,12 @@ where
         invocation: CommandInvocation,
         observer: Arc<dyn CommandTransportObserver>,
     ) -> Result<CommandReceipt, CommandTransportError> {
-        if invocation.aggregate_type() != RentalFleetAggregate::aggregate_type().as_ref() {
+        if invocation.context() != "bike-rental" {
             return Err(local_transport_error(
                 CommandTransportErrorKind::InvalidRequest,
-                "unexpected aggregate type",
+                "unexpected bounded context",
             ));
         }
-        let stream = StreamId::new(
-            StreamAggregateType::new(invocation.aggregate_type()).map_err(|error| {
-                local_transport_error(CommandTransportErrorKind::InvalidRequest, error.to_string())
-            })?,
-            StreamAggregateId::new(invocation.aggregate_id().as_str()).map_err(|error| {
-                local_transport_error(CommandTransportErrorKind::InvalidRequest, error.to_string())
-            })?,
-        );
         let command_message_id = ContentFingerprint::digest(format!(
             "local-command:{}:{}:{}",
             invocation.operation_id().as_str(),
@@ -177,10 +181,14 @@ where
         let correlation_id = CorrelationId::new(invocation.correlation_id()).map_err(|error| {
             local_transport_error(CommandTransportErrorKind::InvalidRequest, error.to_string())
         })?;
-        let metadata = ExecutionMetadata::new(
-            stream,
+        let metadata = CommandExecutionMetadata::new(
             invocation.operation_id().clone(),
             invocation.execution_fingerprint(),
+        )
+        .with_bounded_context(
+            rostfrei::BoundedContextName::new(invocation.context()).map_err(|error| {
+                local_transport_error(CommandTransportErrorKind::InvalidRequest, error.to_string())
+            })?,
         )
         .with_correlation_id(correlation_id);
         let outcome = match (invocation.command(), invocation.schema_version()) {
@@ -188,8 +196,8 @@ where
                 let command = RentBicycle::decode_json(invocation.payload()).map_err(|error| {
                     local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                 })?;
-                match Executor::new(self.store.clone())
-                    .execute::<RentalFleetAggregate, _>(metadata, &command)
+                match CommandExecutor::new(self.store.clone())
+                    .execute(&RentBicycleHandler, metadata, &command)
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
@@ -204,8 +212,8 @@ where
                     ReturnBicycle::decode_json(invocation.payload()).map_err(|error| {
                         local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                     })?;
-                match Executor::new(self.store.clone())
-                    .execute::<RentalFleetAggregate, _>(metadata, &command)
+                match CommandExecutor::new(self.store.clone())
+                    .execute(&ReturnBicycleHandler, metadata, &command)
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
@@ -219,12 +227,28 @@ where
                 let command = AddBicycle::decode_json(invocation.payload()).map_err(|error| {
                     local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                 })?;
-                match Executor::new(self.store.clone())
-                    .execute::<RentalFleetAggregate, _>(metadata, &command)
+                match CommandExecutor::new(self.store.clone())
+                    .execute(&AddBicycleHandler, metadata, &command)
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
                     Ok(rostfrei::CommandOutcome::Rejected(rejection)) => match rejection {},
+                    Err(error) => return Err(local_execution_error(error)),
+                }
+            }
+            (TransferBicycle::LOCAL_ID, TransferBicycle::SCHEMA_VERSION) => {
+                let command =
+                    TransferBicycle::decode_json(invocation.payload()).map_err(|error| {
+                        local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
+                    })?;
+                match CommandExecutor::new(self.store.clone())
+                    .execute(&TransferBicycleHandler, metadata, &command)
+                    .await
+                {
+                    Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
+                    Ok(rostfrei::CommandOutcome::Rejected(rejection)) => {
+                        CommandOutcome::Rejected(local_rejection(&rejection)?)
+                    }
                     Err(error) => return Err(local_execution_error(error)),
                 }
             }
@@ -312,19 +336,16 @@ async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
         .with_test_repository(test_repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder
-        .register_json::<RentalFleetAggregate, RentBicycle>()
+        .register_json::<RentBicycle, _>(RentBicycleHandler)
         .unwrap();
     builder
-        .register_json::<RentalFleetAggregate, ReturnBicycle>()
+        .register_json::<ReturnBicycle, _>(ReturnBicycleHandler)
         .unwrap();
     builder
-        .register_json::<RentalFleetAggregate, AddBicycle>()
+        .register_json::<AddBicycle, _>(AddBicycleHandler)
         .unwrap();
     builder
-        .register_input_options::<RentalFleetAggregate, RentBicycle, _>(RentBicycleInputOptions)
-        .unwrap();
-    builder
-        .register_input_options::<RentalFleetAggregate, ReturnBicycle, _>(ReturnBicycleInputOptions)
+        .register_json::<TransferBicycle, _>(TransferBicycleHandler)
         .unwrap();
     (builder.build().unwrap(), test_store, production_store)
 }
@@ -362,7 +383,7 @@ fn operation_request(
         command,
         mode,
         operation_id,
-        json!({ "bicycle_id": bicycle_id }),
+        json!({ "fleet_id": "city-fleet", "bicycle_id": bicycle_id }),
         token,
     )
 }
@@ -376,15 +397,13 @@ fn operation_request_with_payload(
 ) -> Request<Body> {
     Request::builder()
         .method("POST")
-        .uri(format!(
-            "/contexts/bike-rental/aggregates/rental-fleet/city-fleet/commands/{command}/{mode}"
-        ))
+        .uri(format!("/contexts/bike-rental/commands/{command}/{mode}"))
         .header("content-type", "application/json")
         .header("idempotency-key", operation_id)
         .header("authorization", format!("Bearer {token}"))
         .body(Body::from(
             json!({
-                "schemaVersion": 1,
+                "schemaVersion": 2,
                 "payload": payload
             })
             .to_string(),
@@ -485,7 +504,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["cache-control"], "private, no-store");
     let catalog = json_body(response).await;
-    assert_eq!(catalog["catalogVersion"], 1);
+    assert_eq!(catalog["catalogVersion"], 2);
     assert_eq!(catalog["testScenario"]["resetHref"], "/test-scenario/reset");
     assert_eq!(
         catalog["testScenario"]["fixtureResetHrefTemplate"],
@@ -503,7 +522,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(
         catalog["behavioralTest"],
         json!({
-            "schemaHref": "/schemas/behavioral-test-v1",
+            "schemaHref": "/schemas/behavioral-test-v2",
             "validateHref": "/tests/validate",
             "runHref": "/test-runs",
             "definitionsHref": "/tests"
@@ -579,52 +598,87 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         "/contexts/bike-rental/aggregates/rental-fleet/instances"
     );
     assert!(aggregate.get("instancesHref").is_none());
-    let commands = aggregate["commands"].as_array().unwrap();
+    let commands = catalog["contexts"][0]["commands"].as_array().unwrap();
     assert_eq!(
         commands
             .iter()
             .map(|command| command["id"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        vec!["add-bicycle", "rent-bicycle", "return-bicycle"]
+        vec![
+            "add-bicycle",
+            "rent-bicycle",
+            "return-bicycle",
+            "transfer-bicycle"
+        ]
     );
     let add_command = commands
         .iter()
         .find(|command| command["id"] == "add-bicycle")
         .unwrap();
-    assert_eq!(add_command["versions"][0]["fields"], json!([]));
-    assert_eq!(add_command["versions"][0]["payloadTemplate"], json!({}));
+    assert_eq!(
+        add_command["versions"][0]["fields"],
+        json!([{ "name": "fleet_id", "value": { "kind": "opaque" } }])
+    );
+    assert_eq!(
+        add_command["versions"][0]["payloadTemplate"],
+        json!({ "fleet_id": null })
+    );
     let command = commands
         .iter()
         .find(|command| command["id"] == "rent-bicycle")
         .unwrap();
     assert_eq!(command["id"], "rent-bicycle");
     assert_eq!(command["label"], "Rent bicycle");
-    assert_eq!(command["versions"][0]["schemaVersion"], 1);
+    assert_eq!(command["versions"][0]["schemaVersion"], 2);
     assert_eq!(
         command["versions"][0]["fields"],
-        json!([{ "name": "bicycle_id", "value": { "kind": "opaque" } }])
+        json!([
+            { "name": "fleet_id", "value": { "kind": "opaque" } },
+            { "name": "bicycle_id", "value": { "kind": "opaque" } }
+        ])
     );
     assert_eq!(
         command["versions"][0]["payloadTemplate"],
-        json!({ "bicycle_id": null })
+        json!({ "fleet_id": null, "bicycle_id": null })
     );
     assert_eq!(
         command["versions"][0]["simulateHrefTemplate"],
-        "/contexts/bike-rental/aggregates/rental-fleet/{aggregateId}/commands/rent-bicycle/simulate"
+        "/contexts/bike-rental/commands/rent-bicycle/simulate"
     );
     assert_eq!(
         command["versions"][0]["testHrefTemplate"],
-        "/contexts/bike-rental/aggregates/rental-fleet/{aggregateId}/commands/rent-bicycle/test"
+        "/contexts/bike-rental/commands/rent-bicycle/test"
     );
     assert_eq!(
         command["versions"][0]["dispatchHrefTemplate"],
-        "/contexts/bike-rental/aggregates/rental-fleet/{aggregateId}/commands/rent-bicycle/dispatch"
+        "/contexts/bike-rental/commands/rent-bicycle/dispatch"
     );
     assert_eq!(
         command["versions"][0]["testInputsHrefTemplate"],
-        "/contexts/bike-rental/aggregates/rental-fleet/{aggregateId}/commands/rent-bicycle/schemas/1/inputs"
+        "/contexts/bike-rental/commands/rent-bicycle/schemas/2/inputs"
     );
     assert!(command["versions"][0].get("inputsHrefTemplate").is_none());
+    let transfer_command = commands
+        .iter()
+        .find(|command| command["id"] == "transfer-bicycle")
+        .unwrap();
+    assert_eq!(transfer_command["label"], "Transfer bicycle");
+    assert_eq!(
+        transfer_command["versions"][0]["fields"],
+        json!([
+            { "name": "from_fleet_id", "value": { "kind": "opaque" } },
+            { "name": "bicycle_id", "value": { "kind": "opaque" } },
+            { "name": "to_fleet_id", "value": { "kind": "opaque" } }
+        ])
+    );
+    assert_eq!(
+        transfer_command["versions"][0]["payloadTemplate"],
+        json!({ "from_fleet_id": null, "bicycle_id": null, "to_fleet_id": null })
+    );
+    assert_eq!(
+        transfer_command["versions"][0]["simulateHrefTemplate"],
+        "/contexts/bike-rental/commands/transfer-bicycle/simulate"
+    );
 
     let tests = app
         .clone()
@@ -669,7 +723,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(test.status(), StatusCode::OK);
     let test = json_body(test).await;
     assert_eq!(test["definition"]["setup"]["fixture"], "demo-fleet");
-    assert_eq!(test["definition"]["schemaVersion"], 1);
+    assert_eq!(test["definition"]["schemaVersion"], 2);
     assert_eq!(test["revision"].as_str().unwrap().len(), 64);
 
     let response = app
@@ -689,82 +743,6 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
             "items": [{
                 "aggregateId": "city-fleet",
                 "streamVersion": 1
-            }]
-        })
-    );
-
-    let inputs_href = command["versions"][0]["testInputsHrefTemplate"]
-        .as_str()
-        .unwrap()
-        .replace("{aggregateId}", "city-fleet");
-    let response = app
-        .clone()
-        .oneshot(
-            authorize(Request::builder())
-                .uri(inputs_href)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        json_body(response).await,
-        json!({
-            "fields": [{
-                "name": "bicycle_id",
-                "label": "Bicycle",
-                "options": [{
-                    "value": "bike-42",
-                    "label": "bike-42",
-                    "description": "Available and serviceable"
-                }]
-            }]
-        })
-    );
-
-    let inputs_href = add_command["versions"][0]["testInputsHrefTemplate"]
-        .as_str()
-        .unwrap()
-        .replace("{aggregateId}", "city-fleet");
-    let response = app
-        .clone()
-        .oneshot(
-            authorize(Request::builder())
-                .uri(inputs_href)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(json_body(response).await, json!({ "fields": [] }));
-
-    let return_command = commands
-        .iter()
-        .find(|command| command["id"] == "return-bicycle")
-        .unwrap();
-    let inputs_href = return_command["versions"][0]["testInputsHrefTemplate"]
-        .as_str()
-        .unwrap()
-        .replace("{aggregateId}", "city-fleet");
-    let response = app
-        .oneshot(
-            authorize(Request::builder())
-                .uri(inputs_href)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        json_body(response).await,
-        json!({
-            "fields": [{
-                "name": "bicycle_id",
-                "label": "Bicycle",
-                "options": []
             }]
         })
     );
@@ -815,7 +793,6 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
     .unwrap();
     assert!(trace.contains("event: operation.queued"));
     assert!(trace.contains("event: operation.started"));
-    assert!(trace.contains("event: history.replayed"));
     assert!(trace.contains("event: command.accepted"));
     assert!(trace.contains("event: domain-event.predicted"));
     assert!(trace.contains("event: operation.completed"));
@@ -834,11 +811,22 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
     let completed = json_body(response).await;
     assert_eq!(completed["status"], "completed");
     assert_eq!(completed["result"]["decision"], "accepted");
-    assert_eq!(completed["result"]["baseStreamVersion"], 1);
+    assert_eq!(
+        completed["result"]["participants"][0]["baseStreamVersion"],
+        1
+    );
     assert_eq!(completed["result"]["appended"], false);
     assert_eq!(completed["result"]["published"], false);
     assert_event_evidence(&completed, "predicted");
-    assert_eq!(completed["aggregateType"], "bike-rental/rental-fleet");
+    assert_eq!(completed["context"], "bike-rental");
+    assert_eq!(
+        completed["result"]["participants"][0]["aggregateType"],
+        "bike-rental/rental-fleet"
+    );
+    assert_eq!(
+        completed["result"]["participants"][0]["aggregateId"],
+        "city-fleet"
+    );
     assert_eq!(
         completed["result"]["predictedEvents"][0]["schemaVersion"],
         1
@@ -875,7 +863,6 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
     .unwrap();
     assert!(!resumed.contains("event: operation.queued"));
     assert!(!resumed.contains("event: operation.started"));
-    assert!(resumed.contains("event: history.replayed"));
     assert!(resumed.contains("event: operation.completed"));
 
     let response = app
@@ -950,7 +937,10 @@ async fn rejection_and_idempotency_have_explicit_http_outcomes() {
         .unwrap();
     let completed = json_body(response).await;
     assert_eq!(completed["result"]["decision"], "rejected");
-    assert_eq!(completed["result"]["baseStreamVersion"], 1);
+    assert_eq!(
+        completed["result"]["participants"][0]["baseStreamVersion"],
+        1
+    );
     assert_eq!(completed["result"]["appended"], false);
     assert_eq!(completed["result"]["published"], false);
     assert_eq!(
@@ -972,14 +962,14 @@ async fn transported_http_commands_require_an_idempotency_key() {
                 Request::builder()
                     .method("POST")
                     .uri(format!(
-                        "/contexts/bike-rental/aggregates/rental-fleet/city-fleet/commands/rent-bicycle/{mode}"
+                        "/contexts/bike-rental/commands/rent-bicycle/{mode}"
                     ))
                     .header("content-type", "application/json")
                     .header("authorization", format!("Bearer {token}"))
                     .body(Body::from(
                         json!({
-                            "schemaVersion": 1,
-                            "payload": { "bicycle_id": "bike-42" }
+                            "schemaVersion": 2,
+                            "payload": { "fleet_id": "city-fleet", "bicycle_id": "bike-42" }
                         })
                         .to_string(),
                     ))
@@ -1099,7 +1089,7 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
     assert_eq!(series["capture"]["fidelity"], "exact");
     assert_eq!(
         series["messageSeries"]["messages"][0]["payload"],
-        json!({ "bicycle_id": "bike-42" })
+        json!({ "fleet_id": "city-fleet", "bicycle_id": "bike-42" })
     );
     assert_eq!(
         series["messageSeries"]["messages"][0]["messageId"],
@@ -1144,23 +1134,11 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
     let simulated = terminal_operation(&app, "simulate-after-test", API_TOKEN).await;
     assert_eq!(simulated["mode"], "simulate");
     assert_eq!(simulated["result"]["decision"], "rejected");
-    assert_eq!(simulated["result"]["baseStreamVersion"], 2);
-    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 2);
-
-    let response = app
-        .clone()
-        .oneshot(
-            authorize(Request::builder())
-                .uri("/contexts/bike-rental/aggregates/rental-fleet/city-fleet/commands/return-bicycle/schemas/1/inputs")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
     assert_eq!(
-        json_body(response).await["fields"][0]["options"][0]["value"],
-        "bike-42"
+        simulated["result"]["participants"][0]["baseStreamVersion"],
+        2
     );
+    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 2);
 
     let response = app
         .clone()
@@ -1198,7 +1176,7 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
             "add-bicycle",
             "test",
             "add-bike-77",
-            json!({}),
+            json!({ "fleet_id": "city-fleet" }),
             API_TOKEN,
         ))
         .await
@@ -1229,7 +1207,7 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
             "add-bicycle",
             "test",
             "add-bike-77",
-            json!({}),
+            json!({ "fleet_id": "city-fleet" }),
             API_TOKEN,
         ))
         .await

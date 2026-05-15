@@ -8,6 +8,8 @@ pub fn assemble(domain_path: &Path, runtime_path: &Path, name: &Ident) -> TokenS
             type State = <Self as #domain_path::AggregateDefinition>::Root;
             type Event = <Self as #domain_path::AggregateDefinition>::Event;
 
+            const BOUNDED_CONTEXT: &'static str =
+                <Self as #domain_path::AggregateType>::DESCRIPTOR.id.context.0;
             const AGGREGATE_TYPE: &'static str =
                 <Self as #domain_path::AggregateType>::DESCRIPTOR.id.local;
 

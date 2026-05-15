@@ -8,17 +8,18 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateInstance, AggregateType, AppendOutcome, CommandExecutionError,
-    CommandHandler, CommandOutcome, CommandReceipt, CommandResult, CommittedDomainEvent,
-    ContentFingerprint, DomainEventDispatchOutcome, DomainEventHandler, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, DomainEventRegistrationError, EnvelopeError, EventBatch,
+    Aggregate, AggregateId, AggregateType, AppendOutcome, CommandDecision, CommandExecution,
+    CommandExecutionError, CommandExecutionMetadata, CommandExecutor, CommandHandler,
+    CommandOutcome, CommandReceipt, CommandResult, CommittedDomainEvent, ContentFingerprint,
+    DomainEventDispatchOutcome, DomainEventHandler, DomainEventHandlerError,
+    DomainEventHandlerErrorKind, DomainEventRegistrationError, EnvelopeError, Event, EventBatch,
     EventCodec, EventCodecError, EventCodecErrorKind, EventHistory, EventStore, EventStoreError,
-    EventStoreErrorKind, EventTransaction, ExecutionMetadata, Executor, ExpectedVersion,
-    InMemoryEventStore, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent,
-    SimulationDecision, StreamId, StreamVersion, TransactionParticipant,
+    EventStoreErrorKind, EventTransaction, ExpectedVersion, InMemoryEventStore,
+    MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
+    TransactionAppendOutcome, TransactionReceipt, derive_commit_id, derive_event_id,
 };
 use rostfrei_domain_runtime::{Apply, Initialize};
-use rostfrei_messaging_core::{CausationId, CorrelationId};
+use rostfrei_messaging_core::{BoundedContextName, CausationId, CorrelationId};
 use rostfrei_testing::{DomainEventHandlerHarness, event_store_contract, given};
 use serde::{Deserialize, Serialize};
 
@@ -91,6 +92,7 @@ impl Aggregate for Account {
     type State = Self;
     type Event = AccountEvent;
 
+    const BOUNDED_CONTEXT: &'static str = "accounts";
     const AGGREGATE_TYPE: &'static str = "Account";
 
     fn initial(_stream_id: &StreamId) -> Self::State {
@@ -140,45 +142,66 @@ enum AccountRejection {
     Deliberate,
 }
 
-impl CommandHandler<AccountCommand> for Account {
+struct AccountCommandHandler {
+    account_id: String,
+}
+
+impl AccountCommandHandler {
+    fn for_stream(stream: &StreamId) -> Self {
+        Self {
+            account_id: stream.aggregate_id().as_str().to_owned(),
+        }
+    }
+}
+
+#[async_trait]
+impl CommandHandler<AccountCommand> for AccountCommandHandler {
     type Rejection = AccountRejection;
 
-    fn handle(
+    async fn handle(
+        &self,
         command: &AccountCommand,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        match command {
-            AccountCommand::Import {
-                opening_balance,
-                provenance,
-            } => {
-                if aggregate.state().imported {
-                    return Err(AccountRejection::AlreadyImported);
+        execution: &mut CommandExecution<'_>,
+    ) -> Result<CommandDecision<Self::Rejection>, CommandExecutionError> {
+        let mut account = execution.load::<Account>(&self.account_id).await?;
+        let aggregate = account.aggregate_mut();
+        let decision = 'decision: {
+            match command {
+                AccountCommand::Import {
+                    opening_balance,
+                    provenance,
+                } => {
+                    if aggregate.state().imported {
+                        break 'decision CommandDecision::Rejected(
+                            AccountRejection::AlreadyImported,
+                        );
+                    }
+                    aggregate.raise(AccountEvent::AccountStateImported {
+                        opening_balance: *opening_balance,
+                        provenance: provenance.clone(),
+                    });
                 }
-                aggregate.raise(AccountEvent::AccountStateImported {
-                    opening_balance: *opening_balance,
-                    provenance: provenance.clone(),
-                });
-            }
-            AccountCommand::CreditThenObserve { amount } => {
-                aggregate.raise(AccountEvent::Credited { amount: *amount });
-                let balance_after_credit = aggregate.state().balance;
-                aggregate.raise(AccountEvent::BalanceObserved {
-                    balance: balance_after_credit,
-                });
-            }
-            AccountCommand::CreditMany { event_count } => {
-                for _ in 0..*event_count {
-                    aggregate.raise(AccountEvent::Credited { amount: 1 });
+                AccountCommand::CreditThenObserve { amount } => {
+                    aggregate.raise(AccountEvent::Credited { amount: *amount });
+                    let balance_after_credit = aggregate.state().balance;
+                    aggregate.raise(AccountEvent::BalanceObserved {
+                        balance: balance_after_credit,
+                    });
                 }
+                AccountCommand::CreditMany { event_count } => {
+                    for _ in 0..*event_count {
+                        aggregate.raise(AccountEvent::Credited { amount: 1 });
+                    }
+                }
+                AccountCommand::RecordThenReject => {
+                    aggregate.raise(AccountEvent::Credited { amount: 100 });
+                    break 'decision CommandDecision::Rejected(AccountRejection::Deliberate);
+                }
+                AccountCommand::NoOp => {}
             }
-            AccountCommand::RecordThenReject => {
-                aggregate.raise(AccountEvent::Credited { amount: 100 });
-                return Err(AccountRejection::Deliberate);
-            }
-            AccountCommand::NoOp => {}
-        }
-        Ok(())
+            CommandDecision::Accepted
+        };
+        Ok(decision)
     }
 }
 
@@ -202,6 +225,41 @@ struct BalancePayload {
 }
 
 struct AccountCodec;
+
+impl Event for AccountEvent {
+    fn event_type(&self) -> &'static str {
+        match self {
+            Self::AccountStateImported { .. } => "account-state-imported",
+            Self::Credited { .. } => "account-credited",
+            Self::BalanceObserved { .. } => "account-balance-observed",
+        }
+    }
+
+    fn schema_version(&self) -> u32 {
+        1
+    }
+
+    fn encode_json(&self) -> Result<Vec<u8>, EventCodecError> {
+        match self {
+            Self::AccountStateImported {
+                opening_balance,
+                provenance,
+            } => encode_json(&ImportedPayload {
+                opening_balance: *opening_balance,
+                source_system: provenance.source_system.clone(),
+                source_record: provenance.source_record.clone(),
+                observed_at: provenance.observed_at.clone(),
+                import_batch: provenance.import_batch.clone(),
+            }),
+            Self::Credited { amount } => encode_json(&AmountPayload { amount: *amount }),
+            Self::BalanceObserved { balance } => encode_json(&BalancePayload { balance: *balance }),
+        }
+    }
+
+    fn decode_json(event: &RecordedEvent) -> Result<Self, EventCodecError> {
+        AccountCodec.decode(event)
+    }
+}
 
 impl EventCodec<Account> for AccountCodec {
     fn encode(
@@ -241,42 +299,68 @@ impl EventCodec<Account> for AccountCodec {
         &self,
         event: &rostfrei_core::RecordedEvent,
     ) -> Result<AccountEvent, EventCodecError> {
-        if event.schema_version() != 1 {
-            return Err(EventCodecError::new(
-                EventCodecErrorKind::UnsupportedSchemaVersion,
-                "account events support schema version 1",
-            ));
+        decode_account_event(event, 1)
+    }
+}
+
+fn decode_account_event(
+    event: &RecordedEvent,
+    expected_schema_version: u32,
+) -> Result<AccountEvent, EventCodecError> {
+    if event.schema_version() != expected_schema_version {
+        return Err(EventCodecError::new(
+            EventCodecErrorKind::UnsupportedSchemaVersion,
+            format!("account events support schema version {expected_schema_version}"),
+        ));
+    }
+    match event.event_type() {
+        "account-state-imported" => {
+            let payload: ImportedPayload = decode_json(event.payload())?;
+            Ok(AccountEvent::AccountStateImported {
+                opening_balance: payload.opening_balance,
+                provenance: ImportProvenance {
+                    source_system: payload.source_system,
+                    source_record: payload.source_record,
+                    observed_at: payload.observed_at,
+                    import_batch: payload.import_batch,
+                },
+            })
         }
-        match event.event_type() {
-            "account-state-imported" => {
-                let payload: ImportedPayload = decode_json(event.payload())?;
-                Ok(AccountEvent::AccountStateImported {
-                    opening_balance: payload.opening_balance,
-                    provenance: ImportProvenance {
-                        source_system: payload.source_system,
-                        source_record: payload.source_record,
-                        observed_at: payload.observed_at,
-                        import_batch: payload.import_batch,
-                    },
-                })
-            }
-            "account-credited" => {
-                let payload: AmountPayload = decode_json(event.payload())?;
-                Ok(AccountEvent::Credited {
-                    amount: payload.amount,
-                })
-            }
-            "account-balance-observed" => {
-                let payload: BalancePayload = decode_json(event.payload())?;
-                Ok(AccountEvent::BalanceObserved {
-                    balance: payload.balance,
-                })
-            }
-            unknown => Err(EventCodecError::new(
-                EventCodecErrorKind::UnknownEventType,
-                format!("unknown account event type {unknown}"),
-            )),
+        "account-credited" => {
+            let payload: AmountPayload = decode_json(event.payload())?;
+            Ok(AccountEvent::Credited {
+                amount: payload.amount,
+            })
         }
+        "account-balance-observed" => {
+            let payload: BalancePayload = decode_json(event.payload())?;
+            Ok(AccountEvent::BalanceObserved {
+                balance: payload.balance,
+            })
+        }
+        unknown => Err(EventCodecError::new(
+            EventCodecErrorKind::UnknownEventType,
+            format!("unknown account event type {unknown}"),
+        )),
+    }
+}
+
+struct Schema99AccountCodec;
+
+impl EventCodec<Account> for Schema99AccountCodec {
+    fn encode(
+        &self,
+        event: &AccountEvent,
+        event_id: rostfrei_core::EventId,
+    ) -> Result<NewEvent, EventCodecError> {
+        let encoded = AccountCodec.encode(event, event_id.clone())?;
+        NewEvent::new(event_id, encoded.event_type(), 99, encoded.payload()).map_err(|error| {
+            EventCodecError::new(EventCodecErrorKind::InvalidEnvelope, error.to_string())
+        })
+    }
+
+    fn decode(&self, event: &RecordedEvent) -> Result<AccountEvent, EventCodecError> {
+        decode_account_event(event, 99)
     }
 }
 
@@ -361,17 +445,26 @@ struct DepositMoney {
     amount: i64,
 }
 
-impl CommandHandler<DepositMoney> for AutomaticAccountDefinition {
+struct DepositMoneyHandler {
+    account_id: String,
+}
+
+#[async_trait]
+impl CommandHandler<DepositMoney> for DepositMoneyHandler {
     type Rejection = ();
 
-    fn handle(
+    async fn handle(
+        &self,
         command: &DepositMoney,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.raise(MoneyDeposited {
+        execution: &mut CommandExecution<'_>,
+    ) -> Result<CommandDecision<Self::Rejection>, CommandExecutionError> {
+        let mut account = execution
+            .load::<AutomaticAccountDefinition>(&self.account_id)
+            .await?;
+        account.aggregate_mut().raise(MoneyDeposited {
             amount: command.amount,
         });
-        Ok(())
+        Ok(CommandDecision::Accepted)
     }
 }
 
@@ -473,6 +566,30 @@ impl EventStore for ForcedConflictStore {
         expected_version: ExpectedVersion,
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
+        self.inner.append(stream_id, expected_version, batch).await
+    }
+
+    async fn load_transaction_receipt(
+        &self,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        self.inner.load_transaction_receipt(operation_id).await
+    }
+
+    async fn load_transaction_receipt_in_context(
+        &self,
+        bounded_context: &BoundedContextName,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        self.inner
+            .load_transaction_receipt_in_context(bounded_context, operation_id)
+            .await
+    }
+
+    async fn append_transaction(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<TransactionAppendOutcome, EventStoreError> {
         self.append_attempts.fetch_add(1, Ordering::Relaxed);
         if self
             .remaining_conflicts
@@ -486,7 +603,7 @@ impl EventStore for ForcedConflictStore {
                 "forced test conflict",
             ));
         }
-        self.inner.append(stream_id, expected_version, batch).await
+        self.inner.append_transaction(transaction).await
     }
 }
 
@@ -510,6 +627,30 @@ impl EventStore for AppendOnlyStore {
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
         self.0.append(stream_id, expected_version, batch).await
+    }
+
+    async fn load_transaction_receipt(
+        &self,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        self.0.load_transaction_receipt(operation_id).await
+    }
+
+    async fn load_transaction_receipt_in_context(
+        &self,
+        bounded_context: &BoundedContextName,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        self.0
+            .load_transaction_receipt_in_context(bounded_context, operation_id)
+            .await
+    }
+
+    async fn append_transaction(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        self.0.append_transaction(transaction).await
     }
 }
 
@@ -540,18 +681,16 @@ fn stream(id: &str) -> TestResult<StreamId> {
     Ok(StreamId::new(aggregate_type, aggregate_id))
 }
 
-fn metadata(
-    stream: &StreamId,
-    operation: &str,
-    command_content: &str,
-) -> TestResult<ExecutionMetadata> {
+fn metadata(operation: &str, command_content: &str) -> TestResult<CommandExecutionMetadata> {
     let operation_id = OperationId::new(operation)
         .map_err(|error| fixture_error("account operation ID", error))?;
-    Ok(ExecutionMetadata::new(
-        stream.clone(),
-        operation_id,
-        ContentFingerprint::digest(command_content),
-    ))
+    Ok(
+        CommandExecutionMetadata::new(operation_id, ContentFingerprint::digest(command_content))
+            .with_bounded_context(
+                rostfrei_messaging_core::BoundedContextName::new("accounts")
+                    .map_err(|error| fixture_error("account bounded context", error))?,
+            ),
+    )
 }
 
 fn provenance() -> ImportProvenance {
@@ -570,7 +709,7 @@ async fn in_memory_store_satisfies_reusable_contracts() {
 }
 
 #[tokio::test]
-async fn default_transaction_adapter_satisfies_reusable_base_contract() {
+async fn forwarding_event_store_satisfies_reusable_base_contract() {
     event_store_contract::run(|| AppendOnlyStore(InMemoryEventStore::new())).await;
 }
 
@@ -590,78 +729,6 @@ async fn reusable_contract_reports_errors_and_legacy_wrapper_fails_closed() {
     })
     .await;
     assert!(matches!(assertion, Err(error) if error.is_panic()));
-}
-
-#[tokio::test]
-async fn default_transaction_adapter_rejects_all_transactions_and_has_no_receipts() {
-    let stream = stream("default-transaction-adapter")
-        .expect("valid default transaction adapter stream fixture");
-    let operation = "default-transaction-operation";
-    let transaction_metadata = metadata(&stream, operation, "default-transaction-content")
-        .expect("valid default transaction metadata fixture");
-    let batch = EventBatch::new(
-        transaction_metadata.commit_id().clone(),
-        transaction_metadata.operation_id().clone(),
-        transaction_metadata.operation_fingerprint(),
-        vec![
-            NewEvent::new(
-                transaction_metadata.event_id(0),
-                "default-transaction-event",
-                1,
-                b"event",
-            )
-            .expect("valid event"),
-        ],
-    )
-    .expect("valid batch");
-    let store = AppendOnlyStore(InMemoryEventStore::new());
-    let transactions = [
-        EventTransaction::new(
-            transaction_metadata.operation_id().clone(),
-            transaction_metadata.operation_fingerprint(),
-            vec![TransactionParticipant::new(
-                stream.clone(),
-                ExpectedVersion::NoStream,
-                Some(batch.clone()),
-            )],
-        ),
-        EventTransaction::new(
-            OperationId::new("default-read-only-primary").expect("valid operation identity"),
-            ContentFingerprint::digest("default-read-only-primary"),
-            vec![TransactionParticipant::new(
-                stream.clone(),
-                ExpectedVersion::NoStream,
-                None,
-            )],
-        ),
-        EventTransaction::new(
-            OperationId::new("default-empty-transaction").expect("valid operation identity"),
-            ContentFingerprint::digest("default-empty-transaction"),
-            Vec::new(),
-        ),
-    ];
-
-    for transaction in transactions {
-        let error = store
-            .append_transaction(transaction)
-            .await
-            .expect_err("an adapter without transaction support must reject every transaction");
-        assert_eq!(error.kind(), EventStoreErrorKind::ConfigurationMismatch);
-    }
-    assert!(
-        store
-            .load(&stream)
-            .await
-            .expect("rejected transaction stream should load")
-            .is_empty()
-    );
-    assert!(
-        store
-            .load_transaction_receipt(&stream, transaction_metadata.operation_id())
-            .await
-            .expect("the default receipt lookup should succeed")
-            .is_none()
-    );
 }
 
 #[tokio::test]
@@ -800,12 +867,13 @@ fn recorded_account_event(
     payload: &[u8],
 ) -> TestResult<RecordedEvent> {
     let stream = stream("handled-account")?;
-    let metadata = metadata(&stream, "handled-operation", "handled-content")?;
+    let metadata = metadata("handled-operation", "handled-content")?;
+    let commit_id = derive_commit_id(&stream, metadata.operation_id());
     RecordedEvent::new(
         stream,
         StreamVersion::new(1),
-        metadata.event_id(0),
-        metadata.commit_id().clone(),
+        derive_event_id(&commit_id, 0),
+        commit_id,
         metadata.operation_id().clone(),
         metadata.operation_fingerprint(),
         event_type,
@@ -822,10 +890,12 @@ fn given_when_then_exposes_live_state_and_replay_equivalence() {
         provenance: provenance(),
     }];
     let stream = stream("given-account").expect("valid given account stream fixture");
-    let then = given::<Account, _>(&stream, history.clone())
-        .when(&AccountCommand::CreditThenObserve { amount: 5 });
+    let then = given::<Account, _>(&stream, history.clone()).when(|aggregate| {
+        aggregate.raise(AccountEvent::Credited { amount: 5 });
+        let balance = aggregate.state().balance;
+        aggregate.raise(AccountEvent::BalanceObserved { balance });
+    });
 
-    assert!(then.is_accepted());
     assert_eq!(
         then.events(),
         &[
@@ -836,8 +906,7 @@ fn given_when_then_exposes_live_state_and_replay_equivalence() {
     assert_eq!(then.state().balance, 15);
     assert_eq!(then.state().last_observed_balance, Some(15));
 
-    let (live_state, new_events, decision) = then.into_parts();
-    assert_eq!(decision, Ok(()));
+    let (live_state, new_events) = then.into_parts();
     history.extend(new_events);
     let replayed = given::<Account, _>(&stream, history);
     assert_eq!(replayed.state(), &live_state);
@@ -846,8 +915,10 @@ fn given_when_then_exposes_live_state_and_replay_equivalence() {
 #[tokio::test]
 async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
     let stream = stream("imported-account").expect("valid imported account stream fixture");
-    let executor = Executor::with_codec(InMemoryEventStore::new(), AccountCodec);
-    let import_metadata = metadata(&stream, "import-operation", "stable-import-command")
+    let executor =
+        CommandExecutor::new(InMemoryEventStore::new()).with_codec::<Account, _>(AccountCodec);
+    let handler = AccountCommandHandler::for_stream(&stream);
+    let import_metadata = metadata("import-operation", "stable-import-command")
         .expect("valid import execution metadata fixture");
     let import = AccountCommand::Import {
         opening_balance: 10,
@@ -855,7 +926,7 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
     };
 
     let imported = executor
-        .execute::<Account, _>(import_metadata, &import)
+        .execute(&handler, import_metadata, &import)
         .await
         .expect("honest NoStream import should succeed");
     let CommandOutcome::Accepted(imported) = imported else {
@@ -869,7 +940,7 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
     assert_eq!(imported_payload.observed_at, "2026-08-25T09:30:00Z");
     assert_eq!(imported_payload.import_batch, "migration-17");
 
-    let credit_metadata = metadata(&stream, "credit-operation", "credit-five-and-observe")
+    let credit_metadata = metadata("credit-operation", "credit-five-and-observe")
         .expect("valid credit execution metadata fixture")
         .with_correlation_id(
             CorrelationId::new("credit-correlation").expect("credit correlation identity"),
@@ -877,7 +948,7 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
         .with_causation_id(CausationId::new("credit-command").expect("credit causation identity"));
     let credit = AccountCommand::CreditThenObserve { amount: 5 };
     let credited = executor
-        .execute::<Account, _>(credit_metadata.clone(), &credit)
+        .execute(&handler, credit_metadata.clone(), &credit)
         .await
         .expect("command should observe replayed imported balance");
     let CommandOutcome::Accepted(credited) = credited else {
@@ -890,7 +961,7 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
     assert_eq!(observed, AccountEvent::BalanceObserved { balance: 15 });
 
     let retried = executor
-        .execute::<Account, _>(credit_metadata.clone(), &credit)
+        .execute(&handler, credit_metadata.clone(), &credit)
         .await
         .expect("same operation should be an exact replay");
     let CommandOutcome::Accepted(retried) = retried else {
@@ -899,7 +970,7 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
     assert!(matches!(retried, CommandReceipt::ExactReplay(_)));
     assert_eq!(retried.events(), credited.events());
 
-    let changed_causation = metadata(&stream, "credit-operation", "credit-five-and-observe")
+    let changed_causation = metadata("credit-operation", "credit-five-and-observe")
         .expect("valid conflicting execution metadata fixture")
         .with_correlation_id(
             CorrelationId::new("credit-correlation").expect("credit correlation identity"),
@@ -908,7 +979,7 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
             CausationId::new("different-command").expect("different causation identity"),
         );
     let metadata_conflict = executor
-        .execute::<Account, _>(changed_causation, &credit)
+        .execute(&handler, changed_causation, &credit)
         .await
         .expect_err("metadata is part of exact operation identity");
     assert!(matches!(
@@ -923,8 +994,9 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
         .await
         .expect("load should succeed");
     let rejection = executor
-        .execute::<Account, _>(
-            metadata(&stream, "rejected-operation", "record-then-reject")
+        .execute(
+            &handler,
+            metadata("rejected-operation", "record-then-reject")
                 .expect("valid rejected execution metadata fixture"),
             &AccountCommand::RecordThenReject,
         )
@@ -945,19 +1017,55 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
 }
 
 #[tokio::test]
+async fn command_execution_uses_the_registered_aggregate_codec_for_write_and_replay() {
+    let stream = stream("schema-99-account").expect("valid custom-codec stream fixture");
+    let executor = CommandExecutor::new(InMemoryEventStore::new())
+        .with_codec::<Account, _>(Schema99AccountCodec);
+    let handler = AccountCommandHandler::for_stream(&stream);
+
+    let written = executor
+        .execute(
+            &handler,
+            metadata("schema-99-write", "schema-99-credit")
+                .expect("valid custom-codec write metadata"),
+            &AccountCommand::CreditThenObserve { amount: 9 },
+        )
+        .await
+        .expect("custom-codec command write should succeed");
+    let CommandOutcome::Accepted(written) = written else {
+        panic!("custom-codec command should be accepted");
+    };
+    assert!(
+        written
+            .events()
+            .iter()
+            .all(|event| event.schema_version() == 99)
+    );
+
+    let replayed = executor
+        .execute(
+            &handler,
+            metadata("schema-99-replay", "schema-99-no-op")
+                .expect("valid custom-codec replay metadata"),
+            &AccountCommand::NoOp,
+        )
+        .await
+        .expect("custom codec should decode its non-JSON-default schema during command replay");
+    assert_eq!(replayed, CommandOutcome::Accepted(CommandReceipt::NoEvents));
+}
+
+#[tokio::test]
 async fn executor_rejects_commands_that_exceed_the_atomic_commit_limit() {
     let stream = stream("oversized-command").expect("valid oversized command stream fixture");
-    let executor = Executor::with_codec(InMemoryEventStore::new(), AccountCodec);
+    let executor =
+        CommandExecutor::new(InMemoryEventStore::new()).with_codec::<Account, _>(AccountCodec);
     let event_count = MAX_EVENTS_PER_BATCH.saturating_add(1);
 
     let error = executor
-        .execute::<Account, _>(
-            metadata(
-                &stream,
-                "oversized-command-operation",
-                "oversized-command-content",
-            )
-            .expect("valid oversized command metadata fixture"),
+        .execute(
+            &AccountCommandHandler::for_stream(&stream),
+            metadata("oversized-command-operation", "oversized-command-content")
+                .expect("valid oversized command metadata fixture"),
             &AccountCommand::CreditMany { event_count },
         )
         .await
@@ -989,12 +1097,19 @@ async fn executor_uses_derived_json_events_without_codec_configuration() {
             .expect("valid compiled aggregate type"),
         AggregateId::new("automatic-account-1").expect("valid aggregate id"),
     );
-    let executor = Executor::new(InMemoryEventStore::new());
+    let executor = CommandExecutor::new(InMemoryEventStore::new());
 
     let first = executor
-        .execute::<AutomaticAccountDefinition, _>(
-            metadata(&stream, "automatic-deposit-1", "deposit-seven")
-                .expect("valid first automatic deposit metadata fixture"),
+        .execute(
+            &DepositMoneyHandler {
+                account_id: stream.aggregate_id().as_str().to_owned(),
+            },
+            metadata("automatic-deposit-1", "deposit-seven")
+                .expect("valid first automatic deposit metadata fixture")
+                .with_bounded_context(
+                    rostfrei_messaging_core::BoundedContextName::new("automatic-accounts")
+                        .expect("valid automatic account context"),
+                ),
             &DepositMoney { amount: 7 },
         )
         .await
@@ -1031,9 +1146,16 @@ async fn executor_uses_derived_json_events_without_codec_configuration() {
     );
 
     let second = executor
-        .execute::<AutomaticAccountDefinition, _>(
-            metadata(&stream, "automatic-deposit-2", "deposit-three")
-                .expect("valid second automatic deposit metadata fixture"),
+        .execute(
+            &DepositMoneyHandler {
+                account_id: stream.aggregate_id().as_str().to_owned(),
+            },
+            metadata("automatic-deposit-2", "deposit-three")
+                .expect("valid second automatic deposit metadata fixture")
+                .with_bounded_context(
+                    rostfrei_messaging_core::BoundedContextName::new("automatic-accounts")
+                        .expect("valid automatic account context"),
+                ),
             &DepositMoney { amount: 3 },
         )
         .await
@@ -1047,12 +1169,13 @@ async fn executor_uses_derived_json_events_without_codec_configuration() {
 #[tokio::test]
 async fn executor_returns_an_accepted_no_events_receipt_without_appending() {
     let stream = stream("no-op-execution").expect("valid no-op execution stream fixture");
-    let executor = Executor::with_codec(InMemoryEventStore::new(), AccountCodec);
+    let executor =
+        CommandExecutor::new(InMemoryEventStore::new()).with_codec::<Account, _>(AccountCodec);
 
     let result: CommandResult<AccountRejection> = executor
-        .execute::<Account, _>(
-            metadata(&stream, "no-op-execution", "no-op")
-                .expect("valid no-op execution metadata fixture"),
+        .execute(
+            &AccountCommandHandler::for_stream(&stream),
+            metadata("no-op-execution", "no-op").expect("valid no-op execution metadata fixture"),
             &AccountCommand::NoOp,
         )
         .await;
@@ -1075,10 +1198,11 @@ async fn executor_returns_an_accepted_no_events_receipt_without_appending() {
 async fn simulation_replays_history_and_returns_encoded_predictions_without_appending() {
     let stream = stream("simulated-account").expect("valid simulated account stream fixture");
     let store = InMemoryEventStore::new();
-    let executor = Executor::with_codec(store.clone(), AccountCodec);
+    let executor = CommandExecutor::new(store.clone()).with_codec::<Account, _>(AccountCodec);
     let seed = executor
-        .execute::<Account, _>(
-            metadata(&stream, "simulation-seed", "import-ten")
+        .execute(
+            &AccountCommandHandler::for_stream(&stream),
+            metadata("simulation-seed", "import-ten")
                 .expect("valid simulation seed metadata fixture"),
             &AccountCommand::Import {
                 opening_balance: 10,
@@ -1092,28 +1216,28 @@ async fn simulation_replays_history_and_returns_encoded_predictions_without_appe
         CommandOutcome::Accepted(CommandReceipt::Appended(_))
     ));
     let history_before = store.load(&stream).await.expect("load seeded history");
-    let simulation_metadata = metadata(
-        &stream,
-        "simulated-credit",
-        "simulated-credit-five-and-observe",
-    )
-    .expect("valid credit simulation metadata fixture");
+    let simulation_metadata = metadata("simulated-credit", "simulated-credit-five-and-observe")
+        .expect("valid credit simulation metadata fixture");
 
     let outcome = executor
-        .simulate::<Account, _>(
+        .simulate(
+            &AccountCommandHandler::for_stream(&stream),
             simulation_metadata.clone(),
             &AccountCommand::CreditThenObserve { amount: 5 },
         )
         .await
         .expect("simulation should succeed");
 
-    assert_eq!(outcome.base_version(), StreamVersion::new(1));
-    let SimulationDecision::Accepted(events) = outcome.decision() else {
-        panic!("credit simulation should be accepted");
+    assert_eq!(outcome.decision(), &CommandDecision::Accepted);
+    let [participant] = outcome.participants() else {
+        panic!("credit simulation should contain one aggregate participant");
     };
+    assert_eq!(participant.base_version(), StreamVersion::new(1));
+    let events = participant.events();
     assert_eq!(events.len(), 2);
-    assert_eq!(events[0].event_id(), &simulation_metadata.event_id(0));
-    assert_eq!(events[1].event_id(), &simulation_metadata.event_id(1));
+    let commit_id = derive_commit_id(&stream, simulation_metadata.operation_id());
+    assert_eq!(events[0].event_id(), &derive_event_id(&commit_id, 0));
+    assert_eq!(events[1].event_id(), &derive_event_id(&commit_id, 1));
     assert_eq!(events[0].event_type(), "account-credited");
     assert_eq!(events[1].event_type(), "account-balance-observed");
     let credited: AmountPayload =
@@ -1131,22 +1255,28 @@ async fn simulation_replays_history_and_returns_encoded_predictions_without_appe
 #[tokio::test]
 async fn simulation_returns_typed_rejection_and_discards_pending_events_without_appending() {
     let stream = stream("rejected-simulation").expect("valid rejected simulation stream fixture");
-    let executor = Executor::with_codec(ForcedConflictStore::new(1), AccountCodec);
+    let executor =
+        CommandExecutor::new(ForcedConflictStore::new(1)).with_codec::<Account, _>(AccountCodec);
 
     let outcome = executor
-        .simulate::<Account, _>(
-            metadata(&stream, "simulated-rejection", "record-then-reject")
+        .simulate(
+            &AccountCommandHandler::for_stream(&stream),
+            metadata("simulated-rejection", "record-then-reject")
                 .expect("valid rejected simulation metadata fixture"),
             &AccountCommand::RecordThenReject,
         )
         .await
         .expect("a domain rejection is a successful simulation");
 
-    assert_eq!(outcome.base_version(), StreamVersion::ZERO);
     assert_eq!(
         outcome.decision(),
-        &SimulationDecision::Rejected(AccountRejection::Deliberate)
+        &CommandDecision::Rejected(AccountRejection::Deliberate)
     );
+    let [participant] = outcome.participants() else {
+        panic!("rejected simulation should retain its loaded participant");
+    };
+    assert_eq!(participant.base_version(), StreamVersion::ZERO);
+    assert!(participant.events().is_empty());
     assert_eq!(executor.store().append_attempts.load(Ordering::Relaxed), 0);
     assert!(
         executor
@@ -1162,22 +1292,24 @@ async fn simulation_returns_typed_rejection_and_discards_pending_events_without_
 async fn simulation_accepts_zero_events_with_read_only_object_safe_history() {
     let stream = stream("no-op-simulation").expect("valid no-op simulation stream fixture");
     let history: Arc<dyn EventHistory> = Arc::new(EmptyEventHistory);
-    let executor = Executor::with_codec(history, AccountCodec);
+    let executor = CommandExecutor::new(history).with_codec::<Account, _>(AccountCodec);
 
     let outcome = executor
-        .simulate::<Account, _>(
-            metadata(&stream, "simulated-no-op", "no-op")
-                .expect("valid no-op simulation metadata fixture"),
+        .simulate(
+            &AccountCommandHandler::for_stream(&stream),
+            metadata("simulated-no-op", "no-op").expect("valid no-op simulation metadata fixture"),
             &AccountCommand::NoOp,
         )
         .await
         .expect("zero-event simulation should succeed");
 
-    assert_eq!(outcome.base_version(), StreamVersion::ZERO);
-    assert!(matches!(
-        outcome.decision(),
-        SimulationDecision::Accepted(events) if events.is_empty()
-    ));
+    assert_eq!(outcome.decision(), &CommandDecision::Accepted);
+    let [participant] = outcome.participants() else {
+        panic!("no-op simulation should contain one read-only participant");
+    };
+    assert_eq!(participant.base_version(), StreamVersion::ZERO);
+    assert!(participant.is_read_guard());
+    assert!(participant.events().is_empty());
 }
 
 #[tokio::test]
@@ -1193,11 +1325,12 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
     )
     .await
     .expect("unknown-event history seed should append");
-    let unknown_executor = Executor::with_codec(unknown_store, AccountCodec);
+    let unknown_executor =
+        CommandExecutor::new(unknown_store).with_codec::<Account, _>(AccountCodec);
     let error = unknown_executor
-        .execute::<Account, _>(
-            metadata(&unknown_stream, "after-unknown", "noop")
-                .expect("valid post-unknown-event metadata fixture"),
+        .execute(
+            &AccountCommandHandler::for_stream(&unknown_stream),
+            metadata("after-unknown", "noop").expect("valid post-unknown-event metadata fixture"),
             &AccountCommand::NoOp,
         )
         .await
@@ -1219,10 +1352,12 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
     )
     .await
     .expect("malformed-event history seed should append");
-    let malformed_executor = Executor::with_codec(malformed_store, AccountCodec);
+    let malformed_executor =
+        CommandExecutor::new(malformed_store).with_codec::<Account, _>(AccountCodec);
     let error = malformed_executor
-        .execute::<Account, _>(
-            metadata(&malformed_stream, "after-malformed", "noop")
+        .execute(
+            &AccountCommandHandler::for_stream(&malformed_stream),
+            metadata("after-malformed", "noop")
                 .expect("valid post-malformed-event metadata fixture"),
             &AccountCommand::NoOp,
         )
@@ -1247,10 +1382,12 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
     )
     .await
     .expect("unknown-version history seed should append");
-    let unknown_version_executor = Executor::with_codec(unknown_version_store, AccountCodec);
+    let unknown_version_executor =
+        CommandExecutor::new(unknown_version_store).with_codec::<Account, _>(AccountCodec);
     let error = unknown_version_executor
-        .execute::<Account, _>(
-            metadata(&unknown_version_stream, "after-unknown-version", "noop")
+        .execute(
+            &AccountCommandHandler::for_stream(&unknown_version_stream),
+            metadata("after-unknown-version", "noop")
                 .expect("valid post-unknown-version metadata fixture"),
             &AccountCommand::NoOp,
         )
@@ -1266,12 +1403,13 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
 #[tokio::test]
 async fn executor_retries_conflicts_with_a_hard_bound() {
     let successful_stream = stream("retry-conflict").expect("valid retry stream fixture");
-    let successful = Executor::with_codec(ForcedConflictStore::new(1), AccountCodec)
+    let successful = CommandExecutor::new(ForcedConflictStore::new(1))
+        .with_codec::<Account, _>(AccountCodec)
         .with_max_conflict_retries(1);
     let outcome = successful
-        .execute::<Account, _>(
-            metadata(&successful_stream, "retry-once", "import")
-                .expect("valid retry execution metadata fixture"),
+        .execute(
+            &AccountCommandHandler::for_stream(&successful_stream),
+            metadata("retry-once", "import").expect("valid retry execution metadata fixture"),
             &AccountCommand::Import {
                 opening_balance: 1,
                 provenance: provenance(),
@@ -1290,11 +1428,13 @@ async fn executor_retries_conflicts_with_a_hard_bound() {
 
     let exhausted_stream =
         stream("exhaust-conflict").expect("valid exhausted-retry stream fixture");
-    let exhausted = Executor::with_codec(ForcedConflictStore::new(3), AccountCodec)
+    let exhausted = CommandExecutor::new(ForcedConflictStore::new(3))
+        .with_codec::<Account, _>(AccountCodec)
         .with_max_conflict_retries(2);
     let error = exhausted
-        .execute::<Account, _>(
-            metadata(&exhausted_stream, "retry-three", "import")
+        .execute(
+            &AccountCommandHandler::for_stream(&exhausted_stream),
+            metadata("retry-three", "import")
                 .expect("valid exhausted-retry execution metadata fixture"),
             &AccountCommand::Import {
                 opening_balance: 1,
@@ -1315,22 +1455,23 @@ async fn executor_retries_conflicts_with_a_hard_bound() {
 async fn capacity_failure_is_atomic() {
     let store = InMemoryEventStore::with_capacity(1);
     let stream = stream("capacity").expect("valid capacity stream fixture");
-    let metadata = metadata(&stream, "capacity-operation", "two-events")
+    let metadata = metadata("capacity-operation", "two-events")
         .expect("valid capacity execution metadata fixture");
+    let commit_id = derive_commit_id(&stream, metadata.operation_id());
     let batch = EventBatch::new(
-        metadata.commit_id().clone(),
+        commit_id.clone(),
         metadata.operation_id().clone(),
         metadata.operation_fingerprint(),
         vec![
             NewEvent::new(
-                metadata.event_id(0),
+                derive_event_id(&commit_id, 0),
                 "account-credited",
                 1,
                 br#"{"amount":1}"#,
             )
             .expect("valid event"),
             NewEvent::new(
-                metadata.event_id(1),
+                derive_event_id(&commit_id, 1),
                 "account-credited",
                 1,
                 br#"{"amount":2}"#,
@@ -1388,15 +1529,17 @@ async fn append_raw_version(
     schema_version: u32,
     payload: &[u8],
 ) -> TestResult {
-    let metadata = metadata(
-        stream,
-        operation,
-        payload.escape_ascii().to_string().as_str(),
-    )?;
-    let event = NewEvent::new(metadata.event_id(0), event_type, schema_version, payload)
-        .map_err(|error| fixture_error("raw event envelope", error))?;
+    let metadata = metadata(operation, payload.escape_ascii().to_string().as_str())?;
+    let commit_id = derive_commit_id(stream, metadata.operation_id());
+    let event = NewEvent::new(
+        derive_event_id(&commit_id, 0),
+        event_type,
+        schema_version,
+        payload,
+    )
+    .map_err(|error| fixture_error("raw event envelope", error))?;
     let batch = EventBatch::new(
-        metadata.commit_id().clone(),
+        commit_id,
         metadata.operation_id().clone(),
         metadata.operation_fingerprint(),
         vec![event],

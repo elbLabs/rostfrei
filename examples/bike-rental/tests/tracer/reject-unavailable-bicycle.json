@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "reject-unavailable-bicycle",
   "name": "Reject a maintenance-required bicycle",
   "setup": {
@@ -15,12 +15,9 @@
             "kind": "command",
             "key": "subject",
             "name": "rent-bicycle",
-            "schemaVersion": 1,
-            "aggregate": {
-              "type": "bike-rental/rental-fleet",
-              "id": "city-fleet"
-            },
+            "schemaVersion": 2,
             "payload": {
+              "fleet_id": "city-fleet",
               "bicycle_id": "bike-99"
             },
             "outcome": {
@@ -30,7 +27,8 @@
                   "bicycle_id": "bike-99"
                 }
               }
-            }
+            },
+            "context": "bike-rental"
           }
         ]
       }

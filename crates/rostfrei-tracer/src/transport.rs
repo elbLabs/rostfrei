@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rostfrei_core::{AggregateId, ContentFingerprint, OperationId};
+use rostfrei_core::{ContentFingerprint, OperationId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -11,8 +11,7 @@ pub struct CommandInvocation {
     operation_id: OperationId,
     correlation_id: String,
     execution_fingerprint: ContentFingerprint,
-    aggregate_type: String,
-    aggregate_id: AggregateId,
+    context: String,
     command: String,
     schema_version: u32,
     payload: Value,
@@ -24,8 +23,7 @@ impl CommandInvocation {
         operation_id: OperationId,
         correlation_id: impl Into<String>,
         execution_fingerprint: ContentFingerprint,
-        aggregate_type: impl Into<String>,
-        aggregate_id: AggregateId,
+        context: impl Into<String>,
         command: impl Into<String>,
         schema_version: u32,
         payload: Value,
@@ -34,8 +32,7 @@ impl CommandInvocation {
             operation_id,
             correlation_id: correlation_id.into(),
             execution_fingerprint,
-            aggregate_type: aggregate_type.into(),
-            aggregate_id,
+            context: context.into(),
             command: command.into(),
             schema_version,
             payload,
@@ -54,12 +51,8 @@ impl CommandInvocation {
         self.execution_fingerprint
     }
 
-    pub fn aggregate_type(&self) -> &str {
-        &self.aggregate_type
-    }
-
-    pub const fn aggregate_id(&self) -> &AggregateId {
-        &self.aggregate_id
+    pub fn context(&self) -> &str {
+        &self.context
     }
 
     pub fn command(&self) -> &str {
@@ -271,8 +264,7 @@ pub trait CommandTransport: Send + Sync {
 }
 
 pub fn command_execution_fingerprint(
-    aggregate_type: &str,
-    aggregate_id: &str,
+    context: &str,
     command: &str,
     schema_version: u32,
     payload: &Value,
@@ -280,12 +272,12 @@ pub fn command_execution_fingerprint(
     let payload = canonical_json_payload(payload);
     let schema_version = schema_version.to_be_bytes();
     framed_fingerprint(&[
-        b"rostfrei:command-execution:v1".as_slice(),
-        aggregate_type.as_bytes(),
-        aggregate_id.as_bytes(),
+        b"rostfrei:command-execution:v2".as_slice(),
+        context.as_bytes(),
         command.as_bytes(),
         schema_version.as_slice(),
         &payload,
+        &[0],
     ])
 }
 
@@ -362,12 +354,12 @@ mod tests {
         let right: Value = serde_json::from_str(r#"{"z":false,"outer":{"a":1,"b":2}}"#).unwrap();
 
         assert_eq!(
-            command_execution_fingerprint("context/aggregate", "one", "command", 1, &left),
-            command_execution_fingerprint("context/aggregate", "one", "command", 1, &right)
+            command_execution_fingerprint("context", "command", 1, &left),
+            command_execution_fingerprint("context", "command", 1, &right)
         );
         assert_ne!(
-            command_execution_fingerprint("context/aggregate", "one", "command", 1, &left),
-            command_execution_fingerprint("context/aggregate", "two", "command", 1, &left)
+            command_execution_fingerprint("context-one", "command", 1, &left),
+            command_execution_fingerprint("context-two", "command", 1, &left)
         );
     }
 }

@@ -1,6 +1,6 @@
-use rostfrei_core::{Aggregate, AggregateInstance, CommandHandler, StreamId};
+use rostfrei_core::{Aggregate, AggregateInstance};
 
-pub fn given<A, Events>(stream_id: &StreamId, events: Events) -> Given<A>
+pub fn given<A, Events>(stream_id: &rostfrei_core::StreamId, events: Events) -> Given<A>
 where
     A: Aggregate,
     Events: IntoIterator<Item = A::Event>,
@@ -10,6 +10,11 @@ where
     }
 }
 
+/// A focused aggregate harness for replaying history and exercising aggregate behavior.
+///
+/// Command handlers belong to the application boundary and should be tested through an
+/// [`rostfrei_core::CommandExecutor`] and a concrete handler object. This harness intentionally keeps
+/// persistence and command execution out of aggregate tests.
 pub struct Given<A: Aggregate> {
     aggregate: AggregateInstance<A>,
 }
@@ -19,31 +24,25 @@ impl<A: Aggregate> Given<A> {
         self.aggregate.state()
     }
 
-    pub fn when<Command>(
-        self,
-        command: &Command,
-    ) -> Then<A, <A as CommandHandler<Command>>::Rejection>
+    pub fn when<Action>(self, action: Action) -> Then<A>
     where
-        A: CommandHandler<Command>,
+        Action: FnOnce(&mut AggregateInstance<A>),
     {
         let mut aggregate = self.aggregate;
-        let decision = A::handle(command, &mut aggregate);
+        action(&mut aggregate);
         let (_, state, events) = aggregate.into_parts();
-        Then {
-            state,
-            events,
-            decision,
-        }
+        Then { state, events }
     }
 }
 
-pub struct Then<A: Aggregate, Rejection> {
+pub type ThenParts<A> = (<A as Aggregate>::State, Vec<<A as Aggregate>::Event>);
+
+pub struct Then<A: Aggregate> {
     state: A::State,
     events: Vec<A::Event>,
-    decision: Result<(), Rejection>,
 }
 
-impl<A: Aggregate, Rejection> Then<A, Rejection> {
+impl<A: Aggregate> Then<A> {
     pub const fn state(&self) -> &A::State {
         &self.state
     }
@@ -52,18 +51,7 @@ impl<A: Aggregate, Rejection> Then<A, Rejection> {
         &self.events
     }
 
-    pub const fn decision(&self) -> Result<(), &Rejection> {
-        match &self.decision {
-            Ok(()) => Ok(()),
-            Err(rejection) => Err(rejection),
-        }
-    }
-
-    pub const fn is_accepted(&self) -> bool {
-        self.decision.is_ok()
-    }
-
-    pub fn into_parts(self) -> (A::State, Vec<A::Event>, Result<(), Rejection>) {
-        (self.state, self.events, self.decision)
+    pub fn into_parts(self) -> ThenParts<A> {
+        (self.state, self.events)
     }
 }

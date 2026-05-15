@@ -49,9 +49,15 @@ impl CommandTransport for CommandBusTransport {
         invocation: CommandInvocation,
         observer: Arc<dyn CommandTransportObserver>,
     ) -> Result<CommandReceipt, CommandTransportError> {
+        if self.bus.context().name().as_str() != invocation.context() {
+            return Err(CommandTransportError::new(
+                CommandTransportErrorKind::InvalidConfiguration,
+                "command invocation context does not match the command bus context",
+            ));
+        }
+
         let expected_fingerprint = rostfrei::command_execution_fingerprint(
-            invocation.aggregate_type(),
-            invocation.aggregate_id().as_str(),
+            invocation.context(),
             invocation.command(),
             invocation.schema_version(),
             invocation.payload(),
@@ -69,8 +75,6 @@ impl CommandTransport for CommandBusTransport {
         })?;
         let request = DynamicCommandRequest::new(
             invocation.operation_id().clone(),
-            invocation.aggregate_type(),
-            invocation.aggregate_id().clone(),
             invocation.command(),
             invocation.schema_version(),
             invocation.payload().clone(),
@@ -145,6 +149,12 @@ mod tests {
     use super::*;
 
     struct MaximumMessageAdapter;
+    struct IgnoreTransportObserver;
+
+    #[async_trait]
+    impl CommandTransportObserver for IgnoreTransportObserver {
+        async fn command_published(&self, _publication: CommandPublication) {}
+    }
 
     #[async_trait]
     impl CommandMessageAdapter for MaximumMessageAdapter {
@@ -167,6 +177,45 @@ mod tests {
         let transport = CommandBusTransport::new(CommandBus::new(context, adapter));
 
         assert_eq!(transport.maximum_payload_len(), 1024 * 1024);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn invocation_context_must_match_the_command_bus_context() -> Result<(), Box<dyn Error>> {
+        let context = ApplicationName::new("tracer-test")?.bounded_context("orders")?;
+        let adapter: Arc<dyn CommandMessageAdapter> = Arc::new(MaximumMessageAdapter);
+        let transport = CommandBusTransport::new(CommandBus::new(context, adapter));
+        let payload = serde_json::json!({});
+        let invocation = CommandInvocation::new(
+            rostfrei_core::OperationId::new("operation-1")?,
+            "correlation-1",
+            crate::command_execution_fingerprint("billing", "place-order", 2, &payload),
+            "billing",
+            "place-order",
+            2,
+            payload,
+        );
+
+        let error = transport
+            .invoke(invocation, Arc::new(IgnoreTransportObserver))
+            .await
+            .expect_err("a differently scoped command bus must not dispatch the invocation");
+
+        assert_eq!(
+            error.kind(),
+            CommandTransportErrorKind::InvalidConfiguration
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tracer_and_command_bus_use_the_same_execution_fingerprint() -> Result<(), Box<dyn Error>> {
+        let payload = serde_json::json!({ "z": 1, "a": { "nested": true } });
+
+        assert_eq!(
+            crate::command_execution_fingerprint("orders", "place-order", 2, &payload),
+            rostfrei::command_execution_fingerprint("orders", "place-order", 2, &payload)?
+        );
         Ok(())
     }
 

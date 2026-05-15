@@ -1,6 +1,8 @@
 use rostfrei::{
-    ContentFingerprint, EventStore, EventStoreError, ExecutionMetadata, OperationId, StreamId,
+    CommandExecutionMetadata, ContentFingerprint, EventStore, EventStoreError, OperationId,
+    StreamId,
 };
+use rostfrei_core::{derive_commit_id, derive_event_id};
 use rostfrei_fixtures::{
     Fixture, FixtureApplyError, FixtureApplyReport, FixtureCodecRegistrationError,
     MessageSeriesEngine,
@@ -68,13 +70,14 @@ pub async fn has_legacy_demo_seed(store: &dyn EventStore) -> Result<bool, DemoFi
         return Ok(false);
     };
     let fingerprint = ContentFingerprint::digest(LEGACY_DEMO_SEED_FINGERPRINT);
-    let metadata =
-        ExecutionMetadata::new(demo_stream(), legacy_demo_seed_operation_id(), fingerprint);
+    let metadata = CommandExecutionMetadata::new(legacy_demo_seed_operation_id(), fingerprint);
+    let stream_id = demo_stream();
+    let commit_id = derive_commit_id(&stream_id, metadata.operation_id());
     Ok(existing.operation_id() == metadata.operation_id()
         && existing.operation_fingerprint() == fingerprint
-        && existing.event_id() == &metadata.event_id(0)
-        && existing.commit_id() == metadata.commit_id()
-        && existing.stream_id() == metadata.stream_id()
+        && existing.event_id() == &derive_event_id(&commit_id, 0)
+        && existing.commit_id() == &commit_id
+        && existing.stream_id() == &stream_id
         && existing.stream_version().value() == 1
         && existing.commit_event_ordinal() == 0
         && existing.commit_event_count() == 1
@@ -105,7 +108,7 @@ pub async fn apply_demo_fixture(
 mod tests {
     use std::error::Error;
 
-    use rostfrei::{EventBatch, ExecutionMetadata, ExpectedVersion, InMemoryEventStore, NewEvent};
+    use rostfrei::{EventBatch, ExpectedVersion, InMemoryEventStore, NewEvent};
 
     use super::*;
 
@@ -115,22 +118,23 @@ mod tests {
     async fn recognizes_only_the_persisted_legacy_demo_seed() -> TestResult {
         let legacy_store = InMemoryEventStore::new();
         let fingerprint = ContentFingerprint::digest(LEGACY_DEMO_SEED_FINGERPRINT);
-        let metadata =
-            ExecutionMetadata::new(demo_stream(), legacy_demo_seed_operation_id(), fingerprint);
+        let metadata = CommandExecutionMetadata::new(legacy_demo_seed_operation_id(), fingerprint);
+        let stream_id = demo_stream();
+        let commit_id = derive_commit_id(&stream_id, metadata.operation_id());
         let event = NewEvent::new(
-            metadata.event_id(0),
+            derive_event_id(&commit_id, 0),
             LEGACY_DEMO_SEED_EVENT_TYPE,
             LEGACY_DEMO_SEED_SCHEMA_VERSION,
             LEGACY_DEMO_SEED_PAYLOAD,
         )?;
         let batch = EventBatch::new(
-            metadata.commit_id().clone(),
+            commit_id.clone(),
             metadata.operation_id().clone(),
             fingerprint,
             vec![event],
         )?;
         legacy_store
-            .append(&demo_stream(), ExpectedVersion::NoStream, batch)
+            .append(&stream_id, ExpectedVersion::NoStream, batch)
             .await?;
 
         if !has_legacy_demo_seed(&legacy_store).await? {
@@ -138,21 +142,26 @@ mod tests {
         }
 
         let multi_event_store = InMemoryEventStore::new();
-        let extra_event = NewEvent::new(metadata.event_id(1), "not-the-legacy-seed", 1, b"{}")?;
+        let extra_event = NewEvent::new(
+            derive_event_id(&commit_id, 1),
+            "not-the-legacy-seed",
+            1,
+            b"{}",
+        )?;
         let seed_event = NewEvent::new(
-            metadata.event_id(0),
+            derive_event_id(&commit_id, 0),
             LEGACY_DEMO_SEED_EVENT_TYPE,
             LEGACY_DEMO_SEED_SCHEMA_VERSION,
             LEGACY_DEMO_SEED_PAYLOAD,
         )?;
         let multi_event_batch = EventBatch::new(
-            metadata.commit_id().clone(),
+            commit_id.clone(),
             metadata.operation_id().clone(),
             fingerprint,
             vec![seed_event, extra_event],
         )?;
         multi_event_store
-            .append(&demo_stream(), ExpectedVersion::NoStream, multi_event_batch)
+            .append(&stream_id, ExpectedVersion::NoStream, multi_event_batch)
             .await?;
         if has_legacy_demo_seed(&multi_event_store).await? {
             return Err("multi-event history was mistaken for the legacy seed".into());

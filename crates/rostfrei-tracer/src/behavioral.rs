@@ -23,9 +23,9 @@ use crate::{
     MessageSeriesDefinition, MessageSeriesValidationIssue,
 };
 
-const TEST_DEFINITION_SCHEMA_VERSION: u32 = 1;
+const TEST_DEFINITION_SCHEMA_VERSION: u32 = 2;
 const BEHAVIORAL_TEST_SCHEMA_ID: &str =
-    "https://rostfrei.dev/schemas/tracer/behavioral-test-v1.schema.json";
+    "https://rostfrei.dev/schemas/tracer/behavioral-test-v2.schema.json";
 const MAX_TEST_TIMEOUT_MILLIS: u64 = 60_000;
 const MAX_TEST_DEFINITIONS: usize = 256;
 const MAX_TEST_DEFINITION_BYTES: usize = 1024 * 1024;
@@ -35,7 +35,7 @@ const MAX_TEST_REPOSITORY_BYTES: usize = 8 * 1024 * 1024;
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[schemars(
     title = "Rostfrei Tracer Behavioral Test",
-    description = "A version 1 typed behavioral test. Runtime validation is authoritative for graph topology, byte-oriented identifier bounds, and the exactly-one-graph behavioral constraint.",
+    description = "A version 2 typed behavioral test. Runtime validation is authoritative for graph topology, byte-oriented identifier bounds, and the exactly-one-graph behavioral constraint.",
     extend("$id" = BEHAVIORAL_TEST_SCHEMA_ID)
 )]
 pub struct TestDefinition {
@@ -247,7 +247,9 @@ pub struct TestCommand {
     #[schemars(range(min = 1))]
     #[serde(deserialize_with = "deserialize_positive_schema_version")]
     pub schema_version: u32,
-    pub aggregate: TestAggregate,
+    #[schemars(with = "NonEmptyBehavioralStringSchema")]
+    #[serde(deserialize_with = "deserialize_nonempty")]
+    pub context: String,
     pub payload: Value,
 }
 
@@ -840,7 +842,7 @@ fn reserve_validate_id(schema: &mut Schema) {
 #[allow(dead_code)]
 #[derive(JsonSchema)]
 #[schemars(transparent)]
-struct TestDefinitionSchemaVersion(#[schemars(range(min = 1, max = 1))] u32);
+struct TestDefinitionSchemaVersion(#[schemars(range(min = 2, max = 2))] u32);
 
 #[allow(dead_code)]
 #[derive(JsonSchema)]
@@ -889,7 +891,7 @@ mod tests {
 
     fn definition(id: &str) -> Value {
         json!({
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "id": id,
             "name": "Rent a bike",
             "setup": {
@@ -904,7 +906,7 @@ mod tests {
                         "key": "subject",
                         "name": "rent-bicycle",
                         "schemaVersion": 1,
-                        "aggregate": { "type": "rental/rental", "id": "rental-1" },
+                        "context": "rental",
                         "payload": { "bicycleId": "bike-1" },
                         "outcome": "accepted"
                     }]
@@ -932,7 +934,7 @@ mod tests {
         let value = definition("rent-a-bike");
         let parsed = TestDefinition::from_json_value(value.clone()).unwrap();
 
-        assert_eq!(parsed.schema_version(), 1);
+        assert_eq!(parsed.schema_version(), 2);
         assert_eq!(parsed.id(), "rent-a-bike");
         assert_eq!(parsed.setup().fixture, "available-bike");
         assert_eq!(parsed.expected().graphs().len(), 1);
@@ -1005,7 +1007,7 @@ mod tests {
         assert!(TestDefinition::from_json_value(setup_commands).is_err());
 
         for (pointer, invalid) in [
-            ("/schemaVersion", json!(2)),
+            ("/schemaVersion", json!(1)),
             ("/id", json!("Bad_ID")),
             ("/name", json!("  ")),
             ("/expected/within", json!("61s")),

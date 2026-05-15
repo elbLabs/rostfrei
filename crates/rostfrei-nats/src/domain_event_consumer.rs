@@ -473,10 +473,7 @@ impl NatsDomainEventConsumer {
 
         let receipt = self
             .event_store
-            .load_transaction_receipt(
-                first.decoded.recorded.stream_id(),
-                &first.decoded.operation_id,
-            )
+            .load_transaction_receipt(&first.decoded.operation_id)
             .await
             .map_err(|error| match error.kind() {
                 EventStoreErrorKind::Unavailable => unavailable(format!(
@@ -888,8 +885,8 @@ fn invalid_committed_event(message: impl Into<String>) -> DomainEventConsumerErr
 #[cfg(test)]
 mod tests {
     use rostfrei_core::{
-        AggregateId, AggregateType, ContentFingerprint, ExecutionMetadata, OperationId,
-        RecordedEvent, StreamId, StreamVersion,
+        AggregateId, AggregateType, ContentFingerprint, OperationId, RecordedEvent, StreamId,
+        StreamVersion, derive_commit_id, derive_event_id,
     };
     use rostfrei_messaging_core::{ApplicationName, ConsumerName, DurableName};
 
@@ -1058,18 +1055,14 @@ mod tests {
     ) -> BufferedDomainEvent {
         let operation_id = OperationId::new("transaction-operation").unwrap();
         let operation_fingerprint = ContentFingerprint::digest("transaction-operation");
-        let metadata = ExecutionMetadata::new(
-            stream_id.clone(),
-            operation_id.clone(),
-            operation_fingerprint,
-        );
+        let commit_id = derive_commit_id(stream_id, &operation_id);
         let commit_event_ordinal = u32::try_from(event_ordinal).unwrap();
         let commit_event_count = u32::try_from(event_count).unwrap();
         let recorded = RecordedEvent::new_in_commit(
             stream_id.clone(),
             StreamVersion::new(stream_version),
-            metadata.event_id(commit_event_ordinal),
-            metadata.commit_id().clone(),
+            derive_event_id(&commit_id, commit_event_ordinal),
+            commit_id.clone(),
             operation_id.clone(),
             operation_fingerprint,
             commit_event_ordinal,
@@ -1083,7 +1076,7 @@ mod tests {
             stream_sequence,
             decoded: DecodedEvent {
                 batch_id: "transaction-batch".to_owned(),
-                commit_id: metadata.commit_id().clone(),
+                commit_id,
                 operation_id,
                 operation_fingerprint,
                 event_ordinal,

@@ -10,19 +10,19 @@ fn checked_in_message_series_schemas_match_the_rust_contracts() {
     assert!(behavioral.is_ok(), "behavioral schema must serialize");
     assert_eq!(
         behavioral.unwrap_or_default(),
-        include_str!("../schema/behavioral-test-v1.schema.json")
+        include_str!("../schema/behavioral-test-v2.schema.json")
     );
     let definition = render(&message_series_definition_schema());
     assert!(definition.is_ok(), "definition schema must serialize");
     assert_eq!(
         definition.unwrap_or_default(),
-        include_str!("../schema/message-series-definition-v1.schema.json")
+        include_str!("../schema/message-series-definition-v2.schema.json")
     );
     let observation = render(&observed_message_series_schema());
     assert!(observation.is_ok(), "observation schema must serialize");
     assert_eq!(
         observation.unwrap_or_default(),
-        include_str!("../schema/observed-message-series-v1.schema.json")
+        include_str!("../schema/observed-message-series-v2.schema.json")
     );
 }
 
@@ -61,9 +61,9 @@ fn observed_domain_aggregate_schema_requires_complete_identity() {
 #[test]
 fn generated_unsigned_integers_have_explicit_maxima() {
     for document in [
-        include_str!("../schema/behavioral-test-v1.schema.json"),
-        include_str!("../schema/message-series-definition-v1.schema.json"),
-        include_str!("../schema/observed-message-series-v1.schema.json"),
+        include_str!("../schema/behavioral-test-v2.schema.json"),
+        include_str!("../schema/message-series-definition-v2.schema.json"),
+        include_str!("../schema/observed-message-series-v2.schema.json"),
     ] {
         let schema = serde_json::from_str::<serde_json::Value>(document);
         assert!(schema.is_ok(), "checked-in schema must be valid JSON");

@@ -401,7 +401,7 @@ try {
     const { expectedGraph, layoutMessageGraph, reportGraph } =
       await import("/src/lib/graph.ts")
     const definition = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: "fixture-topology",
       name: "Fixture topology",
       setup: { fixture: "fixture-history" },
@@ -416,10 +416,7 @@ try {
                 key: "subject",
                 name: "subject-command",
                 schemaVersion: 1,
-                aggregate: {
-                  type: "context/aggregate",
-                  id: "aggregate-1",
-                },
+                context: "context",
                 payload: {},
                 outcome: "accepted",
               },
@@ -490,10 +487,9 @@ try {
       },
       mode: "test",
       status: "completed",
+      context: "context",
       command: "subject-command",
       schemaVersion: 1,
-      aggregateType: "context/aggregate",
-      aggregateId: "aggregate-1",
       latestEventId: 2,
       result: { decision: "accepted" },
     }
@@ -513,10 +509,7 @@ try {
               observationOrder: 1,
               name: "subject-command",
               schemaVersion: 1,
-              aggregate: {
-                type: "context/aggregate",
-                id: "aggregate-1",
-              },
+              context: "context",
               payload: {},
             },
           ],

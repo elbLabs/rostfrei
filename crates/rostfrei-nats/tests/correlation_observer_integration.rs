@@ -50,13 +50,21 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
     let domain_stream = format!("CORRELATION_{suffix}_DOMAIN").to_ascii_uppercase();
     let integration_stream = format!("CORRELATION_{suffix}_INTEGRATION").to_ascii_uppercase();
     let domain_subject = format!("{}.domain.test.aggregate.one", application.as_str());
+    let transaction_subject = format!("{}.domain.test.transaction.receipt", application.as_str());
+    let domain_subject_filter = format!("{}.domain.test.aggregate.*", application.as_str());
     let integration_subject = format!("{}.integration.test-event", application.as_str());
     let client = async_nats::connect(nats_url).await?;
     let context = jetstream::new(client.clone());
-    let domain_config = stream_config(&domain_stream, format!("{}.domain.>", application.as_str()));
+    let domain_config = stream_config(
+        &domain_stream,
+        vec![
+            domain_subject_filter.clone(),
+            format!("{}.domain.test.transaction.>", application.as_str()),
+        ],
+    );
     let integration_config = stream_config(
         &integration_stream,
-        format!("{}.integration.>", application.as_str()),
+        vec![format!("{}.integration.>", application.as_str())],
     );
     context.create_stream(domain_config.clone()).await?;
     let integration = context.create_stream(integration_config.clone()).await?;
@@ -91,10 +99,11 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
         .await?;
     let mut worker_info = worker.clone();
 
-    let subscription = NatsCorrelationObserver::new(client.clone(), application.clone())
-        .with_streams(domain_stream.clone(), integration_stream.clone())
-        .subscribe()
-        .await?;
+    let subscription =
+        NatsCorrelationObserver::new(client.clone(), application.clone(), domain_subject_filter)
+            .with_streams(domain_stream.clone(), integration_stream.clone())
+            .subscribe()
+            .await?;
     let (sender, mut observations) = mpsc::unbounded_channel();
     let observer_task = tokio::spawn(subscription.run(Arc::new(ChannelHandler { sender })));
 
@@ -111,6 +120,14 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
         "accepted-domain",
         "accepted-domain-correlation",
         b"domain",
+    )
+    .await?;
+    publish_correlated(
+        &context,
+        &transaction_subject,
+        "accepted-transaction",
+        "accepted-transaction-correlation",
+        b"transaction receipt",
     )
     .await?;
     publish_correlated(
@@ -146,6 +163,12 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
                 && message.payload() == b"integration"
         }),
         "observer missed the committed integration event",
+    )?;
+    ensure(
+        tokio::time::timeout(ABSENCE_TIMEOUT, observations.recv())
+            .await
+            .is_err(),
+        "observer reported a correlated transaction receipt as a domain event",
     )?;
 
     let duplicate = publish_correlated(
@@ -204,6 +227,14 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
 
     context.delete_stream(&domain_stream).await?;
     context.create_stream(domain_config).await?;
+    publish_correlated(
+        &context,
+        &transaction_subject,
+        "replacement-transaction",
+        "replacement-transaction-correlation",
+        b"replacement transaction receipt",
+    )
+    .await?;
     for index in 0..REPLACEMENT_MESSAGE_COUNT {
         publish_correlated(
             &context,
@@ -240,7 +271,7 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
         tokio::time::timeout(ABSENCE_TIMEOUT, observations.recv())
             .await
             .is_err(),
-        "observer replayed a replacement-stream observation",
+        "observer replayed a replacement-stream observation or reported a replacement transaction receipt",
     )?;
 
     current_worker_message.ack().await?;
@@ -252,10 +283,10 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
     Ok(())
 }
 
-fn stream_config(name: &str, subject: String) -> Config {
+fn stream_config(name: &str, subjects: Vec<String>) -> Config {
     Config {
         name: name.to_owned(),
-        subjects: vec![subject],
+        subjects,
         retention: RetentionPolicy::Limits,
         storage: StorageType::Memory,
         max_message_size: 1024,

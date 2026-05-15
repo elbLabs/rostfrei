@@ -1,10 +1,22 @@
-impl CommandHandler<RentBicycle> for RentalFleetAggregate {
+pub struct RentBicycleHandler;
+
+#[async_trait]
+impl CommandHandler<RentBicycle> for RentBicycleHandler {
     type Rejection = BicycleUnavailable;
 
-    fn handle(
-        instance: &mut AggregateInstance<Self>,
-        command: RentBicycle,
-    ) -> Result<(), Self::Rejection> {
-        instance.rent_bicycle(command.bicycle_id)
+    async fn handle(
+        &self,
+        command: &RentBicycle,
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut fleet = execution
+            .load::<RentalFleetAggregate>(command.fleet_id.as_str())
+            .await?;
+        match fleet.aggregate_mut().rent_bicycle(command.bicycle_id.clone()) {
+            Ok(()) => {
+                Ok(CommandDecision::Accepted)
+            }
+            Err(rejection) => Ok(CommandDecision::Rejected(rejection)),
+        }
     }
 }

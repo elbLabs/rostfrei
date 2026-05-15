@@ -85,7 +85,7 @@ enum DocumentsEvents {
 }
 
 #[derive(Command)]
-#[domain(id = "correlate-document", label = "Correlate document")]
+#[domain(context = SemanticScalars, id = "correlate-document", label = "Correlate document")]
 struct CorrelateDocument {
     #[domain(scalar = UuidScalar)]
     correlation_id: foreign::Uuid,

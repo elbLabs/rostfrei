@@ -1,22 +1,51 @@
-use domain::{Command, CommandDescriptor as ModeledCommandDescriptor};
-use rostfrei_core::{Aggregate, AggregateInstance, CommandHandler, StreamId};
+use async_trait::async_trait;
+use domain::{
+    BoundedContextDescriptor, BoundedContextId, BoundedContextType, Command,
+    CommandDescriptor as ModeledCommandDescriptor,
+};
+use rostfrei_core::{
+    Aggregate, CommandDecision, CommandExecution, CommandHandler, CommandHandlingResult, StreamId,
+};
 use rostfrei_registry::{CommandDefinition, DomainRegistry, RegistrationError};
+
+struct FirstContext;
+struct SecondContext;
+struct EmptyContext;
+struct InvalidContext;
+
+macro_rules! bounded_context {
+    ($context:ty, $id:literal) => {
+        impl BoundedContextType for $context {
+            const DESCRIPTOR: BoundedContextDescriptor = BoundedContextDescriptor {
+                id: BoundedContextId($id),
+                label: $id,
+            };
+        }
+    };
+}
+
+bounded_context!(FirstContext, "first");
+bounded_context!(SecondContext, "second");
+bounded_context!(EmptyContext, "");
+bounded_context!(InvalidContext, "InvalidContext");
 
 struct FirstAggregate;
 struct SecondAggregate;
+struct DuplicateFirstAggregate;
 struct EmptyAggregate;
-struct QualifiedAggregate;
+struct UnqualifiedAggregate;
 struct InvalidContextAggregate;
-struct InvalidLocalAggregate;
+struct InvalidNameAggregate;
 struct NestedAggregate;
 
 macro_rules! aggregate {
-    ($aggregate:ty, $name:literal) => {
+    ($aggregate:ty, $aggregate_type:literal) => {
         impl Aggregate for $aggregate {
             type State = ();
             type Event = ();
 
-            const AGGREGATE_TYPE: &'static str = $name;
+            const BOUNDED_CONTEXT: &'static str = "registry-test";
+            const AGGREGATE_TYPE: &'static str = $aggregate_type;
 
             fn initial(_stream_id: &StreamId) -> Self::State {}
 
@@ -25,24 +54,30 @@ macro_rules! aggregate {
     };
 }
 
-aggregate!(FirstAggregate, "first");
-aggregate!(SecondAggregate, "second");
+aggregate!(FirstAggregate, "first/items");
+aggregate!(SecondAggregate, "second/items");
+aggregate!(DuplicateFirstAggregate, "first/items");
 aggregate!(EmptyAggregate, "");
-aggregate!(QualifiedAggregate, "bike-rental/rental-fleet");
-aggregate!(InvalidContextAggregate, "BikeRental/rental-fleet");
-aggregate!(InvalidLocalAggregate, "bike-rental/RentalFleet");
-aggregate!(NestedAggregate, "bike-rental/group/rental-fleet");
+aggregate!(UnqualifiedAggregate, "items");
+aggregate!(InvalidContextAggregate, "Invalid/items");
+aggregate!(InvalidNameAggregate, "first/Items");
+aggregate!(NestedAggregate, "first/group/items");
 
 struct Open;
+struct OpenSecond;
 struct Rename;
 struct EmptyName;
 struct ZeroVersion;
+struct EmptyContextCommand;
+struct InvalidContextCommand;
 struct InvalidRoutedName;
 struct LongName;
 
 macro_rules! command {
-    ($command:ty, $id:literal, $version:literal) => {
+    ($command:ty, $context:ty, $id:literal, $version:literal) => {
         impl Command for $command {
+            type Context = $context;
+
             const LOCAL_ID: &'static str = $id;
             const LABEL: &'static str = $id;
             const FIELDS: &'static [domain::FieldDescriptor] = &[];
@@ -51,63 +86,185 @@ macro_rules! command {
     };
 }
 
-command!(Open, "open", 1);
-command!(Rename, "rename", 2);
-command!(EmptyName, "", 1);
-command!(ZeroVersion, "zero", 0);
-command!(InvalidRoutedName, "Open", 1);
+command!(Open, FirstContext, "open", 1);
+command!(OpenSecond, SecondContext, "open", 1);
+command!(Rename, FirstContext, "rename", 2);
+command!(EmptyName, FirstContext, "", 1);
+command!(ZeroVersion, FirstContext, "zero", 0);
+command!(EmptyContextCommand, EmptyContext, "open", 1);
+command!(InvalidContextCommand, InvalidContext, "open", 1);
+command!(InvalidRoutedName, FirstContext, "Open", 1);
 command!(
     LongName,
+    FirstContext,
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     1
 );
 
+struct OpenHandler;
+struct AlternateOpenHandler;
+struct SecondOpenHandler;
+struct RenameHandler;
+struct EmptyNameHandler;
+struct ZeroVersionHandler;
+struct EmptyContextHandler;
+struct InvalidContextHandler;
+struct InvalidRoutedNameHandler;
+struct LongNameHandler;
+
 macro_rules! handler {
-    ($aggregate:ty, $command:ty, $rejection:ty) => {
-        impl CommandHandler<$command> for $aggregate {
+    ($handler:ty, $command:ty, $rejection:ty) => {
+        #[async_trait]
+        impl CommandHandler<$command> for $handler {
             type Rejection = $rejection;
 
-            fn handle(
+            async fn handle(
+                &self,
                 _command: &$command,
-                _aggregate: &mut AggregateInstance<Self>,
-            ) -> Result<(), Self::Rejection> {
-                Ok(())
+                _unit_of_work: &mut CommandExecution<'_>,
+            ) -> CommandHandlingResult<Self::Rejection> {
+                Ok(CommandDecision::Accepted)
             }
         }
     };
 }
 
-handler!(FirstAggregate, Open, &'static str);
-handler!(FirstAggregate, Rename, ());
-handler!(FirstAggregate, EmptyName, ());
-handler!(FirstAggregate, ZeroVersion, ());
-handler!(SecondAggregate, Open, u8);
-handler!(EmptyAggregate, Open, ());
-handler!(QualifiedAggregate, Open, ());
-handler!(InvalidContextAggregate, Open, ());
-handler!(InvalidLocalAggregate, Open, ());
-handler!(NestedAggregate, Open, ());
-handler!(FirstAggregate, InvalidRoutedName, ());
-handler!(FirstAggregate, LongName, ());
+handler!(OpenHandler, Open, &'static str);
+handler!(AlternateOpenHandler, Open, ());
+handler!(SecondOpenHandler, OpenSecond, u8);
+handler!(RenameHandler, Rename, ());
+handler!(EmptyNameHandler, EmptyName, ());
+handler!(ZeroVersionHandler, ZeroVersion, ());
+handler!(EmptyContextHandler, EmptyContextCommand, ());
+handler!(InvalidContextHandler, InvalidContextCommand, ());
+handler!(InvalidRoutedNameHandler, InvalidRoutedName, ());
+handler!(LongNameHandler, LongName, ());
 
 #[test]
-fn paired_registration_builds_runtime_and_modeled_metadata() {
+fn explicitly_registers_aggregate_inventory_in_stable_order() {
     let mut registry = DomainRegistry::new();
-    registry.register_command::<FirstAggregate, Open>().unwrap();
+    registry.register_aggregate::<SecondAggregate>().unwrap();
+    registry.register_aggregate::<FirstAggregate>().unwrap();
+
+    assert_eq!(
+        registry.aggregates().collect::<Vec<_>>(),
+        ["first/items", "second/items"]
+    );
+}
+
+#[test]
+fn repeated_registration_of_the_same_aggregate_is_idempotent() {
+    let mut registry = DomainRegistry::new();
+    registry.register_aggregate::<FirstAggregate>().unwrap();
+    registry.register_aggregate::<FirstAggregate>().unwrap();
+
+    assert_eq!(registry.aggregates().collect::<Vec<_>>(), ["first/items"]);
+}
+
+#[test]
+fn rejects_a_different_aggregate_with_the_same_stream_identity() {
+    let mut registry = DomainRegistry::new();
+    registry.register_aggregate::<FirstAggregate>().unwrap();
+
+    assert_eq!(
+        registry.register_aggregate::<DuplicateFirstAggregate>(),
+        Err(RegistrationError::DuplicateAggregateType {
+            aggregate_type: "first/items".to_owned(),
+            existing_rust_aggregate_type: std::any::type_name::<FirstAggregate>(),
+            attempted_rust_aggregate_type: std::any::type_name::<DuplicateFirstAggregate>(),
+        })
+    );
+    assert_eq!(registry.aggregates().collect::<Vec<_>>(), ["first/items"]);
+}
+
+#[test]
+fn validates_explicit_aggregate_routing_identity_without_mutation() {
+    let mut registry = DomainRegistry::new();
+
+    assert_eq!(
+        registry.register_aggregate::<EmptyAggregate>(),
+        Err(RegistrationError::EmptyAggregateType {
+            rust_aggregate_type: std::any::type_name::<EmptyAggregate>(),
+        })
+    );
+    assert_eq!(
+        registry.register_aggregate::<UnqualifiedAggregate>(),
+        Err(RegistrationError::InvalidAggregateType {
+            aggregate_type: "items".to_owned(),
+            rust_aggregate_type: std::any::type_name::<UnqualifiedAggregate>(),
+            reason: "aggregate type must be bounded-context-qualified with exactly one context separator"
+                .to_owned(),
+        })
+    );
+    assert_eq!(
+        registry.register_aggregate::<InvalidContextAggregate>(),
+        Err(RegistrationError::InvalidAggregateType {
+            aggregate_type: "Invalid/items".to_owned(),
+            rust_aggregate_type: std::any::type_name::<InvalidContextAggregate>(),
+            reason: "address context has an invalid format".to_owned(),
+        })
+    );
+    assert_eq!(
+        registry.register_aggregate::<InvalidNameAggregate>(),
+        Err(RegistrationError::InvalidAggregateType {
+            aggregate_type: "first/Items".to_owned(),
+            rust_aggregate_type: std::any::type_name::<InvalidNameAggregate>(),
+            reason: "address name has an invalid format".to_owned(),
+        })
+    );
+    assert_eq!(
+        registry.register_aggregate::<NestedAggregate>(),
+        Err(RegistrationError::InvalidAggregateType {
+            aggregate_type: "first/group/items".to_owned(),
+            rust_aggregate_type: std::any::type_name::<NestedAggregate>(),
+            reason: "aggregate type must be bounded-context-qualified with exactly one context separator"
+                .to_owned(),
+        })
+    );
+    assert_eq!(registry.aggregates().count(), 0);
+}
+
+#[test]
+fn every_registered_aggregate_has_tracer_catalog_coordinates() {
+    let mut registry = DomainRegistry::new();
+    registry.register_aggregate::<FirstAggregate>().unwrap();
+    registry.register_aggregate::<SecondAggregate>().unwrap();
+
+    for aggregate_type in registry.aggregates() {
+        let (context, aggregate) = aggregate_type
+            .split_once('/')
+            .expect("successful registration must be context-qualified");
+        assert!(!context.is_empty());
+        assert!(!aggregate.is_empty());
+        assert!(!aggregate.contains('/'));
+    }
+}
+
+#[test]
+fn command_registration_does_not_infer_aggregate_inventory() {
+    let mut registry = DomainRegistry::new();
+    registry.register_command::<Open, OpenHandler>().unwrap();
+
+    assert_eq!(registry.commands().count(), 1);
+    assert_eq!(registry.aggregates().count(), 0);
+}
+
+#[test]
+fn handler_registration_builds_contextual_runtime_and_modeled_metadata() {
+    let mut registry = DomainRegistry::new();
+    registry.register_command::<Open, OpenHandler>().unwrap();
     registry
-        .register_command::<FirstAggregate, Rename>()
+        .register_command::<Rename, RenameHandler>()
         .unwrap();
 
     let open = registry.command("first", "open", 1).unwrap();
-    assert_eq!(open.aggregate_type, "first");
+    assert_eq!(open.bounded_context, "first");
     assert_eq!(open.rust_command_type, std::any::type_name::<Open>());
-    assert_eq!(
-        open.rust_aggregate_type,
-        std::any::type_name::<FirstAggregate>()
-    );
+    assert_eq!(open.rust_handler_type, std::any::type_name::<OpenHandler>());
     assert_eq!(
         open.modeled_command(),
         &ModeledCommandDescriptor {
+            bounded_context: FirstContext::DESCRIPTOR,
             local_id: "open",
             label: "open",
             fields: &[],
@@ -121,10 +278,9 @@ fn paired_registration_builds_runtime_and_modeled_metadata() {
             .schema_version,
         2
     );
-    assert_eq!(registry.aggregates().collect::<Vec<_>>(), ["first"]);
     assert_eq!(
         registry
-            .commands()
+            .commands_for_context("first")
             .map(|command| command.command_name)
             .collect::<Vec<_>>(),
         ["open", "rename"]
@@ -132,34 +288,27 @@ fn paired_registration_builds_runtime_and_modeled_metadata() {
 }
 
 #[test]
-fn one_owner_independent_command_can_be_registered_for_multiple_aggregates() {
+fn the_same_local_command_identity_can_exist_in_different_contexts() {
     let mut registry = DomainRegistry::new();
-    registry.register_command::<FirstAggregate, Open>().unwrap();
+    registry.register_command::<Open, OpenHandler>().unwrap();
     registry
-        .register_command::<SecondAggregate, Open>()
+        .register_command::<OpenSecond, SecondOpenHandler>()
         .unwrap();
 
     assert!(registry.command("first", "open", 1).is_some());
     assert!(registry.command("second", "open", 1).is_some());
     assert_eq!(registry.commands().count(), 2);
-    assert_eq!(
-        registry
-            .commands()
-            .map(|command| command.aggregate_type.as_str())
-            .collect::<Vec<_>>(),
-        ["first", "second"]
-    );
 }
 
 #[test]
-fn duplicate_pair_is_rejected_without_partial_mutation() {
+fn duplicate_context_command_identity_is_rejected_without_partial_mutation() {
     let mut registry = DomainRegistry::new();
-    registry.register_command::<FirstAggregate, Open>().unwrap();
+    registry.register_command::<Open, OpenHandler>().unwrap();
 
     assert_eq!(
-        registry.register_command::<FirstAggregate, Open>(),
+        registry.register_command::<Open, AlternateOpenHandler>(),
         Err(RegistrationError::DuplicateCommandIdentity {
-            aggregate_type: "first".to_owned(),
+            bounded_context: "first",
             command_name: "open",
             schema_version: 1,
         })
@@ -168,24 +317,24 @@ fn duplicate_pair_is_rejected_without_partial_mutation() {
 }
 
 #[test]
-fn validates_command_and_aggregate_identity() {
+fn validates_command_and_context_identity() {
     let mut registry = DomainRegistry::new();
 
     assert_eq!(
-        registry.register_command::<FirstAggregate, EmptyName>(),
+        registry.register_command::<EmptyName, EmptyNameHandler>(),
         Err(RegistrationError::EmptyCommandName {
             rust_command_type: std::any::type_name::<EmptyName>(),
         })
     );
     assert_eq!(
-        registry.register_command::<FirstAggregate, ZeroVersion>(),
+        registry.register_command::<ZeroVersion, ZeroVersionHandler>(),
         Err(RegistrationError::ZeroSchemaVersion {
             command_name: "zero",
         })
     );
     assert_eq!(
-        registry.register_command::<EmptyAggregate, Open>(),
-        Err(RegistrationError::EmptyAggregateType {
+        registry.register_command::<EmptyContextCommand, EmptyContextHandler>(),
+        Err(RegistrationError::EmptyCommandBoundedContext {
             command_name: "open",
             schema_version: 1,
         })
@@ -194,39 +343,27 @@ fn validates_command_and_aggregate_identity() {
 }
 
 #[test]
-fn accepts_qualified_and_legacy_unqualified_aggregate_types() {
-    let mut registry = DomainRegistry::new();
-
-    registry.register_command::<FirstAggregate, Open>().unwrap();
-    registry
-        .register_command::<QualifiedAggregate, Open>()
-        .unwrap();
-
-    assert!(registry.command("first", "open", 1).is_some());
-    assert!(
-        registry
-            .command("bike-rental/rental-fleet", "open", 1)
-            .is_some()
-    );
-}
-
-#[test]
-fn rejects_unroutable_command_names_without_partial_mutation() {
+fn rejects_unroutable_contexts_and_command_names_without_partial_mutation() {
     let mut registry = DomainRegistry::new();
 
     assert_eq!(
-        registry.register_command::<FirstAggregate, InvalidRoutedName>(),
+        registry.register_command::<InvalidContextCommand, InvalidContextHandler>(),
+        Err(RegistrationError::InvalidCommandIdentity {
+            command_name: "open",
+            schema_version: 1,
+            reason: "address context has an invalid format".to_owned(),
+        })
+    );
+    assert_eq!(
+        registry.register_command::<InvalidRoutedName, InvalidRoutedNameHandler>(),
         Err(RegistrationError::InvalidCommandIdentity {
             command_name: "Open",
             schema_version: 1,
             reason: "address name has an invalid format".to_owned(),
         })
     );
-    assert_eq!(registry.commands().count(), 0);
-    assert_eq!(registry.aggregates().count(), 0);
-
     assert_eq!(
-        registry.register_command::<FirstAggregate, LongName>(),
+        registry.register_command::<LongName, LongNameHandler>(),
         Err(RegistrationError::InvalidCommandIdentity {
             command_name: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             schema_version: 1,
@@ -234,43 +371,17 @@ fn rejects_unroutable_command_names_without_partial_mutation() {
         })
     );
     assert_eq!(registry.commands().count(), 0);
-    assert_eq!(registry.aggregates().count(), 0);
 }
 
 #[test]
-fn rejects_unroutable_qualified_aggregate_types_without_partial_mutation() {
-    macro_rules! assert_invalid_routing {
-        ($aggregate:ty, $reason:literal) => {
-            let mut registry = DomainRegistry::new();
-            assert_eq!(
-                registry.register_command::<$aggregate, Open>(),
-                Err(RegistrationError::InvalidCommandIdentity {
-                    command_name: "open",
-                    schema_version: 1,
-                    reason: $reason.to_owned(),
-                })
-            );
-            assert_eq!(registry.commands().count(), 0);
-            assert_eq!(registry.aggregates().count(), 0);
-        };
-    }
-
-    assert_invalid_routing!(
-        InvalidContextAggregate,
-        "address context has an invalid format"
-    );
-    assert_invalid_routing!(InvalidLocalAggregate, "address name has an invalid format");
-    assert_invalid_routing!(
-        NestedAggregate,
-        "aggregate type must contain at most one context separator"
-    );
-}
-
-#[test]
-fn blanket_definition_is_contextual_to_the_handler_aggregate() {
-    let first = <Open as CommandDefinition<FirstAggregate>>::descriptor();
-    let second = <Open as CommandDefinition<SecondAggregate>>::descriptor();
+fn blanket_definition_is_contextual_to_the_command_and_handler() {
+    let first = <Open as CommandDefinition<OpenHandler>>::descriptor();
+    let second = <OpenSecond as CommandDefinition<SecondOpenHandler>>::descriptor();
 
     assert_eq!(first.command_name, second.command_name);
-    assert_ne!(first.aggregate_type, second.aggregate_type);
+    assert_ne!(first.bounded_context, second.bounded_context);
+    assert_eq!(
+        first.rust_handler_type,
+        std::any::type_name::<OpenHandler>()
+    );
 }

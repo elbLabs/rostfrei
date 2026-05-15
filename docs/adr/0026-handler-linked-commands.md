@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Superseded by [ADR 0037](0037-bounded-context-commands-and-unit-of-work.md).
 
 ## Context
 
