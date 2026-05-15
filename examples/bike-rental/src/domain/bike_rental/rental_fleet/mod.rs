@@ -12,8 +12,13 @@ mod retire_bicycle;
 mod return_bicycle;
 mod root;
 mod stream;
-mod transfer_bicycle;
+mod transfer_bicycle_in;
+mod transfer_bicycle_out;
 
+pub use super::bicycle_transfer::{
+    BicycleTransfer, BicycleTransferAction, BicycleTransferRejected,
+    BicycleTransferRejectionReason, TransferBicycle, TransferBicycleHandler,
+};
 pub use add_bicycle::{AddBicycle, AddBicycleAction, AddBicycleHandler, BicycleAdded};
 pub use aggregate::RentalFleetAggregate;
 pub(in crate::domain) use bicycle::assess_rental_eligibility;
@@ -38,7 +43,5 @@ pub use return_bicycle::{
 };
 pub use root::RentalFleet;
 pub use stream::stream_id;
-pub use transfer_bicycle::{
-    BicycleTransfer, BicycleTransferRejected, BicycleTransferRejectionReason, BicycleTransferredIn,
-    BicycleTransferredOut, TransferBicycle, TransferBicycleHandler,
-};
+pub use transfer_bicycle_in::{BicycleTransferredIn, TransferBicycleInAction};
+pub use transfer_bicycle_out::{BicycleTransferredOut, TransferBicycleOutAction};
