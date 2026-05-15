@@ -2,8 +2,9 @@ use rostfrei::domain_model;
 
 use super::{
     BikeRental,
+    bicycle_transfer::BicycleTransfer,
     rental_fleet::{
-        Bicycle, BicycleCannotBeRetired, BicycleCondition, BicycleNotRented, BicycleTransfer,
+        Bicycle, BicycleCannotBeRetired, BicycleCondition, BicycleNotRented,
         BicycleTransferRejected, BicycleTransferRejectionReason, BicycleUnavailable,
         InvalidRentalFleet, RegistrationNumber, RentalFleet, RentalFleetAggregate,
     },

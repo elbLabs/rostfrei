@@ -41,7 +41,8 @@ fn new_project_contains_the_complete_runnable_scaffold() {
     let manifest = read(&destination.join("Cargo.toml"));
     assert!(manifest.starts_with("[workspace]\nresolver = \"3\""));
     assert!(manifest.contains("name = \"bike-rental\""));
-    assert!(manifest.contains("rostfrei-nats = \"0.1.0\""));
+    let expected_dependency = format!("rostfrei-nats = \"{}\"", env!("CARGO_PKG_VERSION"));
+    assert!(manifest.contains(&expected_dependency));
     assert!(manifest.contains("[lints.clippy]"));
     assert!(manifest.contains("arithmetic_side_effects = \"deny\""));
 

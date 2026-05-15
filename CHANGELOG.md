@@ -2,16 +2,10 @@
 
 All notable changes to this project are documented in this file.
 
-## [0.2.0] - 2026-09-04
+## [0.0.4-alpha] - 2026-09-08
 
 ### Changed
 
-- **Breaking:** registered HTTP queries now use `POST` with an
-  `application/json` body at the existing
-  `/contexts/{context}/queries/{query}/schemas/{schema_version}` route. GET
-  query routes and query-string payload decoding have been removed.
-- Registered queries remain safe and idempotent by application contract despite
-  using POST.
 - **Breaking:** commands are now bounded-context operations. Command payloads
   carry every required aggregate ID, and standard HTTP command requests use
   `POST /contexts/{context}/commands/{command}/schemas/{schema_version}` without
@@ -46,3 +40,14 @@ All notable changes to this project are documented in this file.
   Standalone message-series documents have no top-level `schemaVersion`; regenerate
   stored observed series and rediscover all runtime links from Catalog v1 before
   deployment.
+
+## [0.0.3-alpha] - 2026-09-07
+
+### Changed
+
+- **Breaking:** registered HTTP queries now use `POST` with an
+  `application/json` body at the existing
+  `/contexts/{context}/queries/{query}/schemas/{schema_version}` route. GET
+  query routes and query-string payload decoding have been removed.
+- Registered queries remain safe and idempotent by application contract despite
+  using POST. Command endpoints are unchanged.

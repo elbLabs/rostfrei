@@ -16,9 +16,9 @@ sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-rostfrei = { path = "../rostfrei", version = "0.2.0" }
+rostfrei = { path = "../rostfrei", version = "0.0.4-alpha" }
 rostfrei-core = { path = "../rostfrei-core" }
-rostfrei-fixtures = { path = "../rostfrei-fixtures", version = "0.2.0" }
+rostfrei-fixtures = { path = "../rostfrei-fixtures", version = "0.0.4-alpha" }
 rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
 
 [dev-dependencies]
