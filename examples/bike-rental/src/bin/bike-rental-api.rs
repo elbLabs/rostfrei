@@ -70,6 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_test_event_store(test_store.clone())
         .with_stream_directory(test_store)
         .with_test_transport(test_runtime.transport())
+        .with_test_quarantine_reader(test_runtime.quarantine_reader())
         .with_dispatch_transport(dispatch_runtime.transport())
         .with_test_scenario_reset(test_reset)
         .with_default_test_fixture(default_test_fixture)
