@@ -60,7 +60,8 @@ async fn setup(label: &str) -> TestResult<(async_nats::jetstream::Context, NatsE
     let url = std::env::var("ROSTFREI_NATS_URL")?;
     let context = connect_context(&url).await?;
     let (bounded_context, stream_name) = unique_names(label)?;
-    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?;
+    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
+        .with_storage_limits(64 * 1024 * 1024, DEFAULT_EVENT_STORE_MAX_EVENT_BYTES)?;
     provision_event_store(&context, &config).await?;
     let store = NatsEventStore::connect(context.clone(), config).await?;
     Ok((context, store))
