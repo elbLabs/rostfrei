@@ -624,7 +624,8 @@ async fn publish_disposition_commands(
                     id,
                     format!(r#"{{"kind":"{prefix}"}}"#).into_bytes(),
                 )?
-                .with_metadata(metadata),
+                .with_metadata(metadata)
+                .with_correlation_id(CorrelationId::new("quarantine-correlation")?),
             )
             .await?;
     }
@@ -745,6 +746,14 @@ async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() 
         br#"{"kind":"quarantine"}"#
     );
     assert_eq!(record.reason(), "test quarantine");
+    assert_eq!(
+        record.correlation_id().map(CorrelationId::as_str),
+        Some("quarantine-correlation")
+    );
+    assert_eq!(
+        record.failure_kind(),
+        Some(rostfrei_messaging_core::QuarantineFailureKind::HandlerFailure)
+    );
     assert_eq!(record.attempt(), 1);
     assert!(record.source_sequence() > 0);
 
