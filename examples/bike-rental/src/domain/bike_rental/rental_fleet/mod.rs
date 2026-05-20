@@ -5,7 +5,6 @@ mod bicycle_availability;
 mod event_set;
 pub(in crate::domain) mod fleet_consistency;
 mod identity;
-mod import_rental_fleet;
 mod initialize;
 mod rent_bicycle;
 mod retire_bicycle;
@@ -19,7 +18,9 @@ pub use super::bicycle_transfer::{
     BicycleTransfer, BicycleTransferAction, BicycleTransferRejected,
     BicycleTransferRejectionReason, TransferBicycle, TransferBicycleHandler,
 };
-pub use add_bicycle::{AddBicycle, AddBicycleAction, AddBicycleHandler, BicycleAdded};
+pub use add_bicycle::{
+    AddBicycle, AddBicycleAction, AddBicycleHandler, BicycleAdded, BicycleAlreadyInFleet,
+};
 pub use aggregate::RentalFleetAggregate;
 pub(in crate::domain) use bicycle::assess_rental_eligibility;
 pub use bicycle::{
@@ -30,10 +31,6 @@ pub use bicycle::{
 pub use bicycle_availability::{BicycleAvailability, BicycleAvailabilityQuery};
 pub use event_set::RentalFleetEvent;
 pub use identity::FleetId;
-pub use import_rental_fleet::{
-    ImportRentalFleetAction, ImportRentalFleetInput, ImportedBicycle, InvalidRentalFleet,
-    RentalFleetImported,
-};
 pub use rent_bicycle::{
     BicycleRented, BicycleUnavailable, RentBicycle, RentBicycleAction, RentBicycleHandler,
 };

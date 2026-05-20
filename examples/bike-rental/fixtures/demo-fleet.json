@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "id": "demo-fleet",
-  "revision": "1",
+  "revision": "2",
   "messages": [
     {
       "kind": "domain-event",
-      "messageId": "demo-fleet-imported",
-      "correlationId": "fixture:demo-fleet:1",
-      "name": "rental-fleet-imported",
+      "messageId": "demo-bike-42-added",
+      "correlationId": "fixture:demo-fleet:2:bike-42",
+      "name": "bicycle-added",
       "schemaVersion": 1,
       "aggregate": {
         "type": "bike-rental/rental-fleet",
@@ -16,18 +16,25 @@
       "streamVersion": 1,
       "payload": {
         "fleet_id": "city-fleet",
-        "bicycles": [
-          {
-            "bicycle_id": "bike-42",
-            "status": "available",
-            "condition": "serviceable"
-          },
-          {
-            "bicycle_id": "bike-99",
-            "status": "available",
-            "condition": "maintenance-required"
-          }
-        ]
+        "bicycle_id": "bike-42",
+        "condition": "serviceable"
+      }
+    },
+    {
+      "kind": "domain-event",
+      "messageId": "demo-bike-99-added",
+      "correlationId": "fixture:demo-fleet:2:bike-99",
+      "name": "bicycle-added",
+      "schemaVersion": 1,
+      "aggregate": {
+        "type": "bike-rental/rental-fleet",
+        "id": "city-fleet"
+      },
+      "streamVersion": 2,
+      "payload": {
+        "fleet_id": "city-fleet",
+        "bicycle_id": "bike-99",
+        "condition": "maintenance-required"
       }
     }
   ]
