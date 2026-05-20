@@ -53,7 +53,7 @@ inspection. A record removed by retention or deletion returns `404`
 A missing reader or unavailable broker returns `503`, exhausted inspection
 capacity returns `429`, and a read timeout returns `504`. Responses carry
 `Cache-Control: private, no-store`. There are at most eight concurrent inspection
-requests per Tracer, each with a six-second service deadline including waiting
+requests per scope, each with a six-second service deadline including waiting
 for an active Test reset. A failed reset does not itself disable inspection:
 any remaining evidence can still be read when its stream is available.
 
@@ -62,3 +62,67 @@ attach an `Arc<dyn QuarantineReader>` using
 `TracerBuilder::with_test_quarantine_reader`. Construction rejects a normal-scope
 reader registered as Test. The reader needs no command transport or live
 operation table, so retained failures remain inspectable after a Tracer restart.
+
+## Production API and authorization
+
+Production inspection uses its own credential, configured with
+`HttpConfig::with_inspection_token`. It must differ from both Control and Dispatch
+tokens. Fetch `/catalog` with that credential and follow
+`quarantine.production.listHref`. The inspection catalog contains no Test,
+Preview, reset, or command-dispatch links. A Control catalog advertises only Test
+quarantine. Dispatch credentials do not authorize quarantine inspection.
+
+```text
+GET /quarantine/production
+GET /quarantine/production/{recordId}
+```
+
+The query parameters, payload/diagnostic structure, pagination, and error codes
+match Test. Production reads use independently configured readers and capacity;
+they do not wait for Test reset. Register readers with
+`TracerBuilder::with_production_quarantine_reader`. Readers must match their
+traffic scope, and readers installed together must share the same application.
+
+`HttpConfig::inspection_only` installs just the production inspection credential.
+The bike-rental example includes an independently deployable inspection host:
+
+```sh
+# Set ROSTFREI_NATS_URL and ROSTFREI_INSPECTION_TOKEN in the deployment environment.
+cargo run --locked -p bike-rental --bin bike-rental-quarantine
+```
+
+It binds to `127.0.0.1:1310` by default; configure `ROSTFREI_INSPECTION_ADDR` and
+`ROSTFREI_APPLICATION` as needed. It connects to existing resources without
+provisioning streams, applying fixtures, resetting state, or starting workers.
+The combined `bike-rental-api` host also enables production inspection when
+`ROSTFREI_INSPECTION_TOKEN` is set.
+
+For a normal JetStream API prefix, a read-only NATS user needs publish/request
+permissions for exactly:
+
+```text
+$JS.API.STREAM.INFO.<APPLICATION>_QUARANTINE
+$JS.API.STREAM.MSG.GET.<APPLICATION>_QUARANTINE
+```
+
+and subscribe/reply permissions on its client inbox namespace. Match the actual
+API prefix when using a JetStream domain. Business publication, consumer
+management, stream creation, purge, and deletion permissions are unnecessary.
+
+## Payload policy
+
+`DefaultQuarantinePayloadPolicy` exposes retained Test payloads and metadata. In
+production it removes raw base64, decoded JSON, payload digests, caller metadata,
+trace context, and free-form failure reasons. Structured failure categories,
+source/delivery identities, storage time, correlation ID, size, and truncation
+remain available. Payload `status` becomes `redacted`, including for malformed
+quarantine-record bytes. This policy is independent of `TracePayloadPolicy`;
+enabling development trace payloads does not expose production quarantine data.
+
+Implement `QuarantinePayloadPolicy` and install it with
+`TracerBuilder::with_quarantine_payload_policy` for application-specific rules.
+The service applies the policy to list reasons and all detail representations
+before any protocol adapter receives them. When returning sanitized JSON, begin
+with `payload.redacted()` and then set `json` to the sanitized document; this
+removes original base64 and digest representations together. The `redacted`
+status indicates that the visible JSON is a policy-controlled view.

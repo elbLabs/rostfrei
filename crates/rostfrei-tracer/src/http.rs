@@ -35,17 +35,23 @@ const DEFAULT_MESSAGE_SERIES_WITHIN: TestTimeout = TestTimeout(Duration::from_se
 const DEFAULT_MESSAGE_SERIES_SETTLE_FOR: TestTimeout = TestTimeout(Duration::from_millis(500));
 
 #[derive(Clone)]
+#[allow(
+    clippy::struct_field_names,
+    reason = "explicit credential names distinguish independent capabilities"
+)]
 pub struct HttpConfig {
-    control_token: Arc<str>,
+    control_token: Option<Arc<str>>,
     dispatch_token: Option<Arc<str>>,
+    inspection_token: Option<Arc<str>>,
 }
 
 impl HttpConfig {
     pub fn new(bearer_token: impl Into<String>) -> Result<Self, HttpConfigError> {
         let bearer_token = validate_token(bearer_token.into())?;
         Ok(Self {
-            control_token: bearer_token.into(),
+            control_token: Some(bearer_token.into()),
             dispatch_token: None,
+            inspection_token: None,
         })
     }
 
@@ -54,10 +60,35 @@ impl HttpConfig {
         dispatch_token: impl Into<String>,
     ) -> Result<Self, HttpConfigError> {
         let dispatch_token = validate_token(dispatch_token.into())?;
-        if dispatch_token == self.control_token.as_ref() {
+        if self.control_token.as_deref() == Some(dispatch_token.as_str())
+            || self.inspection_token.as_deref() == Some(dispatch_token.as_str())
+        {
             return Err(HttpConfigError::DuplicateBearerTokens);
         }
         self.dispatch_token = Some(dispatch_token.into());
+        Ok(self)
+    }
+
+    /// A host with only production inspection: no Control or Dispatch credential is installed.
+    pub fn inspection_only(token: impl Into<String>) -> Result<Self, HttpConfigError> {
+        Ok(Self {
+            control_token: None,
+            dispatch_token: None,
+            inspection_token: Some(validate_token(token.into())?.into()),
+        })
+    }
+
+    pub fn with_inspection_token(
+        mut self,
+        token: impl Into<String>,
+    ) -> Result<Self, HttpConfigError> {
+        let token = validate_token(token.into())?;
+        if self.control_token.as_deref() == Some(token.as_str())
+            || self.dispatch_token.as_deref() == Some(token.as_str())
+        {
+            return Err(HttpConfigError::DuplicateBearerTokens);
+        }
+        self.inspection_token = Some(token.into());
         Ok(self)
     }
 }
@@ -73,7 +104,7 @@ fn validate_token(token: String) -> Result<String, HttpConfigError> {
 pub enum HttpConfigError {
     #[error("tracer bearer token must be non-empty visible ASCII")]
     InvalidBearerToken,
-    #[error("tracer and dispatch bearer tokens must differ")]
+    #[error("Control, Dispatch, and production inspection bearer tokens must differ")]
     DuplicateBearerTokens,
 }
 
@@ -94,7 +125,6 @@ struct CommandSubmissionResponse {
 
 pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
     let control_routes = Router::new()
-        .route("/catalog", get(get_catalog))
         .route("/quarantine/test", get(get_test_quarantine))
         .route(
             "/quarantine/test/{record_id}",
@@ -159,10 +189,22 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
             "/correlations/{correlation_id}/events",
             get(correlation_events),
         );
+    let inspection_routes = Router::new()
+        .route("/quarantine/production", get(get_production_quarantine))
+        .route(
+            "/quarantine/production/{record_id}",
+            get(get_production_quarantine_record),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            config.clone(),
+            authorize_inspection_request,
+        ));
     Router::new()
+        .route("/catalog", get(get_catalog))
         .merge(control_routes)
         .merge(dispatch_routes)
         .merge(operation_routes)
+        .merge(inspection_routes)
         .layer(DefaultBodyLimit::max(
             MAX_COMMAND_PAYLOAD_LEN + SIMULATION_REQUEST_OVERHEAD,
         ))
@@ -174,8 +216,31 @@ async fn add_private_no_store(response: Response) -> Response {
     private_no_store(response)
 }
 
-async fn get_catalog(State(state): State<HttpState>) -> Response {
+async fn get_catalog(State(state): State<HttpState>, headers: HeaderMap) -> Response {
     let mut catalog = state.tracer.catalog().clone();
+    match capability(&state.config, &headers) {
+        Some(Capability::Control) => {
+            if let Some(quarantine) = &mut catalog.quarantine {
+                quarantine.production = None;
+                if quarantine.test.is_none() {
+                    catalog.quarantine = None;
+                }
+            }
+        }
+        Some(Capability::ProductionInspection) => {
+            catalog.contexts.clear();
+            catalog.behavioral_test = None;
+            catalog.test_scenario = None;
+            catalog.test_repository = None;
+            if let Some(quarantine) = &mut catalog.quarantine {
+                quarantine.test = None;
+                if quarantine.production.is_none() {
+                    catalog.quarantine = None;
+                }
+            }
+        }
+        Some(Capability::Dispatch) | None => return unauthorized(),
+    }
     if state.config.dispatch_token.is_none() {
         for version in catalog
             .contexts
@@ -213,6 +278,13 @@ async fn get_test_quarantine(
     get_quarantine(&state.tracer, QuarantineScope::Test, query).await
 }
 
+async fn get_production_quarantine(
+    State(state): State<HttpState>,
+    query: Result<Query<QuarantineHttpQuery>, QueryRejection>,
+) -> Response {
+    get_quarantine(&state.tracer, QuarantineScope::Production, query).await
+}
+
 async fn get_quarantine(
     tracer: &Tracer,
     scope: QuarantineScope,
@@ -240,11 +312,22 @@ async fn get_test_quarantine_record(
     State(state): State<HttpState>,
     Path(record_id): Path<String>,
 ) -> Response {
-    match state
-        .tracer
-        .quarantine_message(QuarantineScope::Test, &record_id)
-        .await
-    {
+    get_quarantine_record(&state.tracer, QuarantineScope::Test, &record_id).await
+}
+
+async fn get_production_quarantine_record(
+    State(state): State<HttpState>,
+    Path(record_id): Path<String>,
+) -> Response {
+    get_quarantine_record(&state.tracer, QuarantineScope::Production, &record_id).await
+}
+
+async fn get_quarantine_record(
+    tracer: &Tracer,
+    scope: QuarantineScope,
+    record_id: &str,
+) -> Response {
+    match tracer.quarantine_message(scope, record_id).await {
         Ok(record) => Json(record).into_response(),
         Err(error) => quarantine_error_response(error),
     }
@@ -419,6 +502,9 @@ async fn authorize_control_request(
     request: Request,
     next: Next,
 ) -> Response {
+    if capability(&config, request.headers()) == Some(Capability::ProductionInspection) {
+        return forbidden();
+    }
     if capability(&config, request.headers()) != Some(Capability::Control) {
         return unauthorized();
     }
@@ -432,7 +518,19 @@ async fn authorize_dispatch_request(
 ) -> Response {
     match capability(&config, request.headers()) {
         Some(Capability::Dispatch) => next.run(request).await,
-        Some(Capability::Control) => forbidden(),
+        Some(Capability::Control | Capability::ProductionInspection) => forbidden(),
+        None => unauthorized(),
+    }
+}
+
+async fn authorize_inspection_request(
+    State(config): State<HttpConfig>,
+    request: Request,
+    next: Next,
+) -> Response {
+    match capability(&config, request.headers()) {
+        Some(Capability::ProductionInspection) => next.run(request).await,
+        Some(Capability::Control | Capability::Dispatch) => forbidden(),
         None => unauthorized(),
     }
 }
@@ -727,6 +825,7 @@ fn optional_header<'a>(
 enum Capability {
     Control,
     Dispatch,
+    ProductionInspection,
 }
 
 fn capability(config: &HttpConfig, headers: &HeaderMap) -> Option<Capability> {
@@ -734,7 +833,7 @@ fn capability(config: &HttpConfig, headers: &HeaderMap) -> Option<Capability> {
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))?;
-    if token == config.control_token.as_ref() {
+    if config.control_token.as_deref() == Some(token) {
         Some(Capability::Control)
     } else if config
         .dispatch_token
@@ -742,6 +841,8 @@ fn capability(config: &HttpConfig, headers: &HeaderMap) -> Option<Capability> {
         .is_some_and(|expected| token == expected.as_ref())
     {
         Some(Capability::Dispatch)
+    } else if config.inspection_token.as_deref() == Some(token) {
+        Some(Capability::ProductionInspection)
     } else {
         None
     }

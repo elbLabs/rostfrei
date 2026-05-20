@@ -26,6 +26,8 @@ pub struct TracerCatalog {
 pub struct CatalogQuarantine {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test: Option<CatalogQuarantineScope>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub production: Option<CatalogQuarantineScope>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

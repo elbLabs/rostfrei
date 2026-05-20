@@ -71,6 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_stream_directory(test_store)
         .with_test_transport(test_runtime.transport())
         .with_test_quarantine_reader(test_runtime.quarantine_reader())
+        .with_production_quarantine_reader(dispatch_runtime.quarantine_reader())
         .with_dispatch_transport(dispatch_runtime.transport())
         .with_test_scenario_reset(test_reset)
         .with_default_test_fixture(default_test_fixture)
@@ -90,7 +91,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     let api_token = env::var("ROSTFREI_API_TOKEN")?;
     let dispatch_token = env::var("ROSTFREI_DISPATCH_TOKEN")?;
-    let http_config = HttpConfig::new(api_token)?.with_dispatch_token(dispatch_token)?;
+    let mut http_config = HttpConfig::new(api_token)?.with_dispatch_token(dispatch_token)?;
+    match env::var("ROSTFREI_INSPECTION_TOKEN") {
+        Ok(token) => http_config = http_config.with_inspection_token(token)?,
+        Err(env::VarError::NotPresent) => {}
+        Err(error) => return Err(error.into()),
+    }
     let app = http::router(tracer, http_config);
 
     let address = env::var("ROSTFREI_API_ADDR").unwrap_or_else(|_| "127.0.0.1:1309".to_owned());
