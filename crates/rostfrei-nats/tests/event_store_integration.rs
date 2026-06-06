@@ -1,3 +1,5 @@
+#[path = "event_store/append_sessions.rs"]
+mod append_sessions;
 #[path = "../src/event_store.rs"]
 mod event_store;
 #[path = "../src/event_store_config.rs"]
@@ -63,7 +65,7 @@ static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 async fn directory_fixture(
     label: &str,
 ) -> TestResult<(async_nats::jetstream::Context, NatsEventStore)> {
-    let context = connect_context(&std::env::var("ROSTFREI_NATS_URL")?).await?;
+    let context = connect_context(&rostfrei_testing::integration::nats_url()?).await?;
     let (bounded_context, stream_name) = unique_names(label)?;
     let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
@@ -102,7 +104,6 @@ async fn append_directory_transaction(store: &NatsEventStore, operation: &str) -
 }
 
 #[tokio::test]
-#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
 async fn directory_handles_empty_control_only_and_transaction_histories() {
     let (context, store) = directory_fixture("directory-controls")
         .await
@@ -186,7 +187,6 @@ async fn directory_handles_empty_control_only_and_transaction_histories() {
 }
 
 #[tokio::test]
-#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
 async fn directory_excludes_appends_after_its_snapshot() {
     let (context, store) = directory_fixture("directory-concurrent")
         .await
@@ -251,7 +251,6 @@ async fn directory_excludes_appends_after_its_snapshot() {
 }
 
 #[tokio::test]
-#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
 async fn directory_rejects_transaction_events_without_a_valid_receipt() {
     let (context, store) = directory_fixture("directory-corrupt")
         .await
@@ -276,7 +275,6 @@ async fn directory_rejects_transaction_events_without_a_valid_receipt() {
 }
 
 #[tokio::test]
-#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
 async fn directory_and_load_reject_incompatible_aggregate_sequence_expectations() {
     for schema_version in [3, 4] {
         for base_version in [0, 2] {
@@ -413,7 +411,6 @@ async fn publish_commit_with_wrong_sequence_expectation(
 }
 
 #[tokio::test]
-#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
 async fn directory_rejects_version_gaps_and_incomplete_commits() {
     for (label, version, count, reason) in [
         ("directory-gap", 2, 1, "noncontiguous"),
@@ -468,7 +465,6 @@ async fn directory_rejects_version_gaps_and_incomplete_commits() {
 }
 
 #[tokio::test]
-#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
 async fn directory_control_only_snapshot_excludes_a_concurrent_transaction() {
     let (context, store) = directory_fixture("directory-control-race")
         .await
@@ -514,6 +510,77 @@ async fn directory_control_only_snapshot_excludes_a_concurrent_transaction() {
         .delete_stream(store.config().stream_name())
         .await
         .expect("cleanup directory stream");
+}
+
+#[tokio::test]
+async fn directory_snapshot_excludes_later_malformed_participant_history() {
+    let primary = stream("directory-primary").expect("primary identity");
+    let secondary = StreamId::new(
+        AggregateType::new("OtherAggregate").expect("other aggregate type"),
+        AggregateId::new("secondary").expect("secondary identity"),
+    );
+    let guard = stream("directory-guard").expect("guard identity");
+    for (label, participant) in [
+        ("snapshot-cached-writer", primary.clone()),
+        ("snapshot-other-writer", secondary),
+        ("snapshot-empty-guard", guard),
+    ] {
+        let (context, store) = directory_fixture(label).await.expect("snapshot fixture");
+        append_directory_transaction(&store, label)
+            .await
+            .expect("valid transaction before the snapshot");
+        let reached = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let directory = store
+            .clone()
+            .with_directory_snapshot_barriers(Arc::clone(&reached), Arc::clone(&release));
+        let listing = directory.list_streams(primary.aggregate_type());
+        let append = async {
+            let _ = reached.wait().await;
+            context
+                .publish(
+                    store.config().aggregate_subject(
+                        participant.aggregate_type().as_str(),
+                        participant.aggregate_id().as_str(),
+                    ),
+                    b"malformed post-snapshot event".to_vec().into(),
+                )
+                .await
+                .expect("publish post-snapshot bytes")
+                .await
+                .expect("post-snapshot acknowledgement");
+            let _ = release.wait().await;
+        };
+        let (snapshot, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(listing, append)
+        })
+        .await
+        .expect("bounded snapshot race");
+        let latest_history = store.load(&participant).await;
+        let latest_directory = store.list_streams(primary.aggregate_type()).await;
+        context
+            .delete_stream(store.config().stream_name())
+            .await
+            .expect("cleanup snapshot stream");
+
+        assert_eq!(
+            snapshot.expect("later bytes must not affect the captured snapshot"),
+            vec![StreamSummary::new(primary.clone(), StreamVersion::new(2))],
+            "{label}"
+        );
+        assert_eq!(
+            latest_history
+                .expect_err("current history remains corrupt")
+                .kind(),
+            EventStoreErrorKind::CorruptHistory
+        );
+        assert_eq!(
+            latest_directory
+                .expect_err("the next snapshot includes the bad bytes")
+                .kind(),
+            EventStoreErrorKind::CorruptHistory
+        );
+    }
 }
 
 #[tokio::test]
@@ -2439,9 +2506,23 @@ async fn schema_four_event_with_filler_is_not_loadable(
     context: &async_nats::jetstream::Context,
     config: &NatsEventStoreConfig,
 ) -> TestResult<()> {
+    let aggregate = publish_schema_four_event_without_receipt(context, config).await?;
+    let loaded = store.load(&aggregate).await;
+    check(
+        matches!(loaded, Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory),
+        "schema-4 history was exposed without a valid transaction receipt",
+    )
+}
+
+async fn publish_schema_four_event_without_receipt(
+    context: &async_nats::jetstream::Context,
+    config: &NatsEventStoreConfig,
+) -> TestResult<StreamId> {
     let aggregate = stream("schema-four-event-with-filler")?;
     let operation = "schema-four-event-with-filler-operation";
     let event_batch = batch(&aggregate, operation, operation, &[b"must-not-load"])?;
+    // The event passes envelope and atomic-header validation. Only transaction
+    // provenance validation detects the filler in place of a durable receipt.
     publish_raw_atomic_batch(
         context,
         config,
@@ -2465,12 +2546,7 @@ async fn schema_four_event_with_filler_is_not_loadable(
         ],
     )
     .await?;
-
-    let loaded = store.load(&aggregate).await;
-    check(
-        matches!(loaded, Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory),
-        "schema-4 history was exposed without a valid transaction receipt",
-    )
+    Ok(aggregate)
 }
 
 #[allow(clippy::too_many_lines)]
