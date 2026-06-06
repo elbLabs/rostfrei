@@ -238,6 +238,34 @@ export async function prepareScenario(page, scene) {
   }
   await page.click('[data-node-id="visual-command"] .message-node')
   await page.waitForSelector("[data-command-response]", { visible: true })
+  await settlePage(page)
+  const popup = await page.$eval("[data-node-popup]", (element) => {
+    const rect = element.getBoundingClientRect()
+    const maximumScroll = element.scrollHeight - element.clientHeight
+    element.scrollTop = maximumScroll
+    const scrollable =
+      maximumScroll <= 1 ||
+      (getComputedStyle(element).overflowY === "auto" &&
+        element.scrollTop >= maximumScroll - 1)
+    element.scrollTop = 0
+    return {
+      top: rect.top,
+      left: rect.left,
+      right: rect.right,
+      bottom: rect.bottom,
+      viewportWidth: innerWidth,
+      viewportHeight: innerHeight,
+      scrollable,
+    }
+  })
+  assert.ok(
+    popup.scrollable &&
+      popup.top >= 61 &&
+      popup.left >= 7 &&
+      popup.right <= popup.viewportWidth - 7 &&
+      popup.bottom <= popup.viewportHeight - 63,
+    `The ${scene} popup must fit between the topbar and dock: ${JSON.stringify(popup)}`
+  )
 }
 
 async function setPanel(page, name, open) {

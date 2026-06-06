@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
 import { ListTree, LoaderCircle, Play, RotateCcw, Send } from "lucide-react"
 
 import { DraggablePanel } from "@/components/studio-sidebar"
@@ -74,6 +74,7 @@ export function CommandPanel({
   const [choiceKey, setChoiceKey] = useState("")
   const [mode, setMode] = useState<"preview" | "test">("test")
   const [payloadValues, setPayloadValues] = useState<Record<string, string>>({})
+  const previousInputs = useRef<CommandInputField[]>([])
   const [validationError, setValidationError] = useState<string>()
   const [idempotencyKey, setIdempotencyKey] = useState(createIdempotencyKey)
   const [commandInputs, setCommandInputs] = useState<{
@@ -114,17 +115,27 @@ export function CommandPanel({
     void getCommandInputs(inputsHrefTemplate)
       .then((document) => {
         if (!active) return
+        const previous = previousInputs.current
+        previousInputs.current = document.fields
         setCommandInputs({ key: requestKey, fields: document.fields })
+        setInputsError(undefined)
         setPayloadValues((current) =>
-          createPayloadDefaults(selectedFields ?? [], document.fields, current)
+          refreshPayloadValues(
+            selectedFields ?? [],
+            document.fields,
+            current,
+            previous
+          )
         )
       })
       .catch((error) => {
         if (!active) return
-        setCommandInputs(undefined)
-        setPayloadValues((current) =>
-          createPayloadDefaults(selectedFields ?? [], [], current)
-        )
+        const fields = previousInputs.current
+        setCommandInputs({ key: requestKey, fields })
+        setPayloadValues((current) => ({
+          ...createPayloadDefaults(selectedFields ?? [], fields),
+          ...current,
+        }))
         setInputsError({
           key: requestKey,
           message:
@@ -265,10 +276,13 @@ export function CommandPanel({
                 const nextKey = event.target.value
                 const next = choices.find((choice) => choice.key === nextKey)
                 setChoiceKey(nextKey)
+                previousInputs.current = []
                 setCommandInputs(undefined)
                 setInputsError(undefined)
                 setPayloadValues(
-                  createPayloadDefaults(next?.version.fields ?? [])
+                  next?.version.testInputsHrefTemplate
+                    ? {}
+                    : createPayloadDefaults(next?.version.fields ?? [])
                 )
                 markEdited()
               }}
@@ -426,7 +440,8 @@ function PayloadField({
     !selectionInput &&
     !(descriptor.kind === "scalar" && scalarType(descriptor) === "bool")
   const noValue = value === NO_VALUE
-  const controlValue = noValue ? undefined : value
+  const unavailable = value === UNAVAILABLE_VALUE
+  const controlValue = noValue || unavailable ? undefined : value
   const simpleList = descriptor.kind === "list" && isSimpleList(descriptor)
   const emptyList = value === EMPTY_LIST
   const selectedOption = controlValue?.startsWith("option:")
@@ -485,7 +500,7 @@ function PayloadField({
         <div className="command-list-field">
           <textarea
             aria-label={`Payload ${label}`}
-            value={emptyList || noValue ? "" : (value ?? "")}
+            value={emptyList || noValue || unavailable ? "" : (value ?? "")}
             disabled={disabled || emptyList || noValue}
             rows={3}
             spellCheck={false}
@@ -525,6 +540,11 @@ function PayloadField({
       )}
       {selectedOption?.description && (
         <small>{selectedOption.description}</small>
+      )}
+      {unavailable && (
+        <small className="command-input-error">
+          Previous selection is no longer available. Choose or enter a value.
+        </small>
       )}
       {simpleList && <small>Enter one item per line.</small>}
       {!identifier &&
@@ -600,6 +620,9 @@ function encodeField(
   input?: CommandInputField,
   fieldName?: string
 ): string {
+  if (value === UNAVAILABLE_VALUE) {
+    throw new Error(`${label} is no longer available; choose or enter a value`)
+  }
   if (input) {
     if (value === "null" && isOptional(descriptor)) return "null"
     if (!value?.startsWith("option:")) throw new Error(`${label} is required`)
@@ -666,6 +689,7 @@ function encodeField(
 
 const EMPTY_LIST = "\u0001"
 const NO_VALUE = "\u0002"
+const UNAVAILABLE_VALUE = "\u0003"
 
 function validatedJson(
   value: string,
@@ -732,8 +756,7 @@ function isNumeric(value: CatalogFieldValue): boolean {
 
 function createPayloadDefaults(
   fields: CatalogCommandField[],
-  inputs: CommandInputField[] = [],
-  current: Record<string, string> = {}
+  inputs: CommandInputField[] = []
 ): Record<string, string> {
   const inputsByName = new Map(inputs.map((input) => [input.name, input]))
   return Object.fromEntries(
@@ -747,15 +770,48 @@ function createPayloadDefaults(
         return [
           [
             field.name,
-            typeof advertised === "string"
-              ? advertised
-              : (current[field.name] ?? crypto.randomUUID()),
+            typeof advertised === "string" ? advertised : crypto.randomUUID(),
           ],
         ]
       }
       return input && input.options.length > 0 ? [[field.name, "option:0"]] : []
     })
   )
+}
+
+function refreshPayloadValues(
+  fields: CatalogCommandField[],
+  inputs: CommandInputField[],
+  current: Record<string, string>,
+  previousInputs: CommandInputField[]
+): Record<string, string> {
+  const next = createPayloadDefaults(fields, inputs)
+  for (const field of fields) {
+    const value = current[field.name]
+    if (value === undefined) continue
+    next[field.name] = value
+    const previous = fieldInput(
+      field,
+      previousInputs.find((input) => input.name === field.name)
+    )
+    if (!previous || !value.startsWith("option:")) continue
+
+    // Option indexes can move after a Test operation or an explicit refresh.
+    // Preserve the exact wire value, including integers beyond JS precision.
+    const option = previous.options[Number(value.slice(7))]
+    const input = fieldInput(
+      field,
+      inputs.find((input) => input.name === field.name)
+    )
+    const encoded = option && (option.valueJson ?? JSON.stringify(option.value))
+    const index = input?.options.findIndex(
+      (candidate) =>
+        (candidate.valueJson ?? JSON.stringify(candidate.value)) === encoded
+    )
+    next[field.name] =
+      index !== undefined && index >= 0 ? `option:${index}` : UNAVAILABLE_VALUE
+  }
+  return next
 }
 
 function fieldInput(

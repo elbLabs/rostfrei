@@ -44,6 +44,7 @@ import type {
   TestReport,
   TracerCatalog,
   CommandExecutionResult,
+  OperationMessageSeries,
 } from "@/lib/types"
 
 const STORED_RUNS_KEY = "rostfrei-tracer-studio-runs-v1"
@@ -77,6 +78,8 @@ function App() {
   const [error, setError] = useState<string>()
   const [catalog, setCatalog] = useState<TracerCatalog>()
   const [commandResult, setCommandResult] = useState<CommandExecutionResult>()
+  const [commandCapture, setCommandCapture] =
+    useState<OperationMessageSeries["capture"]>()
   const [commandError, setCommandError] = useState<string>()
   const [activeCommandLabel, setActiveCommandLabel] = useState<string>()
   const [testStateRevision, setTestStateRevision] = useState(0)
@@ -166,6 +169,7 @@ function App() {
     const selectionRevision = ++viewRevision.current
     setActiveCommandLabel(undefined)
     setCommandResult(undefined)
+    setCommandCapture(undefined)
     setCommandError(undefined)
     setSelectedTestId(test.id)
     setSelectedRunId(undefined)
@@ -205,6 +209,7 @@ function App() {
     ++viewRevision.current
     setActiveCommandLabel(undefined)
     setCommandResult(undefined)
+    setCommandCapture(undefined)
     setCommandError(undefined)
     setRunning(true)
     setError(undefined)
@@ -273,6 +278,7 @@ function App() {
     ++viewRevision.current
     setActiveCommandLabel(undefined)
     setCommandResult(undefined)
+    setCommandCapture(undefined)
     setCommandError(undefined)
     setSelectedRunId(run.runId)
     setSelectedTestId(run.testId)
@@ -290,6 +296,7 @@ function App() {
     setError(undefined)
     setCommandError(undefined)
     setCommandResult(undefined)
+    setCommandCapture(undefined)
     setSelectedRunId(undefined)
     setActiveCommandLabel(
       `${request.commandLabel} · ${request.mode === "test" ? "Test" : "Preview"}`
@@ -319,6 +326,7 @@ function App() {
         execution.operation.status === "completed" ||
         execution.operation.status === "failed"
       setCommandResult(execution)
+      setCommandCapture(execution.series?.capture)
       if (execution.series) {
         setNodes(operationGraph(execution.operation, execution.series))
       } else {
@@ -447,13 +455,17 @@ function App() {
             <span>{nodes.length} messages</span>
             <span className="text-white/38">/</span>
             <span>
-              {nodes.some(
-                (node) => !node.context && node.edgeFidelity === "grouped"
-              )
-                ? "grouped where causation is absent"
-                : nodes.some((node) => node.edgeRelationship === "stream-order")
-                  ? "stream order + exact causality"
-                  : "exact causality"}
+              {commandCapture
+                ? `${commandCapture.fidelity === "exact" ? "exact causality" : "grouped capture"}${commandCapture.settled ? "" : " / partial"}`
+                : nodes.some(
+                      (node) => !node.context && node.edgeFidelity === "grouped"
+                    )
+                  ? "grouped where causation is absent"
+                  : nodes.some(
+                        (node) => node.edgeRelationship === "stream-order"
+                      )
+                    ? "stream order + exact causality"
+                    : "exact causality"}
             </span>
           </div>
 
