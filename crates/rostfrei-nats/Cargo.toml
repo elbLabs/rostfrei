@@ -22,6 +22,7 @@ rostfrei-fixtures.workspace = true
 rostfrei-messaging-core.workspace = true
 
 [dev-dependencies]
+nkeys.workspace = true
 tempfile.workspace = true
 rostfrei.workspace = true
 rostfrei-testing.workspace = true

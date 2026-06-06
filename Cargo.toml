@@ -39,13 +39,14 @@ rostfrei-testing = { path = "crates/rostfrei-testing", version = "0.0.4-alpha" }
 rostfrei-tracer = { path = "crates/rostfrei-tracer", version = "0.0.4-alpha" }
 zs-registry = { package = "rostfrei-registry", path = "crates/rostfrei-registry", version = "0.0.4-alpha" }
 
-async-nats = { version = "=0.50.0", default-features = false, features = ["jetstream", "ring", "server_2_10", "server_2_11", "server_2_12", "server_2_14"] }
+async-nats = { version = "=0.50.0", default-features = false, features = ["jetstream", "nkeys", "ring", "server_2_10", "server_2_11", "server_2_12", "server_2_14"] }
 async-trait = "0.1"
 axum = "0.8"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
 heck = "0.5"
+nkeys = "0.4"
 proc-macro2 = "1"
 quote = "1"
 schemars = "1.2"
