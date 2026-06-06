@@ -1,4 +1,5 @@
 mod aggregate;
+mod append_session;
 mod domain_event;
 mod envelope;
 mod executor;
@@ -10,6 +11,7 @@ pub use aggregate::{
     Aggregate, AggregateInstance, Event, EventCodec, EventCodecError, EventCodecErrorKind,
     EventVariant, JsonEventCodec,
 };
+pub use append_session::AppendSession;
 pub use domain_event::{
     CommittedDomainEvent, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
     DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError,
