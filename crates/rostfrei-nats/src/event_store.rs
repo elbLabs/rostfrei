@@ -890,6 +890,17 @@ impl StreamDirectory for NatsEventStore {
             if decoded.recorded.stream_id().aggregate_type() == aggregate_type {
                 let stream_id = decoded.recorded.stream_id().clone();
                 let (history, last_sequence) = histories.entry(stream_id).or_default();
+                if decoded.event_ordinal == 0 {
+                    // A new commit must follow this aggregate's preceding event,
+                    // not a receipt, guard, or another aggregate's sequence.
+                    validate_aggregate_sequence_expectation(
+                        optional_single_header(
+                            &message.headers,
+                            "Nats-Expected-Last-Subject-Sequence",
+                        )?,
+                        Some(*last_sequence),
+                    )?;
+                }
                 let is_transactional = decoded.is_transactional;
                 history.push(DecodedStoredEvent {
                     decoded,
@@ -2349,15 +2360,7 @@ fn validate_atomic_headers(
         if transaction_event_ordinal != 0 && expected_stream.is_some() {
             return Err(corrupt("stored transaction repeats its expected stream"));
         }
-        let sequence = expected_sequence
-            .ok_or_else(|| corrupt("stored commit has no aggregate sequence expectation"))?
-            .parse::<u64>()
-            .map_err(|_| corrupt("stored commit has an invalid aggregate sequence expectation"))?;
-        if expected_last_subject_sequence.is_some_and(|expected| sequence != expected) {
-            return Err(corrupt(
-                "stored commit has an incompatible aggregate sequence expectation",
-            ));
-        }
+        validate_aggregate_sequence_expectation(expected_sequence, expected_last_subject_sequence)?;
     } else if expected_stream.is_some() || expected_sequence.is_some() {
         return Err(corrupt(
             "stored commit repeats its aggregate sequence expectation",
@@ -2381,6 +2384,22 @@ fn validate_atomic_headers(
         return Err(corrupt("stored commit was finalized before its last event"));
     }
     Ok(batch_id.to_owned())
+}
+
+fn validate_aggregate_sequence_expectation(
+    stored_sequence: Option<&str>,
+    expected_sequence: Option<u64>,
+) -> Result<(), EventStoreError> {
+    let sequence = stored_sequence
+        .ok_or_else(|| corrupt("stored commit has no aggregate sequence expectation"))?
+        .parse::<u64>()
+        .map_err(|_| corrupt("stored commit has an invalid aggregate sequence expectation"))?;
+    if expected_sequence.is_some_and(|expected| sequence != expected) {
+        return Err(corrupt(
+            "stored commit has an incompatible aggregate sequence expectation",
+        ));
+    }
+    Ok(())
 }
 
 fn required_single_header<'a>(
