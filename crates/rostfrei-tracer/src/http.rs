@@ -12,16 +12,20 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::stream;
+use rostfrei_messaging_core::{
+    DEFAULT_QUARANTINE_PAGE_SIZE, QuarantineFilter, QuarantineMessageKind, QuarantineQuery,
+    QuarantineReadError,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
     CommandInputError, CorrelationError, DiscoveryError, MAX_COMMAND_PAYLOAD_LEN,
-    MessageSeriesCaptureError, OperationMode, OperationSnapshot, SimulationRequest,
-    SubmissionError, TestDefinition, TestDefinitionError, TestDefinitionValidationError,
-    TestRepositoryError, TestRunError, TestScenarioResetError, TestTimeout, Tracer,
-    behavioral_test_schema,
+    MessageSeriesCaptureError, OperationMode, OperationSnapshot, QuarantineInspectionError,
+    QuarantineScope, SimulationRequest, SubmissionError, TestDefinition, TestDefinitionError,
+    TestDefinitionValidationError, TestRepositoryError, TestRunError, TestScenarioResetError,
+    TestTimeout, Tracer, behavioral_test_schema,
 };
 
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
@@ -91,6 +95,11 @@ struct CommandSubmissionResponse {
 pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
     let control_routes = Router::new()
         .route("/catalog", get(get_catalog))
+        .route("/quarantine/test", get(get_test_quarantine))
+        .route(
+            "/quarantine/test/{record_id}",
+            get(get_test_quarantine_record),
+        )
         .route(
             "/contexts/{context}/aggregates/{aggregate}/instances",
             get(get_aggregate_instances),
@@ -185,6 +194,95 @@ async fn get_tests(State(state): State<HttpState>) -> Response {
         Ok(definitions) => private_no_store(Json(definitions).into_response()),
         Err(error) => test_repository_error_response(&error),
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QuarantineHttpQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+    kind: Option<QuarantineMessageKind>,
+    context: Option<String>,
+    name: Option<String>,
+}
+
+async fn get_test_quarantine(
+    State(state): State<HttpState>,
+    query: Result<Query<QuarantineHttpQuery>, QueryRejection>,
+) -> Response {
+    get_quarantine(&state.tracer, QuarantineScope::Test, query).await
+}
+
+async fn get_quarantine(
+    tracer: &Tracer,
+    scope: QuarantineScope,
+    query: Result<Query<QuarantineHttpQuery>, QueryRejection>,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return bad_request("invalid quarantine query");
+    };
+    let query = QuarantineQuery {
+        limit: query.limit.unwrap_or(DEFAULT_QUARANTINE_PAGE_SIZE),
+        cursor: query.cursor,
+        filter: QuarantineFilter {
+            kind: query.kind,
+            context: query.context,
+            name: query.name,
+        },
+    };
+    match tracer.quarantine_messages(scope, query).await {
+        Ok(collection) => Json(collection).into_response(),
+        Err(error) => quarantine_error_response(error),
+    }
+}
+
+async fn get_test_quarantine_record(
+    State(state): State<HttpState>,
+    Path(record_id): Path<String>,
+) -> Response {
+    match state
+        .tracer
+        .quarantine_message(QuarantineScope::Test, &record_id)
+        .await
+    {
+        Ok(record) => Json(record).into_response(),
+        Err(error) => quarantine_error_response(error),
+    }
+}
+
+fn quarantine_error_response(error: QuarantineInspectionError) -> Response {
+    let (status, code) = match &error {
+        QuarantineInspectionError::NotConfigured => {
+            (StatusCode::SERVICE_UNAVAILABLE, "quarantine-not-configured")
+        }
+        QuarantineInspectionError::CapacityExhausted => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "quarantine-capacity-exhausted",
+        ),
+        QuarantineInspectionError::Read(error) => match error {
+            QuarantineReadError::InvalidQuery => {
+                (StatusCode::BAD_REQUEST, "invalid-quarantine-query")
+            }
+            QuarantineReadError::InvalidCursor => {
+                (StatusCode::BAD_REQUEST, "invalid-quarantine-cursor")
+            }
+            QuarantineReadError::InvalidId => (StatusCode::BAD_REQUEST, "invalid-quarantine-id"),
+            QuarantineReadError::StaleGeneration => (StatusCode::GONE, "quarantine-reset"),
+            QuarantineReadError::NotFound => (StatusCode::NOT_FOUND, "quarantine-not-found"),
+            QuarantineReadError::Timeout => (StatusCode::GATEWAY_TIMEOUT, "quarantine-timeout"),
+            QuarantineReadError::Unavailable | QuarantineReadError::InvalidTopology => {
+                (StatusCode::SERVICE_UNAVAILABLE, "quarantine-unavailable")
+            }
+        },
+    };
+    (
+        status,
+        Json(ErrorBody {
+            code,
+            message: error.to_string(),
+        }),
+    )
+        .into_response()
 }
 
 async fn get_test_fixtures(State(state): State<HttpState>) -> Response {

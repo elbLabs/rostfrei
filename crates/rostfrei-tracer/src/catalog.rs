@@ -17,6 +17,22 @@ pub struct TracerCatalog {
     pub test_scenario: Option<CatalogTestScenario>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_repository: Option<CatalogTestRepository>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quarantine: Option<CatalogQuarantine>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogQuarantine {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test: Option<CatalogQuarantineScope>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogQuarantineScope {
+    pub application: String,
+    pub list_href: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -223,6 +239,7 @@ pub fn build_catalog<'a>(
 
     TracerCatalog {
         catalog_version: CATALOG_VERSION,
+        quarantine: None,
         contexts: contexts
             .into_iter()
             .map(|(id, context)| CatalogContext {
@@ -287,7 +304,7 @@ pub fn test_fixture_href(fixture_id: &str) -> String {
     )
 }
 
-fn encode_path_segment(value: &str) -> String {
+pub fn encode_path_segment(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
