@@ -23,8 +23,9 @@ use event_store_config::{
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventStore,
     EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion, MAX_EVENTS_PER_BATCH,
-    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
-    TransactionAppendOutcome, TransactionParticipant, derive_commit_id, derive_event_id,
+    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent, StreamDirectory, StreamId,
+    StreamSummary, StreamVersion, TransactionAppendOutcome, TransactionParticipant,
+    derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
 use rostfrei_testing::event_store_contract;
@@ -61,14 +62,531 @@ fn check(condition: bool, context: &'static str) -> TestResult<()> {
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+async fn directory_fixture(
+    label: &str,
+) -> TestResult<(async_nats::jetstream::Context, NatsEventStore)> {
+    let context = connect_context(&rostfrei_testing::integration::nats_url()?).await?;
+    let (bounded_context, stream_name) = unique_names(label)?;
+    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
+        .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
+    provision_event_store(&context, &config).await?;
+    let store = NatsEventStore::connect(context.clone(), config).await?;
+    Ok((context, store))
+}
+
+async fn append_directory_transaction(store: &NatsEventStore, operation: &str) -> TestResult<()> {
+    let primary = stream("directory-primary")?;
+    let secondary = StreamId::new(
+        AggregateType::new("OtherAggregate")?,
+        AggregateId::new("secondary")?,
+    );
+    let guard = stream("directory-guard")?;
+    store
+        .append_transaction(EventTransaction::new(
+            OperationId::new(operation)?,
+            ContentFingerprint::digest(operation),
+            vec![
+                TransactionParticipant::new(
+                    primary.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(&primary, operation, operation, &[b"one", b"two"])?),
+                ),
+                TransactionParticipant::new(
+                    secondary.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(&secondary, operation, operation, &[b"three"])?),
+                ),
+                TransactionParticipant::new(guard, ExpectedVersion::NoStream, None),
+            ],
+        ))
+        .await?;
+    Ok(())
+}
+
 #[tokio::test]
-#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
+async fn directory_handles_empty_control_only_and_transaction_histories() {
+    let (context, store) = directory_fixture("directory-controls")
+        .await
+        .expect("directory fixture");
+    let aggregate = stream("directory-primary").expect("aggregate identity");
+    let config = store.config();
+    assert!(
+        store
+            .list_streams(aggregate.aggregate_type())
+            .await
+            .expect("empty directory")
+            .is_empty()
+    );
+
+    for subject in [
+        config.transaction_subject("control-only"),
+        config.transaction_guard_subject("control-only", 0),
+    ] {
+        context
+            .publish(subject, br"{}".to_vec().into())
+            .await
+            .expect("publish control")
+            .await
+            .expect("control acknowledgement");
+        assert!(
+            store
+                .list_streams(aggregate.aggregate_type())
+                .await
+                .expect("control-only directory")
+                .is_empty()
+        );
+    }
+    append_directory_transaction(&store, "directory-transaction")
+        .await
+        .expect("transaction");
+    assert_eq!(
+        store
+            .list_streams(aggregate.aggregate_type())
+            .await
+            .expect("trailing receipt directory"),
+        vec![StreamSummary::new(aggregate.clone(), StreamVersion::new(2))]
+    );
+    let other = StreamId::new(
+        AggregateType::new("OtherAggregate").expect("other type"),
+        AggregateId::new("secondary").expect("other id"),
+    );
+    assert_eq!(
+        store
+            .list_streams(other.aggregate_type())
+            .await
+            .expect("other aggregate directory"),
+        vec![StreamSummary::new(other.clone(), StreamVersion::new(1))]
+    );
+    assert!(
+        store
+            .list_streams(&AggregateType::new("AbsentAggregate").expect("absent type"))
+            .await
+            .expect("absent aggregate directory")
+            .is_empty()
+    );
+    context
+        .publish(
+            config.transaction_guard_subject("trailing-guard", 0),
+            br"{}".to_vec().into(),
+        )
+        .await
+        .expect("publish trailing guard")
+        .await
+        .expect("guard acknowledgement");
+    assert_eq!(
+        store
+            .list_streams(aggregate.aggregate_type())
+            .await
+            .expect("trailing guard directory"),
+        vec![StreamSummary::new(aggregate, StreamVersion::new(2))]
+    );
+    context
+        .delete_stream(config.stream_name())
+        .await
+        .expect("cleanup directory stream");
+}
+
+#[tokio::test]
+async fn directory_excludes_appends_after_its_snapshot() {
+    let (context, store) = directory_fixture("directory-concurrent")
+        .await
+        .expect("directory fixture");
+    append_directory_transaction(&store, "before-snapshot")
+        .await
+        .expect("initial transaction");
+    let reached = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let directory = store
+        .clone()
+        .with_directory_snapshot_barriers(Arc::clone(&reached), Arc::clone(&release));
+    let primary = stream("directory-primary").expect("primary identity");
+    let later = stream("directory-later").expect("later identity");
+    let listing = directory.list_streams(primary.aggregate_type());
+    let append = async {
+        let _ = reached.wait().await;
+        store
+            .append(
+                &primary,
+                ExpectedVersion::Exact(StreamVersion::new(2)),
+                batch(&primary, "after-snapshot", "after-snapshot", &[b"later"])
+                    .expect("later batch"),
+            )
+            .await
+            .expect("concurrent append");
+        store
+            .append(
+                &later,
+                ExpectedVersion::NoStream,
+                batch(&later, "new-aggregate", "new-aggregate", &[b"new"]).expect("new batch"),
+            )
+            .await
+            .expect("new aggregate append");
+        let _ = release.wait().await;
+    };
+    let (snapshot, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(listing, append)
+    })
+    .await
+    .expect("bounded concurrent discovery");
+    assert_eq!(
+        snapshot.expect("snapshot directory"),
+        vec![StreamSummary::new(primary.clone(), StreamVersion::new(2))]
+    );
+    let mut expected = vec![
+        StreamSummary::new(primary, StreamVersion::new(3)),
+        StreamSummary::new(later, StreamVersion::new(1)),
+    ];
+    expected.sort_by(|left, right| left.stream_id().cmp(right.stream_id()));
+    assert_eq!(
+        store
+            .list_streams(&AggregateType::new("IntegrationAggregate").expect("aggregate type"))
+            .await
+            .expect("next directory"),
+        expected
+    );
+    context
+        .delete_stream(store.config().stream_name())
+        .await
+        .expect("cleanup directory stream");
+}
+
+#[tokio::test]
+async fn directory_rejects_transaction_events_without_a_valid_receipt() {
+    let (context, store) = directory_fixture("directory-corrupt")
+        .await
+        .expect("directory fixture");
+    schema_four_event_with_filler_is_not_loadable(&store, &context, store.config())
+        .await
+        .expect("corrupt receipt fixture");
+    let result = store
+        .list_streams(&AggregateType::new("IntegrationAggregate").expect("aggregate type"))
+        .await;
+    let error = result.expect_err("directory must validate transaction provenance");
+    assert_eq!(error.kind(), EventStoreErrorKind::CorruptHistory);
+    assert!(
+        error.message().contains("transaction receipt"),
+        "{}",
+        error.message()
+    );
+    context
+        .delete_stream(store.config().stream_name())
+        .await
+        .expect("cleanup directory stream");
+}
+
+#[tokio::test]
+async fn directory_and_load_reject_incompatible_aggregate_sequence_expectations() {
+    for schema_version in [3, 4] {
+        for base_version in [0, 2] {
+            let (context, store) = directory_fixture("directory-sequence-expectation")
+                .await
+                .expect("directory fixture");
+            let aggregate = stream("sequence-expectation").expect("aggregate identity");
+            if base_version != 0 {
+                store
+                    .append(
+                        &aggregate,
+                        ExpectedVersion::NoStream,
+                        batch(
+                            &aggregate,
+                            "previous-commit",
+                            "previous-commit",
+                            &[b"one", b"two"],
+                        )
+                        .expect("previous multi-event commit"),
+                    )
+                    .await
+                    .expect("append valid history");
+                assert_eq!(
+                    store
+                        .list_streams(aggregate.aggregate_type())
+                        .await
+                        .expect("valid directory"),
+                    vec![StreamSummary::new(
+                        aggregate.clone(),
+                        StreamVersion::new(base_version)
+                    )]
+                );
+            }
+            publish_commit_with_wrong_sequence_expectation(
+                &context,
+                store.config(),
+                &aggregate,
+                base_version,
+                schema_version,
+            )
+            .await
+            .expect("publish checksummed history with a wrong sequence expectation");
+
+            let load_error = store
+                .load(&aggregate)
+                .await
+                .expect_err("load rejects the wrong predecessor");
+            assert_eq!(load_error.kind(), EventStoreErrorKind::CorruptHistory);
+            assert_eq!(
+                load_error.message(),
+                "stored commit has an incompatible aggregate sequence expectation"
+            );
+            let directory_error = store
+                .list_streams(aggregate.aggregate_type())
+                .await
+                .expect_err("directory must reject the same inconsistent history");
+            assert_eq!(directory_error, load_error);
+            if schema_version == 4 {
+                let receipt_error = store
+                    .load_transaction_receipt(
+                        &OperationId::new("wrong-predecessor").expect("operation identity"),
+                    )
+                    .await
+                    .expect_err("receipt loading rejects the wrong predecessor");
+                assert_eq!(receipt_error, load_error);
+            }
+            context
+                .delete_stream(store.config().stream_name())
+                .await
+                .expect("cleanup directory stream");
+        }
+    }
+}
+
+async fn publish_commit_with_wrong_sequence_expectation(
+    context: &async_nats::jetstream::Context,
+    config: &NatsEventStoreConfig,
+    aggregate: &StreamId,
+    base_version: u64,
+    schema_version: u16,
+) -> TestResult<()> {
+    let control_subject = config.transaction_guard_subject("unrelated-predecessor", 0);
+    let control = context
+        .publish(control_subject.clone(), br"{}".to_vec().into())
+        .await?
+        .await?;
+    let operation = "wrong-predecessor";
+    let event_batch = batch(aggregate, operation, operation, &[b"must-not-load"])?;
+    let mut messages = vec![RawAtomicMessage {
+        subject: config.aggregate_subject(
+            aggregate.aggregate_type().as_str(),
+            aggregate.aggregate_id().as_str(),
+        ),
+        payload: forged_event_payload_at(
+            config,
+            aggregate,
+            &event_batch,
+            checked_add_u64(base_version, 1, "forged stream version")?,
+            1,
+            schema_version,
+        )?,
+        // NATS accepts this expectation against the unrelated control subject;
+        // Rostfrei must reject it as the predecessor of this aggregate's commit.
+        expected_last_subject_sequence: Some(control.sequence),
+        expectation_subject: Some(control_subject),
+    }];
+    if schema_version == 4 {
+        let receipt = ForgedReceiptContent {
+            event_store_stream: config.stream_name(),
+            application: config.application().as_str(),
+            bounded_context: config.bounded_context().as_str(),
+            operation_id: operation,
+            operation_fingerprint: event_batch.operation_fingerprint().to_hex(),
+            correlation_id: None,
+            causation_id: None,
+            participants: vec![ForgedReceiptParticipant {
+                stream: ForgedStreamIdentity {
+                    aggregate_type: aggregate.aggregate_type().as_str(),
+                    aggregate_id: aggregate.aggregate_id().as_str(),
+                },
+                base_stream_version: base_version,
+                commit_id: Some(event_batch.commit_id().as_str()),
+                event_count: 1,
+            }],
+        };
+        messages.push(RawAtomicMessage {
+            subject: config.transaction_subject(operation),
+            payload: forged_receipt_payload(&receipt)?,
+            expected_last_subject_sequence: Some(0),
+            expectation_subject: None,
+        });
+    }
+    publish_raw_atomic_batch(context, config, "wrong-predecessor-batch", messages).await
+}
+
+#[tokio::test]
+async fn directory_rejects_version_gaps_and_incomplete_commits() {
+    for (label, version, count, reason) in [
+        ("directory-gap", 2, 1, "noncontiguous"),
+        ("directory-incomplete", 1, 2, "inside a commit"),
+    ] {
+        let (context, store) = directory_fixture(label).await.expect("directory fixture");
+        let aggregate = stream("corrupt-aggregate").expect("aggregate identity");
+        let event_batch = batch(&aggregate, label, label, &[b"corrupt"]).expect("event batch");
+        let config = store.config();
+        publish_raw_atomic_batch(
+            &context,
+            config,
+            label,
+            vec![
+                RawAtomicMessage {
+                    subject: config.aggregate_subject(
+                        aggregate.aggregate_type().as_str(),
+                        aggregate.aggregate_id().as_str(),
+                    ),
+                    payload: forged_transaction_event_payload_at(
+                        config,
+                        &aggregate,
+                        &event_batch,
+                        version,
+                        count,
+                    )
+                    .expect("corrupt coordinates"),
+                    expected_last_subject_sequence: Some(0),
+                    expectation_subject: None,
+                },
+                RawAtomicMessage {
+                    subject: config.transaction_guard_subject(label, 0),
+                    payload: br"{}".to_vec(),
+                    expected_last_subject_sequence: None,
+                    expectation_subject: None,
+                },
+            ],
+        )
+        .await
+        .expect("publish corrupt batch");
+        let error = store
+            .list_streams(aggregate.aggregate_type())
+            .await
+            .expect_err("corrupt history must not be listed");
+        assert_eq!(error.kind(), EventStoreErrorKind::CorruptHistory);
+        assert!(error.message().contains(reason), "{}", error.message());
+        context
+            .delete_stream(config.stream_name())
+            .await
+            .expect("cleanup directory stream");
+    }
+}
+
+#[tokio::test]
+async fn directory_control_only_snapshot_excludes_a_concurrent_transaction() {
+    let (context, store) = directory_fixture("directory-control-race")
+        .await
+        .expect("directory fixture");
+    context
+        .publish(
+            store.config().transaction_guard_subject("control", 0),
+            br"{}".to_vec().into(),
+        )
+        .await
+        .expect("publish control")
+        .await
+        .expect("control acknowledgement");
+    let reached = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let directory = store
+        .clone()
+        .with_directory_snapshot_barriers(Arc::clone(&reached), Arc::clone(&release));
+    let aggregate_type = AggregateType::new("IntegrationAggregate").expect("aggregate type");
+    let listing = directory.list_streams(&aggregate_type);
+    let append = async {
+        let _ = reached.wait().await;
+        append_directory_transaction(&store, "after-control-snapshot")
+            .await
+            .expect("concurrent transaction");
+        let _ = release.wait().await;
+    };
+    let (snapshot, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(listing, append)
+    })
+    .await
+    .expect("bounded concurrent discovery");
+    assert!(snapshot.expect("control-only snapshot").is_empty());
+    assert_eq!(
+        store
+            .list_streams(&aggregate_type)
+            .await
+            .expect("new snapshot")
+            .len(),
+        1
+    );
+    context
+        .delete_stream(store.config().stream_name())
+        .await
+        .expect("cleanup directory stream");
+}
+
+#[tokio::test]
+async fn directory_snapshot_excludes_later_malformed_participant_history() {
+    let primary = stream("directory-primary").expect("primary identity");
+    let secondary = StreamId::new(
+        AggregateType::new("OtherAggregate").expect("other aggregate type"),
+        AggregateId::new("secondary").expect("secondary identity"),
+    );
+    let guard = stream("directory-guard").expect("guard identity");
+    for (label, participant) in [
+        ("snapshot-cached-writer", primary.clone()),
+        ("snapshot-other-writer", secondary),
+        ("snapshot-empty-guard", guard),
+    ] {
+        let (context, store) = directory_fixture(label).await.expect("snapshot fixture");
+        append_directory_transaction(&store, label)
+            .await
+            .expect("valid transaction before the snapshot");
+        let reached = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let directory = store
+            .clone()
+            .with_directory_snapshot_barriers(Arc::clone(&reached), Arc::clone(&release));
+        let listing = directory.list_streams(primary.aggregate_type());
+        let append = async {
+            let _ = reached.wait().await;
+            context
+                .publish(
+                    store.config().aggregate_subject(
+                        participant.aggregate_type().as_str(),
+                        participant.aggregate_id().as_str(),
+                    ),
+                    b"malformed post-snapshot event".to_vec().into(),
+                )
+                .await
+                .expect("publish post-snapshot bytes")
+                .await
+                .expect("post-snapshot acknowledgement");
+            let _ = release.wait().await;
+        };
+        let (snapshot, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(listing, append)
+        })
+        .await
+        .expect("bounded snapshot race");
+        let latest_history = store.load(&participant).await;
+        let latest_directory = store.list_streams(primary.aggregate_type()).await;
+        context
+            .delete_stream(store.config().stream_name())
+            .await
+            .expect("cleanup snapshot stream");
+
+        assert_eq!(
+            snapshot.expect("later bytes must not affect the captured snapshot"),
+            vec![StreamSummary::new(primary.clone(), StreamVersion::new(2))],
+            "{label}"
+        );
+        assert_eq!(
+            latest_history
+                .expect_err("current history remains corrupt")
+                .kind(),
+            EventStoreErrorKind::CorruptHistory
+        );
+        assert_eq!(
+            latest_directory
+                .expect_err("the next snapshot includes the bad bytes")
+                .kind(),
+            EventStoreErrorKind::CorruptHistory
+        );
+    }
+}
+
+#[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn real_nats_event_store_contract_and_operator_policy() {
-    let Ok(url) = std::env::var("ROSTFREI_NATS_URL") else {
-        eprintln!("ROSTFREI_NATS_URL is not set; skipping real NATS integration test");
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let context = connect_context(&url)
         .await
         .expect("real NATS JetStream context");
@@ -1809,8 +2327,10 @@ struct ForgedStoredEventContent<'a> {
     causation_id: Option<&'a str>,
     commit_event_ordinal: u32,
     commit_event_count: u32,
-    transaction_event_ordinal: u32,
-    transaction_event_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transaction_event_ordinal: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transaction_event_count: Option<u32>,
     event_id: &'a str,
     event_type: &'a str,
     event_schema_version: u32,
@@ -1844,6 +2364,27 @@ fn forged_transaction_event_payload<'a>(
     stream_id: &'a StreamId,
     batch: &'a EventBatch,
 ) -> TestResult<Vec<u8>> {
+    forged_transaction_event_payload_at(config, stream_id, batch, 1, 1)
+}
+
+fn forged_transaction_event_payload_at<'a>(
+    config: &'a NatsEventStoreConfig,
+    stream_id: &'a StreamId,
+    batch: &'a EventBatch,
+    stream_version: u64,
+    event_count: u32,
+) -> TestResult<Vec<u8>> {
+    forged_event_payload_at(config, stream_id, batch, stream_version, event_count, 4)
+}
+
+fn forged_event_payload_at<'a>(
+    config: &'a NatsEventStoreConfig,
+    stream_id: &'a StreamId,
+    batch: &'a EventBatch,
+    stream_version: u64,
+    event_count: u32,
+    schema_version: u16,
+) -> TestResult<Vec<u8>> {
     let event = batch
         .events()
         .first()
@@ -1856,7 +2397,7 @@ fn forged_transaction_event_payload<'a>(
             aggregate_type: stream_id.aggregate_type().as_str(),
             aggregate_id: stream_id.aggregate_id().as_str(),
         },
-        stream_version: 1,
+        stream_version,
         commit_id: batch.commit_id().as_str(),
         operation_id: batch.operation_id().as_str(),
         operation_fingerprint: batch.operation_fingerprint().to_hex(),
@@ -1867,9 +2408,9 @@ fn forged_transaction_event_payload<'a>(
             .causation_id()
             .map(rostfrei_messaging_core::CausationId::as_str),
         commit_event_ordinal: 0,
-        commit_event_count: 1,
-        transaction_event_ordinal: 0,
-        transaction_event_count: 1,
+        commit_event_count: event_count,
+        transaction_event_ordinal: (schema_version == 4).then_some(0),
+        transaction_event_count: (schema_version == 4).then_some(event_count),
         event_id: event.event_id().as_str(),
         event_type: event.event_type(),
         event_schema_version: event.schema_version(),
@@ -1880,12 +2421,12 @@ fn forged_transaction_event_payload<'a>(
     };
     let checksum = hex::encode_lower_hex(Sha256::digest(serde_json::to_vec(
         &ForgedEventChecksumInput {
-            schema_version: 4,
+            schema_version,
             event: &content,
         },
     )?));
     Ok(serde_json::to_vec(&ForgedStoredEventWire {
-        schema_version: 4,
+        schema_version,
         checksum,
         event: &content,
     })?)

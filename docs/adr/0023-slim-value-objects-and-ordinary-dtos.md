@@ -37,14 +37,10 @@ descriptor contains its ID and label, not an inferred field or variant shape.
 The `value_objects` inventory in `domain_model!` contains semantic value objects
 only.
 
-Action inputs, query outputs, imported records, projections, and similar
+Action inputs, query outputs, external records, projections, and similar
 operation-specific shapes are ordinary Rust structs and enums:
 
 ```rust
-pub struct ImportRentalFleetInput {
-    bicycles: Vec<ImportedBicycle>,
-}
-
 pub enum BicycleAvailability {
     Available,
     Unavailable,

@@ -1,5 +1,6 @@
 [package]
 name = "bike-rental"
+publish = false
 default-run = "bike-rental-api"
 version.workspace = true
 edition = "2024"
@@ -10,22 +11,23 @@ license.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 axum.workspace = true
-rostfrei = { path = "../../crates/rostfrei" }
-rostfrei-core = { path = "../../crates/rostfrei-core" }
-rostfrei-fixtures = { path = "../../crates/rostfrei-fixtures" }
-rostfrei-tracer = { path = "../../crates/rostfrei-tracer", features = ["http"] }
-rostfrei-messaging-core = { path = "../../crates/rostfrei-messaging-core" }
-rostfrei-nats = { path = "../../crates/rostfrei-nats" }
+rostfrei.workspace = true
+rostfrei-core.workspace = true
+rostfrei-fixtures.workspace = true
+rostfrei-tracer = { workspace = true, features = ["http"] }
+rostfrei-messaging-core.workspace = true
+rostfrei-nats.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
 http-body-util = "0.1"
+rostfrei-testing.workspace = true
 tower = { version = "0.5", features = ["util"] }
+uuid.workspace = true
 
 [lints]
 workspace = true

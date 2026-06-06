@@ -1,0 +1,74 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust and real NATS
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the repository Rust toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Check workspace lints
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Check domain structure
+        run: cargo rostfrei-dev check --workspace
+      - name: Check the test runner
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Test the workspace with a disposable broker
+        run: python3 scripts/test_nats.py
+
+  studio:
+    name: Studio browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: studio
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: studio/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm build
+      - name: Test interactions without a live API fallback
+        env:
+          VITE_TRACER_API_URL: https://untrusted.invalid
+          VITE_TRACER_TOKEN: ci-fixture-token
+        run: pnpm test:ui
+      - name: Inspect desktop and mobile layouts
+        run: |
+          pnpm inspect:ui --scene all
+          pnpm inspect:ui --scene rejected --viewport 390x844
+          pnpm inspect:ui --scene long-payload --viewport 390x844
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: studio-inspection
+          path: studio/artifacts/inspect/
+          if-no-files-found: ignore

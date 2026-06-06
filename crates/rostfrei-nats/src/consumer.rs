@@ -15,7 +15,7 @@ use rostfrei_messaging_core::{
     CallerMetadata, CommandAddress, CommandResponseAddress, ConsumeError, ConsumeErrorKind,
     ConsumerConfig, CorrelationId, DeliveryDisposition, DeliveryInfo, IntegrationEventAddress,
     MessageAddress, MessageConsumer, MessageConsumerFactory, MessageDelivery, MessageHandler,
-    MessageId, PublishableAddress, TraceContext,
+    MessageId, PublishableAddress, QuarantineFailureKind, QuarantinedMessage, TraceContext,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -51,6 +51,10 @@ pub struct QuarantineRecord {
     payload_truncated: bool,
     metadata: CallerMetadata,
     trace_context: Option<TraceContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    correlation_id: Option<CorrelationId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure_kind: Option<QuarantineFailureKind>,
     reason: String,
     attempt: u32,
     pending: u64,
@@ -61,6 +65,14 @@ pub struct QuarantineRecord {
 }
 
 impl QuarantineRecord {
+    pub const fn correlation_id(&self) -> Option<&CorrelationId> {
+        self.correlation_id.as_ref()
+    }
+
+    pub const fn failure_kind(&self) -> Option<QuarantineFailureKind> {
+        self.failure_kind
+    }
+
     pub fn message_id(&self) -> &str {
         &self.message_id
     }
@@ -103,6 +115,30 @@ impl QuarantineRecord {
 
     pub const fn consumer_sequence(&self) -> u64 {
         self.consumer_sequence
+    }
+}
+
+impl From<QuarantineRecord> for QuarantinedMessage {
+    fn from(record: QuarantineRecord) -> Self {
+        Self {
+            message_id: record.message_id,
+            address: record.address,
+            payload_base64: record.payload_base64,
+            payload_size: record.payload_size,
+            payload_sha256: record.payload_sha256,
+            payload_truncated: record.payload_truncated,
+            metadata: record.metadata,
+            trace_context: record.trace_context,
+            correlation_id: record.correlation_id,
+            failure_kind: record.failure_kind,
+            reason: record.reason,
+            attempt: record.attempt,
+            pending: record.pending,
+            source_sequence: record.source_sequence,
+            consumer_sequence: record.consumer_sequence,
+            source_stream: record.source_stream,
+            source_consumer: record.source_consumer,
+        }
     }
 }
 
@@ -294,10 +330,26 @@ fn verify_consumer<A>(
 where
     A: PublishableAddress,
 {
+    verify_consumer_config(
+        &consumer.cached_info().name,
+        &consumer.cached_info().config,
+        config,
+    )
+}
+
+fn verify_consumer_config<A>(
+    name: &str,
+    actual: &consumer::Config,
+    config: &ConsumerConfig<A>,
+) -> Result<(), ConsumeError>
+where
+    A: PublishableAddress,
+{
     let expected = durable_consumer_config(config)
         .map_err(|_| ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
-    let actual = &consumer.cached_info().config;
-    if consumer.cached_info().name != config.durable_name().as_str()
+    // These settings control payload delivery, durable progress, and the pull requests
+    // and acknowledgement deadlines used by run(). Reject drift before consuming.
+    if name != config.durable_name().as_str()
         || actual.deliver_subject.is_some()
         || actual.durable_name.as_deref() != expected.durable_name.as_deref()
         || actual.deliver_policy != DeliverPolicy::All
@@ -305,7 +357,20 @@ where
         || actual.ack_wait != expected.ack_wait
         || actual.max_deliver != -1
         || actual.filter_subject != expected.filter_subject
+        || actual.filter_subjects != expected.filter_subjects
         || actual.max_ack_pending != expected.max_ack_pending
+        || actual.headers_only != expected.headers_only
+        || actual.max_batch != expected.max_batch
+        || actual.max_bytes != expected.max_bytes
+        || actual.max_expires != expected.max_expires
+        || actual.inactive_threshold != expected.inactive_threshold
+        || actual.num_replicas != expected.num_replicas
+        || actual.memory_storage != expected.memory_storage
+        || actual.backoff != expected.backoff
+        || actual.replay_policy != expected.replay_policy
+        || actual.rate_limit != expected.rate_limit
+        || actual.priority_policy != expected.priority_policy
+        || actual.priority_groups != expected.priority_groups
     {
         return Err(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration));
     }
@@ -372,6 +437,7 @@ where
             source_stream,
             config.durable_name().as_str(),
             "maximum delivery attempts exceeded",
+            QuarantineFailureKind::DeliveryAttemptsExhausted,
         );
         return quarantine_or_nak(
             context,
@@ -474,6 +540,7 @@ where
                 source_stream,
                 config.durable_name().as_str(),
                 "maximum delivery attempts exceeded",
+                QuarantineFailureKind::DeliveryAttemptsExhausted,
             );
             quarantine_or_nak(
                 &message.context,
@@ -492,6 +559,7 @@ where
                 source_stream,
                 config.durable_name().as_str(),
                 reason.as_str(),
+                QuarantineFailureKind::HandlerFailure,
             );
             quarantine_or_nak(
                 &message.context,
@@ -603,6 +671,7 @@ fn quarantine_record<A>(
     source_stream: &StreamName,
     source_consumer: &str,
     reason: &str,
+    failure_kind: QuarantineFailureKind,
 ) -> QuarantineRecord
 where
     A: PublishableAddress,
@@ -617,6 +686,8 @@ where
         payload_truncated: false,
         metadata: delivery.metadata().clone(),
         trace_context: delivery.trace_context().cloned(),
+        correlation_id: delivery.correlation_id().cloned(),
+        failure_kind: Some(failure_kind),
         reason: reason.to_owned(),
         attempt: delivery.attempt(),
         pending: delivery.pending(),
@@ -656,6 +727,10 @@ fn raw_quarantine_record(
         payload_truncated: false,
         metadata,
         trace_context,
+        correlation_id: headers
+            .and_then(|headers| single_header(headers, CORRELATION_ID_HEADER).ok().flatten())
+            .and_then(|value| CorrelationId::new(value).ok()),
+        failure_kind: Some(QuarantineFailureKind::InvalidSourceMessage),
         reason: reason.to_owned(),
         attempt: info.attempt(),
         pending: info.pending(),
@@ -775,6 +850,71 @@ async fn apply_ack(message: &jetstream::Message, kind: AckKind) -> Result<(), Co
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_nats::jetstream::consumer::IntoConsumerConfig as _;
+
+    #[test]
+    fn consumer_verification_requires_payloads_and_durable_progress() {
+        let context = rostfrei_messaging_core::ApplicationName::new("consumer-test")
+            .unwrap()
+            .bounded_context("orders")
+            .unwrap();
+        let config = ConsumerConfig::new(
+            context.consumer_name("process", 1).unwrap(),
+            context.durable_name("process", 1).unwrap(),
+            context.command_address("place-order").unwrap(),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            4,
+            3,
+        )
+        .unwrap();
+        let expected = durable_consumer_config(&config)
+            .unwrap()
+            .into_consumer_config();
+        let name = config.durable_name().as_str();
+        assert!(verify_consumer_config(name, &expected, &config).is_ok());
+        for actual in [
+            consumer::Config {
+                headers_only: true,
+                ..expected.clone()
+            },
+            consumer::Config {
+                memory_storage: true,
+                ..expected.clone()
+            },
+            consumer::Config {
+                inactive_threshold: Duration::from_secs(60),
+                ..expected.clone()
+            },
+            consumer::Config {
+                num_replicas: 1,
+                ..expected.clone()
+            },
+            consumer::Config {
+                max_batch: 1,
+                ..expected.clone()
+            },
+            consumer::Config {
+                backoff: vec![config.ack_wait(), Duration::from_secs(60)],
+                ..expected.clone()
+            },
+        ] {
+            assert_eq!(
+                verify_consumer_config(name, &actual, &config)
+                    .unwrap_err()
+                    .kind(),
+                ConsumeErrorKind::InvalidConfiguration,
+            );
+        }
+        // NATS supplies a default pull wait queue and server metadata. Neither
+        // changes the application's delivery contract.
+        let mut normalized = expected;
+        normalized.max_waiting = 512;
+        normalized
+            .metadata
+            .insert("_nats.level".to_owned(), "2".to_owned());
+        assert!(verify_consumer_config(name, &normalized, &config).is_ok());
+    }
 
     fn record(payload: &[u8]) -> QuarantineRecord {
         QuarantineRecord {
@@ -786,6 +926,8 @@ mod tests {
             payload_truncated: false,
             metadata: CallerMetadata::new(),
             trace_context: None,
+            correlation_id: None,
+            failure_kind: Some(QuarantineFailureKind::InvalidSourceMessage),
             reason: "invalid source message".to_owned(),
             attempt: 1,
             pending: 0,
@@ -873,6 +1015,8 @@ mod tests {
 
         assert_eq!(record.payload_size(), None);
         assert_eq!(record.payload_sha256(), None);
+        assert_eq!(record.correlation_id(), None);
+        assert_eq!(record.failure_kind(), None);
         assert!(!record.payload_truncated());
     }
 }

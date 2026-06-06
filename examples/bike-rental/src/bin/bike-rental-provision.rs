@@ -2,7 +2,7 @@ use std::env;
 
 use bike_rental::{
     APPLICATION_NAME, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
-    demo::{apply_fixture, demo_fixture, has_legacy_demo_seed},
+    demo::{apply_fixture, demo_fixture},
 };
 use rostfrei_nats::{NatsConnectionConfig, ServerVersion, connect};
 
@@ -24,21 +24,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     config.provision(&connection).await?;
     let store = config.connect_store(&connection).await?;
     let fixture = demo_fixture()?;
-    let legacy_seed_preserved = has_legacy_demo_seed(&store).await?;
-    if !legacy_seed_preserved {
-        apply_fixture(&store, &fixture).await?;
-    }
+    apply_fixture(&store, &fixture).await?;
     connection.drain().await?;
 
-    if legacy_seed_preserved {
-        println!(
-            "provisioned NATS application `{application}` with its preserved legacy demo seed"
-        );
-    } else {
-        println!(
-            "provisioned NATS application `{application}` with fixture `{}`",
-            fixture.id()
-        );
-    }
+    println!(
+        "provisioned NATS application `{application}` with fixture `{}`",
+        fixture.id()
+    );
     Ok(())
 }
