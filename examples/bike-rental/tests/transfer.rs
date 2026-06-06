@@ -1,4 +1,4 @@
-use std::{env, error::Error, io, sync::Arc, time::Duration};
+use std::{error::Error, io, sync::Arc, time::Duration};
 
 use bike_rental::{
     BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
@@ -19,6 +19,7 @@ use rostfrei_nats::{
     NatsConnection, NatsConnectionConfig, NatsEventStore, NatsEventStoreConfig, ServerVersion,
     connect, provision_event_store,
 };
+use rostfrei_testing::integration::nats_url as required_nats_url;
 use uuid::Uuid;
 
 const DESTINATION_FLEET_ID: &str = "harbor-fleet";
@@ -47,7 +48,7 @@ async fn executor_atomically_transfers_replays_and_rejects_in_memory() -> TestRe
         "transfer was rejected for the wrong reason",
     )?;
     ensure(
-        store.load(&demo_stream()).await?.len() == 2,
+        store.load(&demo_stream()).await?.len() == 3,
         "rejected transfer appended to the source stream",
     )?;
     ensure(
@@ -70,7 +71,7 @@ async fn executor_atomically_transfers_replays_and_rejects_in_memory() -> TestRe
         "same-fleet transfer did not return its domain rejection",
     )?;
     ensure(
-        store.load(&demo_stream()).await?.len() == 2
+        store.load(&demo_stream()).await?.len() == 3
             && store.load(&destination_stream()?).await?.len() == 1,
         "same-fleet rejection appended an event",
     )
@@ -115,7 +116,7 @@ async fn simulation_reports_both_participants_without_appending() -> TestResult 
         "simulation additional participant is not the destination transfer event",
     )?;
     ensure(
-        store.load(&demo_stream()).await?.len() == 1
+        store.load(&demo_stream()).await?.len() == 2
             && store.load(&destination_stream()?).await?.is_empty(),
         "simulation changed persisted history",
     )
@@ -157,7 +158,6 @@ async fn rejected_simulation_reports_the_loaded_destination_as_a_read_participan
 }
 
 #[tokio::test]
-#[ignore = "requires NATS 2.12.1+"]
 async fn executor_atomically_transfers_with_actual_nats_event_store() -> TestResult {
     let nats_url = required_nats_url()?;
     let unique = Uuid::now_v7();
@@ -189,7 +189,6 @@ async fn executor_atomically_transfers_with_actual_nats_event_store() -> TestRes
 }
 
 #[tokio::test]
-#[ignore = "requires NATS 2.12.1+"]
 async fn command_bus_to_nats_worker_transfers_bicycle_across_two_streams() -> TestResult {
     let nats_url = required_nats_url()?;
     let unique = Uuid::now_v7();
@@ -275,7 +274,7 @@ async fn dispatch_transfer_through_nats(
     let source = runtime.store().load(&demo_stream()).await?;
     let destination = runtime.store().load(&destination_stream()?).await?;
     ensure(
-        source.len() == 2 && destination.len() == 1,
+        source.len() == 3 && destination.len() == 1,
         "transported transfer did not append exactly once to both streams",
     )?;
     let outgoing = source
@@ -418,16 +417,6 @@ async fn cleanup_runtime_resources(
         connection.delete_stream_if_exists(stream).await?;
     }
     Ok(())
-}
-
-fn required_nats_url() -> TestResult<String> {
-    let value = env::var("ROSTFREI_NATS_URL").map_err(|_| {
-        io::Error::other("ROSTFREI_NATS_URL is required for the ignored real-NATS transfer tests")
-    })?;
-    if value.trim().is_empty() {
-        return Err(io::Error::other("ROSTFREI_NATS_URL must not be empty").into());
-    }
-    Ok(value)
 }
 
 fn ensure(condition: bool, message: &'static str) -> TestResult {

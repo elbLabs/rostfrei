@@ -2,7 +2,7 @@ use std::{env, path::PathBuf, sync::Arc};
 
 use bike_rental::{
     APPLICATION_NAME, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
-    demo::{demo_fixture, has_legacy_demo_seed, rented_demo_fixture},
+    demo::{demo_fixture, no_rental_fleets_fixture, rented_demo_fixture},
     domain_model,
     rental_fleet::{
         AddBicycle, AddBicycleHandler, RentBicycle, RentBicycleHandler, ReturnBicycle,
@@ -39,6 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?,
     );
     let default_test_fixture = demo_fixture()?;
+    let empty_test_fixture = no_rental_fleets_fixture()?;
     let rented_test_fixture = rented_demo_fixture()?;
     test_runtime.reset(&default_test_fixture).await?;
 
@@ -50,13 +51,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?,
     );
-    if has_legacy_demo_seed(dispatch_runtime.store()).await? {
-        println!("preserving the compatible legacy production demo seed");
-    } else {
-        dispatch_runtime
-            .apply_fixture(&default_test_fixture)
-            .await?;
-    }
+    dispatch_runtime
+        .apply_fixture(&default_test_fixture)
+        .await?;
     dispatch_runtime.start_workers().await?;
 
     let test_store = Arc::new(test_runtime.store().clone());
@@ -70,15 +67,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_test_event_store(test_store.clone())
         .with_stream_directory(test_store)
         .with_test_transport(test_runtime.transport())
+        .with_test_quarantine_reader(test_runtime.quarantine_reader())
+        .with_production_quarantine_reader(dispatch_runtime.quarantine_reader())
         .with_dispatch_transport(dispatch_runtime.transport())
         .with_test_scenario_reset(test_reset)
         .with_default_test_fixture(default_test_fixture)
+        .with_test_fixture(empty_test_fixture)
         .with_test_fixture(rented_test_fixture)
         .with_test_repository(test_repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder.register_json::<RentBicycle, _>(RentBicycleHandler)?;
     builder.register_json::<ReturnBicycle, _>(ReturnBicycleHandler)?;
     builder.register_json::<AddBicycle, _>(AddBicycleHandler)?;
+    builder.register_input_options::<AddBicycle, _>(tracer::AddBicycleInputOptions)?;
     builder.register_json::<TransferBicycle, _>(TransferBicycleHandler)?;
     let tracer = builder.build()?;
     let mut test_correlation_observer = test_runtime
@@ -89,7 +90,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     let api_token = env::var("ROSTFREI_API_TOKEN")?;
     let dispatch_token = env::var("ROSTFREI_DISPATCH_TOKEN")?;
-    let http_config = HttpConfig::new(api_token)?.with_dispatch_token(dispatch_token)?;
+    let mut http_config = HttpConfig::new(api_token)?.with_dispatch_token(dispatch_token)?;
+    match env::var("ROSTFREI_INSPECTION_TOKEN") {
+        Ok(token) => http_config = http_config.with_inspection_token(token)?,
+        Err(env::VarError::NotPresent) => {}
+        Err(error) => return Err(error.into()),
+    }
     let app = http::router(tracer, http_config);
 
     let address = env::var("ROSTFREI_API_ADDR").unwrap_or_else(|_| "127.0.0.1:1309".to_owned());

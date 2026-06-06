@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use rostfrei::{
     Command, CommandBindingRegistrationError, CommandBus, CommandMessageAdapter, CommandProcessor,
     CommittedDomainEvent, DomainEventDispatcher, DomainEventRegistrationError,
-    EncodedIntegrationMessage, EventStore, EventStoreError, InfallibleCommandRejectionMapper,
-    IntegrationEvent, IntegrationEventBus, IntegrationEventDispatcherExt, IntegrationEventMapper,
-    IntegrationMessageAdapter, JsonDomainRejectionMapper,
+    EncodedIntegrationMessage, EventStore, EventStoreError, IntegrationEvent, IntegrationEventBus,
+    IntegrationEventDispatcherExt, IntegrationEventMapper, IntegrationMessageAdapter,
+    JsonDomainRejectionMapper,
 };
 use rostfrei_fixtures::{Fixture, FixtureApplyReport, FixtureEventSet};
 use rostfrei_messaging_core::{
@@ -693,6 +693,13 @@ impl BikeRentalNatsRuntime {
         self.transport.clone()
     }
 
+    pub fn quarantine_reader(&self) -> Arc<dyn rostfrei_messaging_core::QuarantineReader> {
+        Arc::new(rostfrei_nats::NatsQuarantineReader::new(
+            self.connection.jetstream().clone(),
+            self.config.messaging.topology().clone(),
+        ))
+    }
+
     pub async fn apply_fixture(
         &self,
         fixture: &Fixture,
@@ -742,7 +749,10 @@ impl BikeRentalNatsRuntime {
             ReturnBicycleHandler,
             JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
         )?;
-        processor.register::<AddBicycle, _>(AddBicycleHandler, InfallibleCommandRejectionMapper)?;
+        processor.register::<AddBicycle, _>(
+            AddBicycleHandler,
+            JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
+        )?;
         processor.register::<TransferBicycle, _>(
             TransferBicycleHandler,
             JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),

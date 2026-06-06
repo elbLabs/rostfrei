@@ -25,13 +25,28 @@ rust-version = "1.98"
 license = "EUPL-1.2"
 
 [workspace.dependencies]
-async-nats = { version = "=0.50.0", default-features = false, features = ["jetstream", "ring", "server_2_10", "server_2_11", "server_2_12", "server_2_14"] }
+rostfrei = { path = "crates/rostfrei", version = "0.0.4-alpha" }
+rostfrei-core = { path = "crates/rostfrei-core", version = "0.0.4-alpha" }
+rostfrei-domain = { path = "crates/rostfrei-domain", version = "0.0.4-alpha" }
+rostfrei-domain-macros = { path = "crates/rostfrei-domain-macros", version = "0.0.4-alpha" }
+rostfrei-domain-runtime = { path = "crates/rostfrei-domain-runtime", version = "0.0.4-alpha" }
+rostfrei-fixtures = { path = "crates/rostfrei-fixtures", version = "0.0.4-alpha" }
+rostfrei-macros = { path = "crates/rostfrei-macros", version = "0.0.4-alpha" }
+rostfrei-messaging-core = { path = "crates/rostfrei-messaging-core", version = "0.0.4-alpha" }
+rostfrei-nats = { path = "crates/rostfrei-nats", version = "0.0.4-alpha" }
+rostfrei-registry = { path = "crates/rostfrei-registry", version = "0.0.4-alpha" }
+rostfrei-testing = { path = "crates/rostfrei-testing", version = "0.0.4-alpha" }
+rostfrei-tracer = { path = "crates/rostfrei-tracer", version = "0.0.4-alpha" }
+zs-registry = { package = "rostfrei-registry", path = "crates/rostfrei-registry", version = "0.0.4-alpha" }
+
+async-nats = { version = "=0.50.0", default-features = false, features = ["jetstream", "nkeys", "ring", "server_2_10", "server_2_11", "server_2_12", "server_2_14"] }
 async-trait = "0.1"
 axum = "0.8"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
 heck = "0.5"
+nkeys = "0.4"
 percent-encoding = "2"
 proc-macro2 = "1"
 quote = "1"
@@ -41,6 +56,7 @@ serde_json = "1"
 sha2 = "0.10"
 syn = { version = "2", features = ["full"] }
 thiserror = "2"
+time = { version = "0.3", features = ["formatting"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
