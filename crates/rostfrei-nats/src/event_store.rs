@@ -137,6 +137,14 @@ impl NatsEventStore {
     }
 
     async fn load_raw_history(&self, stream_id: &StreamId) -> Result<History, EventStoreError> {
+        self.load_raw_history_through(stream_id, None).await
+    }
+
+    async fn load_raw_history_through(
+        &self,
+        stream_id: &StreamId,
+        maximum_stream_sequence: Option<u64>,
+    ) -> Result<History, EventStoreError> {
         let subject = self.config.aggregate_subject(
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
@@ -146,7 +154,7 @@ impl NatsEventStore {
             .get_stream(self.config.stream_name())
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
-        let last_sequence = match stream.get_last_raw_message_by_subject(&subject).await {
+        let last_subject_sequence = match stream.get_last_raw_message_by_subject(&subject).await {
             Ok(message) => {
                 if message.subject.as_str() != subject {
                     return Err(corrupt("aggregate lookup returned the wrong subject"));
@@ -162,21 +170,42 @@ impl NatsEventStore {
                 )));
             }
         };
+        let last_sequence = maximum_stream_sequence.map_or(last_subject_sequence, |limit| {
+            limit.min(last_subject_sequence)
+        });
+        let truncated_at_snapshot = last_sequence < last_subject_sequence;
 
         let mut history = HistoryBuilder::default();
         let mut next_stream_sequence = 1_u64;
         let mut last_commit_stream_sequence = 0_u64;
+        let mut last_seen_sequence = 0_u64;
 
         while next_stream_sequence <= last_sequence {
-            let message = stream
+            let message = match stream
                 .get_first_raw_message_by_subject(&subject, next_stream_sequence)
                 .await
-                .map_err(|error| match error.kind() {
-                    LastRawMessageErrorKind::NoMessageFound => {
-                        corrupt("aggregate history disappeared while loading")
-                    }
-                    _ => unavailable(format!("failed to read aggregate history: {error}")),
-                })?;
+            {
+                Ok(message) => message,
+                Err(error)
+                    if truncated_at_snapshot
+                        && error.kind() == LastRawMessageErrorKind::NoMessageFound =>
+                {
+                    break;
+                }
+                Err(error) => {
+                    return Err(match error.kind() {
+                        LastRawMessageErrorKind::NoMessageFound => {
+                            corrupt("aggregate history disappeared while loading")
+                        }
+                        _ => unavailable(format!("failed to read aggregate history: {error}")),
+                    });
+                }
+            };
+            if message.sequence > last_sequence && truncated_at_snapshot {
+                // Related participants must use the directory's snapshot too,
+                // including an empty read-guard history with only later events.
+                break;
+            }
             if message.subject.as_str() != subject {
                 return Err(corrupt("aggregate history contains the wrong subject"));
             }
@@ -203,6 +232,7 @@ impl NatsEventStore {
                 last_commit_stream_sequence = message.sequence;
             }
             history.push(decoded)?;
+            last_seen_sequence = message.sequence;
 
             if message.sequence == last_sequence {
                 break;
@@ -213,15 +243,21 @@ impl NatsEventStore {
                 .ok_or_else(|| corrupt("JetStream sequence space overflowed"))?;
         }
 
-        if next_stream_sequence > last_sequence {
+        if !truncated_at_snapshot && last_seen_sequence != last_sequence {
             return Err(corrupt("aggregate history ended before its last message"));
         }
-        history.finish(last_sequence)
+        if last_seen_sequence == 0 && truncated_at_snapshot {
+            return Ok(History::default());
+        }
+        history.finish(last_seen_sequence)
     }
 
     async fn load_history(&self, stream_id: &StreamId) -> Result<Arc<History>, EventStoreError> {
         let history = Arc::new(self.load_raw_history(stream_id).await?);
-        let mut raw_histories = RawHistoryCache::from([(stream_id.clone(), Arc::clone(&history))]);
+        let mut raw_histories = RawHistoryCache {
+            histories: HashMap::from([(stream_id.clone(), Arc::clone(&history))]),
+            maximum_stream_sequence: None,
+        };
         self.validate_transaction_history(&history, &mut raw_histories)
             .await?;
         Ok(history)
@@ -232,11 +268,16 @@ impl NatsEventStore {
         stream_id: &StreamId,
         raw_histories: &mut RawHistoryCache,
     ) -> Result<Arc<History>, EventStoreError> {
-        if let Some(history) = raw_histories.get(stream_id) {
+        if let Some(history) = raw_histories.histories.get(stream_id) {
             return Ok(Arc::clone(history));
         }
-        let history = Arc::new(self.load_raw_history(stream_id).await?);
-        raw_histories.insert(stream_id.clone(), Arc::clone(&history));
+        let history = Arc::new(
+            self.load_raw_history_through(stream_id, raw_histories.maximum_stream_sequence)
+                .await?,
+        );
+        raw_histories
+            .histories
+            .insert(stream_id.clone(), Arc::clone(&history));
         Ok(history)
     }
 
@@ -483,7 +524,7 @@ impl NatsEventStore {
         operation_id: &OperationId,
         required: bool,
     ) -> Result<Option<MaterializedTransactionReceipt>, EventStoreError> {
-        let mut raw_histories = RawHistoryCache::new();
+        let mut raw_histories = RawHistoryCache::default();
         self.load_transaction_receipt_materialized_with_raw_histories(
             operation_id,
             required,
@@ -829,6 +870,7 @@ impl StreamDirectory for NatsEventStore {
     /// Lists committed aggregate versions at the stream position captured at entry.
     /// Later appends are excluded; receipt and guard subjects do not create entries.
     /// Discovered transactional histories receive the same provenance validation as `load`.
+    /// Related participant histories are loaded only through the same captured position.
     async fn list_streams(
         &self,
         aggregate_type: &AggregateType,
@@ -924,10 +966,7 @@ impl StreamDirectory for NatsEventStore {
                 Ok((stream_id, Arc::new(history.finish(last_sequence)?)))
             })
             .collect::<Result<BTreeMap<_, _>, EventStoreError>>()?;
-        let mut raw_histories = histories
-            .iter()
-            .map(|(stream_id, history)| (stream_id.clone(), Arc::clone(history)))
-            .collect();
+        let mut raw_histories = RawHistoryCache::at_snapshot(&histories, last_sequence);
         let mut summaries = Vec::with_capacity(histories.len());
         for (stream_id, history) in histories {
             self.validate_transaction_history(&history, &mut raw_histories)
@@ -1338,7 +1377,27 @@ struct History {
     last_subject_stream_sequence: u64,
 }
 
-type RawHistoryCache = HashMap<StreamId, Arc<History>>;
+#[derive(Default)]
+struct RawHistoryCache {
+    histories: HashMap<StreamId, Arc<History>>,
+    // Shared by the initial directory scan and lazily loaded transaction participants.
+    maximum_stream_sequence: Option<u64>,
+}
+
+impl RawHistoryCache {
+    fn at_snapshot(
+        histories: &BTreeMap<StreamId, Arc<History>>,
+        maximum_stream_sequence: u64,
+    ) -> Self {
+        Self {
+            histories: histories
+                .iter()
+                .map(|(stream_id, history)| (stream_id.clone(), Arc::clone(history)))
+                .collect(),
+            maximum_stream_sequence: Some(maximum_stream_sequence),
+        }
+    }
+}
 
 #[derive(Clone)]
 struct StoredCommit {
