@@ -31,6 +31,8 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Check domain structure
         run: cargo rostfrei-dev check --workspace
+      - name: Verify CLI package includes scaffolding templates
+        run: cargo package --locked --offline -p rostfrei-structure
       - name: Check the test runner
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Install the pinned native NATS authentication fixture
