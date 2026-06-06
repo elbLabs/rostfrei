@@ -13,6 +13,7 @@ mod messaging_adapter;
 mod messaging_config;
 mod provisioning;
 mod publish;
+mod quarantine;
 mod query;
 mod stream_policy;
 
@@ -47,4 +48,5 @@ pub use provisioning::{
     verify_application_messaging, verify_stream,
 };
 pub use publish::{CORRELATION_ID_HEADER, NatsPublishAck, NatsPublisher};
+pub use quarantine::NatsQuarantineReader;
 pub use query::{NatsQueryRequester, NatsQueryServer, NatsQueryServerConfig};
