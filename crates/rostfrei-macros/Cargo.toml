@@ -15,7 +15,7 @@ syn.workspace = true
 
 [dev-dependencies]
 trybuild.workspace = true
-zs-registry = { package = "rostfrei-registry", path = "../rostfrei-registry" }
+zs-registry.workspace = true
 
 [lints]
 workspace = true
