@@ -14,7 +14,7 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_nats::{Request, jetstream::message::PublishMessage};
-use event_store::{NatsEventStore, provision_event_store};
+use event_store::{NatsEventStore, provision_event_store, update_event_store};
 use event_store_config::{
     DEFAULT_EVENT_STORE_MAX_EVENT_BYTES, MAX_SUPPORTED_EVENT_BYTES, NatsEventStoreConfig,
 };
@@ -476,7 +476,12 @@ async fn legacy_event_store_policy_is_upgraded(
     legacy.max_message_size = i32::try_from(config.max_event_bytes())?;
     context.create_stream(legacy).await?;
 
-    provision_event_store(context, &config).await?;
+    let provisioned = provision_event_store(context, &config).await;
+    check(
+        matches!(provisioned, Err(ref error) if error.kind() == EventStoreErrorKind::ConfigurationMismatch),
+        "provisioning must require an explicit legacy policy update",
+    )?;
+    update_event_store(context, &config).await?;
     let upgraded = context.get_stream(config.stream_name()).await?;
     check(
         upgraded.cached_info().config.subjects == config.stream_config().subjects,
@@ -542,7 +547,7 @@ async fn legacy_history_remains_readable_after_lower_limit_provisioning(
     let mut legacy_policy = legacy_stream.cached_info().config.clone();
     legacy_policy.subjects = vec![current.aggregate_subject_filter()];
     context.create_or_update_stream(legacy_policy).await?;
-    provision_event_store(context, &current).await?;
+    update_event_store(context, &current).await?;
 
     legacy_stream = context.get_stream(current.stream_name()).await?;
     check(
