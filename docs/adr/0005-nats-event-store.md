@@ -63,21 +63,31 @@ the previously supported 64 MiB configured ceiling. Provisioning preserves a
 larger existing stream message limit, so lowering the write default does not
 make existing history unreadable.
 
-Stream creation and updates are operator-owned through an explicit provisioning
-API. Service startup only connects and verifies. The normal stream name and
-subject prefix are derived from a bounded context. The exceptional constructor
+Stream creation and updates are operator-owned through separate APIs:
+
+- `NatsEventStore::connect()` only verifies an existing stream during normal startup.
+- `provision_event_store()` creates an absent stream or verifies an existing one.
+  It never updates existing policy, including when another provisioner wins a
+  creation race. Incompatible policy returns `ConfigurationMismatch`.
+- `update_event_store()` explicitly updates an existing stream's policy. Capacity
+  reductions require this operation. It preserves larger historical message-size
+  limits while applying the configured total stream capacity and other policy.
+
+The normal stream name and subject prefix are derived from a bounded context.
+The exceptional constructor
 permits a custom stream name while retaining application and bounded-context
 subject scope. Deployments may override the default capacities, replica count,
 and PubAck timeout through builders.
-Provisioning upgrades an event-store stream with the previous aggregate-only
-subject list by adding the internal transaction subject. Other subject-list
-mismatches still fail as scope conflicts. Provisioning checks the NATS version
-before creating or updating the stream.
+An explicit policy update upgrades an event-store stream with the previous
+aggregate-only subject list by adding the internal transaction subject. Other subject-list
+mismatches still fail as scope conflicts. Both operator APIs check the NATS version
+and payload capacity before creating or updating the stream. An update fails if
+the stream is absent; creation remains a separate operation.
 
 Wire schema 4 and the internal transaction subjects are not understood by older
 rostfrei binaries. Deployments must therefore stop old event-store readers and
-writers, deploy transaction-aware binaries, provision the stream, and only then
-enable transaction writes. Mixed-version rolling operation is unsupported for
+writers, deploy transaction-aware binaries, explicitly update the stream policy,
+and only then enable transaction writes. Mixed-version rolling operation is unsupported for
 this schema upgrade.
 
 ## Consequences

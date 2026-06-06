@@ -13,6 +13,14 @@ All notable changes to this project are documented in this file.
   credentials are rejected, and credentials are stripped from client addresses
   and excluded from configuration debug output and returned errors.
 
+### Changed
+
+- **Breaking (NATS provisioning behavior):** `provision_event_store()` now creates
+  an absent stream or verifies an existing one without updating its policy.
+  Move deliberate capacity changes and legacy aggregate-only subject migrations
+  to `update_event_store()`. Normal startup continues to use the verification-only
+  `NatsEventStore::connect()`.
+
 ## [0.0.4-alpha] - 2026-09-08
 
 ### Changed
