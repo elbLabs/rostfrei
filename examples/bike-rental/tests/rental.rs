@@ -6,31 +6,54 @@
 use bike_rental::{
     demo::{apply_demo_fixture, demo_stream},
     rental_fleet::{
-        self, AddBicycleAction as _, BicycleAdded, BicycleAvailability,
+        self, AddBicycleAction as _, BicycleAdded, BicycleAlreadyInFleet, BicycleAvailability,
         BicycleAvailabilityQuery as _, BicycleCondition, BicycleId, BicycleNotRented,
         BicycleRented, BicycleRetired, BicycleReturned, BicycleStatus, BicycleTransfer,
         BicycleTransferAction as _, BicycleTransferRejected, BicycleTransferRejectionReason,
-        BicycleTransferredIn, BicycleTransferredOut, BicycleUnavailable, FleetId,
-        ImportRentalFleetAction as _, ImportRentalFleetInput, ImportedBicycle, RentBicycle,
-        RentBicycleAction as _, RentBicycleHandler, RentalFleetAggregate, RentalFleetImported,
-        RetireBicycleAction as _, ReturnBicycleAction as _, TransferBicycle,
+        BicycleTransferredIn, BicycleTransferredOut, BicycleUnavailable, FleetId, RentBicycle,
+        RentBicycleAction as _, RentBicycleHandler, RentalFleetAggregate, RetireBicycleAction as _,
+        ReturnBicycleAction as _, TransferBicycle,
     },
 };
 use rostfrei::{
     AggregateInstance, CommandExecutionMetadata, CommandExecutor, CommandOutcome, CommandReceipt,
     ContentFingerprint, EventVariant, InMemoryEventStore, OperationId,
 };
-use uuid::Uuid;
 
 fn fleet_with_bicycles(
     fleet_id: &str,
-    bicycles: Vec<ImportedBicycle>,
+    bicycles: Vec<(BicycleId, BicycleStatus, BicycleCondition)>,
 ) -> AggregateInstance<RentalFleetAggregate> {
     let fleet_id = FleetId::new(fleet_id).unwrap();
-    AggregateInstance::rehydrate(
-        rental_fleet::stream_id(fleet_id.as_str()).unwrap(),
-        [RentalFleetImported { fleet_id, bicycles }.into()],
-    )
+    let mut events = Vec::new();
+    for (bicycle_id, status, condition) in bicycles {
+        events.push(
+            BicycleAdded {
+                fleet_id: fleet_id.clone(),
+                bicycle_id: bicycle_id.clone(),
+                condition,
+            }
+            .into(),
+        );
+        match status {
+            BicycleStatus::Available => {}
+            BicycleStatus::Rented => events.push(
+                BicycleRented {
+                    fleet_id: fleet_id.clone(),
+                    bicycle_id,
+                }
+                .into(),
+            ),
+            BicycleStatus::Retired => events.push(
+                BicycleRetired {
+                    fleet_id: fleet_id.clone(),
+                    bicycle_id,
+                }
+                .into(),
+            ),
+        }
+    }
+    AggregateInstance::rehydrate(rental_fleet::stream_id(fleet_id.as_str()).unwrap(), events)
 }
 
 fn fleet(
@@ -39,11 +62,7 @@ fn fleet(
 ) -> AggregateInstance<RentalFleetAggregate> {
     fleet_with_bicycles(
         "city-fleet",
-        vec![ImportedBicycle {
-            bicycle_id: BicycleId::new("bike-42").unwrap(),
-            status,
-            condition,
-        }],
+        vec![(BicycleId::new("bike-42").unwrap(), status, condition)],
     )
 }
 
@@ -105,71 +124,54 @@ fn returns_a_rented_bicycle_and_rejects_a_second_return() {
 }
 
 #[test]
-fn adds_serviceable_bicycles_with_generated_unique_ids() {
+fn adds_a_bicycle_with_the_requested_identity_and_condition() {
     let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable);
-    fleet.add_bicycle();
+    let bicycle_id = BicycleId::new("bike-84").unwrap();
+    fleet
+        .add_bicycle(bicycle_id.clone(), BicycleCondition::MaintenanceRequired)
+        .unwrap();
 
     let event = EventVariant::<BicycleAdded>::event(&fleet.uncommitted_events()[0]).unwrap();
-    let first_bicycle_id = event.bicycle_id.clone();
-    let expected_id = Uuid::new_v5(
-        &Uuid::NAMESPACE_URL,
-        b"rostfrei:bike-rental:bicycle:v1:city-fleet:1",
-    );
-    assert_eq!(event.bicycle_id.as_str(), expected_id.to_string());
-    assert_eq!(event.condition, BicycleCondition::Serviceable);
+    assert_eq!(event.bicycle_id, bicycle_id);
+    assert_eq!(event.condition, BicycleCondition::MaintenanceRequired);
     assert_eq!(fleet.state().bicycles().len(), 2);
     assert_eq!(
         fleet.state().bicycle_availability(&event.bicycle_id),
-        Some(BicycleAvailability::Available)
+        Some(BicycleAvailability::Unavailable)
     );
-    fleet.add_bicycle();
-    let second = EventVariant::<BicycleAdded>::event(&fleet.uncommitted_events()[1]).unwrap();
-    assert_ne!(second.bicycle_id, first_bicycle_id);
-    assert_eq!(fleet.state().bicycles().len(), 3);
 }
 
 #[test]
-fn rejects_an_import_with_duplicate_bicycle_identities_without_raising_an_event() {
-    let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable);
-    let bicycle_id = BicycleId::new("duplicate-bike").unwrap();
-    let input = ImportRentalFleetInput::new(vec![
-        ImportedBicycle {
-            bicycle_id: bicycle_id.clone(),
-            status: BicycleStatus::Available,
-            condition: BicycleCondition::Serviceable,
-        },
-        ImportedBicycle {
-            bicycle_id,
-            status: BicycleStatus::Rented,
-            condition: BicycleCondition::Serviceable,
-        },
-    ]);
-
-    let error = fleet.import_rental_fleet(input).unwrap_err();
-
-    assert_eq!(error.path, "bicycles");
-    assert_eq!(error.reason, "bicycle identities must be unique");
-    assert!(fleet.uncommitted_events().is_empty());
-    assert_eq!(fleet.state().bicycles().len(), 1);
-}
-
-#[test]
-fn imports_a_consistent_fleet() {
-    let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable);
-    let imported_bicycle = ImportedBicycle {
-        bicycle_id: BicycleId::new("bike-84").unwrap(),
-        status: BicycleStatus::Rented,
-        condition: BicycleCondition::Serviceable,
-    };
+fn adds_the_first_bicycle_to_an_empty_fleet() {
+    let fleet_id = FleetId::new("new-fleet").unwrap();
+    let mut fleet = AggregateInstance::rehydrate(
+        rental_fleet::stream_id(fleet_id.as_str()).unwrap(),
+        Vec::new(),
+    );
+    let bicycle_id = BicycleId::new("first-bike").unwrap();
 
     fleet
-        .import_rental_fleet(ImportRentalFleetInput::new(vec![imported_bicycle.clone()]))
+        .add_bicycle(bicycle_id.clone(), BicycleCondition::Serviceable)
         .unwrap();
 
-    let event = EventVariant::<RentalFleetImported>::event(&fleet.uncommitted_events()[0]).unwrap();
-    assert_eq!(event.bicycles, vec![imported_bicycle]);
+    let event = EventVariant::<BicycleAdded>::event(&fleet.uncommitted_events()[0]).unwrap();
+    assert_eq!(event.fleet_id, fleet_id);
+    assert_eq!(event.bicycle_id, bicycle_id);
     assert_eq!(fleet.state().bicycles().len(), 1);
-    assert_eq!(fleet.state().bicycles()[0].status(), BicycleStatus::Rented);
+}
+
+#[test]
+fn rejects_a_duplicate_bicycle_identity_without_raising_an_event() {
+    let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable);
+    let bicycle_id = BicycleId::new("bike-42").unwrap();
+
+    let error = fleet
+        .add_bicycle(bicycle_id.clone(), BicycleCondition::Serviceable)
+        .unwrap_err();
+
+    assert_eq!(error, BicycleAlreadyInFleet { bicycle_id });
+    assert!(fleet.uncommitted_events().is_empty());
+    assert_eq!(fleet.state().bicycles().len(), 1);
 }
 
 #[test]
@@ -314,11 +316,11 @@ fn validates_the_destination_before_raising_the_outgoing_event() {
     let mut source = fleet(BicycleStatus::Available, BicycleCondition::Serviceable);
     let mut destination = fleet_with_bicycles(
         "harbor-fleet",
-        vec![ImportedBicycle {
-            bicycle_id: bicycle_id.clone(),
-            status: BicycleStatus::Rented,
-            condition: BicycleCondition::MaintenanceRequired,
-        }],
+        vec![(
+            bicycle_id.clone(),
+            BicycleStatus::Rented,
+            BicycleCondition::MaintenanceRequired,
+        )],
     );
     let command = TransferBicycle {
         from_fleet_id: FleetId::new("city-fleet").unwrap(),
@@ -386,5 +388,5 @@ async fn rejects_renting_the_same_bicycle_twice_when_commands_are_executed() {
             panic!("expected domain rejection, got {outcome:?}");
         }
     }
-    assert_eq!(store.load(&demo_stream()).await.unwrap().len(), 2);
+    assert_eq!(store.load(&demo_stream()).await.unwrap().len(), 3);
 }

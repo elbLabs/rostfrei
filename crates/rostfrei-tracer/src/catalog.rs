@@ -4,7 +4,7 @@ use rostfrei_registry::DomainRegistry;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-const CATALOG_VERSION: u32 = 2;
+const CATALOG_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
