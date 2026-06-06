@@ -180,11 +180,17 @@ impl NatsConnection {
 }
 
 pub async fn connect(config: &NatsConnectionConfig) -> Result<NatsConnection, NatsError> {
-    let servers = config.server_addrs()?;
+    let (servers, authentication) = config.connection_settings()?;
     let client_name = config.client_name().to_owned();
     let event_client_name = client_name.clone();
     let (closed_tx, closed) = watch::channel(false);
-    let client = ConnectOptions::new()
+    let options = ConnectOptions::new();
+    let options = if let Some(authentication) = authentication {
+        authentication.apply_to(options)
+    } else {
+        options
+    };
+    let client = options
         .name(client_name)
         .connection_timeout(config.connection_timeout())
         .max_reconnects(None)

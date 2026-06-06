@@ -1,5 +1,7 @@
 use std::{fmt, time::Duration};
 
+use async_nats::{ConnectOptions, ServerAddr};
+use percent_encoding::percent_decode_str;
 use rostfrei_messaging_core::{AddressKind, ApplicationName, TrafficScope};
 
 use crate::error::NatsError;
@@ -351,22 +353,23 @@ impl fmt::Display for ServerVersion {
 pub struct NatsConnectionConfig {
     client_name: String,
     server_urls: Vec<String>,
+    authentication: Option<NatsUserPassword>,
     connection_timeout: Duration,
     drain_timeout: Duration,
     minimum_server_version: ServerVersion,
 }
 
 impl NatsConnectionConfig {
+    /// Creates a connection configuration from comma-separated server URLs.
+    ///
+    /// URL credentials are percent-decoded and applied to the whole connection,
+    /// including reconnects and discovered servers. Without explicit credentials,
+    /// every URL must either omit credentials or contain the same complete pair.
     pub fn new(client_name: impl Into<String>, server_urls: impl Into<String>) -> Self {
-        Self {
-            client_name: client_name.into(),
-            server_urls: server_urls.into().split(',').map(str::to_owned).collect(),
-            connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
-            drain_timeout: DEFAULT_DRAIN_TIMEOUT,
-            minimum_server_version: MINIMUM_NATS_SERVER_VERSION,
-        }
+        Self::from_server_pool(client_name, server_urls.into().split(','))
     }
 
+    /// Creates a server pool using the same credential rules as [`Self::new`].
     pub fn from_server_pool<I, S>(client_name: impl Into<String>, server_urls: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -375,10 +378,30 @@ impl NatsConnectionConfig {
         Self {
             client_name: client_name.into(),
             server_urls: server_urls.into_iter().map(Into::into).collect(),
+            authentication: None,
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
             minimum_server_version: MINIMUM_NATS_SERVER_VERSION,
         }
+    }
+
+    /// Sets a username and password for every server, including discovered servers.
+    ///
+    /// These values are used literally, without percent-decoding. Both must be
+    /// nonempty. URLs may omit credentials, but any embedded credentials must be
+    /// complete and match this pair after decoding. Invalid or conflicting
+    /// credentials are rejected by [`Self::validate`] and [`crate::connect`].
+    #[must_use]
+    pub fn with_user_and_password(
+        mut self,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        self.authentication = Some(NatsUserPassword {
+            username: username.into(),
+            password: password.into(),
+        });
+        self
     }
 
     #[must_use]
@@ -400,6 +423,12 @@ impl NatsConnectionConfig {
     }
 
     pub fn validate(&self) -> Result<(), NatsError> {
+        self.connection_settings().map(|_| ())
+    }
+
+    pub(crate) fn connection_settings(
+        &self,
+    ) -> Result<(Vec<ServerAddr>, Option<NatsUserPassword>), NatsError> {
         if self.client_name.is_empty()
             || self.client_name.len() > MAX_CLIENT_NAME_BYTES
             || self.client_name.trim() != self.client_name
@@ -412,15 +441,31 @@ impl NatsConnectionConfig {
             return Err(NatsError::Configuration);
         }
         self.minimum_server_version.validate()?;
-        for server_url in &self.server_urls {
-            if server_url.is_empty() || server_url.trim() != server_url {
-                return Err(NatsError::Configuration);
-            }
-            server_url
-                .parse::<async_nats::ServerAddr>()
-                .map_err(|_| NatsError::Configuration)?;
+        if let Some(authentication) = &self.authentication {
+            authentication.validate()?;
         }
-        Ok(())
+        let mut authentication = self.authentication.clone();
+        let mut has_anonymous_url = false;
+        let mut servers = Vec::with_capacity(self.server_urls.len());
+        for server_url in &self.server_urls {
+            let (server, url_authentication) = parse_server_url(server_url)?;
+            if let Some(url_authentication) = url_authentication {
+                if authentication
+                    .as_ref()
+                    .is_some_and(|current| *current != url_authentication)
+                {
+                    return Err(NatsError::Configuration);
+                }
+                authentication = Some(url_authentication);
+            } else {
+                has_anonymous_url = true;
+            }
+            servers.push(server);
+        }
+        if self.authentication.is_none() && authentication.is_some() && has_anonymous_url {
+            return Err(NatsError::Configuration);
+        }
+        Ok((servers, authentication))
     }
 
     pub fn client_name(&self) -> &str {
@@ -442,15 +487,88 @@ impl NatsConnectionConfig {
     pub const fn minimum_server_version(&self) -> ServerVersion {
         self.minimum_server_version
     }
+}
 
-    pub(crate) fn server_addrs(&self) -> Result<Vec<async_nats::ServerAddr>, NatsError> {
-        self.validate()?;
-        self.server_urls
-            .iter()
-            .map(|server_url| server_url.parse())
-            .collect::<Result<_, _>>()
-            .map_err(|_| NatsError::Configuration)
+#[derive(Clone, Eq, PartialEq)]
+pub struct NatsUserPassword {
+    username: String,
+    password: String,
+}
+
+impl NatsUserPassword {
+    const fn validate(&self) -> Result<(), NatsError> {
+        if self.username.is_empty() || self.password.is_empty() {
+            return Err(NatsError::Configuration);
+        }
+        Ok(())
     }
+
+    pub(crate) fn apply_to(self, options: ConnectOptions) -> ConnectOptions {
+        options.user_and_password(self.username, self.password)
+    }
+}
+
+impl fmt::Debug for NatsUserPassword {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("NatsUserPassword([REDACTED])")
+    }
+}
+
+fn parse_server_url(server_url: &str) -> Result<(ServerAddr, Option<NatsUserPassword>), NatsError> {
+    if server_url.is_empty()
+        || server_url.trim() != server_url
+        || server_url.chars().any(char::is_control)
+    {
+        return Err(NatsError::Configuration);
+    }
+    // The URL parser normalizes empty userinfo away, so inspect the authority
+    // too: `nats://:@host` and `nats://@host` are incomplete credentials.
+    let authority = server_url
+        .split_once("://")
+        .map_or(server_url, |(_, rest)| rest)
+        .split(['/', '?', '#'])
+        .next()
+        .ok_or(NatsError::Configuration)?;
+    let mut url = server_url
+        .parse::<ServerAddr>()
+        .map_err(|_| NatsError::Configuration)?
+        .into_inner();
+    if url.host_str().is_none_or(str::is_empty) {
+        return Err(NatsError::Configuration);
+    }
+    let authentication = if authority.contains('@') {
+        let credentials = NatsUserPassword {
+            username: decode_credential(url.username())?,
+            password: decode_credential(url.password().ok_or(NatsError::Configuration)?)?,
+        };
+        credentials.validate()?;
+        Some(credentials)
+    } else {
+        None
+    };
+    // Never give credential-bearing addresses to async-nats: they can appear
+    // in upstream diagnostics, and URL credentials are not connection-wide auth.
+    url.set_password(None)
+        .map_err(|()| NatsError::Configuration)?;
+    url.set_username("")
+        .map_err(|()| NatsError::Configuration)?;
+    let server = ServerAddr::from_url(url).map_err(|_| NatsError::Configuration)?;
+    Ok((server, authentication))
+}
+
+fn decode_credential(value: &str) -> Result<String, NatsError> {
+    if value.split('%').skip(1).any(|suffix| {
+        suffix
+            .as_bytes()
+            .get(..2)
+            .is_none_or(|escape| !escape.iter().all(u8::is_ascii_hexdigit))
+    }) {
+        return Err(NatsError::Configuration);
+    }
+    percent_decode_str(value)
+        .decode_utf8()
+        .map(std::borrow::Cow::into_owned)
+        .map_err(|_| NatsError::Configuration)
 }
 
 impl fmt::Debug for NatsConnectionConfig {
@@ -459,6 +577,7 @@ impl fmt::Debug for NatsConnectionConfig {
             .debug_struct("NatsConnectionConfig")
             .field("client_name", &self.client_name)
             .field("server_count", &self.server_urls.len())
+            .field("authentication", &self.authentication)
             .field("connection_timeout", &self.connection_timeout)
             .field("drain_timeout", &self.drain_timeout)
             .field("minimum_server_version", &self.minimum_server_version)
@@ -472,6 +591,160 @@ mod tests {
 
     const VALID_SERVER_VERSION: Result<(), NatsError> = ServerVersion::new(2, 10, 0).validate();
     const INVALID_SERVER_VERSION: Result<(), NatsError> = ServerVersion::new(0, 10, 0).validate();
+
+    #[test]
+    fn anonymous_connections_remain_supported() {
+        let config = NatsConnectionConfig::new("anonymous", "localhost:4222,nats://localhost:4223");
+        let (servers, authentication) = config.connection_settings().unwrap();
+        assert_eq!(servers.len(), 2);
+        assert!(authentication.is_none());
+    }
+
+    #[test]
+    fn explicit_credentials_are_literal_and_connection_wide() {
+        let config = NatsConnectionConfig::from_server_pool(
+            "explicit",
+            ["localhost:4222", "tls://localhost:4223"],
+        )
+        .with_user_and_password("user+name", " literal%40password ");
+        let (servers, authentication) = config.connection_settings().unwrap();
+        let authentication = authentication.unwrap();
+        assert_eq!(authentication.username, "user+name");
+        assert_eq!(authentication.password, " literal%40password ");
+        assert_eq!(servers.len(), 2);
+        assert!(servers.iter().all(|server| !server.has_user_pass()));
+    }
+
+    #[test]
+    fn url_credentials_are_decoded_once_and_removed_from_addresses() {
+        let config = NatsConnectionConfig::new(
+            "encoded",
+            "nats://%C3%BCser+name:p%40ss%3A%2F%25%23%3F%2C%20%252F@[::1]:4222",
+        );
+        let (servers, authentication) = config.connection_settings().unwrap();
+        let authentication = authentication.unwrap();
+        assert_eq!(authentication.username, "üser+name");
+        assert_eq!(authentication.password, "p@ss:/%#?, %2F");
+        let server = servers.first().unwrap();
+        assert_eq!(server.as_url_str(), "nats://[::1]:4222");
+        assert!(server.username().is_none());
+        assert!(server.password().is_none());
+        for diagnostic in [
+            format!("{config:?}"),
+            format!("{servers:?}"),
+            format!("{authentication:?}"),
+        ] {
+            for secret in ["üser", "%C3%BCser", "p@ss", "p%40ss"] {
+                assert!(!diagnostic.contains(secret));
+            }
+        }
+    }
+
+    #[test]
+    fn server_pools_compare_decoded_credentials() {
+        let config = NatsConnectionConfig::new(
+            "pool",
+            "nats://user:p%40ss@localhost:4222,tls://%75ser:p%40%73s@localhost:4223",
+        );
+        let (servers, authentication) = config.connection_settings().unwrap();
+        assert_eq!(authentication.unwrap().password, "p@ss");
+        assert_eq!(servers[0].as_url_str(), "nats://localhost:4222");
+        assert_eq!(servers[1].as_url_str(), "tls://localhost:4223");
+
+        let config = NatsConnectionConfig::from_server_pool(
+            "explicit-pool",
+            ["localhost:4222", "user:p%40ss@localhost:4223"],
+        )
+        .with_user_and_password("user", "p@ss");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn incomplete_and_malformed_credentials_are_rejected() {
+        for url in [
+            "nats://user@localhost:4222",
+            "nats://user:@localhost:4222",
+            "nats://:password@localhost:4222",
+            "nats://@localhost:4222",
+            "nats://:@localhost:4222",
+            "nats://user:pass%FF@localhost:4222",
+            "nats://user%FF:password@localhost:4222",
+            "nats://user:pass%@localhost:4222",
+            "nats://user:pass%2@localhost:4222",
+            "nats://user:pass%GG@localhost:4222",
+            "nats://user:pass\nword@localhost:4222",
+            "nats://user:password@",
+        ] {
+            let config = NatsConnectionConfig::new("invalid", url);
+            assert_eq!(config.validate(), Err(NatsError::Configuration));
+            // Explicit credentials must not conceal a broken URL credential pair.
+            assert_eq!(
+                config.with_user_and_password("user", "password").validate(),
+                Err(NatsError::Configuration)
+            );
+        }
+        for (username, password) in [("", "password"), ("user", ""), ("", "")] {
+            assert_eq!(
+                NatsConnectionConfig::new("invalid", "localhost:4222")
+                    .with_user_and_password(username, password)
+                    .validate(),
+                Err(NatsError::Configuration)
+            );
+        }
+    }
+
+    #[test]
+    fn conflicting_or_partially_authenticated_pools_are_rejected_in_any_order() {
+        for other in [
+            "nats://user:other@localhost:4223",
+            "nats://other:password@localhost:4223",
+            "nats://localhost:4223",
+        ] {
+            let authenticated = "nats://user:password@localhost:4222";
+            for pool in [[authenticated, other], [other, authenticated]] {
+                assert_eq!(
+                    NatsConnectionConfig::from_server_pool("invalid-pool", pool).validate(),
+                    Err(NatsError::Configuration)
+                );
+            }
+        }
+        for (username, password) in [("other", "password"), ("user", "other")] {
+            assert_eq!(
+                NatsConnectionConfig::new("conflict", "nats://user:password@localhost:4222")
+                    .with_user_and_password(username, password)
+                    .validate(),
+                Err(NatsError::Configuration)
+            );
+        }
+    }
+
+    #[test]
+    fn configuration_debug_and_errors_never_include_credentials() {
+        for url in [
+            "nats://private-user:private-password@localhost:4222",
+            "bad-scheme://private-user:private-password@localhost:4222",
+            "nats://private-user:private-password@",
+        ] {
+            let config = NatsConnectionConfig::new("redacted", url)
+                .with_user_and_password("explicit-user", "explicit-password");
+            let error = config.validate().unwrap_err();
+            assert!(std::error::Error::source(&error).is_none());
+            for diagnostic in [
+                format!("{config:?}"),
+                format!("{error:?}"),
+                error.to_string(),
+            ] {
+                for secret in [
+                    "private-user",
+                    "private-password",
+                    "explicit-user",
+                    "explicit-password",
+                ] {
+                    assert!(!diagnostic.contains(secret));
+                }
+            }
+        }
+    }
 
     #[test]
     fn server_versions_are_const_validated() {

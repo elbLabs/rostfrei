@@ -88,6 +88,42 @@ The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual architecture
 decisions are recorded in [`docs/adr`](docs/adr).
 
+## NATS authentication
+
+`rostfrei_nats::NatsConnectionConfig` supports username/password authentication
+for the entire connection, including reconnects and failover:
+
+```rust
+use rostfrei_nats::{NatsConnectionConfig, connect};
+
+let config = NatsConnectionConfig::from_server_pool(
+    "my-application",
+    ["nats://nats-a:4222", "nats://nats-b:4222"],
+)
+.with_user_and_password(
+    std::env::var("NATS_USERNAME")?,
+    std::env::var("NATS_PASSWORD")?,
+);
+let connection = connect(&config).await?;
+```
+
+Credentials embedded in URLs (for example,
+`nats://app:p%40ss%3Aword@nats-a:4222`) are percent-decoded once; explicit builder
+values are used literally. Both username and password must be nonempty. A
+URL-only pool must contain the same complete credential pair on every entry,
+or no credentials on any entry. With explicit credentials, URLs may omit the
+pair, but any embedded pair must be complete and match. Invalid or conflicting
+configuration is rejected before connecting.
+
+Credentials are removed from server addresses before they reach the NATS client
+and omitted from configuration debug output and returned errors. The resolved
+pair is also used when reconnecting to servers discovered by NATS.
+
+The pinned `async-nats` 0.50.0 dependency logs raw CONNECT fields, including
+credentials, at TRACE level. Keep `async_nats::connection` logging below TRACE
+when using authentication; Rostfrei's configuration redaction does not filter
+the dependency's protocol logs.
+
 ## Standard HTTP API
 
 Registered queries accept their JSON payload directly in a POST request:
@@ -142,6 +178,14 @@ cargo clippy --workspace --all-targets --all-features
 by participating packages and executes each package's `rostfrei-domain-check`
 target to validate its compiled domain model. A commit is rejected when either
 check or Clippy reports an error.
+
+The NATS authentication acceptance suite starts isolated Docker containers and
+tests correct, missing, and wrong credentials, percent-encoded URL credentials,
+server restart, pool failover, and discovered-server failover:
+
+```sh
+cargo test -p rostfrei-nats --test authentication_integration -- --ignored
+```
 
 ## License
 
