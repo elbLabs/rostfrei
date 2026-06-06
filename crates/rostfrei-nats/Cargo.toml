@@ -16,14 +16,14 @@ sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-rostfrei = { path = "../rostfrei", version = "0.0.4-alpha" }
-rostfrei-core = { path = "../rostfrei-core" }
-rostfrei-fixtures = { path = "../rostfrei-fixtures", version = "0.0.4-alpha" }
-rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
+rostfrei.workspace = true
+rostfrei-core.workspace = true
+rostfrei-fixtures.workspace = true
+rostfrei-messaging-core.workspace = true
 
 [dev-dependencies]
-rostfrei = { path = "../rostfrei" }
-rostfrei-testing = { path = "../rostfrei-testing" }
+rostfrei.workspace = true
+rostfrei-testing.workspace = true
 
 [lints]
 workspace = true
