@@ -7,7 +7,6 @@
 )]
 
 use std::{
-    env,
     error::Error,
     fs, io,
     path::PathBuf,
@@ -47,6 +46,7 @@ use rostfrei_nats::{
     CORRELATION_ID_HEADER, NatsConnection, NatsConnectionConfig, ServerVersion, StreamRetention,
     connect, provision_durable_consumer,
 };
+use rostfrei_testing::integration::nats_url as required_nats_url;
 use rostfrei_tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
     ExpectedMessageKind, ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository,
@@ -105,7 +105,6 @@ impl IntegrationCommandMapper<BicycleRentalStarted> for ReturnBicycleAfterRental
 }
 
 #[tokio::test]
-#[ignore = "requires NATS 2.12.1+"]
 async fn command_workers_and_test_reset_are_subject_scope_isolated() -> TestResult {
     let nats_url = required_nats_url()?;
     let scope = unique_scope()?;
@@ -158,7 +157,6 @@ async fn command_workers_and_test_reset_are_subject_scope_isolated() -> TestResu
 }
 
 #[tokio::test]
-#[ignore = "requires NATS 2.12.1+"]
 async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime() -> TestResult {
     let nats_url = required_nats_url()?;
     let scope = unique_scope()?;
@@ -624,9 +622,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
 
 #[tokio::test]
 async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestResult {
-    let Ok(nats_url) = env::var("ROSTFREI_NATS_URL") else {
-        return Ok(());
-    };
+    let nats_url = required_nats_url()?;
     let scope = unique_scope()?;
     let application = format!("{scope}-reaction");
     let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
@@ -1400,17 +1396,6 @@ async fn cleanup<'a>(
 fn unique_scope() -> TestResult<String> {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     Ok(format!("brt-{:x}-{nanos:x}", process::id()))
-}
-
-fn required_nats_url() -> TestResult<String> {
-    match env::var("ROSTFREI_NATS_URL") {
-        Ok(url) if !url.trim().is_empty() => Ok(url),
-        Ok(_) => Err(io::Error::other("ROSTFREI_NATS_URL must not be empty").into()),
-        Err(error) => Err(io::Error::other(format!(
-            "ROSTFREI_NATS_URL is required for this ignored real-NATS test: {error}"
-        ))
-        .into()),
-    }
 }
 
 fn ensure(condition: bool, message: &'static str) -> TestResult {

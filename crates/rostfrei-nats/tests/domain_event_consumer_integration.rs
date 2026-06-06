@@ -184,13 +184,9 @@ impl DomainEventHandler<TestEvent> for RecordingHandler {
 }
 
 #[tokio::test]
-#[ignore = "requires NATS Server 2.12.1 configured by ROSTFREI_NATS_URL"]
 #[allow(clippy::too_many_lines)]
 async fn durable_domain_event_consumers_preserve_history_order_and_independent_progress() {
-    let Ok(url) = std::env::var("ROSTFREI_NATS_URL") else {
-        eprintln!("ROSTFREI_NATS_URL is not set; skipping real NATS integration test");
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let client = async_nats::connect(url).await.expect("NATS connection");
     assert!(client.is_server_compatible(2, 12, 1));
     let context = async_nats::jetstream::new(client.clone());
@@ -684,12 +680,8 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
 }
 
 #[tokio::test]
-#[ignore = "requires NATS Server 2.12.1 configured by ROSTFREI_NATS_URL"]
 async fn schema_four_events_without_a_valid_receipt_are_not_dispatched() -> TestResult<()> {
-    let Ok(url) = std::env::var("ROSTFREI_NATS_URL") else {
-        eprintln!("ROSTFREI_NATS_URL is not set; skipping real NATS integration test");
-        return Ok(());
-    };
+    let url = rostfrei_testing::integration::nats_url()?;
     let client = async_nats::connect(url).await?;
     if !client.is_server_compatible(2, 12, 1) {
         return Err("NATS Server 2.12.1 or newer is required".into());

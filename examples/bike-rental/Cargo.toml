@@ -24,6 +24,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 http-body-util = "0.1"
+rostfrei-testing = { path = "../../crates/rostfrei-testing" }
 tower = { version = "0.5", features = ["util"] }
 uuid.workspace = true
 
