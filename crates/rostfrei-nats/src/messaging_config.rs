@@ -1,4 +1,4 @@
-use std::{fmt, time::Duration};
+use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use rostfrei_messaging_core::{AddressKind, ApplicationName, TrafficScope};
 
@@ -354,7 +354,11 @@ pub struct NatsConnectionConfig {
     connection_timeout: Duration,
     drain_timeout: Duration,
     minimum_server_version: ServerVersion,
+    event_callback: Option<Arc<ConnectionEventCallback>>,
 }
+
+pub type ConnectionEventCallback =
+    dyn Fn(async_nats::Event) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> + Send + Sync;
 
 impl NatsConnectionConfig {
     pub fn new(client_name: impl Into<String>, server_urls: impl Into<String>) -> Self {
@@ -364,6 +368,7 @@ impl NatsConnectionConfig {
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
             minimum_server_version: MINIMUM_NATS_SERVER_VERSION,
+            event_callback: None,
         }
     }
 
@@ -378,6 +383,7 @@ impl NatsConnectionConfig {
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
             minimum_server_version: MINIMUM_NATS_SERVER_VERSION,
+            event_callback: None,
         }
     }
 
@@ -397,6 +403,25 @@ impl NatsConnectionConfig {
     pub const fn with_minimum_server_version(mut self, version: ServerVersion) -> Self {
         self.minimum_server_version = version;
         self
+    }
+
+    /// Observes connection events after Rostfrei's lifecycle bookkeeping and logging.
+    ///
+    /// Callbacks run serially on the NATS event task and should complete promptly.
+    /// Use this hook instead of `ConnectOptions::event_callback`, which is reserved
+    /// by Rostfrei so that graceful drain can observe connection closure.
+    #[must_use]
+    pub fn with_event_callback<F, Fut>(mut self, callback: F) -> Self
+    where
+        F: Fn(async_nats::Event) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + Sync + 'static,
+    {
+        self.event_callback = Some(Arc::new(move |event| Box::pin(callback(event))));
+        self
+    }
+
+    pub(crate) fn event_callback(&self) -> Option<Arc<ConnectionEventCallback>> {
+        self.event_callback.clone()
     }
 
     pub fn validate(&self) -> Result<(), NatsError> {
@@ -462,6 +487,7 @@ impl fmt::Debug for NatsConnectionConfig {
             .field("connection_timeout", &self.connection_timeout)
             .field("drain_timeout", &self.drain_timeout)
             .field("minimum_server_version", &self.minimum_server_version)
+            .field("has_event_callback", &self.event_callback.is_some())
             .finish()
     }
 }

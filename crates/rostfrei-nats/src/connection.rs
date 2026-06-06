@@ -180,19 +180,51 @@ impl NatsConnection {
 }
 
 pub async fn connect(config: &NatsConnectionConfig) -> Result<NatsConnection, NatsError> {
+    connect_with_options(config, ConnectOptions::new()).await
+}
+
+/// Connects with application-specific authentication, TLS, and transport options.
+///
+/// Rostfrei sets the client name and connection timeout from `config` and installs
+/// its lifecycle event callback. Any event callback on `options` is replaced; use
+/// [`NatsConnectionConfig::with_event_callback`] to observe events alongside the
+/// internal handler. All other supplied options, including authentication callbacks
+/// and reconnect policy, are retained. Server-version checks, health tracking,
+/// flush timeouts, and graceful drain are the same as for [`connect`].
+///
+/// ```no_run
+/// # async fn example() -> Result<(), rostfrei_nats::NatsError> {
+/// use async_nats::ConnectOptions;
+/// use rostfrei_nats::{NatsConnectionConfig, connect_with_options};
+///
+/// let config = NatsConnectionConfig::new("orders", "tls://nats.example.com:4222");
+/// let options = ConnectOptions::with_user_and_password("orders".into(), "secret".into())
+///     .add_root_certificates("nats-ca.pem".into())
+///     .add_client_certificate("orders.pem".into(), "orders-key.pem".into());
+/// let connection = connect_with_options(&config, options).await?;
+/// connection.check_health().await?;
+/// connection.drain().await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn connect_with_options(
+    config: &NatsConnectionConfig,
+    options: ConnectOptions,
+) -> Result<NatsConnection, NatsError> {
     let servers = config.server_addrs()?;
     let client_name = config.client_name().to_owned();
     let event_client_name = client_name.clone();
     let (closed_tx, closed) = watch::channel(false);
-    let client = ConnectOptions::new()
+    let callback = config.event_callback();
+    let client = options
         .name(client_name)
         .connection_timeout(config.connection_timeout())
-        .max_reconnects(None)
         .event_callback(move |event| {
             let closed_tx = closed_tx.clone();
             let client_name = event_client_name.clone();
+            let callback = callback.clone();
             async move {
-                match event {
+                match &event {
                     Event::Connected => tracing::info!(%client_name, "NATS connected"),
                     Event::Disconnected => tracing::warn!(%client_name, "NATS disconnected"),
                     Event::LameDuckMode => {
@@ -211,23 +243,33 @@ pub async fn connect(config: &NatsConnectionConfig) -> Result<NatsConnection, Na
                     }
                     Event::ClientError(error) => {
                         tracing::warn!(%client_name, %error, "NATS client error");
+                        if matches!(error, async_nats::ClientError::MaxReconnects) {
+                            let _ = closed_tx.send(true);
+                        }
                     }
+                }
+                if let Some(callback) = callback {
+                    callback(event).await;
                 }
             }
         })
         .connect(servers)
         .await
         .map_err(|_| NatsError::Connection)?;
-    let minimum = config.minimum_server_version();
-    if !client.is_server_compatible(minimum.major(), minimum.minor(), minimum.patch()) {
-        return Err(NatsError::MinimumServerVersion { required: minimum });
-    }
-
-    Ok(NatsConnection {
+    let connection = NatsConnection {
         jetstream: jetstream::new(client.clone()),
         client,
         closed,
         operation_timeout: config.connection_timeout(),
         drain_timeout: config.drain_timeout(),
-    })
+    };
+    let minimum = config.minimum_server_version();
+    if !connection
+        .client
+        .is_server_compatible(minimum.major(), minimum.minor(), minimum.patch())
+    {
+        let _ = connection.drain().await;
+        return Err(NatsError::MinimumServerVersion { required: minimum });
+    }
+    Ok(connection)
 }
