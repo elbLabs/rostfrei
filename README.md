@@ -133,7 +133,9 @@ With Python 3.11+ and a running local Docker engine, run the complete Rust suite
 python3 scripts/test_nats.py
 ```
 
-The runner starts a pinned NATS 2.12.1 container with JetStream, fresh storage,
+The default run first fetches the separately locked dependencies needed by the
+offline macro compatibility tests. It then starts a pinned NATS 2.12.1 container
+with JetStream, fresh storage,
 random loopback-only ports, and the required payload limit. It waits for
 JetStream readiness, sets bounded bike-rental stream limits, and runs
 `cargo test --locked --workspace --all-features -- --test-threads=1`. It removes
