@@ -48,8 +48,10 @@ canonical namespace; Test automatically inserts a reserved `.test` subject
 scope and uses separate derived streams without inventing another application.
 See
 [`docs/adr`](docs/adr) for the messaging conventions and provisioning decisions.
-For a visual walkthrough of subjects, streams, and Test isolation using the
-bike-rental example, open [`docs/subjects.html`](docs/subjects.html) in a browser.
+For a visual walkthrough using the bike-rental example, read
+[Subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
+on the docs website, or open [`docs/subjects.html`](docs/subjects.html) for the
+standalone offline guide.
 
 [`examples/bike-rental`](examples/bike-rental) is a self-contained public
 example with rental, return, and fleet-addition commands plus their decisions,
