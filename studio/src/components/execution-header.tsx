@@ -28,7 +28,7 @@ interface ExecutionHeaderProps {
   view: FlowView
   loading: boolean
   canRun: boolean
-  demo: boolean
+  connected: boolean
   error?: string
   onRun: () => void
 }
@@ -42,14 +42,19 @@ export function ExecutionHeader({
   view,
   loading,
   canRun,
-  demo,
+  connected,
   error,
   onRun,
 }: ExecutionHeaderProps) {
   const [scenarioOpen, setScenarioOpen] = useState(false)
   const scenarioId = useId()
   const canvas = layout === "canvas"
-  const root = nodes.find((node) => node.kind === "command" && !node.context)
+  const root =
+    nodes.find((node) => node.subject === true) ??
+    nodes.find(
+      (node) =>
+        node.kind === "command" && !node.context && node.subject !== false
+    )
   const expectations = definition?.definition.expected.graphs[0]?.nodes ?? []
   const expected = expectations.find(
     (node) => node.kind === "command" && !node.parentKey
@@ -134,17 +139,7 @@ export function ExecutionHeader({
             ) : (
               <Play />
             )}
-            {view === "running"
-              ? "Running…"
-              : run
-                ? run.source === (demo ? "demo" : "live")
-                  ? "Run again"
-                  : demo
-                    ? "Run demo"
-                    : "Run in Test"
-                : demo
-                  ? "Run demo"
-                  : "Run test"}
+            {view === "running" ? "Running…" : run ? "Run again" : "Run test"}
           </Button>
         </div>
       </div>
@@ -218,7 +213,7 @@ export function ExecutionHeader({
               <time dateTime={run.createdAt}>{formatTime(run.createdAt)}</time>
             )}
           </div>
-          {!demo && (
+          {connected && (
             <p className="execution-note">
               Runs use the current test definition and reset isolated Test state
               to its fixture.
@@ -226,8 +221,9 @@ export function ExecutionHeader({
           )}
           {run && !canRun && !loading && (
             <p className="execution-note">
-              This saved run’s test is not available from the current
-              connection.
+              {connected
+                ? "This saved run’s test is not available from the current connection."
+                : "Viewing a saved run. Reconnect to Tracer to run tests."}
             </p>
           )}
         </>

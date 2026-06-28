@@ -39,7 +39,12 @@ import {
   messageFacts,
   messageState,
 } from "@/lib/message-presentation"
-import type { FlowView, MessageGraphNode, StudioLayout } from "@/lib/types"
+import type {
+  FlowView,
+  MessageGraphNode,
+  StudioLayout,
+  OperationMessageSeries,
+} from "@/lib/types"
 import { useMediaQuery } from "@/lib/use-media-query"
 import { cn } from "@/lib/utils"
 
@@ -47,6 +52,8 @@ interface MessageGraphProps {
   nodes: MessageGraphNode[]
   view: FlowView
   layoutMode: StudioLayout
+  emptyMessage?: string
+  capture?: OperationMessageSeries["capture"]
 }
 
 type MessageFlowNode = Node<
@@ -73,7 +80,13 @@ const kindIcons = {
   "integration-event": Radio,
 }
 
-export function MessageGraph({ nodes, view, layoutMode }: MessageGraphProps) {
+export function MessageGraph({
+  nodes,
+  view,
+  layoutMode,
+  emptyMessage,
+  capture,
+}: MessageGraphProps) {
   const compact = useMediaQuery("(max-width: 1100px)")
   const canvas = layoutMode === "canvas"
   const [selectedId, setSelectedId] = useState<string>()
@@ -92,7 +105,11 @@ export function MessageGraph({ nodes, view, layoutMode }: MessageGraphProps) {
   const layout = useMemo(() => layoutMessageGraph(nodes), [nodes])
   const selected =
     nodes.find((node) => node.id === selectedId) ??
-    nodes.find((node) => node.kind === "command" && !node.context) ??
+    nodes.find((node) => node.subject === true) ??
+    nodes.find(
+      (node) =>
+        node.kind === "command" && !node.context && node.subject !== false
+    ) ??
     nodes[0]
   const highlightedId = inspectorVisible ? selected?.id : undefined
   const select = useCallback(
@@ -194,7 +211,9 @@ export function MessageGraph({ nodes, view, layoutMode }: MessageGraphProps) {
         ? "Execution in progress"
         : view === "unavailable"
           ? "Incomplete execution"
-          : "Observed flow"
+          : view === "predicted"
+            ? "Preview flow"
+            : "Observed flow"
   const dismissInspector = () => {
     setDetailsOpen(false)
     setCanvasInspectorOpen(false)
@@ -249,7 +268,10 @@ export function MessageGraph({ nodes, view, layoutMode }: MessageGraphProps) {
             <div className="graph-empty">
               <Workflow />
               <h3>No flow to display</h3>
-              <p>Select a test to explore its expected messages.</p>
+              <p>
+                {emptyMessage ??
+                  "Select a test to explore its expected messages."}
+              </p>
             </div>
           ) : compact ? (
             <ol className="message-list" aria-label="Messages in this flow">
@@ -264,9 +286,11 @@ export function MessageGraph({ nodes, view, layoutMode }: MessageGraphProps) {
                         ? "Given · fixture state"
                         : node.edgeRelationship === "context"
                           ? "When · root command"
-                          : parent && node.edgeFidelity === "exact"
-                            ? `${view === "expected" ? "Expected after" : "Caused by"} ${parent.name}`
-                            : "Associated message · no resolved cause"}
+                          : node.subject === true
+                            ? "Root command"
+                            : parent && node.edgeFidelity === "exact"
+                              ? `${view === "expected" ? "Expected after" : "Caused by"} ${parent.name}`
+                              : "Associated message · no resolved cause"}
                     </p>
                     <MessageCard
                       node={node}
@@ -310,7 +334,11 @@ export function MessageGraph({ nodes, view, layoutMode }: MessageGraphProps) {
         <footer className="flow-legend">
           <span>
             <ArrowRight size={14} />
-            {view === "expected" ? "Expected causation" : "Causal link"}
+            {view === "expected"
+              ? "Expected causation"
+              : view === "predicted"
+                ? "Predicted causation"
+                : "Causal link"}
           </span>
           <span>
             <i />
@@ -319,6 +347,14 @@ export function MessageGraph({ nodes, view, layoutMode }: MessageGraphProps) {
           {uncertain && (
             <span className="uncertain-note">
               Some messages have no resolved cause
+            </span>
+          )}
+          {capture && (
+            <span className="graph-caption">
+              {capture.fidelity === "exact"
+                ? "exact causality"
+                : "grouped capture"}
+              {capture.settled ? "" : " / partial"}
             </span>
           )}
           {!compact && (
@@ -345,6 +381,7 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
       data-node-id={data.message.id}
       data-context={data.message.context}
       data-status={data.message.status}
+      data-subject={data.message.subject}
     >
       <Handle
         type="target"

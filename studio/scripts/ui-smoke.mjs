@@ -1,40 +1,46 @@
 import assert from "node:assert/strict"
-import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
-import { spawn } from "node:child_process"
+import {
+  startStudioServer,
+  launchStudioBrowser,
+  closeStudioBrowser,
+} from "./browser.mjs"
+import { checkCommandRefresh } from "./command-refresh.mjs"
+import { checkCommandExecution } from "./command-execution.mjs"
+import {
+  SAMPLE_TESTS,
+  SAMPLE_DEFINITIONS,
+  SAMPLE_FIXTURE,
+  SAMPLE_GRAPH,
+  SAMPLE_FIXTURES,
+} from "./fixtures.mjs"
 
-import puppeteer from "puppeteer-core"
-
-const root = fileURLToPath(new URL("..", import.meta.url))
-const url = "http://127.0.0.1:4176"
-const vite = fileURLToPath(
-  new URL("../node_modules/vite/bin/vite.js", import.meta.url)
-)
-const server = spawn(
-  process.execPath,
-  [vite, "--host", "127.0.0.1", "--port", "4176", "--strictPort"],
-  { cwd: root, stdio: "ignore" }
-)
+const { server, url } = await startStudioServer({
+  define: { "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api") },
+})
 
 // All Tracer requests are intercepted before navigation. This test never resets
 // a real scenario or publishes a real command, even if a Tracer is running.
-let apiMode = "demo"
-let sample
+let apiMode = "offline"
+const sample = {
+  tests: SAMPLE_TESTS,
+  definitions: SAMPLE_DEFINITIONS,
+  fixture: SAMPLE_FIXTURE,
+  graph: SAMPLE_GRAPH,
+}
 let failExpectations = false
 let disconnectRun = false
 const publications = []
+let releaseFirstRun
+const firstRunGate = new Promise((resolve) => {
+  releaseFirstRun = resolve
+})
 let browser
 let page
 
 try {
-  await waitForServer()
-  browser = await puppeteer.launch({
-    executablePath: chromeExecutable(),
-    headless: true,
-    args: process.env.CHROME_NO_SANDBOX === "1" ? ["--no-sandbox"] : [],
-  })
+  browser = await launchStudioBrowser()
   await browser
     .defaultBrowserContext()
     .overridePermissions(url, ["clipboard-read", "clipboard-sanitized-write"])
@@ -47,7 +53,90 @@ try {
     void handleRequest(request)
   })
   await page.goto(url, { waitUntil: "networkidle0" })
+  await page.waitForSelector('[data-connection="disconnected"]')
+  assert.match(
+    await text(page, ".connection-notice"),
+    /GET \/api\/catalog: 502/
+  )
+  assert.match(await text(page, ".connection-status"), /Disconnected/)
+  assert.equal(
+    await page.$$eval(
+      "[data-graph-node], .test-row, .run-row",
+      (elements) => elements.length
+    ),
+    0,
+    "an unavailable API must not generate demo tests, messages, or runs"
+  )
+  assert.equal(await page.$(".run-button"), null)
+  await screenshot(page, "disconnected")
+  console.log("Verified disconnected startup without demo data")
+
+  await page.evaluate((sample) => {
+    const run = {
+      testId: sample.tests[0].id,
+      testName: "Legacy demo",
+      createdAt: new Date().toISOString(),
+      status: "passed",
+      nodes: sample.graph,
+    }
+    localStorage.setItem(
+      "rostfrei-tracer-studio-runs-v1",
+      JSON.stringify([
+        { ...run, runId: "demo-old-format" },
+        { ...run, runId: "demo-with-source", source: "demo" },
+      ])
+    )
+  }, sample)
+  await page.reload({ waitUntil: "networkidle0" })
+  await page.waitForSelector('[data-connection="disconnected"]')
+  assert.equal(
+    await page.$$eval(".run-row", (rows) => rows.length),
+    0,
+    "old demo results must not be presented as recorded Tracer runs"
+  )
+  assert.equal(
+    await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem("rostfrei-tracer-studio-runs-v1"))
+          .length
+    ),
+    2,
+    "filtering old demo entries must not modify stored data during loading"
+  )
+
+  for (const [mode, reason] of [
+    ["unauthorized", /401.*Authentication failed.*VITE_TRACER_TOKEN/],
+    ["network-error", /Could not reach the Tracer API/],
+    ["invalid-json", /invalid or incomplete JSON response/],
+    ["unsupported-catalog", /Unsupported Tracer catalog version 2/],
+    ["invalid-list", /did not return a test list/],
+    ["fixture-error", /GET \/api\/test-scenario\/fixtures\/demo-fleet: 503/],
+  ]) {
+    apiMode = mode
+    console.log(`Checking connection recovery: ${mode}`)
+    await page.click(".connection-retry")
+    await page.waitForSelector(
+      `[data-connection="${["invalid-list", "fixture-error"].includes(mode) ? "tests-unavailable" : "disconnected"}"]`
+    )
+    assert.match(await text(page, ".connection-error-detail"), reason)
+    assert.equal(
+      await page.$$eval(
+        "[data-graph-node], .test-row, .run-row",
+        (elements) => elements.length
+      ),
+      0
+    )
+  }
+  apiMode = "live"
+  await page.click(".connection-retry")
   await ready(page)
+  assert.equal(
+    publications.length,
+    0,
+    "connection retries must only discover tests, never execute one"
+  )
+  assert.equal(await page.$(".connection-notice"), null)
+  console.log("Verified read-only reconnect; checking execution and layouts")
   assert.equal(
     await page.$eval('[data-layout="canvas"]', (button) =>
       button.getAttribute("aria-pressed")
@@ -77,14 +166,14 @@ try {
     )
   }
 
-  assert.match(await text(page, ".connection-status"), /Demo data/)
+  assert.match(await text(page, ".connection-status"), /Isolated Test/)
   assert.match(
     await text(page, ".execution-result"),
     /Ready to run.*expected messages/s
   )
   assert.equal(
     await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
-    4
+    5
   )
   assert.match(await text(page, "[data-command-response]"), /Expected outcome/)
   assert.doesNotMatch(
@@ -93,16 +182,6 @@ try {
   )
   await assertFitted(page)
   await screenshot(page, "expected")
-
-  sample = await page.evaluate(async () => {
-    const { SAMPLE_TESTS, SAMPLE_DEFINITIONS, SAMPLE_FIXTURE } =
-      await import("/src/lib/sample-data.ts")
-    return {
-      tests: SAMPLE_TESTS,
-      definitions: SAMPLE_DEFINITIONS,
-      fixture: SAMPLE_FIXTURE,
-    }
-  })
 
   await page.evaluate(() => {
     window.__sawPendingResponse = false
@@ -132,6 +211,7 @@ try {
     ),
     true
   )
+  releaseFirstRun()
   await passed(page)
   assert.equal(
     await page.evaluate(() => {
@@ -143,11 +223,11 @@ try {
   )
   assert.equal(
     await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
-    7
+    5
   )
   assert.equal(
     await page.$$eval("[data-graph-edge]", (edges) => edges.length),
-    6
+    4
   )
   assert.match(
     await text(page, ".execution-result"),
@@ -181,7 +261,7 @@ try {
   )
   assert.equal(
     await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
-    7
+    5
   )
   await screenshot(page, "canvas")
   await page.click(".scenario-toggle")
@@ -189,7 +269,7 @@ try {
   assert.match(await text(page, ".scenario-summary"), /bicycle_id: bike-42/)
   await page.click(".scenario-toggle")
   await page.waitForSelector(".scenario-summary", { hidden: true })
-  await page.click('[data-message-id="event-rented"]')
+  await page.click('[aria-label="Domain event bicycle-rented"]')
   await page.waitForSelector(".message-inspector", { visible: true })
   await page.waitForFunction(
     () =>
@@ -201,7 +281,8 @@ try {
   await page.waitForSelector(".message-inspector", { hidden: true })
   await page.waitForFunction(
     () =>
-      document.activeElement?.getAttribute("data-message-id") === "event-rented"
+      document.activeElement?.getAttribute("aria-label") ===
+      "Domain event bicycle-rented"
   )
   await page.keyboard.press("Enter")
   await page.waitForSelector(".message-inspector", { visible: true })
@@ -218,7 +299,7 @@ try {
   )
   await assertFitted(page)
 
-  await page.click('[data-message-id="event-rented"]')
+  await page.click('[aria-label="Domain event bicycle-rented"]')
   await page.waitForFunction(
     () =>
       document.querySelector(".inspector-message-heading h2")?.textContent ===
@@ -243,7 +324,7 @@ try {
   )
   assert.equal(
     await page.evaluate(() => navigator.clipboard.readText()),
-    "evt_01HZX8B8A2"
+    "mock-1-event-rented"
   )
   await page.mouse.move(5, 5)
   assert.equal(
@@ -340,12 +421,12 @@ try {
     "bicycle-rented",
     "viewport controls preserve message selection"
   )
-  await page.focus('[data-message-id="fixture-event-0-demo-fleet-imported"]')
+  await page.focus('[data-message-id="fixture-event-0-demo-bike-42-added"]')
   await page.keyboard.press("Enter")
   await page.waitForFunction(
     () =>
       document.querySelector(".inspector-message-heading h2").textContent ===
-      "rental-fleet-imported"
+      "bicycle-added"
   )
   assert.match(
     await text(page, ".relationship-description"),
@@ -376,7 +457,7 @@ try {
   await passed(page)
   assert.match(await text(page, ".run-button"), /Run again/)
 
-  // Reloaded history retains its definition, outcome, and simulated provenance.
+  // Reloaded history retains the definition and outcome returned by Tracer.
   await page.reload({ waitUntil: "networkidle0" })
   await ready(page)
   await selectRun(page, "Reject a maintenance-required bicycle")
@@ -384,7 +465,10 @@ try {
     await text(page, ".execution-result"),
     /Command rejected as expected/
   )
-  assert.match(await text(page, ".connection-status"), /Demo data/)
+  assert.match(
+    await text(page, ".connection-status"),
+    /Isolated Test.*Saved run/
+  )
 
   for (const width of [1440, 1280]) {
     await page.setViewport({ width, height: 800, deviceScaleFactor: 1 })
@@ -437,18 +521,16 @@ try {
     if (width === 390) await screenshot(page, "mobile-flow")
   }
 
-  // Exercise the connected UI against deterministic HTTP fixtures.
-  apiMode = "live"
   await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 })
   await page.reload({ waitUntil: "networkidle0" })
   await ready(page)
   assert.match(await text(page, ".connection-status"), /Isolated Test/)
   await selectRun(page, "Rent an available bicycle")
-  assert.match(await text(page, ".connection-status"), /Demo data/)
+  assert.match(await text(page, ".connection-status"), /Isolated Test/)
   assert.match(
     await text(page, ".run-button"),
-    /Run in Test/,
-    "a demo history entry must not conceal the next run's live Test target"
+    /Run again/,
+    "saved Tracer runs can be rerun only through the connected API"
   )
   await page.click(".run-button")
   await passed(page)
@@ -519,6 +601,7 @@ try {
       await import("/src/lib/graph.ts")
     const { messageFacts } = await import("/src/lib/message-presentation.ts")
     const fixture = structuredClone(sample.fixture)
+    fixture.messages = [fixture.messages[0]]
     fixture.messages.push({
       ...fixture.messages[0],
       messageId: "fixture-second",
@@ -577,7 +660,7 @@ try {
     }
   }, sample)
   assert.deepEqual(semantics.streamEdges, [
-    ["demo-fleet-imported", "fixture-second"],
+    ["demo-bike-42-added", "fixture-second"],
   ])
   assert.equal(semantics.contextEdges, 1)
   assert.equal(
@@ -587,14 +670,14 @@ try {
   )
   assert.equal(
     semantics.missingOutcome,
-    null,
+    "indeterminate",
     "a completed operation alone does not prove command acceptance"
   )
   assert.deepEqual(semantics.scalarFacts, [
     [["Value", "null"]],
     [["Value", "false"]],
     [["Value", "0"]],
-    [["Value", '\"\"']],
+    [["Value", '""']],
   ])
 
   await page.click('[data-layout="canvas"]')
@@ -626,9 +709,28 @@ try {
     }
   }
 
-  apiMode = "empty"
+  apiMode = "offline"
+  await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 })
   await page.reload({ waitUntil: "networkidle0" })
-  await page.waitForSelector(".graph-empty")
+  await page.waitForSelector('[data-connection="disconnected"]')
+  if (await page.$('button[aria-label="Expand sidebar"]'))
+    await page.click('button[aria-label="Expand sidebar"]')
+  await page.evaluate(() => document.querySelector(".run-row").click())
+  await page.waitForSelector(".execution-result")
+  assert.match(
+    await text(page, ".connection-status"),
+    /Disconnected.*Saved run/
+  )
+  assert.equal(
+    await page.$eval(".run-button", (button) => button.disabled),
+    true,
+    "saved history must not enable offline execution"
+  )
+  assert.match(await text(page, ".execution-note"), /Viewing a saved run/)
+  const beforeReconnect = publications.length
+  apiMode = "empty"
+  await page.click(".connection-retry")
+  await page.waitForSelector('.connection-status[data-source="live"]')
   assert.match(
     await text(page, ".execution-header"),
     /No behavioral tests are registered/
@@ -641,19 +743,30 @@ try {
     await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
     0
   )
+  assert.equal(publications.length, beforeReconnect)
   assert.deepEqual(errors, [], "no browser runtime errors")
+  await checkCommandExecution(browser, url)
+  await checkCommandRefresh(browser, url)
   console.log(
-    `PASS: expected/observed flows; accepted/rejected outcomes; reruns and history; persistent inspector and clipboard; causal edges; 6 responsive widths; mocked connected runs, failed expectations, ambiguous response and storage failure; empty catalog. Screenshots: ${path.join(tmpdir(), "rostfrei-studio-*.png")}`
+    `PASS: explicit connection failures and read-only retry; no demo fallback; canonical bicycle-added fixtures; behavioral runs and offline history; layouts and hotkeys; inspector and causal edges; 6 responsive widths; Preview/Test command forms, exact numeric payloads, idempotency, input refresh and operation identities; failed expectations, ambiguous responses and storage failure. All API responses were mocked. Screenshots: ${path.join(tmpdir(), "rostfrei-studio-*.png")}`
   )
 } catch (error) {
-  if (page) {
-    await screenshot(page, "failure")
-    console.error(await text(page, ".execution-header"))
+  console.error(error)
+  if (page && !page.isClosed()) {
+    try {
+      await screenshot(page, "failure")
+      console.error(await text(page, ".studio-heading"))
+    } catch {
+      // Preserve the original error if Chrome is no longer available.
+    }
   }
   throw error
 } finally {
-  await browser?.close()
-  server.kill("SIGTERM")
+  console.log("Closing UI browser")
+  await closeStudioBrowser(browser)
+  console.log("Closing UI server")
+  await server.close()
+  console.log("UI resources closed")
 }
 
 async function handleRequest(request) {
@@ -665,18 +778,41 @@ async function handleRequest(request) {
       contentType: "application/json",
       body: JSON.stringify(body),
     })
-  if (apiMode === "demo")
-    return respond({ message: "Deterministic demo data" }, 503)
-  if (pathname === "/api/tests")
-    return respond({ items: apiMode === "empty" ? [] : sample.tests })
-  if (pathname === "/api/test-scenario/fixtures/demo-fleet")
-    return respond(sample.fixture)
+  if (apiMode === "offline") return respond({}, 502)
+  if (apiMode === "unauthorized") return respond({}, 401)
+  if (apiMode === "network-error") return request.abort("failed")
+  if (apiMode === "invalid-json")
+    return request.respond({
+      status: 200,
+      contentType: "application/json",
+      body: "not JSON",
+    })
+  if (pathname === "/api/catalog")
+    return respond({
+      catalogVersion: apiMode === "unsupported-catalog" ? 2 : 1,
+      testRepository: { definitionsHref: "/behavior-tests" },
+      contexts: [],
+    })
+  if (pathname === "/api/behavior-tests")
+    return respond({
+      items:
+        apiMode === "invalid-list"
+          ? null
+          : apiMode === "empty"
+            ? []
+            : sample.tests,
+    })
+  if (pathname.startsWith("/api/test-scenario/fixtures/"))
+    return apiMode === "fixture-error"
+      ? respond({ message: "Fixture discovery unavailable" }, 503)
+      : respond(SAMPLE_FIXTURES[pathname.split("/").at(-1)])
   const match = /^\/api\/tests\/([^/]+)(\/runs)?$/.exec(pathname)
   if (match && sample.definitions[match[1]]) {
     if (!match[2]) return respond(sample.definitions[match[1]])
     assert.equal(request.method(), "POST")
     publications.push(match[1])
     if (disconnectRun) return request.abort("failed")
+    if (publications.length === 1) await firstRunGate
     return respond(reportFor(match[1]))
   }
   return respond({ message: "Unexpected test endpoint" }, 404)
@@ -690,9 +826,35 @@ function reportFor(testId) {
   )
   const accepted = root.outcome === "accepted"
   const identity = `mock-${publications.length}`
+  const observedNodes =
+    !failExpectations && testId === "rent-available-bicycle"
+      ? sample.graph
+          .filter((node) => !node.context)
+          .map((node) => ({
+            ...node,
+            key: node.id,
+            parentKey:
+              node.edgeRelationship === "context" ? undefined : node.parentId,
+            context: node.boundedContext,
+          }))
+      : failExpectations
+        ? [root]
+        : expectedNodes
+  const messages = observedNodes.map((node, index) => ({
+    kind: node.kind,
+    name: node.name,
+    schemaVersion: node.schemaVersion,
+    payload: node.payload,
+    context: node.context,
+    messageId: `${identity}-${node.key}`,
+    causationId: node.parentKey ? `${identity}-${node.parentKey}` : undefined,
+    correlationId: identity,
+    observationOrder: index + 1,
+  }))
   const commandOutcome = {
     responseMessageId: `${identity}-response`,
-    commandMessageId: `${identity}-${root.key}`,
+    commandMessageId: messages.find((message) => message.kind === "command")
+      .messageId,
     correlationId: identity,
     observationOrder: 2,
     outcome: accepted
@@ -707,19 +869,6 @@ function reportFor(testId) {
           },
         },
   }
-  const messages = (failExpectations ? [root] : expectedNodes).map(
-    (node, index) => ({
-      kind: node.kind,
-      name: node.name,
-      schemaVersion: node.schemaVersion,
-      payload: node.payload,
-      context: node.context,
-      messageId: `${identity}-${node.key}`,
-      causationId: node.parentKey ? `${identity}-${node.parentKey}` : undefined,
-      correlationId: identity,
-      observationOrder: index + 1,
-    })
-  )
   const status = failExpectations ? "failed" : "passed"
   return {
     runId: identity,
@@ -730,10 +879,12 @@ function reportFor(testId) {
     commandOutcome,
     comparison: {
       status,
-      matches: messages.map((message) => ({
-        expectedKey: message.messageId.slice(identity.length + 1),
-        observedMessageId: message.messageId,
-      })),
+      matches: expectedNodes.flatMap((node) => {
+        const message = messages.find((message) => message.name === node.name)
+        return message
+          ? [{ expectedKey: node.key, observedMessageId: message.messageId }]
+          : []
+      }),
       diagnostics: failExpectations
         ? [
             {
@@ -826,30 +977,4 @@ async function screenshot(page, label) {
 
 async function text(page, selector) {
   return page.$eval(selector, (element) => element.textContent)
-}
-
-async function waitForServer() {
-  const deadline = Date.now() + 20000
-  while (Date.now() < deadline) {
-    try {
-      if ((await fetch(url)).ok) return
-    } catch {
-      /* Vite is starting. */
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100))
-  }
-  throw new Error(`Vite did not start at ${url}`)
-}
-
-function chromeExecutable() {
-  const executable = [
-    process.env.CHROME_BIN,
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-  ]
-    .filter(Boolean)
-    .find((candidate) => existsSync(candidate))
-  if (!executable) throw new Error("Set CHROME_BIN to a Chrome executable")
-  return executable
 }

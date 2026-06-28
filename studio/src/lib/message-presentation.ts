@@ -48,7 +48,11 @@ export function messageState(node: MessageGraphNode, view: FlowView): string {
     return "Expected message"
   }
   if (node.kind !== "command")
-    return view === "running" ? "Received" : "Observed"
+    return view === "running"
+      ? "Received"
+      : view === "predicted"
+        ? "Predicted"
+        : "Observed"
   switch (node.status) {
     case "accepted":
       return "Accepted"
@@ -58,6 +62,8 @@ export function messageState(node: MessageGraphNode, view: FlowView): string {
       return "Awaiting response"
     case "failed":
       return "Result unavailable"
+    case "indeterminate":
+      return "Outcome unconfirmed"
     default:
       return "Outcome unavailable"
   }

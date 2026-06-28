@@ -26,9 +26,9 @@ interface AggregateInstanceCollection {
   items: AggregateInstance[]
 }
 
-export async function getCatalog(): Promise<TracerCatalog> {
+export async function getCatalog(signal?: AbortSignal): Promise<TracerCatalog> {
   const catalog = await requestJson<TracerCatalog>("/catalog", {
-    signal: AbortSignal.timeout(12_000),
+    signal,
   })
   if (catalog.catalogVersion !== 1) {
     throw new Error(
@@ -77,22 +77,36 @@ async function requestCommandInputs(
 }
 
 export async function listTests(
-  definitionsHref: string
+  definitionsHref: string,
+  signal?: AbortSignal
 ): Promise<TestDefinitionSummary[]> {
   const collection = await requestJson<TestCollection>(
-    advertisedHref(definitionsHref)
+    advertisedHref(definitionsHref),
+    { signal }
   )
+  if (!collection || !Array.isArray(collection.items)) {
+    throw new Error(
+      `${requestLabel(definitionsHref)}: Tracer did not return a test list.`
+    )
+  }
   return collection.items
 }
 
 export function getTest(
-  definitionHref: string
+  definitionHref: string,
+  signal?: AbortSignal
 ): Promise<TestDefinitionRevision> {
-  return requestJson(advertisedHref(definitionHref))
+  return requestJson(advertisedHref(definitionHref), { signal })
 }
 
-export function getFixture(fixtureId: string): Promise<Fixture> {
-  return requestJson(`/test-scenario/fixtures/${encodeURIComponent(fixtureId)}`)
+export function getFixture(
+  fixtureId: string,
+  signal?: AbortSignal
+): Promise<Fixture> {
+  return requestJson(
+    `/test-scenario/fixtures/${encodeURIComponent(fixtureId)}`,
+    { signal }
+  )
 }
 
 export function runTest(runHref: string): Promise<TestReport> {
@@ -185,20 +199,45 @@ export async function submitCommand(
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await request(path, init)
-  return (await response.json()) as T
+  try {
+    return (await response.json()) as T
+  } catch {
+    throw new Error(
+      `${requestLabel(path, init?.method)}: Tracer returned an invalid or incomplete JSON response.`
+    )
+  }
 }
 
 async function request(path: string, init?: RequestInit): Promise<Response> {
-  const response = await fetch(apiUrl(path), {
-    ...init,
-    redirect: "error",
-    headers: {
-      ...requestHeaders("application/json"),
-      ...init?.headers,
-    },
-  })
-  if (!response.ok) throw await responseError(response)
+  const label = requestLabel(path, init?.method)
+  const timeout = AbortSignal.timeout(init?.method === "POST" ? 60_000 : 10_000)
+  const signal = init?.signal
+    ? AbortSignal.any([init.signal, timeout])
+    : timeout
+  let response: Response
+  try {
+    response = await fetch(apiUrl(path), {
+      ...init,
+      signal,
+      redirect: "error",
+      headers: { ...requestHeaders("application/json"), ...init?.headers },
+    })
+  } catch {
+    throw new Error(
+      `${label}: ${timeout.aborted ? "Tracer did not respond before the request timed out." : signal.aborted ? "Request cancelled or timed out." : "Could not reach the Tracer API. Check the server, proxy target, and network connection."}`
+    )
+  }
+  if (!response.ok) {
+    const error = await responseError(response)
+    error.message = `${label}: ${error.message}`
+    throw error
+  }
   return response
+}
+
+function requestLabel(path: string, method = "GET"): string {
+  // Exclude URL credentials, query strings, and authorization headers.
+  return `${method} ${new URL(apiUrl(path), window.location.origin).pathname}`
 }
 
 function requestHeaders(accept: string): HeadersInit {
@@ -333,10 +372,27 @@ class TracerResponseError extends Error {
 
 async function responseError(response: Response): Promise<TracerResponseError> {
   const fallback = `${response.status} ${response.statusText}`
+  if (response.status === 401)
+    return new TracerResponseError(
+      `${fallback}: Authentication failed. Check VITE_TRACER_TOKEN.`,
+      response.status
+    )
+  if (response.status === 403)
+    return new TracerResponseError(
+      `${fallback}: The configured Tracer token does not have permission for this request.`,
+      response.status
+    )
+  if (response.status === 502 || response.status === 504)
+    return new TracerResponseError(
+      `${fallback}: The Studio proxy could not reach Tracer. Check VITE_TRACER_TARGET and that Tracer is running.`,
+      response.status
+    )
   try {
     const body = (await response.json()) as { message?: string; code?: string }
     return new TracerResponseError(
-      body.message ?? body.code ?? fallback,
+      body.message || body.code
+        ? `${fallback}: ${body.message ?? body.code}`
+        : fallback,
       response.status
     )
   } catch {

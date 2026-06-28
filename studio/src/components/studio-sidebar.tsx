@@ -105,11 +105,7 @@ export function StudioSidebar({
               </span>
               <span>
                 <span className="run-name">{run.testName}</span>
-                <span className="run-time">
-                  {formatRunTime(run.createdAt)}
-                  {(run.source === "demo" || run.runId.startsWith("demo-")) &&
-                    " · Demo"}
-                </span>
+                <span className="run-time">{formatRunTime(run.createdAt)}</span>
               </span>
             </button>
           ))
