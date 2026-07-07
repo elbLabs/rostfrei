@@ -1,15 +1,60 @@
-# Rostfrei documentation
+# Build a domain you can explain
 
-Rostfrei keeps domain-focused Rust explicit: macros describe the model, while predictable project structure connects every declaration to its owner and implementation.
+Rostfrei is a Rust framework for domain modeling, event sourcing, and messaging. It helps you understand a codebase even when AI agents wrote it, by connecting explicit domain ownership, typed contracts, event history, and inspectable behavior.
 
-## Explore the documentation
+Keep business decisions in ordinary Rust. Describe their contracts with a compiled domain model. Let the runtime handle event-store execution, then use Tracer to explore commands and follow their outcomes.
 
-- [Subjects and streams](/docs/messaging/subjects) follows the bike-rental example through NATS addresses, private history, public events, and Test isolation.
-- [Domain macros](/docs/domain-macros) explains what each macro declares.
-- [Project structure](/docs/project-structure) shows where each declaration and capability belongs.
+**New here? [Run the bike-rental example](/docs/getting-started).** Start by inspecting its model without a broker, then explore the NATS-backed application and Tracer Studio.
+
+## Understand code you didn't write
+
+An agent can implement a feature. You still need to understand the business rule and its consequences. Use the same path whether you are reviewing an agent's change or joining an unfamiliar project:
+
+1. **Find the owner.** [Project structure](/docs/project-structure) connects a bounded context, its aggregates, and their capabilities to predictable locations in the codebase.
+2. **Read the contract and implementation.** [Domain declarations](/docs/domain-macros) describe the model's roles and relationships. Follow them to the Rust behavior that implements the rule.
+3. **Observe the outcome.** Preview a command decision, then use isolated Test execution to inspect committed domain events and subsequent integrations in Tracer Studio.
+4. **Keep the behavior reviewable.** Behavioral tests express setup, a command, and expected outcomes so you can check them again after a change.
+
+The compiled model gives coding agents structured domain context, and Tracer's API lets them discover command contracts and inspect execution. Humans can navigate the same concepts in code and explore their behavior visually in Studio.
+
+## The mental model
+
+Imagine a customer renting a bicycle:
+
+1. A **command**, `RentBicycle`, asks the Bike Rental bounded context to make a business decision.
+2. Domain behavior checks the fleet and its rental policy. An unavailable bicycle produces a **rejection** and no new domain events.
+3. An accepted rental produces a **domain event**, `BicycleRented`. The runtime commits it to the fleet's private history. Replaying that history reconstructs the aggregate's state.
+4. After the commit, application code maps the private fact to a separately versioned **integration event**, `BicycleRentalStarted`, for public communication.
+
+A query reads state without appending events. A domain policy interprets facts without changing state. These distinctions keep decisions, history, and communication explicit.
 
 ## Follow a domain message
 
-This flow distinguishes a reusable policy from the command decision that produces an event or rejection.
+Explore how commands, policies, events, and rejections relate. A policy helps make the decision; it does not record the change itself.
 
 <DomainFlow />
+
+## Choose your next step
+
+| Your goal | Start here |
+| --- | --- |
+| Evaluate Rostfrei with a working domain | [Getting started](/docs/getting-started) |
+| Understand command routing, event history, and Test isolation | [Subjects and streams](/docs/messaging/subjects) |
+| Declare domain types and behavior contracts | [Domain macros](/docs/domain-macros) |
+| Find where a concept or implementation belongs | [Project structure](/docs/project-structure) |
+| Understand the architectural tradeoffs | [Architecture decisions](https://github.com/elbLabs/rostfrei/tree/main/docs/adr) |
+| Look up the precise meaning of a term | [Ubiquitous language](https://github.com/elbLabs/rostfrei/blob/main/UBIQUITOUS_LANGUAGE.md) |
+
+## How the pieces fit
+
+- **Rostfrei** provides the domain model, command and query buses, and event-sourcing runtime. Aggregates stay independent of persistence, serialization, and brokers.
+- **NATS adapters** connect the application to JetStream for durable commands, integration events, and authoritative domain-event storage. Infrastructure provisioning is explicit.
+- **Tracer** exposes domain contracts, read-only Preview, isolated Test publication, behavioral tests, and separately authorized production dispatch.
+- **Tracer Studio** is the visual client for exploring commands, test runs, and their message flows. Tracer's HTTP API also supports agent-driven workflows.
+- **The structure checker** validates domain ownership in the filesystem and the compiled model, so conventions remain checkable as the project grows.
+
+## When Rostfrei fits
+
+Rostfrei is aimed at applications where business rules, consistency boundaries, and the history of change are central to the design. Explicit ownership and inspectable behavior help teams keep agent-assisted development understandable as the codebase grows. The example shows both single-fleet decisions and a bicycle transfer committed atomically across two fleet aggregate streams in one event store.
+
+The project is **alpha** and its APIs are evolving. Use the example and architecture decisions to evaluate the model and its tradeoffs. Rostfrei is open source under the [European Union Public Licence 1.2](https://github.com/elbLabs/rostfrei/blob/main/LICENSE).

@@ -1,12 +1,28 @@
-# Tracer Studio
+# Rostfrei Tracer Studio
 
-Tracer Studio is a React/Vite client for executing commands, running Tracer
-behavioral tests, and visualizing causal message series. The Command pane offers
+Explore what your domain does, one command at a time. Tracer Studio is Rostfrei's
+visual client for discovering commands, previewing business decisions, running
+isolated behavioral tests, and following causal message flows.
+
+Use it to understand behavior in code you didn't write, including changes made
+by AI agents: inspect the command, its decision, and the messages that follow.
+
+Start with the [bike-rental walkthrough](https://elblabs.github.io/rostfrei/docs/getting-started)
+for a connected application, or run Studio on its own to explore the labeled
+demo data. The client is built with React and Vite.
+
+## Preview a decision or exercise the Test pipeline
+
+The Command pane offers
 Preview, which reads isolated Test history without publishing, and Test bus
 publication, which is the default and can append events and trigger Test-scoped
 integrations. A valid Test push submits immediately, closes the Command pane,
 and displays its message flow. Commands are discovered from Catalog v1 by
 bounded context; identifiers are prefilled editable payload fields.
+
+## Run locally
+
+From `studio/`:
 
 ```sh
 pnpm install --frozen-lockfile
