@@ -5,15 +5,17 @@ use std::{convert::Infallible, error::Error, sync::Arc};
 use async_trait::async_trait;
 use rostfrei::{
     Aggregate, Apply, Command, CommandBindingRegistrationError, CommandBus, CommandBusErrorKind,
-    CommandDecision, CommandExecution, CommandHandler, CommandHandlingResult,
-    CommandMessageAdapter, CommandProcessor, CommandProcessorErrorKind, CommandRequest,
-    DomainEvent, DomainIdentity, DynamicCommandRequest, EncodedCommand, Entity, EventStore,
-    InMemoryEventStore, InMemoryMessagingAdapter, Initialize, OperationId, StreamAggregateId,
-    StreamId, command_execution_fingerprint, command_message_id,
+    CommandDecision, CommandExecution, CommandExecutionMetadata, CommandExecutor, CommandHandler,
+    CommandHandlingResult, CommandMessageAdapter, CommandOutcome, CommandProcessor,
+    CommandProcessorErrorKind, CommandReceipt, CommandRequest, DomainEvent, DomainIdentity,
+    DynamicCommandRequest, EncodedCommand, Entity, EventStore, InMemoryEventStore,
+    InMemoryMessagingAdapter, Initialize, OperationId, StreamAggregateId, StreamId,
+    command_execution_fingerprint, command_message_id,
 };
 use rostfrei::{BoundedContext, InfallibleCommandRejectionMapper};
 use rostfrei_messaging_core::{
-    ApplicationName, CommandResponseOutcome, CorrelationId, MessageId, MessageTimestamp,
+    ApplicationName, CausationId, CommandResponseOutcome, CorrelationId, MessageId,
+    MessageTimestamp,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -212,6 +214,132 @@ fn registered_processor(store: InMemoryEventStore) -> TestResult<CommandProcesso
 
 fn request<C>(operation: &str, command: C) -> TestResult<CommandRequest<C>> {
     Ok(CommandRequest::new(OperationId::new(operation)?, command))
+}
+
+#[tokio::test]
+async fn direct_and_bus_execution_preserve_root_and_inherited_correlation() -> TestResult {
+    let direct_store = InMemoryEventStore::new();
+    let bus_store = InMemoryEventStore::new();
+    let processor = Arc::new(registered_processor(bus_store.clone())?);
+    let bus = CommandBus::new(
+        context()?,
+        Arc::new(InMemoryMessagingAdapter::new(processor)),
+    );
+    let root_correlation = CorrelationId::new("operation-a")?;
+    let supplied_correlation = CorrelationId::new("supplied-flow")?;
+
+    for (operation, correlation, causation) in [
+        ("operation-a", None, "upstream-message"),
+        ("operation-b", Some(&root_correlation), "event-from-a"),
+        ("operation-c", Some(&supplied_correlation), "other-message"),
+    ] {
+        assert_execution_metadata_parity(
+            &direct_store,
+            &bus_store,
+            &bus,
+            operation,
+            correlation,
+            &CausationId::new(causation)?,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn assert_execution_metadata_parity(
+    direct_store: &InMemoryEventStore,
+    bus_store: &InMemoryEventStore,
+    bus: &CommandBus,
+    operation: &str,
+    correlation: Option<&CorrelationId>,
+    causation: &CausationId,
+) -> TestResult {
+    let command = CreditAccount {
+        account_id: "account-1".to_owned(),
+        amount: 7,
+    };
+    let operation_id = OperationId::new(operation)?;
+    let mut request = CommandRequest::new(operation_id.clone(), command.clone())
+        .with_causation_id(causation.clone());
+    let mut metadata = CommandExecutionMetadata::new(
+        operation_id.clone(),
+        command_execution_fingerprint(
+            "ledger",
+            "credit-account",
+            1,
+            &json!({ "account_id": "account-1", "amount": 7 }),
+        )?,
+    )
+    .with_bounded_context(context()?.name().clone())
+    .with_causation_id(causation.clone());
+    if let Some(correlation) = correlation {
+        request = request.with_correlation_id(correlation.clone());
+        metadata = metadata.with_correlation_id(correlation.clone());
+    }
+    let expected_correlation = correlation
+        .cloned()
+        .unwrap_or(CorrelationId::new(operation)?);
+    let encoded = bus.encode(request.clone())?;
+    assert_eq!(encoded.correlation_id(), &expected_correlation);
+    let executor = CommandExecutor::new(direct_store.clone());
+    let direct = executor
+        .execute(&CreditAccountHandler, metadata.clone(), &command)
+        .await?;
+    let dispatched = bus.dispatch(request.clone()).await?;
+    assert!(matches!(
+        direct,
+        CommandOutcome::Accepted(CommandReceipt::Appended(_))
+    ));
+    assert_eq!(
+        dispatched.response().outcome(),
+        &CommandResponseOutcome::Accepted
+    );
+
+    let direct_receipt = direct_store
+        .load_transaction_receipt_in_context(context()?.name(), &operation_id)
+        .await?
+        .ok_or("direct transaction receipt is missing")?;
+    let bus_receipt = bus_store
+        .load_transaction_receipt_in_context(context()?.name(), &operation_id)
+        .await?
+        .ok_or("bus transaction receipt is missing")?;
+    assert_eq!(direct_receipt, bus_receipt);
+    assert_eq!(direct_receipt.correlation_id(), Some(&expected_correlation));
+    assert_eq!(direct_receipt.causation_id(), Some(causation));
+    let events = direct_receipt.events();
+    assert_eq!(events.len(), 1);
+    for event in &events {
+        assert_eq!(event.correlation_id(), direct_receipt.correlation_id());
+        assert_eq!(event.causation_id(), direct_receipt.causation_id());
+    }
+
+    for retry_metadata in [
+        metadata.clone(),
+        metadata.with_correlation_id(expected_correlation.clone()),
+    ] {
+        assert_eq!(
+            executor
+                .execute(&CreditAccountHandler, retry_metadata.clone(), &command)
+                .await?,
+            CommandOutcome::Accepted(CommandReceipt::ExactReplay(events.clone()))
+        );
+        // A receipt written through the bus must also replay through direct execution.
+        assert_eq!(
+            CommandExecutor::new(bus_store.clone())
+                .execute(&CreditAccountHandler, retry_metadata, &command)
+                .await?,
+            CommandOutcome::Accepted(CommandReceipt::ExactReplay(events.clone()))
+        );
+    }
+    let replay = bus
+        .dispatch(request.with_correlation_id(expected_correlation))
+        .await?;
+    assert_eq!(
+        replay.response().outcome(),
+        &CommandResponseOutcome::Accepted
+    );
+    assert!(replay.publication_duplicate());
+    Ok(())
 }
 
 #[tokio::test]

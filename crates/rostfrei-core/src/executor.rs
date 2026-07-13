@@ -565,6 +565,7 @@ where
         Ok(AggregateInstance::rehydrate(stream_id.clone(), events))
     }
 
+    /// Runs a handler without persistence, applying the same metadata defaults as execution.
     pub async fn simulate<Handler, Command>(
         &self,
         handler: &Handler,
@@ -575,6 +576,9 @@ where
         Handler: CommandHandler<Command>,
         Command: Sync,
     {
+        let metadata = metadata
+            .normalized()
+            .map_err(|error| invalid_request(error.to_string()))?;
         let mut execution =
             CommandExecution::with_codecs(&self.store, &metadata, self.codecs.as_ref());
         let decision = handler.handle(command, &mut execution).await?;
@@ -597,6 +601,14 @@ impl<S> CommandExecutor<S>
 where
     S: EventStore,
 {
+    /// Executes a command and atomically persists its accepted events.
+    ///
+    /// Before receipt lookup or handler invocation, an omitted correlation ID defaults to
+    /// the operation ID. Explicit correlation and causation are preserved independently.
+    /// The handler, transaction receipt, and committed events share this normalized metadata,
+    /// which stays stable across conflict retries and exact replay. An operation ID that cannot
+    /// serve as the default correlation ID fails with [`EventStoreErrorKind::InvalidRequest`]
+    /// before execution begins.
     pub async fn execute<Handler, Command>(
         &self,
         handler: &Handler,
@@ -607,6 +619,9 @@ where
         Handler: CommandHandler<Command>,
         Command: Sync,
     {
+        let metadata = metadata
+            .normalized()
+            .map_err(|error| invalid_request(error.to_string()))?;
         let mut remaining_conflict_retries = self.maximum_conflict_retries;
         loop {
             if let Some(receipt) = reconcile_existing(&self.store, &metadata).await? {
@@ -1151,6 +1166,133 @@ mod tests {
             .unwrap();
         assert!(receipt.streams()[0].events().is_empty());
         assert_eq!(receipt.streams()[1].events().len(), 1);
+        assert_eq!(
+            receipt
+                .correlation_id()
+                .map(rostfrei_messaging_core::CorrelationId::as_str),
+            Some("operation")
+        );
+        assert_eq!(receipt.causation_id(), None);
+        for event in receipt.events() {
+            assert_eq!(event.correlation_id(), receipt.correlation_id());
+            assert_eq!(event.causation_id(), receipt.causation_id());
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_rejects_changed_correlation_or_causation() {
+        use rostfrei_messaging_core::{CausationId, CorrelationId};
+
+        let executor = CommandExecutor::new(InMemoryEventStore::new());
+        let handler = WriteHandler {
+            calls: AtomicUsize::new(0),
+        };
+        let metadata = metadata().with_causation_id(CausationId::new("cause").unwrap());
+        executor
+            .execute(&handler, metadata.clone(), &())
+            .await
+            .unwrap();
+        for changed in [
+            metadata
+                .clone()
+                .with_correlation_id(CorrelationId::new("other-flow").unwrap()),
+            metadata.with_causation_id(CausationId::new("other-cause").unwrap()),
+        ] {
+            let error = executor.execute(&handler, changed, &()).await.unwrap_err();
+            assert!(matches!(
+                error,
+                CommandExecutionError::Store(error)
+                    if error.kind() == EventStoreErrorKind::IdentityConflict
+            ));
+        }
+        assert_eq!(handler.calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn invalid_default_correlation_fails_before_handling_or_persistence() {
+        let store = InMemoryEventStore::new();
+        let executor = CommandExecutor::new(store.clone());
+        let handler = WriteHandler {
+            calls: AtomicUsize::new(0),
+        };
+        let metadata = CommandExecutionMetadata::new(
+            OperationId::new("operation with spaces").unwrap(),
+            ContentFingerprint::digest("command"),
+        )
+        .with_bounded_context(metadata().bounded_context().unwrap().clone());
+
+        let error = executor
+            .execute(&handler, metadata.clone(), &())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CommandExecutionError::Store(error)
+            if error.kind() == EventStoreErrorKind::InvalidRequest));
+        let error = executor
+            .simulate(&handler, metadata.clone(), &())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, SimulationError::Store(error)
+            if error.kind() == EventStoreErrorKind::InvalidRequest));
+        assert_eq!(handler.calls.load(Ordering::Relaxed), 0);
+        assert!(
+            store
+                .load_transaction_receipt_in_context(
+                    metadata.bounded_context().unwrap(),
+                    metadata.operation_id(),
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    struct MetadataObservingHandler;
+
+    #[async_trait]
+    impl CommandHandler<CommandExecutionMetadata> for MetadataObservingHandler {
+        type Rejection = ();
+
+        async fn handle(
+            &self,
+            expected: &CommandExecutionMetadata,
+            execution: &mut CommandExecution<'_>,
+        ) -> CommandHandlingResult<Self::Rejection> {
+            assert_eq!(execution.metadata(), expected);
+            Ok(CommandDecision::Accepted)
+        }
+    }
+
+    #[tokio::test]
+    async fn execution_and_simulation_handlers_observe_normalized_metadata() {
+        use rostfrei_messaging_core::{CausationId, CorrelationId};
+
+        let executor = CommandExecutor::new(InMemoryEventStore::new());
+        let metadata = metadata().with_causation_id(CausationId::new("cause").unwrap());
+        for (input, expected) in [
+            (
+                metadata.clone(),
+                metadata
+                    .clone()
+                    .with_correlation_id(CorrelationId::new("operation").unwrap()),
+            ),
+            (
+                metadata
+                    .clone()
+                    .with_correlation_id(CorrelationId::new("earlier-operation").unwrap()),
+                metadata.with_correlation_id(CorrelationId::new("earlier-operation").unwrap()),
+            ),
+        ] {
+            let outcome = executor
+                .execute(&MetadataObservingHandler, input.clone(), &expected)
+                .await
+                .unwrap();
+            assert_eq!(outcome, CommandOutcome::Accepted(CommandReceipt::NoEvents));
+            let simulation = executor
+                .simulate(&MetadataObservingHandler, input, &expected)
+                .await
+                .unwrap();
+            assert_eq!(simulation.decision(), &CommandDecision::Accepted);
+        }
     }
 
     struct EncodingFailureAggregate;
@@ -1559,6 +1701,12 @@ mod tests {
             &self,
             transaction: EventTransaction,
         ) -> Result<TransactionAppendOutcome, EventStoreError> {
+            assert_eq!(
+                transaction
+                    .correlation_id()
+                    .map(rostfrei_messaging_core::CorrelationId::as_str),
+                Some(transaction.operation_id().as_str()),
+            );
             if self.attempts.fetch_add(1, Ordering::Relaxed) == 0 {
                 return Err(EventStoreError::new(
                     self.failure_kind,
@@ -2277,6 +2425,8 @@ mod tests {
     async fn no_event_decision_reconciles_a_receipt_committed_while_handling() {
         let inner = InMemoryEventStore::new();
         let metadata = metadata();
+        let correlation_id =
+            rostfrei_messaging_core::CorrelationId::new(metadata.operation_id().as_str()).unwrap();
         let stream_id = stream_id_for::<TestAggregate>("concurrent-writer").unwrap();
         let commit_id = derive_commit_id(&stream_id, metadata.operation_id());
         let batch = EventBatch::new(
@@ -2287,7 +2437,8 @@ mod tests {
                 NewEvent::new(derive_event_id(&commit_id, 0), "test-event", 1, Vec::new()).unwrap(),
             ],
         )
-        .unwrap();
+        .unwrap()
+        .with_correlation_id(correlation_id.clone());
         inner
             .append_transaction(
                 EventTransaction::new(
@@ -2299,7 +2450,8 @@ mod tests {
                         Some(batch),
                     )],
                 )
-                .with_bounded_context(metadata.bounded_context().unwrap().clone()),
+                .with_bounded_context(metadata.bounded_context().unwrap().clone())
+                .with_correlation_id(correlation_id),
             )
             .await
             .unwrap();
