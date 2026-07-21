@@ -28,6 +28,8 @@ const INVALID_PAYLOAD_CODE: &str = "rostfrei.command.invalid-payload";
 const UNKNOWN_COMMAND_CODE: &str = "rostfrei.command.unknown";
 const OPERATION_CONFLICT_CODE: &str = "rostfrei.operation.identity-conflict";
 
+/// A command submission whose correlation defaults to its operation ID when omitted.
+/// Explicit correlation and causation are preserved in the outgoing envelope.
 #[derive(Clone, Debug)]
 pub struct CommandRequest<C> {
     operation_id: CoreOperationId,
@@ -508,11 +510,6 @@ impl CommandBus {
             .map_err(|error| CommandBusError::encoding(error.to_string()))?;
         let operation_id = OperationId::new(request.operation_id.as_str())
             .map_err(|error| CommandBusError::encoding(error.to_string()))?;
-        let correlation_id = match request.correlation_id {
-            Some(correlation_id) => correlation_id,
-            None => CorrelationId::new(operation_id.as_str())
-                .map_err(|error| CommandBusError::encoding(error.to_string()))?,
-        };
         let created_at = match request.created_at {
             Some(created_at) => created_at,
             None => current_timestamp()?,
@@ -522,6 +519,13 @@ impl CommandBus {
             .with_events_caused_by_command(request.events_caused_by_command);
         let fingerprint =
             routed_command_execution_fingerprint(self.context.name().as_str(), &routed)?;
+        let mut metadata = CommandExecutionMetadata::new(request.operation_id, fingerprint);
+        if let Some(correlation_id) = request.correlation_id {
+            metadata = metadata.with_correlation_id(correlation_id);
+        }
+        let correlation_id = metadata
+            .effective_correlation_id()
+            .map_err(|error| CommandBusError::encoding(error.to_string()))?;
         let message_id = command_message_id(
             &address,
             &operation_id,

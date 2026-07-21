@@ -111,6 +111,16 @@ store. Direct executor callers must bind the context with
 `CommandExecutionMetadata::with_bounded_context`; metadata without a context may
 still be used by non-command infrastructure but cannot load command participants.
 
+Both direct execution and the command bus use the same correlation rule:
+`correlation_id = supplied_correlation_id ?? operation_id`. The executor normalizes
+metadata before invoking the handler, looking up receipts, or persisting events;
+simulation exposes the same normalized metadata to handlers. Explicit correlation,
+including an earlier operation's root correlation, and supplied causation are
+preserved independently. Transaction receipts and their events carry the same
+correlation and causation across retries. If an omitted correlation cannot be
+derived as a valid correlation ID from the operation ID, execution fails before
+invoking the handler or writing events.
+
 Transaction receipts are addressed by `(bounded context, OperationId)`. The context
 is persisted in `EventTransaction` and `TransactionReceipt`, participates in exact
 replay, and allows even a shared in-memory store to maintain independent operation

@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use rostfrei_messaging_core::{BoundedContextName, CausationId, CorrelationId};
+use rostfrei_messaging_core::{BoundedContextName, CausationId, ContractError, CorrelationId};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -195,6 +195,12 @@ const fn checked_hex_offset(value: u8, base: u8) -> Option<u8> {
     }
 }
 
+/// Identity and provenance supplied to command execution.
+///
+/// The executor defaults an omitted correlation ID to the operation ID before invoking the
+/// handler, comparing receipts, or persisting events. Explicit correlation and causation are
+/// preserved, including correlation inherited from an earlier operation in the same flow.
+/// Transaction receipts and their events carry the same normalized metadata on every retry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandExecutionMetadata {
     bounded_context: Option<BoundedContextName>,
@@ -245,8 +251,25 @@ impl CommandExecutionMetadata {
         self.operation_fingerprint
     }
 
+    /// Returns the correlation ID supplied by the caller, or established by the executor.
     pub const fn correlation_id(&self) -> Option<&CorrelationId> {
         self.correlation_id.as_ref()
+    }
+
+    /// Resolves the correlation used by execution and outgoing command envelopes.
+    ///
+    /// An explicit correlation ID takes precedence; otherwise the operation ID establishes
+    /// the root correlation. Returns an error if that default is not a valid correlation ID.
+    pub fn effective_correlation_id(&self) -> Result<CorrelationId, ContractError> {
+        self.correlation_id.as_ref().map_or_else(
+            || CorrelationId::new(self.operation_id.as_str()),
+            |correlation_id| Ok(correlation_id.clone()),
+        )
+    }
+
+    pub(crate) fn normalized(mut self) -> Result<Self, ContractError> {
+        self.correlation_id = Some(self.effective_correlation_id()?);
+        Ok(self)
     }
 
     pub const fn causation_id(&self) -> Option<&CausationId> {
