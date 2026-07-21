@@ -111,8 +111,13 @@ fn handlers_must_invoke_actions_instead_of_raising_events() {
         "let emit = || fleet.raise(event); emit();",
         "forward!({ fleet.raise(event) });",
         "forward!({ fleet.r#raise(event) });",
+        "forward!(fleet.raise::<BicycleRented>(event));",
+        "forward!(fleet.raise::<Option<Result<BicycleRented, Error>>>(event));",
+        "forward!(fleet.raise::<fn() -> BicycleRented>(event));",
+        "forward!(fleet.raise::<fn() -> Option<BicycleRented>>(event));",
         "forward!(AggregateInstance::<RentalFleetAggregate>::raise(&mut fleet, event));",
         "macro_rules! emit { () => { fleet.raise(event) }; } emit!();",
+        "macro_rules! emit { ($event:ty) => { fleet.raise::<$event>(event) }; } emit!(BicycleRented);",
     ] {
         fixture.write(HANDLER, &handler_source(body)).unwrap();
         let diagnostics = check_domain_root(&fixture.domain);
@@ -266,6 +271,77 @@ fn ordinary_action_calls_and_strings_mentioning_raise_are_allowed() {
         .unwrap();
     let diagnostics = check_domain_root(&fixture.domain);
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+}
+
+#[test]
+fn attribute_macro_arguments_cannot_raise_events_outside_actions() {
+    let fixture = Fixture::new().unwrap();
+    for expression in [
+        "instance.raise(event)",
+        "instance.r#raise::<BicycleRented>(event)",
+        "AggregateInstance::<RentalFleetAggregate>::raise(instance, event)",
+    ] {
+        let helper = format!(
+            "#[tracing::instrument(skip_all, fields(emitted = {{ {expression}; true }}))]
+fn helper(instance: &mut AggregateInstance<RentalFleetAggregate>, event: BicycleRented) {{}}"
+        );
+        let action = action_source("");
+        for (path, source) in [
+            (ACTION, format!("{action}\n{helper}")),
+            (ACTION, action_source(&helper)),
+            (HANDLER, handler_source(&helper)),
+            (HANDLER, handler_source("").replace(
+                "    async fn handle",
+                &format!("    #[tracing::instrument(skip_all, fields(emitted = {{ {expression}; true }}))]\n    async fn handle"),
+            )),
+            (ACTION, format!("#[instrument_impl(emitted = {{ {expression}; true }})]\n{action}")),
+        ] {
+            fixture.write(path, &source).unwrap();
+            let diagnostics = fixture.raising_diagnostics();
+            assert_eq!(diagnostics.len(), 1, "{source}: {diagnostics:#?}");
+            assert_eq!(diagnostics[0].path, fixture.domain.join(path));
+            fixture.write(path, if path == ACTION { &action } else { "" }).unwrap();
+        }
+    }
+}
+
+#[test]
+fn attributes_on_action_methods_retain_the_action_scope() {
+    let fixture = Fixture::new().unwrap();
+    fixture.write(ACTION, &action_source("").replace(
+        "    fn rent_bicycle",
+        "    #[tracing::instrument(skip_all, fields(emitted = { self.raise(BicycleRented { bicycle_id: bicycle_id.clone() }); true }))]\n    fn rent_bicycle",
+    )).unwrap();
+    let diagnostics = check_domain_root(&fixture.domain);
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+}
+
+#[test]
+fn fields_and_ranges_in_macro_inputs_are_not_event_raising() {
+    let fixture = Fixture::new().unwrap();
+    for expression in [
+        "salary.raise",
+        "salary.r#raise",
+        "(salary.raise)(event)",
+        "0..raise",
+        "0..raise()",
+        "0..raise::<u8>()",
+        "0..=raise",
+        "..raise",
+    ] {
+        for body in [
+            format!("let _value = {expression};"),
+            format!("assert_eq!({expression}, expected);"),
+            format!("trace!(value = ?({expression}));"),
+            format!(
+                "#[tracing::instrument(skip_all, fields(value = ?({expression})))]\nfn helper() {{}}"
+            ),
+        ] {
+            fixture.write(HANDLER, &handler_source(&body)).unwrap();
+            let diagnostics = check_domain_root(&fixture.domain);
+            assert!(diagnostics.is_empty(), "{body}: {diagnostics:#?}");
+        }
+    }
 }
 
 #[test]

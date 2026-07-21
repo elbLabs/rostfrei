@@ -1,4 +1,4 @@
-use proc_macro2::{TokenStream, TokenTree};
+use proc_macro2::{Delimiter, TokenStream, TokenTree, token_stream::IntoIter};
 use syn::ext::IdentExt;
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
@@ -29,12 +29,15 @@ impl EventRaisingVisitor {
     fn visit_tokens(&mut self, tokens: TokenStream) {
         let mut previous = None;
         let mut before_previous = None;
-        for token in tokens {
+        let mut tokens = tokens.into_iter();
+        while let Some(token) = tokens.next() {
             match &token {
                 TokenTree::Group(group) => self.visit_tokens(group.stream()),
                 TokenTree::Ident(ident)
                     if ident.unraw() == "raise"
-                        && (previous == Some('.')
+                        && ((previous == Some('.')
+                            && before_previous != Some('.')
+                            && followed_by_arguments(tokens.clone()))
                             || (before_previous == Some(':') && previous == Some(':'))) =>
                 {
                     self.record(ident.span());
@@ -50,10 +53,47 @@ impl EventRaisingVisitor {
     }
 }
 
+fn followed_by_arguments(mut tokens: IntoIter) -> bool {
+    let first = tokens.next();
+    if let Some(TokenTree::Group(arguments)) = first {
+        return arguments.delimiter() == Delimiter::Parenthesis;
+    }
+    if !matches!(
+        (first, tokens.next(), tokens.next()),
+        (Some(TokenTree::Punct(first)), Some(TokenTree::Punct(second)), Some(TokenTree::Punct(open)))
+            if first.as_char() == ':' && second.as_char() == ':' && open.as_char() == '<'
+    ) {
+        return false;
+    }
+
+    let mut depth = 1_usize;
+    let mut previous = None;
+    while let Some(token) = tokens.next() {
+        let punctuation = match token {
+            TokenTree::Punct(punct) => Some(punct.as_char()),
+            _ => None,
+        };
+        match punctuation {
+            Some('<') => depth = depth.saturating_add(1),
+            Some('>') if previous != Some('-') => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == 0 {
+            return matches!(tokens.next(), Some(TokenTree::Group(arguments))
+                if arguments.delimiter() == Delimiter::Parenthesis);
+        }
+        previous = punctuation;
+    }
+    false
+}
+
 impl<'ast> Visit<'ast> for EventRaisingVisitor {
     fn visit_item(&mut self, item: &'ast syn::Item) {
         let enclosing = self.implementation.take();
         if let syn::Item::Impl(implementation) = item {
+            for attribute in &implementation.attrs {
+                self.visit_attribute(attribute);
+            }
             let start = implementation.span().start();
             for member in &implementation.items {
                 self.implementation =
@@ -85,5 +125,13 @@ impl<'ast> Visit<'ast> for EventRaisingVisitor {
 
     fn visit_macro(&mut self, item: &'ast syn::Macro) {
         self.visit_tokens(item.tokens.clone());
+    }
+
+    fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
+        if let syn::Meta::List(arguments) = &attribute.meta {
+            self.visit_tokens(arguments.tokens.clone());
+        } else {
+            visit::visit_attribute(self, attribute);
+        }
     }
 }

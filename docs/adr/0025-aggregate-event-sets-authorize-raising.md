@@ -48,8 +48,12 @@ queries, policies, apply/initialize implementations, free helper functions, nest
 items, or other unapproved scopes. Closures in action methods retain their action
 scope. Qualified references are checked even when assigned to function-pointer
 aliases; renaming the receiver type does not hide a `.raise` or `::raise` reference.
-Method/path references visible in macro input and macro definitions are checked
-at their source location. String literals are not interpreted as code.
+Method/path references visible in macro input, attribute arguments, and macro
+definitions are checked at their source location. Attributes on action methods
+retain the action scope; attributes on helpers and entire implementations do not
+grant that scope. Method calls include optional turbofish arguments; field access
+such as `salary.raise` and ranges such as `0..raise` are not method calls.
+String literals are not interpreted as code.
 
 This is a source-level architectural rule: `raise` remains public for action
 implementations in application crates. The checker reserves these spellings
