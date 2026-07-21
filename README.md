@@ -84,6 +84,14 @@ addition to atomic multi-event commits, one event transaction can atomically
 append commits to multiple aggregate streams in the same bounded-context event
 store.
 
+Successful command execution always persists an acceptance receipt, including
+commands that emit no domain events or load no aggregates. Event-free acceptance
+returns `CommandReceipt::AcceptedNoEvents`; retries return `ExactReplay` with an
+empty event list. Loaded read-only aggregates are guarded atomically with the
+receipt, and changed command content or provenance conflicts under the accepted
+operation identity. See [Durable event-free acceptance](docs/adr/0039-durable-event-free-acceptance.md)
+for concurrency, storage compatibility, and migration from transient no-op results.
+
 The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual architecture
 decisions are recorded in [`docs/adr`](docs/adr).
