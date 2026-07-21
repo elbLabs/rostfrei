@@ -213,6 +213,23 @@ backend. The runner's own lifecycle tests need no Docker:
 python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
+### Aggregate benchmarks
+
+Measure the time until an aggregate is fully rehydrated and ready to use, along
+with history-only loading, event application, and a new executor command:
+
+```sh
+python3 scripts/test_nats.py -- cargo bench --locked \
+  -p rostfrei-nats --bench aggregate_loading -- \
+  --events 0,100,1000 --samples 5 \
+  --output /tmp/rostfrei-aggregate-loading.json
+```
+
+The release-mode suite creates both direct-appended and actual command-generated
+histories, verifies the resulting state, and writes raw samples and summaries as
+JSON. Fixture creation is excluded from sample timings and may take time for
+large command histories. See [benchmark methodology and options](docs/benchmarks/aggregate-loading.md).
+
 ### Git hooks
 
 Enable the tracked Git hooks once per checkout:

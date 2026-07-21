@@ -6,6 +6,8 @@ mod event_store;
 mod event_store_config;
 #[path = "../src/hex.rs"]
 mod hex;
+#[path = "event_store/history_reads.rs"]
+mod history_reads;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
 
