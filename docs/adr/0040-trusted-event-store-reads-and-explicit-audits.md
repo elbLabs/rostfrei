@@ -1,4 +1,4 @@
-# ADR 0039: Trusted event-store reads and explicit historical audits
+# ADR 0040: Trusted event-store reads and explicit historical audits
 
 ## Status
 
