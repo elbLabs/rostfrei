@@ -35,8 +35,10 @@ trusted:  947.109, 1140.668,  448.376,  576.873,  506.872,  630.371
 - One process/connection and a two-worker Tokio runtime; measurement on a worker.
 - Seed 1,000 real commands once, then warm both read paths.
 - Three ABBA blocks: audited, trusted, trusted, audited.
-- Audit mode calls `audit_history` through an `EventHistory` wrapper and the
-  same `CommandExecutor::rehydrate` implementation as ordinary mode.
+- The recorded run called `audit_history` through an `EventHistory` wrapper and
+  the same `CommandExecutor::rehydrate` implementation as ordinary mode. The
+  comparison now selects the equivalent public `with_history_auditing(true)`
+  handle policy.
 - Setup, result verification, and cleanup are outside the timed interval.
 
 Run the controlled comparison:
@@ -96,6 +98,8 @@ Local logs:
 
 ## Reversal
 
-Revert the separate commit introducing ADR 0039 to restore historical audits
-during normal reads. Earlier optimizations and the benchmark suite remain in the
-baseline checkpoint. Stored data and wire formats require no rollback migration.
+Historical audits can now be restored per handle with
+`with_history_auditing(true)`. For a code-level rollback, revert the configuration
+follow-up before the separate commit introducing ADR 0039. Earlier optimizations
+and the benchmark suite remain in the baseline checkpoint. Stored data and wire
+formats require no rollback migration.
