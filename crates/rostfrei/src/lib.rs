@@ -85,10 +85,11 @@ pub use rostfrei_core::{
     DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind,
     DomainEventRegistrationError, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind,
     EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind, EventTransaction,
-    EventVariant, ExpectedVersion, InMemoryEventStore, LoadedAggregate, MAX_TRANSACTION_ITEMS,
-    NewEvent, OperationId, RecordedEvent, SimulatedParticipant, SimulationError, SimulationOutcome,
-    StreamId, StreamVersion, TransactionAppendOutcome, TransactionParticipant, TransactionReceipt,
-    TransactionStreamReceipt,
+    EventVariant, ExpectedVersion, InMemoryEventStore, JsonReadModelCodec, LoadedAggregate,
+    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, ReadModelCodec, ReadModelEntry, ReadModelError,
+    ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelStore, RecordedEvent,
+    SimulatedParticipant, SimulationError, SimulationOutcome, StreamId, StreamVersion,
+    TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
 };
 pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};
 pub use rostfrei_macros::QueryDefinition;

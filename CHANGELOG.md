@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Typed, revision-aware `ReadModelStore<T>` and NATS KV adapter with versioned
+  codecs, CAS create/update/delete, application/context/model/traffic isolation,
+  and explicit provisioning, verification, and policy updates. Includes a
+  multi-handler query/rebuild example and migration/operations documentation.
+
 ### Changed
 
 - **Breaking (command acceptance):** successful event-free commands now persist a
