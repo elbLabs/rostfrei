@@ -84,6 +84,23 @@ Run the example tests:
 cargo test --locked -p bike-rental
 ```
 
+## Quarantine walkthrough
+
+The [quarantine walkthrough](QUARANTINE.md) runs the complete retry → quarantine
+→ inspect → repair → republish → acknowledge flow against real NATS, plus
+immediate quarantine for invalid application payloads and malformed transport
+messages:
+
+```sh
+docker compose -f examples/bike-rental/compose.yaml up -d
+ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
+  cargo run --locked -p bike-rental --bin bike-rental-quarantine-demo
+```
+
+It prints and checks the stored quarantine records, uses a fresh isolated
+namespace each run, and cleans up afterward. Add `-- --keep-streams` to inspect
+the records afterward with the NATS CLI. It can run independently of Tracer.
+
 ## NATS-backed Tracer
 
 The runnable example uses the shared `CommandBus`, `IntegrationEventBus`, NATS
