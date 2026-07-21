@@ -330,6 +330,19 @@ async fn assert_execution_metadata_parity(
             CommandOutcome::Accepted(CommandReceipt::ExactReplay(events.clone()))
         );
     }
+    let fresh_processor = registered_processor(bus_store.clone())?;
+    assert_eq!(
+        fresh_processor.process(&encoded).await?.outcome(),
+        &CommandResponseOutcome::Accepted
+    );
+    let stream_id = events
+        .first()
+        .ok_or("committed event is missing")?
+        .stream_id();
+    assert_eq!(
+        direct_store.load(stream_id).await?,
+        bus_store.load(stream_id).await?
+    );
     let replay = bus
         .dispatch(request.with_correlation_id(expected_correlation))
         .await?;

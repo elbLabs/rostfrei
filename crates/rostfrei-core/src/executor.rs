@@ -1180,7 +1180,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replay_rejects_changed_correlation_or_causation() {
+    async fn replay_rejects_changed_execution_metadata() {
         use rostfrei_messaging_core::{CausationId, CorrelationId};
 
         let executor = CommandExecutor::new(InMemoryEventStore::new());
@@ -1193,6 +1193,12 @@ mod tests {
             .await
             .unwrap();
         for changed in [
+            CommandExecutionMetadata::new(
+                metadata.operation_id().clone(),
+                ContentFingerprint::digest("different-command"),
+            )
+            .with_bounded_context(metadata.bounded_context().unwrap().clone())
+            .with_causation_id(metadata.causation_id().unwrap().clone()),
             metadata
                 .clone()
                 .with_correlation_id(CorrelationId::new("other-flow").unwrap()),
@@ -1210,40 +1216,56 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_default_correlation_fails_before_handling_or_persistence() {
-        let store = InMemoryEventStore::new();
-        let executor = CommandExecutor::new(store.clone());
-        let handler = WriteHandler {
-            calls: AtomicUsize::new(0),
-        };
-        let metadata = CommandExecutionMetadata::new(
-            OperationId::new("operation with spaces").unwrap(),
-            ContentFingerprint::digest("command"),
-        )
-        .with_bounded_context(metadata().bounded_context().unwrap().clone());
+        for operation in ["operation with spaces", "opération"] {
+            let store = InMemoryEventStore::new();
+            let executor = CommandExecutor::new(store.clone());
+            let handler = WriteHandler {
+                calls: AtomicUsize::new(0),
+            };
+            let metadata = CommandExecutionMetadata::new(
+                OperationId::new(operation).unwrap(),
+                ContentFingerprint::digest("command"),
+            )
+            .with_bounded_context(metadata().bounded_context().unwrap().clone());
 
-        let error = executor
-            .execute(&handler, metadata.clone(), &())
-            .await
-            .unwrap_err();
-        assert!(matches!(error, CommandExecutionError::Store(error)
-            if error.kind() == EventStoreErrorKind::InvalidRequest));
-        let error = executor
-            .simulate(&handler, metadata.clone(), &())
-            .await
-            .unwrap_err();
-        assert!(matches!(error, SimulationError::Store(error)
-            if error.kind() == EventStoreErrorKind::InvalidRequest));
-        assert_eq!(handler.calls.load(Ordering::Relaxed), 0);
-        assert!(
-            store
-                .load_transaction_receipt_in_context(
-                    metadata.bounded_context().unwrap(),
-                    metadata.operation_id(),
+            let error = executor
+                .execute(&handler, metadata.clone(), &())
+                .await
+                .unwrap_err();
+            assert!(matches!(error, CommandExecutionError::Store(error)
+                if error.kind() == EventStoreErrorKind::InvalidRequest));
+            let error = executor
+                .simulate(&handler, metadata.clone(), &())
+                .await
+                .unwrap_err();
+            assert!(matches!(error, SimulationError::Store(error)
+                if error.kind() == EventStoreErrorKind::InvalidRequest));
+            assert_eq!(handler.calls.load(Ordering::Relaxed), 0);
+            assert!(
+                store
+                    .load_transaction_receipt_in_context(
+                        metadata.bounded_context().unwrap(),
+                        metadata.operation_id(),
+                    )
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+
+            let correlation = rostfrei_messaging_core::CorrelationId::new("explicit-flow").unwrap();
+            let outcome = executor
+                .execute(
+                    &handler,
+                    metadata.with_correlation_id(correlation.clone()),
+                    &(),
                 )
                 .await
-                .unwrap()
-                .is_none()
-        );
+                .unwrap();
+            let CommandOutcome::Accepted(CommandReceipt::Appended(events)) = outcome else {
+                panic!("explicit correlation should allow execution");
+            };
+            assert_eq!(events[0].correlation_id(), Some(&correlation));
+        }
     }
 
     struct MetadataObservingHandler;
@@ -1266,7 +1288,6 @@ mod tests {
     async fn execution_and_simulation_handlers_observe_normalized_metadata() {
         use rostfrei_messaging_core::{CausationId, CorrelationId};
 
-        let executor = CommandExecutor::new(InMemoryEventStore::new());
         let metadata = metadata().with_causation_id(CausationId::new("cause").unwrap());
         for (input, expected) in [
             (
@@ -1282,11 +1303,34 @@ mod tests {
                 metadata.with_correlation_id(CorrelationId::new("earlier-operation").unwrap()),
             ),
         ] {
+            let store = InMemoryEventStore::new();
+            let executor = CommandExecutor::new(store.clone());
             let outcome = executor
                 .execute(&MetadataObservingHandler, input.clone(), &expected)
                 .await
                 .unwrap();
-            assert_eq!(outcome, CommandOutcome::Accepted(CommandReceipt::NoEvents));
+            assert_eq!(
+                outcome,
+                CommandOutcome::Accepted(CommandReceipt::AcceptedNoEvents)
+            );
+            let receipt = store
+                .load_transaction_receipt_in_context(
+                    expected.bounded_context().unwrap(),
+                    expected.operation_id(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(receipt.correlation_id(), expected.correlation_id());
+            assert_eq!(receipt.causation_id(), expected.causation_id());
+            assert!(receipt.events().is_empty());
+            assert_eq!(
+                executor
+                    .execute(&MetadataObservingHandler, input.clone(), &expected)
+                    .await
+                    .unwrap(),
+                CommandOutcome::Accepted(CommandReceipt::ExactReplay(Vec::new()))
+            );
             let simulation = executor
                 .simulate(&MetadataObservingHandler, input, &expected)
                 .await
@@ -1580,9 +1624,17 @@ mod tests {
     #[tokio::test]
     async fn two_loaded_aggregates_are_committed_atomically() {
         let store = InMemoryEventStore::new();
+        let correlation = rostfrei_messaging_core::CorrelationId::new("earlier-operation").unwrap();
+        let causation = rostfrei_messaging_core::CausationId::new("parent-event").unwrap();
 
         let outcome = CommandExecutor::new(store.clone())
-            .execute(&TwoWriterHandler, metadata(), &())
+            .execute(
+                &TwoWriterHandler,
+                metadata()
+                    .with_correlation_id(correlation.clone())
+                    .with_causation_id(causation.clone()),
+                &(),
+            )
             .await
             .unwrap();
 
@@ -1599,6 +1651,15 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(receipt.streams().len(), 2);
+        assert_eq!(receipt.correlation_id(), Some(&correlation));
+        assert_eq!(receipt.causation_id(), Some(&causation));
+        assert!(
+            receipt
+                .events()
+                .iter()
+                .all(|event| event.correlation_id() == Some(&correlation)
+                    && event.causation_id() == Some(&causation))
+        );
         assert!(
             receipt
                 .streams()
@@ -1707,6 +1768,7 @@ mod tests {
                     .map(rostfrei_messaging_core::CorrelationId::as_str),
                 Some(transaction.operation_id().as_str()),
             );
+            assert_eq!(transaction.causation_id(), None);
             if self.attempts.fetch_add(1, Ordering::Relaxed) == 0 {
                 return Err(EventStoreError::new(
                     self.failure_kind,

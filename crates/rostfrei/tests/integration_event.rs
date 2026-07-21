@@ -255,6 +255,7 @@ async fn direct_execution_without_correlation_publishes_mapped_integration_event
         AccountCreditedMapper,
     )?;
     dispatcher.dispatch(credited).await?;
+    dispatcher.dispatch(credited).await?;
 
     let messages = adapter.integration_messages().await;
     assert_eq!(messages.len(), 1);

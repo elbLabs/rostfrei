@@ -15,6 +15,14 @@ All notable changes to this project are documented in this file.
   Past transient no-op acceptances cannot be reconstructed retroactively. See
   [ADR 0039](docs/adr/0039-durable-event-free-acceptance.md).
 
+### Fixed
+
+- Direct command execution now defaults missing correlation to the operation ID,
+  using the same metadata rule as `CommandBus`. Explicit correlation and causation
+  are preserved, transaction receipts and events agree across retries, and mapped
+  integration events can be published from directly executed commands without
+  caller-supplied correlation.
+
 ## [0.0.5-alpha] - 2026-09-16
 
 ### Added

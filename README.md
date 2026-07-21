@@ -155,6 +155,21 @@ representation. Query responses use `Cache-Control: private, no-store`.
 Commands continue to use their existing POST route, JSON body, and mandatory
 `Idempotency-Key` header.
 
+## Command execution metadata
+
+`CommandExecutor::execute` and `CommandBus` share the correlation rule
+`correlation_id = supplied_correlation_id ?? operation_id`. Direct execution
+establishes this default before invoking a handler, checking an existing receipt,
+or persisting events. Every committed event and its transaction receipt carry the
+same correlation. Retrying the same operation retains that identity; a follow-up
+operation can supply the earlier operation's correlation to continue its flow.
+
+Supplied causation is preserved independently. Direct execution leaves omitted
+causation absent; the bus processor uses the command message ID when no causation
+was supplied. `CommandExecutor::simulate` applies the same correlation default to
+the metadata visible to its handler. An operation ID used as the default must
+satisfy `CorrelationId` validation; invalid defaults fail before execution.
+
 ## Macro setup
 
 Crates that declare Rostfrei domain types install macro support once at their

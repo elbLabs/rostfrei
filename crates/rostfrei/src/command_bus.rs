@@ -28,6 +28,8 @@ const INVALID_PAYLOAD_CODE: &str = "rostfrei.command.invalid-payload";
 const UNKNOWN_COMMAND_CODE: &str = "rostfrei.command.unknown";
 const OPERATION_CONFLICT_CODE: &str = "rostfrei.operation.identity-conflict";
 
+/// A command submission whose correlation defaults to its operation ID when omitted.
+/// Explicit correlation and causation are preserved in the outgoing envelope.
 #[derive(Clone, Debug)]
 pub struct CommandRequest<C> {
     operation_id: CoreOperationId,
