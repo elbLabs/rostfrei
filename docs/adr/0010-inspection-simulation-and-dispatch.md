@@ -52,10 +52,12 @@ while normal Dispatch uses stable operator-owned resources.
 
 The durable response narrows but does not eliminate the execution-to-response
 gap. A worker reconciles a matching retained response before aggregate execution,
-and event-appending acceptance can use exact event-store replay after a crash.
-Rejected and accepted-no-event decisions have no transactional operation receipt
-or outbox, however, so a crash after the decision and before response persistence
-can cause redelivery to evaluate the decision again. No exactly-once terminal
-outcome is claimed. Response immutability and reconciliation are effective only
-for the configured command-response retention period and capacity; eviction
-removes that persisted guard.
+and both event-appending and event-free acceptance use exact event-store replay
+after a crash, including after response retention expires (see
+[ADR 0039](0039-durable-event-free-acceptance.md)). Rejected decisions have no
+transactional operation receipt or outbox, so a crash after rejection and before
+response persistence can cause redelivery to evaluate the decision again. No
+exactly-once terminal outcome is claimed for rejections. Response immutability and
+response reconciliation are effective only for the configured command-response
+retention period and capacity; eviction removes that response guard, but not an
+accepted operation's authoritative event-store receipt.

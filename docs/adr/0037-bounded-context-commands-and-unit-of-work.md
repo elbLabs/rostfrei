@@ -123,10 +123,12 @@ The operation-only lookup and contextless transaction values remain available
 solely for legacy migration and low-level store tooling; `CommandExecutor` never
 uses them.
 
-An accepted command with no emitted events has no durable event-store receipt.
-Its `CommandReceipt::NoEvents` result may therefore rerun on retry. Domain
-rejections are likewise not persisted by the event store; durable command
-transport may retain their command response separately.
+As extended by [ADR 0039](0039-durable-event-free-acceptance.md), an accepted command
+with no emitted events persists a durable receipt and all loaded read guards before
+returning `CommandReceipt::AcceptedNoEvents`. Commands loading no aggregates persist
+only the receipt. Exact retries return `ExactReplay` with an empty event list.
+Domain rejections are not persisted by the event store; durable command transport
+may retain their command response separately.
 
 Command registration is keyed by bounded context, command name, and schema
 version. Aggregate inventory used for stream discovery is registered explicitly
