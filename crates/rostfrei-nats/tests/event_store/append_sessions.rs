@@ -78,9 +78,9 @@ async fn sessions_satisfy_direct_and_transaction_contracts() -> TestResult<()> {
 }
 
 #[tokio::test]
-async fn session_load_rejects_history_without_receipt_on_every_attempt() -> TestResult<()> {
+async fn session_load_rejects_malformed_history_on_every_attempt() -> TestResult<()> {
     let (context, store) = setup("session-missing-receipt-load").await?;
-    let aggregate = publish_schema_four_event_without_receipt(&context, store.config()).await?;
+    let aggregate = malformed_history(&context, store.config()).await?;
     let session = store.append_session().await?;
     let first_load = session.load(&aggregate).await;
     let second_load = session.load(&aggregate).await;
@@ -88,7 +88,7 @@ async fn session_load_rejects_history_without_receipt_on_every_attempt() -> Test
 
     assert!(
         matches!(&first_load, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory),
-        "session exposed history without a transaction receipt: {first_load:?}"
+        "session exposed malformed history: {first_load:?}"
     );
     assert!(
         matches!(&second_load, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory),
@@ -98,9 +98,9 @@ async fn session_load_rejects_history_without_receipt_on_every_attempt() -> Test
 }
 
 #[tokio::test]
-async fn session_direct_append_rejects_history_without_receipt_before_writing() -> TestResult<()> {
+async fn session_direct_append_rejects_malformed_history_before_writing() -> TestResult<()> {
     let (context, store) = setup("session-missing-receipt-append").await?;
-    let aggregate = publish_schema_four_event_without_receipt(&context, store.config()).await?;
+    let aggregate = malformed_history(&context, store.config()).await?;
     let before = broker_position(&context, &store).await?;
     let session = store.append_session().await?;
     // Deliberately skip load: append must validate its lazily loaded history too.
@@ -121,29 +121,26 @@ async fn session_direct_append_rejects_history_without_receipt_before_writing() 
 
     assert!(
         matches!(&result, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory),
-        "append trusted history without a transaction receipt: {result:?}"
+        "append trusted malformed history: {result:?}"
     );
     assert_eq!(after, before, "rejected append published new messages");
     Ok(())
 }
 
 #[tokio::test]
-async fn session_transaction_rejects_writer_history_without_receipt_before_writing()
--> TestResult<()> {
-    transaction_rejects_history_without_receipt(true).await
+async fn session_transaction_rejects_malformed_writer_history_before_writing() -> TestResult<()> {
+    transaction_rejects_malformed_history(true).await
 }
 
 #[tokio::test]
-async fn session_transaction_rejects_read_guard_history_without_receipt_before_writing()
--> TestResult<()> {
-    transaction_rejects_history_without_receipt(false).await
+async fn session_transaction_rejects_malformed_read_guard_history_before_writing() -> TestResult<()>
+{
+    transaction_rejects_malformed_history(false).await
 }
 
-async fn transaction_rejects_history_without_receipt(
-    invalid_participant_writes: bool,
-) -> TestResult<()> {
+async fn transaction_rejects_malformed_history(invalid_participant_writes: bool) -> TestResult<()> {
     let (context, store) = setup("session-missing-receipt-transaction").await?;
-    let invalid = publish_schema_four_event_without_receipt(&context, store.config()).await?;
+    let invalid = malformed_history(&context, store.config()).await?;
     let valid = stream("valid-writer")?;
     let operation = "new-transaction";
     let operation_id = OperationId::new(operation)?;
@@ -180,7 +177,7 @@ async fn transaction_rejects_history_without_receipt(
 
     assert!(
         matches!(&result, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory),
-        "transaction trusted participant history without a receipt: {result:?}"
+        "transaction trusted malformed participant history: {result:?}"
     );
     assert_eq!(after, before, "rejected transaction published new messages");
     assert!(
@@ -192,6 +189,15 @@ async fn transaction_rejects_history_without_receipt(
         "rejected transaction persisted a receipt"
     );
     Ok(())
+}
+
+async fn malformed_history(
+    context: &async_nats::jetstream::Context,
+    config: &NatsEventStoreConfig,
+) -> TestResult<StreamId> {
+    let aggregate = stream("malformed-session-history")?;
+    publish_commit_with_wrong_sequence_expectation(context, config, &aggregate, 0, 3).await?;
+    Ok(aggregate)
 }
 
 async fn broker_position(

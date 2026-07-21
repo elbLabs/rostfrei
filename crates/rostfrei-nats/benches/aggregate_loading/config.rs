@@ -37,6 +37,9 @@ pub struct Options {
     pub samples: u32,
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(0..=100))]
     pub warmups: u32,
+    /// Audit historical transaction evidence during read phases (writes stay ordinary).
+    #[arg(long)]
+    pub audit_reads: bool,
     /// Bytes in the event's note field; total JSON/wire payload is larger.
     #[arg(long, default_value_t = 128, value_parser = clap::value_parser!(u32).range(0..=65536))]
     pub note_bytes: u32,

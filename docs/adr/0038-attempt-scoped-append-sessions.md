@@ -4,6 +4,9 @@
 
 Proposed. Extends [ADR 0005](0005-nats-event-store.md) and
 [ADR 0037](0037-bounded-context-commands-and-unit-of-work.md).
+The read trust boundary is refined by
+[ADR 0039](0039-trusted-event-store-reads-and-explicit-audits.md): normal session
+loads retain local history checks; deep historical receipt verification is explicit.
 
 ## Context
 
@@ -36,7 +39,7 @@ Existing adapters remain source-compatible through a forwarding implementation.
 `Store` is a trait object. Custom adapters can opt into history reuse without
 exposing broker positions in domain or command-handler APIs.
 
-The NATS implementation retains fully validated histories separately from the
+The NATS implementation retains locally checked histories separately from the
 raw-history cache used while validating receipts. It reuses native last-subject
 sequences, but still enforces them through atomic broker expectations for every
 writer and read guard. Fresh receipt lookups, operation fingerprints, derived
@@ -81,7 +84,7 @@ memory benchmarks, snapshot design, and batched reads remain follow-up work.
 
 ### Historical transaction read optimization
 
-Within a history load, transaction receipt lookup and materialization reuse a
+Within an explicit history audit, transaction receipt lookup and materialization reuse a
 stream handle, and an already checked transaction-first event is reused when it
 belongs to the loaded commit. Independent receipt lookups are pipelined with a
 maximum of eight outstanding futures/results; materialization remains ordered

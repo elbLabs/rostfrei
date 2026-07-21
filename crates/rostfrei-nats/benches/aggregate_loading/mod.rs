@@ -29,13 +29,18 @@ pub type BenchResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync
 struct MeasuredHistory {
     store: NatsEventStore,
     last_load_ns: AtomicU64,
+    audit: bool,
 }
 
 #[async_trait]
 impl EventHistory for MeasuredHistory {
     async fn load(&self, stream: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         let started = Instant::now();
-        let result = self.store.load(stream).await;
+        let result = if self.audit {
+            self.store.audit_history(stream).await
+        } else {
+            self.store.load(stream).await
+        };
         self.last_load_ns.store(
             u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
             Ordering::Relaxed,
@@ -45,7 +50,6 @@ impl EventHistory for MeasuredHistory {
 }
 
 struct ReadCase<'a> {
-    store: &'a NatsEventStore,
     executor: CommandExecutor<MeasuredHistory>,
     connection: &'a NatsConnection,
     stream: StreamId,
@@ -63,7 +67,7 @@ impl ReadCase<'_> {
         let started = Instant::now();
         let (elapsed_ns, history_load_ns) = match phase {
             Phase::HistoryLoad => {
-                let events = self.store.load(&self.stream).await?;
+                let events = self.executor.store().load(&self.stream).await?;
                 let elapsed = nanos(started.elapsed())?;
                 if events.len() != usize::try_from(self.expected_events)? {
                     return Err("history length changed during read benchmark".into());
@@ -148,7 +152,6 @@ async fn measure_case(
         .collect::<Result<Vec<_>, _>>()?;
     drop(recorded);
     let reads = ReadCase {
-        store,
         connection,
         stream,
         expected_events: u64::from(count),
@@ -156,6 +159,7 @@ async fn measure_case(
         executor: CommandExecutor::new(MeasuredHistory {
             store: store.clone(),
             last_load_ns: AtomicU64::new(0),
+            audit: options.audit_reads,
         }),
         decoded,
     };
