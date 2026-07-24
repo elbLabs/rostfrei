@@ -131,11 +131,20 @@ python3 scripts/test_nats.py -- cargo run --locked -p rostfrei-nats --example re
 
 Each handler reads the entire snapshot, checks its own source position, changes
 only its fields, and writes **value plus source position in one CAS**. On conflict,
-it starts again from a fresh read. A crash after persistence but before ACK causes
-redelivery; the stored position makes that duplicate a no-op. The consumer ACK or
-any separate global checkpoint advances only after the snapshot write succeeds.
-Domain storage/configuration failures map to the existing retryable/operator-blocking
-consumer recovery contract; a gap blocks progress until history is repaired.
+it starts again from a fresh read. Successful materialization returns ACK only
+after persistence (or after confirming that the source position is already
+applied). A crash between persistence and ACK can cause redelivery; the stored
+position makes that duplicate a no-op. Any application-maintained materialization
+checkpoint must follow the same ordering.
+
+Consumer progress is a delivery outcome, not proof of materialization. Domain
+storage/configuration failures use the existing retryable/operator-blocking
+domain-consumer contract; a source gap blocks progress until history is repaired.
+The integration consumer has a different terminal path: an explicit quarantine
+disposition, or exhaustion of configured retries, persists a quarantine record
+and sends a terminal ACK. Its durable can advance while the snapshot and its
+`billing_version` remain unchanged. Fixing storage alone does not redeliver that
+event. See [integration recovery](#integration-quarantine-and-recovery) below.
 
 Three positions have different meanings:
 
@@ -165,6 +174,41 @@ Multi-key materialization is not atomic. A handler may persist one key and fail 
 the next. Use per-key idempotency, reconciliation, or an application-owned staged
 generation/cutover protocol. There is no cross-key transaction or exactly-once
 delivery promise.
+
+### Integration quarantine and recovery
+
+The example quarantines permanent storage/configuration failures immediately.
+Transient unavailability retries only up to the integration consumer's configured
+attempt limit, then also enters quarantine. For example, a `paid=false` billing
+fact at source version 8 can be quarantined while the snapshot still contains
+`paid=true` at version 7. Consumer ACK progress cannot establish that version 8 was
+materialized, and storage recovery does not automatically change that snapshot.
+
+Applications must monitor quarantined materialization failures and implement a
+recovery policy. After repairing storage/configuration, either:
+
+1. **Republish the quarantined event.** Validate its application/context/address,
+   schema, and complete payload (`payload_truncated` must be false). Publish to the
+   intended integration-event subject with a new transport/envelope message ID so
+   JetStream's duplicate window does not suppress the recovery delivery. Preserve
+   the logical billing source version, original occurrence time, and correlation;
+   link the new delivery to the original with causation and recovery metadata.
+   The normal handler then applies it through the same source-checkpoint/CAS path.
+2. **Refresh from the billing authority.** Fetch its latest complete fact and pass
+   it through `Entitlements::billing_changed`. Its monotonic source version makes
+   an already-applied or superseded quarantined event harmless. The application
+   schedules retries of this refresh until it succeeds.
+
+Retain the original quarantine record. A successful republication PubAck only
+confirms enqueueing, so mark recovery complete after verifying the snapshot's
+billing checkpoint has reached or superseded the failed version. Query freshness
+and authorization policies still decide how to treat a lagging snapshot.
+
+The [broker-backed recovery tests](../crates/rostfrei-nats/tests/read_model/recovery.rs)
+exercise immediate capacity-failure quarantine and unavailable-storage retry
+exhaustion against a real consumer and KV bucket. They verify terminal consumer
+progress with an unchanged snapshot, duplicate-window suppression of the old
+message ID, successful explicit republication after repair, and idempotent replay.
 
 ### Rebuild and externally sourced facts
 

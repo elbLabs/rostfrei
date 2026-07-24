@@ -206,6 +206,7 @@ fn map_update_error(error: &kv::UpdateError) -> ReadModelError {
                     ReadModelErrorKind::PayloadTooLarge
                 }
                 jetstream::ErrorCode::STORAGE_RESOURCES_EXCEEDED
+                | jetstream::ErrorCode::ACCOUNT_RESOURCES_EXCEEDED
                 | jetstream::ErrorCode::STREAM_LIMITS
                 | jetstream::ErrorCode::STREAM_MAX_STREAM_BYTES_EXCEEDED => {
                     ReadModelErrorKind::CapacityExhausted
