@@ -7,6 +7,13 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
+/// Application-owned materialized query state. Derive through `rostfrei::ReadModel`.
+/// The event runtime stores source checkpoints separately from these business fields.
+pub trait ReadModel: Default + Serialize + DeserializeOwned + Send + Sync + 'static {
+    const NAME: &'static str;
+    const SCHEMA_VERSION: u32;
+}
+
 /// A concrete key, never a wildcard or a key enumeration request.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ReadModelKey(String);

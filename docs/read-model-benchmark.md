@@ -37,6 +37,11 @@ warmup and measured result must match byte-for-byte. Seeded member/seat counts a
 source versions are independently checked before measurements. Errors abort the
 benchmark instead of becoming successful latency samples.
 
+The recorded KV case uses the underlying typed storage API with manually supplied
+checkpoints. The declarative `ReadModel` runtime adds its own checkpoint envelope;
+these measurements are the storage baseline, not a separate measurement of that
+new runtime's reader and event-processing overhead.
+
 ## Reproduce
 
 Requires the repository's Rust toolchain, Python 3.11+, and Docker. Build first,

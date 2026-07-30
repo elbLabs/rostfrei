@@ -1,5 +1,10 @@
 # KV-backed read models
 
+For the high-level `#[derive(ReadModel)]` and event-handler builder, start with
+[event-driven read models](read-model-runtime.md). That runtime handles loading,
+checkpointing, CAS retries, and persistence. This page documents the underlying
+storage contract and the lower-level, application-owned orchestration example.
+
 For measured query costs, see [KV versus two-aggregate replay](read-model-benchmark.md):
 a reproducible real-NATS benchmark with 100 total events and 100 events per aggregate,
 parallel replay, and an already-loaded-history baseline.
@@ -110,8 +115,8 @@ when old readers cannot interpret new values.
 
 ## Multiple handlers and source ordering
 
-The runnable [example](../crates/rostfrei-nats/examples/read_model/main.rs) and
-[application code](../crates/rostfrei-nats/examples/read_model/application.rs)
+The runnable [storage example](../crates/rostfrei-nats/examples/read_model_storage/main.rs) and
+[application code](../crates/rostfrei-nats/examples/read_model_storage/application.rs)
 include:
 
 - Two `DomainEventHandler` implementations (`MemberJoined`, `DemoChanged`),
@@ -126,7 +131,7 @@ include:
 Run it against an isolated broker:
 
 ```sh
-python3 scripts/test_nats.py -- cargo run --locked -p rostfrei-nats --example read_model
+python3 scripts/test_nats.py -- cargo run --locked -p rostfrei-nats --example read_model_storage
 ```
 
 Each handler reads the entire snapshot, checks its own source position, changes

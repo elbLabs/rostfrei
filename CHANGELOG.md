@@ -10,6 +10,10 @@ All notable changes to this project are documented in this file.
   codecs, CAS create/update/delete, application/context/model/traffic isolation,
   and explicit provisioning, verification, and policy updates. Includes a
   multi-handler query/rebuild example and migration/operations documentation.
+- `ReadModel` declarations and event-only registration builders with automatic
+  persistence, source checkpoints, bounded CAS retries, authoritative domain-gap
+  catch-up, explicit integration ordering policies, read-only query handles, and
+  managed NATS consumer workers.
 
 ### Changed
 

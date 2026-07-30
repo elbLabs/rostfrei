@@ -1,6 +1,6 @@
 #![allow(clippy::panic_in_result_fn)]
 
-#[path = "../examples/read_model/application.rs"]
+#[path = "../examples/read_model_storage/application.rs"]
 mod application;
 
 #[path = "read_model/recovery.rs"]
