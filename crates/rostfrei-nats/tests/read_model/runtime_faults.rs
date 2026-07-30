@@ -13,20 +13,21 @@ use rostfrei_core::EventHistory;
 
 use super::{
     BillingChanged, DeliveryDisposition, Fixture, IntegrationEventOrder, NatsReadModelBackend,
-    OrganizationAccess, ReadModelProcessingError, TestResult, application, deliver,
+    OrganizationAccess, ReadModelProcessingError, TestResult, deliver, register_business,
 };
 
 #[derive(Default)]
-struct Faults {
+pub struct Faults {
     conflicts: AtomicU32,
-    ambiguous: AtomicBool,
+    pub(super) ambiguous: AtomicBool,
+    pub(super) unavailable_once: AtomicBool,
     unavailable: AtomicBool,
-    committed: AtomicU32,
+    pub(super) committed: AtomicU32,
 }
 
-struct Backend {
-    inner: NatsReadModelBackend,
-    faults: Arc<Faults>,
+pub struct Backend {
+    pub(super) inner: NatsReadModelBackend,
+    pub(super) faults: Arc<Faults>,
 }
 
 #[async_trait]
@@ -55,7 +56,9 @@ struct Store<M: ReadModel> {
 
 impl<M: ReadModel> Store<M> {
     fn before(&self) -> Result<(), ReadModelError> {
-        if self.faults.unavailable.load(Ordering::SeqCst) {
+        if self.faults.unavailable.load(Ordering::SeqCst)
+            || self.faults.unavailable_once.swap(false, Ordering::SeqCst)
+        {
             return Err(ReadModelError::new(
                 ReadModelErrorKind::Unavailable,
                 "injected outage",
@@ -133,7 +136,7 @@ async fn conflicts_are_bounded_and_uncertain_commits_are_not_applied_twice() -> 
             faults: faults.clone(),
         },
     );
-    let model = application::register(&models, fixture.billing.clone()).await?;
+    let model = register_business(&models, fixture.billing.clone()).await?;
     let key = ReadModelKey::new("org-1")?;
     faults.conflicts.store(16, Ordering::SeqCst);
     assert!(matches!(

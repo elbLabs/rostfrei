@@ -66,8 +66,6 @@ impl Samples {
         Ok(())
     }
 
-    // Reporting uses floating-point ratios; counters remain exact integers until
-    // presentation. Small rounding differences are immaterial to these timings.
     #[allow(
         clippy::arithmetic_side_effects,
         clippy::cast_precision_loss,

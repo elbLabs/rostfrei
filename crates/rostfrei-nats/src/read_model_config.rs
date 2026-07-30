@@ -168,8 +168,6 @@ impl NatsReadModelConfig {
             discard: DiscardPolicy::New,
             allow_rollup: true,
             deny_delete: true,
-            // Use leader-served message reads, not potentially stale direct reads
-            // from replicas. The KV client follows this flag when reading entries.
             allow_direct: false,
             duplicate_window: if self.ttl.is_zero() {
                 Duration::from_secs(120)
@@ -189,7 +187,6 @@ pub async fn provision_read_model(
     match context.get_stream(config.stream_name()).await {
         Ok(stream) => verify_config(config, &stream.cached_info().config),
         Err(error) if is_stream_not_found(&error) => {
-            // A concurrent provisioner can win. Always verify the winning policy.
             let created = context.create_stream(config.stream_config()).await;
             match created {
                 Ok(stream) => verify_config(config, &stream.cached_info().config),

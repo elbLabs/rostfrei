@@ -44,4 +44,5 @@ pub struct PublicChanged { pub id: String, pub version: u64 }
 impl rostfrei::IntegrationEvent for PublicChanged {
     const EVENT_NAME: &'static str = "public-changed";
     const SCHEMA_VERSION: u32 = 1;
+    const BOUNDED_CONTEXT: Option<&'static str> = Some("billing");
 }

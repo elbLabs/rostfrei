@@ -127,7 +127,6 @@ impl Fixture {
             Path::Sequential => {
                 let records = self.history.load(&self.organization).await?;
                 let state = model::replay_organization(&records)?;
-                // Discover the related aggregate from organization history.
                 let billing = StreamId::new(
                     AggregateType::new("billing-account")?,
                     AggregateId::new(&state.billing_account_id)?,
@@ -136,7 +135,6 @@ impl Fixture {
                 model::join(&self.organization, state, &model::replay_billing(&records)?)?
             }
             Path::Parallel => {
-                // Optimistic comparison: caller already knows the related ID.
                 let (organization, billing) = tokio::try_join!(
                     self.history.load(&self.organization),
                     self.history.load(&self.billing)
@@ -221,7 +219,6 @@ async fn main() -> BenchResult {
         .map(|size| NatsReadModelConfig::new(&context, format!("access-{size}")))
         .collect::<Result<Vec<_>, _>>()?;
     let result = run(&connection, &events, &models, &options).await;
-    // Only resources derived from this invocation's unique application are removed.
     let cleanup = cleanup(&connection, &events, &models).await;
     let cases = result?;
     cleanup?;
@@ -334,8 +331,6 @@ async fn prepare(
     let organization_events = history.load(&organization).await?;
     let billing_events = history.load(&billing).await?;
     let snapshot = model::replay(&organization, &organization_events, &billing_events)?;
-    // An independent expected result catches reducers that agree with each other
-    // but produce the wrong view. Histories include one opening event each.
     let changes = u64::from(size.checked_sub(1).ok_or("empty history")?);
     if snapshot.view.member_count != changes
         || snapshot.view.purchased_seats != changes.checked_mul(2).ok_or("seats overflow")?
@@ -476,9 +471,6 @@ async fn measure(
             options.samples
         );
         for _ in 0..options.samples {
-            // Interleave all four paths and rotate their order every iteration.
-            // Each path has only one outstanding query; parallel replay overlaps
-            // the two aggregate loads within that one query.
             for (path, samples) in &mut paths {
                 let handler = Handler {
                     fixture,

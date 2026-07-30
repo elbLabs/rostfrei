@@ -2,6 +2,8 @@
 
 #[path = "../examples/read_model/application.rs"]
 mod application;
+#[path = "read_model/broker_order.rs"]
+mod broker_order;
 #[path = "read_model/runtime_faults.rs"]
 mod faults;
 #[path = "../examples/read_model/source.rs"]
@@ -36,13 +38,53 @@ use rostfrei_nats::{
     NatsReadModelWorker, provision_application_messaging, provision_event_store,
     provision_read_model, provision_read_model_consumers,
 };
-use source::{
-    BillingChanged, DemoChanged, MemberJoined, Organization, OrganizationEvent, OrganizationRenamed,
-};
+use source::{DemoChanged, MemberJoined, Organization, OrganizationEvent, OrganizationRenamed};
 
 rostfrei::install_macro_support!();
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct BillingChanged {
+    organization_id: String,
+    source_version: u64,
+    paid: bool,
+}
+
+impl rostfrei::IntegrationEvent for BillingChanged {
+    const EVENT_NAME: &'static str = "versioned-billing-changed";
+    const SCHEMA_VERSION: u32 = 1;
+    const BOUNDED_CONTEXT: Option<&'static str> = Some("billing");
+}
+
+async fn register_business<B: rostfrei::ReadModelBackend>(
+    models: &ReadModels<B>,
+    billing: BoundedContext,
+) -> Result<ReadModelRuntime<OrganizationAccess>, ReadModelProcessingError> {
+    models
+        .register::<OrganizationAccess>()
+        .from_aggregate::<Organization>()
+        .on_domain_event::<MemberJoined>(
+            |event| event.organization_id.clone(),
+            |view, _| view.members = view.members.saturating_add(1),
+        )
+        .on_domain_event::<DemoChanged>(
+            |event| event.organization_id.clone(),
+            |view, event| view.demo = event.active,
+        )
+        .on_integration_event::<BillingChanged>(
+            |event| event.organization_id.clone(),
+            |view, event| view.paid = event.paid,
+        )
+        .integration_source::<BillingChanged>(
+            billing,
+            IntegrationEventOrder::<BillingChanged>::latest("billing-account", |event| {
+                event.source_version
+            }),
+        )
+        .build()
+        .await
+}
 
 #[derive(Default, serde::Serialize, serde::Deserialize, rostfrei::ReadModel)]
 #[read_model(id = "organization-count", version = 1)]
@@ -105,7 +147,7 @@ impl Fixture {
     }
 
     async fn runtime(&self) -> TestResult<ReadModelRuntime<OrganizationAccess>> {
-        Ok(application::register(
+        Ok(register_business(
             &ReadModels::new(self.context.clone(), self.backend()),
             self.billing.clone(),
         )
@@ -540,21 +582,9 @@ async fn rebuild_uses_an_independent_model_generation_and_external_source_refres
 }
 
 #[tokio::test]
-async fn integration_ordering_is_explicit_and_consecutive_gaps_do_not_persist() -> TestResult {
+async fn business_ordering_can_require_consecutive_versions_without_partial_writes() -> TestResult {
     let fixture = Fixture::new().await?;
     let models = ReadModels::new(fixture.context.clone(), fixture.backend());
-    let missing = models
-        .register::<OrganizationAccess>()
-        .on_integration_event::<BillingChanged>(
-            |event| event.organization_id.clone(),
-            |view, event| view.paid = event.paid,
-        )
-        .build()
-        .await;
-    assert!(matches!(
-        missing,
-        Err(ReadModelProcessingError::Configuration(_))
-    ));
     let model = models
         .register::<OrganizationAccess>()
         .on_integration_event::<BillingChanged>(
@@ -635,8 +665,8 @@ async fn registration_rejects_duplicates_wrong_contexts_and_foreign_traffic() ->
         wrong,
         Err(ReadModelProcessingError::Configuration(_))
     ));
-    let _registered = application::register(&models, fixture.billing.clone()).await?;
-    let duplicate_model = application::register(&models, fixture.billing.clone()).await;
+    let _registered = register_business(&models, fixture.billing.clone()).await?;
+    let duplicate_model = register_business(&models, fixture.billing.clone()).await;
     assert!(matches!(
         duplicate_model,
         Err(ReadModelProcessingError::Configuration(_))
@@ -712,9 +742,9 @@ async fn worker_runs_both_event_families_and_materializes_before_ack() -> TestRe
         NatsPublisher::new(fixture.js.clone(), messaging.topology().clone())
             .publish_integration_event_with_ack(
                 OutboundMessage::json(
-                    fixture
-                        .billing
-                        .integration_event_address("billing-changed")?,
+                    fixture.billing.integration_event_address(
+                        <BillingChanged as rostfrei::IntegrationEvent>::EVENT_NAME,
+                    )?,
                     fact.message_id().clone(),
                     &fact,
                 )?,

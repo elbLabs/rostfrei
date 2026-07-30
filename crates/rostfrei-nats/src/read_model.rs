@@ -38,8 +38,6 @@ impl<T, C: ReadModelCodec<T>> NatsReadModelStore<T, C> {
         config: NatsReadModelConfig,
         codec: C,
     ) -> Result<Self, ReadModelError> {
-        // Verify even a non-KV stream occupying the expected name so malformed
-        // bucket layout is a configuration mismatch, not an availability error.
         verify_read_model(&context, &config).await?;
         let bucket = context
             .get_key_value(config.bucket_name())
@@ -130,8 +128,7 @@ where
         value: &T,
     ) -> Result<ReadModelRevision, ReadModelError> {
         let bytes = self.encode(value)?;
-        // Read the tombstone revision explicitly. The client's create helper can
-        // hide a publish failure as AlreadyExists; keep the original CAS error.
+        // Explicit tombstone CAS preserves the original publish failure.
         let entry = self
             .bucket
             .entry(key.as_str())

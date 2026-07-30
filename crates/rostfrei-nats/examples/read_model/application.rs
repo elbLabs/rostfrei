@@ -2,9 +2,8 @@
 
 use async_trait::async_trait;
 use rostfrei::{
-    BoundedContext, IntegrationEventOrder, QueryErrorPayload, QueryHandler, QueryHandlerRequest,
-    ReadModelBackend, ReadModelKey, ReadModelProcessingError, ReadModelReader, ReadModelRuntime,
-    ReadModels,
+    QueryErrorPayload, QueryHandler, QueryHandlerRequest, ReadModelBackend, ReadModelKey,
+    ReadModelProcessingError, ReadModelReader, ReadModelRuntime, ReadModels,
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +19,6 @@ pub struct OrganizationAccess {
 
 pub async fn register<B: ReadModelBackend>(
     read_models: &ReadModels<B>,
-    billing: BoundedContext,
 ) -> Result<ReadModelRuntime<OrganizationAccess>, ReadModelProcessingError> {
     read_models
         .register::<OrganizationAccess>()
@@ -41,12 +39,6 @@ pub async fn register<B: ReadModelBackend>(
         .on_integration_event::<BillingChanged>(
             |event| event.organization_id.clone(),
             |view, event| view.paid = event.paid,
-        )
-        .integration_source::<BillingChanged>(
-            billing,
-            IntegrationEventOrder::<BillingChanged>::latest("billing-account", |event| {
-                event.source_version
-            }),
         )
         .build()
         .await
