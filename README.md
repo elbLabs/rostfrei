@@ -135,6 +135,10 @@ authorization. The aggregate identity in the API is qualified by its bounded
 context. Command and rejection derives supply their canonical JSON codecs,
 while aggregate event JSON comes from the compiled aggregate codec.
 
+The example also includes a self-checking [quarantine walkthrough](examples/bike-rental/QUARANTINE.md)
+covering retry exhaustion, quarantine inspection, repair and republication, and
+invalid-message handling against real NATS JetStream.
+
 A Tracer instance receives an explicit test `EventHistory` for discovery,
 dynamic inputs, and read-only Simulate. Test and Dispatch instead use separately
 configured implementations of the same protocol-neutral command transport. The
@@ -157,6 +161,14 @@ Authoritative NATS event storage requires NATS Server 2.12.1 or newer. In
 addition to atomic multi-event commits, one event transaction can atomically
 append commits to multiple aggregate streams in the same bounded-context event
 store.
+
+Successful command execution always persists an acceptance receipt, including
+commands that emit no domain events or load no aggregates. Event-free acceptance
+returns `CommandReceipt::AcceptedNoEvents`; retries return `ExactReplay` with an
+empty event list. Loaded read-only aggregates are guarded atomically with the
+receipt, and changed command content or provenance conflicts under the accepted
+operation identity. See [Durable event-free acceptance](docs/adr/0039-durable-event-free-acceptance.md)
+for concurrency, storage compatibility, and migration from transient no-op results.
 
 The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual architecture
@@ -220,6 +232,21 @@ representation. Query responses use `Cache-Control: private, no-store`.
 
 Commands continue to use their existing POST route, JSON body, and mandatory
 `Idempotency-Key` header.
+
+## Command execution metadata
+
+`CommandExecutor::execute` and `CommandBus` share the correlation rule
+`correlation_id = supplied_correlation_id ?? operation_id`. Direct execution
+establishes this default before invoking a handler, checking an existing receipt,
+or persisting events. Every committed event and its transaction receipt carry the
+same correlation. Retrying the same operation retains that identity; a follow-up
+operation can supply the earlier operation's correlation to continue its flow.
+
+Supplied causation is preserved independently. Direct execution leaves omitted
+causation absent; the bus processor uses the command message ID when no causation
+was supplied. `CommandExecutor::simulate` applies the same correlation default to
+the metadata visible to its handler. An operation ID used as the default must
+satisfy `CorrelationId` validation; invalid defaults fail before execution.
 
 ## Macro setup
 
@@ -302,7 +329,10 @@ check or Clippy reports an error.
 
 The NATS authentication acceptance suite starts isolated Docker containers and
 tests correct, missing, and wrong credentials, percent-encoded URL credentials,
-server restart, pool failover, and discovered-server failover:
+server restart, pool failover, and discovered-server failover. Its authenticated
+JetStream scenarios also exercise command delivery and durable responses, then
+recreate the managed connection to verify aggregate/command replay and durable
+post-commit consumption with both explicit and URL credentials:
 
 ```sh
 cargo test --locked -p rostfrei-nats --test authentication_integration

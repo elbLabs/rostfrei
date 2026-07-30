@@ -12,7 +12,7 @@ impl CommandHandler<RentBicycle> for RentBicycleHandler {
         let mut fleet = execution
             .load::<RentalFleetAggregate>(command.fleet_id.as_str())
             .await?;
-        match fleet.aggregate_mut().rent_bicycle(command.bicycle_id.clone()) {
+        match fleet.rent_bicycle(command.bicycle_id.clone()) {
             Ok(()) => {
                 Ok(CommandDecision::Accepted)
             }

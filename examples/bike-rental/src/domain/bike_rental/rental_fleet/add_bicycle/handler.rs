@@ -18,10 +18,7 @@ impl CommandHandler<AddBicycle> for AddBicycleHandler {
         let mut fleet = execution
             .load::<RentalFleetAggregate>(command.fleet_id.as_str())
             .await?;
-        match fleet
-            .aggregate_mut()
-            .add_bicycle(command.bicycle_id.clone(), command.condition)
-        {
+        match fleet.add_bicycle(command.bicycle_id.clone(), command.condition) {
             Ok(()) => Ok(CommandDecision::Accepted),
             Err(rejection) => Ok(CommandDecision::Rejected(rejection)),
         }

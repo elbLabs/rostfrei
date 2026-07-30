@@ -394,11 +394,6 @@ fn validate_transaction(
     state: &State,
     transaction: &EventTransaction,
 ) -> Result<(), EventStoreError> {
-    if transaction.participants().is_empty() {
-        return Err(invalid(
-            "an event transaction must contain at least one participant",
-        ));
-    }
     let mut streams = HashSet::with_capacity(transaction.participants().len());
     for participant in transaction.participants() {
         if !streams.insert(participant.stream_id()) {
