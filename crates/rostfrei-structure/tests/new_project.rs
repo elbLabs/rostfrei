@@ -41,8 +41,11 @@ fn new_project_contains_the_complete_runnable_scaffold() {
     let manifest = read(&destination.join("Cargo.toml"));
     assert!(manifest.starts_with("[workspace]\nresolver = \"3\""));
     assert!(manifest.contains("name = \"bike-rental\""));
-    let expected_dependency = format!("rostfrei-nats = \"{}\"", env!("CARGO_PKG_VERSION"));
-    assert!(manifest.contains(&expected_dependency));
+    for name in ["rostfrei", "rostfrei-nats"] {
+        assert!(manifest.contains(&format!(
+            "{name} = {{ git = \"https://github.com/elbLabs/rostfrei\", rev = \"c9f5516ddc324265916b60e1eb7300dad9acac9d\" }}"
+        )));
+    }
     assert!(manifest.contains("[lints.clippy]"));
     assert!(manifest.contains("arithmetic_side_effects = \"deny\""));
 
@@ -112,6 +115,40 @@ fn new_project_refuses_to_modify_an_existing_destination() {
 }
 
 #[test]
+fn generated_module_names_are_rejected_before_creating_parent_or_destination() {
+    let temporary = tempfile::tempdir();
+    assert!(temporary.is_ok(), "could not create temporary directory");
+    let Some(temporary) = temporary.ok() else {
+        return;
+    };
+    let parent = temporary.path().join("not-created");
+
+    for name in ["model", "tests"] {
+        let destination = parent.join(name);
+        let result = create_project(&destination);
+        assert!(matches!(
+            result,
+            Err(NewProjectError::GeneratedModuleName { .. })
+        ));
+
+        let output = Command::new(env!("CARGO_BIN_EXE_cargo-rostfrei"))
+            .args(["rostfrei", "new"])
+            .arg(&destination)
+            .output();
+        assert!(output.is_ok(), "could not execute cargo-rostfrei");
+        let Some(output) = output.ok() else {
+            return;
+        };
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(&format!("generated `{name}` module")));
+        assert!(stderr.contains(&format!("`{name}-app`")));
+        assert!(!parent.exists(), "rejected name created its parent");
+        assert!(!destination.exists(), "rejected name created a project");
+    }
+}
+
+#[test]
 fn cargo_new_command_generates_a_project() {
     let temporary = tempfile::tempdir();
     assert!(temporary.is_ok(), "could not create temporary directory");
@@ -136,6 +173,7 @@ fn cargo_new_command_generates_a_project() {
         "new command failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(stdout.contains("Created Rostfrei project `customer-support`"));
+    assert!(stdout.contains("  cargo check\n  cargo test\n"));
     assert!(destination.join("Cargo.toml").is_file());
     assert!(
         destination
