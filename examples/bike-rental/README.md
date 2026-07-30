@@ -1,7 +1,16 @@
-# Bike rental example
+# Bike rental: from business rules to message flows
 
-This public example models a bicycle rental fleet. It demonstrates rostfrei's
-compiled domain metadata without depending on a production application:
+This runnable example shows Rostfrei's domain model, event-sourcing runtime,
+NATS messaging, and Tracer working together. Follow a rental from `RentBicycle`
+through the private `BicycleRented` history to the public
+`BicycleRentalStarted` integration event, or explore a business rejection when
+the bicycle cannot be rented.
+
+**First time here?** Start with the
+[getting-started guide](https://elblabs.github.io/rostfrei/docs/getting-started)
+to inspect the model, run the application, and explore it in Tracer Studio.
+
+## What the domain demonstrates
 
 - `RentalFleetAggregate` owns the fleet and its bicycles;
 - `RentBicycle`, `ReturnBicycle`, `AddBicycle`, and `TransferBicycle` are self-contained Bike Rental commands;

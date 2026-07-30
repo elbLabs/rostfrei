@@ -2,10 +2,12 @@ import { createFileRoute } from "@tanstack/react-router"
 
 import { MacroExplorerSection } from "@/components/macro-explorer/MacroExplorerSection"
 import {
+  GettingStartedSection,
   HeroSection,
   PrinciplesBar,
   SiteFooter,
   SiteHeader,
+  StorySection,
 } from "@/components/page-shell"
 import { ProjectStructureSection } from "@/components/project-structure/ProjectStructureSection"
 
@@ -23,8 +25,10 @@ function LandingPage() {
       >
         <HeroSection />
         <PrinciplesBar />
+        <StorySection />
         <ProjectStructureSection />
         <MacroExplorerSection />
+        <GettingStartedSection />
       </main>
       <SiteFooter />
     </div>
