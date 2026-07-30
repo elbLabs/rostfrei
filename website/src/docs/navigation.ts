@@ -21,6 +21,10 @@ export const docsNavigation = [
     items: [{ title: "Introduction", slug: "" }],
   },
   {
+    title: "Messaging",
+    items: [{ title: "Subjects and streams", slug: "messaging/subjects" }],
+  },
+  {
     title: "Domain Macros",
     items: [
       { title: "Overview", slug: "domain-macros" },

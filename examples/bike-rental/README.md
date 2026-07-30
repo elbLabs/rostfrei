@@ -14,6 +14,12 @@ compiled domain metadata without depending on a production application:
   and policies; and
 - `BicycleAvailabilityQuery` exposes a read-only availability query.
 
+For a visual explanation of this example's NATS subjects, command flow, streams,
+and Test isolation, read
+[Subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
+on the docs website, or open the [standalone HTML guide](../../docs/subjects.html)
+in a browser.
+
 ## Bounded-context command handlers
 
 Each command payload identifies every fleet it needs and declares `context = BikeRental`.
