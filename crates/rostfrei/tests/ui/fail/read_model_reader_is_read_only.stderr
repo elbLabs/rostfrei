@@ -1,0 +1,5 @@
+error[E0599]: no method named `delete` found for reference `&ReadModelReader<View>` in the current scope
+ --> tests/ui/fail/read_model_reader_is_read_only.rs:6:12
+  |
+6 |     reader.delete("org-1");
+  |            ^^^^^^ method not found in `&ReadModelReader<View>`

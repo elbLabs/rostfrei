@@ -347,9 +347,17 @@ where
 {
     let expected = durable_consumer_config(config)
         .map_err(|_| ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
+    verify_consumer_settings(name, actual, &expected)
+}
+
+pub fn verify_consumer_settings(
+    name: &str,
+    actual: &consumer::Config,
+    expected: &consumer::pull::Config,
+) -> Result<(), ConsumeError> {
     // These settings control payload delivery, durable progress, and the pull requests
     // and acknowledgement deadlines used by run(). Reject drift before consuming.
-    if name != config.durable_name().as_str()
+    if expected.durable_name.as_deref() != Some(name)
         || actual.deliver_subject.is_some()
         || actual.durable_name.as_deref() != expected.durable_name.as_deref()
         || actual.deliver_policy != DeliverPolicy::All
@@ -375,6 +383,27 @@ where
         return Err(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration));
     }
     Ok(())
+}
+
+/// Shared integration delivery/ACK/quarantine path for the read-model worker's
+/// multi-subject, single-in-flight consumer.
+pub async fn process_integration_message(
+    context: &jetstream::Context,
+    topology: &MessagingTopology,
+    config: &ConsumerConfig<IntegrationEventAddress>,
+    handler: Arc<dyn MessageHandler<IntegrationEventAddress>>,
+    message: jetstream::Message,
+) -> Result<(), ConsumeError> {
+    process_message(
+        context,
+        topology.integration_event_stream(),
+        topology.quarantine_stream(),
+        DEFAULT_PUBLISH_TIMEOUT,
+        config,
+        handler,
+        message,
+    )
+    .await
 }
 
 async fn process_message<A>(

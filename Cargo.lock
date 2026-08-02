@@ -1244,6 +1244,7 @@ dependencies = [
  "async-nats",
  "async-trait",
  "base64",
+ "clap",
  "futures-util",
  "nkeys",
  "percent-encoding",
