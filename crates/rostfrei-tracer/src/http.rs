@@ -179,6 +179,12 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
             authorize_dispatch_request,
         ));
     let operation_routes = Router::new()
+        .route("/observation/{scope}", get(get_observation))
+        .route("/observation/{scope}/events", get(observation_events))
+        .route(
+            "/observation/{scope}/flows/{flow_id}",
+            get(get_observed_flow),
+        )
         .route("/operations/{operation_id}", get(get_operation))
         .route(
             "/operations/{operation_id}/message-series",
@@ -220,6 +226,9 @@ async fn get_catalog(State(state): State<HttpState>, headers: HeaderMap) -> Resp
     let mut catalog = state.tracer.catalog().clone();
     match capability(&state.config, &headers) {
         Some(Capability::Control) => {
+            catalog
+                .observation
+                .retain(|entry| entry.scope == crate::ObservationScope::Test);
             if let Some(quarantine) = &mut catalog.quarantine {
                 quarantine.production = None;
                 if quarantine.test.is_none() {
@@ -228,6 +237,9 @@ async fn get_catalog(State(state): State<HttpState>, headers: HeaderMap) -> Resp
             }
         }
         Some(Capability::ProductionInspection) => {
+            catalog
+                .observation
+                .retain(|entry| entry.scope == crate::ObservationScope::Production);
             catalog.contexts.clear();
             catalog.behavioral_test = None;
             catalog.test_scenario = None;
@@ -259,6 +271,113 @@ async fn get_tests(State(state): State<HttpState>) -> Response {
         Ok(definitions) => private_no_store(Json(definitions).into_response()),
         Err(error) => test_repository_error_response(&error),
     }
+}
+
+#[allow(clippy::result_large_err)]
+fn authorized_observation(
+    state: &HttpState,
+    headers: &HeaderMap,
+    scope: crate::ObservationScope,
+) -> Result<Arc<crate::ObservationFeed>, Response> {
+    let capability = capability(&state.config, headers).ok_or_else(unauthorized)?;
+    let required = match scope {
+        crate::ObservationScope::Test => Capability::Control,
+        crate::ObservationScope::Production => Capability::ProductionInspection,
+    };
+    if capability != required {
+        return Err(forbidden());
+    }
+    state
+        .tracer
+        .observation(scope)
+        .map_err(|error| observation_error_response(&error))
+}
+
+async fn get_observation(
+    State(state): State<HttpState>,
+    Path(scope): Path<crate::ObservationScope>,
+    headers: HeaderMap,
+) -> Response {
+    match authorized_observation(&state, &headers, scope) {
+        Ok(feed) => Json(feed.snapshot()).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn get_observed_flow(
+    State(state): State<HttpState>,
+    Path((scope, flow_id)): Path<(crate::ObservationScope, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let feed = match authorized_observation(&state, &headers, scope) {
+        Ok(feed) => feed,
+        Err(response) => return response,
+    };
+    match feed.flow(&flow_id) {
+        Ok(flow) => Json(flow).into_response(),
+        Err(error) => observation_error_response(&error),
+    }
+}
+
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "the subscription permit is moved into the SSE stream and held until disconnect"
+)]
+async fn observation_events(
+    State(state): State<HttpState>,
+    Path(scope): Path<crate::ObservationScope>,
+    headers: HeaderMap,
+) -> Response {
+    let feed = match authorized_observation(&state, &headers, scope) {
+        Ok(feed) => feed,
+        Err(response) => return response,
+    };
+    let subscription = match feed.subscribe() {
+        Ok(subscription) => subscription,
+        Err(error) => return observation_error_response(&error),
+    };
+    let stream = stream::unfold(subscription, |mut subscription| async move {
+        let snapshot = subscription.next().await?;
+        let frame = serde_json::to_string(&snapshot)
+            .map(|data| Event::default().event("observation").data(data));
+        // Coalesce busy feeds rather than queueing a frame per broker message.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        Some((frame, subscription))
+    });
+    let mut response = Sse::new(stream)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keep-alive"),
+        )
+        .into_response();
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
+}
+
+fn observation_error_response(error: &crate::ObservationError) -> Response {
+    let (status, code) = match error {
+        crate::ObservationError::Unavailable => {
+            (StatusCode::NOT_IMPLEMENTED, "observation-unavailable")
+        }
+        crate::ObservationError::Expired => (StatusCode::GONE, "observation-expired"),
+        crate::ObservationError::InvalidSource => {
+            (StatusCode::BAD_REQUEST, "invalid-observation-source")
+        }
+        crate::ObservationError::SourceCapacity | crate::ObservationError::SubscriptionCapacity => {
+            (StatusCode::SERVICE_UNAVAILABLE, "observation-capacity")
+        }
+    };
+    (
+        status,
+        Json(ErrorBody {
+            code,
+            message: error.to_string(),
+        }),
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]

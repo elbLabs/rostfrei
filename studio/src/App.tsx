@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { PanelLeft, Send, Workflow } from "lucide-react"
+import { PanelLeft, Radio, Send, Workflow } from "lucide-react"
 
 import { ConnectionNotice } from "@/components/connection-notice"
 import {
@@ -12,6 +12,10 @@ import {
 } from "@/components/command-execution-header"
 import { ExecutionHeader } from "@/components/execution-header"
 import { MessageGraph } from "@/components/message-graph"
+import {
+  ObservationPanel,
+  type ObservationConnection,
+} from "@/components/observation-panel"
 import { StudioSidebar } from "@/components/studio-sidebar"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -24,7 +28,12 @@ import {
   runTest,
   submitCommand,
 } from "@/lib/api"
-import { expectedGraph, operationGraph, reportGraph } from "@/lib/graph"
+import {
+  expectedGraph,
+  observedGraph,
+  operationGraph,
+  reportGraph,
+} from "@/lib/graph"
 import type {
   Fixture,
   CommandExecutionResult,
@@ -35,6 +44,7 @@ import type {
   TestDefinitionSummary,
   TestReport,
   TracerCatalog,
+  ObservedFlow,
 } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -43,6 +53,10 @@ const MAXIMUM_STORED_RUNS = 16
 const STORED_LAYOUT_KEY = "rostfrei-tracer-studio-layout-v1"
 
 function App() {
+  const [observationActive, setObservationActive] = useState(false)
+  const [observedFlow, setObservedFlow] = useState<ObservedFlow>()
+  const [observationConnection, setObservationConnection] =
+    useState<ObservationConnection>("connecting")
   const [layout, setLayout] = useState<StudioLayout>(readStoredLayout)
   const [canvasNavigationOpen, setCanvasNavigationOpen] = useState(false)
   const [workbenchNavigationOpen, setWorkbenchNavigationOpen] = useState(
@@ -216,6 +230,7 @@ function App() {
 
   const selectTest = async (test: TestDefinitionSummary) => {
     if (running || loading || source !== "live") return
+    setObservationActive(false)
     setLoading(true)
     setActiveCommand(undefined)
     setCommandResult(undefined)
@@ -242,6 +257,7 @@ function App() {
   const executeSelectedTest = async () => {
     const selected = tests.find((test) => test.id === selectedTestId)
     if (!selected || running || loading || source !== "live") return
+    setObservationActive(false)
     setRunning(true)
     setActiveCommand(undefined)
     setCommandResult(undefined)
@@ -314,6 +330,7 @@ function App() {
 
   const selectRun = (run: StoredRun) => {
     if (running || loading) return
+    setObservationActive(false)
     setSelectedRunId(run.runId)
     setActiveCommand(undefined)
     setCommandResult(undefined)
@@ -331,6 +348,7 @@ function App() {
     request: CommandExecutionRequest
   ): Promise<boolean> => {
     if (running || loading || source !== "live") return false
+    setObservationActive(false)
     setRunning(true)
     setError(undefined)
     setCommandError(undefined)
@@ -399,17 +417,24 @@ function App() {
 
   const selectedRun = runs.find((run) => run.runId === selectedRunId)
   const selectedTest = tests.find((test) => test.id === selectedTestId)
-  const view = running
-    ? "running"
-    : resultUnavailable || activeCommand?.error
-      ? "unavailable"
-      : activeCommand
-        ? activeCommand.request.mode === "preview"
-          ? "predicted"
-          : "observed"
-        : selectedRun
-          ? "observed"
-          : "expected"
+  const view = observationActive
+    ? "observed"
+    : running
+      ? "running"
+      : resultUnavailable || activeCommand?.error
+        ? "unavailable"
+        : activeCommand
+          ? activeCommand.request.mode === "preview"
+            ? "predicted"
+            : "observed"
+          : selectedRun
+            ? "observed"
+            : "expected"
+  const displayNodes = observationActive
+    ? observedFlow
+      ? observedGraph(observedFlow.messageSeries)
+      : []
+    : nodes
 
   return (
     <TooltipProvider>
@@ -417,6 +442,7 @@ function App() {
         className={cn(
           "studio-shell",
           `studio-layout-${layout}`,
+          observationActive && "observation-active",
           sidebarOpen && "sidebar-is-open"
         )}
       >
@@ -428,7 +454,11 @@ function App() {
             onClick={() => setSidebarOpen((open) => !open)}
             aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
             aria-expanded={sidebarOpen}
-            aria-controls="studio-navigation"
+            aria-controls={
+              observationActive
+                ? "studio-observation-panel"
+                : "studio-navigation"
+            }
           >
             <PanelLeft />
           </Button>
@@ -454,6 +484,26 @@ function App() {
           >
             <Send />
             <span>Command</span>
+          </Button>
+          <Button
+            className="observation-panel-trigger"
+            variant="ghost"
+            size="sm"
+            disabled={running || loading}
+            aria-label={
+              observationActive
+                ? "Return to executions"
+                : "Open observation panel"
+            }
+            aria-pressed={observationActive}
+            onClick={() => {
+              setObservationActive(!observationActive)
+              setSidebarOpen(true)
+              setCommandOpen(false)
+            }}
+          >
+            <Radio />
+            <span>{observationActive ? "Executions" : "Observe"}</span>
           </Button>
           <div
             className="layout-switch"
@@ -483,23 +533,25 @@ function App() {
           </div>
           <div
             className="connection-status"
-            data-source={source}
+            data-source={observationActive ? observationConnection : source}
             data-tracer-source={source}
           >
             <span className="connection-dot" />
-            {source === "connecting"
-              ? "Connecting"
-              : source === "live"
-                ? "Isolated Test"
-                : "Disconnected"}
-            {selectedRun && (
+            {observationActive
+              ? `Observation · ${observationConnection}`
+              : source === "connecting"
+                ? "Connecting"
+                : source === "live"
+                  ? "Isolated Test"
+                  : "Disconnected"}
+            {!observationActive && selectedRun && (
               <span className="connection-detail">Saved run</span>
             )}
           </div>
         </header>
 
         <StudioSidebar
-          open={sidebarOpen}
+          open={sidebarOpen && !observationActive}
           tests={tests}
           selectedTestId={selectedTestId}
           selectedRunId={selectedRunId}
@@ -509,6 +561,21 @@ function App() {
           onClose={() => setSidebarOpen(false)}
           onSelectTest={(test) => void selectTest(test)}
           onSelectRun={selectRun}
+        />
+        <ObservationPanel
+          open={sidebarOpen && observationActive}
+          active={observationActive}
+          catalog={catalog}
+          onClose={() => setSidebarOpen(false)}
+          onSelect={() => {
+            if (
+              layout === "canvas" ||
+              window.matchMedia("(max-width: 1399px)").matches
+            )
+              setSidebarOpen(false)
+          }}
+          onFlow={setObservedFlow}
+          onStatus={setObservationConnection}
         />
         <CommandPanel
           open={commandOpen}
@@ -541,15 +608,35 @@ function App() {
 
         <main className="studio-main">
           <div className="studio-heading">
-            {(source !== "live" || testDiscoveryError) && (
-              <ConnectionNotice
-                connecting={source === "connecting"}
-                testsOnly={source === "live"}
-                error={testDiscoveryError ?? connectionError}
-                onRetry={retryConnection}
-              />
-            )}
-            {activeCommand ? (
+            {!observationActive &&
+              (source !== "live" || testDiscoveryError) && (
+                <ConnectionNotice
+                  connecting={source === "connecting"}
+                  testsOnly={source === "live"}
+                  error={testDiscoveryError ?? connectionError}
+                  onRetry={retryConnection}
+                />
+              )}
+            {observationActive ? (
+              <section className="observation-heading" aria-live="polite">
+                <div>
+                  <h1>{observedFlow?.name ?? "Observe application traffic"}</h1>
+                  <p>
+                    {observedFlow
+                      ? `${observedFlow.application} · ${observedFlow.scope} · ${observedFlow.correlationId}`
+                      : "Choose a flow from the observation sidebar."}
+                  </p>
+                </div>
+                <p className="observation-evidence">
+                  {observedFlow
+                    ? `${observedFlow.fidelity} observation · partial${observedFlow.truncated ? " · truncated" : ""}${observedFlow.conflicted ? " · conflicting evidence" : ""}`
+                    : observationConnection}
+                  <span>
+                    Rolling window; silence does not establish completion.
+                  </span>
+                </p>
+              </section>
+            ) : activeCommand ? (
               <CommandExecutionHeader
                 execution={activeCommand}
                 root={
@@ -587,18 +674,32 @@ function App() {
           </div>
           <MessageGraph
             key={
-              activeCommand
-                ? "command-execution"
-                : (selectedRunId ?? selectedTestId ?? "empty")
+              observationActive
+                ? `observation-${observedFlow?.scope ?? "empty"}-${observedFlow?.id ?? "empty"}`
+                : activeCommand
+                  ? "command-execution"
+                  : (selectedRunId ?? selectedTestId ?? "empty")
             }
             layoutMode={layout}
-            nodes={nodes}
+            nodes={displayNodes}
             view={view}
-            capture={activeCommand?.result?.series?.capture}
+            capture={
+              observationActive
+                ? observedFlow
+                  ? {
+                      fidelity: observedFlow.fidelity,
+                      settled: false,
+                      settledFor: "0ms",
+                    }
+                  : undefined
+                : activeCommand?.result?.series?.capture
+            }
             emptyMessage={
-              source !== "live"
-                ? "Connect to Tracer to load tests and message flows."
-                : undefined
+              observationActive
+                ? "Select an observed flow. Only real captured messages will appear here."
+                : source !== "live"
+                  ? "Connect to Tracer to load tests and message flows."
+                  : undefined
             }
           />
         </main>

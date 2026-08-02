@@ -42,6 +42,46 @@ export interface TracerCatalog {
   contexts: CatalogContext[]
   testRepository?: { definitionsHref: string }
   behavioralTest?: { definitionsHref?: string }
+  observation?: ObservationCapability[]
+}
+
+export interface ObservationCapability {
+  application: string
+  scope: "test" | "production"
+  listHref: string
+  eventsHref: string
+}
+
+export interface ObservedFlowSummary {
+  id: string
+  correlationId: string
+  name: string
+  messageCount: number
+  revision: string
+  truncated: boolean
+  conflicted: boolean
+  detailHref: string
+}
+
+export interface ObservationSnapshot {
+  application: string
+  scope: ObservationCapability["scope"]
+  generation: string
+  revision: string
+  status: "connecting" | "live" | "unavailable" | "resetting"
+  evictedFlows: string
+  discardedMessages: string
+  maximumFlows: number
+  items: ObservedFlowSummary[]
+}
+
+export interface ObservedFlow extends ObservedFlowSummary {
+  application: string
+  scope: ObservationCapability["scope"]
+  generation: string
+  messageSeries: ObservedMessageSeries
+  fidelity: EdgeFidelity
+  partial: boolean
 }
 
 export interface CatalogContext {

@@ -86,7 +86,7 @@ export function MessageInspector({
                       ? "Root command for this execution."
                       : view === "expected"
                         ? "No parent specified in the expectation."
-                        : "Associated with this run. No resolved causal parent is available."}
+                        : "Associated with this flow. No resolved causal parent is available."}
             </p>
           </section>
 
