@@ -30,5 +30,10 @@ tempfile.workspace = true
 rostfrei.workspace = true
 rostfrei-testing.workspace = true
 
+[[bench]]
+name = "aggregate_loading"
+harness = false
+test = false
+
 [lints]
 workspace = true
