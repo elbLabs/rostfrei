@@ -1,7 +1,16 @@
-# Bike rental example
+# Bike rental: from business rules to message flows
 
-This public example models a bicycle rental fleet. It demonstrates rostfrei's
-compiled domain metadata without depending on a production application:
+This runnable example shows Rostfrei's domain model, event-sourcing runtime,
+NATS messaging, and Tracer working together. Follow a rental from `RentBicycle`
+through the private `BicycleRented` history to the public
+`BicycleRentalStarted` integration event, or explore a business rejection when
+the bicycle cannot be rented.
+
+**First time here?** Start with the
+[getting-started guide](https://elblabs.github.io/rostfrei/docs/getting-started)
+to inspect the model, run the application, and explore it in Tracer Studio.
+
+## What the domain demonstrates
 
 - `RentalFleetAggregate` owns the fleet and its bicycles;
 - `RentBicycle`, `ReturnBicycle`, `AddBicycle`, and `TransferBicycle` are self-contained Bike Rental commands;
@@ -13,6 +22,12 @@ compiled domain metadata without depending on a production application:
 - `RegistrationNumber` is an isolated demonstration of Value Object-local actions, invariants,
   and policies; and
 - `BicycleAvailabilityQuery` exposes a read-only availability query.
+
+For a visual explanation of this example's NATS subjects, command flow, streams,
+and Test isolation, read
+[Subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
+on the docs website, or open the [standalone HTML guide](../../docs/subjects.html)
+in a browser.
 
 ## Bounded-context command handlers
 
@@ -83,6 +98,23 @@ Run the example tests:
 ```sh
 cargo test --locked -p bike-rental
 ```
+
+## Quarantine walkthrough
+
+The [quarantine walkthrough](QUARANTINE.md) runs the complete retry → quarantine
+→ inspect → repair → republish → acknowledge flow against real NATS, plus
+immediate quarantine for invalid application payloads and malformed transport
+messages:
+
+```sh
+docker compose -f examples/bike-rental/compose.yaml up -d
+ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
+  cargo run --locked -p bike-rental --bin bike-rental-quarantine-demo
+```
+
+It prints and checks the stored quarantine records, uses a fresh isolated
+namespace each run, and cleans up afterward. Add `-- --keep-streams` to inspect
+the records afterward with the NATS CLI. It can run independently of Tracer.
 
 ## NATS-backed Tracer
 

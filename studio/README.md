@@ -1,4 +1,6 @@
-# Tracer Studio
+# Rostfrei Tracer Studio
+
+Explore what your domain does, one command at a time.
 
 Tracer Studio is a React/Vite client for command execution, Tracer behavioral
 tests, and causal message-series visualization.
@@ -25,6 +27,13 @@ remain available even when the catalog has no behavioral-test repository.
 Identifiers are editable, discovered payload options refresh after Test runs,
 and numeric options retain their exact JSON representation. An unconfirmed Test
 submission keeps its idempotency key and payload for an explicit retry.
+Start with the [bike-rental walkthrough](https://elblabs.github.io/rostfrei/docs/getting-started)
+for a connected application. Studio requires a reachable Tracer API; synthetic
+responses are limited to the browser-test and visual-inspection fixtures below.
+
+## Run locally
+
+From `studio/`:
 
 ```sh
 pnpm install --frozen-lockfile

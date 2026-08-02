@@ -6,6 +6,7 @@ use syn::spanned::Spanned;
 use syn::visit::Visit;
 use syn::{Item, ItemMod};
 
+use super::event_raising;
 use super::facts::{ModuleDeclaration, SourceFileFacts};
 use super::item::top_level_fact;
 use super::recognize::is_cfg_test;
@@ -53,6 +54,7 @@ pub fn parse(path: &Path) -> Result<SourceFileFacts, syn::Error> {
         non_composition_items,
         test_lines: visitor.test_lines,
         include_lines: visitor.include_lines,
+        event_raises: event_raising::collect(&file),
     })
 }
 

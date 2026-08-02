@@ -14,6 +14,7 @@ pub enum DiagnosticCode {
     InvalidTestMirror,
     MissingDomainCheckTarget,
     CompiledDomainCheckFailed,
+    EventRaisingOutsideAction,
 }
 
 impl DiagnosticCode {
@@ -30,6 +31,7 @@ impl DiagnosticCode {
             Self::InvalidTestMirror => "RF008",
             Self::MissingDomainCheckTarget => "RF009",
             Self::CompiledDomainCheckFailed => "RF010",
+            Self::EventRaisingOutsideAction => "RF011",
         }
     }
 }

@@ -1,3 +1,4 @@
+import { Fragment } from "react"
 import { CheckCircle2 } from "lucide-react"
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -13,8 +14,13 @@ export function MacroSlideCard({ macro }: { macro: MacroSlide }) {
           <p className="font-mono text-[10px] font-semibold tracking-[0.18em] text-primary uppercase">
             {macro.family}
           </p>
-          <h3 className="mt-3 max-w-md text-3xl leading-tight font-semibold tracking-[-0.035em] text-stone-50 sm:text-4xl">
-            {macro.name}
+          <h3 className="mt-3 max-w-md text-3xl leading-tight font-semibold tracking-[-0.035em] wrap-anywhere text-stone-50 sm:text-4xl">
+            {macro.name.split(/(?<=_)/).map((part, index) => (
+              <Fragment key={index}>
+                {part}
+                <wbr />
+              </Fragment>
+            ))}
           </h3>
           <p className="mt-5 max-w-md text-lg leading-snug font-medium text-stone-200 sm:text-xl">
             {macro.headline}

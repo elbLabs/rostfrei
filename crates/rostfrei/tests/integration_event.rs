@@ -5,13 +5,14 @@ use std::{convert::Infallible, error::Error, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use rostfrei::{
     Aggregate, Apply, BoundedContext, Command, CommandBus, CommandDecision, CommandExecution,
-    CommandHandler, CommandHandlingResult, CommandMessageAdapter, CommandProcessor, CommandRequest,
+    CommandExecutionMetadata, CommandExecutor, CommandHandler, CommandHandlingResult,
+    CommandMessageAdapter, CommandOutcome, CommandProcessor, CommandReceipt, CommandRequest,
     CommittedDomainEvent, DomainEvent, DomainEventDispatcher, Entity, EventStore,
     InMemoryEventStore, InMemoryMessagingAdapter, InfallibleCommandRejectionMapper, Initialize,
     IntegrationCommandMapper, IntegrationEvent, IntegrationEventBus,
     IntegrationEventCommandHandler, IntegrationEventDispatcherExt, IntegrationEventMapper,
     IntegrationMessageAdapter, OperationId, RoutedCommand, StreamAggregateId, StreamAggregateType,
-    StreamId,
+    StreamId, command_execution_fingerprint,
 };
 use rostfrei_messaging_core::{
     ApplicationName, CallerMetadata, CommandEnvelope, CommandResponseOutcome, CorrelationId,
@@ -212,6 +213,71 @@ fn registered_processor(store: &InMemoryEventStore) -> TestResult<CommandProcess
         InfallibleCommandRejectionMapper,
     )?;
     Ok(processor)
+}
+
+#[tokio::test]
+async fn direct_execution_without_correlation_publishes_mapped_integration_event() -> TestResult {
+    let store = InMemoryEventStore::new();
+    let processor = registered_processor(&store)?;
+    let adapter = Arc::new(InMemoryMessagingAdapter::new(Arc::new(processor)));
+    let context = ApplicationName::new("integration-flow-test")?.bounded_context("ledger")?;
+    let metadata = CommandExecutionMetadata::new(
+        OperationId::new("direct-credit")?,
+        command_execution_fingerprint(
+            "ledger",
+            "credit-account",
+            1,
+            &serde_json::json!({ "account_id": "account-1", "amount": 7 }),
+        )?,
+    )
+    .with_bounded_context(context.name().clone());
+    let outcome = CommandExecutor::new(store.clone())
+        .execute(
+            &CreditAccountHandler,
+            metadata,
+            &CreditAccount {
+                account_id: "account-1".to_owned(),
+                amount: 7,
+            },
+        )
+        .await?;
+    assert!(matches!(
+        outcome,
+        CommandOutcome::Accepted(CommandReceipt::Appended(_))
+    ));
+
+    let history = store.load(&stream_id()?).await?;
+    let credited = history.first().ok_or("credit event was not committed")?;
+    let integration_adapter: Arc<dyn IntegrationMessageAdapter> = adapter.clone();
+    let mut dispatcher = DomainEventDispatcher::new();
+    dispatcher.register_integration_event::<AccountAggregate, AccountCredited, _>(
+        IntegrationEventBus::new(context, integration_adapter),
+        AccountCreditedMapper,
+    )?;
+    dispatcher.dispatch(credited).await?;
+    dispatcher.dispatch(credited).await?;
+
+    let messages = adapter.integration_messages().await;
+    assert_eq!(messages.len(), 1);
+    let envelope = messages
+        .first()
+        .ok_or("integration event was not published")?
+        .decode::<AccountWasCredited>()?;
+    assert_eq!(envelope.correlation_id().as_str(), "direct-credit");
+    assert_eq!(credited.correlation_id(), Some(envelope.correlation_id()));
+    assert_eq!(credited.causation_id(), None);
+    assert_eq!(
+        envelope.causation_id().map(rostfrei::CausationId::as_str),
+        Some(credited.event_id().as_str())
+    );
+    assert_eq!(
+        envelope.payload(),
+        &AccountWasCredited {
+            account_id: "account-1".to_owned(),
+            amount: 7,
+        }
+    );
+    Ok(())
 }
 
 #[tokio::test]

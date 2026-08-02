@@ -200,13 +200,13 @@ impl CommandHandler<DepositAndObserve> for AccountCommandHandler {
         let mut aggregate = execution
             .load::<AccountAggregate>(command.account_id)
             .await?;
-        if aggregate.aggregate().state().id.0 != command.account_id {
+        if aggregate.state().id.0 != command.account_id {
             return Ok(CommandDecision::Rejected(
                 "stream identity was not used to initialize the aggregate",
             ));
         }
-        aggregate.aggregate_mut().deposit(command.amount);
-        aggregate.aggregate_mut().observe_balance();
+        aggregate.deposit(command.amount);
+        aggregate.observe_balance();
         Ok(CommandDecision::Accepted)
     }
 }
@@ -228,7 +228,7 @@ impl CommandHandler<DepositThenReject> for AccountCommandHandler {
         let mut aggregate = execution
             .load::<AccountAggregate>(command.account_id)
             .await?;
-        aggregate.aggregate_mut().deposit(command.amount);
+        aggregate.deposit(command.amount);
         Ok(CommandDecision::Rejected("deliberate rejection"))
     }
 }
@@ -360,6 +360,64 @@ fn executable_action_can_raise_multiple_registered_event_types() {
         Some(&BalanceObserved { balance: 4 })
     );
     assert_eq!(aggregate.state().observed_balance, 4);
+}
+
+#[tokio::test]
+async fn direct_actions_simulate_execute_and_replay_the_same_events() {
+    let store = InMemoryEventStore::new();
+    let executor = CommandExecutor::new(store.clone());
+    let metadata = metadata("direct-actions").unwrap();
+    let command = DepositAndObserve {
+        account_id: "direct-account",
+        amount: 7,
+    };
+
+    let simulation = executor
+        .simulate(&AccountCommandHandler, metadata.clone(), &command)
+        .await
+        .unwrap();
+    assert_eq!(simulation.decision(), &CommandDecision::Accepted);
+    assert_eq!(simulation.participants().len(), 1);
+    let predicted = simulation.participants()[0].events();
+    assert_eq!(predicted.len(), 2);
+    assert_eq!(predicted[1].payload(), br#"{"balance":7}"#);
+    assert!(
+        store
+            .load(&stream("direct-account").unwrap())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let CommandOutcome::Accepted(committed) = executor
+        .execute(&AccountCommandHandler, metadata.clone(), &command)
+        .await
+        .unwrap()
+    else {
+        panic!("deposit should be accepted");
+    };
+    assert!(!committed.is_exact_replay());
+    assert_eq!(committed.events().len(), predicted.len());
+    for (actual, predicted) in committed.events().iter().zip(predicted) {
+        assert_eq!(actual.event_id(), predicted.event_id());
+        assert_eq!(actual.payload(), predicted.payload());
+    }
+    let CommandOutcome::Accepted(replayed) = executor
+        .execute(&AccountCommandHandler, metadata, &command)
+        .await
+        .unwrap()
+    else {
+        panic!("retry should be accepted");
+    };
+    assert!(replayed.is_exact_replay());
+    assert_eq!(replayed.events(), committed.events());
+    assert_eq!(
+        store
+            .load(&stream("direct-account").unwrap())
+            .await
+            .unwrap(),
+        committed.events()
+    );
 }
 
 #[tokio::test]
