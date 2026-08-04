@@ -1,6 +1,7 @@
 #![allow(clippy::panic_in_result_fn)]
 
 use super::*;
+use std::time::Duration;
 
 #[tokio::test]
 async fn ordinary_history_reads_do_not_traverse_historical_receipts() -> TestResult<()> {
@@ -199,7 +200,7 @@ async fn auditing_policy_is_local_to_the_handle_and_rejects_bad_receipts_before_
 }
 
 #[tokio::test]
-async fn parallel_history_reads_preserve_commits_across_sparse_ranges() -> TestResult<()> {
+async fn history_reads_preserve_commits_across_sparse_ranges() -> TestResult<()> {
     let (context, store) = directory_fixture("history-read-ranges").await?;
     let writer = stream("range-writer")?;
     let secondary = stream("range-secondary")?;
@@ -279,15 +280,85 @@ async fn parallel_history_reads_preserve_commits_across_sparse_ranges() -> TestR
     Ok(())
 }
 
+async fn seed_history(
+    store: &NatsEventStore,
+    aggregate: &StreamId,
+) -> TestResult<Vec<RecordedEvent>> {
+    let mut expected = Vec::new();
+    for index in 0..7_u64 {
+        let operation = format!("history-{index}");
+        let outcome = store
+            .append(
+                aggregate,
+                if index == 0 {
+                    ExpectedVersion::NoStream
+                } else {
+                    ExpectedVersion::Exact(StreamVersion::new(u64::try_from(expected.len())?))
+                },
+                repeated_batch(aggregate, &operation, &operation, 100)?,
+            )
+            .await?;
+        expected.extend_from_slice(outcome.events());
+        let unrelated = stream(&format!("unrelated-{index}"))?;
+        store
+            .append(
+                &unrelated,
+                ExpectedVersion::NoStream,
+                batch(&unrelated, &operation, &operation, &[b"noise"])?,
+            )
+            .await?;
+    }
+    Ok(expected)
+}
+
+async fn consumer_count(
+    context: &async_nats::jetstream::Context,
+    store: &NatsEventStore,
+) -> TestResult<usize> {
+    let stream = context.get_stream(store.config().stream_name()).await?;
+    Ok(stream.cached_info().state.consumer_count)
+}
+
+#[tokio::test]
+async fn history_replay_filters_interleaved_subjects_and_batches_requests() -> TestResult<()> {
+    let (context, store) = directory_fixture("history-batches").await?;
+    let aggregate = stream("batched")?;
+    let expected = seed_history(&store, &aggregate).await?;
+    // Bookkeeping is deliberately not a valid domain event and must not be delivered.
+    context
+        .publish(
+            store.config().transaction_guard_subject("noise", 0),
+            br"{}".to_vec().into(),
+        )
+        .await?
+        .await?;
+    let client = context.client();
+    client.flush().await?;
+    let before = client.statistics().out_messages.load(Ordering::Relaxed);
+    let actual = store.load(&aggregate).await?;
+    client.flush().await?;
+    let requests = client
+        .statistics()
+        .out_messages
+        .load(Ordering::Relaxed)
+        .checked_sub(before)
+        .ok_or("request count regressed")?;
+    assert_eq!(actual, expected);
+    assert!(requests <= 10, "700 events used {requests} requests");
+    assert_eq!(consumer_count(&context, &store).await?, 0);
+    context.delete_stream(store.config().stream_name()).await?;
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "release-mode diagnostic benchmark; run explicitly against a disposable broker"]
-async fn compare_serial_and_parallel_history_windows() -> TestResult<()> {
+async fn compare_serial_raw_and_batched_history_replay() -> TestResult<()> {
     tokio::spawn(compare_history_windows()).await?
 }
 
 async fn compare_history_windows() -> TestResult<()> {
-    let (context, parallel) = directory_fixture("history-window-comparison").await?;
-    let serial = parallel.clone().with_serial_history_reads();
+    let (context, batched) = directory_fixture("history-window-comparison").await?;
+    let serial = batched.clone().with_serial_history_reads();
     let client = context.client();
     for (label, size, transactions) in [
         ("direct-100", 100_u64, false),
@@ -306,7 +377,7 @@ async fn compare_history_windows() -> TestResult<()> {
             };
             let events = repeated_batch(&writer, &operation, &operation, count)?;
             if transactions {
-                parallel
+                batched
                     .append_transaction(EventTransaction::new(
                         OperationId::new(&operation)?,
                         ContentFingerprint::digest(&operation),
@@ -318,19 +389,19 @@ async fn compare_history_windows() -> TestResult<()> {
                     ))
                     .await?;
             } else {
-                parallel.append(&writer, expected, events).await?;
+                batched.append(&writer, expected, events).await?;
             }
             version = version
                 .checked_add(u64::from(count))
                 .ok_or("seed version overflow")?;
         }
         let expected = serial.load(&writer).await?;
-        assert_eq!(parallel.load(&writer).await?, expected);
+        assert_eq!(batched.load(&writer).await?, expected);
         // Alternating ABBA blocks share the exact stream, connection, process,
         // runtime placement, and warmup. Timing thresholds are intentionally absent.
         for block in 0..3 {
-            for mode in ["serial", "parallel", "parallel", "serial"] {
-                let store = if mode == "serial" { &serial } else { &parallel };
+            for mode in ["serial", "batched", "batched", "serial"] {
+                let store = if mode == "serial" { &serial } else { &batched };
                 client.flush().await?;
                 let before = client.statistics().out_messages.load(Ordering::Relaxed);
                 let started = std::time::Instant::now();
@@ -352,7 +423,143 @@ async fn compare_history_windows() -> TestResult<()> {
         }
     }
     context
-        .delete_stream(parallel.config().stream_name())
+        .delete_stream(batched.config().stream_name())
         .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn history_replay_crosses_byte_limited_pages() -> TestResult<()> {
+    let (context, store) = directory_fixture("history-byte-pages").await?;
+    let aggregate = stream("large-events")?;
+    let payload = vec![42_u8; 80_000];
+    let payloads = [payload.as_slice(); 9];
+    let mut expected = Vec::new();
+    for index in 0..10 {
+        let operation = format!("large-{index}");
+        let outcome = store
+            .append(
+                &aggregate,
+                if index == 0 {
+                    ExpectedVersion::NoStream
+                } else {
+                    ExpectedVersion::Exact(StreamVersion::new(u64::try_from(expected.len())?))
+                },
+                batch(&aggregate, &operation, &operation, &payloads)?,
+            )
+            .await?;
+        expected.extend_from_slice(outcome.events());
+    }
+    assert_eq!(store.load(&aggregate).await?, expected);
+    assert_eq!(consumer_count(&context, &store).await?, 0);
+    context.delete_stream(store.config().stream_name()).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn history_replay_ignores_concurrent_appends_after_its_cutoff() -> TestResult<()> {
+    let (context, store) = directory_fixture("history-cutoff").await?;
+    let aggregate = stream("concurrent")?;
+    let expected = seed_history(&store, &aggregate).await?;
+    let reached = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let loader = store
+        .clone()
+        .with_history_snapshot_barriers(Arc::clone(&reached), Arc::clone(&release));
+    let reading = loader.load(&aggregate);
+    let append = async {
+        reached.wait().await;
+        // Even malformed bytes beyond the captured cutoff must not affect this read.
+        context
+            .publish(
+                store.config().aggregate_subject(
+                    aggregate.aggregate_type().as_str(),
+                    aggregate.aggregate_id().as_str(),
+                ),
+                b"later malformed event".to_vec().into(),
+            )
+            .await?
+            .await?;
+        release.wait().await;
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+    };
+    let (actual, appended) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(reading, append)
+    })
+    .await?;
+    appended?;
+    assert_eq!(actual?, expected);
+    assert!(matches!(store.load(&aggregate).await,
+        Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory));
+    assert_eq!(consumer_count(&context, &store).await?, 0);
+    context.delete_stream(store.config().stream_name()).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn history_replay_cleans_up_after_cancellation() -> TestResult<()> {
+    let (context, store) = directory_fixture("history-cancel").await?;
+    let aggregate = stream("cancel")?;
+    store
+        .append(
+            &aggregate,
+            ExpectedVersion::NoStream,
+            batch(&aggregate, "seed", "seed", &[b"one"])?,
+        )
+        .await?;
+    let reached = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let loader = store
+        .clone()
+        .with_history_snapshot_barriers(Arc::clone(&reached), release);
+    let task = tokio::spawn(async move { loader.load(&aggregate).await });
+    tokio::time::timeout(Duration::from_secs(5), reached.wait()).await?;
+    assert_eq!(consumer_count(&context, &store).await?, 1);
+    task.abort();
+    assert!(task.await.is_err());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while consumer_count(&context, &store).await? != 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+    })
+    .await??;
+    context.delete_stream(store.config().stream_name()).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn history_replay_does_not_touch_durable_progress() -> TestResult<()> {
+    let (context, store) = directory_fixture("history-durable").await?;
+    let aggregate = stream("durable")?;
+    let expected = store
+        .append(
+            &aggregate,
+            ExpectedVersion::NoStream,
+            batch(&aggregate, "seed", "seed", &[b"one", b"two"])?,
+        )
+        .await?;
+    let broker_stream = context.get_stream(store.config().stream_name()).await?;
+    let consumer = broker_stream
+        .create_consumer(async_nats::jetstream::consumer::pull::Config {
+            durable_name: Some("application-progress".to_owned()),
+            filter_subject: store.config().aggregate_subject(
+                aggregate.aggregate_type().as_str(),
+                aggregate.aggregate_id().as_str(),
+            ),
+            ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
+            ..Default::default()
+        })
+        .await?;
+    let before = consumer.get_info().await?;
+    assert_eq!(store.load(&aggregate).await?, expected.events());
+    let after = consumer.get_info().await?;
+    assert_eq!(before.delivered, after.delivered);
+    assert_eq!(before.ack_floor, after.ack_floor);
+    assert_eq!(before.num_pending, after.num_pending);
+    assert_eq!(consumer_count(&context, &store).await?, 1);
+    assert!(store.load(&stream("absent")?).await?.is_empty());
+    assert_eq!(consumer_count(&context, &store).await?, 1);
+    context.delete_stream(store.config().stream_name()).await?;
     Ok(())
 }

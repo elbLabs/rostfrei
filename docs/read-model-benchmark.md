@@ -79,6 +79,10 @@ python3 scripts/test_nats.py -- cargo run --locked --release \
 
 ## Recorded results — 2026-10-02
 
+These are historical measurements of the per-event raw-message reader. The
+batched replay implementation and paired before/after measurements are documented
+in [the history-replay benchmark](history-replay-benchmark.md).
+
 Environment: Linux x86-64 KVM VM, 16 exposed AMD EPYC CPU cores, Rust 1.98.0
 release build, two Tokio workers, NATS 2.12.1 in local Docker over a loopback
 published port. Both stores use file storage and one replica. Histories and the
@@ -131,7 +135,7 @@ its measured latency changes between cases.
 
 ## Why the difference is large
 
-The current `NatsEventStore::load_raw_history_through` performs a stream-info
+The `NatsEventStore::load_raw_history_through` implementation measured above performs a stream-info
 request, a last-message lookup, and then one request per historical event.
 For these independently committed source streams that yields:
 

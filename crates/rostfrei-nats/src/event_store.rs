@@ -35,8 +35,13 @@ use crate::event_store_config::{MAX_SUPPORTED_EVENT_BYTES, NatsEventStoreConfig}
 use crate::hex::encode_lower_hex;
 use crate::stream_policy::{is_stream_not_found, stream_config_mismatches};
 
+// Retained only for raw-reader reference tests and the opt-in diagnostic comparison.
+#[cfg(test)]
 #[path = "event_store/history_reads.rs"]
 mod history_reads;
+#[path = "event_store/history_reader.rs"]
+mod history_reader;
+use history_reader::HistoryReader;
 
 const LEGACY_EVENT_SCHEMA_VERSION: u16 = 1;
 const CORRELATION_EVENT_SCHEMA_VERSION: u16 = 2;
@@ -123,6 +128,8 @@ pub struct NatsEventStore {
     directory_snapshot_hook: Option<ReadBarrierHook>,
     #[cfg(test)]
     serial_history_reads: bool,
+    #[cfg(test)]
+    history_snapshot_hook: Option<ReadBarrierHook>,
 }
 
 #[cfg(test)]
@@ -165,6 +172,8 @@ impl NatsEventStore {
             directory_snapshot_hook: None,
             #[cfg(test)]
             serial_history_reads: false,
+            #[cfg(test)]
+            history_snapshot_hook: None,
         })
     }
 
@@ -240,6 +249,17 @@ impl NatsEventStore {
             let _ = hook.reached.wait().await;
             let _ = hook.release.wait().await;
         }
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn with_history_snapshot_barriers(
+        mut self,
+        reached: Arc<tokio::sync::Barrier>,
+        release: Arc<tokio::sync::Barrier>,
+    ) -> Self {
+        self.history_snapshot_hook = Some(ReadBarrierHook { reached, release });
+        self
     }
 
     /// Loads an aggregate's recorded events using this handle's audit policy.
@@ -323,15 +343,103 @@ impl NatsEventStore {
             )
             .await;
         }
-        history_reads::load_prefix(
-            &stream,
-            &self.config,
-            stream_id,
-            &subject,
-            last_sequence,
-            truncated_at_snapshot,
-        )
-        .await
+
+        if last_sequence == 0 {
+            return Ok(History::default());
+        }
+        let mut reader = HistoryReader::new(&self.context, &stream, &subject).await?;
+        #[cfg(test)]
+        if let Some(hook) = &self.history_snapshot_hook {
+            let _ = hook.reached.wait().await;
+            let _ = hook.release.wait().await;
+        }
+        let result = self
+            .read_history_through(
+                &mut reader,
+                stream_id,
+                &subject,
+                last_sequence,
+                truncated_at_snapshot,
+            )
+            .await;
+        let cleanup = reader.close().await;
+        let history = result?;
+        cleanup?;
+        Ok(history)
+    }
+
+    async fn read_history_through(
+        &self,
+        reader: &mut HistoryReader,
+        stream_id: &StreamId,
+        subject: &str,
+        last_sequence: u64,
+        truncated_at_snapshot: bool,
+    ) -> Result<History, EventStoreError> {
+        let mut history = HistoryBuilder::default();
+        let mut next_stream_sequence = 1_u64;
+        let mut last_commit_stream_sequence = 0_u64;
+        let mut last_seen_sequence = 0_u64;
+        let empty_headers = HeaderMap::default();
+
+        while next_stream_sequence <= last_sequence {
+            let received = reader.next().await?;
+            let message = match received {
+                Some(message) => message,
+                None if truncated_at_snapshot => break,
+                None => return Err(corrupt("aggregate history disappeared while loading")),
+            };
+            let sequence = message
+                .info()
+                .map_err(|error| corrupt(format!("invalid history delivery metadata: {error}")))?
+                .stream_sequence;
+            if sequence > last_sequence && truncated_at_snapshot {
+                // Related participants must use the directory's snapshot too,
+                // including an empty read-guard history with only later events.
+                break;
+            }
+            if message.subject.as_str() != subject {
+                return Err(corrupt("aggregate history contains the wrong subject"));
+            }
+            if sequence < next_stream_sequence || sequence > last_sequence {
+                return Err(corrupt(
+                    "aggregate history returned an invalid stream sequence",
+                ));
+            }
+
+            let decoded = decode_event(
+                &self.config,
+                subject,
+                stream_id,
+                Some(last_commit_stream_sequence),
+                sequence,
+                message.headers.as_ref().unwrap_or(&empty_headers),
+                message.payload.as_ref(),
+            )?;
+            let next_event_ordinal = decoded
+                .event_ordinal
+                .checked_add(1)
+                .ok_or_else(|| corrupt("stored event has invalid commit coordinates"))?;
+            if next_event_ordinal == decoded.event_count {
+                last_commit_stream_sequence = sequence;
+            }
+            history.push(decoded)?;
+            last_seen_sequence = sequence;
+
+            if sequence == last_sequence {
+                break;
+            }
+            next_stream_sequence = sequence
+                .checked_add(1)
+                .ok_or_else(|| corrupt("JetStream sequence space overflowed"))?;
+        }
+        if !truncated_at_snapshot && last_seen_sequence != last_sequence {
+            return Err(corrupt("aggregate history ended before its last message"));
+        }
+        if last_seen_sequence == 0 && truncated_at_snapshot {
+            return Ok(History::default());
+        }
+        history.finish(last_seen_sequence)
     }
 
     async fn load_history(&self, stream_id: &StreamId) -> Result<Arc<History>, EventStoreError> {

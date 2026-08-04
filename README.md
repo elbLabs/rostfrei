@@ -162,6 +162,12 @@ addition to atomic multi-event commits, one event transaction can atomically
 append commits to multiple aggregate streams in the same bounded-context event
 store.
 
+Aggregate histories use bounded, exact-subject ephemeral replay without advancing
+application durable consumers. Reader credentials require scoped replay-consumer
+create/pull/delete and inbox permissions in addition to stream-info/raw-message
+access. No stream-policy change is needed; see
+[batched history replay](docs/adr/0042-batched-aggregate-history-replay.md).
+
 Successful command execution always persists an acceptance receipt, including
 commands that emit no domain events or load no aggregates. Event-free acceptance
 returns `CommandReceipt::AcceptedNoEvents`; retries return `ExactReplay` with an
