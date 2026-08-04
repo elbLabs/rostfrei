@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Extends ADRs 0005 and 0038. Implements issue #97.
+Accepted. Extends ADRs 0005, 0038 and 0040. Implements issue #97.
 
 ## Decision
 
@@ -20,8 +20,10 @@ consumed before another request is sent.
 
 The read stops at the captured cutoff. Directory-related history reads retain
 their shared snapshot cutoff. Later concurrent appends, including invalid bytes,
-are excluded before decoding. Existing event, commit, predecessor, checksum and
-transaction-provenance checks are unchanged. A truncated/inconsistent history
+are excluded before decoding. Existing event, commit, predecessor and checksum
+checks are unchanged. ADR 0040's per-handle audit policy remains unchanged:
+ordinary loads trust supported writes after local checks; strict handles and
+explicit audits also verify historical transaction evidence. A truncated/inconsistent history
 does not become a successful partial history.
 
 Consumer delivery sequence must also be contiguous. Lost/reordered delivery after
@@ -38,9 +40,10 @@ failure prevents a successful read and never masks an original validation error.
 History retrieval costs one consumer creation/deletion and one request per page,
 not one request per historical event. Full replay still transfers and applies
 the complete history. This is not aggregate snapshotting or a cross-request cache.
-Transaction receipt/guard verification and append-suffix verification retain
-individual raw lookups; command-style histories therefore have residual
-history-dependent validation costs.
+Explicit transaction receipt/guard auditing and append-suffix verification retain
+individual raw lookups. Ordinary command-history loads no longer pay for either
+per-event retrieval requests or historical receipt audits; strict/explicit audits
+still have history-dependent evidence verification costs.
 
 No authoritative storage format, stream policy, minimum NATS version, or durable
 consumer configuration changes. Direct batch APIs would require enabling stream
@@ -59,4 +62,6 @@ Real NATS coverage exercises count- and byte-limited pages, interleaved subjects
 concurrent append cutoffs, cancellation cleanup, empty histories and unchanged
 durable consumer progress. Existing event-store contracts and transaction/snapshot
 corruption cases remain mandatory. Paired release benchmarks cover the old
-single-event-commit workload, longer histories, and command-style transactions.
+single-event-commit workload, longer histories, and both trusted and audited
+command-style transactions. The previous raw-window implementation and its tests
+remain a test-only reference; they are not a production fallback.

@@ -35,12 +35,12 @@ use crate::event_store_config::{MAX_SUPPORTED_EVENT_BYTES, NatsEventStoreConfig}
 use crate::hex::encode_lower_hex;
 use crate::stream_policy::{is_stream_not_found, stream_config_mismatches};
 
+#[path = "event_store/history_reader.rs"]
+mod history_reader;
 // Retained only for raw-reader reference tests and the opt-in diagnostic comparison.
 #[cfg(test)]
 #[path = "event_store/history_reads.rs"]
 mod history_reads;
-#[path = "event_store/history_reader.rs"]
-mod history_reader;
 use history_reader::HistoryReader;
 
 const LEGACY_EVENT_SCHEMA_VERSION: u16 = 1;

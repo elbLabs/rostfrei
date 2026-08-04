@@ -7,7 +7,7 @@ from benchmark_history import compare
 def report():
     return {
         "release_build": True,
-        "options": {"samples": 10},
+        "options": {"samples": 10, "transactional": True, "history_auditing": False},
         "nats_server_version": "2.12.1",
         "runtime_workers": 2,
         "architecture": "x86_64",
@@ -58,6 +58,12 @@ class ComparisonTests(unittest.TestCase):
             after["cases"][0]["results"][0][field] = value
             with self.assertRaises(ValueError):
                 compare(before, after)
+
+    def test_rejects_different_audit_policies(self):
+        before, after = report(), report()
+        after["options"]["history_auditing"] = True
+        with self.assertRaises(ValueError):
+            compare(before, after)
 
 
 if __name__ == "__main__":

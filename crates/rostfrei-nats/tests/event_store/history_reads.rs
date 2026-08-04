@@ -40,9 +40,10 @@ async fn ordinary_history_reads_do_not_traverse_historical_receipts() -> TestRes
             .checked_sub(before)
             .ok_or("request counter regressed")?;
         assert_eq!(loaded.len(), usize::try_from(size)?);
-        // Only this aggregate's event reads, metadata, and bounded window probes.
-        // Historical receipt work belongs to the explicit audit below.
-        let budget = size.checked_add(16).ok_or("request budget overflowed")?;
+        // Stream info, last subject message, replay creation, one page, deletion.
+        // Historical receipt work belongs to the explicit audit below. This cost
+        // stays constant for histories smaller than a replay page.
+        let budget = 5;
         assert!(
             requests <= budget,
             "history of {size} transactions used {requests} requests; budget {budget}"
@@ -268,6 +269,7 @@ async fn history_reads_preserve_commits_across_sparse_ranges() -> TestResult<()>
             .filter(|event| event.stream_id() == &writer),
     );
     assert_eq!(store.load(&writer).await?, expected);
+    assert_eq!(store.audit_history(&writer).await?, expected);
     assert_eq!(
         store.load(&secondary).await?,
         receipt
@@ -276,6 +278,11 @@ async fn history_reads_preserve_commits_across_sparse_ranges() -> TestResult<()>
             .filter(|event| event.stream_id() == &secondary)
             .collect::<Vec<_>>()
     );
+    assert_eq!(
+        store.audit_history(&secondary).await?,
+        store.load(&secondary).await?
+    );
+    assert_eq!(consumer_count(&context, &store).await?, 0);
     context.delete_stream(store.config().stream_name()).await?;
     Ok(())
 }
