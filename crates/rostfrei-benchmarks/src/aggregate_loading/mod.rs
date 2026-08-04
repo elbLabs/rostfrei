@@ -261,16 +261,11 @@ async fn measure_command(
 }
 
 pub async fn run(options: Options) -> BenchResult {
-    if options.test || (cfg!(test) && cfg!(debug_assertions)) {
-        eprintln!("Benchmark test mode: verifying in-memory fixture contracts");
-        return smoke().await;
-    }
     if cfg!(debug_assertions) {
-        return Err("run this suite with cargo bench (optimized profile)".into());
+        return Err("build rostfrei-benchmarks with --release".into());
     }
-    let url = std::env::var("ROSTFREI_NATS_URL").map_err(
-        |_| "ROSTFREI_NATS_URL is required; use scripts/test_nats.py with this benchmark",
-    )?;
+    let url = std::env::var("ROSTFREI_NATS_URL")
+        .map_err(|_| "ROSTFREI_NATS_URL is required; use rostfrei-benchmarks aggregate-loading")?;
     if url.trim().is_empty() {
         return Err("ROSTFREI_NATS_URL must not be empty".into());
     }

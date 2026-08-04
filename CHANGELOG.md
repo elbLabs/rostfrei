@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Non-published `rostfrei-benchmarks` workspace package owning aggregate readiness,
+  typed read-model query workloads and paired history comparisons. Its Rust runner
+  manages disposable pinned NATS, cancellation/cleanup, subprocess failures and
+  report validation without Python. Benchmark-specific Python tooling is removed.
 - Typed, revision-aware `ReadModelStore<T>` and NATS KV adapter with versioned
   codecs, CAS create/update/delete, application/context/model/traffic isolation,
   and explicit provisioning, verification, and policy updates. Includes a
