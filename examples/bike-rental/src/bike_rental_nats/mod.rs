@@ -58,6 +58,10 @@ const CONSUMER_ACK_WAIT: Duration = Duration::from_secs(45);
 const CONSUMER_PROCESSING_TIMEOUT: Duration = Duration::from_secs(30);
 const CONSUMER_CONCURRENCY: usize = 4;
 const COMMAND_CONSUMER_CONCURRENCY: usize = 1;
+// Freeze the existing --v2 identities from the released example. This is a legacy
+// naming suffix, not a payload/handler version: changing or removing it creates a
+// different WorkQueue subscription and requires an explicit operator cutover.
+const COMMAND_SUBSCRIPTION_GENERATION: u32 = 2;
 const MAXIMUM_DELIVERY_ATTEMPTS: u32 = 5;
 const COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MESSAGING_STREAM_MAX_BYTES: i64 = 64 * 1024 * 1024;
@@ -304,10 +308,10 @@ impl BikeRentalNatsConfig {
             RetryDelay::new(RETRY_DELAY)?,
         )?;
         let command_routes = [
-            command_route(&context, BikeRentalCommand::RentBicycle)?,
-            command_route(&context, BikeRentalCommand::ReturnBicycle)?,
-            command_route(&context, BikeRentalCommand::AddBicycle)?,
-            command_route(&context, BikeRentalCommand::TransferBicycle)?,
+            command_route::<RentBicycle>(&context, BikeRentalCommand::RentBicycle)?,
+            command_route::<ReturnBicycle>(&context, BikeRentalCommand::ReturnBicycle)?,
+            command_route::<AddBicycle>(&context, BikeRentalCommand::AddBicycle)?,
+            command_route::<TransferBicycle>(&context, BikeRentalCommand::TransferBicycle)?,
         ];
         let integration_event_route = integration_event_route(&context)?;
         Ok(Self {
@@ -400,16 +404,15 @@ impl BikeRentalNatsConfig {
     }
 }
 
-fn command_route(
+fn command_route<C: Command>(
     context: &BoundedContext,
     command: BikeRentalCommand,
 ) -> Result<BikeRentalCommandRoute, ContractError> {
-    let name = command.command_name();
-    let schema_version = command.schema_version();
+    let name = C::LOCAL_ID;
     let address = context.command_address(name)?;
     let consumer = ConsumerConfig::new(
-        context.consumer_name(name, schema_version)?,
-        context.durable_name(name, schema_version)?,
+        context.consumer_name(name, COMMAND_SUBSCRIPTION_GENERATION)?,
+        context.durable_name(name, COMMAND_SUBSCRIPTION_GENERATION)?,
         address.clone(),
         CONSUMER_ACK_WAIT,
         CONSUMER_PROCESSING_TIMEOUT,
