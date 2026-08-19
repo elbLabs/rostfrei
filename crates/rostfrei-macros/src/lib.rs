@@ -24,12 +24,20 @@ pub fn __install_test_macro_support(input: TokenStream) -> TokenStream {
 }
 
 mod query;
+mod read_model;
 mod support;
 
 #[proc_macro_derive(QueryDefinition, attributes(rostfrei))]
 pub fn derive_query_definition(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     query::expand(&input)
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+#[proc_macro_derive(ReadModel, attributes(read_model))]
+pub fn derive_read_model(input: TokenStream) -> TokenStream {
+    read_model::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

@@ -4,6 +4,9 @@
 
 Proposed. Extends [ADR 0005](0005-nats-event-store.md) and
 [ADR 0037](0037-bounded-context-commands-and-unit-of-work.md).
+The read trust boundary is refined by
+[ADR 0040](0040-trusted-event-store-reads-and-explicit-audits.md): normal session
+loads retain local history checks; deep historical receipt verification is explicit.
 
 ## Context
 
@@ -36,7 +39,7 @@ Existing adapters remain source-compatible through a forwarding implementation.
 `Store` is a trait object. Custom adapters can opt into history reuse without
 exposing broker positions in domain or command-handler APIs.
 
-The NATS implementation retains fully validated histories separately from the
+The NATS implementation retains locally checked histories separately from the
 raw-history cache used while validating receipts. It reuses native last-subject
 sequences, but still enforces them through atomic broker expectations for every
 writer and read guard. Fresh receipt lookups, operation fingerprints, derived
@@ -78,3 +81,28 @@ rehydration and historical transaction validation remain history-dependent.
 Sessions retain histories for the duration of a command attempt; suffix validation
 also clones and indexes the retained prefix in memory. Large-history latency and
 memory benchmarks, snapshot design, and batched reads remain follow-up work.
+
+### Historical transaction read optimization
+
+Within an explicit history audit, transaction receipt lookup and materialization reuse a
+stream handle, and an already checked transaction-first event is reused when it
+belongs to the loaded commit. Independent receipt lookups are pipelined with a
+maximum of eight outstanding futures/results; materialization remains ordered
+and uses the read's shared raw-history cache and cutoff. Legacy receipt lookup
+precedence, fresh reconciliation, and append-session incarnation checks remain
+unchanged. Reads continue to use the leader-routed raw-message API.
+
+The [September 26 experiments](../reviews/2026-09-26-history-read-experiments.md)
+record request counts, release timings, integrity verification, and a separate
+Direct Get batching prototype. That prototype is not part of the authoritative
+loader because replica-read consistency and explicit operator configuration need
+further design and testing.
+
+Initial raw-history discovery also uses bounded parallel leader-read windows:
+up to eight windows of 128 global positions, with a 256 KiB chunk target and
+oversized-record progress. One ordered fold validates commits across all window
+and chunk boundaries. Indexed lookahead skips empty subject gaps, while a sparse
+history falls back to a single lane to bound redundant lookups. No consumer state,
+Direct Get provisioning, or replica-read assumption is introduced. See the
+[second experiment round](../reviews/2026-09-26-history-read-windows.md) for
+the algorithm, rejected scheduling experiment, and controlled comparisons.
