@@ -9,6 +9,7 @@ export default defineConfig([
   globalIgnores(["dist", "artifacts"]),
   {
     files: [
+      "scripts/api-timeouts.mjs",
       "scripts/browser.mjs",
       "scripts/command-refresh.mjs",
       "scripts/ui-inspect.mjs",
