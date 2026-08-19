@@ -199,6 +199,7 @@ impl NatsCorrelationSubscription {
             tokio::select! {
                 message = self.domain_events.messages.next() => {
                     let Some(message) = message else {
+                        handler.availability(false).await;
                         return Err(NatsError::Consumer);
                     };
                     let Ok(message) = message else {
@@ -207,13 +208,14 @@ impl NatsCorrelationSubscription {
                     };
                     if family_matches(&self.application, self.traffic_scope, message.subject.as_str(), CorrelatedMessageFamily::DomainEvent)
                         && let Some(message) = correlated_message(&message.message, CorrelatedMessageFamily::DomainEvent)
-                        && self.domain_events.delivery_is_current(&self.context).await
+                        && self.domain_events.delivery_is_current(&self.context, handler.as_ref()).await
                     {
                         handler.handle(message).await;
                     }
                 }
                 message = self.integration_events.messages.next() => {
                     let Some(message) = message else {
+                        handler.availability(false).await;
                         return Err(NatsError::Consumer);
                     };
                     let Ok(message) = message else {
@@ -222,7 +224,7 @@ impl NatsCorrelationSubscription {
                     };
                     if family_matches(&self.application, self.traffic_scope, message.subject.as_str(), CorrelatedMessageFamily::IntegrationEvent)
                         && let Some(message) = correlated_message(&message.message, CorrelatedMessageFamily::IntegrationEvent)
-                        && self.integration_events.delivery_is_current(&self.context).await
+                        && self.integration_events.delivery_is_current(&self.context, handler.as_ref()).await
                     {
                         handler.handle(message).await;
                     }
@@ -303,12 +305,17 @@ impl ObservedStream {
         Ok(false)
     }
 
-    async fn delivery_is_current(&mut self, context: &jetstream::Context) -> bool {
+    async fn delivery_is_current(
+        &mut self,
+        context: &jetstream::Context,
+        handler: &dyn CorrelatedMessageHandler,
+    ) -> bool {
         loop {
-            match self.refresh_if_recreated(context).await {
-                Ok(recreated) => return !recreated,
-                Err(_) => tokio::time::sleep(STREAM_GENERATION_POLL_INTERVAL).await,
+            if let Ok(recreated) = self.refresh_if_recreated(context).await {
+                return !recreated;
             }
+            handler.availability(false).await;
+            tokio::time::sleep(STREAM_GENERATION_POLL_INTERVAL).await;
         }
     }
 }
@@ -471,5 +478,88 @@ mod tests {
             "bike-rental.test.integration.>",
             &filter,
         ));
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use std::{
+        error::Error,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    use tokio::sync::mpsc;
+
+    struct AvailabilityHandler(mpsc::UnboundedSender<bool>);
+
+    #[async_trait]
+    impl CorrelatedMessageHandler for AvailabilityHandler {
+        async fn handle(&self, _message: CorrelatedMessage) {}
+
+        async fn availability(&self, available: bool) {
+            let _ = self.0.send(available);
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::panic_in_result_fn)]
+    async fn failed_delivery_generation_checks_report_unavailable()
+    -> Result<(), Box<dyn Error + Send + Sync>> {
+        let suffix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let application = ApplicationName::new(format!("delivery-health-{suffix}"))?;
+        let name = format!("DELIVERY_HEALTH_{suffix}");
+        let filter = format!("{}.domain.test.aggregate.*", application.as_str());
+        let client = async_nats::connect(rostfrei_testing::integration::nats_url()?).await?;
+        let context = jetstream::new(client.clone());
+        let config = jetstream::stream::Config {
+            name: name.clone(),
+            subjects: vec![filter.clone()],
+            storage: jetstream::stream::StorageType::Memory,
+            max_bytes: 1024 * 1024,
+            ..Default::default()
+        };
+        context.create_stream(config.clone()).await?;
+        let result = async {
+            let mut observed = ObservedStream::subscribe(
+                &context,
+                name.clone(),
+                family_filter(
+                    &application,
+                    TrafficScope::Normal,
+                    CorrelatedMessageFamily::DomainEvent,
+                ),
+                filter,
+                DeliverPolicy::New,
+            )
+            .await?;
+            context.delete_stream(&name).await?;
+            let (sender, mut availability) = mpsc::unbounded_channel();
+            let handler = AvailabilityHandler(sender);
+            let delivery_context = context.clone();
+            let delivery = tokio::spawn(async move {
+                let current = observed
+                    .delivery_is_current(&delivery_context, &handler)
+                    .await;
+                (current, observed)
+            });
+            let unavailable =
+                tokio::time::timeout(Duration::from_secs(2), availability.recv()).await;
+            // Recreate even on a failed assertion so the retrying task can terminate.
+            context.create_stream(config).await?;
+            let recovered = tokio::time::timeout(Duration::from_secs(5), delivery).await??;
+            assert_eq!(unavailable?, Some(false));
+            assert!(
+                !recovered.0,
+                "a queued delivery from an old generation must be discarded"
+            );
+            Ok::<_, Box<dyn Error + Send + Sync>>(())
+        }
+        .await;
+        let cleanup = context.delete_stream(&name).await;
+        let drain = client.drain().await;
+        result?;
+        cleanup?;
+        drain?;
+        Ok(())
     }
 }
