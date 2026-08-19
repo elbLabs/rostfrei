@@ -134,6 +134,7 @@ traffic. Browser failures and failed detail reads are displayed explicitly.
 - Each scope retains at most **128 flows**, in last-updated order, with at most
   **256 messages and 256 KiB accounted data per flow**. Metadata has additional
   bounded overhead. Test and production have independent windows and stream limits.
+  Event names are limited to 256 bytes before they enter retained summaries.
 - There are at most 32 named sources and 16 simultaneous SSE subscriptions per
   scope. Disconnect releases its subscription slot.
 - Payload policy is applied **before retention**. The default omits payloads.

@@ -9,7 +9,7 @@ use std::{
 };
 
 use rostfrei_core::ContentFingerprint;
-use rostfrei_messaging_core::ApplicationName;
+use rostfrei_messaging_core::{ApplicationName, MAX_IDENTIFIER_BYTES};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
@@ -281,8 +281,11 @@ impl ObservationFeed {
         policy: &dyn crate::TracePayloadPolicy,
     ) {
         // Validate before admitting a correlation or retaining any caller data.
+        // The summary retains the name even when the message itself is truncated.
         let mut validated = ObservedMessageSeries::new();
-        if validated.insert_message(message.clone()).is_err() {
+        if message.name().len() > MAX_IDENTIFIER_BYTES
+            || validated.insert_message(message.clone()).is_err()
+        {
             self.discard();
             return;
         }
@@ -515,6 +518,58 @@ mod tests {
     use super::*;
     use crate::ExposeTracePayloadsForLocalDevelopment;
     use serde_json::json;
+
+    #[test]
+    fn oversized_names_cannot_escape_the_retained_byte_budget()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let feed = ObservationFeed::new(ApplicationName::new("test-app")?, ObservationScope::Test);
+        feed.observe(
+            ObservedMessageNode::domain_event(
+                "oversized-name",
+                "flow",
+                None,
+                "a".repeat(MAXIMUM_FLOW_BYTES.saturating_add(1)),
+                1,
+                None,
+                None,
+            ),
+            &ExposeTracePayloadsForLocalDevelopment,
+        );
+        assert!(feed.snapshot().items.is_empty());
+        assert_eq!(feed.snapshot().discarded_messages, "1");
+        feed.observe(
+            ObservedMessageNode::domain_event(
+                "just-over-name-bound",
+                "flow",
+                None,
+                "a".repeat(MAX_IDENTIFIER_BYTES.saturating_add(1)),
+                1,
+                None,
+                None,
+            ),
+            &ExposeTracePayloadsForLocalDevelopment,
+        );
+        assert!(feed.snapshot().items.is_empty());
+        assert_eq!(feed.snapshot().discarded_messages, "2");
+        let allowed = "a".repeat(MAX_IDENTIFIER_BYTES);
+        feed.observe(
+            ObservedMessageNode::domain_event(
+                "allowed-name",
+                "flow",
+                None,
+                allowed.clone(),
+                1,
+                None,
+                None,
+            ),
+            &ExposeTracePayloadsForLocalDevelopment,
+        );
+        assert_eq!(
+            feed.snapshot().items.first().ok_or("missing flow")?.name,
+            allowed
+        );
+        Ok(())
+    }
 
     #[test]
     fn reset_invalidates_the_window_and_failed_reset_blocks_new_evidence()
