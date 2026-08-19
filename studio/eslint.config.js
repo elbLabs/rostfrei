@@ -12,6 +12,8 @@ export default defineConfig([
       "scripts/api-timeouts.mjs",
       "scripts/browser.mjs",
       "scripts/command-refresh.mjs",
+      "scripts/observation-fixture.mjs",
+      "scripts/observation-smoke.mjs",
       "scripts/ui-inspect.mjs",
       "scripts/ui-smoke.mjs",
       "scripts/visual-scenarios.mjs",
