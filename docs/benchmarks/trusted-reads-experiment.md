@@ -44,8 +44,9 @@ trusted:  947.109, 1140.668,  448.376,  576.873,  506.872,  630.371
 Run the controlled comparison:
 
 ```sh
-python3 scripts/test_nats.py -- cargo test --locked --release \
-  -p rostfrei-nats --test history_audit_benchmark -- \
+cargo build --locked --release -p rostfrei-benchmarks --bins
+target/release/rostfrei-benchmarks run -- cargo test --locked --release \
+  -p rostfrei-benchmarks --test history_audit_benchmark -- \
   --ignored --nocapture --test-threads=1
 ```
 

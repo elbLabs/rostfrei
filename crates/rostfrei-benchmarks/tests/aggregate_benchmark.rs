@@ -3,12 +3,7 @@
     reason = "test assertions report benchmark contract failures"
 )]
 
-#[allow(
-    dead_code,
-    reason = "tests exercise benchmark contracts without starting its NATS runner"
-)]
-#[path = "../benches/aggregate_loading/mod.rs"]
-mod suite;
+use rostfrei_benchmarks::aggregate_loading as suite;
 
 use clap::Parser as _;
 use suite::report::{Phase, Sample, summarize};

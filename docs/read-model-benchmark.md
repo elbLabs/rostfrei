@@ -22,7 +22,7 @@ aggregate, the result is 49 members, 98 purchased seats, and 49 available seats.
 Both directions of the aggregate relationship are checked. The organization
 rehydration builds a set of member identities; the read model stores their count.
 
-The [benchmark](../crates/rostfrei-nats/examples/read_model_benchmark/main.rs)
+The [benchmark](../crates/rostfrei-benchmarks/src/bin/read-model-benchmark/main.rs)
 measures four implementations of the same typed `QueryHandler`:
 
 | Path | Work inside each timed query |
@@ -44,14 +44,13 @@ new runtime's reader and event-processing overhead.
 
 ## Reproduce
 
-Requires the repository's Rust toolchain, Python 3.11+, and Docker. Build first,
+Requires the repository's Rust toolchain and Docker. Build first,
 then run against the checksum-pinned disposable NATS 2.12.1 fixture:
 
 ```sh
-cargo build --locked --release -p rostfrei-nats --example read_model_benchmark
+cargo build --locked --release -p rostfrei-benchmarks --bins
 
-python3 scripts/test_nats.py -- cargo run --locked --release \
-  -p rostfrei-nats --example read_model_benchmark -- \
+target/release/rostfrei-benchmarks read-model -- \
   --events-per-aggregate 10,50,100 \
   --samples 100 --rounds 3 --warmup 10 \
   --events-per-commit 1 --extra-event-bytes 256
@@ -63,21 +62,24 @@ The counts above cover **20, 100, and 200 total events**. Use
 measured baseline uses one event per commit, representing one-event commands.
 `--extra-event-bytes` adds padding beyond the event fields and JSON framing.
 
-The executable emits a JSON report to stdout and progress to stderr. The Python
-runner also prints its broker-startup line. Each invocation uses a unique Test
+The executable emits a JSON report to stdout and progress to stderr. The Rust
+runner also writes its broker-startup line to stderr. Each invocation uses a unique Test
 application namespace and deletes its own resources on completion/error; the
 runner removes its container. Direct runs require `ROSTFREI_NATS_URL`.
 
 For a fast correctness check, including a partially filled final commit:
 
 ```sh
-python3 scripts/test_nats.py -- cargo run --locked --release \
-  -p rostfrei-nats --example read_model_benchmark -- \
+target/release/rostfrei-benchmarks read-model -- \
   --events-per-aggregate 2,3 --events-per-commit 2 \
   --samples 3 --rounds 1 --warmup 1
 ```
 
 ## Recorded results — 2026-10-02
+
+These are historical measurements of the per-event raw-message reader. The
+batched replay implementation and paired before/after measurements are documented
+in [the history-replay benchmark](history-replay-benchmark.md).
 
 Environment: Linux x86-64 KVM VM, 16 exposed AMD EPYC CPU cores, Rust 1.98.0
 release build, two Tokio workers, NATS 2.12.1 in local Docker over a loopback
@@ -131,7 +133,7 @@ its measured latency changes between cases.
 
 ## Why the difference is large
 
-The current `NatsEventStore::load_raw_history_through` performs a stream-info
+The `NatsEventStore::load_raw_history_through` implementation measured above performs a stream-info
 request, a last-message lookup, and then one request per historical event.
 For these independently committed source streams that yields:
 

@@ -51,13 +51,6 @@ pub struct Options {
     pub stream_bytes: i64,
     #[arg(long, default_value_os_t = default_output())]
     pub output: PathBuf,
-    // Cargo's custom benchmark/test target invocation flags.
-    #[arg(long, hide = true)]
-    #[serde(skip)]
-    pub bench: bool,
-    #[arg(long, hide = true)]
-    #[serde(skip)]
-    pub test: bool,
 }
 
 fn default_output() -> PathBuf {

@@ -1,5 +1,4 @@
-#[path = "aggregate_loading/mod.rs"]
-mod suite;
+use rostfrei_benchmarks::aggregate_loading as suite;
 
 use clap::Parser as _;
 

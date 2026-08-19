@@ -3,12 +3,7 @@
     reason = "benchmark assertions check equivalent aggregate results"
 )]
 
-#[allow(
-    dead_code,
-    reason = "reuse the benchmark's exact domain model and fixture generator"
-)]
-#[path = "../benches/aggregate_loading/mod.rs"]
-mod suite;
+use rostfrei_benchmarks::aggregate_loading as suite;
 
 use std::{
     sync::atomic::Ordering,

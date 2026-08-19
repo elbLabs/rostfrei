@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/rostfrei",
+    "crates/rostfrei-benchmarks",
     "crates/rostfrei-http",
     "crates/rostfrei-tracer",
     "crates/rostfrei-core",

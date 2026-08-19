@@ -18,9 +18,9 @@ use rostfrei::{
     ReadModelCodec, ReadModelKey, ReadModelStore, TrafficScope,
 };
 use rostfrei_core::{
-    AggregateId, AggregateType, ContentFingerprint, EventBatch, EventStore, ExpectedVersion,
-    NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion, derive_commit_id,
-    derive_event_id,
+    AggregateId, AggregateType, ContentFingerprint, EventBatch, EventStore, EventTransaction,
+    ExpectedVersion, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
+    TransactionParticipant, derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{
     CallerMetadata, CorrelationId, EnvelopeContext, MessageId, MessageTimestamp, SchemaVersion,
@@ -52,6 +52,12 @@ struct Options {
     /// Padding in each domain-event payload, beyond event fields/JSON framing.
     #[arg(long, default_value_t = 256)]
     extra_event_bytes: usize,
+    /// Seed through command-style transactions with durable acceptance receipts.
+    #[arg(long)]
+    transactional: bool,
+    /// Audit historical transaction evidence during measured reads (off by default).
+    #[arg(long)]
+    history_auditing: bool,
 }
 
 impl Options {
@@ -201,7 +207,7 @@ async fn main() -> BenchResult {
     let options = Options::parse();
     options.validate()?;
     if cfg!(debug_assertions) {
-        eprintln!("Debug build: use --release for publishable timings.");
+        return Err("build rostfrei-benchmarks with --release for publishable timings".into());
     }
     let connection = connect(&NatsConnectionConfig::new(
         "read-model-benchmark",
@@ -318,6 +324,7 @@ async fn prepare(
         "organization-changed",
         &organization_payloads,
         options.events_per_commit,
+        options.transactional,
     )
     .await?;
     seed(
@@ -326,6 +333,7 @@ async fn prepare(
         "billing-changed",
         &billing_payloads,
         options.events_per_commit,
+        options.transactional,
     )
     .await?;
     let organization_events = history.load(&organization).await?;
@@ -354,7 +362,11 @@ async fn prepare(
         )
         .await?;
     Ok(Fixture {
-        history: history.clone(),
+        // Seed and check the fixture with ordinary reads; only measured query reads adopt
+        // this policy, avoiding quadratic historical audits during fixture preparation.
+        history: history
+            .clone()
+            .with_history_auditing(options.history_auditing),
         snapshots,
         organization,
         billing,
@@ -369,6 +381,7 @@ async fn seed(
     event_type: &str,
     payloads: &[Vec<u8>],
     events_per_commit: u32,
+    transactional: bool,
 ) -> BenchResult {
     let mut version = 0_u64;
     for (index, chunk) in payloads
@@ -399,13 +412,25 @@ async fn seed(
         } else {
             ExpectedVersion::Exact(StreamVersion::new(version))
         };
-        history
-            .append(
-                stream,
-                expected,
-                EventBatch::new(commit, operation, fingerprint, events)?,
-            )
-            .await?;
+        let batch = EventBatch::new(commit, operation.clone(), fingerprint, events)?;
+        if transactional {
+            history
+                .append_transaction(
+                    EventTransaction::new(
+                        operation,
+                        fingerprint,
+                        vec![TransactionParticipant::new(
+                            stream.clone(),
+                            expected,
+                            Some(batch),
+                        )],
+                    )
+                    .with_bounded_context(history.config().bounded_context().clone()),
+                )
+                .await?;
+        } else {
+            history.append(stream, expected, batch).await?;
+        }
         version = version
             .checked_add(u64::try_from(chunk.len())?)
             .ok_or("source version overflow")?;
