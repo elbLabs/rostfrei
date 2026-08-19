@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { ListTree, LoaderCircle, Play, RotateCcw, Send } from "lucide-react"
 
-import { DraggablePanel } from "@/components/studio-sidebar"
+import { DraggablePanel } from "@/components/draggable-panel"
+import "./command-panel.css"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { getCommandInputs } from "@/lib/api"

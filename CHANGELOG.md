@@ -52,11 +52,21 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- New projects build outside the repository with unmodified manifests by pinning
+  Rostfrei dependencies to the available `v0.0.5-alpha` Git release commit.
+  The starter pin is independent of CLI version bumps and advances after release
+  publication. Names `model` and `tests` now fail before project creation with a
+  suggested alternative. CI checks and tests an external, unpatched starter.
 - Direct command execution now defaults missing correlation to the operation ID,
   using the same metadata rule as `CommandBus`. Explicit correlation and causation
   are preserved, transaction receipts and events agree across retries, and mapped
   integration events can be published from directly executed commands without
   caller-supplied correlation.
+- Bike-rental command consumer and durable names now freeze the existing `--v2`
+  identities independently of payload schema versions, preserving durable progress
+  and pending work across schema changes. Documentation treats subscription names
+  as stable identities and distinguishes command cutover from event replay.
+  Startup does not delete or migrate conflicting durables or queued payloads.
 
 ## [0.0.5-alpha] - 2026-09-16
 
