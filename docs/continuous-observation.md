@@ -151,9 +151,9 @@ traffic. Browser failures and failed detail reads are displayed explicitly.
   backfilled. Application restart loses the in-memory window. Stream recreation
   follows the NATS observer's existing generation handling.
 - A Tracer Test reset invalidates the Test window and suspends collection during
-  reset. A failed reset reports unavailable until a successful reset. Production
-  observation is unaffected. Broker replay after recreation can include fixture
-  domain events; those retain their actual fixture correlation identities.
+  reset. A failed or cancelled reset reports unavailable until a successful reset.
+  Production observation is unaffected. Broker replay after recreation can include
+  fixture domain events; those retain their actual fixture correlation identities.
 
 Correlation-specific capture sessions for external test runners are tracked in
 [#71](https://github.com/elbLabs/rostfrei/issues/71). Continuous observation and the

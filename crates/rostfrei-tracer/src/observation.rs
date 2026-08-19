@@ -404,6 +404,14 @@ impl ObservationFeed {
         drop(state);
     }
 
+    pub(crate) fn reset_guard(&self) -> ObservationResetGuard<'_> {
+        self.reset(true);
+        ObservationResetGuard {
+            feed: self,
+            completed: false,
+        }
+    }
+
     pub(crate) fn fail_reset(&self) {
         let mut state = self.lock();
         state.resetting = false;
@@ -419,6 +427,31 @@ impl ObservationFeed {
     fn notify(&self, state: &mut State) {
         state.revision = state.revision.saturating_add(1);
         self.changed.send_replace(state.revision);
+    }
+}
+
+/// Failed, cancelled, or panicking resets must not leave coverage resetting.
+pub struct ObservationResetGuard<'a> {
+    feed: &'a ObservationFeed,
+    completed: bool,
+}
+
+impl ObservationResetGuard<'_> {
+    pub(crate) fn finish(mut self, succeeded: bool) {
+        if succeeded {
+            self.feed.reset(false);
+        } else {
+            self.feed.fail_reset();
+        }
+        self.completed = true;
+    }
+}
+
+impl Drop for ObservationResetGuard<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.feed.fail_reset();
+        }
     }
 }
 
