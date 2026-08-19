@@ -25,6 +25,8 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+async-nats.workspace = true
+futures-util.workspace = true
 http-body-util = "0.1"
 rostfrei-testing.workspace = true
 tower = { version = "0.5", features = ["util"] }

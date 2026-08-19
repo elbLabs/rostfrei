@@ -259,8 +259,14 @@ durable is:
 bike-rental--bike-rental--rent-bicycle--v2
 ```
 
-Test inserts `--test` after the application. The version belongs to the consumer
-identity and message schema; the command subject still ends in `rent-bicycle`.
+Test inserts `--test` after the application. This legacy suffix is frozen
+independently of payload schemas; the command subject still ends in `rent-bicycle`.
+Preserve the exact durable name across deployments, including any existing suffix.
+Renaming it creates an overlapping WorkQueue consumer and blocks provisioning even
+with an empty queue. Deliberate replacement requires an explicit cutover with
+pending work handled first; it does not migrate payloads or replay acknowledged
+commands. See the
+[example identity guidance](https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/README.md#stable-command-subscription-identities).
 
 ## Source references
 
