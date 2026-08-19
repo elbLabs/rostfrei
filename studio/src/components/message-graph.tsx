@@ -1,19 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import {
-  Check,
+  ArrowRight,
   CircleDot,
-  Copy,
   Focus,
   GitBranch,
-  ListTree,
   Minus,
+  PanelRight,
   Plus,
   Radio,
-  Reply,
+  Workflow,
 } from "lucide-react"
 import {
+  Background,
   Handle,
-  Panel,
   Position,
   ReactFlow,
   getBezierPath,
@@ -26,69 +26,127 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react"
 
-import { Badge } from "@/components/ui/badge"
+import { MessageInspector } from "@/components/message-inspector"
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
-import { layoutMessageGraph, type PositionedNode } from "@/lib/graph"
-import type { MessageGraphNode, MessageKind } from "@/lib/types"
+import {
+  layoutMessageGraph,
+  FIXTURE_WIDTH,
+  MESSAGE_HEIGHT,
+  MESSAGE_WIDTH,
+} from "@/lib/graph"
+import {
+  kindLabels,
+  messageFacts,
+  messageState,
+} from "@/lib/message-presentation"
+import type {
+  FlowView,
+  MessageGraphNode,
+  StudioLayout,
+  OperationMessageSeries,
+} from "@/lib/types"
+import { useMediaQuery } from "@/lib/use-media-query"
 import { cn } from "@/lib/utils"
 
 interface MessageGraphProps {
   nodes: MessageGraphNode[]
-  running: boolean
+  view: FlowView
+  layoutMode: StudioLayout
+  emptyMessage?: string
+  capture?: OperationMessageSeries["capture"]
 }
 
-type MessageNodeData = Record<string, unknown> & {
-  message: PositionedNode
-}
-
-type MessageFlowNode = Node<MessageNodeData, "message">
-
-type MessageEdgeData = Record<string, unknown> & {
-  fidelity: "exact" | "grouped"
-  relationship: "causation" | "stream-order" | "context"
-  context: boolean
-  running: boolean
-}
-
-type MessageFlowEdge = Edge<MessageEdgeData, "message">
-
-const kindLabel: Record<MessageKind, string> = {
-  command: "command",
-  "domain-event": "domain event",
-  "integration-event": "integration event",
-}
-
-const kindIcon = {
-  command: CircleDot,
-  "domain-event": GitBranch,
-  "integration-event": Radio,
-} satisfies Record<MessageKind, typeof CircleDot>
+type MessageFlowNode = Node<
+  {
+    message: MessageGraphNode
+    view: FlowView
+    selected: boolean
+    onSelect: (id: string) => void
+  },
+  "message"
+>
+type MessageFlowEdge = Edge<
+  {
+    relationship: "causation" | "stream-order" | "context"
+  },
+  "message"
+>
 
 const nodeTypes = { message: MessageNode }
 const edgeTypes = { message: MessageEdge }
-const enableNodePointerEvents = () => undefined
-const DISMISS_MESSAGE_POPUPS_EVENT = "dismiss-message-popups"
+const kindIcons = {
+  command: CircleDot,
+  "domain-event": GitBranch,
+  "integration-event": Radio,
+}
 
-export function MessageGraph({ nodes, running }: MessageGraphProps) {
-  const layout = useMemo(() => layoutMessageGraph(nodes), [nodes])
+export function MessageGraph({
+  nodes,
+  view,
+  layoutMode,
+  emptyMessage,
+  capture,
+}: MessageGraphProps) {
+  const compact = useMediaQuery("(max-width: 1100px)")
+  const canvas = layoutMode === "canvas"
+  const [selectedId, setSelectedId] = useState<string>()
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [canvasInspectorOpen, setCanvasInspectorOpen] = useState(false)
+  const inspectorVisible = compact
+    ? detailsOpen
+    : !canvas || canvasInspectorOpen
+  const [controlsRoot, setControlsRoot] = useState<HTMLDivElement | null>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const mobileTrigger = useRef<HTMLElement | null>(null)
   const [flow, setFlow] = useState<ReactFlowInstance<
     MessageFlowNode,
     MessageFlowEdge
   > | null>(null)
+  const layout = useMemo(() => layoutMessageGraph(nodes), [nodes])
+  const selected =
+    nodes.find((node) => node.id === selectedId) ??
+    nodes.find((node) => node.subject === true) ??
+    nodes.find(
+      (node) =>
+        node.kind === "command" && !node.context && node.subject !== false
+    ) ??
+    nodes[0]
+  const highlightedId = inspectorVisible ? selected?.id : undefined
+  const select = useCallback(
+    (id: string) => {
+      mobileTrigger.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null
+      setSelectedId(id)
+      setDetailsOpen(true)
+      if (canvas) setCanvasInspectorOpen(true)
+    },
+    [canvas]
+  )
   const flowNodes = useMemo<MessageFlowNode[]>(
     () =>
       layout.nodes.map((node) => ({
         id: node.id,
         type: "message",
         position: { x: node.x, y: node.y },
-        data: { message: node },
+        width: node.context ? FIXTURE_WIDTH : MESSAGE_WIDTH,
+        height: MESSAGE_HEIGHT,
+        style: {
+          width: node.context ? FIXTURE_WIDTH : MESSAGE_WIDTH,
+          height: MESSAGE_HEIGHT,
+        },
+        data: {
+          message: node,
+          view,
+          selected: node.id === highlightedId,
+          onSelect: select,
+        },
         draggable: false,
         selectable: false,
         focusable: false,
-        ariaLabel: `${messageKindLabel(node)} ${node.name}`,
       })),
-    [layout.nodes]
+    [layout.nodes, view, highlightedId, select]
   )
   const flowEdges = useMemo<MessageFlowEdge[]>(
     () =>
@@ -97,346 +155,307 @@ export function MessageGraph({ nodes, running }: MessageGraphProps) {
         type: "message",
         source: edge.source.id,
         target: edge.target.id,
-        selectable: false,
+        data: { relationship: edge.relationship },
         focusable: false,
-        data: {
-          fidelity: edge.fidelity,
-          relationship: edge.relationship,
-          context: edge.context,
-          running: running && !edge.context,
-        },
+        selectable: false,
       })),
-    [layout.edges, running]
+    [layout.edges]
   )
-  const subjectClassified = flowNodes.some(
-    (node) =>
-      node.data.message.kind === "command" &&
-      node.data.message.subject !== undefined
-  )
-  const subjectCommand =
-    flowNodes.find((node) => node.data.message.subject) ??
-    (!subjectClassified
-      ? flowNodes.find(
-          (node) =>
-            node.data.message.kind === "command" && !node.data.message.context
-        )
-      : undefined)
-  const subjectCommandId = subjectCommand?.id
-
-  useEffect(() => {
-    if (!flow || !subjectCommandId) return
-    const frame = window.requestAnimationFrame(() => {
-      const node = flow.getNode(subjectCommandId)
-      if (!node) return
-      void flow.fitView({
-        nodes: [node],
-        padding: 0,
-        minZoom: 1,
+  const nodeIds = nodes.map((node) => node.id).join("\u0000")
+  const fit = useCallback(() => {
+    if (view !== "running")
+      void flow?.fitView({
+        padding: 0.04,
+        minZoom: 0.2,
         maxZoom: 1,
         duration: 0,
       })
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [flow, subjectCommandId])
-
-  return (
-    <section
-      className="message-graph"
-      aria-label="Directed message series graph"
-      onPointerDownCapture={(event) => {
-        if (
-          event.button === 0 &&
-          event.target instanceof Element &&
-          event.target.classList.contains("react-flow__pane")
-        ) {
-          window.dispatchEvent(new Event(DISMISS_MESSAGE_POPUPS_EVENT))
-        }
-      }}
-    >
-      <ReactFlow<MessageFlowNode, MessageFlowEdge>
-        className="message-flow"
-        nodes={flowNodes}
-        edges={flowEdges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        nodeOrigin={[0.5, 0.5]}
-        minZoom={0.25}
-        maxZoom={1.8}
-        fitView={Boolean(subjectCommand)}
-        fitViewOptions={{
-          nodes: subjectCommand ? [subjectCommand] : undefined,
-          padding: 0,
-          minZoom: 1,
-          maxZoom: 1,
-          duration: 0,
-        }}
-        onInit={setFlow}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        nodesFocusable={false}
-        edgesFocusable={false}
-        elementsSelectable={false}
-        onNodeMouseEnter={enableNodePointerEvents}
-        autoPanOnNodeFocus={false}
-        panOnDrag
-        panOnScroll={false}
-        zoomOnScroll
-        zoomOnPinch
-        zoomOnDoubleClick={false}
-        proOptions={{ hideAttribution: true }}
-      >
-        <GraphControls />
-      </ReactFlow>
-
-      {layout.nodes.length === 0 && (
-        <div className="graph-empty">No messages observed yet.</div>
-      )}
-    </section>
-  )
-}
-
-function MessageNode({ data }: NodeProps<MessageFlowNode>) {
-  const node = data.message
-  const Icon = kindIcon[node.kind]
-  const label = messageKindLabel(node)
-  const [popupOpen, setPopupOpen] = useState(false)
-  const togglePopup = () => {
-    if (!popupOpen) {
-      window.dispatchEvent(new Event(DISMISS_MESSAGE_POPUPS_EVENT))
-    }
-    setPopupOpen((open) => !open)
-  }
-  const dismissPopup = () => {
-    setPopupOpen(false)
-  }
+  }, [flow, view])
 
   useEffect(() => {
-    const dismiss = () => setPopupOpen(false)
-    window.addEventListener(DISMISS_MESSAGE_POPUPS_EVENT, dismiss)
-    return () =>
-      window.removeEventListener(DISMISS_MESSAGE_POPUPS_EVENT, dismiss)
-  }, [])
+    const frame = window.requestAnimationFrame(fit)
+    return () => window.cancelAnimationFrame(frame)
+  }, [fit, nodeIds, compact])
+
+  useEffect(() => {
+    const element = viewportRef.current
+    if (!element || compact) return
+    let frame = 0
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(fit)
+    })
+    observer.observe(element)
+    return () => {
+      observer.disconnect()
+      window.cancelAnimationFrame(frame)
+    }
+  }, [fit, compact])
+
+  useEffect(() => {
+    if (compact && detailsOpen)
+      viewportRef.current
+        ?.closest(".graph-workspace")
+        ?.querySelector<HTMLElement>(".message-inspector")
+        ?.focus()
+  }, [compact, detailsOpen])
+
+  const fixtureCount = nodes.filter((node) => node.context).length
+  const uncertain = nodes.some(
+    (node) => !node.context && node.edgeFidelity === "grouped"
+  )
+  const title =
+    view === "expected"
+      ? "Expected flow"
+      : view === "running"
+        ? "Execution in progress"
+        : view === "unavailable"
+          ? "Incomplete execution"
+          : view === "predicted"
+            ? "Preview flow"
+            : "Observed flow"
+  const dismissInspector = () => {
+    setDetailsOpen(false)
+    setCanvasInspectorOpen(false)
+    window.requestAnimationFrame(() => mobileTrigger.current?.focus())
+  }
 
   return (
     <div
       className={cn(
-        "message-flow-node",
-        node.context && "message-flow-node-context"
+        "graph-workspace",
+        !compact && !inspectorVisible && "inspector-collapsed",
+        compact && detailsOpen && "mobile-inspecting"
       )}
+    >
+      <section className="flow-panel" aria-label={title}>
+        <header className="flow-heading">
+          <div>
+            <Workflow size={16} />
+            <h2>{title}</h2>
+          </div>
+          <span>
+            {nodes.length - fixtureCount}{" "}
+            {nodes.length - fixtureCount === 1 ? "message" : "messages"} ·{" "}
+            {fixtureCount} fixture {fixtureCount === 1 ? "event" : "events"}
+          </span>
+          {canvas && !compact && (
+            <Button
+              className="inspector-toggle"
+              variant="ghost"
+              size="sm"
+              disabled={!nodes.length}
+              aria-expanded={inspectorVisible}
+              aria-label={
+                inspectorVisible
+                  ? "Close message details"
+                  : "Open message details"
+              }
+              onClick={(event) => {
+                if (inspectorVisible) dismissInspector()
+                else {
+                  mobileTrigger.current = event.currentTarget
+                  setCanvasInspectorOpen(true)
+                }
+              }}
+            >
+              <PanelRight /> Details
+            </Button>
+          )}
+        </header>
+        <div className="message-graph" ref={viewportRef}>
+          {nodes.length === 0 ? (
+            <div className="graph-empty">
+              <Workflow />
+              <h3>No flow to display</h3>
+              <p>
+                {emptyMessage ??
+                  "Select a test to explore its expected messages."}
+              </p>
+            </div>
+          ) : compact ? (
+            <ol className="message-list" aria-label="Messages in this flow">
+              {nodes.map((node) => {
+                const parent = nodes.find(
+                  (candidate) => candidate.id === node.parentId
+                )
+                return (
+                  <li key={node.id}>
+                    <p className="list-relationship">
+                      {node.context
+                        ? "Given · fixture state"
+                        : node.edgeRelationship === "context"
+                          ? "When · root command"
+                          : node.subject === true
+                            ? "Root command"
+                            : parent && node.edgeFidelity === "exact"
+                              ? `${view === "expected" ? "Expected after" : "Caused by"} ${parent.name}`
+                              : "Associated message · no resolved cause"}
+                    </p>
+                    <MessageCard
+                      node={node}
+                      view={view}
+                      selected={highlightedId === node.id}
+                      onSelect={select}
+                    />
+                  </li>
+                )
+              })}
+            </ol>
+          ) : (
+            <ReactFlow<MessageFlowNode, MessageFlowEdge>
+              className="message-flow"
+              nodes={flowNodes}
+              edges={flowEdges}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              minZoom={0.2}
+              maxZoom={1.5}
+              fitView
+              fitViewOptions={{ padding: 0.04, maxZoom: 1 }}
+              onInit={setFlow}
+              nodesDraggable={false}
+              nodesConnectable={false}
+              nodesFocusable={false}
+              edgesFocusable={false}
+              elementsSelectable={false}
+              autoPanOnNodeFocus={false}
+              panOnDrag
+              zoomOnScroll
+              zoomOnPinch
+              zoomOnDoubleClick={false}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background color="#39434f" gap={24} size={1} />
+              <GraphControls container={controlsRoot} />
+            </ReactFlow>
+          )}
+        </div>
+        <footer className="flow-legend">
+          <span>
+            <ArrowRight size={14} />
+            {view === "expected"
+              ? "Expected causation"
+              : view === "predicted"
+                ? "Predicted causation"
+                : "Causal link"}
+          </span>
+          <span>
+            <i />
+            Fixture / stream context
+          </span>
+          {uncertain && (
+            <span className="uncertain-note">
+              Some messages have no resolved cause
+            </span>
+          )}
+          {capture && (
+            <span className="graph-caption">
+              {capture.fidelity === "exact"
+                ? "exact causality"
+                : "grouped capture"}
+              {capture.settled ? "" : " / partial"}
+            </span>
+          )}
+          {!compact && (
+            <div className="graph-controls-slot" ref={setControlsRoot} />
+          )}
+        </footer>
+      </section>
+      <MessageInspector
+        hidden={!inspectorVisible}
+        closable={canvas || compact}
+        node={selected}
+        parent={nodes.find((node) => node.id === selected?.parentId)}
+        view={view}
+        onBack={dismissInspector}
+      />
+    </div>
+  )
+}
+
+function MessageNode({ data }: NodeProps<MessageFlowNode>) {
+  return (
+    <div
       data-graph-node
-      data-node-id={node.id}
-      data-parent-id={node.parentId}
-      data-layout-x={node.x}
-      data-layout-y={node.y}
-      data-context={node.context}
-      data-stream-version={node.streamVersion}
-      data-status={node.status}
+      data-node-id={data.message.id}
+      data-context={data.message.context}
+      data-status={data.message.status}
+      data-subject={data.message.subject}
     >
       <Handle
         type="target"
         position={Position.Left}
         className="message-handle"
       />
+      <MessageCard
+        node={data.message}
+        view={data.view}
+        selected={data.selected}
+        onSelect={data.onSelect}
+      />
       <Handle
         type="source"
         position={Position.Right}
         className="message-handle"
       />
-      <Popover open={popupOpen} onOpenChange={() => undefined}>
-        <PopoverAnchor asChild>
-          <button
-            type="button"
-            className={cn(
-              "message-node nodrag nopan",
-              `message-node-${node.kind}`,
-              node.status === "running" && "message-node-running",
-              (node.status === "rejected" ||
-                node.status === "failed" ||
-                node.status === "indeterminate") &&
-                "message-node-danger"
-            )}
-            aria-label={`${label} ${node.name}`}
-            aria-haspopup="dialog"
-            aria-expanded={popupOpen}
-            onPointerDown={(event) => {
-              event.stopPropagation()
-              if (event.button === 0) togglePopup()
-            }}
-            onClick={(event) => {
-              event.stopPropagation()
-              if (event.detail === 0) togglePopup()
-            }}
-          >
-            <span className="message-node-glint" />
-          </button>
-        </PopoverAnchor>
-        <PopoverContent
-          data-node-popup
-          data-popup-pinned
-          className={cn(
-            "message-popup",
-            node.kind === "command" && "w-[min(380px,calc(100vw-2rem))]",
-            (node.status === "rejected" ||
-              node.status === "failed" ||
-              node.status === "indeterminate") &&
-              "payload-glass-danger"
-          )}
-          side="top"
-          align="start"
-          collisionPadding={{ top: 62, bottom: 64, left: 8, right: 8 }}
-          onOpenAutoFocus={(event) => event.preventDefault()}
-          onCloseAutoFocus={(event) => event.preventDefault()}
-          onPointerDownOutside={(event) => {
-            event.preventDefault()
-          }}
-          onEscapeKeyDown={dismissPopup}
-        >
-          <div className="flex items-start gap-5 border-b border-white/8 px-3.5 py-3">
-            <div className="min-w-0">
-              <div className="mb-1 flex items-center gap-1.5 text-[12px] tracking-[0.12em] text-white/64 uppercase">
-                <Icon className="size-3" />
-                {label}
-              </div>
-              <div className="truncate font-mono text-[14px] text-white/92">
-                {node.name}
-              </div>
-            </div>
-          </div>
-
-          <div className="px-3.5 py-3">
-            <div className="mb-2 flex items-center gap-1.5 font-mono text-[12px] tracking-[0.13em] text-white/60 uppercase">
-              <ListTree className="size-3" />
-              {node.kind === "command" ? "request" : "payload"}
-            </div>
-            {node.payload === undefined ? (
-              <p className="m-0 font-mono text-[13px] text-white/56 italic">
-                redacted or empty
-              </p>
-            ) : (
-              <PayloadList payload={node.payload} />
-            )}
-          </div>
-
-          {node.kind === "command" && !node.context && (
-            <div
-              data-command-response
-              className="border-t border-white/7 px-3.5 py-3"
-            >
-              <div className="mb-2 flex items-center gap-1.5 font-mono text-[12px] tracking-[0.13em] text-white/60 uppercase">
-                <Reply className="size-3" />
-                response
-                <Badge
-                  variant={
-                    node.status === "accepted"
-                      ? "success"
-                      : node.status === "rejected" ||
-                          node.status === "failed" ||
-                          node.status === "indeterminate"
-                        ? "danger"
-                        : "neutral"
-                  }
-                  className="ml-auto"
-                >
-                  {node.status === "running"
-                    ? "pending"
-                    : (node.status ?? "unavailable")}
-                </Badge>
-              </div>
-              {node.response === undefined ? (
-                <p className="m-0 font-mono text-[13px] text-white/56 italic">
-                  {node.status === "running"
-                    ? "awaiting command response"
-                    : "response redacted or unavailable"}
-                </p>
-              ) : (
-                <PayloadList
-                  payload={node.response}
-                  omitTechnicalIdentities
-                  collapseDuplicateRejectionDetails
-                />
-              )}
-            </div>
-          )}
-
-          {node.kind !== "command" && (node.messageId || node.causationId) && (
-            <div className="flex gap-1.5 border-t border-white/7 px-3.5 py-2.5">
-              {node.messageId && (
-                <CopyIdentityButton
-                  label={node.context === "fixture" ? "event ID" : "message ID"}
-                  value={node.messageId}
-                />
-              )}
-              {node.causationId && (
-                <CopyIdentityButton label="cause ID" value={node.causationId} />
-              )}
-            </div>
-          )}
-        </PopoverContent>
-      </Popover>
-
-      <div className="message-node-label" aria-hidden="true">
-        <span>{node.name}</span>
-        <small>{label}</small>
-      </div>
     </div>
   )
 }
 
-function messageKindLabel(node: MessageGraphNode): string {
-  if (node.context === "fixture") return "fixture domain event"
-  return kindLabel[node.kind]
-}
-
-function CopyIdentityButton({
-  label,
-  value,
+function MessageCard({
+  node,
+  view,
+  selected,
+  onSelect,
 }: {
-  label: string
-  value: string
+  node: MessageGraphNode
+  view: FlowView
+  selected: boolean
+  onSelect: (id: string) => void
 }) {
-  const [copied, setCopied] = useState(false)
-  const resetTimer = useRef<number | undefined>(undefined)
-
-  useEffect(
-    () => () => {
-      if (resetTimer.current !== undefined) {
-        window.clearTimeout(resetTimer.current)
-      }
-    },
-    []
-  )
-
-  const copyIdentity = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-      if (resetTimer.current !== undefined) {
-        window.clearTimeout(resetTimer.current)
-      }
-      resetTimer.current = window.setTimeout(() => setCopied(false), 1400)
-    } catch {
-      setCopied(false)
-    }
-  }
-
+  const Icon = kindIcons[node.kind]
   return (
-    <Button
+    <button
       type="button"
-      variant="outline"
-      size="sm"
-      className="h-7 px-2 font-mono text-[12px] font-normal text-white/68"
-      data-copy-identity={label}
-      aria-label={`Copy ${label}`}
-      onClick={() => void copyIdentity()}
+      className={cn(
+        "message-card nodrag nopan",
+        `message-card-${node.kind}`,
+        selected && "message-card-selected",
+        node.context && "message-card-fixture"
+      )}
+      onClick={() => onSelect(node.id)}
+      aria-label={`${kindLabels[node.kind]} ${node.name}`}
+      aria-pressed={selected}
+      data-message-id={node.id}
     >
-      {copied ? <Check /> : <Copy />}
-      {copied ? "copied" : label}
-    </Button>
+      <span className="message-card-kind">
+        <Icon size={13} />
+        {kindLabels[node.kind]}
+        {node.context && <span className="fixture-tag">Fixture</span>}
+      </span>
+      <strong className="message-card-name" title={node.name}>
+        {node.name}
+      </strong>
+      <span className="message-card-facts">
+        {messageFacts(node).map(([key, value]) => (
+          <span key={key} title={`${key}: ${value}`}>
+            <span>{key}</span> <b>{value}</b>
+          </span>
+        ))}
+      </span>
+      <span
+        className="message-card-footer"
+        data-status={view === "expected" || node.context ? "idle" : node.status}
+      >
+        {messageState(node, view)}
+        <span aria-hidden="true">↗</span>
+      </span>
+    </button>
   )
 }
 
 function MessageEdge({
-  id,
   sourceX,
   sourceY,
   sourcePosition,
@@ -447,7 +466,7 @@ function MessageEdge({
   target,
   data,
 }: EdgeProps<MessageFlowEdge>) {
-  const markerId = `message-arrow-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+  const markerId = `arrow-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`
   const directed = data?.relationship === "causation"
   const [path] = getBezierPath({
     sourceX,
@@ -456,9 +475,8 @@ function MessageEdge({
     targetX,
     targetY,
     targetPosition,
-    curvature: 0.42,
+    curvature: 0.3,
   })
-
   return (
     <g
       data-graph-edge
@@ -473,31 +491,18 @@ function MessageEdge({
             viewBox="0 0 10 10"
             refX="9"
             refY="5"
-            markerWidth="10"
-            markerHeight="10"
-            markerUnits="userSpaceOnUse"
+            markerWidth="9"
+            markerHeight="9"
             orient="auto"
+            markerUnits="userSpaceOnUse"
           >
-            <path
-              d="M 1 1.25 L 9 5 L 1 8.75 L 3.4 5 Z"
-              className={cn(
-                "graph-edge-arrow",
-                data?.context && "graph-edge-arrow-context"
-              )}
-            />
+            <path d="M 1 1 L 9 5 L 1 9" className="graph-edge-arrow" />
           </marker>
         </defs>
       )}
       <path
         d={path}
-        className={cn(
-          "graph-edge",
-          data?.fidelity === "grouped" && "graph-edge-grouped",
-          data?.context && "graph-edge-context",
-          data?.relationship === "stream-order" && "graph-edge-stream-order",
-          data?.running && "graph-edge-running"
-        )}
-        pathLength="1"
+        className={cn("graph-edge", !directed && "graph-edge-context")}
         vectorEffect="non-scaling-stroke"
         markerEnd={directed ? `url(#${markerId})` : undefined}
       />
@@ -505,139 +510,46 @@ function MessageEdge({
   )
 }
 
-function GraphControls() {
-  const { fitView, zoomIn, zoomOut } = useReactFlow<
-    MessageFlowNode,
-    MessageFlowEdge
-  >()
+function GraphControls({ container }: { container: HTMLDivElement | null }) {
+  const { fitView, zoomIn, zoomOut } = useReactFlow()
   const { zoom } = useViewport()
-
-  return (
-    <Panel
-      position="bottom-right"
-      className="graph-controls nodrag nopan nowheel"
-    >
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => void zoomOut({ duration: 180 })}
-        aria-label="Zoom out"
-      >
-        <Minus />
-      </Button>
-      <span className="graph-zoom-value">{Math.round(zoom * 100)}%</span>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => void zoomIn({ duration: 180 })}
-        aria-label="Zoom in"
-      >
-        <Plus />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() =>
-          void fitView({
-            padding: 0.28,
-            minZoom: 0.5,
-            maxZoom: 1,
-            duration: 350,
-          })
-        }
-        aria-label="Fit graph to view"
-      >
-        <Focus />
-      </Button>
-    </Panel>
-  )
-}
-
-interface PayloadRow {
-  path: string
-  value: string
-  kind: "string" | "number" | "boolean" | "null" | "empty"
-}
-
-function PayloadList({
-  payload,
-  omitTechnicalIdentities = false,
-  collapseDuplicateRejectionDetails = false,
-}: {
-  payload: unknown
-  omitTechnicalIdentities?: boolean
-  collapseDuplicateRejectionDetails?: boolean
-}) {
-  let rows = flattenPayload(payload).filter(
-    (row) => !omitTechnicalIdentities || !isTechnicalIdentity(row.path)
-  )
-  if (collapseDuplicateRejectionDetails) {
-    rows = withoutDuplicateRejectionDetails(rows)
-  }
-  return (
-    <dl className="payload-list">
-      {rows.map((row, index) => (
-        <div className="payload-row" key={`${row.path}-${index}`}>
-          <dt>{row.path}</dt>
-          <dd data-kind={row.kind}>{row.value}</dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
-function withoutDuplicateRejectionDetails(rows: PayloadRow[]): PayloadRow[] {
-  const valuesByPath = new Map(rows.map((row) => [row.path, row]))
-  return rows.filter((row) => {
-    const match = /^(rejection\.)?details\.(code|message)$/.exec(row.path)
-    if (!match) return true
-    const primary = valuesByPath.get(`${match[1] ?? ""}${match[2]}`)
-    return primary?.kind !== row.kind || primary.value !== row.value
-  })
-}
-
-function flattenPayload(
-  value: unknown,
-  path = "value",
-  rows: PayloadRow[] = []
-): PayloadRow[] {
-  if (value === null) {
-    rows.push({ path, value: "null", kind: "null" })
-    return rows
-  }
-  if (Array.isArray(value)) {
-    if (value.length === 0)
-      rows.push({ path, value: "empty list", kind: "empty" })
-    value.forEach((item, index) =>
-      flattenPayload(item, `${path}[${index}]`, rows)
-    )
-    return rows
-  }
-  if (typeof value === "object") {
-    const entries = Object.entries(value)
-    if (entries.length === 0)
-      rows.push({ path, value: "empty object", kind: "empty" })
-    entries.forEach(([key, item]) =>
-      flattenPayload(item, path === "value" ? key : `${path}.${key}`, rows)
-    )
-    return rows
-  }
-
-  const kind = typeof value
-  if (kind === "string" || kind === "number" || kind === "boolean") {
-    rows.push({ path, value: String(value), kind })
-  } else {
-    rows.push({ path, value: String(value), kind: "empty" })
-  }
-  return rows
-}
-
-function isTechnicalIdentity(path: string): boolean {
-  const property = path.split(".").at(-1)
-  return (
-    property === "messageId" ||
-    property === "causationId" ||
-    property === "commandMessageId" ||
-    property === "responseMessageId"
-  )
+  return container
+    ? createPortal(
+        <div className="graph-controls nodrag nopan nowheel">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => void zoomOut({ duration: 150 })}
+            aria-label="Zoom out"
+          >
+            <Minus />
+          </Button>
+          <span className="graph-zoom-value">{Math.round(zoom * 100)}%</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => void zoomIn({ duration: 150 })}
+            aria-label="Zoom in"
+          >
+            <Plus />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() =>
+              void fitView({
+                padding: 0.04,
+                minZoom: 0.2,
+                maxZoom: 1,
+                duration: 150,
+              })
+            }
+            aria-label="Fit graph to view"
+          >
+            <Focus />
+          </Button>
+        </div>,
+        container
+      )
+    : null
 }

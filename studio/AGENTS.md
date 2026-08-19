@@ -50,23 +50,26 @@ with synthetic responses; real command behavior is verified through Tracer.
 - `pnpm build` (TypeScript project build and Vite production bundle)
 - `pnpm test:ui` for changes to interactions, graph behavior, or shared browser
   tooling. This checks command forms, outcomes, dragging, panning, zooming,
-  popups, graph stability, and mobile behavior.
+  message inspection, graph stability, and mobile behavior.
 - Capture affected scenarios for visual changes. `inspect:ui` fails on page
   exceptions, failed requests, unexpected HTTP errors, and missing mock routes;
   it saves artifacts on scenario failures where the page remains available.
 
 ## Code and presentation
 
-- `src/App.tsx`: selection, panels, command execution, and run state.
+- `src/App.tsx`: catalog discovery, layouts, panels, command execution, and run state.
 - `src/components/command-panel.tsx`: catalog-driven command forms and results.
-- `src/components/message-graph.tsx`: React Flow rendering and message details.
-- `src/components/studio-sidebar.tsx`: draggable Tests, Runs, and Command shell.
+- `src/components/message-graph.tsx`: message cards, React Flow, and the mobile list.
+- `src/components/message-inspector.tsx`: selected message request, response, and metadata.
+- `src/components/studio-sidebar.tsx`: Tests and run-history navigation.
+- `src/components/draggable-panel.tsx`: draggable Command panel shell.
 - `src/lib/graph.ts`: message-to-graph conversion and layout.
 - `src/lib/api.ts`: Tracer HTTP client.
-- `src/lib/sample-data.ts`: demo definitions, fixtures, and message graph.
+- `scripts/fixtures.mjs`: test-only imports of the canonical bike-rental fixtures
+  and behavioral definitions. Runtime demo fallback is intentionally absent.
 - `src/index.css`: Studio layout and visual styling.
 
-Follow the current dark palette, glass panels, compact typography, and distinct
+Follow the current charcoal palette, readable cards, compact controls, and distinct
 command/domain-event/integration-event colors unless the task changes the design.
 Prefer accessible control names and existing `data-graph-node`/`data-graph-edge`
 attributes for automation. Preserve the distinction between causation, fixture
