@@ -1,8 +1,12 @@
 import assert from "node:assert/strict"
+import path from "node:path"
 import {
+  capturePage,
   closeStudioBrowser,
   launchStudioBrowser,
+  observePage,
   startStudioServer,
+  studioRoot,
 } from "./browser.mjs"
 import {
   observationBackend,
@@ -24,9 +28,12 @@ export async function checkContinuousObservation() {
     },
   })
   let browser
+  let page
+  let diagnostics
   try {
     browser = await launchStudioBrowser()
-    const page = await browser.newPage()
+    page = await browser.newPage()
+    diagnostics = observePage(page)
     const errors = []
     page.on("pageerror", (error) => errors.push(error.message))
     await page.setViewport({ width: 1440, height: 900 })
@@ -139,6 +146,13 @@ export async function checkContinuousObservation() {
         .querySelector(".observation-notice")
         ?.textContent.includes("evicted or reset")
     )
+    await page.click('[aria-label="Collapse sidebar"]')
+    await page.waitForFunction(() =>
+      document
+        .querySelector(".observation-evidence")
+        ?.textContent.includes("retained snapshot")
+    )
+    await page.click('[aria-label="Expand sidebar"]')
     await page.select('[aria-label="Observation scope"]', "production")
     await page.waitForSelector(
       '[data-observed-flow="production-external-flow"]'
@@ -161,6 +175,27 @@ export async function checkContinuousObservation() {
         .filter((request) => request.path.includes("/production"))
         .every((request) => request.token === "Bearer observation-inspection")
     )
+    let observationRevision = 2
+    for (const invalid of [
+      { application: "different-application" },
+      { id: "different-flow" },
+      { correlationId: "different-correlation" },
+    ]) {
+      backend.overrideDetail(invalid)
+      backend.publish(observationRevision++, "production")
+      await page.waitForFunction(() =>
+        document
+          .querySelector('[role="alert"]')
+          ?.textContent.includes("Observed flow changed")
+      )
+      assert.equal(
+        await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
+        0
+      )
+      backend.overrideDetail(undefined)
+      backend.publish(observationRevision++, "production")
+      await page.waitForSelector('[data-graph-node][data-node-id="received"]')
+    }
     assert.ok(backend.requests.every((request) => request.method === "GET"))
     await page.setViewport({ width: 390, height: 844 })
     await page.click('[aria-label="Close observation panel"]')
@@ -179,13 +214,246 @@ export async function checkContinuousObservation() {
     })
     assert.deepEqual(errors, [])
     await page.close()
+    await checkObservationApiSafety(browser, url, backend)
     console.log(
       "Continuous observation: external flows, long-lived streams, shared cards/inspector, layout selection, pause/resume, filtering, reconnect, reset, scope credentials and mobile details passed"
     )
+  } catch (error) {
+    if (page && !page.isClosed()) {
+      console.log(
+        await capturePage(
+          page,
+          path.join(studioRoot, "artifacts/review/observation-failure"),
+          { diagnostics, source: "mocked" }
+        )
+      )
+    }
+    throw error
   } finally {
     backend.close()
     await closeStudioBrowser(browser)
     await server.close()
+  }
+}
+
+async function checkObservationApiSafety(browser, url, backend) {
+  const context = await browser.createBrowserContext()
+  try {
+    const page = await context.newPage()
+    await page.setViewport({ width: 1440, height: 900 })
+    backend.inspectionOnly(true)
+    await page.goto(url, { waitUntil: "networkidle0" })
+    await page.waitForSelector('[data-tracer-source="disconnected"]')
+    await page.click('[aria-label="Open observation panel"]')
+    await page.waitForSelector(
+      '[data-observed-flow="production-external-flow"]'
+    )
+    assert.deepEqual(
+      await page.$$eval('[aria-label="Observation scope"] option', (options) =>
+        options.map((option) => option.value)
+      ),
+      ["production"]
+    )
+    await page.click('[data-observed-flow="production-external-flow"]')
+    await page.waitForSelector('[data-graph-node][data-node-id="received"]')
+    await page.click('[aria-label="Return to executions"]')
+    backend.inspectionOnly(false)
+    const results = await page.evaluate(async () => {
+      const { followObservation } = await import("/src/lib/observation-api.ts")
+      const capability = {
+        application: "visual-fixture",
+        scope: "test",
+        eventsHref: "/observation/test/events",
+        listHref: "/observation/test",
+      }
+      const nativeFetch = window.fetch
+      const requests = []
+      window.fetch = (...args) => {
+        requests.push(String(args[0]))
+        return nativeFetch(...args)
+      }
+      const unsafeErrors = []
+      for (const eventsHref of [
+        "https://untrusted.invalid/events",
+        "//untrusted.invalid/events",
+        "/\\untrusted.invalid/events",
+        "/events#fragment",
+        "/events\n",
+        "/events/{scope}",
+      ]) {
+        try {
+          await followObservation(
+            { ...capability, eventsHref },
+            new AbortController().signal,
+            () => {}
+          )
+        } catch (error) {
+          unsafeErrors.push(error.message)
+        }
+      }
+      const frameErrors = []
+      let delivered = 0
+      let cancelled = 0
+      for (const data of [
+        JSON.stringify({ application: "other-app", scope: "test", items: [] }),
+        JSON.stringify({
+          application: "visual-fixture",
+          scope: "production",
+          items: [],
+        }),
+        "not-json",
+        "a".repeat(1_048_577),
+      ]) {
+        window.fetch = async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    `event: observation\ndata: ${data}\n\n`
+                  )
+                )
+              },
+              cancel() {
+                cancelled += 1
+              },
+            }),
+            { headers: { "content-type": "text/event-stream" } }
+          )
+        try {
+          await followObservation(
+            capability,
+            new AbortController().signal,
+            () => {
+              delivered += 1
+            }
+          )
+        } catch (error) {
+          frameErrors.push(error.message)
+        }
+      }
+      window.fetch = async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("not an SSE stream"))
+            },
+            cancel() {
+              cancelled += 1
+            },
+          }),
+          { headers: { "content-type": "application/json" } }
+        )
+      let wrongContentType
+      try {
+        await followObservation(
+          capability,
+          new AbortController().signal,
+          () => {
+            delivered += 1
+          }
+        )
+      } catch (error) {
+        wrongContentType = error.message
+      }
+      window.fetch = nativeFetch
+      return {
+        unsafeErrors,
+        requests,
+        frameErrors,
+        delivered,
+        cancelled,
+        wrongContentType,
+      }
+    })
+    assert.equal(results.unsafeErrors.length, 6)
+    assert.ok(results.unsafeErrors.every((error) => /unsafe link/.test(error)))
+    assert.deepEqual(
+      results.requests,
+      [],
+      "unsafe links must never send credentials"
+    )
+    assert.match(results.frameErrors[0], /scope does not match discovery/)
+    assert.match(results.frameErrors[1], /scope does not match discovery/)
+    assert.match(results.frameErrors[2], /JSON/)
+    assert.match(results.frameErrors[3], /size limit/)
+    assert.equal(results.delivered, 0)
+    assert.match(
+      results.wrongContentType,
+      /did not return an observation stream/
+    )
+    assert.equal(
+      results.cancelled,
+      5,
+      "rejected streams must release their readers and bodies"
+    )
+
+    backend.redirectEvents("/api/observation/test/redirect-target")
+    const redirectError = await page.evaluate(async () => {
+      const { followObservation } = await import("/src/lib/observation-api.ts")
+      try {
+        await followObservation(
+          {
+            application: "visual-fixture",
+            scope: "test",
+            eventsHref: "/observation/test/events",
+            listHref: "/observation/test",
+          },
+          new AbortController().signal,
+          () => {}
+        )
+      } catch (error) {
+        return error.message
+      }
+    })
+    backend.redirectEvents(undefined)
+    assert.match(redirectError, /Could not reach the Tracer API/)
+    assert.ok(
+      backend.requests.every(
+        (request) => !request.path.endsWith("/redirect-target")
+      ),
+      "authenticated SSE requests must never follow redirects"
+    )
+
+    backend.recover()
+    await page.evaluate(async () => {
+      const { followObservation } = await import("/src/lib/observation-api.ts")
+      const nativeTimeout = window.setTimeout
+      window.setTimeout = (callback, milliseconds, ...args) => {
+        if (milliseconds === 35_000) window.__observationIdle = callback
+        return nativeTimeout(callback, milliseconds, ...args)
+      }
+      window.__observationIdleResult = undefined
+      window.__observationReceived = false
+      void followObservation(
+        {
+          application: "visual-fixture",
+          scope: "test",
+          eventsHref: "/observation/test/events",
+          listHref: "/observation/test",
+        },
+        new AbortController().signal,
+        () => {
+          window.__observationReceived = true
+        }
+      ).catch((error) => {
+        window.__observationIdleResult = error.message
+      })
+    })
+    await page.waitForFunction(() =>
+      Boolean(window.__observationIdle && window.__observationReceived)
+    )
+    await page.evaluate(() => window.__observationIdle())
+    await page.waitForFunction(() => Boolean(window.__observationIdleResult))
+    await page.close()
+    console.log(
+      "Observation API safety: hostile links, scope mismatches, malformed/oversized SSE, reader cleanup and idle cancellation passed"
+    )
+  } finally {
+    backend.inspectionOnly(false)
+    backend.overrideDetail(undefined)
+    backend.redirectEvents(undefined)
+    await context.close()
   }
 }
 

@@ -55,6 +55,7 @@ const STORED_LAYOUT_KEY = "rostfrei-tracer-studio-layout-v1"
 function App() {
   const [observationActive, setObservationActive] = useState(false)
   const [observedFlow, setObservedFlow] = useState<ObservedFlow>()
+  const [observationExpired, setObservationExpired] = useState(false)
   const [observationConnection, setObservationConnection] =
     useState<ObservationConnection>("connecting")
   const [layout, setLayout] = useState<StudioLayout>(readStoredLayout)
@@ -575,6 +576,7 @@ function App() {
               setSidebarOpen(false)
           }}
           onFlow={setObservedFlow}
+          onExpired={setObservationExpired}
           onStatus={setObservationConnection}
         />
         <CommandPanel
@@ -629,10 +631,12 @@ function App() {
                 </div>
                 <p className="observation-evidence">
                   {observedFlow
-                    ? `${observedFlow.fidelity} observation · partial${observedFlow.truncated ? " · truncated" : ""}${observedFlow.conflicted ? " · conflicting evidence" : ""}`
+                    ? `${observedFlow.fidelity} observation · partial${observationExpired ? " · retained snapshot" : ""}${observedFlow.truncated ? " · truncated" : ""}${observedFlow.conflicted ? " · conflicting evidence" : ""}`
                     : observationConnection}
                   <span>
-                    Rolling window; silence does not establish completion.
+                    {observationExpired
+                      ? "This graph was evicted or reset; select another flow for live updates."
+                      : "Rolling window; silence does not establish completion."}
                   </span>
                 </p>
               </section>
