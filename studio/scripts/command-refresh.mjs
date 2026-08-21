@@ -175,7 +175,8 @@ export async function checkCommandRefresh(browser, url) {
       await response
       await page.waitForFunction(
         () =>
-          !document.querySelector('input[aria-label="Payload Fleet"]').disabled
+          document.querySelector('input[aria-label="Payload Fleet"]')
+            ?.disabled === false
       )
       assert.equal(inputRequests, requestCount + 1)
       assert.notEqual(await key(), previousKey)
@@ -230,7 +231,8 @@ export async function checkCommandRefresh(browser, url) {
     await page.click('button[aria-controls="studio-command-panel"]')
     await page.waitForFunction(
       () =>
-        !document.querySelector('input[aria-label="Payload Fleet"]').disabled
+        document.querySelector('input[aria-label="Payload Fleet"]')
+          ?.disabled === false
     )
     assert.deepEqual(
       await payload(),

@@ -3,6 +3,7 @@ import type {
   Fixture,
   MessageGraphNode,
   ObservedCommandOutcome,
+  ObservedMessageSeries,
   OperationMessageSeries,
   OperationSnapshot,
   TestDefinition,
@@ -262,12 +263,19 @@ export function operationGraph(
   operation: OperationSnapshot,
   series: OperationMessageSeries
 ): MessageGraphNode[] {
-  const messages = [...series.messageSeries.messages].sort(
+  return observedGraph(series.messageSeries, operation)
+}
+
+export function observedGraph(
+  series: ObservedMessageSeries,
+  operation?: OperationSnapshot
+): MessageGraphNode[] {
+  const messages = [...series.messages].sort(
     (left, right) => left.observationOrder - right.observationOrder
   )
   const knownIds = new Set(messages.map((message) => message.messageId))
   const subjectId =
-    commandMessageId(operation.result) ?? operation.failure?.commandMessageId
+    commandMessageId(operation?.result) ?? operation?.failure?.commandMessageId
   const subject = subjectId
     ? messages.find(
         (message) =>
@@ -275,10 +283,7 @@ export function operationGraph(
       )
     : messages.find((message) => message.kind === "command")
   const outcomes = new Map(
-    series.messageSeries.commandOutcomes.map((outcome) => [
-      outcome.commandMessageId,
-      outcome,
-    ])
+    series.commandOutcomes.map((outcome) => [outcome.commandMessageId, outcome])
   )
 
   return messages.map<MessageGraphNode>((message) => {
@@ -304,7 +309,7 @@ export function operationGraph(
       response:
         message.kind === "command"
           ? (outcome?.outcome ??
-            (isSubject ? (operation.result ?? operation.failure) : undefined))
+            (isSubject ? (operation?.result ?? operation?.failure) : undefined))
           : undefined,
       messageId: message.messageId,
       causationId: message.causationId,
@@ -315,7 +320,9 @@ export function operationGraph(
         message.kind === "domain-event" ? message.aggregate?.id : undefined,
       status:
         message.kind === "command"
-          ? operationCommandStatus(outcome, operation, isSubject)
+          ? operation
+            ? operationCommandStatus(outcome, operation, isSubject)
+            : (outcome?.outcome.status ?? "indeterminate")
           : "accepted",
     }
   })

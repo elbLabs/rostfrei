@@ -678,6 +678,32 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
             tokio::spawn(async move { reaction_consumer.run(reaction_handler).await });
         runtime.start_workers().await?;
 
+        // Observe the normal application bus without submitting or registering
+        // an operation through Tracer. The independent consumer must be ready
+        // before the external command below can publish its first event.
+        let feed = rostfrei_tracer::ObservationFeed::new(
+            rostfrei_messaging_core::ApplicationName::new(&application)?,
+            rostfrei_tracer::ObservationScope::Production,
+        );
+        let tracer = rostfrei_tracer::TracerBuilder::new(
+            Arc::new(runtime.store().clone()),
+            rostfrei::DomainRegistry::new(),
+        )
+        .with_continuous_observation(Arc::clone(&feed))
+        .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment))
+        .build()?;
+        let observation_task = runtime
+            .start_correlation_observer(tracer.correlation_observer(OperationMode::Dispatch))
+            .await?;
+        ensure(
+            feed.snapshot().status == rostfrei_tracer::ObservationStatus::Live,
+            "observer was not ready before external publication",
+        )?;
+        let observation_app = http::router(
+            tracer.clone(),
+            HttpConfig::inspection_only("external-observation")?,
+        );
+
         let receipt = runtime
             .transport()
             .invoke(
@@ -740,6 +766,76 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
         ensure(
             reaction_causation.as_str() == generated_response.command_message_id().as_str(),
             "reaction event did not use its generated command as direct causation",
+        )?;
+        let snapshot = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let snapshot = feed.snapshot();
+                if snapshot.items.iter().any(|flow| {
+                    flow.correlation_id == "command-reaction-correlation" && flow.message_count >= 3
+                }) {
+                    return snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await?;
+        let flow = snapshot
+            .items
+            .iter()
+            .find(|flow| flow.correlation_id == "command-reaction-correlation")
+            .ok_or_else(|| io::Error::other("external flow was not discovered"))?;
+        let response = observation_app
+            .oneshot(
+                Request::builder()
+                    .uri(&flow.detail_href)
+                    .header("authorization", "Bearer external-observation")
+                    .body(Body::empty())?,
+            )
+            .await?;
+        ensure(
+            response.status() == StatusCode::OK,
+            "external observation detail failed",
+        )?;
+        let detail = json_response(response).await?;
+        let series: ObservedMessageSeries =
+            serde_json::from_value(detail["messageSeries"].clone())?;
+        ensure(
+            series.messages().len() == 3,
+            "expected both persisted events and the integration event",
+        )?;
+        ensure(
+            series
+                .messages()
+                .iter()
+                .all(|message| !message.is_command()),
+            "passive capture fabricated a command",
+        )?;
+        ensure(
+            series.command_outcomes().is_empty(),
+            "passive capture fabricated a command outcome",
+        )?;
+        ensure(
+            series.messages().iter().any(|message| {
+                message.name() == "bicycle-rental-started"
+                    && message.causation_id() == Some(history[2].event_id().as_str())
+            }),
+            "integration event lost its explicit domain-event parent",
+        )?;
+        ensure(
+            tracer
+                .correlation_mode("command-reaction-correlation")
+                .is_err(),
+            "external traffic unexpectedly registered a Tracer operation",
+        )?;
+        ensure(
+            detail["partial"] == true && detail["fidelity"] == "grouped",
+            "missing command evidence was described as complete",
+        )?;
+        observation_task.abort();
+        let _ = observation_task.await;
+        ensure(
+            feed.snapshot().status == rostfrei_tracer::ObservationStatus::Unavailable,
+            "stopped observer still appears live",
         )?;
         let mut quarantine_stream = connection
             .jetstream()
