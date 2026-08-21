@@ -324,7 +324,7 @@ python3 scripts/test_nats.py
 ```
 
 The default run first fetches the separately locked dependencies needed by the
-offline macro compatibility tests. It then starts a pinned NATS 2.12.1 container
+offline macro compatibility tests. It then starts a pinned NATS 2.12.15 container
 with JetStream, fresh storage,
 random loopback-only ports, and the required payload limit. It waits for
 JetStream readiness, sets bounded bike-rental stream limits, and runs
@@ -344,6 +344,15 @@ them require an explicit, nonempty `ROSTFREI_NATS_URL`; missing configuration is
 an error, never a successful skip. Use a disposable broker: these tests provision
 and remove streams. Run `cargo test --locked -p rostfrei-tracer --features http`
 for a broker-free Tracer API check.
+
+The [domain-event worker pool](docs/design/domain-event-worker-pool.md) lets
+overlapping application instances share a durable with explicit ACKs, ordered
+transaction processing, and graceful shutdown. Existing `AckPolicy::All`
+durables require the documented one-time migration. Run its real-NATS tests with:
+
+```sh
+python3 scripts/test_nats.py -- cargo test --locked -p rostfrei-nats --test domain_event_consumer_integration
+```
 
 The **Tests** GitHub Actions workflow runs the Rust suite with the same broker
 runner, and separately runs Studio lint/build, mocked-API browser tests, and

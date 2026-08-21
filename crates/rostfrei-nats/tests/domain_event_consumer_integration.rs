@@ -1,6 +1,9 @@
 #[path = "../src/hex.rs"]
 mod hex;
 
+#[path = "domain_event_consumer/worker_pool.rs"]
+mod worker_pool;
+
 use std::{
     sync::{
         Arc,
@@ -733,11 +736,11 @@ async fn schema_four_events_without_a_valid_receipt_are_not_dispatched() -> Test
     Ok(())
 }
 
-async fn connect_consumer(
+async fn connect_consumer<H: DomainEventHandler<TestEvent> + 'static>(
     context: async_nats::jetstream::Context,
     event_store: NatsEventStoreConfig,
     config: NatsDomainEventConsumerConfig,
-    handler: Arc<RecordingHandler>,
+    handler: Arc<H>,
 ) -> TestResult<NatsDomainEventConsumer> {
     let mut dispatcher = DomainEventDispatcher::new();
     dispatcher.register::<TestAggregate, TestEvent, _>("test-event", handler)?;
