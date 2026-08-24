@@ -20,17 +20,22 @@ explicit codec only as an override. Unregistered aggregate/event pairs are inten
 are treated as successfully handled without invoking a side effect. Registered
 events are decoded through the aggregate's codec; unsupported schemas, malformed
 payloads, permanently unsupported events, and operator-blocking failures stop
-the durable consumer without skipping the event. Retryable failures cause the
-complete atomic transaction group to be negatively acknowledged for redelivery.
+the durable consumer without skipping the event. Retryable failures release the
+unacknowledged work for redelivery and reprocessing of the complete transaction.
 
 The NATS adapter consumes the authoritative EventStore JetStream stream through
 caller-named durable pull consumers. It verifies the existing stream and durable
 configuration without provisioning at service startup. It validates and buffers
 one complete ADR-50 atomic transaction group before dispatch, reconstructing
 filtered progress across internal transaction guards and receipts when needed.
-It invokes handlers in transaction order, ACKs the group as a unit only after
-every invocation succeeds, and retries the group as a unit after a retryable
-failure or timeout. Limits retention keeps aggregate replay, other durables,
+Replicas share a durable with explicit ACKs, multiple waiting pulls, and one
+pending delivery. The worker receiving a transaction's first event reads its
+tail directly from committed history and invokes all handlers in transaction
+order before confirming that first delivery. Its ACK then proves completion to
+workers confirming the remaining events, including after a restart. A failure
+before that ACK retries the whole transaction. See the
+[worker-pool design](../design/domain-event-worker-pool.md) for shutdown and
+legacy-durable migration. Limits retention keeps aggregate replay, other durables,
 future rebuilds, and permanent history independent from consumer
 acknowledgements.
 
