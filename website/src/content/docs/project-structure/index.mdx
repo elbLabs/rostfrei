@@ -2,7 +2,7 @@
 
 Rostfrei uses predictable directories to connect each domain declaration with its owner and implementation. Choose the page that matches the concept or capability you are adding.
 
-The goal is to make a growing domain easy to navigate: find an aggregate, see the behavior it owns, and follow that behavior to its implementation. `cargo rostfrei check --workspace` validates the configured structure and each participating package's compiled model.
+Run `cargo rostfrei check --workspace` to validate configured packages. The checker verifies file roles and implementation targets, then runs each package's compiled-model check. Business rules still require tests.
 
 **New to the model?** Follow the [bike-rental walkthrough](/docs/getting-started) first. For the declarations inside these files, see [Domain macros](/docs/domain-macros).
 

@@ -41,7 +41,7 @@ function DomainNodeCard({ data }: NodeProps<DomainNode>) {
       ) : null}
 
       <p className="font-mono text-[9px] tracking-[0.14em] text-primary uppercase">
-        {data.kind}
+        {data.kind === "event" ? "domain event" : data.kind}
       </p>
       <p className="mt-1 text-sm font-semibold text-card-foreground">
         {data.title}
@@ -93,7 +93,7 @@ const initialNodes: DomainNode[] = [
     data: {
       kind: "command",
       title: "Rent bicycle",
-      description: "Carries the rider and bicycle identities.",
+      description: "Carries the fleet and bicycle IDs.",
       output: "single",
     },
   },
@@ -104,7 +104,7 @@ const initialNodes: DomainNode[] = [
     data: {
       kind: "policy",
       title: "Assess eligibility",
-      description: "Evaluates the rule without changing state.",
+      description: "Checks rental status and bicycle condition.",
       input: true,
       output: "single",
     },
@@ -116,7 +116,7 @@ const initialNodes: DomainNode[] = [
     data: {
       kind: "decision",
       title: "Decide rental",
-      description: "Accepts with an event or returns a rejection.",
+      description: "Raises BicycleRented or returns a rejection.",
       input: true,
       output: "branch",
     },
@@ -128,7 +128,7 @@ const initialNodes: DomainNode[] = [
     data: {
       kind: "event",
       title: "Bicycle rented",
-      description: "Records the accepted state transition.",
+      description: "Appended to fleet history on acceptance.",
       input: true,
     },
   },
@@ -139,7 +139,7 @@ const initialNodes: DomainNode[] = [
     data: {
       kind: "rejection",
       title: "Rental rejected",
-      description: "Returns an explicit domain outcome.",
+      description: "Declines the rental without appending events.",
       input: true,
     },
   },
@@ -186,12 +186,12 @@ export function DomainFlow() {
     <div className="my-8 overflow-hidden rounded-xl border border-border bg-[#0d0b08] shadow-lg shadow-black/10">
       <div className="border-b border-border/70 px-4 py-3">
         <p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-          Interactive domain flow
+          Rental decision
         </p>
       </div>
       <div className="h-96 w-full sm:h-105">
         <ReactFlow<DomainNode>
-          aria-label="A command consults a reusable policy before its decision produces either an accepted event or a rejection"
+          aria-label="A rental action evaluates eligibility, then raises a domain event or returns a rejection"
           colorMode="dark"
           defaultEdges={initialEdges}
           defaultNodes={initialNodes}

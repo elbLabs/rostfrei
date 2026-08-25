@@ -10,7 +10,7 @@ export function DocsNotFound() {
         Documentation page not found
       </h1>
       <p className="mt-4 max-w-xl leading-7 text-muted-foreground">
-        This page does not exist yet, or its address has changed.
+        No documentation page matches this address.
       </p>
       <Link
         className="mt-6 inline-flex text-sm font-medium text-primary underline decoration-primary/35 underline-offset-4 hover:decoration-primary"

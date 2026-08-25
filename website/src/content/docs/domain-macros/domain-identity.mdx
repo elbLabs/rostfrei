@@ -1,10 +1,6 @@
 # `DomainIdentity`
 
-Any Rust type can be an identity. The derive is deliberately only a semantic marker. The EntityDefinition accessor gives it meaning. Keep representation and supporting traits fully under application control.
-
-- Struct or enum
-- No scalar declaration
-- UUIDs and custom types work
+Marks a struct or enum as a domain identity. `EntityDefinition::Identity` selects the type and `identity()` exposes its value. The application supplies its representation, constructors, and supporting traits.
 
 **Placement:** [Entity](/docs/project-structure/entity) — `identity.rs`.
 

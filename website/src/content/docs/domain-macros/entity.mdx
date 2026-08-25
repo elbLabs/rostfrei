@@ -1,10 +1,6 @@
 # `Entity`
 
-State plus an explicit identity. Entity metadata is derived locally. Owner, identity type, and identity access remain compiler-checked Rust. Implement the definition trait to make those relationships explicit.
-
-- Named-field struct
-- Identity accessor required
-- Custom fields stay opaque
+Adds metadata to a named-field struct. Implement `EntityDefinition` to select the owning aggregate, declare the identity type, and provide `identity()`. Custom field types remain opaque in the compiled model.
 
 **Placement:** [Entity](/docs/project-structure/entity) — `entity.rs`.
 
