@@ -1,6 +1,6 @@
 # Value-object policy
 
-A value-object policy evaluates a rule owned by one semantic value and returns a closed outcome. Keeping contract, outcome, and evaluation separate prevents policy vocabulary from becoming incidental implementation detail.
+A value-object policy evaluates the value without changing it. The example returns a `RegistrationNumberFormat` outcome: compact or segmented.
 
 - Put the contract in `policy.rs`.
 - Put the `PolicyOutcome` enum in `outcome.rs`.

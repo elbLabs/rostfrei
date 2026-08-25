@@ -1,10 +1,6 @@
 # `domain_model!`
 
-Keep model composition visible. The explicit inventory builds one deterministic catalog. Events and identities are discovered through their aggregate and entity relationships. Register the top-level domain types in one place.
-
-- One visible composition root
-- Returns validated JSON
-- No hidden behavior inventory
+Builds and validates a JSON description of the domain from an explicit inventory of contexts, aggregates, entities, value objects, services, and errors. Aggregate event sets and entity definitions supply event and identity metadata.
 
 **Placement:** [Domain root](/docs/project-structure/domain-root) — `model.rs`.
 

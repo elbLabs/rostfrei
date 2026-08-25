@@ -34,9 +34,9 @@ pub mod __rostfrei_macro_support {
   {
     name: "BoundedContext",
     family: "derive",
-    headline: "Name one domain language.",
+    headline: "Declare a bounded context.",
     description:
-      "A bounded context is a small marker with a stable ID and a human label.",
+      "A unit struct gives commands, aggregates, and services a shared context ID and display label.",
     points: [
       "Non-generic unit struct",
       "Stable context ID",
@@ -57,12 +57,12 @@ pub struct BikeRental;`,
   {
     name: "Aggregate",
     family: "derive",
-    headline: "Keep aggregate metadata small.",
+    headline: "Connect context, state, and events.",
     description:
       "The derive names the aggregate. An ordinary definition trait keeps context, root, and event relationships visible.",
     points: [
       "ID and label only",
-      "Relationships stay authored",
+      "Explicit AggregateDefinition",
       "Runtime bridge generated",
     ],
     file: "src/domain/bike_rental/rental_fleet/aggregate.rs",
@@ -89,9 +89,9 @@ impl rostfrei_core::Aggregate for RentalFleetAggregate {
   {
     name: "AggregateEvents",
     family: "derive",
-    headline: "One closed set owns the stream.",
+    headline: "Declare the aggregate's event set.",
     description:
-      "The event enum is the single authority for membership, serialization, replay, and Apply dispatch.",
+      "Each tuple variant selects an event type that the aggregate can record and replay.",
     points: [
       "One tuple variant per event",
       "JSON codec and replay",
@@ -158,9 +158,9 @@ impl EntityDefinition for Bicycle {
   {
     name: "DomainIdentity",
     family: "derive",
-    headline: "Any Rust type can be an identity.",
+    headline: "Mark a domain identity type.",
     description:
-      "The derive is deliberately only a semantic marker. The EntityDefinition accessor gives it meaning.",
+      "Mark a struct or enum, then expose its value through EntityDefinition::identity().",
     points: [
       "Struct or enum",
       "No scalar declaration",
@@ -177,9 +177,9 @@ pub struct BicycleId(String);`,
   {
     name: "ValueObject",
     family: "derive",
-    headline: "Tag only genuinely semantic values.",
+    headline: "Name a domain value.",
     description:
-      "A Value Object keeps a global semantic ID and label without claiming a field shape or transport schema.",
+      "Adds a semantic ID and label to a struct or enum. Representation and behavior remain application-defined.",
     points: [
       "Struct or enum",
       "ID and label only",
@@ -209,45 +209,52 @@ pub enum BicycleCondition {
     points: [
       "Non-generic unit struct",
       "Context relationship is explicit",
-      "Focused Actions and Policies stay ordinary traits",
+      "Actions and policies are ordinary traits",
     ],
-    file: "src/domain/<context>/<service>/service.rs",
+    file: "src/domain/bike_rental/bicycle_transfer/service.rs",
     authored: `#[derive(DomainService)]
-#[domain(id = "fleet-planning", label = "Fleet planning")]
-pub struct FleetPlanning;
+#[domain(id = "bicycle-transfer", label = "Bicycle transfer")]
+pub struct BicycleTransfer;
 
-impl DomainServiceDefinition for FleetPlanning {
+impl DomainServiceDefinition for BicycleTransfer {
     type Context = BikeRental;
 }`,
-    generated: `impl DomainServiceType for FleetPlanning {
+    generated: `impl DomainServiceType for BicycleTransfer {
     const DESCRIPTOR: DomainServiceDescriptor =
         DomainServiceDescriptor {
             id: /* context-scoped service ID */,
-            label: "Fleet planning",
+            label: "Bicycle transfer",
         };
 }`,
   },
   {
     name: "Command",
     family: "derive",
-    headline: "One JSON path for commands.",
+    headline: "Define a bounded-context command.",
     description:
-      "Commands carry boundary payload metadata and an exact JSON codec. The handler supplies aggregate and rejection relationships.",
+      "The payload declares its context and carries every required aggregate ID. The derive generates metadata and a JSON codec.",
     points: [
       "Schema version 1 by default",
-      "Exact JSON shape",
-      "Owner-independent payload",
+      "Explicit bounded context",
+      "Handler loads participating aggregates",
     ],
     file: "src/domain/bike_rental/rental_fleet/rent_bicycle/command.rs",
     authored: `#[derive(Command, Clone, Debug)]
-#[domain(id = "rent-bicycle", label = "Rent bicycle")]
+#[domain(
+    id = "rent-bicycle",
+    label = "Rent bicycle",
+    context = BikeRental,
+    schema_version = 2
+)]
 pub struct RentBicycle {
+    pub fleet_id: FleetId,
     pub bicycle_id: BicycleId,
 }`,
     generated: `impl Command for RentBicycle {
+    type Context = BikeRental;
     const LOCAL_ID: &str = "rent-bicycle";
     const LABEL: &str = "Rent bicycle";
-    const SCHEMA_VERSION: u32 = 1;
+    const SCHEMA_VERSION: u32 = 2;
     const FIELDS: &[FieldDescriptor] = /* … */;
 }
 
@@ -259,9 +266,9 @@ impl JsonCommandPayload for RentBicycle {
   {
     name: "DomainEvent",
     family: "derive",
-    headline: "Events describe facts, not owners.",
+    headline: "Describe a recorded domain fact.",
     description:
-      "An event owns intrinsic wire metadata. AggregateEvents supplies its aggregate membership and runtime codec.",
+      "Declares event metadata. The aggregate's event set supplies membership, JSON encoding, and replay dispatch.",
     points: [
       "Schema version 1 by default",
       "Serializable Rust payload",
@@ -284,9 +291,9 @@ pub struct BicycleRented {
   {
     name: "DomainError",
     family: "derive",
-    headline: "Make business rejection stable.",
+    headline: "Define a business rejection.",
     description:
-      "A Domain Error owns its public code and message and always gets the conventional JSON rejection encoding.",
+      "Declares a rejection code, message, and structured details, with generated JSON encoding.",
     points: [
       "Global semantic ID",
       "Stable code and message",
@@ -350,9 +357,9 @@ pub enum RentalEligibilityOutcome {
   {
     name: "EntityLifecycle",
     family: "derive",
-    headline: "Make stored state executable.",
+    headline: "Declare lifecycle states.",
     description:
-      "The entity's actual state enum supplies stable metadata, an explicit initial state, and pure transition evaluation.",
+      "The entity's state enum supplies metadata and an initial state for typed transition evaluation.",
     points: [
       "Fieldless enum",
       "Explicit initial state",
@@ -428,9 +435,9 @@ pub enum BicycleRentalTransition {
     description:
       "The macro preserves the trait and adds only owner-independent metadata. The checker links its implementation through nesting.",
     points: [
-      "No generated second trait",
-      "No prescribed signature",
-      "Direct method calls remain",
+      "Preserves the authored trait",
+      "Application-defined signatures",
+      "Checked implementation owner",
     ],
     file: "src/domain/bike_rental/rental_fleet/rent_bicycle/action.rs",
     authored: `#[domain_action(id = "rent-bicycle", label = "Rent bicycle")]
@@ -460,7 +467,7 @@ pub trait RentBicycleAction {
     points: [
       "Root is the receiver",
       "Inputs and outputs are ordinary Rust",
-      "No model group",
+      "Separate from HTTP query registration",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle_availability/query.rs",
     authored: `#[domain_query(
@@ -487,13 +494,13 @@ pub trait BicycleAvailabilityQuery {
   {
     name: "domain_policy",
     family: "behavior",
-    headline: "Make policy explicit and reusable.",
+    headline: "Evaluate domain facts without mutation.",
     description:
-      "A policy is a singular trait with arbitrary Rust inputs and a closed outcome vocabulary when the domain needs one.",
+      "A policy returns a business outcome from supplied facts. The application is responsible for keeping evaluation pure.",
     points: [
-      "Aggregate or entity implementation",
-      "No owner metadata",
-      "No projection group",
+      "Aggregate, entity, value object, or service",
+      "Application-defined inputs and outputs",
+      "Optional PolicyOutcome enum",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/policy.rs",
     authored: `#[domain_policy(
@@ -516,7 +523,7 @@ pub trait RentalEligibilityPolicy {
     family: "behavior",
     headline: "Separate a rule from its evaluation.",
     description:
-      "The contract names one invariant. evaluate.rs supplies its ordinary Rust implementation for the enclosing aggregate or entity.",
+      "The trait describes a rule for domain state. evaluate.rs implements it for the enclosing aggregate, entity, or value object.",
     points: [
       "Global semantic ID",
       "Arbitrary validation signature",
@@ -545,7 +552,7 @@ pub trait FleetConsistency {
   {
     name: "domain_*_test",
     family: "test",
-    headline: "Attach evidence to its subject.",
+    headline: "Link a test to its domain subject.",
     description:
       "Action, policy, invariant, and lifecycle tests remain normal Rust tests with discoverable subject metadata.",
     points: [
@@ -582,16 +589,16 @@ const __DOMAIN_TEST_SUBJECT: DomainTestSubject =
     points: [
       "One visible composition root",
       "Returns validated JSON",
-      "No hidden behavior inventory",
+      "Events and identities follow type relationships",
     ],
     file: "src/domain/model.rs",
     authored: `domain_model! {
     contexts: [BikeRental],
     aggregates: [RentalFleetAggregate],
     entities: [RentalFleet, Bicycle],
-    value_objects: [BicycleCondition, RegistrationNumber],
-    services: [],
-    errors: [BicycleUnavailable, BicycleNotRented, BicycleAlreadyInFleet, BicycleCannotBeRetired],
+    value_objects: [BicycleCondition, RegistrationNumber, BicycleTransferRejectionReason],
+    services: [BicycleTransfer],
+    errors: [BicycleUnavailable, BicycleNotRented, BicycleAlreadyInFleet, BicycleCannotBeRetired, BicycleTransferRejected],
 }`,
     generated: `try_build(|builder| {
     builder.add_bounded_context(BikeRental::DESCRIPTOR)?;
@@ -600,10 +607,13 @@ const __DOMAIN_TEST_SUBJECT: DomainTestSubject =
     builder.add_entity_type::<Bicycle>()?;
     builder.add_value_object_type::<BicycleCondition>()?;
     builder.add_value_object_type::<RegistrationNumber>()?;
+    builder.add_value_object_type::<BicycleTransferRejectionReason>()?;
+    builder.add_domain_service(BicycleTransfer::DESCRIPTOR)?;
     builder.add_domain_error(BicycleUnavailable::DESCRIPTOR)?;
     builder.add_domain_error(BicycleNotRented::DESCRIPTOR)?;
     builder.add_domain_error(BicycleAlreadyInFleet::DESCRIPTOR)?;
     builder.add_domain_error(BicycleCannotBeRetired::DESCRIPTOR)?;
+    builder.add_domain_error(BicycleTransferRejected::DESCRIPTOR)?;
     Ok(())
 })`,
   },

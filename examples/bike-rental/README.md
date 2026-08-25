@@ -1,130 +1,13 @@
-# Bike rental: from business rules to message flows
+# Bike-rental example
 
-This runnable example shows Rostfrei's domain model, event-sourcing runtime,
-NATS messaging, and Tracer working together. Follow a rental from `RentBicycle`
-through the private `BicycleRented` history to the public
-`BicycleRentalStarted` integration event, or explore a business rejection when
-the bicycle cannot be rented.
-
-**First time here?** Start with the
+This application models a rental fleet and runs it through NATS-backed command
+handlers, event storage, and Tracer. Start with the
 [getting-started guide](https://elblabs.github.io/rostfrei/docs/getting-started)
-to inspect the model, run the application, and explore it in Tracer Studio.
+for a walkthrough. Run the commands below from the repository root. Requirements:
+the pinned Rust toolchain and NATS Server 2.12.1 or newer (the supplied Docker
+Compose configuration provides NATS).
 
-## What the domain demonstrates
-
-- `RentalFleetAggregate` owns the fleet and its bicycles;
-- `RentBicycle`, `ReturnBicycle`, `AddBicycle`, and `TransferBicycle` are self-contained Bike Rental commands;
-- `RetireBicycleAction` demonstrates one logical transition from either available or rented;
-- `RentalEligibilityPolicy` composes bicycle condition policy with the rental lifecycle;
-- bicycle-added, rented, returned, retired, and transferred events describe successful domain transitions;
-- unavailable, not-rented, and already-in-fleet errors describe command rejections;
-- `FleetConsistency` independently demonstrates an aggregate invariant over bicycle identities;
-- `RegistrationNumber` is an isolated demonstration of Value Object-local actions, invariants,
-  and policies; and
-- `BicycleAvailabilityQuery` exposes a read-only availability query.
-
-For a visual explanation of this example's NATS subjects, command flow, streams,
-and Test isolation, read
-[Subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
-on the docs website, or open the [standalone HTML guide](../../docs/subjects.html)
-in a browser.
-
-## Bounded-context command handlers
-
-Each command payload identifies every fleet it needs and declares `context = BikeRental`.
-Application handler structs use `CommandExecution` to load their participants. Every successful
-load is tracked automatically: aggregates with events become writers and unchanged aggregates
-become read guards when the accepted command writes. For example, `TransferBicycle` contains
-`from_fleet_id`, `bicycle_id`, and `to_fleet_id`:
-
-```rust
-#[async_trait]
-impl CommandHandler<TransferBicycle> for TransferBicycleHandler {
-    type Rejection = BicycleTransferRejected;
-
-    async fn handle(
-        &self,
-        command: &TransferBicycle,
-        execution: &mut CommandExecution<'_>,
-    ) -> CommandHandlingResult<Self::Rejection> {
-        let mut source = execution
-            .load::<RentalFleetAggregate>(command.from_fleet_id.as_str())
-            .await?;
-        if let Err(rejection) = BicycleTransfer::validate_route(source.aggregate(), command) {
-            return Ok(CommandDecision::Rejected(rejection));
-        }
-        let mut destination = execution
-            .load::<RentalFleetAggregate>(command.to_fleet_id.as_str())
-            .await?;
-
-        match BicycleTransfer::transfer(
-            source.aggregate_mut(),
-            destination.aggregate_mut(),
-            command,
-        ) {
-            Ok(()) => Ok(CommandDecision::Accepted),
-            Err(rejection) => Ok(CommandDecision::Rejected(rejection)),
-        }
-    }
-}
-```
-
-`BicycleTransfer` remains responsible for the domain behavior: it validates both aggregates before
-changing either one and raises `BicycleTransferredOut` on the source and `BicycleTransferredIn` on
-the destination. The application handler itself raises no events. `CommandExecutor` commits both
-automatically tracked participants in one atomic event-store transaction with both expected stream
-versions, and retries the complete command attempt after a conflict.
-
-All four handlers are registered through the same bounded-context `CommandProcessor`, NATS worker,
-and Tracer paths. `tests/transfer.rs` covers in-memory execution and simulation, direct execution
-against `NatsEventStore`, and a separate end-to-end command transport path from `CommandBus` through
-the NATS worker and `CommandProcessor` to both aggregate streams.
-
-Run the ignored real-NATS transfer tests against NATS Server 2.12.1 or newer:
-
-```sh
-ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
-  cargo test --locked -p bike-rental --test transfer -- --ignored --test-threads=1
-```
-
-Print the compiled domain model:
-
-```sh
-cargo run --locked -p bike-rental --bin bike-rental-model
-```
-
-Run the example tests:
-
-```sh
-cargo test --locked -p bike-rental
-```
-
-## Quarantine walkthrough
-
-The [quarantine walkthrough](QUARANTINE.md) runs the complete retry → quarantine
-→ inspect → repair → republish → acknowledge flow against real NATS, plus
-immediate quarantine for invalid application payloads and malformed transport
-messages:
-
-```sh
-docker compose -f examples/bike-rental/compose.yaml up -d
-ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
-  cargo run --locked -p bike-rental --bin bike-rental-quarantine-demo
-```
-
-It prints and checks the stored quarantine records, uses a fresh isolated
-namespace each run, and cleans up afterward. Add `-- --keep-streams` to inspect
-the records afterward with the NATS CLI. It can run independently of Tracer.
-
-## NATS-backed Tracer
-
-The runnable example uses the shared `CommandBus`, `IntegrationEventBus`, NATS
-adapters, durable command and domain-event consumers, immutable command
-responses, and `NatsEventStore` path intended for deployed systems. After
-`BicycleRented` commits, the domain-event consumer maps it to the public
-`BicycleRentalStarted` integration event; a separate durable consumer handles
-that event. NATS Server 2.12.1 or newer is required for atomic event batches.
-Start the supplied disposable NATS server and local Tracer:
+## Run locally
 
 ```sh
 docker compose -f examples/bike-rental/compose.yaml up -d
@@ -138,109 +21,196 @@ ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
   cargo run --locked -p bike-rental
 ```
 
-It binds to `127.0.0.1:1309` by default. Set `ROSTFREI_API_ADDR` to use another
-local address. The control capability protects discovery, simulation, isolated
-test execution, reset, and their traces. The separate dispatch capability is
-required for dispatch execution and its traces; startup rejects equal tokens.
-The canonical application identity defaults to `bike-rental`. Set
-`ROSTFREI_APPLICATION` to override that one base token when isolating multiple
-instances; Rostfrei never appends a deployment label to it.
+Tracer listens at `http://127.0.0.1:1309`. Startup provisions local resources,
+verifies the NATS topology, and seeds `city-fleet` with serviceable `bike-42` and
+maintenance-required `bike-99`. Normal state persists across restarts; isolated
+test state is recreated at startup.
 
-The example accepts byte-count resource limits through the environment:
+Use [Tracer Studio](../../studio/README.md) to inspect and run behavioral tests.
 
-- `ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES` limits each messaging stream and
-  defaults to 64 MiB;
-- `ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES` limits each authoritative
-  domain-event stream and defaults to 10 GiB; and
-- `ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES` limits an event payload before
-  atomic-transaction headers and defaults to 512 KiB.
+## Domain model
 
-The local command above explicitly limits each Test and normal event store
-to 256 MiB so NATS does not need to reserve more than 20 GiB of JetStream
-capacity. Provisioning rejects non-positive or malformed values and detects
-limits that disagree with already-provisioned streams.
+| Concept | Example |
+| --- | --- |
+| Aggregate | `RentalFleetAggregate` owns a fleet and its bicycles. |
+| Commands | `RentBicycle`, `ReturnBicycle`, `AddBicycle`, and `TransferBicycle` belong to the `BikeRental` bounded context. |
+| Domain service | `BicycleTransfer` coordinates a transfer between two fleets. |
+| Policy | `RentalEligibilityPolicy` evaluates bicycle condition and whether the rental lifecycle permits renting. |
+| Lifecycle | A bicycle can be available, rented, or retired. |
+| Invariant | `FleetConsistency` demonstrates a rule over bicycle identities. |
+| Value object | `RegistrationNumber` demonstrates local actions, policies, and invariants. |
+| Query | `BicycleAvailabilityQuery` reads availability from fleet state. |
 
-Runtime startup verifies the operator-provisioned NATS topology and exits if a
-durable command, domain-event, or integration-event consumer stops.
+Command payloads carry all required fleet and bicycle IDs. `AddBicycle` takes
+`fleet_id`, `bicycle_id`, and `condition`; it rejects an ID already in the fleet.
+`RetireBicycleAction` demonstrates domain behavior but is not registered as a
+command.
+
+Print the compiled model without a broker:
+
+```sh
+cargo run --locked -p bike-rental --bin bike-rental-model
+```
+
+### Command execution
+
+Handlers load aggregates through `CommandExecution` and call domain actions.
+Loaded aggregates with new events become writing participants; unchanged loaded
+aggregates become read guards. `CommandExecutor` commits all participants and
+the acceptance receipt atomically at their expected stream versions and retries
+the complete command attempt after a conflict. Event-free acceptance still
+persists a receipt.
+
+The [transfer handler](src/domain/bike_rental/bicycle_transfer/handler.rs) loads
+the source and destination fleets. `BicycleTransfer` validates both before
+raising `BicycleTransferredOut` and `BicycleTransferredIn`. The two commits
+belong to one event transaction.
+
+After `BicycleRented` commits, a durable domain-event consumer maps it to the
+public `BicycleRentalStarted` integration event. `IntegrationEventBus` publishes
+it, and a separate durable consumer handles it.
+
+For the routing details, see [subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
+or the [offline HTML guide](../../docs/subjects.html).
 
 ### Stable command subscription identities
 
-Command consumer and durable names use the explicitly named
-`COMMAND_SUBSCRIPTION_GENERATION = 2`, independently of `Command::SCHEMA_VERSION`.
-This freezes the released example's existing names, such as
-`bike-rental--bike-rental--rent-bicycle--v2` (or
-`bike-rental--test--bike-rental--rent-bicycle--v2` in Test). The suffix is a retained
-identity, not a payload or handler upgrade version. Do not increment, reset, or
-remove it when deploying a new payload schema or handler. Existing domain-event
-and integration-event subscriptions retain their `--v1` names.
+Command consumer and durable names use `COMMAND_SUBSCRIPTION_GENERATION = 2`,
+independently of `Command::SCHEMA_VERSION`. This preserves deployed names such as
+`bike-rental--bike-rental--rent-bicycle--v2` and
+`bike-rental--test--bike-rental--rent-bicycle--v2`. The suffix identifies the
+retained subscription; it is not a payload or handler version. Domain-event and
+integration-event subscriptions retain their `--v1` names.
 
-When adopting this pattern in an application, pin each subscription to its exact
-deployed identity. If it already uses `--v1`, keep that name rather than copying
-the example's `2`. Renaming a command durable creates an overlapping WorkQueue
-subscription and provisioning fails even if no messages are queued. Normal
-startup does not delete or migrate conflicting durables or their messages.
+Pin an application's subscriptions to their exact deployed identities. Keep an
+existing `--v1` name rather than copying this example's `2`. Renaming a command
+durable creates an overlapping WorkQueue subscription, so provisioning fails
+even with no queued messages. Startup does not migrate conflicting durables.
 
-Deliberate subscription replacement is a separate operator action: quiesce the
-affected producers, drain or otherwise handle pending work, then stop the old
-workers and retire their durable before provisioning its replacement. A new
-command durable cannot replay commands already removed by acknowledgement.
+For deliberate replacement, quiesce producers, handle pending work, stop the old
+workers, and retire their durable before provisioning its replacement. A new
+durable cannot replay commands already removed by acknowledgement. Stable names
+preserve progress but do not make incompatible payloads readable: register
+compatibility handlers for supported schemas. This example registers only its
+current schemas. See [durable consumer versions](../../docs/adr/0014-application-scoped-nats-conventions.md#durable-consumer-versions).
 
-Stable identities preserve acknowledgement progress and pending work, but do not
-make incompatible payloads readable. Register compatibility handlers for schemas
-you support; unsupported command versions can receive a permanent rejection.
-The example registers only the current schemas and does not convert old payloads.
-See [ADR 0014](../../docs/adr/0014-application-scoped-nats-conventions.md#durable-consumer-versions).
+## Quarantine walkthrough
 
-### Traffic scopes
+The [quarantine walkthrough](QUARANTINE.md) checks retry exhaustion, inspection,
+repair, republication, and acknowledgement against real NATS, including invalid
+payloads and malformed transport messages:
 
-The example uses one canonical application with two disjoint traffic scopes:
+```sh
+ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
+  cargo run --locked -p bike-rental --bin bike-rental-quarantine-demo
+```
 
-- `bike-rental.test.>` is recreated and its default `demo-fleet` MessageSeries
-  fixture is applied on startup and by `POST /test-scenario/reset`; an explicit
-  registered fixture can be selected with
-  `POST /test-scenario/reset/{fixtureId}`;
-- normal `bike-rental` subjects such as `bike-rental.command.>` persist across
-  restarts and are never affected by test reset.
+Start the supplied NATS server first. The walkthrough uses an isolated namespace
+and cleans up afterward; add `-- --keep-streams` to retain it for inspection. It
+runs independently of Tracer.
 
-The canonical `demo-fleet` fixture builds `city-fleet` through two ordered
-`bicycle-added` events. Because this example intentionally carries no legacy
-event decoder, incompatible demo histories require a fresh
-`ROSTFREI_APPLICATION` namespace or deletion of the disposable NATS streams.
+## Tracer
 
-Each scope has separate command, command-response, integration-event,
-quarantine, and authoritative domain-event streams, plus separate durables.
-Test resources use the `BIKE_RENTAL__TEST` stream prefix. Test reset stops its
-workers, recreates that complete topology, replays the selected fixture's
-domain-event series through the shared MessageSeries engine, and restarts the
-workers without touching normal Dispatch resources.
-A failed reset leaves Test, Simulate, instances, and dynamic inputs unavailable
-until a later reset succeeds rather than exposing partially rebuilt state.
+| Action | State | Authorization |
+| --- | --- | --- |
+| Preview (`simulate`) | Reads test history; appends nothing. | Control token |
+| Test (`test`) | Publishes a command and appends to isolated test history. | Control token |
+| Production dispatch (`dispatch`) | Uses the same pipeline against normal application state. | Dispatch token |
 
-Both initially contain `city-fleet`, serviceable `bike-42`, and
-maintenance-required `bike-99`. The local example explicitly provisions these
-streams and exposes trace payloads for demonstration. Production deployments
-should provision infrastructure separately and use distinct NATS credentials or
-accounts for Test and Dispatch.
+Discovery, test reset, and control-mode traces use `ROSTFREI_API_TOKEN`.
+Production dispatch and its traces use `ROSTFREI_DISPATCH_TOKEN`. Startup rejects
+equal tokens. Payloads are exposed in this local example; Tracer redacts them by
+default.
 
-## Quarantine inspection
+### Observation and quarantine inspection
 
-Tracer advertises retained Test quarantine messages through
-`catalog.quarantine.test.listHref`. Set `ROSTFREI_INSPECTION_TOKEN` to enable a
-separate read-only production capability in the combined API. Production
-payloads and metadata are redacted by default.
+Tracer advertises Test quarantine through `catalog.quarantine.test.listHref`.
+Set `ROSTFREI_INSPECTION_TOKEN` to enable separate read-only production
+inspection; production payloads and metadata are redacted by default.
 
-For inspection independently of application workers, run
-`cargo run --locked -p bike-rental --bin bike-rental-quarantine` with
-`ROSTFREI_NATS_URL` and `ROSTFREI_INSPECTION_TOKEN` configured. It serves the same
-catalog/list/detail contract on `127.0.0.1:1310` without provisioning resources.
-See [quarantine inspection](../../docs/quarantine-inspection.md) for filters,
-permissions, payload policy, and reset semantics.
+For inspection without application workers, run
+`cargo run --locked -p bike-rental --bin bike-rental-quarantine` with the NATS URL
+and inspection token configured. It listens on `127.0.0.1:1310` and does not
+provision resources. See [quarantine inspection](../../docs/quarantine-inspection.md)
+for filters, permissions, and reset behavior.
 
-## Agent-first Tracer workflow
+Studio's Observe panel follows externally triggered domain and integration
+events. See [continuous observation](../../docs/continuous-observation.md) for
+backend wiring, scope isolation, and retention.
 
-The repository-local OpenCode skill at
-`.opencode/skills/rostfrei-tracer/SKILL.md` discovers Tracer capabilities from
-Catalog v1. Run OpenCode from the repository root so it loads that skill:
+### Test state and reset
+
+The application has two traffic scopes:
+
+- `bike-rental.test.>` uses separate command, response, integration-event,
+  quarantine, and domain-event streams with the `BIKE_RENTAL__TEST` prefix.
+- Normal subjects, such as `bike-rental.command.>`, retain state across test
+  resets and application restarts.
+
+`POST /test-scenario/reset` restores the `demo-fleet` fixture.
+`POST /test-scenario/reset/{fixtureId}` selects another registered fixture.
+Reset stops test workers, recreates test resources, replays the fixture's domain
+events, and restarts the workers. A failed reset leaves Test, Preview, test
+instances, and dynamic inputs unavailable until a reset succeeds.
+
+The `demo-fleet` fixture builds `city-fleet` from two ordered `bicycle-added`
+events. There is no legacy event decoder; incompatible demo histories require a
+fresh `ROSTFREI_APPLICATION` namespace or deletion of disposable NATS streams.
+
+For example, renting `bike-42` once succeeds. A second rental with a new
+idempotency key is rejected with `BICYCLE_UNAVAILABLE`. Preview then reports the
+same rejection without changing history. Reset restores the initial state.
+
+### Submission and observation
+
+Test and production dispatch require an `Idempotency-Key`. A `202 Accepted`
+response echoes the key and returns the resolved `operationId` and `Location`.
+Follow `Location`: the key is not the operation ID. An exact retry returns the
+retained operation; different content under the same key returns `409 Conflict`.
+Reset rotates the test scenario generation so old evidence cannot enter a new
+scenario. Retained operation resources do not expose the raw key.
+
+Transported commands wait for NATS publication acknowledgement and a durable
+accepted or rejected response. If publication was acknowledged but no valid
+response can be established, the operation is `indeterminate`; that does not
+prove the command failed. Do not automatically resubmit with a new key.
+
+Operation resources advertise the observation links:
+
+- `operationEventsHref`: operation-lifecycle SSE stream.
+- `correlationEventsHref`: correlated business-message SSE stream.
+- `messageSeriesHref`: finite capture of messages and command outcomes; accepts
+  bounded `within` and `settleFor` windows.
+
+Preview returns predicted events. Test and dispatch return observed evidence.
+An unsettled capture may be partial. Exact causal edges require a message's
+`causationId` to match another message's `messageId`; timestamps and array order
+do not establish causality. `grouped` fidelity means the capture cannot establish
+all causal relationships.
+
+Operations and traces are retained in count- and byte-bounded memory, not as a
+durable audit log. Operation payloads share a 64 MiB budget; correlation evidence
+has a separate 64 MiB budget divided evenly between control and dispatch modes.
+Payloads exceeding a record's share are omitted. Retention is pressure-based.
+
+### Behavioral tests
+
+Definitions in [`tests/tracer`](tests/tracer) select a fixture from
+[`fixtures`](fixtures) and describe an expected causal graph. Each run resets
+the complete isolated scenario, replays the fixture's domain events, and
+publishes the graph's root command through the Test pipeline. The server
+compares observed messages and outcomes with the definition. Expected JSON
+objects use subset matching; scalars and array lengths and order match exactly.
+
+Catalog v1 advertises the links for listing, reading, validating, and running
+tests. Executable behavioral-test documents use schema version 2. Catalog's
+version is independent of document schema versions; the checked-in v1 schemas
+are offline migration references.
+
+### Agent workflow
+
+The repository's Tracer skill discovers commands, tests, and inputs through
+Catalog links. Start OpenCode from the repository root with the local target:
 
 ```sh
 export ROSTFREI_TRACER_URL=http://127.0.0.1:1309
@@ -249,104 +219,48 @@ export ROSTFREI_DISPATCH_TOKEN=local-dispatch-token
 opencode
 ```
 
-`ROSTFREI_TRACER_URL` defaults to `http://127.0.0.1:1309`. The control token is
-used for discovery, Preview, isolated Test publication, behavioral tests, reset,
-and inspection of those operations. The separate dispatch token is used only
-for production dispatch and inspection of production operations. The skill is
-instructed not to print or persist either token.
-
-Ask in domain language rather than assembling HTTP routes. For example:
+Example requests:
 
 ```text
-List the available Rostfrei behavioral tests and summarize their intent.
-
-Read the rent-available-bicycle behavioral test and explain it as Given, When,
-Then without running it.
-
-Run the rent-available-bicycle behavioral test. Explain the result and render
-the observed causal message series as Mermaid.
-
+List the available behavioral tests and summarize their intent.
 Preview renting bike-42 from city-fleet and show the causal Mermaid flow.
-
-Publish a Test rental of bike-42 from city-fleet, then explain the result and
-show its causal Mermaid flow.
-
-Return the currently rented bicycle in isolated Test state and visualize what
-happened.
-
-Preview adding a bicycle to city-fleet and visualize the predicted messages.
+Run rent-available-bicycle and explain the observed result.
 ```
 
-Preview is read-only and never appends. Test publication uses the normal command
-pipeline but appends only to isolated Test state. Before a Test publication or a
-behavioral-test run, the agent presents the exact action and asks for the
-required confirmation; a behavioral-test run resets the complete isolated test
-scenario to its selected fixture before the subject command executes.
+The skill asks for confirmation before Test publication, reset, or a behavioral
+test run. Production dispatch requires separately confirmed production inputs
+and the dispatch token. Test-state discoveries are not production inputs.
 
-The skill starts from Catalog v1 and follows its advertised links for commands,
-schema versions, isolated test instances, dynamic test inputs, behavioral-test
-definitions, fixture MessageSeries, actions, reset, operations, and finite
-message series. Catalog v1 names the discovery representation; it does not make
-Tracer schema-v1 behavioral tests or message-series documents executable. Those
-v1 schema artifacts are offline migration references only. The skill does not
-embed bike-rental routes or silently select among multiple schema versions.
-Values discovered through test links are treated only as isolated Test data and
-are never assumed to exist in production.
+## Configuration
 
-For production, make the target and intent explicit:
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ROSTFREI_NATS_URL` | `nats://127.0.0.1:4222` | NATS connection. |
+| `ROSTFREI_API_ADDR` | `127.0.0.1:1309` | HTTP listen address. |
+| `ROSTFREI_APPLICATION` | `bike-rental` | Application namespace. |
+| `ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES` | 64 MiB | Limit per messaging stream. |
+| `ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES` | 10 GiB | Limit per domain-event stream. |
+| `ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES` | 512 KiB | Event payload limit before transaction headers. |
 
-```text
-Dispatch RentBicycle schema version 2 to the Bike Rental production context with
-payload fleet_id city-fleet and bicycle_id bike-42, using idempotency key
-prod-rental-2026-09-02-01. Show the exact request for confirmation before
-publishing, then explain the result and render its causal Mermaid flow.
-```
+Resource-limit variables accept positive byte counts. The local command above
+limits each event store to 256 MiB to reduce JetStream capacity requirements.
+Provisioning rejects malformed limits and mismatches with existing streams.
+The process exits if a durable command, domain-event, or integration-event
+consumer stops.
 
-The agent requires independently supplied production aggregate and payload
-values, uses only `ROSTFREI_DISPATCH_TOKEN`, warns that production and downstream
-integrations may change, and asks for explicit confirmation. It never
-automatically retries an ambiguous publication or an `indeterminate` operation.
+Deployed applications should provision infrastructure separately and use
+distinct NATS credentials or accounts for Test and production dispatch.
 
-Every operation snapshot distinguishes execution lifecycle from business-event
-evidence. `operationEventsHref` links to the Tracer lifecycle SSE stream, while
-`correlationEventsHref` links to the correlated business-message SSE stream.
-The `events` descriptor identifies the relevant evidence: Simulation reports
-`kind: predicted` and links to operation events; Test and Dispatch report
-`kind: observed` and link to correlation events. Consequently, `predictedEvents`
-is serialized only for accepted Simulation results and is omitted from
-transported results.
+## NATS integration checks
 
-After a command, the skill can follow the operation's `messageSeriesHref` and
-wait for terminal status plus a bounded idle settling window. Unlike the live
-SSE links, this produces a finite capture containing the canonical messages and
-command outcomes. Rejections, no-event decisions, or an unsettled timeout may
-omit some message categories or produce a partial series. Mermaid edges are
-drawn only from an explicit `causationId` to its matching `messageId`; array
-position and timestamps never imply causality. Preview or
-incomplete/conflicting identities are reported with grouped fidelity, while
-complete consistent transported identities are exact.
-
-Behavioral tests are canonical JSON documents in `tests/tracer`. They select a
-fixture from `fixtures/` and describe one expected causal graph. Fixtures are
-MessageSeries documents containing only the domain events replayed into isolated
-history. The root command in `expected.graphs[0]` is then published
-through the isolated Test NATS WorkQueue. The server constructs the observed
-command, durable response, domain-event, and integration-event series and
-performs the comparison. Expected JSON objects use subset semantics, while
-scalar values and array lengths/order must match exactly. The filesystem remains
-the source of truth, and the skill can list, read, validate, and run both
-persisted and inline JSON definitions through advertised Catalog links.
-
-Run the scope-isolation checks, all five behavioral definitions, integration
-command reactions, and multi-stream transfers with a disposable NATS broker
-from the repository root:
+Run the example's tests with a disposable broker:
 
 ```sh
 python3 scripts/test_nats.py -- cargo test --locked -p bike-rental -- --test-threads=1
 ```
 
-The broker tests are enabled during normal Cargo test runs. To use an explicitly
-configured disposable NATS Server 2.12.1 or newer instead:
+Broker tests are enabled during normal Cargo test runs. To supply a disposable
+NATS Server 2.12.1 or newer yourself:
 
 ```sh
 ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
@@ -354,65 +268,9 @@ ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
   ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES=268435456 \
   ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES=524288 \
   cargo test --locked -p bike-rental \
-  --test nats_runtime_integration --test transfer -- --test-threads=1
+  --test transfer --test nats_runtime_integration -- --test-threads=1
 ```
 
-The tests fail rather than skip when `ROSTFREI_NATS_URL` is missing,
-empty, unreachable, or points to an unsupported server version.
-
-The three Tracer actions have distinct semantics:
-
-- `simulate` loads the current test NATS history but never appends;
-- `test` publishes through the normal command pipeline and appends only to the
-  isolated test NATS history;
-- `dispatch` uses the identical pipeline against the canonical unsuffixed
-  application namespace.
-
-Both transported modes wait for command PubAck and a durable accepted or
-rejected response. Accepted rentals then flow through a durable post-commit
-domain-event handler, publish the correlated `bicycle-rental-started`
-integration event, and consume it through the normal integration-event durable.
-An `Idempotency-Key` is required for Test and Dispatch. The authenticated
-`202 Accepted` submission response echoes it as `idempotencyKey` alongside the
-resolved `operationId`, but retained operation resources do not store or return
-the raw key. Test and Dispatch derive a mode-namespaced operation identity from
-the key and command address, so clients must follow the response `Location`
-header rather than assume the key is the operation ID. Idempotency keys should
-not contain secrets.
-
-If an error occurs after PubAck but before a valid durable response is observed,
-the operation is `indeterminate` and preserves its command message identity
-instead of claiming that the business command failed.
-
-Running Test for `bike-42` twice accepts and appends the first command, then
-replays that new state and rejects the second with `BICYCLE_UNAVAILABLE`.
-Simulate subsequently observes the same rejection without changing history.
-Reset returns the test stream to the default `demo-fleet` MessageSeries fixture
-and does not touch Dispatch state.
-
-`ReturnBicycle` advertises currently rented bicycles as runtime input choices and
-makes the selected bicycle available again. `AddBicycle` carries the requested
-business identity and initial condition, rejects an identity already present in
-the fleet, and otherwise adds the bicycle as available. All three commands use
-their generated JSON payload contracts; Tracer has no command-specific wire
-codecs.
-
-Reusing an `Idempotency-Key` returns the retained operation only for the exact
-same request, echoes the same key and resolved operation identity in the new
-submission response, and returns `409 Conflict` for different content.
-Each Test reset rotates the Test scenario generation, so a key reused afterward
-cannot receive delayed correlation events from the previous scenario.
-
-The route uses the context-qualified aggregate identity
-`bike-rental/rental-fleet`. `RentBicycle`, its rejection, and aggregate events
-use generated JSON contracts rather than handwritten bike-rental codecs.
-
-Operation resources, traces, and correlation feeds remain count- and
-byte-bounded in memory even though domain events are durable in NATS. Operation
-payload retention has a 64 MiB aggregate budget. Raw correlation evidence has a
-separate 64 MiB total budget split evenly between control modes and production
-dispatch, so Preview or Test captures cannot consume dispatch evidence capacity.
-Payloads that cannot fit a record's share are omitted rather than retained
-without bound. Concurrent admission is bounded, and operation retention is
-pressure-based rather than durable or time-based. This server is therefore a
-local development example, not a production audit system.
+They cover cross-fleet transactions, command transport, scope isolation,
+integration-command reactions, and five behavioral definitions. They fail if the
+NATS URL is missing or unreachable, or the server version is unsupported.

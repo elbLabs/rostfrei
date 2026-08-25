@@ -1,11 +1,9 @@
 # `Command`
 
-One JSON path for commands. Commands carry boundary payload metadata and an exact JSON codec. The handler supplies aggregate and rejection relationships. Define only the input fields needed by the operation.
+Declares a bounded-context command and generates its JSON payload codec. Set `context` to the owning bounded context and include every required aggregate ID in the payload. The schema version defaults to 1; the rental example explicitly uses version 2.
 
-- Schema version 1 by default
-- Exact JSON shape
-- Owner-independent payload
+The registered handler loads the participating aggregates and declares the command's rejection type.
 
-**Placement:** [Aggregate action](/docs/project-structure/aggregate-action) — `command.rs`.
+**Placement:** `command.rs` beside its handler, in an [aggregate action](/docs/project-structure/aggregate-action) or [domain service](/docs/project-structure/domain-service) module.
 
 <MacroExample name="Command" />

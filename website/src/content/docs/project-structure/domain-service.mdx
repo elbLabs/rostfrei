@@ -1,27 +1,29 @@
 # Domain service
 
-A domain service owns stateless domain behavior that does not naturally belong to one Aggregate, Entity, or Value Object. Its definition explicitly connects the service marker to the enclosing bounded context.
+A domain service owns stateless behavior involving domain objects supplied by its caller. `DomainServiceDefinition` connects the service to its bounded context.
 
 - Put the service declaration and context definition together in `service.rs`.
-- Nest each focused Action or Domain Policy directory beside that stable anchor.
-- Use an Action to coordinate behavior over domain objects supplied by the caller.
-- Use a Domain Policy for a pure interpretation of supplied domain facts.
+- Put each action or policy in a child directory.
+- Use an action to coordinate changes to domain objects.
+- Use a policy to evaluate supplied facts without mutation.
 - Keep repositories, messaging, persistence, and transaction execution outside the domain service.
 
-The domain service expresses the domain operation. Application or runtime code supplies participating Aggregates and other domain objects, then owns loading and persisting them. The service itself remains stateless and infrastructure-free.
+`BicycleTransfer` validates and changes two fleets. Its application handler loads both fleets and the runtime commits their events atomically. The service's `transfer/execute.rs` implements `BicycleTransferAction` directly for `BicycleTransfer`.
 
-In the example, `rebalance_fleet` is an Action and `assess_demand` is a Domain Policy. Both implementations target `FleetPlanning` directly; neither is attached through the derive.
-
-Path: `src/domain/bike_rental/fleet_planning`
+Path: `src/domain/bike_rental/bicycle_transfer`
 
 <ProjectStructureExample name="domain-service">
 
 ```rust
-#[derive(DomainService)]
-#[domain(id = "fleet-planning", label = "Fleet planning")]
-pub struct FleetPlanning;
+use rostfrei::{DomainService, DomainServiceDefinition};
 
-impl DomainServiceDefinition for FleetPlanning {
+use crate::domain::BikeRental;
+
+#[derive(DomainService)]
+#[domain(id = "bicycle-transfer", label = "Bicycle transfer")]
+pub struct BicycleTransfer;
+
+impl DomainServiceDefinition for BicycleTransfer {
     type Context = BikeRental;
 }
 ```

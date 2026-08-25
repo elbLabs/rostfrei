@@ -1,10 +1,6 @@
 # `Aggregate`
 
-Keep aggregate metadata small. The derive names the aggregate. An ordinary definition trait keeps context, root, and event relationships visible. This separates stable metadata from relationships authored in Rust.
-
-- ID and label only
-- Relationships stay authored
-- Runtime bridge generated
+Adds an ID and label to an aggregate marker. Implement `AggregateDefinition` to select its bounded context, root entity, and event set. The derive connects those types to the event-sourcing runtime.
 
 **Placement:** [Aggregate](/docs/project-structure/aggregate) — `aggregate.rs`.
 
