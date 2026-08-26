@@ -1,0 +1,21 @@
+error[E0119]: conflicting implementations of trait `DomainEventType` for type `SharedEvent`
+  --> tests/ui/fail/event_multiple_aggregates.rs:44:10
+   |
+34 | #[derive(rostfrei::Aggregate)]
+   |          ------------------- first implementation here
+...
+44 | #[derive(rostfrei::Aggregate)]
+   |          ^^^^^^^^^^^^^^^^^^^ conflicting implementation for `SharedEvent`
+   |
+   = note: this error originates in the derive macro `rostfrei::Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0119]: conflicting implementations of trait `ActionOutputType<DomainServiceActionOutput<_>>` for type `SharedEvent`
+  --> tests/ui/fail/event_multiple_aggregates.rs:44:10
+   |
+34 | #[derive(rostfrei::Aggregate)]
+   |          ------------------- first implementation here
+...
+44 | #[derive(rostfrei::Aggregate)]
+   |          ^^^^^^^^^^^^^^^^^^^ conflicting implementation for `SharedEvent`
+   |
+   = note: this error originates in the derive macro `rostfrei::Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)

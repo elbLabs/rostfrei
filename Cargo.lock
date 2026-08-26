@@ -673,6 +673,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rostfrei"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "rostfrei-core",
+ "rostfrei-domain",
+ "rostfrei-domain-runtime",
+ "rostfrei-registry",
+ "serde",
+ "serde_json",
+ "tokio",
+ "trybuild",
+]
+
+[[package]]
 name = "rostfrei-core"
 version = "0.1.0"
 dependencies = [
