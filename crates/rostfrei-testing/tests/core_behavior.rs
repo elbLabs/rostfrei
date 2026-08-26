@@ -721,7 +721,8 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
 #[tokio::test]
 async fn executor_uses_derived_json_events_without_codec_configuration() {
     let stream = StreamId::new(
-        AggregateType::new("automatic-account").expect("valid aggregate type"),
+        AggregateType::new(AutomaticAccountDefinition::aggregate_type())
+            .expect("valid compiled aggregate type"),
         AggregateId::new("automatic-account-1").expect("valid aggregate id"),
     );
     let executor = Executor::new(InMemoryEventStore::new());

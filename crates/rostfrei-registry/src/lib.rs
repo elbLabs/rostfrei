@@ -14,7 +14,7 @@ pub trait CommandDefinition: Sized + Send + Sync + 'static {
         CommandDescriptor {
             command_name: Self::COMMAND_NAME,
             schema_version: Self::SCHEMA_VERSION,
-            aggregate_type: <Self::Aggregate as Aggregate>::AGGREGATE_TYPE,
+            aggregate_type: <Self::Aggregate as Aggregate>::aggregate_type().into_owned(),
             rust_command_type: type_name::<Self>(),
             rust_aggregate_type: type_name::<Self::Aggregate>(),
             domain_command: None,
@@ -32,7 +32,7 @@ pub struct CommandIdentity {
 pub struct CommandDescriptor {
     pub command_name: &'static str,
     pub schema_version: u32,
-    pub aggregate_type: &'static str,
+    pub aggregate_type: String,
     pub rust_command_type: &'static str,
     pub rust_aggregate_type: &'static str,
     pub domain_command: Option<domain::DomainCommandDescriptor>,
@@ -118,7 +118,7 @@ struct RegisteredCommand {
 pub struct DomainRegistry {
     modules: BTreeMap<&'static str, ModuleDescriptor>,
     commands: BTreeMap<&'static str, BTreeMap<u32, RegisteredCommand>>,
-    aggregates: BTreeSet<&'static str>,
+    aggregates: BTreeSet<String>,
 }
 
 impl DomainRegistry {
@@ -131,7 +131,7 @@ impl DomainRegistry {
         self.validate(&descriptor)?;
 
         for command in &descriptor.commands {
-            self.aggregates.insert(command.aggregate_type);
+            self.aggregates.insert(command.aggregate_type.clone());
             self.commands
                 .entry(command.command_name)
                 .or_default()
@@ -177,8 +177,8 @@ impl DomainRegistry {
             .filter(move |command| command.aggregate_type == aggregate_type)
     }
 
-    pub fn aggregates(&self) -> impl ExactSizeIterator<Item = &'static str> + '_ {
-        self.aggregates.iter().copied()
+    pub fn aggregates(&self) -> impl ExactSizeIterator<Item = &str> + '_ {
+        self.aggregates.iter().map(String::as_str)
     }
 
     fn validate(&self, module: &ModuleDescriptor) -> Result<(), RegistrationError> {

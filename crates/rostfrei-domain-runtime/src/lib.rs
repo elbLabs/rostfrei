@@ -92,7 +92,7 @@ macro_rules! domain_module {
                     $crate::__private::CommandDescriptor {
                         command_name: Self::COMMAND_NAME,
                         schema_version: Self::SCHEMA_VERSION,
-                        aggregate_type: <Self::Aggregate as $crate::__private::Aggregate>::AGGREGATE_TYPE,
+                        aggregate_type: <Self::Aggregate as $crate::__private::Aggregate>::aggregate_type().into_owned(),
                         rust_command_type: $crate::__private::type_name::<Self>(),
                         rust_aggregate_type: $crate::__private::type_name::<Self::Aggregate>(),
                         domain_command: ::core::option::Option::Some(

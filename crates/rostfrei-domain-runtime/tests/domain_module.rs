@@ -89,11 +89,15 @@ fn registers_runtime_metadata_from_the_domain_command() {
 
     let descriptor = registry.command("catalog.open-catalog", 1).unwrap();
 
-    assert_eq!(descriptor.aggregate_type, "catalog");
+    assert_eq!(descriptor.aggregate_type, "catalog/catalog");
     assert_eq!(descriptor.domain_command(), Some(&OpenCatalog::DESCRIPTOR));
     assert_eq!(
         <OpenCatalog as CommandDefinition>::Aggregate::AGGREGATE_TYPE,
         "catalog"
+    );
+    assert_eq!(
+        <OpenCatalog as CommandDefinition>::Aggregate::aggregate_type().as_ref(),
+        "catalog/catalog"
     );
     assert_eq!(CatalogAggregate::DESCRIPTOR.id.local, "catalog");
 }
