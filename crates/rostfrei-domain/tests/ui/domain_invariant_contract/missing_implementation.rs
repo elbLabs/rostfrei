@@ -1,6 +1,6 @@
 #![allow(unused, non_snake_case)]
 
-use rostfrei_domain::{
+use domain::{
     BoundedContext, InvariantOwnerType, InvariantViolation, ValueObject, domain_invariants,
 };
 

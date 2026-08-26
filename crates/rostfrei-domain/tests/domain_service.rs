@@ -1,4 +1,4 @@
-use rostfrei_domain::{
+use domain::{
     BoundedContext, BoundedContextId, DomainService, DomainServiceDescriptor, DomainServiceId,
     DomainServiceType,
 };

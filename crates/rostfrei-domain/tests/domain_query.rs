@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::{
+use domain::{
     Aggregate, BoundedContext, DomainIdentity, DomainIdentityType, Entity, QueryGroupType,
     QueryInputDescriptor, QueryOutputDescriptor, ScalarType, ValueObject, ValueObjectType,
     domain_model, domain_queries,
@@ -141,7 +141,7 @@ struct DuplicateQueries;
 
 impl QueryGroupType for DuplicateQueries {
     type Owner = CatalogAggregate;
-    const QUERIES: &'static [rostfrei_domain::QueryDescriptor] = CatalogQueries::QUERIES;
+    const QUERIES: &'static [domain::QueryDescriptor] = CatalogQueries::QUERIES;
 }
 
 #[test]

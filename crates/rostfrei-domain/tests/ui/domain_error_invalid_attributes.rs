@@ -1,4 +1,4 @@
-use rostfrei_domain::DomainError;
+use domain::DomainError;
 
 struct Owner;
 

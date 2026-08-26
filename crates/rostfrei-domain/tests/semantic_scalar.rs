@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::{
+use domain::{
     Aggregate, BoundedContext, DomainCommand, DomainCommandType, DomainError, DomainErrorType,
     DomainEvent, DomainEventType, DomainIdentity, DomainIdentityDescriptor, DomainIdentityId,
     DomainIdentityType, Entity, EntityType, FieldKind, FieldWrapper, ScalarType, SemanticScalar,
@@ -122,9 +122,9 @@ impl DomainIdentityType for ContradictoryId {
 
     const DESCRIPTOR: DomainIdentityDescriptor = DomainIdentityDescriptor {
         id: DomainIdentityId {
-            owner: rostfrei_domain::EntityId {
-                aggregate: rostfrei_domain::AggregateId {
-                    context: rostfrei_domain::BoundedContextId("semantic-scalars"),
+            owner: domain::EntityId {
+                aggregate: domain::AggregateId {
+                    context: domain::BoundedContextId("semantic-scalars"),
                     local: "contradictory-documents",
                 },
                 local: "contradictory-root",
@@ -156,7 +156,7 @@ fn describes_semantic_fields_and_nested_wrappers() {
 
     let semantic_kinds = [
         match ExternalReference::DESCRIPTOR.shape {
-            rostfrei_domain::ValueObjectShapeDescriptor::Struct { fields } => fields[0].value.kind,
+            domain::ValueObjectShapeDescriptor::Struct { fields } => fields[0].value.kind,
             _ => panic!(),
         },
         CorrelateDocument::DESCRIPTOR.fields[0].value.kind,

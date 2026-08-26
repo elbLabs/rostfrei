@@ -11,9 +11,9 @@ pub fn assemble(item: ItemTrait, actions: &[Action]) -> syn::Result<TokenStream>
         item,
         actions,
         Configuration {
-            owner_supertrait: syn::parse_quote!(::rostfrei_domain::AggregateActionOwnerType),
+            owner_supertrait: syn::parse_quote!(::domain::AggregateActionOwnerType),
             output_policy: OutputPolicy::Declared(syn::parse_quote!(
-                ::rostfrei_domain::__private::AggregateActionOutput
+                ::domain::__private::AggregateActionOutput
             )),
             owner_predicate: Some(add_root_predicate),
         },
@@ -22,9 +22,8 @@ pub fn assemble(item: ItemTrait, actions: &[Action]) -> syn::Result<TokenStream>
 
 fn add_root_predicate(item: &mut ItemTrait, action: &Action) -> syn::Result<()> {
     let root = action.signature.as_ref().unwrap().root.as_ref().unwrap();
-    let predicate: WherePredicate = syn::parse2(
-        quote_spanned! {root.span()=> Self: ::rostfrei_domain::AggregateType<Root = #root>},
-    )?;
+    let predicate: WherePredicate =
+        syn::parse2(quote_spanned! {root.span()=> Self: ::domain::AggregateType<Root = #root>})?;
     item.generics.make_where_clause().predicates.push(predicate);
     Ok(())
 }

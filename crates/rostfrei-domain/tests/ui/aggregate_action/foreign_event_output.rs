@@ -1,4 +1,4 @@
-use rostfrei_domain::{
+use domain::{
     Aggregate, BoundedContext, DomainEvent, DomainIdentity, Entity, domain_actions,
 };
 

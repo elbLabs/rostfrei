@@ -1,4 +1,4 @@
-use rostfrei_domain::ValueObject;
+use domain::ValueObject;
 
 struct Context;
 trait Actions {}

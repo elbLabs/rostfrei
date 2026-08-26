@@ -1,5 +1,5 @@
+use domain::AggregateType;
 use rostfrei_core::Aggregate;
-use rostfrei_domain::AggregateType;
 
 /// Connects a descriptive domain aggregate to its executable Rostfrei state.
 pub trait AggregateRuntime: AggregateType {
@@ -8,8 +8,8 @@ pub trait AggregateRuntime: AggregateType {
 
 #[doc(hidden)]
 pub mod __private {
+    pub use domain::DomainCommandType;
     pub use rostfrei_core::Aggregate;
-    pub use rostfrei_domain::DomainCommandType;
     pub use rostfrei_registry::{
         CommandDefinition, CommandDescriptor, DomainModule, ModuleDescriptor,
     };

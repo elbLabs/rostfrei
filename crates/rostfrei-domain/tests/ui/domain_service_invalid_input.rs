@@ -1,4 +1,4 @@
-use rostfrei_domain::DomainService;
+use domain::DomainService;
 
 #[derive(DomainService)]
 #[domain(id = "named", label = "Named", context = Context)]

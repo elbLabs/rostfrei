@@ -18,13 +18,13 @@ pub fn assemble(
         },
         |provider| {
             (
-                quote!(<#provider as ::rostfrei_domain::SemanticScalar>::DESCRIPTOR.representation),
-                quote!(Some(<#provider as ::rostfrei_domain::SemanticScalar>::DESCRIPTOR)),
+                quote!(<#provider as ::domain::SemanticScalar>::DESCRIPTOR.representation),
+                quote!(Some(<#provider as ::domain::SemanticScalar>::DESCRIPTOR)),
                 quote! {
                     const _: () = {
                         fn assert_semantic_scalar<P, V>()
                         where
-                            P: ::rostfrei_domain::SemanticScalar<Value = V>,
+                            P: ::domain::SemanticScalar<Value = V>,
                             V: 'static,
                         {}
                         let _ = assert_semantic_scalar::<#provider, #value>;
@@ -34,18 +34,18 @@ pub fn assemble(
         },
     );
     quote! {
-        impl ::rostfrei_domain::DomainIdentityType for #name {
+        impl ::domain::DomainIdentityType for #name {
             type Owner = #owner;
 
-            const SEMANTIC_SCALAR: ::core::option::Option<::rostfrei_domain::SemanticScalarDescriptor> =
+            const SEMANTIC_SCALAR: ::core::option::Option<::domain::SemanticScalarDescriptor> =
                 #semantic_scalar;
 
-            const DESCRIPTOR: ::rostfrei_domain::DomainIdentityDescriptor =
-                ::rostfrei_domain::DomainIdentityDescriptor {
-                    id: ::rostfrei_domain::DomainIdentityId {
-                        owner: ::rostfrei_domain::EntityId {
-                            aggregate: <<#owner as ::rostfrei_domain::EntityType>::Owner as ::rostfrei_domain::AggregateType>::DESCRIPTOR.id,
-                            local: <#owner as ::rostfrei_domain::EntityType>::LOCAL_ID,
+            const DESCRIPTOR: ::domain::DomainIdentityDescriptor =
+                ::domain::DomainIdentityDescriptor {
+                    id: ::domain::DomainIdentityId {
+                        owner: ::domain::EntityId {
+                            aggregate: <<#owner as ::domain::EntityType>::Owner as ::domain::AggregateType>::DESCRIPTOR.id,
+                            local: <#owner as ::domain::EntityType>::LOCAL_ID,
                         },
                     },
                     scalar: #scalar,
@@ -54,17 +54,17 @@ pub fn assemble(
 
         #assertion
 
-        impl ::rostfrei_domain::QueryInputType<<#owner as ::rostfrei_domain::EntityType>::Owner> for #name {
-            const DESCRIPTOR: ::rostfrei_domain::QueryInputDescriptor =
-                ::rostfrei_domain::QueryInputDescriptor::DomainIdentity(
-                    <Self as ::rostfrei_domain::DomainIdentityType>::DESCRIPTOR.id,
+        impl ::domain::QueryInputType<<#owner as ::domain::EntityType>::Owner> for #name {
+            const DESCRIPTOR: ::domain::QueryInputDescriptor =
+                ::domain::QueryInputDescriptor::DomainIdentity(
+                    <Self as ::domain::DomainIdentityType>::DESCRIPTOR.id,
                 );
         }
 
-        impl ::rostfrei_domain::QueryOutputType<<#owner as ::rostfrei_domain::EntityType>::Owner> for #name {
-            const DESCRIPTOR: ::rostfrei_domain::QueryOutputDescriptor =
-                ::rostfrei_domain::QueryOutputDescriptor::DomainIdentity(
-                    <Self as ::rostfrei_domain::DomainIdentityType>::DESCRIPTOR.id,
+        impl ::domain::QueryOutputType<<#owner as ::domain::EntityType>::Owner> for #name {
+            const DESCRIPTOR: ::domain::QueryOutputDescriptor =
+                ::domain::QueryOutputDescriptor::DomainIdentity(
+                    <Self as ::domain::DomainIdentityType>::DESCRIPTOR.id,
                 );
         }
     }

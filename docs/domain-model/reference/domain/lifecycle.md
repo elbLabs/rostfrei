@@ -40,7 +40,7 @@ lifecycle requires a stable `id`, human-readable `label`, Entity `owner`, and
 `initial` state. Every state requires its own explicit stable `id` and `label`.
 
 ```rust
-use rostfrei_domain::{Entity, EntityLifecycle, domain_actions};
+use domain::{Entity, EntityLifecycle, domain_actions};
 
 #[domain_actions(entity)]
 trait TodoActions {

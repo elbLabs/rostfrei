@@ -9,8 +9,8 @@ The workspace contains nine crates:
 
 - `rostfrei-core`: aggregate execution, event-store contracts, and the
   in-memory reference store.
-- `rostfrei-domain`: the compiled domain model, descriptors, ownership rules,
-  model projection, and domain-test metadata.
+- `rostfrei-domain` (imported as `domain`): the compiled domain model,
+  descriptors, ownership rules, model projection, and domain-test metadata.
 - `rostfrei-domain-macros`: derives and attributes for domain types and
   behavior contracts.
 - `rostfrei-domain-runtime`: bindings from compiled domain commands to

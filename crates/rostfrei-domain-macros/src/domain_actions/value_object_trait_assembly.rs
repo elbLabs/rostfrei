@@ -9,9 +9,9 @@ pub fn assemble(item: ItemTrait, actions: &[Action]) -> syn::Result<TokenStream>
         item,
         actions,
         Configuration {
-            owner_supertrait: syn::parse_quote!(::rostfrei_domain::ValueObjectActionOwnerType),
+            owner_supertrait: syn::parse_quote!(::domain::ValueObjectActionOwnerType),
             output_policy: OutputPolicy::OwnerSelf(syn::parse_quote!(
-                ::rostfrei_domain::__private::ValueObjectActionOutput
+                ::domain::__private::ValueObjectActionOutput
             )),
             owner_predicate: None,
         },

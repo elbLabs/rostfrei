@@ -1,4 +1,4 @@
-use rostfrei_domain::DomainError;
+use domain::DomainError;
 
 #[derive(DomainError)]
 #[domain(id = "denied", label = "Denied", owner = Owner, code = "DENIED", message = "Denied.")]

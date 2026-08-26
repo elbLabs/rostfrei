@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2024"
 rust-version.workspace = true
 
+[lib]
+name = "domain"
+
 [dependencies]
 rostfrei-domain-macros = { path = "../rostfrei-domain-macros" }
 serde_json.workspace = true

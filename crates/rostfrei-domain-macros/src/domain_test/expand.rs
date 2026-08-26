@@ -47,13 +47,13 @@ pub fn expand(
 
         #(#companion_attributes)*
         #[allow(non_upper_case_globals)]
-        const #subject_name: ::rostfrei_domain::DomainTestSubject = #subject;
+        const #subject_name: ::domain::DomainTestSubject = #subject;
 
         #(#companion_attributes)*
         #[test]
         #[ignore]
         fn #companion_name() {
-            let descriptor = ::rostfrei_domain::DomainTestDescriptor {
+            let descriptor = ::domain::DomainTestDescriptor {
                 package: env!("CARGO_PKG_NAME"),
                 target: env!("CARGO_CRATE_NAME"),
                 test: concat!(module_path!(), "::", stringify!(#function_name)),
@@ -62,7 +62,7 @@ pub fn expand(
                 column: #column,
                 subject: #subject_name,
             };
-            ::rostfrei_domain::__private::emit_domain_test_descriptor(descriptor)
+            ::domain::__private::emit_domain_test_descriptor(descriptor)
                 .expect("failed to emit domain test metadata");
         }
     })

@@ -1,4 +1,4 @@
-use rostfrei_domain::{DomainIdentity, Entity, ValueObject};
+use domain::{DomainIdentity, Entity, ValueObject};
 
 #[derive(DomainIdentity)]
 struct Id(u64);

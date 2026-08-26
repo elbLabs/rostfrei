@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::{BoundedContext, ValueObject, domain_decisions};
+use domain::{BoundedContext, ValueObject, domain_decisions};
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]

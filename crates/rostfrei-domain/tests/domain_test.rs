@@ -1,6 +1,6 @@
 #![allow(dead_code, non_snake_case, private_bounds, private_interfaces)]
 
-use rostfrei_domain::{
+use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle, EntityLifecycleType,
     InvariantOwnerType, InvariantViolation, ValueObject, domain_action_test, domain_actions,
     domain_decision_test, domain_decisions, domain_invariant_test, domain_invariants,

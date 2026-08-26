@@ -1,6 +1,6 @@
 #![allow(unused, non_snake_case)]
 
-use rostfrei_domain::ValueObject;
+use domain::ValueObject;
 
 struct Context;
 struct Contracts;

@@ -1,6 +1,6 @@
 #![allow(non_snake_case, clippy::clone_on_copy)]
 
-use rostfrei_domain::{
+use domain::{
     AggregateId, BoundedContext, BoundedContextId, InvariantId, InvariantOwnerId,
     InvariantOwnerType, InvariantReference, InvariantViolation, ValueObject, ValueObjectType,
     domain_invariants,

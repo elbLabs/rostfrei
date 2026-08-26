@@ -148,7 +148,7 @@ fn is_invariant_owner_candidate(ty: &Type) -> bool {
         .map(|segment| segment.ident.to_string())
         .collect();
     owner_path.as_slice() == ["InvariantOwnerType"]
-        || owner_path.as_slice() == ["rostfrei_domain", "InvariantOwnerType"]
+        || owner_path.as_slice() == ["domain", "InvariantOwnerType"]
 }
 
 fn is_self_type(ty: &Type) -> bool {
@@ -216,11 +216,7 @@ fn is_invariant_violation(ty: &Type) -> bool {
         return false;
     }
     path_has_names(&type_path.path, false, &["InvariantViolation"])
-        || path_has_names(
-            &type_path.path,
-            false,
-            &["rostfrei_domain", "InvariantViolation"],
-        )
+        || path_has_names(&type_path.path, false, &["domain", "InvariantViolation"])
 }
 
 fn path_has_names(path: &Path, allow_last_arguments: bool, expected: &[&str]) -> bool {

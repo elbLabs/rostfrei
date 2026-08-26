@@ -53,7 +53,7 @@ help: the trait `DomainCommandOwnerType` is not implemented for `Catalog`
    |
  5 | struct Catalog;
    | ^^^^^^^^^^^^^^
-note: required by a bound in `rostfrei_domain::DomainCommandType::Owner`
+note: required by a bound in `domain::DomainCommandType::Owner`
   --> src/domain_command/domain_type.rs
    |
    |     type Owner: DomainCommandOwnerType;

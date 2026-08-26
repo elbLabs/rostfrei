@@ -1,9 +1,9 @@
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rostfrei_domain::__private::DomainModelBuilder;
-use rostfrei_domain::extension::ActionGroupType;
-use rostfrei_domain::{
+use domain::__private::DomainModelBuilder;
+use domain::extension::ActionGroupType;
+use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOwnerId, ActionOwnerType,
     AggregateDescriptor, AggregateId, AggregateType, BoundedContextDescriptor, BoundedContextId,
     BoundedContextType, DecisionDescriptor, DecisionId, DecisionImplementationDescriptor,

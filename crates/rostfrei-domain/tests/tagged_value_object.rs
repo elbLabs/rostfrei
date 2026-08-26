@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::{
+use domain::{
     Aggregate, AggregateType, BoundedContext, BoundedContextId, DomainIdentity, DomainIdentityType,
     Entity, FieldDescriptor, FieldKind, FieldValue, FieldWrapper, ScalarType, SemanticScalar,
     SemanticScalarDescriptor, ValueObject, ValueObjectDescriptor, ValueObjectId,

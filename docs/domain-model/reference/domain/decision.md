@@ -36,7 +36,7 @@ Decision methods are declared on owner-kind contract traits:
 
 ```rust
 mod contracts {
-    use rostfrei_domain::domain_decisions;
+    use domain::domain_decisions;
 
     #[domain_decisions(aggregate)]
     pub trait TodoDecisions {

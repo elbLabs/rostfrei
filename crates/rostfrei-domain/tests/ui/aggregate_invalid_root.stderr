@@ -20,7 +20,7 @@ help: the trait `EntityType` is implemented for `OtherRoot`
    |
 21 | #[derive(Entity)]
    |          ^^^^^^
-note: required by a bound in `rostfrei_domain::AggregateType::Root`
+note: required by a bound in `domain::AggregateType::Root`
   --> src/aggregate/domain_type.rs
    |
    |     type Root: EntityType<Owner = Self>;
@@ -38,7 +38,7 @@ note: expected this to be `WrongOwner`
    |
 22 | #[domain(id = "other-root", label = "Other", owner = OtherAggregate)]
    |                                                      ^^^^^^^^^^^^^^
-note: required by a bound in `rostfrei_domain::AggregateType::Root`
+note: required by a bound in `domain::AggregateType::Root`
   --> src/aggregate/domain_type.rs
    |
    |     type Root: EntityType<Owner = Self>;

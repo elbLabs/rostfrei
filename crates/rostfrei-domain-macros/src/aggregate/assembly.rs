@@ -39,7 +39,7 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
                 _candidate: &Self::Candidate,
             ) -> ::core::result::Result<
                 (),
-                ::std::vec::Vec<::rostfrei_domain::InvariantViolation>,
+                ::std::vec::Vec<::domain::InvariantViolation>,
             > {
                 ::core::result::Result::Ok(())
             }
@@ -50,7 +50,7 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
                 candidate: &Self::Candidate,
             ) -> ::core::result::Result<
                 (),
-                ::std::vec::Vec<::rostfrei_domain::InvariantViolation>,
+                ::std::vec::Vec<::domain::InvariantViolation>,
             > {
                 let mut violations = ::std::vec::Vec::new();
                 #(
@@ -69,11 +69,11 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
     };
 
     quote! {
-        impl ::rostfrei_domain::InvariantOwnerType for #name {
-            type Candidate = <Self as ::rostfrei_domain::AggregateType>::Root;
-            const INVARIANT_OWNER_ID: ::rostfrei_domain::InvariantOwnerId =
-                ::rostfrei_domain::InvariantOwnerId::Aggregate(
-                    <Self as ::rostfrei_domain::AggregateType>::DESCRIPTOR.id,
+        impl ::domain::InvariantOwnerType for #name {
+            type Candidate = <Self as ::domain::AggregateType>::Root;
+            const INVARIANT_OWNER_ID: ::domain::InvariantOwnerId =
+                ::domain::InvariantOwnerId::Aggregate(
+                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
                 );
 
             #validate_invariants
@@ -83,16 +83,16 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
 
 fn assemble_aggregate_invariant_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::AggregateInvariantOwnerType for #name {}
+        impl ::domain::AggregateInvariantOwnerType for #name {}
     }
 }
 
 fn assemble_domain_command_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::DomainCommandOwnerType for #name {
-            const DOMAIN_COMMAND_OWNER_ID: ::rostfrei_domain::DomainCommandOwnerId =
-                ::rostfrei_domain::DomainCommandOwnerId::Aggregate(
-                    <Self as ::rostfrei_domain::AggregateType>::DESCRIPTOR.id,
+        impl ::domain::DomainCommandOwnerType for #name {
+            const DOMAIN_COMMAND_OWNER_ID: ::domain::DomainCommandOwnerId =
+                ::domain::DomainCommandOwnerId::Aggregate(
+                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
                 );
         }
     }
@@ -100,16 +100,16 @@ fn assemble_domain_command_owner(name: &Ident) -> TokenStream {
 
 fn assemble_aggregate_action_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::AggregateActionOwnerType for #name {}
+        impl ::domain::AggregateActionOwnerType for #name {}
     }
 }
 
 fn assemble_action_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::ActionOwnerType for #name {
-            const ACTION_OWNER_ID: ::rostfrei_domain::ActionOwnerId =
-                ::rostfrei_domain::ActionOwnerId::Aggregate(
-                    <Self as ::rostfrei_domain::AggregateType>::DESCRIPTOR.id,
+        impl ::domain::ActionOwnerType for #name {
+            const ACTION_OWNER_ID: ::domain::ActionOwnerId =
+                ::domain::ActionOwnerId::Aggregate(
+                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
                 );
         }
     }
@@ -117,16 +117,16 @@ fn assemble_action_owner(name: &Ident) -> TokenStream {
 
 fn assemble_aggregate_decision_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::AggregateDecisionOwnerType for #name {}
+        impl ::domain::AggregateDecisionOwnerType for #name {}
     }
 }
 
 fn assemble_decision_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::DecisionOwnerType for #name {
-            const DECISION_OWNER_ID: ::rostfrei_domain::DecisionOwnerId =
-                ::rostfrei_domain::DecisionOwnerId::Aggregate(
-                    <Self as ::rostfrei_domain::AggregateType>::DESCRIPTOR.id,
+        impl ::domain::DecisionOwnerType for #name {
+            const DECISION_OWNER_ID: ::domain::DecisionOwnerId =
+                ::domain::DecisionOwnerId::Aggregate(
+                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
                 );
         }
     }
@@ -134,16 +134,16 @@ fn assemble_decision_owner(name: &Ident) -> TokenStream {
 
 fn assemble_public_action_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::PublicActionOwnerType for #name {}
+        impl ::domain::PublicActionOwnerType for #name {}
     }
 }
 
 fn assemble_domain_error_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::DomainErrorOwnerType for #name {
-            const DOMAIN_ERROR_OWNER_ID: ::rostfrei_domain::DomainErrorOwnerId =
-                ::rostfrei_domain::DomainErrorOwnerId::Aggregate(
-                    <Self as ::rostfrei_domain::AggregateType>::DESCRIPTOR.id,
+        impl ::domain::DomainErrorOwnerType for #name {
+            const DOMAIN_ERROR_OWNER_ID: ::domain::DomainErrorOwnerId =
+                ::domain::DomainErrorOwnerId::Aggregate(
+                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
                 );
         }
     }
@@ -151,10 +151,10 @@ fn assemble_domain_error_owner(name: &Ident) -> TokenStream {
 
 fn assemble_value_object_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::ValueObjectOwnerType for #name {
-            const VALUE_OBJECT_OWNER_ID: ::rostfrei_domain::ValueObjectOwnerId =
-                ::rostfrei_domain::ValueObjectOwnerId::Aggregate(
-                    <Self as ::rostfrei_domain::AggregateType>::DESCRIPTOR.id,
+        impl ::domain::ValueObjectOwnerType for #name {
+            const VALUE_OBJECT_OWNER_ID: ::domain::ValueObjectOwnerId =
+                ::domain::ValueObjectOwnerId::Aggregate(
+                    <Self as ::domain::AggregateType>::DESCRIPTOR.id,
                 );
         }
     }

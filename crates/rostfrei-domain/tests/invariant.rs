@@ -1,6 +1,6 @@
 #![allow(dead_code, non_snake_case)]
 
-use rostfrei_domain::{
+use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, InvariantOwnerId, InvariantOwnerType,
     InvariantViolation, ValueObject, domain_invariants,
 };

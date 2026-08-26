@@ -8,6 +8,9 @@ kind: reference
 This reference defines the target domain language. The handbook explains how
 the concepts work together.
 
+The Cargo package `rostfrei-domain` exposes the Rust crate name `domain`, so
+examples use paths such as `domain::Aggregate`.
+
 ## Concepts
 
 ### Domain Boundaries

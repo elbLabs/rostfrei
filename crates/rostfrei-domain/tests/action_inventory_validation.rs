@@ -4,9 +4,9 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rostfrei_domain::__private::DomainModelBuilder;
-use rostfrei_domain::extension::ActionGroupType;
-use rostfrei_domain::{
+use domain::__private::DomainModelBuilder;
+use domain::extension::ActionGroupType;
+use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainCommand, DomainCommandId,
     DomainCommandOwnerId, DomainCommandType, DomainError, DomainErrorId, DomainErrorOwnerId,
@@ -599,7 +599,7 @@ fn reports_descriptor_failures_in_input_output_error_order() {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<ExtensionService>();
         builder.add_action_extension::<DeterministicExtension>();
-        builder.add_domain_command(rostfrei_domain::DomainCommandDescriptor {
+        builder.add_domain_command(domain::DomainCommandDescriptor {
             id: MISSING_COMMAND_ID,
             label: "Missing command",
             fields: &[],
@@ -610,12 +610,12 @@ fn reports_descriptor_failures_in_input_output_error_order() {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<ExtensionService>();
         builder.add_action_extension::<DeterministicExtension>();
-        builder.add_domain_command(rostfrei_domain::DomainCommandDescriptor {
+        builder.add_domain_command(domain::DomainCommandDescriptor {
             id: MISSING_COMMAND_ID,
             label: "Missing command",
             fields: &[],
         });
-        builder.add_domain_event(rostfrei_domain::DomainEventDescriptor {
+        builder.add_domain_event(domain::DomainEventDescriptor {
             id: MISSING_EVENT_ID,
             label: "Missing event",
             fields: &[],

@@ -14,31 +14,31 @@ pub fn assemble(name: &Ident, attributes: &Attributes) -> TokenStream {
     let invariants = &attributes.invariants;
 
     quote! {
-        impl ::rostfrei_domain::AggregateType for #name {
+        impl ::domain::AggregateType for #name {
             type Context = #context;
             type Root = #root;
 
-            const DESCRIPTOR: ::rostfrei_domain::AggregateDescriptor = {
-                let id = ::rostfrei_domain::AggregateId {
-                        context: <#context as ::rostfrei_domain::BoundedContextType>::DESCRIPTOR.id,
+            const DESCRIPTOR: ::domain::AggregateDescriptor = {
+                let id = ::domain::AggregateId {
+                        context: <#context as ::domain::BoundedContextType>::DESCRIPTOR.id,
                         local: #id,
                 };
-                ::rostfrei_domain::AggregateDescriptor {
+                ::domain::AggregateDescriptor {
                     id,
                     label: #label,
-                    root: ::rostfrei_domain::EntityId {
+                    root: ::domain::EntityId {
                         aggregate: id,
-                        local: <#root as ::rostfrei_domain::EntityType>::LOCAL_ID,
+                        local: <#root as ::domain::EntityType>::LOCAL_ID,
                     },
                 }
             };
-            const ACTION_CONTRACTS: &'static [&'static [::rostfrei_domain::ActionDescriptor]] = &[
+            const ACTION_CONTRACTS: &'static [&'static [::domain::ActionDescriptor]] = &[
                 #(<Self as #actions>::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE,)*
             ];
-            const DECISION_CONTRACTS: &'static [&'static [::rostfrei_domain::DecisionDescriptor]] = &[
+            const DECISION_CONTRACTS: &'static [&'static [::domain::DecisionDescriptor]] = &[
                 #(<Self as #decisions>::__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE,)*
             ];
-            const INVARIANT_CONTRACTS: &'static [&'static [::rostfrei_domain::InvariantDescriptor]] = &[
+            const INVARIANT_CONTRACTS: &'static [&'static [::domain::InvariantDescriptor]] = &[
                 #(<Self as #invariants>::__DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE,)*
             ];
         }

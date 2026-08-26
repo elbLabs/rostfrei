@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::__private::DomainModelBuilder;
-use rostfrei_domain::{
+use domain::__private::DomainModelBuilder;
+use domain::{
     Aggregate, BoundedContext, BoundedContextId, DecisionDescriptor, DecisionId,
     DecisionImplementationDescriptor, DecisionInputDescriptor, DecisionOutputDescriptor,
     DecisionOwnerId, DomainIdentity, DomainService, DomainServiceDescriptor, DomainServiceId,

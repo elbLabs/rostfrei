@@ -1,4 +1,4 @@
-use rostfrei_domain::Entity;
+use domain::Entity;
 
 #[derive(Entity)]
 #[domain(

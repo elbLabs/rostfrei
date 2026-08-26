@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::{
+use domain::{
     ActionInputDescriptor, ActionOutputDescriptor, DomainError, DomainErrorType, DomainIdentity,
     Entity, EntityType, ScalarType, ValueObject, ValueObjectType, domain_actions, domain_model,
 };
 
 mod contracts {
-    use rostfrei_domain::domain_actions;
+    use domain::domain_actions;
 
     use super::Title;
 
@@ -41,7 +41,7 @@ trait UnlistedTaskActions {
     fn revision(&self) -> u32;
 }
 
-#[derive(rostfrei_domain::BoundedContext)]
+#[derive(domain::BoundedContext)]
 #[domain(id = "planning", label = "Planning")]
 struct Planning;
 
@@ -64,7 +64,7 @@ struct Task {
     revision: u32,
 }
 
-#[derive(rostfrei_domain::Aggregate)]
+#[derive(domain::Aggregate)]
 #[domain(id = "project", label = "Project", context = Planning, root = Task)]
 struct Project;
 

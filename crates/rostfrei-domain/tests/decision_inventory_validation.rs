@@ -3,8 +3,8 @@
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rostfrei_domain::__private::DomainModelBuilder;
-use rostfrei_domain::{
+use domain::__private::DomainModelBuilder;
+use domain::{
     BoundedContext, BoundedContextId, DecisionId, DecisionOwnerId, DomainService, DomainServiceId,
     ValueObject, ValueObjectId, ValueObjectOwnerId, ValueObjectType, domain_decisions,
 };

@@ -8,13 +8,13 @@ pub fn assemble_descriptors(fields: &[Field]) -> TokenStream {
     let fields = fields.iter().map(|field| {
         let name = &field.name;
         let wrappers = field.wrappers.iter().map(|wrapper| match wrapper {
-            Wrapper::List => quote!(::rostfrei_domain::FieldWrapper::List),
-            Wrapper::Optional => quote!(::rostfrei_domain::FieldWrapper::Optional),
+            Wrapper::List => quote!(::domain::FieldWrapper::List),
+            Wrapper::Optional => quote!(::domain::FieldWrapper::Optional),
         });
         let kind = assemble_kind(field);
-        quote!(::rostfrei_domain::FieldDescriptor {
+        quote!(::domain::FieldDescriptor {
             name: #name,
-            value: ::rostfrei_domain::FieldValue { kind: #kind, wrappers: &[#(#wrappers),*] },
+            value: ::domain::FieldValue { kind: #kind, wrappers: &[#(#wrappers),*] },
         })
     });
     quote!(&[#(#fields),*])
@@ -42,12 +42,12 @@ pub fn assemble_assertions(
     });
     quote! {
         const _: () = {
-            fn assert_identity<T: ::rostfrei_domain::DomainIdentityType>() {}
-            fn assert_entity<T, O>() where T: ::rostfrei_domain::EntityType<Owner = O>, O: ::rostfrei_domain::AggregateType {}
-            fn assert_value_object<T: ::rostfrei_domain::ValueObjectType>() {}
+            fn assert_identity<T: ::domain::DomainIdentityType>() {}
+            fn assert_entity<T, O>() where T: ::domain::EntityType<Owner = O>, O: ::domain::AggregateType {}
+            fn assert_value_object<T: ::domain::ValueObjectType>() {}
             fn assert_semantic_scalar<P, V>()
             where
-                P: ::rostfrei_domain::SemanticScalar<Value = V>,
+                P: ::domain::SemanticScalar<Value = V>,
                 V: 'static,
             {}
             fn assert_container<T: 'static>() {}
@@ -62,30 +62,30 @@ pub fn assemble_assertions(
 fn assemble_kind(field: &Field) -> TokenStream {
     let base = &field.base;
     match &field.role {
-        Role::Identity => quote!(::rostfrei_domain::FieldKind::DomainIdentity(
-            <#base as ::rostfrei_domain::DomainIdentityType>::DESCRIPTOR.id,
+        Role::Identity => quote!(::domain::FieldKind::DomainIdentity(
+            <#base as ::domain::DomainIdentityType>::DESCRIPTOR.id,
         )),
         Role::Entity => {
-            quote!(::rostfrei_domain::FieldKind::Entity(::rostfrei_domain::EntityId {
-                aggregate: <<#base as ::rostfrei_domain::EntityType>::Owner as ::rostfrei_domain::AggregateType>::DESCRIPTOR.id,
-                local: <#base as ::rostfrei_domain::EntityType>::LOCAL_ID,
+            quote!(::domain::FieldKind::Entity(::domain::EntityId {
+                aggregate: <<#base as ::domain::EntityType>::Owner as ::domain::AggregateType>::DESCRIPTOR.id,
+                local: <#base as ::domain::EntityType>::LOCAL_ID,
             }))
         }
         Role::ValueObject => {
-            quote!(::rostfrei_domain::FieldKind::ValueObject(::rostfrei_domain::ValueObjectId {
-                owner: <<#base as ::rostfrei_domain::ValueObjectType>::Owner as ::rostfrei_domain::ValueObjectOwnerType>::VALUE_OBJECT_OWNER_ID,
-                local: <#base as ::rostfrei_domain::ValueObjectType>::LOCAL_ID,
+            quote!(::domain::FieldKind::ValueObject(::domain::ValueObjectId {
+                owner: <<#base as ::domain::ValueObjectType>::Owner as ::domain::ValueObjectOwnerType>::VALUE_OBJECT_OWNER_ID,
+                local: <#base as ::domain::ValueObjectType>::LOCAL_ID,
             }))
         }
         Role::AggregateReference(target) => {
-            quote!(::rostfrei_domain::FieldKind::AggregateReference(<#target as ::rostfrei_domain::AggregateType>::DESCRIPTOR.id))
+            quote!(::domain::FieldKind::AggregateReference(<#target as ::domain::AggregateType>::DESCRIPTOR.id))
         }
-        Role::SemanticScalar(provider) => quote!(::rostfrei_domain::FieldKind::SemanticScalar(
-            <#provider as ::rostfrei_domain::SemanticScalar>::DESCRIPTOR,
+        Role::SemanticScalar(provider) => quote!(::domain::FieldKind::SemanticScalar(
+            <#provider as ::domain::SemanticScalar>::DESCRIPTOR,
         )),
         Role::Scalar(scalar) => {
             let scalar = scalar_tokens(scalar);
-            quote!(::rostfrei_domain::FieldKind::Scalar(#scalar))
+            quote!(::domain::FieldKind::Scalar(#scalar))
         }
     }
 }
@@ -115,5 +115,5 @@ fn scalar_tokens(scalar: &Scalar) -> TokenStream {
         Scalar::Usize => "Usize",
     };
     let ident = Ident::new(variant, proc_macro2::Span::call_site());
-    quote!(::rostfrei_domain::ScalarType::#ident)
+    quote!(::domain::ScalarType::#ident)
 }

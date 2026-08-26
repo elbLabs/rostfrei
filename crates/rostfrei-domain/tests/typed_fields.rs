@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::{
+use domain::{
     Aggregate, AggregateType, BoundedContext, DomainIdentity, DomainIdentityType, Entity,
     EntityType, FieldKind, FieldWrapper, ScalarType, ValueObject, ValueObjectType,
 };
@@ -115,8 +115,7 @@ fn describes_entity_roles_wrappers_order_and_raw_names() {
 
 #[test]
 fn describes_value_object_shapes_composition_and_all_scalars() {
-    let rostfrei_domain::ValueObjectShapeDescriptor::Struct { fields } = Details::DESCRIPTOR.shape
-    else {
+    let domain::ValueObjectShapeDescriptor::Struct { fields } = Details::DESCRIPTOR.shape else {
         panic!()
     };
     assert_eq!(fields[0].name, "product_id");
@@ -133,7 +132,7 @@ fn describes_value_object_shapes_composition_and_all_scalars() {
     );
     assert_eq!(
         match Dimensions::DESCRIPTOR.shape {
-            rostfrei_domain::ValueObjectShapeDescriptor::Struct { fields } => fields,
+            domain::ValueObjectShapeDescriptor::Struct { fields } => fields,
             _ => panic!(),
         }
         .iter()
@@ -143,11 +142,11 @@ fn describes_value_object_shapes_composition_and_all_scalars() {
     );
     assert!(matches!(
         Marker::DESCRIPTOR.shape,
-        rostfrei_domain::ValueObjectShapeDescriptor::Struct { fields: &[] }
+        domain::ValueObjectShapeDescriptor::Struct { fields: &[] }
     ));
     assert_eq!(
         match Scalars::DESCRIPTOR.shape {
-            rostfrei_domain::ValueObjectShapeDescriptor::Struct { fields } => fields,
+            domain::ValueObjectShapeDescriptor::Struct { fields } => fields,
             _ => panic!(),
         }
         .iter()

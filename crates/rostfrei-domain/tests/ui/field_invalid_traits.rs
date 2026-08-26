@@ -1,4 +1,4 @@
-use rostfrei_domain::{Aggregate, BoundedContext, DomainIdentity, Entity, ValueObject};
+use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, ValueObject};
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]

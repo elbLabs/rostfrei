@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::{Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle};
+use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle};
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -22,7 +22,7 @@ struct Root {
 struct Owner;
 
 mod contracts {
-    use rostfrei_domain::domain_actions;
+    use domain::domain_actions;
 
     #[domain_actions(entity)]
     pub(crate) trait TodoActions {

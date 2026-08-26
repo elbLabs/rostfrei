@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::{
+use domain::{
     Aggregate, BoundedContext, DomainError, DomainEvent, DomainIdentity, DomainService, Entity,
     ValueObject, domain_actions, domain_model,
 };

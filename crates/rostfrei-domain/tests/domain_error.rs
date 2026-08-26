@@ -1,4 +1,4 @@
-use rostfrei_domain::{
+use domain::{
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainError, DomainErrorDescriptor,
     DomainErrorId, DomainErrorOwnerId, DomainErrorType, DomainIdentity, DomainService,
     DomainServiceId, Entity, EntityId, ValueObject, ValueObjectId,
@@ -55,7 +55,7 @@ fn descriptor(
     label: &'static str,
     code: &'static str,
     message: &'static str,
-    fields: &'static [rostfrei_domain::FieldDescriptor],
+    fields: &'static [domain::FieldDescriptor],
 ) -> DomainErrorDescriptor {
     DomainErrorDescriptor {
         id: DomainErrorId { owner, local },
@@ -117,7 +117,7 @@ fn derives_descriptors_for_each_owner() {
         SubjectBlank::DESCRIPTOR,
         descriptor(
             DomainErrorOwnerId::ValueObject(ValueObjectId {
-                owner: rostfrei_domain::ValueObjectOwnerId::Aggregate(aggregate),
+                owner: domain::ValueObjectOwnerId::Aggregate(aggregate),
                 local: "subject",
             }),
             "subject-blank",

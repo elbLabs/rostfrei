@@ -9,7 +9,7 @@ help: the trait `ActionOwnerType` is not implemented for `PlainOwner`
   |
 3 | struct PlainOwner;
   | ^^^^^^^^^^^^^^^^^
-note: required by a bound in `rostfrei_domain::extension::ActionGroupType::Owner`
+note: required by a bound in `domain::extension::ActionGroupType::Owner`
  --> src/action/group_type.rs
   |
   |     type Owner: ActionOwnerType;

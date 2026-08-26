@@ -1,4 +1,4 @@
-use rostfrei_domain::{
+use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, ScalarType, SemanticScalar,
     SemanticScalarDescriptor,
 };

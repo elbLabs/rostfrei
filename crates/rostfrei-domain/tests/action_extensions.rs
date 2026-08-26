@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::__private::DomainModelBuilder;
-use rostfrei_domain::extension::ActionGroupType;
-use rostfrei_domain::{
+use domain::__private::DomainModelBuilder;
+use domain::extension::ActionGroupType;
+use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, ActionOwnerType, Aggregate, AggregateId,
     BoundedContext, BoundedContextId, DomainIdentity, DomainService, DomainServiceId, Entity,
     EntityId, ValueObject, ValueObjectId, ValueObjectOwnerId, domain_actions, domain_model,

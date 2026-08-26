@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::{
+use domain::{
     Aggregate, AggregateId, AggregateType, BoundedContext, BoundedContextId, DecisionDescriptor,
     DecisionId, DecisionImplementationDescriptor, DecisionInputDescriptor,
     DecisionOutputDescriptor, DecisionOwnerId, DecisionOwnerType, DomainIdentity, DomainService,
@@ -81,7 +81,7 @@ struct DecisionOutcome {
 struct RiskPolicy;
 
 mod contracts {
-    use rostfrei_domain::{domain_actions, domain_decisions};
+    use domain::{domain_actions, domain_decisions};
 
     #[domain_actions(aggregate)]
     pub trait ApplicationActions {

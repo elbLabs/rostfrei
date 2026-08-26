@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::{
+use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle, EntityLifecycleType,
     domain_actions,
 };
@@ -73,6 +73,6 @@ impl TodoActions for Todo {
     fn complete(&mut self) {}
 }
 
-const _: rostfrei_domain::EntityLifecycleDescriptor = TodoLifecycle::DESCRIPTOR;
+const _: domain::EntityLifecycleDescriptor = TodoLifecycle::DESCRIPTOR;
 
 fn main() {}

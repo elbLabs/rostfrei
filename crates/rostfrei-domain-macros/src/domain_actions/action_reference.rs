@@ -98,8 +98,8 @@ fn append(item: &mut ItemTrait, references: Vec<GeneratedReference<'_>>) -> syn:
         item.items.push(syn::parse2(quote_spanned! {id.span()=>
             #[doc(hidden)]
             #[allow(dead_code)]
-            const #ident: ::rostfrei_domain::ActionReference<Self> =
-                ::rostfrei_domain::ActionReference::<Self>::__from_local(#id);
+            const #ident: ::domain::ActionReference<Self> =
+                ::domain::ActionReference::<Self>::__from_local(#id);
         })?);
     }
     Ok(())

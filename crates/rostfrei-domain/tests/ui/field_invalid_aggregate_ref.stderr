@@ -21,7 +21,7 @@ help: the trait `EntityType` is not implemented for `MissingValue`
    |
 13 | struct MissingValue {
    | ^^^^^^^^^^^^^^^^^^^
-note: required by a bound in `rostfrei_domain::DomainIdentityType::Owner`
+note: required by a bound in `domain::DomainIdentityType::Owner`
   --> src/domain_identity/domain_type.rs
    |
    |     type Owner: EntityType<Identity = Self>;
@@ -51,7 +51,7 @@ help: the trait `EntityType` is not implemented for `GenericTarget`
    |
 22 | struct GenericTarget {
    | ^^^^^^^^^^^^^^^^^^^^
-note: required by a bound in `rostfrei_domain::DomainIdentityType::Owner`
+note: required by a bound in `domain::DomainIdentityType::Owner`
   --> src/domain_identity/domain_type.rs
    |
    |     type Owner: EntityType<Identity = Self>;

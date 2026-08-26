@@ -2,8 +2,8 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rostfrei_domain::__private::DomainModelBuilder;
-use rostfrei_domain::{
+use domain::__private::DomainModelBuilder;
+use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, AggregateDescriptor, AggregateId, BoundedContext,
     BoundedContextId, DomainCommandDescriptor, DomainCommandId, DomainCommandOwnerId,
     DomainErrorDescriptor, DomainErrorId, DomainErrorOwnerId, DomainEventDescriptor, DomainEventId,

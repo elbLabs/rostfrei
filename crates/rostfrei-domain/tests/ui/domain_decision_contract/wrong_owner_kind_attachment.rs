@@ -1,4 +1,4 @@
-use rostfrei_domain::{BoundedContext, DomainService, ValueObject, domain_decisions};
+use domain::{BoundedContext, DomainService, ValueObject, domain_decisions};
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]

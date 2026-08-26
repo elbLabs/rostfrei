@@ -1,4 +1,4 @@
-use rostfrei_domain::DomainIdentity;
+use domain::DomainIdentity;
 
 #[derive(DomainIdentity)]
 struct Named { value: u64 }

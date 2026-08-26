@@ -9,7 +9,7 @@ help: the trait `AggregateType` is not implemented for `Inbox`
   |
 5 | struct Inbox;
   | ^^^^^^^^^^^^
-note: required by a bound in `rostfrei_domain::DomainEventType::Owner`
+note: required by a bound in `domain::DomainEventType::Owner`
  --> src/domain_event/domain_type.rs
   |
   |     type Owner: AggregateType;

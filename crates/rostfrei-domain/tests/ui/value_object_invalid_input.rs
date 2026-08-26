@@ -1,4 +1,4 @@
-use rostfrei_domain::ValueObject;
+use domain::ValueObject;
 
 #[derive(ValueObject)]
 #[domain(id = "empty", label = "Empty", owner = Owner)]

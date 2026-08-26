@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use rostfrei_domain::extension::ActionGroupType;
-use rostfrei_domain::{
+use domain::extension::ActionGroupType;
+use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
     Aggregate, AggregateType, BoundedContext, DomainError, DomainErrorType, DomainIdentity, Entity,
     ScalarType, ValueObject, ValueObjectType, domain_actions, domain_model,
@@ -72,7 +72,7 @@ trait MoneyConstruction {
 }
 
 mod contracts {
-    use rostfrei_domain::domain_actions;
+    use domain::domain_actions;
 
     #[domain_actions(value_object)]
     pub(crate) trait MoneyArithmetic {

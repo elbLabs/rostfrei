@@ -1,4 +1,4 @@
-use rostfrei_domain::Aggregate;
+use domain::Aggregate;
 
 struct Context;
 struct Root;

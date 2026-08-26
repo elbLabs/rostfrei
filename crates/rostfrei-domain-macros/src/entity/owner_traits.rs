@@ -33,7 +33,7 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
                 _candidate: &Self::Candidate,
             ) -> ::core::result::Result<
                 (),
-                ::std::vec::Vec<::rostfrei_domain::InvariantViolation>,
+                ::std::vec::Vec<::domain::InvariantViolation>,
             > {
                 ::core::result::Result::Ok(())
             }
@@ -44,7 +44,7 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
                 candidate: &Self::Candidate,
             ) -> ::core::result::Result<
                 (),
-                ::std::vec::Vec<::rostfrei_domain::InvariantViolation>,
+                ::std::vec::Vec<::domain::InvariantViolation>,
             > {
                 let mut violations = ::std::vec::Vec::new();
                 #(
@@ -63,32 +63,32 @@ fn assemble_invariant_owner(name: &Ident, attributes: &Attributes) -> TokenStrea
     };
 
     quote! {
-        impl ::rostfrei_domain::InvariantOwnerType for #name {
+        impl ::domain::InvariantOwnerType for #name {
             type Candidate = Self;
-            const INVARIANT_OWNER_ID: ::rostfrei_domain::InvariantOwnerId =
-                ::rostfrei_domain::InvariantOwnerId::Entity(
-                    <Self as ::rostfrei_domain::EntityType>::DESCRIPTOR.id,
+            const INVARIANT_OWNER_ID: ::domain::InvariantOwnerId =
+                ::domain::InvariantOwnerId::Entity(
+                    <Self as ::domain::EntityType>::DESCRIPTOR.id,
                 );
 
             #validate_invariants
         }
 
-        impl ::rostfrei_domain::EntityInvariantOwnerType for #name {}
+        impl ::domain::EntityInvariantOwnerType for #name {}
     }
 }
 
 fn assemble_entity_action_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::EntityActionOwnerType for #name {}
+        impl ::domain::EntityActionOwnerType for #name {}
     }
 }
 
 fn assemble_action_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::ActionOwnerType for #name {
-            const ACTION_OWNER_ID: ::rostfrei_domain::ActionOwnerId =
-                ::rostfrei_domain::ActionOwnerId::Entity(
-                    <Self as ::rostfrei_domain::EntityType>::DESCRIPTOR.id,
+        impl ::domain::ActionOwnerType for #name {
+            const ACTION_OWNER_ID: ::domain::ActionOwnerId =
+                ::domain::ActionOwnerId::Entity(
+                    <Self as ::domain::EntityType>::DESCRIPTOR.id,
                 );
         }
     }
@@ -96,16 +96,16 @@ fn assemble_action_owner(name: &Ident) -> TokenStream {
 
 fn assemble_entity_decision_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::EntityDecisionOwnerType for #name {}
+        impl ::domain::EntityDecisionOwnerType for #name {}
     }
 }
 
 fn assemble_decision_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::DecisionOwnerType for #name {
-            const DECISION_OWNER_ID: ::rostfrei_domain::DecisionOwnerId =
-                ::rostfrei_domain::DecisionOwnerId::Entity(
-                    <Self as ::rostfrei_domain::EntityType>::DESCRIPTOR.id,
+        impl ::domain::DecisionOwnerType for #name {
+            const DECISION_OWNER_ID: ::domain::DecisionOwnerId =
+                ::domain::DecisionOwnerId::Entity(
+                    <Self as ::domain::EntityType>::DESCRIPTOR.id,
                 );
         }
     }
@@ -113,16 +113,16 @@ fn assemble_decision_owner(name: &Ident) -> TokenStream {
 
 fn assemble_internal_action_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::InternalActionOwnerType for #name {}
+        impl ::domain::InternalActionOwnerType for #name {}
     }
 }
 
 fn assemble_domain_error_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::DomainErrorOwnerType for #name {
-            const DOMAIN_ERROR_OWNER_ID: ::rostfrei_domain::DomainErrorOwnerId =
-                ::rostfrei_domain::DomainErrorOwnerId::Entity(
-                    <Self as ::rostfrei_domain::EntityType>::DESCRIPTOR.id,
+        impl ::domain::DomainErrorOwnerType for #name {
+            const DOMAIN_ERROR_OWNER_ID: ::domain::DomainErrorOwnerId =
+                ::domain::DomainErrorOwnerId::Entity(
+                    <Self as ::domain::EntityType>::DESCRIPTOR.id,
                 );
         }
     }
@@ -130,12 +130,12 @@ fn assemble_domain_error_owner(name: &Ident) -> TokenStream {
 
 fn assemble_value_object_owner(name: &Ident) -> TokenStream {
     quote! {
-        impl ::rostfrei_domain::ValueObjectOwnerType for #name {
-            const VALUE_OBJECT_OWNER_ID: ::rostfrei_domain::ValueObjectOwnerId =
-                ::rostfrei_domain::ValueObjectOwnerId::Entity(
-                    ::rostfrei_domain::EntityId {
-                        aggregate: <<Self as ::rostfrei_domain::EntityType>::Owner as ::rostfrei_domain::AggregateType>::DESCRIPTOR.id,
-                        local: <Self as ::rostfrei_domain::EntityType>::LOCAL_ID,
+        impl ::domain::ValueObjectOwnerType for #name {
+            const VALUE_OBJECT_OWNER_ID: ::domain::ValueObjectOwnerId =
+                ::domain::ValueObjectOwnerId::Entity(
+                    ::domain::EntityId {
+                        aggregate: <<Self as ::domain::EntityType>::Owner as ::domain::AggregateType>::DESCRIPTOR.id,
+                        local: <Self as ::domain::EntityType>::LOCAL_ID,
                     },
                 );
         }
