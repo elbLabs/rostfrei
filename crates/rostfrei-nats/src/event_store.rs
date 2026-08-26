@@ -9,7 +9,7 @@ use async_nats::{
     jetstream::{
         self,
         response::Response,
-        stream::{Config, DiscardPolicy, LastRawMessageErrorKind, RetentionPolicy, StorageType},
+        stream::{Config, LastRawMessageErrorKind},
     },
     HeaderMap, Request,
 };
@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::event_store_config::NatsEventStoreConfig;
+use crate::stream_policy::{is_stream_not_found, stream_config_mismatches};
 
 const LEGACY_EVENT_SCHEMA_VERSION: u16 = 1;
 const CORRELATION_EVENT_SCHEMA_VERSION: u16 = 2;
@@ -332,11 +333,28 @@ pub async fn provision_event_store(
     context: &jetstream::Context,
     config: &NatsEventStoreConfig,
 ) -> Result<(), EventStoreError> {
-    context
-        .create_or_update_stream(config.stream_config())
+    let expected = config.stream_config();
+    match context.get_stream(config.stream_name()).await {
+        Ok(existing) => {
+            if existing.cached_info().config.subjects != expected.subjects {
+                return Err(EventStoreError::new(
+                    EventStoreErrorKind::ConfigurationMismatch,
+                    "existing event-store stream belongs to a different application or bounded context",
+                ));
+            }
+        }
+        Err(error) if is_stream_not_found(&error) => {}
+        Err(error) => {
+            return Err(unavailable(format!(
+                "failed to inspect event-store stream before provisioning: {error}"
+            )));
+        }
+    }
+    let provisioned = context
+        .create_or_update_stream(expected.clone())
         .await
         .map_err(|error| unavailable(format!("failed to provision event-store stream: {error}")))?;
-    Ok(())
+    verify_stream_config(&expected, &provisioned.config)
 }
 
 #[derive(Default)]
@@ -380,7 +398,7 @@ pub(crate) struct DecodedEvent {
     pub(crate) recorded: RecordedEvent,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StoredEventWire {
     schema_version: u16,
@@ -388,7 +406,7 @@ struct StoredEventWire {
     event: StoredEventContentWire,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StoredEventContentWire {
     event_store_stream: String,
@@ -413,7 +431,7 @@ struct StoredEventContentWire {
     payload_base64: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StreamIdentityWire {
     aggregate_type: String,
@@ -1102,82 +1120,7 @@ fn event_checksum(
 }
 
 fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventStoreError> {
-    let mut mismatches = Vec::new();
-    if actual.name != expected.name {
-        mismatches.push("name");
-    }
-    if actual.subjects != expected.subjects {
-        mismatches.push("subjects");
-    }
-    if actual.retention != RetentionPolicy::Limits {
-        mismatches.push("retention");
-    }
-    if actual.storage != StorageType::File {
-        mismatches.push("storage");
-    }
-    if actual.discard != DiscardPolicy::New {
-        mismatches.push("discard");
-    }
-    if actual.discard_new_per_subject {
-        mismatches.push("discard_new_per_subject");
-    }
-    if !actual.max_age.is_zero() {
-        mismatches.push("max_age");
-    }
-    if actual.max_messages != -1 {
-        mismatches.push("max_messages");
-    }
-    if actual.max_messages_per_subject != -1 {
-        mismatches.push("max_messages_per_subject");
-    }
-    if actual.max_bytes != expected.max_bytes {
-        mismatches.push("max_bytes");
-    }
-    if actual.max_message_size != expected.max_message_size {
-        mismatches.push("max_message_size");
-    }
-    if actual.max_consumers != -1 {
-        mismatches.push("max_consumers");
-    }
-    if actual.no_ack {
-        mismatches.push("no_ack");
-    }
-    if actual.duplicate_window != expected.duplicate_window {
-        mismatches.push("duplicate_window");
-    }
-    if actual.num_replicas != expected.num_replicas {
-        mismatches.push("num_replicas");
-    }
-    if !actual.deny_delete {
-        mismatches.push("deny_delete");
-    }
-    if !actual.deny_purge {
-        mismatches.push("deny_purge");
-    }
-    if actual.allow_rollup {
-        mismatches.push("allow_rollup");
-    }
-    if !actual.allow_atomic_publish {
-        mismatches.push("allow_atomic_publish");
-    }
-    if actual.sealed {
-        mismatches.push("sealed");
-    }
-    if !actual.template_owner.is_empty() {
-        mismatches.push("template_owner");
-    }
-    if actual.republish.is_some() {
-        mismatches.push("republish");
-    }
-    if actual.mirror.is_some() {
-        mismatches.push("mirror");
-    }
-    if actual.sources.is_some() {
-        mismatches.push("sources");
-    }
-    if actual.subject_transform.is_some() {
-        mismatches.push("subject_transform");
-    }
+    let mismatches = stream_config_mismatches(expected, actual);
     if mismatches.is_empty() {
         Ok(())
     } else {
@@ -1213,7 +1156,35 @@ fn unavailable(message: impl Into<String>) -> EventStoreError {
 
 #[cfg(test)]
 mod tests {
+    use rostfrei_messaging_core::ApplicationName;
+
     use super::*;
+
+    fn config() -> NatsEventStoreConfig {
+        let context = ApplicationName::new("acme")
+            .unwrap()
+            .bounded_context("orders")
+            .unwrap();
+        NatsEventStoreConfig::new(&context, "EVENTS").unwrap()
+    }
+
+    fn stream_id() -> StreamId {
+        StreamId::new(
+            AggregateType::new("Test").unwrap(),
+            AggregateId::new("one").unwrap(),
+        )
+    }
+
+    fn atomic_headers(stream_name: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("Content-Type", "application/json");
+        headers.insert(NATS_BATCH_ID, "schema-compatibility");
+        headers.insert(NATS_BATCH_SEQUENCE, "1");
+        headers.insert(NATS_EXPECTED_STREAM, stream_name);
+        headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
+        headers.insert(NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL);
+        headers
+    }
 
     #[test]
     fn legacy_event_checksum_remains_stable_when_metadata_is_absent() {
@@ -1252,5 +1223,139 @@ mod tests {
         assert!(reencoded.get("causationId").is_none());
         assert!(reencoded.get("application").is_none());
         assert!(reencoded.get("boundedContext").is_none());
+    }
+
+    #[test]
+    fn schema_two_fixture_preserves_checksum_and_exact_replay() {
+        let fixture = br#"{
+            "schemaVersion": 2,
+            "checksum": "500416c7d826fb8ee897d371d1269c2b4aa6437ec14817c78ce1d4f04616d072",
+            "event": {
+                "eventStoreStream": "EVENTS",
+                "stream": {"aggregateType": "Test", "aggregateId": "one"},
+                "streamVersion": 1,
+                "commitId": "commit:058e7cef4bd684348e646c0abcceef8a2e3bb6ba386c73e4931c77693ecded54",
+                "operationId": "schema-2-operation",
+                "operationFingerprint": "fee21a1bfc244307e772580bf87fa36197609b1a31de0e9b133b1d73282aba4d",
+                "correlationId": "correlation-1",
+                "causationId": "causation-1",
+                "commitEventOrdinal": 0,
+                "commitEventCount": 1,
+                "eventId": "event:3219be45a3c44e07a9295a7b2044c376ccea46a791c804e57293a18d405afa92",
+                "eventType": "opened",
+                "eventSchemaVersion": 1,
+                "payloadBase64": "e30="
+            }
+        }"#;
+        let wire: StoredEventWire = serde_json::from_slice(fixture).expect("schema-2 fixture");
+        assert_eq!(wire.schema_version, CORRELATION_EVENT_SCHEMA_VERSION);
+        assert_eq!(
+            event_checksum(wire.schema_version, &wire.event).expect("schema-2 checksum"),
+            wire.checksum
+        );
+
+        let config = config();
+        let stream_id = stream_id();
+        let subject = config.aggregate_subject(
+            stream_id.aggregate_type().as_str(),
+            stream_id.aggregate_id().as_str(),
+        );
+        let decoded = decode_event(
+            &config,
+            &subject,
+            &stream_id,
+            Some(0),
+            &atomic_headers(config.stream_name()),
+            fixture,
+        )
+        .expect("schema-2 decode");
+        let mut builder = HistoryBuilder::default();
+        builder.push(decoded).expect("schema-2 history event");
+        let history = builder.finish(1).expect("schema-2 history");
+
+        let operation_id = OperationId::new("schema-2-operation").unwrap();
+        let fingerprint = ContentFingerprint::from_hex(
+            "fee21a1bfc244307e772580bf87fa36197609b1a31de0e9b133b1d73282aba4d",
+        )
+        .unwrap();
+        let metadata = ExecutionMetadata::new(stream_id, operation_id.clone(), fingerprint);
+        let event = NewEvent::new(metadata.event_id(0), "opened", 1, b"{}".to_vec()).unwrap();
+        let batch = EventBatch::new(
+            metadata.commit_id().clone(),
+            operation_id,
+            fingerprint,
+            vec![event.clone()],
+        )
+        .unwrap()
+        .with_correlation_id(CorrelationId::new("correlation-1").unwrap())
+        .with_causation_id(CausationId::new("causation-1").unwrap());
+
+        assert_eq!(
+            NatsEventStore::resolve_existing(&history, &batch).expect("exact replay"),
+            Some(history.events.clone())
+        );
+        let changed = EventBatch::new(
+            metadata.commit_id().clone(),
+            metadata.operation_id().clone(),
+            fingerprint,
+            vec![event],
+        )
+        .unwrap()
+        .with_correlation_id(CorrelationId::new("correlation-2").unwrap())
+        .with_causation_id(CausationId::new("causation-1").unwrap());
+        assert_eq!(
+            NatsEventStore::resolve_existing(&history, &changed)
+                .unwrap_err()
+                .kind(),
+            EventStoreErrorKind::IdentityConflict
+        );
+    }
+
+    #[test]
+    fn schema_three_scope_is_required_and_checked_after_checksum_validation() {
+        let config = config();
+        let stream_id = stream_id();
+        let operation_id = OperationId::new("schema-3-operation").unwrap();
+        let fingerprint = ContentFingerprint::digest("schema-3-content");
+        let metadata = ExecutionMetadata::new(stream_id.clone(), operation_id.clone(), fingerprint);
+        let event = NewEvent::new(metadata.event_id(0), "opened", 1, b"{}".to_vec()).unwrap();
+        let batch = EventBatch::new(
+            metadata.commit_id().clone(),
+            operation_id,
+            fingerprint,
+            vec![event],
+        )
+        .unwrap();
+        let recorded = record_batch(&stream_id, StreamVersion::ZERO, &batch).unwrap();
+        let payload = encode_events(&config, &stream_id, &batch, &recorded)
+            .unwrap()
+            .remove(0);
+        let subject = config.aggregate_subject(
+            stream_id.aggregate_type().as_str(),
+            stream_id.aggregate_id().as_str(),
+        );
+        let headers = atomic_headers(config.stream_name());
+        decode_event(&config, &subject, &stream_id, Some(0), &headers, &payload)
+            .expect("schema-3 decode");
+        let wire: StoredEventWire = serde_json::from_slice(&payload).unwrap();
+
+        for (application, bounded_context) in [
+            (Some("other"), Some("orders")),
+            (Some("acme"), Some("billing")),
+            (None, Some("orders")),
+            (Some("acme"), None),
+        ] {
+            let mut changed = wire.clone();
+            changed.event.application = application.map(str::to_owned);
+            changed.event.bounded_context = bounded_context.map(str::to_owned);
+            changed.checksum = event_checksum(changed.schema_version, &changed.event).unwrap();
+            let payload = serde_json::to_vec(&changed).unwrap();
+
+            let result = decode_event(&config, &subject, &stream_id, Some(0), &headers, &payload);
+            assert!(matches!(
+                result,
+                Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory
+            ));
+        }
     }
 }

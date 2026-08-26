@@ -33,14 +33,16 @@ Aggregates own typed decisions and deterministic state transitions only.
 
 rostfrei does not provide conventional state persistence through its
 aggregate abstraction. It also does not initially provide handler discovery,
-procedural macros, workflows, reactions, projection orchestration, schema
-generation, or execution journals.
+workflows, reactions, projection orchestration, schema generation, or execution
+journals. Procedural domain macros and explicit runtime registration are now
+implemented as described by ADRs 0010 and 0014.
 
 ## Consequences
 
 Application code invokes an aggregate executor rather than a raw event-store
-adapter. Product names, subjects, stream names, environment variables, and
-deployment defaults do not belong in rostfrei. Documentation and APIs qualify
+adapter. Product names, environment variables, and deployment-specific
+overrides do not belong in rostfrei. ADR 0015 assigns normal application-scoped
+subject and stream-name derivation to rostfrei. Documentation and APIs qualify
 the word `event` as domain event or integration event, and qualify `stream` as
 aggregate stream or JetStream stream whenever the shorter term would be
 ambiguous.

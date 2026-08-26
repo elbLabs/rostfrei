@@ -29,10 +29,7 @@ pub struct NatsEventStoreConfig {
 impl NatsEventStoreConfig {
     pub fn for_bounded_context(context: &BoundedContext) -> Result<Self, EventStoreError> {
         let stream_name = domain_event_stream_name(context);
-        Self::new(
-            context,
-            stream_name,
-        )
+        Self::new(context, stream_name)
     }
 
     pub fn new(
@@ -308,7 +305,7 @@ mod tests {
 
     #[test]
     fn event_store_defaults_are_bounded_and_single_node_compatible() {
-        let config = NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST").expect("valid config");
+        let config = NatsEventStoreConfig::for_bounded_context(&context()).expect("valid config");
 
         assert_eq!(
             config.max_stream_bytes(),
@@ -324,12 +321,25 @@ mod tests {
 
     #[test]
     fn aggregate_subject_is_deterministic_and_opaque() {
-        let config = NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST")
-            .expect("valid config");
+        let config =
+            NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST").expect("valid config");
         let subject = config.aggregate_subject("Account", "account-123");
         assert_eq!(subject, config.aggregate_subject("Account", "account-123"));
         assert!(!subject.contains("Account"));
         assert!(!subject.contains("account-123"));
         assert_ne!(subject, config.aggregate_subject("Account", "account-124"));
+    }
+
+    #[test]
+    fn applications_with_the_same_context_have_disjoint_event_stores() {
+        let first = NatsEventStoreConfig::for_bounded_context(&context()).unwrap();
+        let second_context = ApplicationName::new("other-inbox")
+            .unwrap()
+            .bounded_context("commercial-access")
+            .unwrap();
+        let second = NatsEventStoreConfig::for_bounded_context(&second_context).unwrap();
+
+        assert_ne!(first.stream_name(), second.stream_name());
+        assert_ne!(first.subject_filter(), second.subject_filter());
     }
 }

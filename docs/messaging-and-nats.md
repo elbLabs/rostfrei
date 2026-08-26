@@ -56,7 +56,10 @@ connection.verify_application_messaging(&messaging).await?;
 ```
 
 Runtime services connect to and verify provisioned infrastructure. They do not
-mutate streams during ordinary startup.
+mutate streams during ordinary startup. Verification compares the complete
+rostfrei-owned stream policy, including retention, capacity, replication,
+delete and purge controls, rollup, sealing, transforms, persistence mode, and
+supported message-lifecycle features.
 
 Publishers, consumers, query requesters, query servers, and domain-event
 consumers reject addresses or durable names belonging to another application.
@@ -66,15 +69,18 @@ inside the same application.
 
 ## Overrides
 
-Replica counts are the normal deployment override. Low-level topology and
-event-store constructors remain available for exceptional stream names or
-capacities. They do not permit removing application or bounded-context scope
-from subjects. `ApplicationMessagingConfig::with_max_bytes` provides a bounded
-capacity override without exposing subject filters.
+Replica counts are the normal deployment override. Application-bound low-level
+stream and event-store constructors remain available for exceptional stream
+names or policies. They reject subject filters outside the configured
+application, and event-store subjects always retain bounded-context scope.
+`ApplicationMessagingConfig::with_max_bytes` provides a bounded capacity
+override without exposing subject filters.
 
 ## Security
 
 Subject names are not a security boundary. Use NATS accounts and permissions.
 Application-first subjects make those permissions direct: `fast-inbox.>` grants
 access to one application's commands, queries, integration events, quarantine,
-and domain-event subjects.
+and domain-event subjects. Core NATS request/reply also uses `_INBOX.*` reply
+subjects, so query clients and servers need the corresponding inbox publish and
+subscribe permissions.

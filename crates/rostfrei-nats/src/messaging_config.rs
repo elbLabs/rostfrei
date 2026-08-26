@@ -144,28 +144,34 @@ pub struct MessagingTopology {
 }
 
 impl MessagingTopology {
-    pub const fn new(
+    pub fn new(
         application: ApplicationName,
         command_stream: StreamName,
         integration_event_stream: StreamName,
         quarantine_stream: StreamName,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, NatsError> {
+        if command_stream == integration_event_stream
+            || command_stream == quarantine_stream
+            || integration_event_stream == quarantine_stream
+        {
+            return Err(NatsError::Configuration);
+        }
+        Ok(Self {
             application,
             command: command_stream,
             integration_event: integration_event_stream,
             quarantine: quarantine_stream,
-        }
+        })
     }
 
     pub fn for_application(application: &ApplicationName) -> Result<Self, NatsError> {
         let prefix = application_stream_token(application);
-        Ok(Self::new(
+        Self::new(
             application.clone(),
             StreamName::new(format!("{prefix}_COMMANDS"))?,
             StreamName::new(format!("{prefix}_INTEGRATION_EVENTS"))?,
             StreamName::new(format!("{prefix}_QUARANTINE"))?,
-        ))
+        )
     }
 
     pub const fn application(&self) -> &ApplicationName {
@@ -363,5 +369,24 @@ impl fmt::Debug for NatsConnectionConfig {
             .field("drain_timeout", &self.drain_timeout)
             .field("minimum_server_version", &self.minimum_server_version)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_topology_rejects_aliased_stream_roles() {
+        let application = ApplicationName::new("fast-inbox").unwrap();
+        let shared = StreamName::new("FAST_INBOX_SHARED").unwrap();
+
+        assert!(MessagingTopology::new(
+            application,
+            shared.clone(),
+            shared,
+            StreamName::new("FAST_INBOX_QUARANTINE").unwrap(),
+        )
+        .is_err());
     }
 }

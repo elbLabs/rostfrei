@@ -760,6 +760,7 @@ dependencies = [
  "async-trait",
  "base64",
  "futures-util",
+ "rostfrei",
  "rostfrei-core",
  "rostfrei-messaging-core",
  "rostfrei-testing",

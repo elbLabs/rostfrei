@@ -39,10 +39,12 @@ event limit, one replica, and a five-second PubAck timeout. These bounded defaul
 work with a standalone development server; production deployments normally
 override the replica count to match their NATS cluster durability policy.
 
-Stream creation and updates are operator-owned through an explicit generic
-provisioning API. Service startup only connects and verifies. Product stream
-names and subject prefixes are supplied by the application. Deployments may
-override the default capacities, replica count, and PubAck timeout.
+Stream creation and updates are operator-owned through an explicit provisioning
+API. Service startup only connects and verifies. The normal stream name and
+subject prefix are derived from a bounded context. The exceptional constructor
+permits a custom stream name while retaining application and bounded-context
+subject scope. Deployments may override the default capacities, replica count,
+and PubAck timeout through builders.
 
 ## Consequences
 

@@ -2,6 +2,8 @@
 mod event_store;
 #[path = "../src/event_store_config.rs"]
 mod event_store_config;
+#[path = "../src/stream_policy.rs"]
+mod stream_policy;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -240,6 +242,11 @@ async fn real_nats_event_store_contract_and_operator_policy() {
             serde_json::from_slice(&stored_event.payload).expect("stored event should be JSON");
         assert!(wire.get("events").is_none());
         assert_eq!(
+            wire.pointer("/schemaVersion")
+                .and_then(serde_json::Value::as_u64),
+            Some(3)
+        );
+        assert_eq!(
             wire.pointer("/event/application")
                 .and_then(serde_json::Value::as_str),
             Some(config.application().as_str())
@@ -309,13 +316,13 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         ),
         config.stream_name(),
     )
-        .expect("valid mismatching config")
-        .with_storage_limits(config.max_stream_bytes() + 1, config.max_event_bytes())
-        .expect("valid mismatching storage limits")
-        .with_replicas(config.replicas())
-        .expect("valid matching replicas")
-        .with_puback_timeout(config.puback_timeout())
-        .expect("valid matching PubAck timeout");
+    .expect("valid mismatching config")
+    .with_storage_limits(config.max_stream_bytes() + 1, config.max_event_bytes())
+    .expect("valid mismatching storage limits")
+    .with_replicas(config.replicas())
+    .expect("valid matching replicas")
+    .with_puback_timeout(config.puback_timeout())
+    .expect("valid matching PubAck timeout");
     let mismatch_result = NatsEventStore::connect(context.clone(), mismatch).await;
     assert!(matches!(
         mismatch_result,

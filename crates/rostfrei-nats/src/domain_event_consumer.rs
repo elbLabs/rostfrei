@@ -74,6 +74,13 @@ impl NatsDomainEventConsumerConfig {
         processing_timeout: Duration,
         retry_delay: RetryDelay,
     ) -> Result<Self, DomainEventConsumerError> {
+        if name.application() != durable_name.application()
+            || name.context() != durable_name.context()
+        {
+            return Err(invalid_configuration(
+                "consumer and durable names must have the same application and bounded context",
+            ));
+        }
         if ack_wait.is_zero()
             || ack_wait > MAX_PROCESSING_TIMEOUT
             || processing_timeout.is_zero()
@@ -645,9 +652,22 @@ mod tests {
             .bounded_context("orders")
             .unwrap();
         let event_store = NatsEventStoreConfig::for_bounded_context(&context).unwrap();
+        assert_eq!(
+            NatsDomainEventConsumerConfig::new(
+                ConsumerName::new("other", "orders", "projection", 1).unwrap(),
+                DurableName::new("acme", "orders", "projection", 1).unwrap(),
+                Duration::from_secs(5),
+                Duration::from_secs(2),
+                RetryDelay::new(Duration::from_millis(100)).unwrap(),
+            )
+            .unwrap_err()
+            .kind(),
+            DomainEventConsumerErrorKind::InvalidConfiguration
+        );
+
         let consumer = NatsDomainEventConsumerConfig::new(
             ConsumerName::new("other", "orders", "projection", 1).unwrap(),
-            DurableName::new("acme", "orders", "projection", 1).unwrap(),
+            DurableName::new("other", "orders", "projection", 1).unwrap(),
             Duration::from_secs(5),
             Duration::from_secs(2),
             RetryDelay::new(Duration::from_millis(100)).unwrap(),

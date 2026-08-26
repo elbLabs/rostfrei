@@ -5,7 +5,8 @@ keeps domain aggregates independent from persistence, serialization, and brokers
 while providing a compiled domain model, strict execution, developer tooling,
 and NATS JetStream adapters at the application edge.
 
-The workspace contains ten crates:
+The workspace contains ten framework crates plus the bike-rental example Cargo
+package:
 
 - `rostfrei`: application facade for the compiled domain model,
   event-sourcing runtime, registry, and public macros.
@@ -31,9 +32,10 @@ handbook are in [`docs/domain-model`](docs/domain-model).
 
 Messaging is application-scoped. An application name such as `fast-inbox`
 derives its command, integration-event, and quarantine streams and prefixes all
-subjects. Bounded contexts derive typed addresses and authoritative domain-event
-streams. See [`docs/messaging-and-nats.md`](docs/messaging-and-nats.md) for the
-conventions and provisioning API.
+rostfrei business subjects. Bounded contexts derive typed addresses and
+authoritative domain-event streams. See
+[`docs/messaging-and-nats.md`](docs/messaging-and-nats.md) for the conventions
+and provisioning API.
 
 [`examples/bike-rental`](examples/bike-rental) is a self-contained public
 example with an aggregate action, a decision, a query, a domain event, and a

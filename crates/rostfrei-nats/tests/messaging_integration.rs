@@ -14,6 +14,8 @@ mod provisioning;
 mod publish;
 #[path = "../src/query.rs"]
 mod query;
+#[path = "../src/stream_policy.rs"]
+mod stream_policy;
 
 use std::{
     collections::HashMap,
