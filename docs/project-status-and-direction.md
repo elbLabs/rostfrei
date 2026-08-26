@@ -75,15 +75,20 @@ deduplication window.
 Messaging supports typed commands, integration events, and queries; bounded
 wire envelopes; PubAck-confirmed publication; durable pull consumers; delayed
 retry; bounded delivery attempts; quarantine; and Core NATS request/reply.
+Application-first addresses and application-derived stream topology make one
+validated application name the normal configuration boundary. Bounded contexts
+derive authoritative domain-event stream names, subjects, and persisted scope
+metadata.
 Infrastructure provisioning remains an explicit operator action rather than a
 service-startup side effect.
 
 ## Nexus integration
 
 An integrating application currently adopts rostfrei as its messaging
-foundation through a thin policy facade. It uses rostfrei publishing,
-consumption, retry, quarantine, and topology validation while retaining its
-application-owned addresses and deployment defaults.
+foundation through a thin policy facade. ADR 0015 makes that facade temporary:
+rostfrei now owns normal address conventions and topology defaults, while the
+application supplies its name, business message names, environment variables,
+and operator composition.
 
 The integration does not yet run a production aggregate through rostfrei's
 `Executor`, `EventStore`, or `NatsEventStore`. No production aggregate is being
@@ -170,6 +175,7 @@ The three operational modes are deliberately distinct:
 | [0012](adr/0012-studio-and-ai-control-plane.md) | One secured control plane for Studio and AI tooling |
 | [0013](adr/0013-domain-event-handlers.md) | Typed post-commit domain-event handlers and durable NATS dispatch |
 | [0014](adr/0014-compiled-domain-model.md) | Absorb the domain compiler as rostfrei's canonical optional platform model |
+| [0015](adr/0015-application-scoped-nats-conventions.md) | Derive application-first subjects, stream topology, and bounded-context event stores |
 
 The product direction can be summarized as follows:
 

@@ -254,7 +254,8 @@ Messaging contracts and NATS mechanics are separate.
 
 `rostfrei-messaging-core` owns:
 
-- Validated command, integration-event, and query addresses.
+- Validated application and bounded-context names.
+- Application-first command, integration-event, and query addresses.
 - Bounded envelopes.
 - Correlation and causation metadata.
 - Publishing ports.
@@ -270,10 +271,12 @@ Messaging contracts and NATS mechanics are separate.
 - Retry and quarantine mechanics.
 - Core NATS request/reply and queue groups.
 - Broker-header validation.
-- Generic operator provisioning.
+- Application-derived stream topology and operator provisioning.
 
 Queries use adapter-generated Core NATS inboxes and are never written to
 JetStream. Application metadata cannot override broker control headers.
+Applications provide one top-level name; rostfrei derives disjoint stream names
+and subjects. Domain-event streams additionally include their bounded context.
 
 ## Truthful legacy import
 

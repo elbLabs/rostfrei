@@ -21,7 +21,7 @@ use rostfrei_core::{
     DomainEventHandlerErrorKind, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind,
     EventStore, ExecutionMetadata, ExpectedVersion, NewEvent, OperationId, RecordedEvent, StreamId,
 };
-use rostfrei_messaging_core::{ConsumerName, DurableName, RetryDelay};
+use rostfrei_messaging_core::{ApplicationName, RetryDelay};
 use rostfrei_nats::{
     provision_domain_event_consumer, provision_event_store, NatsDomainEventConsumer,
     NatsDomainEventConsumerConfig, NatsEventStore, NatsEventStoreConfig,
@@ -170,9 +170,13 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
     assert!(client.is_server_compatible(2, 12, 0));
     let context = async_nats::jetstream::new(client.clone());
     let suffix = unique_suffix();
+    let bounded_context = ApplicationName::new(format!("rostfrei-{suffix}"))
+        .expect("application name")
+        .bounded_context("domain-event-consumer")
+        .expect("bounded context");
     let event_store_config = NatsEventStoreConfig::new(
+        &bounded_context,
         format!("DOMAIN_EVENT_CONSUMER_{suffix}").to_ascii_uppercase(),
-        format!("private.domain-event-consumer.{suffix}"),
     )
     .expect("event-store config")
     .with_storage_limits(64 * 1024 * 1024, 2 * 1024 * 1024)
@@ -184,8 +188,8 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         .await
         .expect("event store");
 
-    let first_config = consumer_config(&format!("history-{suffix}"));
-    let second_config = consumer_config(&format!("independent-{suffix}"));
+    let first_config = consumer_config(&bounded_context, &format!("history-{suffix}"));
+    let second_config = consumer_config(&bounded_context, &format!("independent-{suffix}"));
     provision_domain_event_consumer(&context, &event_store_config, &first_config)
         .await
         .expect("first durable provisioning");
@@ -338,7 +342,7 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         .expect("restart task join")
         .expect("clean restart shutdown");
 
-    let retry_config = consumer_config(&format!("retry-{suffix}"));
+    let retry_config = consumer_config(&bounded_context, &format!("retry-{suffix}"));
     provision_domain_event_consumer(&context, &event_store_config, &retry_config)
         .await
         .expect("retry durable provisioning");
@@ -367,9 +371,11 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         .expect("clean retry shutdown");
 
     let blocked_config = NatsDomainEventConsumerConfig::new(
-        ConsumerName::new("rostfrei", "domain-events", &format!("blocked-{suffix}"), 1)
+        bounded_context
+            .consumer_name(&format!("blocked-{suffix}"), 1)
             .expect("blocked consumer name"),
-        DurableName::new("rostfrei", "domain-events", &format!("blocked-{suffix}"), 1)
+        bounded_context
+            .durable_name(&format!("blocked-{suffix}"), 1)
             .expect("blocked durable name"),
         Duration::from_secs(2),
         Duration::from_millis(500),
@@ -454,10 +460,17 @@ async fn connect_consumer(
         .expect("domain-event consumer")
 }
 
-fn consumer_config(purpose: &str) -> NatsDomainEventConsumerConfig {
+fn consumer_config(
+    bounded_context: &rostfrei_messaging_core::BoundedContext,
+    purpose: &str,
+) -> NatsDomainEventConsumerConfig {
     NatsDomainEventConsumerConfig::new(
-        ConsumerName::new("rostfrei", "domain-events", purpose, 1).expect("consumer name"),
-        DurableName::new("rostfrei", "domain-events", purpose, 1).expect("durable name"),
+        bounded_context
+            .consumer_name(purpose, 1)
+            .expect("consumer name"),
+        bounded_context
+            .durable_name(purpose, 1)
+            .expect("durable name"),
         Duration::from_secs(5),
         Duration::from_secs(2),
         RetryDelay::new(Duration::from_millis(50)).expect("retry delay"),

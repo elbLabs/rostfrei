@@ -29,13 +29,19 @@ The workspace contains ten crates:
 compiled models and Cargo diagnostics. The domain language reference and
 handbook are in [`docs/domain-model`](docs/domain-model).
 
+Messaging is application-scoped. An application name such as `fast-inbox`
+derives its command, integration-event, and quarantine streams and prefixes all
+subjects. Bounded contexts derive typed addresses and authoritative domain-event
+streams. See [`docs/messaging-and-nats.md`](docs/messaging-and-nats.md) for the
+conventions and provisioning API.
+
 [`examples/bike-rental`](examples/bike-rental) is a self-contained public
 example with an aggregate action, a decision, a query, a domain event, and a
 domain error.
 
 rostfrei does not provision infrastructure during service startup. Operators
-use the explicit provisioning APIs with bounded stream-policy defaults that the
-deployment can override.
+use the explicit provisioning APIs with bounded, application-scoped defaults
+that the deployment can override.
 Authoritative NATS event storage requires NATS Server 2.12.0 or newer for atomic
 multi-event publishing.
 

@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted; application topology-facade ownership partially superseded by ADR
+0015.
 
 ## Decision
 

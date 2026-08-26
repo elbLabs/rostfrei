@@ -27,23 +27,20 @@ use std::{
 use async_trait::async_trait;
 use base64::Engine as _;
 use rostfrei_messaging_core::{
-    ApplicationErrorCode, CallerMetadata, CommandAddress, CommandPublisher, ConsumerConfig,
-    ConsumerName, CorrelationId, DeliveryDisposition, DurableName, EnvelopeContext,
+    ApplicationErrorCode, ApplicationName, BoundedContext, CallerMetadata, CommandAddress,
+    CommandPublisher, ConsumerConfig, CorrelationId, DeliveryDisposition, EnvelopeContext,
     MessageConsumerFactory, MessageDelivery, MessageHandler, MessageId, MessageTimestamp,
     OutboundMessage, QuarantineReason, QueryAddress, QueryErrorClassification, QueryErrorPayload,
-    QueryHandler, QueryOptions, QueryOutcome, QueryRequest, QueryRequester, QueryResponse,
-    QueryServer, RetryDelay, SchemaVersion, TraceContext,
+    QueryHandler, QueryOptions, QueryOutcome, QueryRequest, QueryRequestErrorKind, QueryRequester,
+    QueryResponse, QueryServer, QueryServerErrorKind, RetryDelay, SchemaVersion, TraceContext,
 };
 use serde_json::{json, Value};
 
 use connection::{connect, NatsConnection};
 use consumer::{NatsConsumerFactory, QuarantineRecord};
-use messaging_config::{
-    MessagingTopology, NatsConnectionConfig, QueueGroup, StreamName, SubjectFilter,
-};
+use messaging_config::{MessagingTopology, NatsConnectionConfig, QueueGroup, StreamName};
 use provisioning::{
-    provision_durable_consumer, provision_stream, StreamProvisioningConfig, StreamRetention,
-    StreamStorage,
+    provision_application_messaging, provision_durable_consumer, ApplicationMessagingConfig,
 };
 use publish::{NatsPublisher, CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE};
 use query::{NatsQueryServerConfig, CORRELATION_ID_HEADER, REQUEST_ID_HEADER};
@@ -55,19 +52,22 @@ static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 struct Fixture {
     connection: NatsConnection,
     topology: MessagingTopology,
-    owner: String,
+    context: BoundedContext,
 }
 
 impl Fixture {
     async fn new(url: String) -> Self {
         let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let owner = format!("test-{}-{sequence}", std::process::id());
-        let suffix = format!("{}_{}", std::process::id(), sequence);
-        let topology = MessagingTopology::new(
-            StreamName::new(format!("COMMANDS_{suffix}")).expect("command stream name"),
-            StreamName::new(format!("INTEGRATION_{suffix}")).expect("event stream name"),
-            StreamName::new(format!("QUARANTINE_{suffix}")).expect("quarantine stream name"),
-        );
+        let application = ApplicationName::new(format!("test-{}-{sequence}", std::process::id()))
+            .expect("application name");
+        let context = application
+            .bounded_context("messaging")
+            .expect("bounded context");
+        let messaging = ApplicationMessagingConfig::new(&application)
+            .expect("messaging config")
+            .with_max_bytes(64 * 1024 * 1024)
+            .expect("test stream capacity");
+        let topology = messaging.topology().clone();
         let connection = connect(&NatsConnectionConfig::new(
             format!("messaging-test-{sequence}"),
             url,
@@ -75,53 +75,30 @@ impl Fixture {
         .await
         .expect("connect to test NATS");
 
-        let command = StreamProvisioningConfig::new(
-            topology.command_stream().clone(),
-            vec![SubjectFilter::new(format!("command.{owner}.>")).expect("command filter")],
-            StreamRetention::WorkQueue,
-        )
-        .expect("command config")
-        .with_storage(StreamStorage::Memory)
-        .with_max_bytes(32 * 1024 * 1024);
-        let integration = StreamProvisioningConfig::new(
-            topology.integration_event_stream().clone(),
-            vec![SubjectFilter::new(format!("integration.{owner}.>")).expect("integration filter")],
-            StreamRetention::Limits,
-        )
-        .expect("integration config")
-        .with_storage(StreamStorage::Memory)
-        .with_max_bytes(32 * 1024 * 1024);
-        let quarantine = StreamProvisioningConfig::new(
-            topology.quarantine_stream().clone(),
-            vec![SubjectFilter::new(format!("quarantine.command.{owner}.>"))
-                .expect("quarantine filter")],
-            StreamRetention::Limits,
-        )
-        .expect("quarantine config")
-        .with_storage(StreamStorage::Memory)
-        .with_max_bytes(32 * 1024 * 1024);
-        for config in [&command, &integration, &quarantine] {
-            provision_stream(connection.jetstream(), config)
-                .await
-                .expect("provision test stream");
-            provision_stream(connection.jetstream(), config)
-                .await
-                .expect("repeated stream provisioning must be idempotent");
-        }
+        provision_application_messaging(connection.jetstream(), &messaging)
+            .await
+            .expect("provision application messaging");
+        provision_application_messaging(connection.jetstream(), &messaging)
+            .await
+            .expect("repeated provisioning must be idempotent");
+        connection
+            .verify_application_messaging(&messaging)
+            .await
+            .expect("provisioned messaging policy");
 
         Self {
             connection,
             topology,
-            owner,
+            context,
         }
     }
 
     fn command_address(&self, name: &str) -> CommandAddress {
-        CommandAddress::new(&self.owner, "messaging", name).expect("command address")
+        self.context.command_address(name).expect("command address")
     }
 
     fn query_address(&self, name: &str) -> QueryAddress {
-        QueryAddress::new(&self.owner, "messaging", name).expect("query address")
+        self.context.query_address(name).expect("query address")
     }
 
     async fn message_counts(&self) -> [u64; 3] {
@@ -192,6 +169,33 @@ async fn stream_message_count(context: &async_nats::jetstream::Context, name: &S
     stream.info().await.expect("stream info").state.messages
 }
 
+async fn assert_application_scope_guards(fixture: &Fixture, publisher: &NatsPublisher) {
+    let mismatched_policy = ApplicationMessagingConfig::new(fixture.context.application())
+        .expect("mismatched messaging config")
+        .with_max_bytes(32 * 1024 * 1024)
+        .expect("mismatched stream capacity");
+    assert!(matches!(
+        fixture
+            .connection
+            .verify_application_messaging(&mismatched_policy)
+            .await,
+        Err(error::NatsError::Configuration)
+    ));
+
+    let cross_application = OutboundMessage::new(
+        CommandAddress::new("other", "messaging", "publish").expect("other address"),
+        message_id("cross-application"),
+        br#"{"ok":true}"#.to_vec(),
+    )
+    .expect("cross-application message");
+    assert!(matches!(
+        publisher
+            .publish_command_with_ack(cross_application, Duration::from_secs(5))
+            .await,
+        Err(error::NatsError::InvalidMessage)
+    ));
+}
+
 #[tokio::test]
 async fn puback_confirms_stream_sequence_duplicate_and_owned_headers() {
     let Some(url) = test_url() else {
@@ -213,6 +217,7 @@ async fn puback_confirms_stream_sequence_duplicate_and_owned_headers() {
         fixture.connection.jetstream().clone(),
         fixture.topology.clone(),
     );
+    assert_application_scope_guards(&fixture, &publisher).await;
 
     let first = publisher
         .publish_command_with_ack(message.clone(), Duration::from_secs(5))
@@ -347,9 +352,14 @@ async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() 
     };
     let fixture = Fixture::new(url).await;
     let address = fixture.command_address("consume");
-    let name = ConsumerName::new(&fixture.owner, "messaging", "consume", 1).expect("consumer name");
-    let durable =
-        DurableName::new(&fixture.owner, "messaging", "consume", 1).expect("durable name");
+    let name = fixture
+        .context
+        .consumer_name("consume", 1)
+        .expect("consumer name");
+    let durable = fixture
+        .context
+        .durable_name("consume", 1)
+        .expect("durable name");
     let config = ConsumerConfig::new(name, durable, address.clone(), Duration::from_secs(5), 4, 3)
         .expect("consumer config");
     provision_durable_consumer(fixture.connection.jetstream(), &fixture.topology, &config)
@@ -398,7 +408,8 @@ async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() 
     .await
     .expect("consumer dispositions completed");
 
-    let quarantine_subject = format!("quarantine.{}", address.as_str());
+    let (_, routed) = address.as_str().split_once('.').expect("routed address");
+    let quarantine_subject = format!("{}.quarantine.{routed}", address.application());
     let quarantine_stream = fixture
         .connection
         .jetstream()
@@ -459,8 +470,22 @@ async fn core_nats_query_roundtrip_preserves_errors_and_does_not_touch_jetstream
     let address = fixture.query_address("roundtrip");
     let server = fixture
         .connection
-        .query_server(NatsQueryServerConfig::default())
+        .query_server(
+            fixture.context.application(),
+            NatsQueryServerConfig::default(),
+        )
         .expect("query server");
+    let invalid_server_scope = <query::NatsQueryServer as QueryServer<Value, Value>>::run(
+        &server,
+        QueryAddress::new("other", "messaging", "roundtrip").expect("other query address"),
+        Arc::new(RoundTripHandler),
+    )
+    .await
+    .expect_err("query server must reject another application");
+    assert_eq!(
+        invalid_server_scope.kind(),
+        QueryServerErrorKind::InvalidConfiguration
+    );
     let server_address = address.clone();
     let server_task = tokio::spawn(async move {
         <query::NatsQueryServer as QueryServer<Value, Value>>::run(
@@ -479,7 +504,22 @@ async fn core_nats_query_roundtrip_preserves_errors_and_does_not_touch_jetstream
         .publish(address.as_str().to_owned(), b"not-json".to_vec().into())
         .await
         .expect("publish malformed query");
-    let requester = fixture.connection.query_requester();
+    let requester = fixture
+        .connection
+        .query_requester(fixture.context.application());
+    let invalid_request_scope =
+        <query::NatsQueryRequester as QueryRequester<Value, Value>>::request(
+            &requester,
+            &QueryAddress::new("other", "messaging", "roundtrip").expect("other query address"),
+            query_request(message_id("cross-application-query"), json!({})),
+            QueryOptions::new(Duration::from_secs(3), 64 * 1024).expect("query options"),
+        )
+        .await
+        .expect_err("query requester must reject another application");
+    assert_eq!(
+        invalid_request_scope.kind(),
+        QueryRequestErrorKind::Rejected
+    );
     let success = requester
         .request(
             &address,
@@ -547,7 +587,10 @@ async fn query_servers_in_one_queue_group_share_requests() {
     ] {
         let server = fixture
             .connection
-            .query_server(NatsQueryServerConfig::default().with_queue_group(queue_group.clone()))
+            .query_server(
+                fixture.context.application(),
+                NatsQueryServerConfig::default().with_queue_group(queue_group.clone()),
+            )
             .expect("queue query server");
         let server_address = address.clone();
         tasks.push(tokio::spawn(async move {
@@ -561,7 +604,9 @@ async fn query_servers_in_one_queue_group_share_requests() {
     }
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let requester = fixture.connection.query_requester();
+    let requester = fixture
+        .connection
+        .query_requester(fixture.context.application());
     for index in 0..20 {
         let _: QueryResponse<Value> = requester
             .request(
