@@ -1,7 +1,8 @@
-use domain::{
+use rostfrei::{
     Aggregate, BoundedContext, DomainCommand, DomainError, DomainEvent, DomainIdentity, Entity,
     ValueObject, domain_actions, domain_decisions, domain_queries,
 };
+use serde::{Deserialize, Serialize};
 
 #[derive(BoundedContext)]
 #[domain(id = "bike-rental", label = "Bike Rental")]
@@ -15,7 +16,7 @@ pub struct BikeRental;
     root = RentalFleet,
     actions = [RentalFleetActions],
     decisions = [RentalEligibilityDecisions],
-    events = [BicycleRented]
+    events = [RentalFleetImported, BicycleRented]
 )]
 pub struct RentalFleetAggregate;
 
@@ -39,6 +40,20 @@ impl RentalFleet {
 
     pub fn bicycles(&self) -> &[Bicycle] {
         &self.bicycles
+    }
+
+    pub fn fleet_id(&self) -> &FleetId {
+        &self.fleet_id
+    }
+
+    pub(crate) fn apply_rental(&mut self, bicycle_id: &BicycleId) {
+        if let Some(bicycle) = self
+            .bicycles
+            .iter_mut()
+            .find(|bicycle| bicycle.bicycle_id() == bicycle_id)
+        {
+            bicycle.mark_rented(BicycleStatus::Rented);
+        }
     }
 }
 
@@ -74,41 +89,77 @@ impl Bicycle {
     pub fn status(&self) -> BicycleStatus {
         self.status
     }
+
+    pub fn condition(&self) -> BicycleCondition {
+        self.condition
+    }
 }
 
-#[derive(DomainIdentity, Clone, Debug, Eq, Hash, PartialEq, Ord, PartialOrd)]
+#[derive(
+    DomainIdentity, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Ord, PartialOrd, Serialize,
+)]
 #[domain(owner = RentalFleet)]
+#[serde(try_from = "String")]
 pub struct FleetId(String);
 
 impl FleetId {
     pub fn new(value: impl Into<String>) -> Option<Self> {
         non_empty(value).map(Self)
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-#[derive(DomainIdentity, Clone, Debug, Eq, Hash, PartialEq, Ord, PartialOrd)]
+impl TryFrom<String> for FleetId {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value).ok_or("fleet ID must be non-empty and trimmed")
+    }
+}
+
+#[derive(
+    DomainIdentity, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Ord, PartialOrd, Serialize,
+)]
 #[domain(owner = Bicycle)]
+#[serde(try_from = "String")]
 pub struct BicycleId(String);
 
 impl BicycleId {
     pub fn new(value: impl Into<String>) -> Option<Self> {
         non_empty(value).map(Self)
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
+impl TryFrom<String> for BicycleId {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value).ok_or("bicycle ID must be non-empty and trimmed")
+    }
+}
+
+#[derive(ValueObject, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[domain(id = "bicycle-status", label = "Bicycle status", owner = RentalFleetAggregate)]
+#[serde(rename_all = "kebab-case")]
 pub enum BicycleStatus {
     Available,
     Rented,
 }
 
-#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(ValueObject, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[domain(
     id = "bicycle-condition",
     label = "Bicycle condition",
     owner = RentalFleetAggregate
 )]
+#[serde(rename_all = "kebab-case")]
 pub enum BicycleCondition {
     Serviceable,
     MaintenanceRequired,
@@ -133,9 +184,9 @@ pub enum BicycleAvailability {
 )]
 pub(crate) struct RentalEligibilityInput {
     #[domain(value_object)]
-    status: BicycleStatus,
+    pub(crate) status: BicycleStatus,
     #[domain(value_object)]
-    condition: BicycleCondition,
+    pub(crate) condition: BicycleCondition,
 }
 
 #[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
@@ -156,7 +207,31 @@ pub struct RentBicycle {
     pub bicycle_id: BicycleId,
 }
 
-#[derive(DomainEvent, Clone, Debug, Eq, PartialEq)]
+#[derive(ValueObject, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[domain(
+    id = "imported-bicycle",
+    label = "Imported bicycle",
+    owner = RentalFleetAggregate
+)]
+pub struct ImportedBicycle {
+    #[domain(identity)]
+    pub bicycle_id: BicycleId,
+    #[domain(value_object)]
+    pub status: BicycleStatus,
+    #[domain(value_object)]
+    pub condition: BicycleCondition,
+}
+
+#[derive(DomainEvent, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[domain(id = "rental-fleet-imported", label = "Rental fleet imported")]
+pub struct RentalFleetImported {
+    #[domain(identity)]
+    pub fleet_id: FleetId,
+    #[domain(value_object)]
+    pub bicycles: Vec<ImportedBicycle>,
+}
+
+#[derive(DomainEvent, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[domain(id = "bicycle-rented", label = "Bicycle rented")]
 pub struct BicycleRented {
     #[domain(identity)]
@@ -222,31 +297,37 @@ impl RentalFleetActions for RentalFleetAggregate {
         root: &mut RentalFleet,
         input: RentBicycle,
     ) -> Result<BicycleRented, BicycleUnavailable> {
-        let bicycle = root
-            .bicycles
-            .iter_mut()
-            .find(|bicycle| bicycle.bicycle_id == input.bicycle_id)
-            .ok_or_else(|| BicycleUnavailable {
-                bicycle_id: input.bicycle_id.clone(),
-            })?;
-        let eligibility = RentalEligibilityInput {
-            status: bicycle.status,
-            condition: bicycle.condition,
-        };
-        if RentalFleetAggregate::assess_rental_eligibility(eligibility)
-            != RentalEligibility::Eligible
-        {
-            return Err(BicycleUnavailable {
-                bicycle_id: input.bicycle_id,
-            });
-        }
-
-        bicycle.mark_rented(BicycleStatus::Rented);
-        Ok(BicycleRented {
-            fleet_id: root.fleet_id.clone(),
-            bicycle_id: input.bicycle_id,
-        })
+        let event = decide_rental(root, &input)?;
+        root.apply_rental(&event.bicycle_id);
+        Ok(event)
     }
+}
+
+pub(crate) fn decide_rental(
+    root: &RentalFleet,
+    input: &RentBicycle,
+) -> Result<BicycleRented, BicycleUnavailable> {
+    let bicycle = root
+        .bicycles
+        .iter()
+        .find(|bicycle| bicycle.bicycle_id == input.bicycle_id)
+        .ok_or_else(|| BicycleUnavailable {
+            bicycle_id: input.bicycle_id.clone(),
+        })?;
+    let eligibility = RentalEligibilityInput {
+        status: bicycle.status,
+        condition: bicycle.condition,
+    };
+    if RentalFleetAggregate::assess_rental_eligibility(eligibility) != RentalEligibility::Eligible {
+        return Err(BicycleUnavailable {
+            bicycle_id: input.bicycle_id.clone(),
+        });
+    }
+
+    Ok(BicycleRented {
+        fleet_id: root.fleet_id.clone(),
+        bicycle_id: input.bicycle_id.clone(),
+    })
 }
 
 #[domain_queries(group = BicycleAvailabilityQueries)]

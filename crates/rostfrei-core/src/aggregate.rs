@@ -45,31 +45,53 @@ impl<E> EventVariant<E> for E {
     }
 }
 
-pub struct DecisionContext<'a, A: Aggregate> {
-    state: &'a mut A::State,
-    recorded: &'a mut Vec<A::Event>,
+pub struct AggregateInstance<A: Aggregate> {
+    stream_id: StreamId,
+    state: A::State,
+    uncommitted_events: Vec<A::Event>,
 }
 
-impl<'a, A: Aggregate> DecisionContext<'a, A> {
-    pub fn new(state: &'a mut A::State, recorded: &'a mut Vec<A::Event>) -> Self {
-        Self { state, recorded }
+impl<A: Aggregate> AggregateInstance<A> {
+    pub fn new(stream_id: StreamId) -> Self {
+        let state = A::initial(&stream_id);
+        Self {
+            stream_id,
+            state,
+            uncommitted_events: Vec::new(),
+        }
+    }
+
+    pub fn rehydrate(stream_id: StreamId, events: impl IntoIterator<Item = A::Event>) -> Self {
+        let mut aggregate = Self::new(stream_id);
+        for event in events {
+            A::apply(&mut aggregate.state, &event);
+        }
+        aggregate
+    }
+
+    pub fn stream_id(&self) -> &StreamId {
+        &self.stream_id
     }
 
     pub fn state(&self) -> &A::State {
-        self.state
+        &self.state
     }
 
-    pub fn record<E>(&mut self, event: E)
+    pub fn raise<E>(&mut self, event: E)
     where
         E: Into<A::Event>,
     {
         let event = event.into();
-        A::apply(self.state, &event);
-        self.recorded.push(event);
+        A::apply(&mut self.state, &event);
+        self.uncommitted_events.push(event);
     }
 
-    pub fn recorded(&self) -> &[A::Event] {
-        self.recorded
+    pub fn uncommitted_events(&self) -> &[A::Event] {
+        &self.uncommitted_events
+    }
+
+    pub fn into_parts(self) -> (StreamId, A::State, Vec<A::Event>) {
+        (self.stream_id, self.state, self.uncommitted_events)
     }
 }
 
@@ -78,7 +100,7 @@ pub trait CommandHandler<Command>: Aggregate {
 
     fn handle(
         command: &Command,
-        context: &mut DecisionContext<'_, Self>,
+        aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection>;
 }
 

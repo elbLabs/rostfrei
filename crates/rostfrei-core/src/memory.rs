@@ -6,8 +6,8 @@ use tokio::sync::Mutex;
 
 use crate::identity::{derive_commit_id, derive_event_id};
 use crate::{
-    AppendOutcome, CommitId, EventBatch, EventId, EventStore, EventStoreError, EventStoreErrorKind,
-    ExpectedVersion, OperationId, RecordedEvent, StreamId, StreamVersion,
+    AppendOutcome, CommitId, EventBatch, EventHistory, EventId, EventStore, EventStoreError,
+    EventStoreErrorKind, ExpectedVersion, OperationId, RecordedEvent, StreamId, StreamVersion,
 };
 
 #[derive(Clone)]
@@ -51,16 +51,23 @@ impl InMemoryEventStore {
             maximum_events,
         }
     }
+
+    pub async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        <Self as EventHistory>::load(self, stream_id).await
+    }
+}
+
+#[async_trait]
+impl EventHistory for InMemoryEventStore {
+    async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        let state = self.state.lock().await;
+        Ok(state.streams.get(stream_id).cloned().unwrap_or_default())
+    }
 }
 
 #[async_trait]
 #[allow(clippy::too_many_lines)]
 impl EventStore for InMemoryEventStore {
-    async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
-        let state = self.state.lock().await;
-        Ok(state.streams.get(stream_id).cloned().unwrap_or_default())
-    }
-
     async fn append(
         &self,
         stream_id: &StreamId,

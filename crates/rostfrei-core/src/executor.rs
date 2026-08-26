@@ -4,9 +4,10 @@ use thiserror::Error;
 
 use crate::identity::{derive_commit_id, derive_event_id};
 use crate::{
-    Aggregate, AppendOutcome, CommandHandler, DecisionContext, EventBatch, EventCodec,
-    EventCodecError, EventStore, EventStoreError, EventStoreErrorKind, ExecutionMetadata,
-    ExpectedVersion, JsonEventCodec, RecordedEvent, StreamId, StreamVersion,
+    Aggregate, AggregateInstance, AppendOutcome, CommandHandler, EventBatch, EventCodec,
+    EventCodecError, EventHistory, EventStore, EventStoreError, EventStoreErrorKind,
+    ExecutionMetadata, ExpectedVersion, JsonEventCodec, NewEvent, RecordedEvent, StreamId,
+    StreamVersion,
 };
 
 const DEFAULT_MAX_CONFLICT_RETRIES: usize = 3;
@@ -77,6 +78,145 @@ pub enum ExecutionError<Rejection> {
     Codec(#[from] EventCodecError),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SimulationOutcome<Rejection> {
+    base_version: StreamVersion,
+    decision: SimulationDecision<Rejection>,
+}
+
+impl<Rejection> SimulationOutcome<Rejection> {
+    pub const fn base_version(&self) -> StreamVersion {
+        self.base_version
+    }
+
+    pub const fn decision(&self) -> &SimulationDecision<Rejection> {
+        &self.decision
+    }
+
+    pub fn into_parts(self) -> (StreamVersion, SimulationDecision<Rejection>) {
+        (self.base_version, self.decision)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SimulationDecision<Rejection> {
+    Accepted(Vec<NewEvent>),
+    Rejected(Rejection),
+}
+
+impl<Rejection> SimulationDecision<Rejection> {
+    pub const fn is_accepted(&self) -> bool {
+        matches!(self, Self::Accepted(_))
+    }
+
+    pub fn events(&self) -> Option<&[NewEvent]> {
+        match self {
+            Self::Accepted(events) => Some(events),
+            Self::Rejected(_) => None,
+        }
+    }
+
+    pub const fn rejection(&self) -> Option<&Rejection> {
+        match self {
+            Self::Accepted(_) => None,
+            Self::Rejected(rejection) => Some(rejection),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum SimulationError {
+    #[error(transparent)]
+    Store(#[from] EventStoreError),
+    #[error(transparent)]
+    Codec(#[from] EventCodecError),
+}
+
+impl<Rejection> From<SimulationError> for ExecutionError<Rejection> {
+    fn from(error: SimulationError) -> Self {
+        match error {
+            SimulationError::Store(error) => Self::Store(error),
+            SimulationError::Codec(error) => Self::Codec(error),
+        }
+    }
+}
+
+impl<S, C> Executor<S, C>
+where
+    S: EventHistory,
+{
+    pub async fn simulate<A, Command>(
+        &self,
+        metadata: ExecutionMetadata,
+        command: &Command,
+    ) -> Result<SimulationOutcome<<A as CommandHandler<Command>>::Rejection>, SimulationError>
+    where
+        A: Aggregate + CommandHandler<Command>,
+        C: EventCodec<A>,
+    {
+        let (aggregate, history) = self.load_and_replay::<A>(metadata.stream_id()).await?;
+        let base_version = current_version(&history);
+        let decision = match self.decide::<A, Command>(&metadata, command, aggregate)? {
+            SimulationDecision::Accepted(events) => {
+                let events = prepare_batch(&metadata, events)?
+                    .map_or_else(Vec::new, EventBatch::into_events);
+                SimulationDecision::Accepted(events)
+            }
+            SimulationDecision::Rejected(rejection) => SimulationDecision::Rejected(rejection),
+        };
+        Ok(SimulationOutcome {
+            base_version,
+            decision,
+        })
+    }
+
+    async fn load_and_replay<A>(
+        &self,
+        stream_id: &StreamId,
+    ) -> Result<(AggregateInstance<A>, Vec<RecordedEvent>), SimulationError>
+    where
+        A: Aggregate,
+        C: EventCodec<A>,
+    {
+        validate_aggregate_type::<A>(stream_id)?;
+        let history = self.store.load(stream_id).await?;
+        validate_history(stream_id, &history)?;
+
+        let mut events = Vec::with_capacity(history.len());
+        for event in &history {
+            events.push(self.codec.decode(event)?);
+        }
+        Ok((
+            AggregateInstance::rehydrate(stream_id.clone(), events),
+            history,
+        ))
+    }
+
+    fn decide<A, Command>(
+        &self,
+        metadata: &ExecutionMetadata,
+        command: &Command,
+        mut aggregate: AggregateInstance<A>,
+    ) -> Result<SimulationDecision<<A as CommandHandler<Command>>::Rejection>, SimulationError>
+    where
+        A: Aggregate + CommandHandler<Command>,
+        C: EventCodec<A>,
+    {
+        if let Err(rejection) = A::handle(command, &mut aggregate) {
+            return Ok(SimulationDecision::Rejected(rejection));
+        }
+
+        let mut encoded = Vec::with_capacity(aggregate.uncommitted_events().len());
+        for (ordinal, event) in aggregate.uncommitted_events().iter().enumerate() {
+            let ordinal = u32::try_from(ordinal).map_err(|_| {
+                invalid_request("command emitted more events than the supported ordinal range")
+            })?;
+            encoded.push(self.codec.encode(event, metadata.event_id(ordinal))?);
+        }
+        Ok(SimulationDecision::Accepted(encoded))
+    }
+}
+
 impl<S, C> Executor<S, C>
 where
     S: EventStore,
@@ -90,24 +230,8 @@ where
         A: Aggregate + CommandHandler<Command>,
         C: EventCodec<A>,
     {
-        let aggregate_type = A::aggregate_type();
-        if metadata.stream_id().aggregate_type().as_str() != aggregate_type.as_ref() {
-            return Err(invalid_request(format!(
-                "aggregate type {} cannot execute stream type {}",
-                aggregate_type,
-                metadata.stream_id().aggregate_type()
-            ))
-            .into());
-        }
         for attempt in 0..=self.maximum_conflict_retries {
-            let history = self.store.load(metadata.stream_id()).await?;
-            validate_history(metadata.stream_id(), &history)?;
-
-            let mut aggregate = A::initial(metadata.stream_id());
-            for event in &history {
-                let decoded = self.codec.decode(event)?;
-                A::apply(&mut aggregate, &decoded);
-            }
+            let (aggregate, history) = self.load_and_replay::<A>(metadata.stream_id()).await?;
 
             let prior_operation: Vec<_> = history
                 .iter()
@@ -131,36 +255,19 @@ where
                 .into());
             }
 
-            let mut pending = Vec::new();
-            let mut context = DecisionContext::new(&mut aggregate, &mut pending);
-            A::handle(command, &mut context).map_err(ExecutionError::Rejected)?;
-            if pending.is_empty() {
+            let events = match self.decide::<A, Command>(&metadata, command, aggregate)? {
+                SimulationDecision::Accepted(events) => events,
+                SimulationDecision::Rejected(rejection) => {
+                    return Err(ExecutionError::Rejected(rejection));
+                }
+            };
+            let Some(batch) = prepare_batch(&metadata, events)? else {
                 return Ok(ExecutionOutcome::NoEvents);
-            }
-
-            let mut encoded = Vec::with_capacity(pending.len());
-            for (ordinal, event) in pending.iter().enumerate() {
-                let ordinal = u32::try_from(ordinal).map_err(|_| {
-                    invalid_request("command emitted more events than the supported ordinal range")
-                })?;
-                encoded.push(self.codec.encode(event, metadata.event_id(ordinal))?);
-            }
-            let mut batch = EventBatch::new(
-                metadata.commit_id().clone(),
-                metadata.operation_id().clone(),
-                metadata.operation_fingerprint(),
-                encoded,
-            )
-            .map_err(|error| invalid_request(error.to_string()))?;
-            if let Some(correlation_id) = metadata.correlation_id() {
-                batch = batch.with_correlation_id(correlation_id.clone());
-            }
-            if let Some(causation_id) = metadata.causation_id() {
-                batch = batch.with_causation_id(causation_id.clone());
-            }
-            let expected_version = history.last().map_or(ExpectedVersion::NoStream, |event| {
-                ExpectedVersion::Exact(event.stream_version())
-            });
+            };
+            let expected_version = match current_version(&history) {
+                StreamVersion::ZERO => ExpectedVersion::NoStream,
+                version => ExpectedVersion::Exact(version),
+            };
 
             match self
                 .store
@@ -182,6 +289,47 @@ where
 
         unreachable!("the bounded retry loop always returns on its final attempt")
     }
+}
+
+fn validate_aggregate_type<A: Aggregate>(stream_id: &StreamId) -> Result<(), EventStoreError> {
+    let aggregate_type = A::aggregate_type();
+    if stream_id.aggregate_type().as_str() != aggregate_type.as_ref() {
+        return Err(invalid_request(format!(
+            "aggregate type {} cannot execute stream type {}",
+            aggregate_type,
+            stream_id.aggregate_type()
+        )));
+    }
+    Ok(())
+}
+
+fn prepare_batch(
+    metadata: &ExecutionMetadata,
+    events: Vec<NewEvent>,
+) -> Result<Option<EventBatch>, EventStoreError> {
+    if events.is_empty() {
+        return Ok(None);
+    }
+    let mut batch = EventBatch::new(
+        metadata.commit_id().clone(),
+        metadata.operation_id().clone(),
+        metadata.operation_fingerprint(),
+        events,
+    )
+    .map_err(|error| invalid_request(error.to_string()))?;
+    if let Some(correlation_id) = metadata.correlation_id() {
+        batch = batch.with_correlation_id(correlation_id.clone());
+    }
+    if let Some(causation_id) = metadata.causation_id() {
+        batch = batch.with_causation_id(causation_id.clone());
+    }
+    Ok(Some(batch))
+}
+
+fn current_version(history: &[RecordedEvent]) -> StreamVersion {
+    history
+        .last()
+        .map_or(StreamVersion::ZERO, RecordedEvent::stream_version)
 }
 
 fn validate_history(

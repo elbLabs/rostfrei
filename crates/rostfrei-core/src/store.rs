@@ -71,9 +71,12 @@ impl AppendOutcome {
 }
 
 #[async_trait]
-pub trait EventStore: Send + Sync {
+pub trait EventHistory: Send + Sync {
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError>;
+}
 
+#[async_trait]
+pub trait EventStore: EventHistory {
     async fn append(
         &self,
         stream_id: &StreamId,
@@ -83,11 +86,14 @@ pub trait EventStore: Send + Sync {
 }
 
 #[async_trait]
-impl<Store: EventStore + ?Sized> EventStore for Arc<Store> {
+impl<History: EventHistory + ?Sized> EventHistory for Arc<History> {
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         self.as_ref().load(stream_id).await
     }
+}
 
+#[async_trait]
+impl<Store: EventStore + ?Sized> EventStore for Arc<Store> {
     async fn append(
         &self,
         stream_id: &StreamId,

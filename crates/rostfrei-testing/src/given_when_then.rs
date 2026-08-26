@@ -1,38 +1,36 @@
-use rostfrei_core::{Aggregate, CommandHandler, DecisionContext, StreamId};
+use rostfrei_core::{Aggregate, AggregateInstance, CommandHandler, StreamId};
 
 pub fn given<A, Events>(stream_id: &StreamId, events: Events) -> Given<A>
 where
     A: Aggregate,
     Events: IntoIterator<Item = A::Event>,
 {
-    let mut state = A::initial(stream_id);
-    for event in events {
-        A::apply(&mut state, &event);
+    Given {
+        aggregate: AggregateInstance::rehydrate(stream_id.clone(), events),
     }
-    Given { state }
 }
 
 pub struct Given<A: Aggregate> {
-    state: A::State,
+    aggregate: AggregateInstance<A>,
 }
 
 impl<A: Aggregate> Given<A> {
     pub fn state(&self) -> &A::State {
-        &self.state
+        self.aggregate.state()
     }
 
     pub fn when<Command>(
-        mut self,
+        self,
         command: &Command,
     ) -> Then<A, <A as CommandHandler<Command>>::Rejection>
     where
         A: CommandHandler<Command>,
     {
-        let mut events = Vec::new();
-        let mut context = DecisionContext::new(&mut self.state, &mut events);
-        let decision = A::handle(command, &mut context);
+        let mut aggregate = self.aggregate;
+        let decision = A::handle(command, &mut aggregate);
+        let (_, state, events) = aggregate.into_parts();
         Then {
-            state: self.state,
+            state,
             events,
             decision,
         }

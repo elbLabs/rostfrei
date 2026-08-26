@@ -7,7 +7,7 @@ mod memory;
 mod store;
 
 pub use aggregate::{
-    Aggregate, CommandHandler, DecisionContext, Event, EventCodec, EventCodecError,
+    Aggregate, AggregateInstance, CommandHandler, Event, EventCodec, EventCodecError,
     EventCodecErrorKind, EventVariant, JsonEventCodec,
 };
 pub use domain_event::{
@@ -18,13 +18,16 @@ pub use envelope::{
     EnvelopeError, EventBatch, ExpectedVersion, NewEvent, RecordedEvent, StreamVersion,
     MAX_BATCH_PAYLOAD_LEN, MAX_EVENTS_PER_BATCH, MAX_EVENT_PAYLOAD_LEN, MAX_EVENT_TYPE_LEN,
 };
-pub use executor::{ExecutionError, ExecutionOutcome, Executor};
+pub use executor::{
+    ExecutionError, ExecutionOutcome, Executor, SimulationDecision, SimulationError,
+    SimulationOutcome,
+};
 pub use identity::{
     AggregateId, AggregateType, CommitId, ContentFingerprint, EventId, ExecutionMetadata,
     IdentityError, OperationId, StreamId,
 };
 pub use memory::InMemoryEventStore;
-pub use store::{AppendOutcome, EventStore, EventStoreError, EventStoreErrorKind};
+pub use store::{AppendOutcome, EventHistory, EventStore, EventStoreError, EventStoreErrorKind};
 
 #[doc(hidden)]
 pub mod __private {

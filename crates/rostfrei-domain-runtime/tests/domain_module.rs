@@ -4,7 +4,7 @@ use domain::{
     Aggregate as DomainAggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandType,
     DomainEvent, DomainIdentity, Entity,
 };
-use rostfrei_core::{Aggregate as RuntimeAggregate, CommandHandler, DecisionContext};
+use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance, CommandHandler};
 use rostfrei_domain_runtime::{domain_module, Apply, Initialize};
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::{Deserialize, Serialize};
@@ -63,9 +63,9 @@ impl CommandHandler<OpenCatalog> for CatalogAggregate {
 
     fn handle(
         _command: &OpenCatalog,
-        context: &mut DecisionContext<'_, Self>,
+        aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        context.record(CatalogOpened);
+        aggregate.raise(CatalogOpened);
         Ok(())
     }
 }

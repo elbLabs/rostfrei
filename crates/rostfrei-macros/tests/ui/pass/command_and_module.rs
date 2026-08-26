@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use rostfrei_macros::{Command, Module};
-use zs_core::{Aggregate, CommandHandler, DecisionContext, StreamId};
+use zs_core::{Aggregate, AggregateInstance, CommandHandler, StreamId};
 
 struct Account<T: Send + Sync + 'static>(PhantomData<T>);
 
@@ -27,7 +27,7 @@ impl<T: Send + Sync + 'static> CommandHandler<OpenAccount<T>> for Account<T> {
 
     fn handle(
         _: &OpenAccount<T>,
-        _: &mut DecisionContext<'_, Self>,
+        _: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
         Ok(())
     }

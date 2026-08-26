@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/rostfrei",
+    "crates/rostfrei-control-plane",
     "crates/rostfrei-core",
     "crates/rostfrei-domain",
     "crates/rostfrei-domain-macros",
@@ -23,6 +24,7 @@ license = "EUPL-1.2"
 [workspace.dependencies]
 async-nats = { version = "=0.50.0", default-features = false, features = ["jetstream", "ring", "server_2_10", "server_2_11", "server_2_12", "server_2_14"] }
 async-trait = "0.1"
+axum = "0.8"
 base64 = "0.22"
 futures-util = "0.3"
 proc-macro-crate = "3"
@@ -33,7 +35,7 @@ serde_json = "1"
 sha2 = "0.10"
 syn = { version = "2", features = ["full"] }
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
 trybuild = "1"
 

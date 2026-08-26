@@ -1,9 +1,9 @@
-use domain::domain_model;
+use rostfrei::domain_model;
 
 use crate::rental::{
     Bicycle, BicycleAvailability, BicycleAvailabilityQueries, BicycleCondition, BicycleId,
-    BicycleStatus, BicycleUnavailable, BikeRental, FleetId, RentBicycle, RentalEligibility,
-    RentalEligibilityInput, RentalFleet, RentalFleetAggregate,
+    BicycleStatus, BicycleUnavailable, BikeRental, FleetId, ImportedBicycle, RentBicycle,
+    RentalEligibility, RentalEligibilityInput, RentalFleet, RentalFleetAggregate,
 };
 
 pub fn domain_model() -> serde_json::Value {
@@ -18,6 +18,7 @@ pub fn domain_model() -> serde_json::Value {
             BicycleAvailability,
             RentalEligibilityInput,
             RentalEligibility,
+            ImportedBicycle,
         ],
         services: [],
         commands: [RentBicycle],
