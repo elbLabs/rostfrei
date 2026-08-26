@@ -4,7 +4,7 @@ mod event_store;
 mod event_store_config;
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_nats::jetstream::message::PublishMessage;
 use event_store::{provision_event_store, NatsEventStore};
@@ -28,15 +28,10 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     };
     let context = connect_context(&url).await;
     let (stream_name, subject_prefix) = unique_names("contract");
-    let config = NatsEventStoreConfig::new(
-        stream_name,
-        subject_prefix,
-        64 * 1024 * 1024,
-        2 * 1024 * 1024,
-        1,
-        Duration::from_secs(5),
-    )
-    .expect("valid integration config");
+    let config = NatsEventStoreConfig::new(stream_name, subject_prefix)
+        .expect("valid integration config")
+        .with_storage_limits(64 * 1024 * 1024, 2 * 1024 * 1024)
+        .expect("valid integration storage limits");
 
     let missing = NatsEventStore::connect(context.clone(), config.clone()).await;
     assert!(
@@ -296,15 +291,14 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory
     ));
 
-    let mismatch = NatsEventStoreConfig::new(
-        config.stream_name(),
-        config.subject_prefix(),
-        config.max_stream_bytes() + 1,
-        config.max_event_bytes(),
-        config.replicas(),
-        config.puback_timeout(),
-    )
-    .expect("valid mismatching config");
+    let mismatch = NatsEventStoreConfig::new(config.stream_name(), config.subject_prefix())
+        .expect("valid mismatching config")
+        .with_storage_limits(config.max_stream_bytes() + 1, config.max_event_bytes())
+        .expect("valid mismatching storage limits")
+        .with_replicas(config.replicas())
+        .expect("valid matching replicas")
+        .with_puback_timeout(config.puback_timeout())
+        .expect("valid matching PubAck timeout");
     let mismatch_result = NatsEventStore::connect(context.clone(), mismatch).await;
     assert!(matches!(
         mismatch_result,
@@ -316,15 +310,10 @@ async fn real_nats_event_store_contract_and_operator_policy() {
 
 async fn capacity_is_reported_distinctly(context: &async_nats::jetstream::Context) {
     let (stream_name, subject_prefix) = unique_names("capacity");
-    let config = NatsEventStoreConfig::new(
-        stream_name,
-        subject_prefix,
-        4096,
-        2048,
-        1,
-        Duration::from_secs(5),
-    )
-    .expect("valid capacity config");
+    let config = NatsEventStoreConfig::new(stream_name, subject_prefix)
+        .expect("valid capacity config")
+        .with_storage_limits(4096, 2048)
+        .expect("valid capacity limits");
     provision_event_store(context, &config)
         .await
         .expect("capacity stream should provision");

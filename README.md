@@ -32,7 +32,8 @@ example with an aggregate action, a decision, a query, a domain event, and a
 domain error.
 
 rostfrei does not provision infrastructure during service startup. Operators
-use the explicit provisioning APIs with deployment-owned stream policies.
+use the explicit provisioning APIs with bounded stream-policy defaults that the
+deployment can override.
 Authoritative NATS event storage requires NATS Server 2.12.0 or newer for atomic
 multi-event publishing.
 

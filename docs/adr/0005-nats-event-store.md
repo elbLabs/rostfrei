@@ -34,9 +34,15 @@ deny delete, deny purge, and no rollup. Capacity exhaustion is distinct from
 conflict and unavailability. Existing stream configuration is verified before
 use, including the required `allow_atomic_publish` setting.
 
+Event-store configuration defaults to 10 GiB of stream capacity, a 2 MiB encoded
+event limit, one replica, and a five-second PubAck timeout. These bounded defaults
+work with a standalone development server; production deployments normally
+override the replica count to match their NATS cluster durability policy.
+
 Stream creation and updates are operator-owned through an explicit generic
 provisioning API. Service startup only connects and verifies. Product stream
-names and capacities are supplied by the deployment.
+names and subject prefixes are supplied by the application. Deployments may
+override the default capacities, replica count, and PubAck timeout.
 
 ## Consequences
 

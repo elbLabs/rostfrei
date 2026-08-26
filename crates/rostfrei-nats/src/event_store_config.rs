@@ -10,6 +10,10 @@ const MAX_SUBJECT_PREFIX_LEN: usize = 512;
 const MAX_SUBJECT_TOKEN_LEN: usize = 256;
 const MAX_EVENT_BYTES: usize = 64 * 1024 * 1024;
 const DUPLICATE_WINDOW: Duration = Duration::from_secs(2 * 60);
+pub const DEFAULT_EVENT_STORE_MAX_STREAM_BYTES: i64 = 10 * 1024 * 1024 * 1024;
+pub const DEFAULT_EVENT_STORE_MAX_EVENT_BYTES: usize = 2 * 1024 * 1024;
+pub const DEFAULT_EVENT_STORE_REPLICAS: usize = 1;
+pub const DEFAULT_EVENT_STORE_PUBACK_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NatsEventStoreConfig {
@@ -25,21 +29,43 @@ impl NatsEventStoreConfig {
     pub fn new(
         stream_name: impl Into<String>,
         subject_prefix: impl Into<String>,
-        max_stream_bytes: i64,
-        max_event_bytes: usize,
-        replicas: usize,
-        puback_timeout: Duration,
     ) -> Result<Self, EventStoreError> {
         let config = Self {
             stream_name: stream_name.into(),
             subject_prefix: subject_prefix.into(),
-            max_stream_bytes,
-            max_event_bytes,
-            replicas,
-            puback_timeout,
+            max_stream_bytes: DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
+            max_event_bytes: DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
+            replicas: DEFAULT_EVENT_STORE_REPLICAS,
+            puback_timeout: DEFAULT_EVENT_STORE_PUBACK_TIMEOUT,
         };
         config.validate()?;
         Ok(config)
+    }
+
+    pub fn with_storage_limits(
+        mut self,
+        max_stream_bytes: i64,
+        max_event_bytes: usize,
+    ) -> Result<Self, EventStoreError> {
+        self.max_stream_bytes = max_stream_bytes;
+        self.max_event_bytes = max_event_bytes;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_replicas(mut self, replicas: usize) -> Result<Self, EventStoreError> {
+        self.replicas = replicas;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_puback_timeout(
+        mut self,
+        puback_timeout: Duration,
+    ) -> Result<Self, EventStoreError> {
+        self.puback_timeout = puback_timeout;
+        self.validate()?;
+        Ok(self)
     }
 
     pub fn stream_name(&self) -> &str {
@@ -128,7 +154,7 @@ impl NatsEventStoreConfig {
             ));
         }
         if !(1..=5).contains(&self.replicas) {
-            return Err(invalid("replicas must be explicitly set between 1 and 5"));
+            return Err(invalid("replicas must be between 1 and 5"));
         }
         if self.puback_timeout.is_zero() {
             return Err(invalid("PubAck timeout must be greater than zero"));
@@ -184,16 +210,15 @@ mod tests {
 
     #[test]
     fn authoritative_stream_config_is_append_only_and_finite() {
-        let config = NatsEventStoreConfig::new(
-            "EVENT_STORE_TEST",
-            "private.event-store-test",
-            8 * 1024 * 1024,
-            1024 * 1024,
-            3,
-            Duration::from_secs(2),
-        )
-        .expect("valid config")
-        .stream_config();
+        let config = NatsEventStoreConfig::new("EVENT_STORE_TEST", "private.event-store-test")
+            .expect("valid config")
+            .with_storage_limits(8 * 1024 * 1024, 1024 * 1024)
+            .expect("valid storage limits")
+            .with_replicas(3)
+            .expect("valid replicas")
+            .with_puback_timeout(Duration::from_secs(2))
+            .expect("valid PubAck timeout")
+            .stream_config();
 
         assert_eq!(config.retention, RetentionPolicy::Limits);
         assert_eq!(config.storage, StorageType::File);
@@ -212,16 +237,26 @@ mod tests {
     }
 
     #[test]
+    fn event_store_defaults_are_bounded_and_single_node_compatible() {
+        let config = NatsEventStoreConfig::new("EVENT_STORE_TEST", "private.event-store-test")
+            .expect("valid config");
+
+        assert_eq!(
+            config.max_stream_bytes(),
+            DEFAULT_EVENT_STORE_MAX_STREAM_BYTES
+        );
+        assert_eq!(
+            config.max_event_bytes(),
+            DEFAULT_EVENT_STORE_MAX_EVENT_BYTES
+        );
+        assert_eq!(config.replicas(), DEFAULT_EVENT_STORE_REPLICAS);
+        assert_eq!(config.puback_timeout(), DEFAULT_EVENT_STORE_PUBACK_TIMEOUT);
+    }
+
+    #[test]
     fn aggregate_subject_is_deterministic_and_opaque() {
-        let config = NatsEventStoreConfig::new(
-            "EVENT_STORE_TEST",
-            "private.event-store-test",
-            8 * 1024 * 1024,
-            1024 * 1024,
-            1,
-            Duration::from_secs(2),
-        )
-        .expect("valid config");
+        let config = NatsEventStoreConfig::new("EVENT_STORE_TEST", "private.event-store-test")
+            .expect("valid config");
         let subject = config.aggregate_subject("Account", "account-123");
         assert_eq!(subject, config.aggregate_subject("Account", "account-123"));
         assert!(!subject.contains("Account"));

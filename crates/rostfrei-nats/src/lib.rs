@@ -19,7 +19,11 @@ pub use domain_event_consumer::{
 };
 pub use error::{NatsError, NatsErrorKind};
 pub use event_store::{provision_event_store, NatsEventStore};
-pub use event_store_config::NatsEventStoreConfig;
+pub use event_store_config::{
+    NatsEventStoreConfig, DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
+    DEFAULT_EVENT_STORE_MAX_STREAM_BYTES, DEFAULT_EVENT_STORE_PUBACK_TIMEOUT,
+    DEFAULT_EVENT_STORE_REPLICAS,
+};
 pub use messaging_config::{
     MessagingTopology, NatsConnectionConfig, QueueGroup, ServerVersion, StreamName, SubjectFilter,
     MINIMUM_NATS_SERVER_VERSION,
