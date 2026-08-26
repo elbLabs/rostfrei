@@ -8,7 +8,7 @@ pub struct Attributes {
 pub fn parse(attributes: &[Attribute]) -> syn::Result<Attributes> {
     let domain: Vec<_> = attributes
         .iter()
-        .filter(|attribute| attribute.path().is_ident("domain"))
+        .filter(|attribute| crate::helper::domain_attribute::is_helper(attribute))
         .collect();
     if domain.is_empty() {
         return Err(syn::Error::new(

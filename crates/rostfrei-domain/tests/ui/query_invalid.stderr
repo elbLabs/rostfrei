@@ -134,11 +134,14 @@ help: the trait `AggregateType` is implemented for `Model`
 15 | #[derive(Aggregate)]
    |          ^^^^^^^^^
 note: required by a bound in `assert_owner`
-  --> tests/ui/query_invalid.rs:85:12
+  --> tests/ui/query_invalid.rs:82:1
    |
+82 | #[domain_queries(group = Unsupported)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `assert_owner`
+...
 85 |     pub fn plain(root: &Root) -> bool { true }
-   |            ^^^^^ required by this bound in `assert_owner`
-   = note: this error originates in the derive macro `Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)
+   |            ----- required by a bound in this function
+   = note: this error originates in the derive macro `Aggregate` which comes from the expansion of the attribute macro `domain_queries` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 warning: unused variable: `root`
   --> tests/ui/query_invalid.rs:85:18

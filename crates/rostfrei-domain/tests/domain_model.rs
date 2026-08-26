@@ -29,7 +29,8 @@ pub struct MailboxRoot {
     label = "Mailbox",
     context = Inbox,
     root = MailboxRoot,
-    actions = [MailboxClosingActions, MailboxOpeningActions]
+    actions = [MailboxClosingActions, MailboxOpeningActions],
+    events = [MailboxOpened]
 )]
 pub struct Mailbox;
 
@@ -66,7 +67,7 @@ struct EmailAddress(String);
 struct MailTransfer;
 
 #[derive(DomainEvent)]
-#[domain(id = "mailbox-opened", label = "Mailbox opened", owner = Mailbox)]
+#[domain(id = "mailbox-opened", label = "Mailbox opened")]
 struct MailboxOpened;
 
 #[derive(DomainError)]
@@ -83,7 +84,6 @@ fn compiles_explicit_domain_model_to_json() {
         value_objects: [EmailAddress],
         services: [MailTransfer],
         commands: [],
-        events: [MailboxOpened],
         errors: [TransferDenied],
         query_groups: [],
     };
@@ -195,6 +195,7 @@ fn compiles_explicit_domain_model_to_json() {
                     "local": "mailbox-opened",
                 },
                 "label": "Mailbox opened",
+                "schemaVersion": 1,
                 "fields": [],
             }],
             "domainErrors": [{
@@ -270,7 +271,6 @@ fn supports_empty_declaration_lists() {
         value_objects: [],
         services: [],
         commands: [],
-        events: [],
         errors: [],
         query_groups: [],
     };

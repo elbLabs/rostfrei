@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use proc_macro2::Ident;
 use quote::quote_spanned;
 use syn::ext::IdentExt;
-use syn::{ItemTrait, TraitItem};
+use syn::{ItemTrait, Path, TraitItem};
 
 use super::decision::Decision;
 
@@ -12,11 +12,11 @@ struct GeneratedReference<'a> {
     ident: Ident,
 }
 
-pub fn add(item: &mut ItemTrait, decisions: &[Decision]) -> syn::Result<()> {
+pub fn add(domain_path: &Path, item: &mut ItemTrait, decisions: &[Decision]) -> syn::Result<()> {
     let references = generate(decisions);
     validate_generated_collisions(&references)?;
     validate_trait_item_collisions(&item.items, &references)?;
-    append(item, references)
+    append(domain_path, item, references)
 }
 
 fn generate(decisions: &[Decision]) -> Vec<GeneratedReference<'_>> {
@@ -91,15 +91,19 @@ fn normalized(ident: &Ident) -> String {
     ident.unraw().to_string()
 }
 
-fn append(item: &mut ItemTrait, references: Vec<GeneratedReference<'_>>) -> syn::Result<()> {
+fn append(
+    domain_path: &Path,
+    item: &mut ItemTrait,
+    references: Vec<GeneratedReference<'_>>,
+) -> syn::Result<()> {
     for reference in references {
         let ident = reference.ident;
         let id = &reference.decision.id;
         item.items.push(syn::parse2(quote_spanned! {id.span()=>
             #[doc(hidden)]
             #[allow(dead_code)]
-            const #ident: ::domain::DecisionReference<Self> =
-                ::domain::DecisionReference::<Self>::__from_local(#id);
+            const #ident: #domain_path::DecisionReference<Self> =
+                #domain_path::DecisionReference::<Self>::__from_local(#id);
         })?);
     }
     Ok(())

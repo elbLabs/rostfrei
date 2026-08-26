@@ -145,7 +145,6 @@ fn projected_model() -> Value {
         value_objects: [ProjectionInput, ProjectionOutput],
         services: [ProjectionService],
         commands: [],
-        events: [],
         errors: [],
         query_groups: [],
     }
@@ -301,7 +300,6 @@ fn rejects_duplicate_decision_ids_across_attached_traits() {
         value_objects: [],
         services: [DuplicateService],
         commands: [],
-        events: [],
         errors: [],
         query_groups: [],
     };

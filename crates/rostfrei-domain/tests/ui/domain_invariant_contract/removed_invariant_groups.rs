@@ -11,7 +11,6 @@ fn main() {
         value_objects: [],
         services: [],
         commands: [],
-        events: [],
         errors: [],
         query_groups: [],
         invariant_groups: [],

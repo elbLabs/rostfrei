@@ -1,6 +1,7 @@
 use super::AggregateDescriptor;
 use crate::{
-    ActionDescriptor, BoundedContextType, DecisionDescriptor, EntityType, InvariantDescriptor,
+    ActionDescriptor, BoundedContextType, DecisionDescriptor, DomainEventDescriptor, EntityType,
+    InvariantDescriptor,
 };
 
 pub trait AggregateType: 'static + Sized {
@@ -11,4 +12,5 @@ pub trait AggregateType: 'static + Sized {
     const ACTION_CONTRACTS: &'static [&'static [ActionDescriptor]] = &[];
     const DECISION_CONTRACTS: &'static [&'static [DecisionDescriptor]] = &[];
     const INVARIANT_CONTRACTS: &'static [&'static [InvariantDescriptor]] = &[];
+    const DOMAIN_EVENTS: &'static [DomainEventDescriptor] = &[];
 }

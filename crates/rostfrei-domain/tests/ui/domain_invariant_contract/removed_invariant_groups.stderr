@@ -1,7 +1,7 @@
 error: no rules expected `invariant_groups`
-  --> tests/ui/domain_invariant_contract/removed_invariant_groups.rs:17:9
+  --> tests/ui/domain_invariant_contract/removed_invariant_groups.rs:16:9
    |
-17 |         invariant_groups: [],
+16 |         invariant_groups: [],
    |         ^^^^^^^^^^^^^^^^ no rules expected this token in macro call
    |
    = note: while trying to match sequence end

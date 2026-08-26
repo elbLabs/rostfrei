@@ -342,6 +342,7 @@ const COMMAND_REFERENCE: DomainCommandDescriptor = DomainCommandDescriptor {
 const EVENT_REFERENCE: DomainEventDescriptor = DomainEventDescriptor {
     id: EVENT_ID,
     label: "Event source",
+    schema_version: 1,
     fields: &[FieldDescriptor {
         name: "value",
         value: FieldValue {

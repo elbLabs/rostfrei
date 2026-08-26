@@ -31,26 +31,30 @@ fn expand_entity_trait(item: ItemTrait) -> syn::Result<TokenStream> {
     let mut item = trait_input::validate(item)?;
     let mut actions = trait_attributes::extract(&mut item.items)?;
     trait_validation::validate(&item.items, &mut actions)?;
-    trait_assembly::assemble(item, &actions)
+    let domain_path = crate::helper::domain_api_path::resolve()?;
+    trait_assembly::assemble(&domain_path, item, &actions)
 }
 
 fn expand_value_object_trait(item: ItemTrait) -> syn::Result<TokenStream> {
     let mut item = trait_input::validate(item)?;
     let mut actions = trait_attributes::extract(&mut item.items)?;
     value_object_trait_validation::validate(&item.items, &mut actions)?;
-    value_object_trait_assembly::assemble(item, &actions)
+    let domain_path = crate::helper::domain_api_path::resolve()?;
+    value_object_trait_assembly::assemble(&domain_path, item, &actions)
 }
 
 fn expand_aggregate_trait(item: ItemTrait) -> syn::Result<TokenStream> {
     let mut item = public_trait_input::validate(item, "aggregate")?;
     let mut actions = trait_attributes::extract(&mut item.items)?;
     aggregate_trait_validation::validate(&item.items, &mut actions)?;
-    aggregate_trait_assembly::assemble(item, &actions)
+    let domain_path = crate::helper::domain_api_path::resolve()?;
+    aggregate_trait_assembly::assemble(&domain_path, item, &actions)
 }
 
 fn expand_domain_service_trait(item: ItemTrait) -> syn::Result<TokenStream> {
     let mut item = public_trait_input::validate(item, "domain service")?;
     let mut actions = trait_attributes::extract(&mut item.items)?;
     domain_service_trait_validation::validate(&item.items, &mut actions)?;
-    domain_service_trait_assembly::assemble(item, &actions)
+    let domain_path = crate::helper::domain_api_path::resolve()?;
+    domain_service_trait_assembly::assemble(&domain_path, item, &actions)
 }

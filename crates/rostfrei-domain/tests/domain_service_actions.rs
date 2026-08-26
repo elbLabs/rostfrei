@@ -54,7 +54,8 @@ pub trait WorkActions {
     label = "Work",
     context = Operations,
     root = WorkRoot,
-    actions = [WorkActions]
+    actions = [WorkActions],
+    events = [WorkStarted]
 )]
 pub struct Work;
 
@@ -66,7 +67,7 @@ impl WorkActions for Work {
 }
 
 #[derive(DomainEvent, Clone, Copy, Debug, Eq, PartialEq)]
-#[domain(id = "work-started", label = "Work started", owner = Work)]
+#[domain(id = "work-started", label = "Work started")]
 pub struct WorkStarted;
 
 #[domain_actions(value_object)]
@@ -356,7 +357,6 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
         value_objects: [Receipt],
         services: [Coordinator, OmittedActionsService, EmptyActionsService],
         commands: [CoordinateWork],
-        events: [WorkStarted],
         errors: [CoordinationFailed],
         action_extensions: [WorkExtensionActions],
         query_groups: [],
@@ -413,7 +413,6 @@ fn rejects_duplicate_action_id_across_attached_domain_service_contracts() {
         value_objects: [],
         services: [DuplicateService],
         commands: [],
-        events: [],
         errors: [],
         query_groups: [],
     };
@@ -430,7 +429,6 @@ fn rejects_duplicate_action_id_between_attached_and_extension_domain_service_gro
         value_objects: [],
         services: [Coordinator],
         commands: [],
-        events: [],
         errors: [],
         action_extensions: [DuplicateCoordinatorExtensionActions],
         query_groups: [],

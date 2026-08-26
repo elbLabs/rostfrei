@@ -1,26 +1,27 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Ident, TypePath};
+use syn::{Ident, Path, TypePath};
 
 use super::ir::{Field, Role, Scalar, Wrapper};
 
-pub fn assemble_descriptors(fields: &[Field]) -> TokenStream {
+pub fn assemble_descriptors_with_path(domain_path: &Path, fields: &[Field]) -> TokenStream {
     let fields = fields.iter().map(|field| {
         let name = &field.name;
         let wrappers = field.wrappers.iter().map(|wrapper| match wrapper {
-            Wrapper::List => quote!(::domain::FieldWrapper::List),
-            Wrapper::Optional => quote!(::domain::FieldWrapper::Optional),
+            Wrapper::List => quote!(#domain_path::FieldWrapper::List),
+            Wrapper::Optional => quote!(#domain_path::FieldWrapper::Optional),
         });
-        let kind = assemble_kind(field);
-        quote!(::domain::FieldDescriptor {
+        let kind = assemble_kind(domain_path, field);
+        quote!(#domain_path::FieldDescriptor {
             name: #name,
-            value: ::domain::FieldValue { kind: #kind, wrappers: &[#(#wrappers),*] },
+            value: #domain_path::FieldValue { kind: #kind, wrappers: &[#(#wrappers),*] },
         })
     });
     quote!(&[#(#fields),*])
 }
 
-pub fn assemble_assertions(
+pub fn assemble_assertions_with_path(
+    domain_path: &Path,
     container: &Ident,
     owner: Option<&TypePath>,
     fields: &[Field],
@@ -42,12 +43,12 @@ pub fn assemble_assertions(
     });
     quote! {
         const _: () = {
-            fn assert_identity<T: ::domain::DomainIdentityType>() {}
-            fn assert_entity<T, O>() where T: ::domain::EntityType<Owner = O>, O: ::domain::AggregateType {}
-            fn assert_value_object<T: ::domain::ValueObjectType>() {}
+            fn assert_identity<T: #domain_path::DomainIdentityType>() {}
+            fn assert_entity<T, O>() where T: #domain_path::EntityType<Owner = O>, O: #domain_path::AggregateType {}
+            fn assert_value_object<T: #domain_path::ValueObjectType>() {}
             fn assert_semantic_scalar<P, V>()
             where
-                P: ::domain::SemanticScalar<Value = V>,
+                P: #domain_path::SemanticScalar<Value = V>,
                 V: 'static,
             {}
             fn assert_container<T: 'static>() {}
@@ -59,42 +60,42 @@ pub fn assemble_assertions(
     }
 }
 
-fn assemble_kind(field: &Field) -> TokenStream {
+fn assemble_kind(domain_path: &Path, field: &Field) -> TokenStream {
     let base = &field.base;
     match &field.role {
-        Role::Identity => quote!(::domain::FieldKind::DomainIdentity(
-            <#base as ::domain::DomainIdentityType>::DESCRIPTOR.id,
+        Role::Identity => quote!(#domain_path::FieldKind::DomainIdentity(
+            <#base as #domain_path::DomainIdentityType>::DESCRIPTOR.id,
         )),
         Role::Entity => {
-            quote!(::domain::FieldKind::Entity(::domain::EntityId {
-                aggregate: <<#base as ::domain::EntityType>::Owner as ::domain::AggregateType>::DESCRIPTOR.id,
-                local: <#base as ::domain::EntityType>::LOCAL_ID,
+            quote!(#domain_path::FieldKind::Entity(#domain_path::EntityId {
+                aggregate: <<#base as #domain_path::EntityType>::Owner as #domain_path::AggregateType>::DESCRIPTOR.id,
+                local: <#base as #domain_path::EntityType>::LOCAL_ID,
             }))
         }
         Role::ValueObject => {
-            quote!(::domain::FieldKind::ValueObject(::domain::ValueObjectId {
-                owner: <<#base as ::domain::ValueObjectType>::Owner as ::domain::ValueObjectOwnerType>::VALUE_OBJECT_OWNER_ID,
-                local: <#base as ::domain::ValueObjectType>::LOCAL_ID,
+            quote!(#domain_path::FieldKind::ValueObject(#domain_path::ValueObjectId {
+                owner: <<#base as #domain_path::ValueObjectType>::Owner as #domain_path::ValueObjectOwnerType>::VALUE_OBJECT_OWNER_ID,
+                local: <#base as #domain_path::ValueObjectType>::LOCAL_ID,
             }))
         }
         Role::AggregateReference(target) => {
-            quote!(::domain::FieldKind::AggregateReference(<#target as ::domain::AggregateType>::DESCRIPTOR.id))
+            quote!(#domain_path::FieldKind::AggregateReference(<#target as #domain_path::AggregateType>::DESCRIPTOR.id))
         }
-        Role::SemanticScalar(provider) => quote!(::domain::FieldKind::SemanticScalar(
-            <#provider as ::domain::SemanticScalar>::DESCRIPTOR,
+        Role::SemanticScalar(provider) => quote!(#domain_path::FieldKind::SemanticScalar(
+            <#provider as #domain_path::SemanticScalar>::DESCRIPTOR,
         )),
         Role::Scalar(scalar) => {
-            let scalar = scalar_tokens(scalar);
-            quote!(::domain::FieldKind::Scalar(#scalar))
+            let scalar = scalar_tokens(domain_path, scalar);
+            quote!(#domain_path::FieldKind::Scalar(#scalar))
         }
     }
 }
 
-pub fn assemble_scalar(path: &syn::TypePath) -> TokenStream {
-    scalar_tokens(&super::scalar::classify(path).unwrap())
+pub fn assemble_scalar(domain_path: &Path, path: &syn::TypePath) -> TokenStream {
+    scalar_tokens(domain_path, &super::scalar::classify(path).unwrap())
 }
 
-fn scalar_tokens(scalar: &Scalar) -> TokenStream {
+fn scalar_tokens(domain_path: &Path, scalar: &Scalar) -> TokenStream {
     let variant = match scalar {
         Scalar::Bool => "Bool",
         Scalar::String => "String",
@@ -115,5 +116,5 @@ fn scalar_tokens(scalar: &Scalar) -> TokenStream {
         Scalar::Usize => "Usize",
     };
     let ident = Ident::new(variant, proc_macro2::Span::call_site());
-    quote!(::domain::ScalarType::#ident)
+    quote!(#domain_path::ScalarType::#ident)
 }

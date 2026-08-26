@@ -18,11 +18,11 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "owner", label = "Owner", context = Context, root = Root)]
+#[domain(id = "owner", label = "Owner", context = Context, root = Root, events = [Renamed])]
 struct Owner;
 
 #[derive(DomainEvent)]
-#[domain(id = "renamed", label = "Renamed", owner = Owner)]
+#[domain(id = "renamed", label = "Renamed")]
 struct Renamed;
 
 #[domain_actions(value_object)]

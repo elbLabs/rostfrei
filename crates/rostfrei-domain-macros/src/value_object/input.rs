@@ -98,7 +98,7 @@ fn validate_enum(data: &DataEnum) -> Result<()> {
         if let Some(attribute) = variant
             .attrs
             .iter()
-            .find(|attribute| attribute.path().is_ident("domain"))
+            .find(|attribute| crate::helper::domain_attribute::is_helper(attribute))
         {
             return Err(syn::Error::new_spanned(
                 attribute,

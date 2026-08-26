@@ -30,11 +30,11 @@ impl Actions for Item {
 }
 
 #[derive(DomainEvent)]
-#[domain(id = "published", label = "Published", owner = Owner)]
+#[domain(id = "published", label = "Published")]
 struct Published;
 
 #[derive(Aggregate)]
-#[domain(id = "owner", label = "Owner", context = Context, root = Item)]
+#[domain(id = "owner", label = "Owner", context = Context, root = Item, events = [Published])]
 struct Owner;
 
 fn main() {}

@@ -235,7 +235,6 @@ fn domain_model_automatically_projects_only_listed_entity_action_traits() {
         value_objects: [Title],
         services: [],
         commands: [],
-        events: [],
         errors: [TaskRejected],
         query_groups: [],
     };
@@ -272,7 +271,6 @@ fn domain_model_automatically_projects_only_listed_entity_action_traits() {
         value_objects: [],
         services: [],
         commands: [],
-        events: [],
         errors: [],
         query_groups: [],
     };

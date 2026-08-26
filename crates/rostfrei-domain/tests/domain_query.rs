@@ -104,7 +104,6 @@ fn projects_queries_and_identities_to_exact_json() {
         value_objects: [Filter],
         services: [],
         commands: [],
-        events: [],
         errors: [],
 
         query_groups: [CatalogQueries],
@@ -149,7 +148,7 @@ impl QueryGroupType for DuplicateQueries {
 fn rejects_duplicate_query_ids_across_groups() {
     let _ = domain_model! {
         contexts: [], aggregates: [], entities: [], identities: [], value_objects: [],
-        services: [], commands: [], events: [], errors: [],
+        services: [], commands: [], errors: [],
         query_groups: [CatalogQueries, DuplicateQueries],
     };
 }
@@ -159,7 +158,7 @@ fn rejects_duplicate_query_ids_across_groups() {
 fn rejects_duplicate_identity_ids() {
     let _ = domain_model! {
         contexts: [], aggregates: [], entities: [], identities: [CatalogId, CatalogId],
-        value_objects: [], services: [], commands: [], events: [], errors: [],
+        value_objects: [], services: [], commands: [], errors: [],
         query_groups: [],
     };
 }

@@ -127,7 +127,6 @@ fn inventories_aggregate_and_domain_service_commands() {
         value_objects: [Status],
         services: [CatalogSync],
         commands: [ChangeStatus, SyncCatalog],
-        events: [],
         errors: [],
         query_groups: [],
     };
@@ -160,7 +159,6 @@ fn rejects_duplicate_command_ids_deterministically() {
         value_objects: [],
         services: [],
         commands: [ChangeStatus, ChangeStatus],
-        events: [],
         errors: [],
         query_groups: [],
     };

@@ -43,7 +43,10 @@ pub use domain_command::{
 pub use domain_error::{
     DomainErrorDescriptor, DomainErrorId, DomainErrorOwnerId, DomainErrorOwnerType, DomainErrorType,
 };
-pub use domain_event::{DomainEventDescriptor, DomainEventId, DomainEventType};
+pub use domain_event::{
+    DomainEventDefinition, DomainEventDefinitionType, DomainEventDescriptor, DomainEventId,
+    DomainEventType,
+};
 pub use domain_identity::{DomainIdentityDescriptor, DomainIdentityId, DomainIdentityType};
 pub use domain_query::{
     QueryDescriptor, QueryGroupType, QueryId, QueryInputDescriptor, QueryInputType,
@@ -97,7 +100,6 @@ macro_rules! domain_model {
         value_objects: [$($value_object:ty),* $(,)?],
         services: [$($service:ty),* $(,)?],
         commands: [$($command:ty),* $(,)?],
-        events: [$($event:ty),* $(,)?],
         errors: [$($error:ty),* $(,)?],
         $(action_extensions: [$($action_extension:ty),* $(,)?],)?
         query_groups: [$($query_group:ty),* $(,)?] $(,)?
@@ -110,7 +112,6 @@ macro_rules! domain_model {
         $(builder.add_value_object_type::<$value_object>();)*
         $(builder.add_domain_service_type::<$service>();)*
         $(builder.add_domain_command(<$command as $crate::DomainCommandType>::DESCRIPTOR);)*
-        $(builder.add_domain_event(<$event as $crate::DomainEventType>::DESCRIPTOR);)*
         $(builder.add_domain_error(<$error as $crate::DomainErrorType>::DESCRIPTOR);)*
         $($(builder.add_action_extension::<$action_extension>();)*)?
         $(builder.add_queries(<$query_group as $crate::QueryGroupType>::QUERIES);)*

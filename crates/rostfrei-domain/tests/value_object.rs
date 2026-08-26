@@ -255,7 +255,6 @@ fn enum_value_objects_compose_in_fields_and_project_to_json() {
         value_objects: [CategoryKind, CategorySelection],
         services: [],
         commands: [],
-        events: [],
         errors: [],
 
         query_groups: [],

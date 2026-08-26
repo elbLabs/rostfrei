@@ -1,10 +1,10 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::Ident;
+use syn::{Ident, Path};
 
 use super::attributes::Attributes;
 
-pub fn assemble(name: &Ident, attributes: &Attributes) -> TokenStream {
+pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> TokenStream {
     let Some(lifecycle) = &attributes.lifecycle else {
         return TokenStream::new();
     };
@@ -12,7 +12,7 @@ pub fn assemble(name: &Ident, attributes: &Attributes) -> TokenStream {
         const _: () = {
             fn assert_lifecycle<L>()
             where
-                L: ::domain::EntityLifecycleType<Owner = #name>,
+                L: #domain_path::EntityLifecycleType<Owner = #name>,
             {
             }
             let _ = assert_lifecycle::<#lifecycle>;

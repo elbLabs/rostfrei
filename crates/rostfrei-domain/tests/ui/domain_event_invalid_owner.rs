@@ -1,11 +1,9 @@
-use domain::{BoundedContext, DomainEvent};
+use domain::DomainEvent;
 
-#[derive(BoundedContext)]
-#[domain(id = "inbox", label = "Inbox")]
-struct Inbox;
+struct Owner;
 
 #[derive(DomainEvent)]
-#[domain(id = "created", label = "Created", owner = Inbox)]
+#[domain(id = "created", label = "Created", owner = Owner)]
 struct Created;
 
 fn main() {}

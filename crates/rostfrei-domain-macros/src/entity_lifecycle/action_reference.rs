@@ -22,15 +22,19 @@ pub fn parse(input: ParseStream) -> syn::Result<ActionReferencePath> {
     })
 }
 
-pub fn assemble_id(reference: &ActionReferencePath, owner: &syn::TypePath) -> TokenStream {
+pub fn assemble_id(
+    domain_path: &Path,
+    reference: &ActionReferencePath,
+    owner: &syn::TypePath,
+) -> TokenStream {
     let trait_path = &reference.trait_path;
     let hidden = crate::helper::action_reference::hidden_from_public(&reference.reference);
     let span = reference.span;
     quote_spanned! {span=>
         {
-            let _: &'static [::domain::ActionDescriptor] =
+            let _: &'static [#domain_path::ActionDescriptor] =
                 <#owner as #trait_path>::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE;
-            let reference: ::domain::ActionReference<#owner> =
+            let reference: #domain_path::ActionReference<#owner> =
                 <#owner as #trait_path>::#hidden;
             reference.id()
         }

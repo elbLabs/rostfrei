@@ -13,7 +13,7 @@ struct Id(u64);
 struct Root { #[domain(identity)] id: Id }
 
 #[derive(Aggregate)]
-#[domain(id = "model", label = "Model", context = Catalog, root = Root)]
+#[domain(id = "model", label = "Model", context = Catalog, root = Root, events = [Event])]
 struct Model;
 
 #[derive(ValueObject)]
@@ -25,7 +25,7 @@ struct Filter(String);
 struct Command;
 
 #[derive(DomainEvent)]
-#[domain(id = "event", label = "Event", owner = Model)]
+#[domain(id = "event", label = "Event")]
 struct Event;
 
 #[derive(DomainError)]

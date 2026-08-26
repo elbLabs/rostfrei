@@ -9,7 +9,7 @@ pub fn parse(variant: &Variant) -> syn::Result<StateAttribute> {
     let domains: Vec<_> = variant
         .attrs
         .iter()
-        .filter(|attribute| attribute.path().is_ident("domain"))
+        .filter(|attribute| crate::helper::domain_attribute::is_helper(attribute))
         .collect();
     let Some(domain) = domains.first() else {
         return Err(syn::Error::new_spanned(

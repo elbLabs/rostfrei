@@ -27,12 +27,12 @@ impl DomainTestSubjectInput {
         }
     }
 
-    pub(crate) fn assemble(&self, kind: DomainTestKind) -> TokenStream {
+    pub(crate) fn assemble(&self, domain_path: &Path, kind: DomainTestKind) -> TokenStream {
         match self {
-            Self::Typed(subject) => subject.assemble(kind),
+            Self::Typed(subject) => subject.assemble(domain_path, kind),
             Self::Lifecycle(lifecycle) => quote_spanned! {lifecycle.path.span()=>
-                ::domain::DomainTestSubject::Lifecycle(
-                    <#lifecycle as ::domain::EntityLifecycleType>::DESCRIPTOR.id
+                #domain_path::DomainTestSubject::Lifecycle(
+                    <#lifecycle as #domain_path::EntityLifecycleType>::DESCRIPTOR.id
                 )
             },
         }
@@ -40,7 +40,7 @@ impl DomainTestSubjectInput {
 }
 
 impl TypedSubject {
-    fn assemble(&self, kind: DomainTestKind) -> TokenStream {
+    fn assemble(&self, domain_path: &Path, kind: DomainTestKind) -> TokenStream {
         let owner = &self.owner;
         let trait_path = &self.trait_path;
         let hidden_reference = hidden_reference(kind, &self.reference);
@@ -69,11 +69,11 @@ impl TypedSubject {
 
         quote_spanned! {span=>
             {
-                let _: &'static [::domain::#descriptor] =
+                let _: &'static [#domain_path::#descriptor] =
                     <#owner as #trait_path>::#marker;
-                let reference: ::domain::#reference<#owner> =
+                let reference: #domain_path::#reference<#owner> =
                     <#owner as #trait_path>::#hidden_reference;
-                ::domain::DomainTestSubject::#variant(reference.id())
+                #domain_path::DomainTestSubject::#variant(reference.id())
             }
         }
     }

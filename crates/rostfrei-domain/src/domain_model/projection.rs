@@ -101,6 +101,9 @@ impl DomainModelBuilder {
         for contract in A::INVARIANT_CONTRACTS {
             self.invariants.add_group(owner, contract);
         }
+        for event in A::DOMAIN_EVENTS {
+            self.add_domain_event(*event);
+        }
     }
 
     pub fn add_entity(&mut self, descriptor: EntityDescriptor) {
@@ -227,6 +230,13 @@ impl DomainModelBuilder {
     }
 
     pub fn add_domain_event(&mut self, descriptor: DomainEventDescriptor) {
+        if self
+            .domain_events
+            .iter()
+            .any(|(id, _)| *id == descriptor.id)
+        {
+            panic!("duplicate DomainEventId: {:?}", descriptor.id);
+        }
         self.domain_events.push((
             descriptor.id,
             json!({
@@ -235,6 +245,7 @@ impl DomainModelBuilder {
                     "local": descriptor.id.local,
                 },
                 "label": descriptor.label,
+                "schemaVersion": descriptor.schema_version,
                 "fields": field_projection::fields(descriptor.fields),
             }),
         ));

@@ -16,5 +16,6 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         states,
     };
     super::validation::validate(&lifecycle)?;
-    Ok(super::assembly::assemble(&lifecycle))
+    let domain_path = crate::helper::domain_api_path::resolve()?;
+    Ok(super::assembly::assemble(&domain_path, &lifecycle))
 }

@@ -14,7 +14,8 @@ pub struct BikeRental;
     context = BikeRental,
     root = RentalFleet,
     actions = [RentalFleetActions],
-    decisions = [RentalEligibilityDecisions]
+    decisions = [RentalEligibilityDecisions],
+    events = [BicycleRented]
 )]
 pub struct RentalFleetAggregate;
 
@@ -156,7 +157,7 @@ pub struct RentBicycle {
 }
 
 #[derive(DomainEvent, Clone, Debug, Eq, PartialEq)]
-#[domain(id = "bicycle-rented", label = "Bicycle rented", owner = RentalFleetAggregate)]
+#[domain(id = "bicycle-rented", label = "Bicycle rented")]
 pub struct BicycleRented {
     #[domain(identity)]
     pub fleet_id: FleetId,
