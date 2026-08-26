@@ -58,12 +58,10 @@ where
             .map_err(|_| QueryRequestError::new(QueryRequestErrorKind::Serialization))?;
         let mut headers = safe_headers(request.metadata(), request.trace_context());
         insert_query_controls(&mut headers, request_id.as_str(), correlation_id.as_str());
-        let inbox = self.client.new_inbox();
         let nats_request = NatsRequest::new()
             .payload(payload.into())
             .headers(headers)
-            .timeout(Some(options.timeout()))
-            .inbox(inbox);
+            .timeout(Some(options.timeout()));
         let response = self
             .client
             .send_request(address.as_str().to_owned(), nats_request)
