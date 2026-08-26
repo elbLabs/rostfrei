@@ -278,10 +278,14 @@ fn parse_commands(input: ParseStream<'_>) -> syn::Result<Vec<Type>> {
 }
 
 fn registry_path() -> syn::Result<Path> {
-    let found = crate_name("rostfrei-registry").map_err(|error| {
+    dependency_path("rostfrei-registry")
+}
+
+fn dependency_path(package: &str) -> syn::Result<Path> {
+    let found = crate_name(package).map_err(|error| {
         Error::new(
             proc_macro2::Span::call_site(),
-            format!("could not resolve the `rostfrei-registry` dependency: {error}"),
+            format!("could not resolve the `{package}` dependency: {error}"),
         )
     })?;
 
