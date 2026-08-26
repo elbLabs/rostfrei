@@ -1,0 +1,6 @@
+error: domain decision contract traits cannot have trait-level where clauses
+ --> tests/ui/domain_decision_contract/trait_where_clause.rs:5:1
+  |
+5 | / where
+6 | |     Self: Send,
+  | |_______________^

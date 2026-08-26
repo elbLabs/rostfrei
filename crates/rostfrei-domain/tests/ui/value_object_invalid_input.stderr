@@ -1,0 +1,35 @@
+error: ValueObject enums must declare at least one variant
+ --> tests/ui/value_object_invalid_input.rs:5:1
+  |
+5 | enum Empty {}
+  | ^^^^
+
+error: ValueObject enum variants cannot have explicit discriminants
+  --> tests/ui/value_object_invalid_input.rs:10:13
+   |
+10 |     Value = 1,
+   |             ^
+
+error: domain attributes are not supported on ValueObject enum variants
+  --> tests/ui/value_object_invalid_input.rs:16:5
+   |
+16 |     #[domain(id = "value")]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+error: ValueObject only supports structs or enums
+  --> tests/ui/value_object_invalid_input.rs:22:7
+   |
+22 | union Storage {
+   |       ^^^^^^^
+
+error: ValueObject does not support generics
+  --> tests/ui/value_object_invalid_input.rs:29:15
+   |
+29 | struct Generic<T>(T);
+   |               ^^^
+
+error: ValueObject does not support generics
+  --> tests/ui/value_object_invalid_input.rs:33:17
+   |
+33 | enum GenericEnum<T> {
+   |                 ^^^

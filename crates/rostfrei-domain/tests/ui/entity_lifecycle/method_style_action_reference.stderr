@@ -1,0 +1,5 @@
+error: transition action references must use canonical uppercase names such as `ACTIVATE` or `_2FA_START`
+ --> tests/ui/entity_lifecycle/method_style_action_reference.rs:7:36
+  |
+7 |     #[transition(action = Actions::activate, to = Draft)]
+  |                                    ^^^^^^^^

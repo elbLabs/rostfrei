@@ -1,0 +1,368 @@
+#![allow(dead_code)]
+
+use rostfrei_domain::__private::DomainModelBuilder;
+use rostfrei_domain::extension::ActionGroupType;
+use rostfrei_domain::{
+    ActionDescriptor, ActionId, ActionOwnerId, ActionOwnerType, Aggregate, AggregateId,
+    BoundedContext, BoundedContextId, DomainIdentity, DomainService, DomainServiceId, Entity,
+    EntityId, ValueObject, ValueObjectId, ValueObjectOwnerId, domain_actions, domain_model,
+};
+
+const CONTEXT_ID: BoundedContextId = BoundedContextId("extensions");
+const AGGREGATE_ID: AggregateId = AggregateId {
+    context: CONTEXT_ID,
+    local: "extension-owner",
+};
+const ENTITY_ID: EntityId = EntityId {
+    aggregate: AGGREGATE_ID,
+    local: "extension-root",
+};
+const VALUE_OBJECT_ID: ValueObjectId = ValueObjectId {
+    owner: ValueObjectOwnerId::Aggregate(AGGREGATE_ID),
+    local: "extension-value",
+};
+const SERVICE_ID: DomainServiceId = DomainServiceId {
+    context: CONTEXT_ID,
+    local: "extension-service",
+};
+const UNREGISTERED_OWNER_ID: ActionOwnerId = ActionOwnerId::Aggregate(AggregateId {
+    context: CONTEXT_ID,
+    local: "unregistered",
+});
+
+const fn action(owner: ActionOwnerId, local: &'static str) -> ActionDescriptor {
+    ActionDescriptor {
+        id: ActionId { owner, local },
+        label: local,
+        input: None,
+        output: None,
+        error: None,
+    }
+}
+
+#[derive(BoundedContext)]
+#[domain(id = "extensions", label = "Extensions")]
+pub struct Extensions;
+
+#[derive(DomainIdentity)]
+#[domain(owner = ExtensionRoot)]
+pub struct ExtensionRootId(u64);
+
+#[derive(Entity)]
+#[domain(
+    id = "extension-root",
+    label = "Extension root",
+    owner = ExtensionOwner
+)]
+pub struct ExtensionRoot {
+    #[domain(identity)]
+    id: ExtensionRootId,
+}
+
+#[domain_actions(aggregate)]
+pub trait AttachedActions {
+    #[action(id = "attached", label = "Attached")]
+    fn attached(root: &mut ExtensionRoot);
+}
+
+#[derive(Aggregate)]
+#[domain(
+    id = "extension-owner",
+    label = "Extension owner",
+    context = Extensions,
+    root = ExtensionRoot,
+    actions = [AttachedActions]
+)]
+pub struct ExtensionOwner;
+
+impl AttachedActions for ExtensionOwner {
+    fn attached(_root: &mut ExtensionRoot) {}
+}
+
+#[derive(ValueObject)]
+#[domain(
+    id = "extension-value",
+    label = "Extension value",
+    owner = ExtensionOwner
+)]
+struct ExtensionValue(u64);
+
+#[derive(DomainService)]
+#[domain(
+    id = "extension-service",
+    label = "Extension service",
+    context = Extensions
+)]
+struct ExtensionService;
+
+struct FirstAggregateExtension;
+
+impl ActionGroupType for FirstAggregateExtension {
+    type Owner = ExtensionOwner;
+
+    const ACTIONS: &'static [ActionDescriptor] = &[
+        action(ActionOwnerId::Aggregate(AGGREGATE_ID), "extension-one"),
+        action(ActionOwnerId::Aggregate(AGGREGATE_ID), "extension-two"),
+    ];
+}
+
+struct SecondAggregateExtension;
+
+impl ActionGroupType for SecondAggregateExtension {
+    type Owner = ExtensionOwner;
+
+    const ACTIONS: &'static [ActionDescriptor] = &[action(
+        ActionOwnerId::Aggregate(AGGREGATE_ID),
+        "extension-three",
+    )];
+}
+
+struct EntityExtension;
+
+impl ActionGroupType for EntityExtension {
+    type Owner = ExtensionRoot;
+
+    const ACTIONS: &'static [ActionDescriptor] =
+        &[action(ActionOwnerId::Entity(ENTITY_ID), "entity-extension")];
+}
+
+struct ValueObjectExtension;
+
+impl ActionGroupType for ValueObjectExtension {
+    type Owner = ExtensionValue;
+
+    const ACTIONS: &'static [ActionDescriptor] = &[action(
+        ActionOwnerId::ValueObject(VALUE_OBJECT_ID),
+        "value-object-extension",
+    )];
+}
+
+struct ServiceExtension;
+
+impl ActionGroupType for ServiceExtension {
+    type Owner = ExtensionService;
+
+    const ACTIONS: &'static [ActionDescriptor] = &[action(
+        ActionOwnerId::DomainService(SERVICE_ID),
+        "service-extension",
+    )];
+}
+
+struct WrongOwnerExtension;
+
+impl ActionGroupType for WrongOwnerExtension {
+    type Owner = ExtensionOwner;
+
+    const ACTIONS: &'static [ActionDescriptor] =
+        &[action(ActionOwnerId::Entity(ENTITY_ID), "wrong-owner")];
+}
+
+struct UnregisteredOwner;
+
+impl ActionOwnerType for UnregisteredOwner {
+    const ACTION_OWNER_ID: ActionOwnerId = UNREGISTERED_OWNER_ID;
+}
+
+struct UnregisteredOwnerExtension;
+
+impl ActionGroupType for UnregisteredOwnerExtension {
+    type Owner = UnregisteredOwner;
+
+    const ACTIONS: &'static [ActionDescriptor] =
+        &[action(UNREGISTERED_OWNER_ID, "unregistered-extension")];
+}
+
+struct EmptyExtension;
+
+impl ActionGroupType for EmptyExtension {
+    type Owner = ExtensionOwner;
+
+    const ACTIONS: &'static [ActionDescriptor] = &[];
+}
+
+struct FirstDuplicateExtension;
+
+impl ActionGroupType for FirstDuplicateExtension {
+    type Owner = ExtensionOwner;
+
+    const ACTIONS: &'static [ActionDescriptor] = &[action(
+        ActionOwnerId::Aggregate(AGGREGATE_ID),
+        "duplicate-extension",
+    )];
+}
+
+struct SecondDuplicateExtension;
+
+impl ActionGroupType for SecondDuplicateExtension {
+    type Owner = ExtensionOwner;
+
+    const ACTIONS: &'static [ActionDescriptor] = &[action(
+        ActionOwnerId::Aggregate(AGGREGATE_ID),
+        "duplicate-extension",
+    )];
+}
+
+struct SingleSliceDuplicateExtension;
+
+impl ActionGroupType for SingleSliceDuplicateExtension {
+    type Owner = ExtensionOwner;
+
+    const ACTIONS: &'static [ActionDescriptor] = &[
+        action(ActionOwnerId::Aggregate(AGGREGATE_ID), "duplicate-in-slice"),
+        action(ActionOwnerId::Aggregate(AGGREGATE_ID), "duplicate-in-slice"),
+    ];
+}
+
+struct AttachedDuplicateExtension;
+
+impl ActionGroupType for AttachedDuplicateExtension {
+    type Owner = ExtensionOwner;
+
+    const ACTIONS: &'static [ActionDescriptor] =
+        &[action(ActionOwnerId::Aggregate(AGGREGATE_ID), "attached")];
+}
+
+fn action_locals(model: &serde_json::Value) -> Vec<&str> {
+    model["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|action| action["id"]["local"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn accepts_extensions_for_every_registered_action_owner_kind() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_aggregate_type::<ExtensionOwner>();
+    builder.add_entity_type::<ExtensionRoot>();
+    builder.add_domain_identity_type::<ExtensionRootId>();
+    builder.add_value_object_type::<ExtensionValue>();
+    builder.add_domain_service_type::<ExtensionService>();
+    builder.add_action_extension::<FirstAggregateExtension>();
+    builder.add_action_extension::<EntityExtension>();
+    builder.add_action_extension::<ValueObjectExtension>();
+    builder.add_action_extension::<ServiceExtension>();
+
+    let model = builder.finish();
+
+    assert_eq!(
+        action_locals(&model),
+        [
+            "attached",
+            "extension-one",
+            "extension-two",
+            "entity-extension",
+            "value-object-extension",
+            "service-extension",
+        ]
+    );
+}
+
+#[test]
+fn extensions_follow_attached_contracts_and_preserve_extension_order() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_aggregate_type::<ExtensionOwner>();
+    builder.add_action_extension::<FirstAggregateExtension>();
+    builder.add_action_extension::<SecondAggregateExtension>();
+
+    let model = builder.finish();
+
+    assert_eq!(
+        action_locals(&model),
+        [
+            "attached",
+            "extension-one",
+            "extension-two",
+            "extension-three",
+        ]
+    );
+}
+
+#[test]
+#[should_panic(expected = "action descriptor owner mismatch")]
+fn rejects_extension_descriptor_owner_mismatch() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_aggregate_type::<ExtensionOwner>();
+    builder.add_action_extension::<WrongOwnerExtension>();
+}
+
+#[test]
+#[should_panic(expected = "unregistered action extension owner")]
+fn rejects_extension_for_an_unregistered_owner() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_action_extension::<UnregisteredOwnerExtension>();
+}
+
+#[test]
+#[should_panic(expected = "action extension must not be empty")]
+fn rejects_empty_extension() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_aggregate_type::<ExtensionOwner>();
+    builder.add_action_extension::<EmptyExtension>();
+}
+
+#[test]
+#[should_panic(expected = "duplicate ActionId")]
+fn rejects_duplicate_action_id_across_extensions() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_aggregate_type::<ExtensionOwner>();
+    builder.add_action_extension::<FirstDuplicateExtension>();
+    builder.add_action_extension::<SecondDuplicateExtension>();
+}
+
+#[test]
+#[should_panic(expected = "duplicate ActionId")]
+fn rejects_duplicate_action_id_within_one_extension_slice() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_aggregate_type::<ExtensionOwner>();
+    builder.add_action_extension::<SingleSliceDuplicateExtension>();
+}
+
+#[test]
+#[should_panic(expected = "duplicate ActionId")]
+fn rejects_duplicate_action_id_against_an_attached_contract() {
+    let mut builder = DomainModelBuilder::new();
+    builder.add_aggregate_type::<ExtensionOwner>();
+    builder.add_action_extension::<AttachedDuplicateExtension>();
+}
+
+#[test]
+fn domain_model_accepts_optional_action_extensions_and_still_allows_omission() {
+    let extended = domain_model! {
+        contexts: [],
+        aggregates: [ExtensionOwner],
+        entities: [],
+        identities: [],
+        value_objects: [],
+        services: [],
+        commands: [],
+        events: [],
+        errors: [],
+        action_extensions: [FirstAggregateExtension, SecondAggregateExtension],
+        query_groups: [],
+    };
+    let omitted = domain_model! {
+        contexts: [],
+        aggregates: [ExtensionOwner],
+        entities: [],
+        identities: [],
+        value_objects: [],
+        services: [],
+        commands: [],
+        events: [],
+        errors: [],
+        query_groups: [],
+    };
+
+    assert_eq!(
+        action_locals(&extended),
+        [
+            "attached",
+            "extension-one",
+            "extension-two",
+            "extension-three",
+        ]
+    );
+    assert_eq!(action_locals(&omitted), ["attached"]);
+}

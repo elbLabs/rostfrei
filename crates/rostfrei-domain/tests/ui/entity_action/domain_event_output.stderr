@@ -1,0 +1,55 @@
+error[E0277]: the trait bound `Published: ActionOutputType<EntityActionOutput<Item>>` is not satisfied
+  --> tests/ui/entity_action/domain_event_output.rs:26:6
+   |
+26 | impl Actions for Item {
+   |      ^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `ActionOutputType<EntityActionOutput<Item>>` is not implemented for `Published`
+  --> tests/ui/entity_action/domain_event_output.rs:34:1
+   |
+34 | struct Published;
+   | ^^^^^^^^^^^^^^^^
+help: the following other types implement trait `ActionOutputType<Contract>`
+  --> tests/ui/entity_action/domain_event_output.rs:32:10
+   |
+32 | #[derive(DomainEvent)]
+   |          ^^^^^^^^^^^
+   |          |
+   |          `Published` implements `ActionOutputType<AggregateActionOutput<Owner>>`
+   |          `Published` implements `ActionOutputType<DomainServiceActionOutput<Service>>`
+note: required by a bound in `Actions`
+  --> tests/ui/entity_action/domain_event_output.rs:9:1
+   |
+ 9 | #[domain_actions(entity)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
+10 | trait Actions {
+   |       ------- required by a bound in this trait
+   = note: this error originates in the derive macro `DomainEvent` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Published: ActionOutputType<EntityActionOutput<Item>>` is not satisfied
+  --> tests/ui/entity_action/domain_event_output.rs:19:10
+   |
+19 | #[derive(Entity)]
+   |          ^^^^^^ unsatisfied trait bound
+   |
+help: the trait `ActionOutputType<EntityActionOutput<Item>>` is not implemented for `Published`
+  --> tests/ui/entity_action/domain_event_output.rs:34:1
+   |
+34 | struct Published;
+   | ^^^^^^^^^^^^^^^^
+help: the following other types implement trait `ActionOutputType<Contract>`
+  --> tests/ui/entity_action/domain_event_output.rs:32:10
+   |
+32 | #[derive(DomainEvent)]
+   |          ^^^^^^^^^^^
+   |          |
+   |          `Published` implements `ActionOutputType<AggregateActionOutput<Owner>>`
+   |          `Published` implements `ActionOutputType<DomainServiceActionOutput<Service>>`
+note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
+  --> tests/ui/entity_action/domain_event_output.rs:9:1
+   |
+ 9 | #[domain_actions(entity)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
+10 | trait Actions {
+   |       ------- required by a bound in this associated constant
+   = note: this error originates in the derive macro `Entity` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

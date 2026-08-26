@@ -1,0 +1,11 @@
+error: expected identifier
+ --> tests/ui/semantic_scalar/malformed_provider.rs:7:41
+  |
+7 | struct MalformedField(#[domain(scalar = "Provider")] Custom);
+  |                                         ^^^^^^^^^^
+
+error: expected identifier
+  --> tests/ui/semantic_scalar/malformed_provider.rs:10:35
+   |
+10 | #[domain(owner = Entity, scalar = "Provider")]
+   |                                   ^^^^^^^^^^

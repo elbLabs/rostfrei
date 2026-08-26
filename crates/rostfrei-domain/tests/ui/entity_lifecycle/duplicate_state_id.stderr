@@ -1,0 +1,11 @@
+error: duplicate lifecycle state id
+ --> tests/ui/entity_lifecycle/duplicate_state_id.rs:8:19
+  |
+8 |     #[domain(id = "same", label = "Active")]
+  |                   ^^^^^^
+
+error: the first lifecycle state id is declared here
+ --> tests/ui/entity_lifecycle/duplicate_state_id.rs:6:19
+  |
+6 |     #[domain(id = "same", label = "Draft")]
+  |                   ^^^^^^

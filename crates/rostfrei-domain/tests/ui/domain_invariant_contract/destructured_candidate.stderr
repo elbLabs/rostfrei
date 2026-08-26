@@ -1,0 +1,5 @@
+error: invariant parameter must be a simple immutable identifier named `candidate`
+ --> tests/ui/domain_invariant_contract/destructured_candidate.rs:8:14
+  |
+8 |     fn valid(_: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation>;
+  |              ^

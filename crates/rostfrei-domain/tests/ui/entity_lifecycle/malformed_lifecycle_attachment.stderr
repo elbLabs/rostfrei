@@ -1,0 +1,5 @@
+error: lifecycle must be a direct, non-generic type path
+ --> tests/ui/entity_lifecycle/malformed_lifecycle_attachment.rs:8:17
+  |
+8 |     lifecycle = Lifecycle<u8>
+  |                 ^^^^^^^^^^^^^

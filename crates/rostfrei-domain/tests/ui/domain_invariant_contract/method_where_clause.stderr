@@ -1,0 +1,6 @@
+error: invariant checkers cannot have method-level where clauses
+  --> tests/ui/domain_invariant_contract/method_where_clause.rs:11:5
+   |
+11 | /     where
+12 | |         Self: Sized;
+   | |___________________^

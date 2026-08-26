@@ -1,0 +1,7 @@
+error: domain decision contract methods require exactly one owned input parameter
+ --> tests/ui/domain_decision_contract/zero_inputs.rs:5:1
+  |
+5 | #[domain_decisions(entity)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `domain_decisions` (in Nightly builds, run with -Z macro-backtrace for more info)

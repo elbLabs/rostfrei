@@ -1,0 +1,65 @@
+error: DomainIdentity requires #[domain(owner = EntityType)]
+ --> tests/ui/field_invalid_shapes.rs:3:10
+  |
+3 | #[derive(DomainIdentity)]
+  |          ^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `DomainIdentity` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: custom domain fields require an explicit domain role
+  --> tests/ui/field_invalid_shapes.rs:13:12
+   |
+13 |     value: Custom,
+   |            ^^^^^^
+
+error: field must use a supported scalar or direct domain type
+  --> tests/ui/field_invalid_shapes.rs:21:12
+   |
+21 |     value: &'static str,
+   |            ^^^^^^^^^^^^
+
+error: field must use a supported scalar or direct domain type
+  --> tests/ui/field_invalid_shapes.rs:29:12
+   |
+29 |     value: [u8; 4],
+   |            ^^^^^^^
+
+error: field must use a supported scalar or direct domain type
+  --> tests/ui/field_invalid_shapes.rs:37:12
+   |
+37 |     value: (u8, u8),
+   |            ^^^^^^^^
+
+error: field base type must be direct and non-generic
+  --> tests/ui/field_invalid_shapes.rs:45:12
+   |
+45 |     value: std::collections::HashMap<String, String>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: field base type must be direct and non-generic
+  --> tests/ui/field_invalid_shapes.rs:53:12
+   |
+53 |     value: collections::Vec<u8>,
+   |            ^^^^^^^^^^^^^^^^^^^^
+
+error: Vec and Option require exactly one plain type argument
+  --> tests/ui/field_invalid_shapes.rs:61:18
+   |
+61 |     value: Option<u8, u16>,
+   |                  ^^^^^^^^^
+
+error[E0107]: enum takes 1 generic argument but 2 generic arguments were supplied
+  --> tests/ui/field_invalid_shapes.rs:61:12
+   |
+61 |     value: Option<u8, u16>,
+   |            ^^^^^^   ----- help: remove the unnecessary generic argument
+   |            |
+   |            expected 1 generic argument
+
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `collections`
+  --> tests/ui/field_invalid_shapes.rs:53:12
+   |
+53 |     value: collections::Vec<u8>,
+   |            ^^^^^^^^^^^ use of unresolved module or unlinked crate `collections`
+   |
+   = help: if you wanted to use a crate named `collections`, use `cargo add collections` to add it to your `Cargo.toml`

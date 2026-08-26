@@ -1,0 +1,8 @@
+error[E0046]: not all trait items implemented, missing: `second`
+  --> tests/ui/domain_invariant_contract/incomplete_implementation.rs:29:1
+   |
+17 |     fn second(candidate: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation>;
+   |     --------------------------------------------------------------------------------------------- `second` from trait
+...
+29 | impl Invariants for Value {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^ missing `second` in implementation

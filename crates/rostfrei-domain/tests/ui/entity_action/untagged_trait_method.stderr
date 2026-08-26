@@ -1,0 +1,5 @@
+error: domain action contract methods require exactly one action attribute
+ --> tests/ui/entity_action/untagged_trait_method.rs:5:8
+  |
+5 |     fn rename(&self);
+  |        ^^^^^^

@@ -1,0 +1,5 @@
+error: duplicate state domain attribute
+ --> tests/ui/entity_lifecycle/duplicate_state_metadata.rs:7:5
+  |
+7 |     #[domain(id = "other", label = "Other")]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

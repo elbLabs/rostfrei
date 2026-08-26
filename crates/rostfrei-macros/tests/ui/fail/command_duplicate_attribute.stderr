@@ -1,0 +1,5 @@
+error: duplicate `name` attribute
+ --> tests/ui/fail/command_duplicate_attribute.rs:6:69
+  |
+6 | #[rostfrei(name = "account.open", version = 1, aggregate = Account, name = "account.create")]
+  |                                                                     ^^^^

@@ -1,6 +1,6 @@
 # Ubiquitous Language
 
-This is the canonical language for Zeitstrahl's event-sourcing model. Framework
+This is the canonical language for Rostfrei's event-sourcing model. Framework
 APIs, architecture decisions, documentation, Studio, and AI tooling use these
 terms with the same meanings. ADR 0001 makes this language an architectural
 constraint.
@@ -35,6 +35,7 @@ constraint.
 | --- | --- | --- |
 | **Integration event** | A bounded, independently versioned public contract normally derived from committed private domain events. | Domain event, raw event, notification |
 | **Projection** | A read-oriented model derived from committed domain events without becoming aggregate truth. | Aggregate, source of truth |
+| **Domain-event handler** | A post-commit application handler for one or more private domain events. It may perform side effects but never participates in aggregate decisions or changes the originating commit. | Projection handler, reaction, event projector |
 
 ## Relationships
 
@@ -73,7 +74,7 @@ constraint.
   **integration event** for a public message contract.
 - **Stream** is ambiguous. Use **aggregate stream** for one aggregate's logical
   history and **JetStream stream** for NATS infrastructure containing subjects.
-- **Publish** is ambiguous. Zeitstrahl **appends** domain events through the
+- **Publish** is ambiguous. Rostfrei **appends** domain events through the
   EventStore even though the NATS adapter uses broker publication internally;
   application messaging **publishes** commands and integration events.
 - **Batch** is an implementation term. Use **commit** for the atomic business

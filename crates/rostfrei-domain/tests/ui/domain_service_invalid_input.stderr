@@ -1,0 +1,23 @@
+error: DomainService only supports non-generic unit structs
+ --> tests/ui/domain_service_invalid_input.rs:5:8
+  |
+5 | struct Named { value: u64 }
+  |        ^^^^^
+
+error: DomainService only supports non-generic unit structs
+ --> tests/ui/domain_service_invalid_input.rs:9:8
+  |
+9 | struct Tuple(u64);
+  |        ^^^^^
+
+error: DomainService only supports non-generic unit structs
+  --> tests/ui/domain_service_invalid_input.rs:13:15
+   |
+13 | struct Generic<T>(T);
+   |               ^^^
+
+error: DomainService only supports non-generic unit structs
+  --> tests/ui/domain_service_invalid_input.rs:17:6
+   |
+17 | enum Enumerated {}
+   |      ^^^^^^^^^^

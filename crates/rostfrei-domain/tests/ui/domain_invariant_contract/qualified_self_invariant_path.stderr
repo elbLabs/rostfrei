@@ -1,0 +1,5 @@
+error: invariant paths cannot use qualified self syntax
+  --> tests/ui/domain_invariant_contract/qualified_self_invariant_path.rs:19:19
+   |
+19 |     invariants = [<Contracts as ContractSet>::Invariants]
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

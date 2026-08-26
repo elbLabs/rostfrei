@@ -1,0 +1,29 @@
+#![allow(dead_code)]
+
+use rostfrei_domain::{
+    Aggregate, BoundedContext, DomainIdentity, DomainIdentityType, Entity, ScalarType,
+};
+
+#[derive(BoundedContext)]
+#[domain(id = "context", label = "Context")]
+struct Context;
+
+#[derive(DomainIdentity)]
+#[domain(owner = Root)]
+struct RootId(u64);
+
+#[derive(Entity)]
+#[domain(id = "root", label = "Root", owner = Owner)]
+struct Root {
+    #[domain(identity)]
+    id: RootId,
+}
+
+#[derive(Aggregate)]
+#[domain(id = "owner", label = "Owner", context = Context, root = Root)]
+struct Owner;
+
+const _: () = assert!(matches!(RootId::DESCRIPTOR.scalar, ScalarType::U64));
+const _: () = assert!(RootId::SEMANTIC_SCALAR.is_none());
+
+fn main() {}

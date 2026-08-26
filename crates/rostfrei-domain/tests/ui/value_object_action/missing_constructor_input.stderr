@@ -1,0 +1,7 @@
+error: value object constructors require exactly one input parameter
+ --> tests/ui/value_object_action/missing_constructor_input.rs:3:1
+  |
+3 | #[domain_actions(value_object)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

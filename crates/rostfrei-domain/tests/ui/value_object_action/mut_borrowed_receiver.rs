@@ -1,0 +1,9 @@
+use rostfrei_domain::domain_actions;
+
+#[domain_actions(value_object)]
+trait Actions {
+    #[action(id = "normalize", label = "Normalize")]
+    fn normalize(&mut self) -> Self;
+}
+
+fn main() {}

@@ -1,0 +1,5 @@
+error: action parameter must be a simple identifier named `input`
+ --> tests/ui/domain_service_action/bad_input_name.rs:6:16
+  |
+6 |     fn execute(command: u8);
+  |                ^^^^^^^

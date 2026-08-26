@@ -1,0 +1,5 @@
+error: duplicate id
+ --> tests/ui/domain_decision_contract/duplicate_decision_key.rs:8:31
+  |
+8 |     #[decision(id = "decide", id = "other", label = "Decide")]
+  |                               ^^

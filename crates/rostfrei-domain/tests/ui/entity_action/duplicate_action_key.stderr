@@ -1,0 +1,5 @@
+error: duplicate id
+ --> tests/ui/entity_action/duplicate_action_key.rs:5:32
+  |
+5 |     #[action(id = "duplicate", id = "other", label = "Duplicate")]
+  |                                ^^

@@ -1,0 +1,5 @@
+error: transition action must use `TraitPath::REFERENCE`
+ --> tests/ui/entity_lifecycle/malformed_action_reference.rs:7:27
+  |
+7 |     #[transition(action = ACTIVATE, to = Draft)]
+  |                           ^^^^^^^^

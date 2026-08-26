@@ -1,0 +1,5 @@
+error: duplicate action id
+ --> tests/ui/entity_action/duplicate_action_id.rs:8:19
+  |
+8 |     #[action(id = "change", label = "Archive")]
+  |                   ^^^^^^^^

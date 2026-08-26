@@ -1,0 +1,5 @@
+error: domain invariant contract traits accept exactly one kind
+ --> tests/ui/domain_invariant_contract/multiple_macro_kinds.rs:5:27
+  |
+5 | #[domain_invariants(entity, aggregate)]
+  |                           ^

@@ -1,0 +1,5 @@
+error: decisions cannot be extern
+ --> tests/ui/domain_decision_contract/extern_method.rs:9:5
+  |
+9 |     extern "C" fn decide(input: Input) -> Output;
+  |     ^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: domain action contract traits accept exactly one kind
+ --> tests/ui/domain_action_contract/multiple_arguments.rs:3:24
+  |
+3 | #[domain_actions(entity, aggregate)]
+  |                        ^

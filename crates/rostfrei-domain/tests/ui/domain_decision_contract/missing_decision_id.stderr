@@ -1,0 +1,5 @@
+error: missing id
+ --> tests/ui/domain_decision_contract/missing_decision_id.rs:8:5
+  |
+8 |     #[decision(label = "Decide")]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

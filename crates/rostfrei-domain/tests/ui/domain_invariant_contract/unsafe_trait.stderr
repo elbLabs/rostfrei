@@ -1,0 +1,5 @@
+error: domain invariant contract traits cannot be unsafe
+ --> tests/ui/domain_invariant_contract/unsafe_trait.rs:6:1
+  |
+6 | unsafe trait Invariants {
+  | ^^^^^^

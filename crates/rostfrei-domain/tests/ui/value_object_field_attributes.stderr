@@ -1,0 +1,29 @@
+error[E0425]: cannot find type `Owner` in this scope
+ --> tests/ui/value_object_field_attributes.rs:4:65
+  |
+4 | #[domain(id = "email-address", label = "Email address", owner = Owner)]
+  |                                                                 ^^^^^
+  |
+help: you might have meant to use the associated type
+  |
+4 | #[domain(id = "email-address", label = "Email address", owner = Self::Owner)]
+  |                                                                 ++++++
+
+error[E0277]: the trait bound `std::string::String: DomainIdentityType` is not satisfied
+ --> tests/ui/value_object_field_attributes.rs:5:41
+  |
+5 | struct EmailAddress(#[domain(identity)] String);
+  |                                         ^^^^^^ the trait `DomainIdentityType` is not implemented for `std::string::String`
+
+error[E0277]: the trait bound `std::string::String: DomainIdentityType` is not satisfied
+ --> tests/ui/value_object_field_attributes.rs:5:41
+  |
+5 | struct EmailAddress(#[domain(identity)] String);
+  |                                         ^^^^^^ the trait `DomainIdentityType` is not implemented for `std::string::String`
+  |
+note: required by a bound in `assert_identity`
+ --> tests/ui/value_object_field_attributes.rs:3:10
+  |
+3 | #[derive(ValueObject)]
+  |          ^^^^^^^^^^^ required by this bound in `assert_identity`
+  = note: this error originates in the derive macro `ValueObject` (in Nightly builds, run with -Z macro-backtrace for more info)

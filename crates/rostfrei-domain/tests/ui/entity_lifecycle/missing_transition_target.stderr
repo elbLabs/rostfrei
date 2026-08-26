@@ -1,0 +1,5 @@
+error: missing transition target
+ --> tests/ui/entity_lifecycle/missing_transition_target.rs:7:5
+  |
+7 |     #[transition(action = Actions::ACTIVATE)]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

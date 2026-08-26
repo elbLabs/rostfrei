@@ -1,0 +1,5 @@
+error: domain service invariant contracts are not supported; expected `aggregate`, `entity`, or `value_object`
+ --> tests/ui/domain_invariant_contract/domain_service_kind.rs:5:21
+  |
+5 | #[domain_invariants(domain_service)]
+  |                     ^^^^^^^^^^^^^^

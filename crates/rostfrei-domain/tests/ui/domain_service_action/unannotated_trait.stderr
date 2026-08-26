@@ -1,0 +1,10 @@
+error[E0576]: cannot find method or associated constant `__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE` in trait `Actions`
+  --> tests/ui/domain_service_action/unannotated_trait.rs:11:10
+   |
+ 8 |     fn execute();
+   |     ------------- associated function `execute` defined here
+...
+11 | #[derive(DomainService)]
+   |          ^^^^^^^^^^^^^ not found in `Actions`
+   |
+   = note: this error originates in the derive macro `DomainService` (in Nightly builds, run with -Z macro-backtrace for more info)

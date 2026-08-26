@@ -1,0 +1,63 @@
+error: missing root
+ --> tests/ui/aggregate_invalid_root.rs:8:1
+  |
+8 | #[domain(id = "missing-root", label = "Missing Root", context = Inbox)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0277]: the trait bound `PlainRoot: EntityType` is not satisfied
+  --> tests/ui/aggregate_invalid_root.rs:14:75
+   |
+14 | #[domain(id = "plain-root", label = "Plain Root", context = Inbox, root = PlainRoot)]
+   |                                                                           ^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `PlainRoot`
+  --> tests/ui/aggregate_invalid_root.rs:11:1
+   |
+11 | struct PlainRoot;
+   | ^^^^^^^^^^^^^^^^
+help: the trait `EntityType` is implemented for `OtherRoot`
+  --> tests/ui/aggregate_invalid_root.rs:21:10
+   |
+21 | #[derive(Entity)]
+   |          ^^^^^^
+note: required by a bound in `rostfrei_domain::AggregateType::Root`
+  --> src/aggregate/domain_type.rs
+   |
+   |     type Root: EntityType<Owner = Self>;
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `AggregateType::Root`
+   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0271]: type mismatch resolving `<OtherRoot as EntityType>::Owner == WrongOwner`
+  --> tests/ui/aggregate_invalid_root.rs:29:77
+   |
+29 | #[domain(id = "wrong-owner", label = "Wrong Owner", context = Inbox, root = OtherRoot)]
+   |                                                                             ^^^^^^^^^ type mismatch resolving `<OtherRoot as EntityType>::Owner == WrongOwner`
+   |
+note: expected this to be `WrongOwner`
+  --> tests/ui/aggregate_invalid_root.rs:22:54
+   |
+22 | #[domain(id = "other-root", label = "Other", owner = OtherAggregate)]
+   |                                                      ^^^^^^^^^^^^^^
+note: required by a bound in `rostfrei_domain::AggregateType::Root`
+  --> src/aggregate/domain_type.rs
+   |
+   |     type Root: EntityType<Owner = Self>;
+   |                           ^^^^^^^^^^^^ required by this bound in `AggregateType::Root`
+
+error[E0277]: the trait bound `PlainRoot: EntityType` is not satisfied
+  --> tests/ui/aggregate_invalid_root.rs:14:75
+   |
+14 | #[domain(id = "plain-root", label = "Plain Root", context = Inbox, root = PlainRoot)]
+   |                                                                           ^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `PlainRoot`
+  --> tests/ui/aggregate_invalid_root.rs:11:1
+   |
+11 | struct PlainRoot;
+   | ^^^^^^^^^^^^^^^^
+help: the trait `EntityType` is implemented for `OtherRoot`
+  --> tests/ui/aggregate_invalid_root.rs:21:10
+   |
+21 | #[derive(Entity)]
+   |          ^^^^^^
+   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)

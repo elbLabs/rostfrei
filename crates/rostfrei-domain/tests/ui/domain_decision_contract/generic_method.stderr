@@ -1,0 +1,5 @@
+error: decisions cannot have generic parameters
+ --> tests/ui/domain_decision_contract/generic_method.rs:9:15
+  |
+9 |     fn decide<T>(input: Input) -> Output;
+  |               ^

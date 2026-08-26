@@ -1,0 +1,5 @@
+error: transition actions must use the public reference name without the generated prefix
+ --> tests/ui/entity_lifecycle/hidden_action_reference.rs:7:36
+  |
+7 |     #[transition(action = Actions::__DOMAIN_ACTION_REFERENCE_ACTIVATE, to = Draft)]
+  |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

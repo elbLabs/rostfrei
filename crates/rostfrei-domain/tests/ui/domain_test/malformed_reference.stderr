@@ -1,0 +1,5 @@
+error: action tests require an owner-qualified reference in the form `<Owner as TraitPath>::CANONICAL_REFERENCE`
+ --> tests/ui/domain_test/malformed_reference.rs:3:22
+  |
+3 | #[domain_action_test(Actions::RUN)]
+  |                      ^^^^^^^^^^^^

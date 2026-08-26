@@ -1,0 +1,5 @@
+error: domain action contract methods cannot have default bodies
+ --> tests/ui/entity_action/default_method_body.rs:6:22
+  |
+6 |     fn rename(&self) {}
+  |                      ^^

@@ -1,0 +1,5 @@
+error: invariant checkers must return exactly `Option<InvariantViolation>`
+ --> tests/ui/domain_invariant_contract/missing_output.rs:8:8
+  |
+8 |     fn valid(candidate: &<Self as InvariantOwnerType>::Candidate);
+  |        ^^^^^

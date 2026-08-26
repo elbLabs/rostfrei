@@ -1,0 +1,5 @@
+error: unsupported action attribute
+ --> tests/ui/entity_action/unsupported_action_attribute.rs:5:57
+  |
+5 |     #[action(id = "unsupported", label = "Unsupported", other = "value")]
+  |                                                         ^^^^^

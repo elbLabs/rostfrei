@@ -1,0 +1,5 @@
+error: custom domain fields require an explicit domain role
+  --> tests/ui/value_object_tagged/custom_unannotated_type.rs:12:12
+   |
+12 |     Custom(Custom),
+   |            ^^^^^^

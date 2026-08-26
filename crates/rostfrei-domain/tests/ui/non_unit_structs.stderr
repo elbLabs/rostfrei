@@ -1,0 +1,11 @@
+error: BoundedContext only supports non-generic unit structs
+ --> tests/ui/non_unit_structs.rs:5:8
+  |
+5 | struct Inbox(String);
+  |        ^^^^^
+
+error: Aggregate only supports non-generic unit structs
+ --> tests/ui/non_unit_structs.rs:9:8
+  |
+9 | struct Mailbox { name: String }
+  |        ^^^^^^^

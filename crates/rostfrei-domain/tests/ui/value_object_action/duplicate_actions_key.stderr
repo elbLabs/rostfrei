@@ -1,0 +1,5 @@
+error: duplicate actions
+  --> tests/ui/value_object_action/duplicate_actions_key.rs:12:5
+   |
+12 |     actions = [Actions]
+   |     ^^^^^^^

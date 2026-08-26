@@ -1,0 +1,17 @@
+error[E0271]: type mismatch resolving `<Lifecycle as EntityLifecycleType>::Owner == Todo`
+  --> tests/ui/entity_lifecycle/lifecycle_owner_mismatch.rs:47:66
+   |
+47 | #[domain(id = "todo", label = "Todo", owner = Owner, lifecycle = Lifecycle)]
+   |                                                                  ^^^^^^^^^ type mismatch resolving `<Lifecycle as EntityLifecycleType>::Owner == Todo`
+   |
+note: expected this to be `Todo`
+  --> tests/ui/entity_lifecycle/lifecycle_owner_mismatch.rs:36:55
+   |
+36 | #[domain(id = "workflow", label = "Workflow", owner = Other, initial = Draft)]
+   |                                                       ^^^^^
+note: required by a bound in `assert_lifecycle`
+  --> tests/ui/entity_lifecycle/lifecycle_owner_mismatch.rs:46:10
+   |
+46 | #[derive(Entity)]
+   |          ^^^^^^ required by this bound in `assert_lifecycle`
+   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)

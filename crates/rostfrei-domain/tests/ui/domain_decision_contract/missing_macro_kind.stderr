@@ -1,0 +1,7 @@
+error: unexpected end of input, domain decision contract kind is required; expected `aggregate`, `domain_service`, `entity`, or `value_object`
+ --> tests/ui/domain_decision_contract/missing_macro_kind.rs:3:1
+  |
+3 | #[domain_decisions]
+  | ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `domain_decisions` (in Nightly builds, run with -Z macro-backtrace for more info)

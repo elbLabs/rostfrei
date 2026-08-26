@@ -1,0 +1,39 @@
+error[E0271]: type mismatch resolving `<WrongError as DomainErrorType>::Owner == Item`
+  --> tests/ui/entity_action/wrong_domain_error_owner.rs:26:6
+   |
+26 | impl Actions for Item {
+   |      ^^^^^^^ type mismatch resolving `<WrongError as DomainErrorType>::Owner == Item`
+   |
+note: expected this to be `Item`
+  --> tests/ui/entity_action/wrong_domain_error_owner.rs:47:13
+   |
+47 |     owner = Other,
+   |             ^^^^^
+note: required by a bound in `Actions`
+  --> tests/ui/entity_action/wrong_domain_error_owner.rs:9:1
+   |
+ 9 | #[domain_actions(entity)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
+10 | trait Actions {
+   |       ------- required by a bound in this trait
+   = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0271]: type mismatch resolving `<WrongError as DomainErrorType>::Owner == Item`
+  --> tests/ui/entity_action/wrong_domain_error_owner.rs:19:10
+   |
+19 | #[derive(Entity)]
+   |          ^^^^^^ type mismatch resolving `<WrongError as DomainErrorType>::Owner == Item`
+   |
+note: expected this to be `Item`
+  --> tests/ui/entity_action/wrong_domain_error_owner.rs:47:13
+   |
+47 |     owner = Other,
+   |             ^^^^^
+note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
+  --> tests/ui/entity_action/wrong_domain_error_owner.rs:9:1
+   |
+ 9 | #[domain_actions(entity)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
+10 | trait Actions {
+   |       ------- required by a bound in this associated constant
+   = note: this error originates in the derive macro `Entity` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

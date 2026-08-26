@@ -1,0 +1,5 @@
+error: duplicate lifecycle
+ --> tests/ui/entity_lifecycle/duplicate_lifecycle_attachment.rs:9:5
+  |
+9 |     lifecycle = Second
+  |     ^^^^^^^^^

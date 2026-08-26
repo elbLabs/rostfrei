@@ -1,0 +1,5 @@
+error: domain invariant contract kinds must be unkeyed; use `entity`
+ --> tests/ui/domain_invariant_contract/keyed_macro_kind.rs:5:21
+  |
+5 | #[domain_invariants(kind = entity)]
+  |                     ^^^^

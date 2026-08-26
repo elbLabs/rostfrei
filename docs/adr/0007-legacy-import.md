@@ -12,7 +12,7 @@ starting fact. The event payload records enough provenance to distinguish
 native, imported, synthetic, and externally observed facts, including source
 system, source record, observation time, and import batch where applicable.
 
-Zeitstrahl does not fabricate historical business events from a current-state
+Rostfrei does not fabricate historical business events from a current-state
 row and does not hide imported state in a snapshot. Import is a normal
 `NoStream` commit and follows the same concurrency and idempotency rules as any
 other command.

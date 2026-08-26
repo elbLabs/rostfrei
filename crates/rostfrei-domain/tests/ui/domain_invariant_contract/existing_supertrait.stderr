@@ -1,0 +1,5 @@
+error: domain invariant contract traits cannot have existing supertraits
+ --> tests/ui/domain_invariant_contract/existing_supertrait.rs:8:19
+  |
+8 | trait Invariants: Existing {
+  |                   ^^^^^^^^
