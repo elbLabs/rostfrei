@@ -6,10 +6,10 @@ Accepted.
 
 ## Decision
 
-Rostfrei will expose domain descriptors, stream inspection, state
+rostfrei will expose domain descriptors, stream inspection, state
 reconstruction, command simulation, operation tracing, scenario execution, and
 authorized dispatch through a protocol-independent control-plane service.
-Rostfrei Studio and AI-facing adapters, including a possible MCP server, are
+rostfrei Studio and AI-facing adapters, including a possible MCP server, are
 clients of that same service.
 
 The control plane uses the runtime registry as its declared domain model. AI
@@ -28,4 +28,4 @@ Humans and AI observe the same domain definitions and execution results. New
 interfaces cannot silently invent different dispatch or security semantics.
 Production deployments can expose inspection without exposing dispatch, and
 organizations can omit the control plane entirely while continuing to use the
-Rostfrei kernel and adapters.
+rostfrei kernel and adapters.

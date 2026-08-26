@@ -1,4 +1,4 @@
-//! NATS adapters for Rostfrei event sourcing and messaging.
+//! NATS adapters for rostfrei event sourcing and messaging.
 
 mod connection;
 mod consumer;

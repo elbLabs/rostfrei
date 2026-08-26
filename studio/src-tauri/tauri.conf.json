@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Rostfrei Studio",
+  "productName": "rostfrei Studio",
   "version": "0.1.0",
   "identifier": "dev.rostfrei.studio",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Rostfrei Studio",
+        "title": "rostfrei Studio",
         "width": 1440,
         "height": 900,
         "minWidth": 960,

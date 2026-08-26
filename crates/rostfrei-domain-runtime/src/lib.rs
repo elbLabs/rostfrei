@@ -1,7 +1,7 @@
 use domain::AggregateType;
 use rostfrei_core::Aggregate;
 
-/// Connects a descriptive domain aggregate to its executable Rostfrei state.
+/// Connects a descriptive domain aggregate to its executable rostfrei state.
 pub trait AggregateRuntime: AggregateType {
     type Runtime: Aggregate;
 }
@@ -18,7 +18,7 @@ pub mod __private {
     pub use crate::AggregateRuntime;
 }
 
-/// Generates Rostfrei command and module registrations from domain command types.
+/// Generates rostfrei command and module registrations from domain command types.
 ///
 /// The domain model supplies command ownership and structural metadata. The binding
 /// supplies only runtime wire names and schema versions.

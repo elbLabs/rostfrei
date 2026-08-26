@@ -1,6 +1,6 @@
-# Rostfrei
+# rostfrei
 
-Rostfrei is a Rust domain-modeling, event-sourcing, and messaging platform. It
+rostfrei is a Rust domain-modeling, event-sourcing, and messaging platform. It
 keeps domain aggregates independent from persistence, serialization, and brokers
 while providing a compiled domain model, strict execution, developer tooling,
 and NATS JetStream adapters at the application edge.
@@ -14,7 +14,7 @@ The workspace contains nine crates:
 - `rostfrei-domain-macros`: derives and attributes for domain types and
   behavior contracts.
 - `rostfrei-domain-runtime`: bindings from compiled domain commands to
-  executable Rostfrei aggregates and runtime registration.
+  executable rostfrei aggregates and runtime registration.
 - `rostfrei-registry`: explicit command metadata, domain modules, and
   deterministic runtime registration.
 - `rostfrei-macros`: derives for command definitions and domain modules.
@@ -23,11 +23,11 @@ The workspace contains nine crates:
 - `rostfrei-nats`: NATS messaging and authoritative JetStream event storage.
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
 
-[`studio`](studio) contains Rostfrei Studio, a Tauri application for browsing
+[`studio`](studio) contains rostfrei Studio, a Tauri application for browsing
 compiled models and Cargo diagnostics. The domain language reference and
 handbook are in [`docs/domain-model`](docs/domain-model).
 
-Rostfrei does not provision infrastructure during service startup. Operators
+rostfrei does not provision infrastructure during service startup. Operators
 use the explicit provisioning APIs with deployment-owned stream policies.
 Authoritative NATS event storage requires NATS Server 2.12.0 or newer for atomic
 multi-event publishing.

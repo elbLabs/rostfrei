@@ -39,6 +39,6 @@ never exposed to application handlers.
 Handler effects are at-least-once and must be idempotent by committed event
 identity. Public integration-event publication waits for its PubAck before the
 domain-event delivery is acknowledged. Poison events block their durable until
-an operator repairs the cause or makes an explicit skip decision; Rostfrei
+an operator repairs the cause or makes an explicit skip decision; rostfrei
 does not automatically quarantine and continue an incomplete projection or
 public history.

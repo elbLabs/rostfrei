@@ -1,7 +1,7 @@
 [package]
 name = "rostfrei-studio"
 version = "0.1.0"
-description = "Visual browser and compiler for Rostfrei domain models"
+description = "Visual browser and compiler for rostfrei domain models"
 authors = []
 license = ""
 repository = ""

@@ -24,8 +24,8 @@ use crate::{
     publish::{safe_headers, CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE},
 };
 
-pub const REQUEST_ID_HEADER: &str = "Rostfrei-Control-Request-Id";
-pub const CORRELATION_ID_HEADER: &str = "Rostfrei-Control-Correlation-Id";
+pub const REQUEST_ID_HEADER: &str = "rostfrei-Control-Request-Id";
+pub const CORRELATION_ID_HEADER: &str = "rostfrei-Control-Correlation-Id";
 pub const DEFAULT_QUERY_HANDLER_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_QUERY_SERVER_CONCURRENCY: usize = 64;
 

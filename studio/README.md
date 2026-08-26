@@ -1,6 +1,6 @@
-# Rostfrei Studio
+# rostfrei Studio
 
-Desktop IDE for browsing and validating compiled Rostfrei domain models.
+Desktop IDE for browsing and validating compiled rostfrei domain models.
 
 ## Development
 

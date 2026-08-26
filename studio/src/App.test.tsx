@@ -158,7 +158,7 @@ async function openWorkspace(user = userEvent.setup()) {
   return user
 }
 
-describe('Rostfrei Studio', () => {
+describe('rostfrei Studio', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     successfulNativeCalls()
