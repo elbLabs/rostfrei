@@ -8,14 +8,14 @@ Accepted.
 
 rostfrei is developed and committed in its own repository. Nexus consumes the
 three runtime crates through Git dependencies pinned to one full commit SHA.
-Nexus may retain `nexus-messaging` as a thin policy facade for environment
-variables, deployed stream names, topology defaults, an integrating application address policy,
-operator binary composition, and temporary compatibility re-exports.
+An integrating application may retain a thin policy facade for environment
+variables, deployed stream names, topology defaults, address policy, operator
+binary composition, and temporary compatibility re-exports.
 
-Nexus must not vendor rostfrei source or duplicate generic adapters. The first
-integration proves messaging through existing an integrating application flows and proves event
-sourcing through rostfrei's framework contract fixtures. No Nexus aggregate is
-converted merely to create an integration example.
+Integrating applications must not vendor rostfrei source or duplicate generic
+adapters. The first integration proves messaging through existing application
+flows and proves event sourcing through rostfrei's framework contract fixtures.
+No production aggregate is converted merely to create an integration example.
 
 For the initial single-command, single-integration-event flow, Nexus does not
 add an outbox. It ACKs the command only after the integration event receives a

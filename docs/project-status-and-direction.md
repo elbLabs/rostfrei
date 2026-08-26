@@ -71,22 +71,21 @@ service-startup side effect.
 
 ## Nexus integration
 
-Nexus currently adopts rostfrei as its messaging foundation through a thin
-`nexus-messaging` policy facade. an integrating application uses rostfrei publishing,
+An integrating application currently adopts rostfrei as its messaging
+foundation through a thin policy facade. It uses rostfrei publishing,
 consumption, retry, quarantine, and topology validation while retaining its
 application-owned addresses and deployment defaults.
 
-The integration does not yet run a Nexus aggregate through rostfrei's
+The integration does not yet run a production aggregate through rostfrei's
 `Executor`, `EventStore`, or `NatsEventStore`. No production aggregate is being
-converted solely to demonstrate the framework. The existing an integrating application path
-remains command to command to a NATS KV entitlement snapshot.
+converted solely to demonstrate the framework.
 
 ## Verification
 
 The current local implementation has passed workspace tests and strict clippy,
 real NATS 2.12 event-store tests, concurrent append tests, the 1,000-event batch
 boundary, atomic capacity-failure tests, exact replay contracts, focused Nexus
-tests, Nexus architecture tests, and destructive an integrating application NATS tests including
+tests, integration architecture tests, and destructive NATS tests including
 quarantine behavior.
 
 The work is not released. rostfrei has no configured Git remote, recent
