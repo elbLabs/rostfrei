@@ -13,6 +13,7 @@ use rostfrei_core::{
     Executor, ExpectedVersion, InMemoryEventStore, NewEvent, OperationId, RecordedEvent, StreamId,
     StreamVersion,
 };
+use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_messaging_core::{CausationId, CorrelationId};
 use rostfrei_testing::{event_store_contract, given, DomainEventHandlerHarness};
 use serde::{Deserialize, Serialize};
@@ -47,11 +48,12 @@ struct Account {
 }
 
 impl Aggregate for Account {
+    type State = Self;
     type Event = AccountEvent;
 
     const AGGREGATE_TYPE: &'static str = "Account";
 
-    fn initial() -> Self {
+    fn initial(_stream_id: &StreamId) -> Self::State {
         Self {
             imported: false,
             balance: 0,
@@ -59,17 +61,17 @@ impl Aggregate for Account {
         }
     }
 
-    fn apply(&mut self, event: &Self::Event) {
+    fn apply(state: &mut Self::State, event: &Self::Event) {
         match event {
             AccountEvent::AccountStateImported {
                 opening_balance, ..
             } => {
-                self.imported = true;
-                self.balance = *opening_balance;
+                state.imported = true;
+                state.balance = *opening_balance;
             }
-            AccountEvent::Credited { amount } => self.balance += amount,
+            AccountEvent::Credited { amount } => state.balance += amount,
             AccountEvent::BalanceObserved { balance } => {
-                self.last_observed_balance = Some(*balance);
+                state.last_observed_balance = Some(*balance);
             }
         }
     }
@@ -244,6 +246,96 @@ impl EventCodec<Account> for AlternateAccountCodec {
     }
 }
 
+#[derive(domain::BoundedContext)]
+#[domain(id = "automatic-accounts", label = "Automatic accounts")]
+struct AutomaticAccounts;
+
+#[derive(domain::DomainIdentity)]
+#[domain(owner = AutomaticAccountRoot)]
+#[allow(dead_code)]
+struct AutomaticAccountId(String);
+
+#[derive(domain::Entity)]
+#[domain(
+    id = "automatic-account-root",
+    label = "Automatic account",
+    owner = AutomaticAccountDefinition
+)]
+struct AutomaticAccountRoot {
+    #[domain(identity)]
+    #[allow(dead_code)]
+    id: AutomaticAccountId,
+    balance: i64,
+}
+
+#[derive(domain::Aggregate)]
+#[domain(
+    id = "automatic-account",
+    label = "Automatic account",
+    context = AutomaticAccounts,
+    root = AutomaticAccountRoot,
+    events = [MoneyDeposited]
+)]
+struct AutomaticAccountDefinition;
+
+#[derive(Clone, Debug, Deserialize, domain::DomainEvent, Eq, PartialEq, Serialize)]
+#[domain(id = "money-deposited", label = "Money deposited", schema_version = 2)]
+struct MoneyDeposited {
+    amount: i64,
+}
+
+impl Initialize<AutomaticAccountDefinition> for AutomaticAccountRoot {
+    fn initialize(stream_id: &StreamId) -> Self {
+        Self {
+            id: AutomaticAccountId(stream_id.aggregate_id().as_str().to_owned()),
+            balance: 0,
+        }
+    }
+}
+
+impl Apply<MoneyDeposited> for AutomaticAccountRoot {
+    fn apply(&mut self, event: &MoneyDeposited) {
+        self.balance += event.amount;
+    }
+}
+
+struct DepositMoney {
+    amount: i64,
+}
+
+impl CommandHandler<DepositMoney> for AutomaticAccountDefinition {
+    type Rejection = ();
+
+    fn handle(
+        command: &DepositMoney,
+        context: &mut DecisionContext<'_, Self>,
+    ) -> Result<(), Self::Rejection> {
+        context.record(MoneyDeposited {
+            amount: command.amount,
+        });
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct RecordingAutomaticEventHandler {
+    events: Mutex<Vec<MoneyDeposited>>,
+}
+
+#[async_trait]
+impl DomainEventHandler<MoneyDeposited> for RecordingAutomaticEventHandler {
+    async fn handle(
+        &self,
+        event: &CommittedDomainEvent<'_, MoneyDeposited>,
+    ) -> Result<(), DomainEventHandlerError> {
+        self.events
+            .lock()
+            .expect("automatic event recording lock")
+            .push(event.event().clone());
+        Ok(())
+    }
+}
+
 struct RecordingDomainEventHandler {
     failure: Option<DomainEventHandlerErrorKind>,
     handled: Mutex<Vec<(AccountEvent, RecordedEvent)>>,
@@ -378,7 +470,11 @@ async fn domain_event_handlers_decode_typed_events_preserve_metadata_and_classif
     let handler = Arc::new(RecordingDomainEventHandler::succeeding());
     let mut harness = DomainEventHandlerHarness::new();
     harness
-        .register::<Account, _, _>("account-credited", Arc::new(AccountCodec), handler.clone())
+        .register_with_codec::<Account, AccountEvent, _, _>(
+            "account-credited",
+            Arc::new(AccountCodec),
+            handler.clone(),
+        )
         .expect("handler registration");
 
     assert_eq!(
@@ -418,7 +514,7 @@ async fn domain_event_handlers_decode_typed_events_preserve_metadata_and_classif
     ] {
         let mut failing_harness = DomainEventHandlerHarness::new();
         failing_harness
-            .register::<Account, _, _>(
+            .register_with_codec::<Account, AccountEvent, _, _>(
                 "account-credited",
                 Arc::new(AccountCodec),
                 Arc::new(RecordingDomainEventHandler::failing(failure_kind)),
@@ -440,17 +536,25 @@ async fn expected_domain_events_fail_closed_for_schema_payload_and_registration_
     let handler = Arc::new(RecordingDomainEventHandler::succeeding());
     let mut harness = DomainEventHandlerHarness::new();
     harness
-        .register::<Account, _, _>("account-credited", Arc::new(AccountCodec), handler.clone())
+        .register_with_codec::<Account, AccountEvent, _, _>(
+            "account-credited",
+            Arc::new(AccountCodec),
+            handler.clone(),
+        )
         .expect("handler registration");
     let conflict = harness
-        .register::<Account, _, _>("account-credited", Arc::new(AccountCodec), handler)
+        .register_with_codec::<Account, AccountEvent, _, _>(
+            "account-credited",
+            Arc::new(AccountCodec),
+            handler,
+        )
         .expect_err("duplicate registration must fail");
     assert!(matches!(
         conflict,
         DomainEventRegistrationError::Conflict { .. }
     ));
     let aggregate_conflict = harness
-        .register::<Account, _, _>(
+        .register_with_codec::<Account, AccountEvent, _, _>(
             "account-balance-observed",
             Arc::new(AlternateAccountCodec),
             Arc::new(RecordingDomainEventHandler::succeeding()),
@@ -504,8 +608,9 @@ fn given_when_then_exposes_live_state_and_replay_equivalence() {
         opening_balance: 10,
         provenance: provenance(),
     }];
-    let then =
-        given::<Account, _>(history.clone()).when(&AccountCommand::CreditThenObserve { amount: 5 });
+    let stream = stream("given-account");
+    let then = given::<Account, _>(&stream, history.clone())
+        .when(&AccountCommand::CreditThenObserve { amount: 5 });
 
     assert!(then.is_accepted());
     assert_eq!(
@@ -521,14 +626,14 @@ fn given_when_then_exposes_live_state_and_replay_equivalence() {
     let (live_state, new_events, decision) = then.into_parts();
     assert_eq!(decision, Ok(()));
     history.extend(new_events);
-    let replayed = given::<Account, _>(history);
+    let replayed = given::<Account, _>(&stream, history);
     assert_eq!(replayed.state(), &live_state);
 }
 
 #[tokio::test]
 async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
     let stream = stream("imported-account");
-    let executor = Executor::new(InMemoryEventStore::new(), AccountCodec);
+    let executor = Executor::with_codec(InMemoryEventStore::new(), AccountCodec);
     let import_metadata = metadata(&stream, "import-operation", "stable-import-command");
     let import = AccountCommand::Import {
         opening_balance: 10,
@@ -614,6 +719,59 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
 }
 
 #[tokio::test]
+async fn executor_uses_derived_json_events_without_codec_configuration() {
+    let stream = StreamId::new(
+        AggregateType::new("automatic-account").expect("valid aggregate type"),
+        AggregateId::new("automatic-account-1").expect("valid aggregate id"),
+    );
+    let executor = Executor::new(InMemoryEventStore::new());
+
+    let first = executor
+        .execute::<AutomaticAccountDefinition, _>(
+            metadata(&stream, "automatic-deposit-1", "deposit-seven"),
+            &DepositMoney { amount: 7 },
+        )
+        .await
+        .expect("default JSON event encoding should succeed");
+    assert_eq!(first.events()[0].event_type(), "money-deposited");
+    assert_eq!(first.events()[0].schema_version(), 2);
+    assert_eq!(first.events()[0].payload(), br#"{"amount":7}"#);
+
+    let handler = Arc::new(RecordingAutomaticEventHandler::default());
+    let mut harness = DomainEventHandlerHarness::new();
+    harness
+        .register::<AutomaticAccountDefinition, MoneyDeposited, _>(
+            "money-deposited",
+            handler.clone(),
+        )
+        .expect("default JSON event handler registration should succeed");
+    assert_eq!(
+        harness
+            .handle(&first.events()[0])
+            .await
+            .expect("default JSON event handling should succeed"),
+        DomainEventDispatchOutcome::Handled
+    );
+    assert_eq!(
+        handler
+            .events
+            .lock()
+            .expect("automatic event recording lock")
+            .as_slice(),
+        &[MoneyDeposited { amount: 7 }]
+    );
+
+    let second = executor
+        .execute::<AutomaticAccountDefinition, _>(
+            metadata(&stream, "automatic-deposit-2", "deposit-three"),
+            &DepositMoney { amount: 3 },
+        )
+        .await
+        .expect("derived JSON events should replay without codec configuration");
+    assert_eq!(second.events()[0].payload(), br#"{"amount":3}"#);
+}
+
+#[tokio::test]
 async fn executor_fails_closed_for_unknown_and_malformed_events() {
     let unknown_stream = stream("unknown-codec");
     let unknown_store = InMemoryEventStore::new();
@@ -625,7 +783,7 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
         b"{}",
     )
     .await;
-    let unknown_executor = Executor::new(unknown_store, AccountCodec);
+    let unknown_executor = Executor::with_codec(unknown_store, AccountCodec);
     let error = unknown_executor
         .execute::<Account, _>(
             metadata(&unknown_stream, "after-unknown", "noop"),
@@ -649,7 +807,7 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
         b"not-json",
     )
     .await;
-    let malformed_executor = Executor::new(malformed_store, AccountCodec);
+    let malformed_executor = Executor::with_codec(malformed_store, AccountCodec);
     let error = malformed_executor
         .execute::<Account, _>(
             metadata(&malformed_stream, "after-malformed", "noop"),
@@ -674,7 +832,7 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
         br#"{"amount":1}"#,
     )
     .await;
-    let unknown_version_executor = Executor::new(unknown_version_store, AccountCodec);
+    let unknown_version_executor = Executor::with_codec(unknown_version_store, AccountCodec);
     let error = unknown_version_executor
         .execute::<Account, _>(
             metadata(&unknown_version_stream, "after-unknown-version", "noop"),
@@ -692,8 +850,8 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
 #[tokio::test]
 async fn executor_retries_conflicts_with_a_hard_bound() {
     let successful_stream = stream("retry-conflict");
-    let successful =
-        Executor::new(ForcedConflictStore::new(1), AccountCodec).with_max_conflict_retries(1);
+    let successful = Executor::with_codec(ForcedConflictStore::new(1), AccountCodec)
+        .with_max_conflict_retries(1);
     let outcome = successful
         .execute::<Account, _>(
             metadata(&successful_stream, "retry-once", "import"),
@@ -711,8 +869,8 @@ async fn executor_retries_conflicts_with_a_hard_bound() {
     );
 
     let exhausted_stream = stream("exhaust-conflict");
-    let exhausted =
-        Executor::new(ForcedConflictStore::new(3), AccountCodec).with_max_conflict_retries(2);
+    let exhausted = Executor::with_codec(ForcedConflictStore::new(3), AccountCodec)
+        .with_max_conflict_retries(2);
     let error = exhausted
         .execute::<Account, _>(
             metadata(&exhausted_stream, "retry-three", "import"),

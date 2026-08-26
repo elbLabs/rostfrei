@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `Account: CommandHandler<OpenAccount>` is not satisfied
-  --> tests/ui/fail/command_without_handler.rs:19:60
+  --> tests/ui/fail/command_without_handler.rs:20:60
    |
-19 | #[rostfrei(name = "account.open", version = 1, aggregate = Account)]
+20 | #[rostfrei(name = "account.open", version = 1, aggregate = Account)]
    |                                                            ^^^^^^^ unsatisfied trait bound
    |
 help: the trait `CommandHandler<OpenAccount>` is not implemented for `Account`

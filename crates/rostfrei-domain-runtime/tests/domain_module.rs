@@ -2,11 +2,12 @@
 
 use domain::{
     Aggregate as DomainAggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandType,
-    DomainIdentity, Entity,
+    DomainEvent, DomainIdentity, Entity,
 };
 use rostfrei_core::{Aggregate as RuntimeAggregate, CommandHandler, DecisionContext};
-use rostfrei_domain_runtime::{domain_module, AggregateRuntime};
+use rostfrei_domain_runtime::{domain_module, Apply, Initialize};
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
+use serde::{Deserialize, Serialize};
 
 #[derive(BoundedContext)]
 #[domain(id = "catalog", label = "Catalog")]
@@ -21,53 +22,50 @@ struct CatalogId(u64);
 struct CatalogRoot {
     #[domain(identity)]
     id: CatalogId,
+    opened: bool,
 }
 
 #[derive(DomainAggregate)]
-#[domain(id = "catalog", label = "Catalog", context = Catalog, root = CatalogRoot)]
+#[domain(
+    id = "catalog",
+    label = "Catalog",
+    context = Catalog,
+    root = CatalogRoot,
+    events = [CatalogOpened]
+)]
 struct CatalogAggregate;
 
 #[derive(DomainCommand)]
 #[domain(id = "open-catalog", label = "Open catalog", owner = CatalogAggregate)]
 struct OpenCatalog;
 
-#[derive(Default)]
-struct CatalogState {
-    opened: bool,
-}
+#[derive(Deserialize, DomainEvent, Serialize)]
+#[domain(id = "catalog-opened", label = "Catalog opened")]
+struct CatalogOpened;
 
-enum CatalogEvent {
-    Opened,
-}
-
-impl RuntimeAggregate for CatalogState {
-    type Event = CatalogEvent;
-
-    const AGGREGATE_TYPE: &'static str = "catalog";
-
-    fn initial() -> Self {
-        Self::default()
-    }
-
-    fn apply(&mut self, event: &Self::Event) {
-        match event {
-            CatalogEvent::Opened => self.opened = true,
+impl Initialize<CatalogAggregate> for CatalogRoot {
+    fn initialize(_stream_id: &rostfrei_core::StreamId) -> Self {
+        Self {
+            id: CatalogId(0),
+            opened: false,
         }
     }
 }
 
-impl AggregateRuntime for CatalogAggregate {
-    type Runtime = CatalogState;
+impl Apply<CatalogOpened> for CatalogRoot {
+    fn apply(&mut self, _event: &CatalogOpened) {
+        self.opened = true;
+    }
 }
 
-impl CommandHandler<OpenCatalog> for CatalogState {
+impl CommandHandler<OpenCatalog> for CatalogAggregate {
     type Rejection = ();
 
     fn handle(
         _command: &OpenCatalog,
         context: &mut DecisionContext<'_, Self>,
     ) -> Result<(), Self::Rejection> {
-        context.record(CatalogEvent::Opened);
+        context.record(CatalogOpened);
         Ok(())
     }
 }

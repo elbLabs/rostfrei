@@ -7,7 +7,8 @@ mod memory;
 mod store;
 
 pub use aggregate::{
-    Aggregate, CommandHandler, DecisionContext, EventCodec, EventCodecError, EventCodecErrorKind,
+    Aggregate, CommandHandler, DecisionContext, Event, EventCodec, EventCodecError,
+    EventCodecErrorKind, EventVariant, JsonEventCodec,
 };
 pub use domain_event::{
     CommittedDomainEvent, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
@@ -24,3 +25,22 @@ pub use identity::{
 };
 pub use memory::InMemoryEventStore;
 pub use store::{AppendOutcome, EventStore, EventStoreError, EventStoreErrorKind};
+
+#[doc(hidden)]
+pub mod __private {
+    use serde::{de::DeserializeOwned, Serialize};
+
+    use crate::{EventCodecError, EventCodecErrorKind};
+
+    pub fn encode_json<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, EventCodecError> {
+        serde_json::to_vec(value).map_err(|error| {
+            EventCodecError::new(EventCodecErrorKind::EncodingFailed, error.to_string())
+        })
+    }
+
+    pub fn decode_json<T: DeserializeOwned>(payload: &[u8]) -> Result<T, EventCodecError> {
+        serde_json::from_slice(payload).map_err(|error| {
+            EventCodecError::new(EventCodecErrorKind::MalformedPayload, error.to_string())
+        })
+    }
+}

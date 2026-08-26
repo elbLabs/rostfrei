@@ -11,6 +11,8 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 rostfrei-core = { path = "../rostfrei-core" }
+rostfrei-domain = { path = "../rostfrei-domain" }
+rostfrei-domain-runtime = { path = "../rostfrei-domain-runtime" }
 rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
 
 [lints]

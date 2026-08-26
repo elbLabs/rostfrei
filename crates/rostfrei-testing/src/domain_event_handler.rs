@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use rostfrei_core::{
     Aggregate, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
-    DomainEventHandlerError, DomainEventRegistrationError, EventCodec, RecordedEvent,
+    DomainEventHandlerError, DomainEventRegistrationError, Event, EventCodec, EventVariant,
+    RecordedEvent,
 };
 
 #[derive(Default)]
@@ -15,7 +16,21 @@ impl DomainEventHandlerHarness {
         Self::default()
     }
 
-    pub fn register<A, C, H>(
+    pub fn register<A, E, H>(
+        &mut self,
+        event_type: impl Into<String>,
+        handler: Arc<H>,
+    ) -> Result<(), DomainEventRegistrationError>
+    where
+        A: Aggregate + Send + Sync + 'static,
+        A::Event: Event + EventVariant<E> + Send + Sync + 'static,
+        E: Send + Sync + 'static,
+        H: DomainEventHandler<E> + 'static,
+    {
+        self.dispatcher.register::<A, E, H>(event_type, handler)
+    }
+
+    pub fn register_with_codec<A, E, C, H>(
         &mut self,
         event_type: impl Into<String>,
         codec: Arc<C>,
@@ -23,12 +38,13 @@ impl DomainEventHandlerHarness {
     ) -> Result<(), DomainEventRegistrationError>
     where
         A: Aggregate + Send + Sync + 'static,
-        A::Event: Send + Sync + 'static,
+        A::Event: EventVariant<E> + Send + Sync + 'static,
+        E: Send + Sync + 'static,
         C: EventCodec<A> + 'static,
-        H: DomainEventHandler<A::Event> + 'static,
+        H: DomainEventHandler<E> + 'static,
     {
         self.dispatcher
-            .register::<A, C, H>(event_type, codec, handler)
+            .register_with_codec::<A, E, C, H>(event_type, codec, handler)
     }
 
     pub async fn handle(

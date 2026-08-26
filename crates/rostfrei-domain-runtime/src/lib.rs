@@ -1,21 +1,64 @@
 use domain::AggregateType;
 use rostfrei_core::Aggregate;
 
-/// Connects a descriptive domain aggregate to its executable rostfrei state.
-pub trait AggregateRuntime: AggregateType {
-    type Runtime: Aggregate;
+/// Applies one concrete domain event to an aggregate root.
+pub trait Apply<Event> {
+    fn apply(&mut self, event: &Event);
+}
+
+/// Constructs an aggregate root for a stream before its history is replayed.
+pub trait Initialize<A: AggregateType>: Sized {
+    fn initialize(stream_id: &rostfrei_core::StreamId) -> Self;
+}
+
+/// Marks a compiled aggregate whose descriptor and executable definition agree.
+pub trait AggregateRuntime:
+    AggregateType + Aggregate<State = <Self as AggregateType>::Root>
+{
 }
 
 #[doc(hidden)]
 pub mod __private {
     pub use domain::DomainCommandType;
+    pub use rostfrei_core as core;
     pub use rostfrei_core::Aggregate;
     pub use rostfrei_registry::{
         CommandDefinition, CommandDescriptor, DomainModule, ModuleDescriptor,
     };
     pub use std::any::type_name;
 
-    pub use crate::AggregateRuntime;
+    pub use crate::{AggregateRuntime, Apply, Initialize};
+
+    pub const fn assert_unique_event_ids(ids: &[&str]) {
+        let mut left = 0;
+        while left < ids.len() {
+            let mut right = left + 1;
+            while right < ids.len() {
+                assert!(
+                    !strings_equal(ids[left], ids[right]),
+                    "duplicate domain event ID in aggregate"
+                );
+                right += 1;
+            }
+            left += 1;
+        }
+    }
+
+    const fn strings_equal(left: &str, right: &str) -> bool {
+        let left = left.as_bytes();
+        let right = right.as_bytes();
+        if left.len() != right.len() {
+            return false;
+        }
+        let mut index = 0;
+        while index < left.len() {
+            if left[index] != right[index] {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
 }
 
 /// Generates rostfrei command and module registrations from domain command types.
@@ -40,7 +83,7 @@ macro_rules! domain_module {
     ) => {
         $(
             impl $crate::__private::CommandDefinition for $command {
-                type Aggregate = <<$command as $crate::__private::DomainCommandType>::Owner as $crate::AggregateRuntime>::Runtime;
+                type Aggregate = <$command as $crate::__private::DomainCommandType>::Owner;
 
                 const COMMAND_NAME: &'static str = $command_name;
                 const SCHEMA_VERSION: u32 = $schema_version;

@@ -1,23 +1,23 @@
-use rostfrei_core::{Aggregate, CommandHandler, DecisionContext};
+use rostfrei_core::{Aggregate, CommandHandler, DecisionContext, StreamId};
 
-pub fn given<A, Events>(events: Events) -> Given<A>
+pub fn given<A, Events>(stream_id: &StreamId, events: Events) -> Given<A>
 where
     A: Aggregate,
     Events: IntoIterator<Item = A::Event>,
 {
-    let mut state = A::initial();
+    let mut state = A::initial(stream_id);
     for event in events {
-        state.apply(&event);
+        A::apply(&mut state, &event);
     }
     Given { state }
 }
 
 pub struct Given<A: Aggregate> {
-    state: A,
+    state: A::State,
 }
 
 impl<A: Aggregate> Given<A> {
-    pub fn state(&self) -> &A {
+    pub fn state(&self) -> &A::State {
         &self.state
     }
 
@@ -40,13 +40,13 @@ impl<A: Aggregate> Given<A> {
 }
 
 pub struct Then<A: Aggregate, Rejection> {
-    state: A,
+    state: A::State,
     events: Vec<A::Event>,
     decision: Result<(), Rejection>,
 }
 
 impl<A: Aggregate, Rejection> Then<A, Rejection> {
-    pub fn state(&self) -> &A {
+    pub fn state(&self) -> &A::State {
         &self.state
     }
 
@@ -65,7 +65,7 @@ impl<A: Aggregate, Rejection> Then<A, Rejection> {
         self.decision.is_ok()
     }
 
-    pub fn into_parts(self) -> (A, Vec<A::Event>, Result<(), Rejection>) {
+    pub fn into_parts(self) -> (A::State, Vec<A::Event>, Result<(), Rejection>) {
         (self.state, self.events, self.decision)
     }
 }
