@@ -19,7 +19,7 @@ use rostfrei_messaging_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout, Instant};
 
 use crate::{
     error::NatsError,
@@ -317,11 +317,7 @@ where
         .await;
     }
 
-    let disposition = timeout(
-        config.processing_timeout(),
-        handler.handle(delivery.clone()),
-    )
-    .await;
+    let disposition = handle_with_progress(config, &message, handler, delivery.clone()).await?;
     apply_disposition(
         source_stream,
         quarantine_stream,
@@ -332,6 +328,45 @@ where
         disposition,
     )
     .await
+}
+
+async fn handle_with_progress<A>(
+    config: &ConsumerConfig<A>,
+    message: &jetstream::Message,
+    handler: Arc<dyn MessageHandler<A>>,
+    delivery: MessageDelivery<A>,
+) -> Result<Result<DeliveryDisposition, tokio::time::error::Elapsed>, ConsumeError>
+where
+    A: ConsumableAddress,
+{
+    send_progress(message).await?;
+
+    let handling = timeout(config.processing_timeout(), handler.handle(delivery));
+    tokio::pin!(handling);
+    let progress_interval = config.ack_wait() / 2;
+    let progress = sleep(progress_interval);
+    tokio::pin!(progress);
+
+    loop {
+        tokio::select! {
+            biased;
+            disposition = &mut handling => {
+                send_progress(message).await?;
+                return Ok(disposition);
+            }
+            () = &mut progress => {
+                send_progress(message).await?;
+                progress.as_mut().reset(Instant::now() + progress_interval);
+            }
+        }
+    }
+}
+
+async fn send_progress(message: &jetstream::Message) -> Result<(), ConsumeError> {
+    message
+        .ack_with(AckKind::Progress)
+        .await
+        .map_err(|_| ConsumeError::new(ConsumeErrorKind::Disposition))
 }
 
 async fn apply_disposition<A>(
