@@ -31,10 +31,6 @@ Cargo package:
 - `rostfrei-nats`: NATS messaging and authoritative JetStream event storage.
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
 
-[`studio`](studio) contains rostfrei Studio, a Tauri application for browsing
-compiled models and Cargo diagnostics. The domain language reference and
-handbook are in [`docs/domain-model`](docs/domain-model).
-
 Messaging is application-scoped. An application name such as `fast-inbox`
 derives its command, integration-event, and quarantine streams and prefixes all
 rostfrei business subjects. Bounded contexts derive typed addresses and

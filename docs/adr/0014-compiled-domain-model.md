@@ -8,13 +8,13 @@ Accepted.
 
 rostfrei absorbs the former standalone domain compiler as its canonical,
 optional domain-model platform layer. The imported implementation becomes
-`rostfrei-domain`, `rostfrei-domain-macros`, and rostfrei Studio. Its
-domain-language reference, handbook, examples, compile-time tests, and model
-browser are maintained in the rostfrei repository and namespace.
+`rostfrei-domain` and `rostfrei-domain-macros`. Its domain-language reference,
+handbook, examples, and compile-time tests are maintained in the rostfrei
+repository and namespace.
 
 The event-sourcing kernel remains independent. `rostfrei-core` does not depend
-on domain descriptors, procedural macros, model projection, Studio, or a UI
-protocol. Its manual `Aggregate` and `EventCodec` contracts remain available to
+on domain descriptors, procedural macros, model projection, or tooling
+protocols. Its manual `Aggregate` and `EventCodec` contracts remain available to
 applications that intentionally use the kernel without the compiled model.
 
 `rostfrei-domain-runtime` is the integration boundary, exposed to applications
@@ -63,12 +63,12 @@ independent trait implementations.
 ## Consequences
 
 rostfrei has one source of truth for domain identity, structure, event
-membership, ownership, default persistence behavior, behavior metadata, testing
-metadata, and Studio presentation. It does not need a permanent compatibility
-adapter to a separately evolving compiler project or a second public event
-macro system.
+membership, ownership, default persistence behavior, behavior metadata, and
+testing metadata. It does not need a permanent compatibility adapter to a
+separately evolving compiler project or a second public event macro system.
 
 The imported model is broader than the current runtime. Some contracts remain
-descriptive, model assembly can still panic on invalid non-event inventories,
-and Studio is currently a read-only browser. Those are now rostfrei platform
-concerns to evolve without expanding the kernel's responsibilities.
+descriptive, and model assembly can still panic on invalid non-event
+inventories.
+Those are now rostfrei platform concerns to evolve without expanding the
+kernel's responsibilities.
