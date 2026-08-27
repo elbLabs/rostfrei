@@ -4,11 +4,12 @@ use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOwnerId, ActionOwnerType,
     AggregateDescriptor, AggregateId, AggregateType, BoundedContextDescriptor, BoundedContextId,
     BoundedContextType, DecisionDescriptor, DecisionId, DecisionImplementationDescriptor,
-    DecisionInputDescriptor, DecisionOutputDescriptor, DecisionOwnerId, DomainIdentityDescriptor,
-    DomainIdentityId, DomainIdentityType, DomainModelError, DomainModelReference, EntityDescriptor,
-    EntityId, EntityLifecycleDescriptor, EntityLifecycleId, EntityLifecycleStateDescriptor,
-    EntityLifecycleStateId, EntityLifecycleTransitionDescriptor, EntityType, IdentityDescriptor,
-    ScalarType, ValueObjectId, ValueObjectOwnerId,
+    DecisionInputDescriptor, DecisionOutputDescriptor, DecisionOwnerId,
+    DecisionParameterDescriptor, DomainIdentityDescriptor, DomainIdentityId, DomainIdentityType,
+    DomainModelError, DomainModelReference, EntityDescriptor, EntityId, EntityLifecycleDescriptor,
+    EntityLifecycleId, EntityLifecycleStateDescriptor, EntityLifecycleStateId,
+    EntityLifecycleTransitionDescriptor, EntityType, IdentityDescriptor, ScalarType, ValueObjectId,
+    ValueObjectOwnerId,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("lifecycle-action-validation");
@@ -93,8 +94,12 @@ const BROKEN_DECISIONS: &[DecisionDescriptor] = &[DecisionDescriptor {
         local: "broken-decision",
     },
     label: "Broken decision",
-    input: DecisionInputDescriptor::ValueObject(MISSING_VALUE_ID),
-    output: DecisionOutputDescriptor::ValueObject(MISSING_VALUE_ID),
+    parameters: &[DecisionParameterDescriptor {
+        name: "input",
+        input: DecisionInputDescriptor::ValueObject(MISSING_VALUE_ID),
+    }],
+    output: Some(DecisionOutputDescriptor::ValueObject(MISSING_VALUE_ID)),
+    error: None,
     implementation: DecisionImplementationDescriptor::Rust,
 }];
 const BROKEN_DECISION_CONTRACTS: &[&[DecisionDescriptor]] = &[BROKEN_DECISIONS];

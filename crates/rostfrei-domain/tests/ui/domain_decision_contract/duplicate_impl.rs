@@ -16,13 +16,21 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "owner", label = "Owner", context = Context, root = Root)]
+#[domain(id = "owner", label = "Owner", context = Context, root = Root, decisions)]
 struct Owner;
 
-#[domain_decisions(entity)]
+#[domain_decisions(aggregate)]
 impl Owner {
-    #[decision(id = "decide", label = "Decide")]
-    fn decide() -> Result<(), ()> {
+    #[decision(id = "first", label = "First")]
+    fn first() -> Result<(), ()> {
+        Ok(())
+    }
+}
+
+#[domain_decisions(aggregate)]
+impl Owner {
+    #[decision(id = "second", label = "Second")]
+    fn second() -> Result<(), ()> {
         Ok(())
     }
 }

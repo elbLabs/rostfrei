@@ -1,39 +1,22 @@
-error[E0277]: the trait bound `Service: EntityDecisionOwnerType` is not satisfied
-  --> tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs:30:20
+error[E0277]: the trait bound `Owner: EntityDecisionOwnerType` is not satisfied
+  --> tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs:23:6
    |
-30 | impl Decisions for Service {
-   |                    ^^^^^^^ unsatisfied trait bound
+23 | impl Owner {
+   |      ^^^^^ unsatisfied trait bound
    |
-help: the trait `EntityDecisionOwnerType` is not implemented for `Service`
-  --> tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs:28:1
+help: the trait `EntityDecisionOwnerType` is not implemented for `Owner`
+  --> tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs:20:1
    |
-28 | struct Service;
-   | ^^^^^^^^^^^^^^
-note: required by a bound in `Decisions`
-  --> tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs:15:1
+20 | struct Owner;
+   | ^^^^^^^^^^^^
+help: the trait `EntityDecisionOwnerType` is implemented for `Root`
+  --> tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs:11:10
    |
-15 | #[domain_decisions(entity)]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Decisions`
-16 | trait Decisions {
-   |       --------- required by a bound in this trait
-   = note: this error originates in the attribute macro `domain_decisions` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0277]: the trait bound `Service: EntityDecisionOwnerType` is not satisfied
-  --> tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs:21:10
+11 | #[derive(Entity)]
+   |          ^^^^^^
+note: required by a bound in `assert_owner`
+  --> tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs:22:1
    |
-21 | #[derive(DomainService)]
-   |          ^^^^^^^^^^^^^ unsatisfied trait bound
-   |
-help: the trait `EntityDecisionOwnerType` is not implemented for `Service`
-  --> tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs:28:1
-   |
-28 | struct Service;
-   | ^^^^^^^^^^^^^^
-note: required by a bound in `Decisions::__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE`
-  --> tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs:15:1
-   |
-15 | #[domain_decisions(entity)]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Decisions::__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE`
-16 | trait Decisions {
-   |       --------- required by a bound in this associated constant
-   = note: this error originates in the derive macro `DomainService` which comes from the expansion of the attribute macro `domain_decisions` (in Nightly builds, run with -Z macro-backtrace for more info)
+22 | #[domain_decisions(entity)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `assert_owner`
+   = note: this error originates in the derive macro `Entity` which comes from the expansion of the attribute macro `domain_decisions` (in Nightly builds, run with -Z macro-backtrace for more info)

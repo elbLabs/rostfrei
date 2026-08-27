@@ -9,8 +9,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     let action_owner = assemble_action_owner(domain_path, name);
     let public_action_owner = assemble_public_action_owner(domain_path, name);
     let domain_service_action_owner = assemble_domain_service_action_owner(domain_path, name);
-    let decision_owner = assemble_decision_owner(domain_path, name);
-    let domain_service_decision_owner = assemble_domain_service_decision_owner(domain_path, name);
     let domain_error_owner = assemble_domain_error_owner(domain_path, name);
     let domain_command_owner = assemble_domain_command_owner(domain_path, name);
     quote! {
@@ -18,8 +16,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
         #action_owner
         #public_action_owner
         #domain_service_action_owner
-        #decision_owner
-        #domain_service_decision_owner
         #domain_error_owner
         #domain_command_owner
     }
@@ -49,23 +45,6 @@ fn assemble_action_owner(domain_path: &Path, name: &Ident) -> TokenStream {
         impl #domain_path::ActionOwnerType for #name {
             const ACTION_OWNER_ID: #domain_path::ActionOwnerId =
                 #domain_path::ActionOwnerId::DomainService(
-                    <Self as #domain_path::DomainServiceType>::DESCRIPTOR.id,
-                );
-        }
-    }
-}
-
-fn assemble_domain_service_decision_owner(domain_path: &Path, name: &Ident) -> TokenStream {
-    quote! {
-        impl #domain_path::DomainServiceDecisionOwnerType for #name {}
-    }
-}
-
-fn assemble_decision_owner(domain_path: &Path, name: &Ident) -> TokenStream {
-    quote! {
-        impl #domain_path::DecisionOwnerType for #name {
-            const DECISION_OWNER_ID: #domain_path::DecisionOwnerId =
-                #domain_path::DecisionOwnerId::DomainService(
                     <Self as #domain_path::DomainServiceType>::DESCRIPTOR.id,
                 );
         }

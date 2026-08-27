@@ -16,29 +16,28 @@ Domain Action Call
 ```
 
 Rust Decisions v1 does not attach Decisions to Actions. An Action explicitly
-calls a Decision through its owner-attached trait using ordinary Rust syntax.
+calls an Aggregate- or Entity-owned Decision using ordinary inherent Rust
+syntax.
 
 ## Visibility
 
 An Action may call any Decision in the same
 [Bounded Context](../reference/domain/bounded-context.md) when the Decision
-contract is visible at the call site. The Action and Decision do not need the
+function is visible at the call site. The Action and Decision do not need the
 same owner.
 
-Rust module and trait visibility control whether the call compiles. The domain
-compiler validates Decision declarations and owner attachment, but does not
-enforce Action-to-Decision call permissions or infer a call graph from method
-bodies.
+Rust module and function visibility control whether the call compiles. The
+domain compiler validates Decision declarations and owner attachment, but does
+not enforce Action-to-Decision call permissions or infer a call graph from
+method bodies.
 
 ## Input and Output
 
-The Action constructs the Decision's one Value Object `input` from facts already
-available to the Action. The Decision returns its direct Value Object output.
-
-The output is data, not a `Result` or Domain Error. It may model an allowed or
-denied business outcome and the facts explaining that outcome. The Action gives
-that data operational meaning: it may continue, derive a value for later
-behavior, or return an owner-appropriate
+The Action supplies the Decision's ordinary typed parameters from facts already
+available to it. The Decision returns `Result<T, E>`, where `Ok(T)` is the
+accepted outcome and `Err(E)` is modeled business-denial data rather than a
+Domain Error. The Action may continue with the success value or translate the
+denial into an owner-appropriate
 [Domain Error](../reference/domain/domain-error.md).
 
 When the Action denies, no state changes or
@@ -48,7 +47,7 @@ When the Action denies, no state changes or
 
 An Action may call the Decisions required by its behavior. A Decision may also
 compose pure rules in ordinary Rust, provided its complete contract remains one
-Value Object input and one direct Value Object output.
+typed parameter list and one `Result<T, E>` output.
 
 The model records each Decision independently. It does not record gates,
 derivations, Action-to-Decision links, call order, or a Decision dependency

@@ -12,8 +12,8 @@ A **Domain Error** is a modeled business denial.
 It describes why a domain action or lifecycle rule was not allowed. An
 invariant checker returns `InvariantViolation`, not a Domain Error; the Action
 translates the complete violation collection into its own Domain Error. A
-Decision similarly returns business-denial data in its output Value Object for
-an Action to translate.
+Decision similarly returns business-denial data through the `Err(E)` branch of
+its result for an Action to translate.
 
 ## Ownership
 

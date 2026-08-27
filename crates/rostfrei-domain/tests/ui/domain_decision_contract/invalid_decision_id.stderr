@@ -1,5 +1,0 @@
-error: id must be nonempty lowercase kebab-case using ASCII letters and digits
- --> tests/ui/domain_decision_contract/invalid_decision_id.rs:8:21
-  |
-8 |     #[decision(id = "Not-Kebab", label = "Invalid")]
-  |                     ^^^^^^^^^^^

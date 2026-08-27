@@ -1,108 +1,83 @@
-use syn::{FnArg, Pat, ReturnType, Signature, Type};
+use syn::{FnArg, GenericArgument, Pat, PathArguments, ReturnType, Signature, Type, TypePath};
+
+use super::decision::Parameter;
 
 pub struct DecisionTypes {
-    pub input: Type,
+    pub parameters: Vec<Parameter>,
     pub output: Type,
+    pub error: Type,
 }
 
 pub fn parse(signature: &Signature) -> syn::Result<DecisionTypes> {
     validate_qualifiers(signature)?;
-    validate_generics(signature)?;
-
+    let parameters = parse_parameters(signature)?;
+    let (output, error) = parse_output(signature)?;
     Ok(DecisionTypes {
-        input: parse_input(signature)?,
-        output: parse_output(signature)?,
+        parameters,
+        output,
+        error,
     })
 }
 
 fn validate_qualifiers(signature: &Signature) -> syn::Result<()> {
-    if let Some(asyncness) = &signature.asyncness {
+    if signature.variadic.is_some()
+        || signature.asyncness.is_some()
+        || signature.unsafety.is_some()
+        || signature.abi.is_some()
+        || !signature.generics.params.is_empty()
+        || signature.generics.where_clause.is_some()
+    {
         return Err(syn::Error::new_spanned(
-            asyncness,
-            "decisions cannot be async",
-        ));
-    }
-    if let Some(unsafety) = &signature.unsafety {
-        return Err(syn::Error::new_spanned(
-            unsafety,
-            "decisions cannot be unsafe",
-        ));
-    }
-    if let Some(abi) = &signature.abi {
-        return Err(syn::Error::new_spanned(abi, "decisions cannot be extern"));
-    }
-    if let Some(variadic) = &signature.variadic {
-        return Err(syn::Error::new_spanned(
-            variadic,
-            "decisions cannot be variadic",
+            signature,
+            "decisions cannot be async, unsafe, extern, variadic, generic, or have where clauses",
         ));
     }
     Ok(())
 }
 
-fn validate_generics(signature: &Signature) -> syn::Result<()> {
-    if !signature.generics.params.is_empty() {
-        return Err(syn::Error::new_spanned(
-            &signature.generics.params,
-            "decisions cannot have generic parameters",
-        ));
-    }
-    if let Some(where_clause) = &signature.generics.where_clause {
-        return Err(syn::Error::new_spanned(
-            where_clause,
-            "decisions cannot have method-level where clauses",
-        ));
-    }
-    Ok(())
-}
-
-fn parse_input(signature: &Signature) -> syn::Result<Type> {
+fn parse_parameters(signature: &Signature) -> syn::Result<Vec<Parameter>> {
     if let Some(receiver) = signature.inputs.iter().find_map(|input| match input {
         FnArg::Receiver(receiver) => Some(receiver),
         FnArg::Typed(_) => None,
     }) {
         return Err(syn::Error::new_spanned(
             receiver,
-            "domain decision contract methods must be associated functions without a receiver",
+            "decisions must be associated functions without a receiver",
         ));
     }
-    if signature.inputs.len() != 1 {
-        return Err(syn::Error::new_spanned(
-            &signature.inputs,
-            "domain decision contract methods require exactly one owned input parameter",
-        ));
-    }
-
-    let Some(FnArg::Typed(input)) = signature.inputs.first() else {
-        return Err(syn::Error::new_spanned(
-            &signature.inputs,
-            "domain decision contract methods require exactly one owned input parameter",
-        ));
-    };
-    validate_input_pattern(&input.pat)?;
-    validate_owned_type(&input.ty)?;
-    Ok((*input.ty).clone())
+    signature.inputs.iter().map(parse_parameter).collect()
 }
 
-fn validate_input_pattern(pattern: &Pat) -> syn::Result<()> {
+fn parse_parameter(input: &FnArg) -> syn::Result<Parameter> {
+    let FnArg::Typed(input) = input else {
+        return Err(syn::Error::new_spanned(input, "unexpected receiver"));
+    };
+    let name = validate_parameter_pattern(&input.pat)?;
+    validate_owned_type(&input.ty)?;
+    Ok(Parameter {
+        name,
+        ty: (*input.ty).clone(),
+    })
+}
+
+fn validate_parameter_pattern(pattern: &Pat) -> syn::Result<syn::Ident> {
     let Pat::Ident(pattern) = pattern else {
-        return Err(invalid_input_pattern(pattern));
+        return Err(invalid_parameter_pattern(pattern));
     };
     if !pattern.attrs.is_empty()
         || pattern.by_ref.is_some()
         || pattern.mutability.is_some()
         || pattern.subpat.is_some()
-        || pattern.ident != "input"
     {
-        return Err(invalid_input_pattern(pattern));
+        return Err(invalid_parameter_pattern(pattern));
     }
-    Ok(())
+    Ok(pattern.ident.clone())
 }
 
-fn invalid_input_pattern(pattern: impl quote::ToTokens) -> syn::Error {
+fn invalid_parameter_pattern(pattern: impl quote::ToTokens) -> syn::Error {
     syn::Error::new_spanned(
         pattern,
-        "decision parameter must be a simple identifier named `input`",
+        "decision parameters must use simple, immutable identifiers",
     )
 }
 
@@ -112,18 +87,61 @@ fn validate_owned_type(ty: &Type) -> syn::Result<()> {
         Type::Paren(paren) => validate_owned_type(&paren.elem),
         Type::Reference(_) => Err(syn::Error::new_spanned(
             ty,
-            "decision input parameter must use an owned type, not a reference",
+            "decision parameters must use owned types, not references",
         )),
         _ => Ok(()),
     }
 }
 
-fn parse_output(signature: &Signature) -> syn::Result<Type> {
-    match &signature.output {
-        ReturnType::Default => Err(syn::Error::new_spanned(
-            &signature.ident,
-            "domain decision contract methods require an explicit output type",
-        )),
-        ReturnType::Type(_, output) => Ok((**output).clone()),
+fn parse_output(signature: &Signature) -> syn::Result<(Type, Type)> {
+    let output = match &signature.output {
+        ReturnType::Default => {
+            return Err(syn::Error::new_spanned(
+                &signature.ident,
+                "decisions must return Result<T, E>",
+            ));
+        }
+        ReturnType::Type(_, output) => output.as_ref(),
+    };
+    split_result(output)
+        .ok_or_else(|| syn::Error::new_spanned(output, "decisions must return Result<T, E>"))
+}
+
+fn split_result(output: &Type) -> Option<(Type, Type)> {
+    let Type::Path(TypePath { qself: None, path }) = output else {
+        return None;
+    };
+    let names: Vec<_> = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect();
+    if names.as_slice() != ["Result"]
+        && names.as_slice() != ["core", "result", "Result"]
+        && names.as_slice() != ["std", "result", "Result"]
+    {
+        return None;
     }
+    if path
+        .segments
+        .iter()
+        .take(path.segments.len().saturating_sub(1))
+        .any(|segment| !matches!(segment.arguments, PathArguments::None))
+    {
+        return None;
+    }
+    let PathArguments::AngleBracketed(arguments) = &path.segments.last()?.arguments else {
+        return None;
+    };
+    let mut arguments = arguments.args.iter();
+    let GenericArgument::Type(output) = arguments.next()? else {
+        return None;
+    };
+    let GenericArgument::Type(error) = arguments.next()? else {
+        return None;
+    };
+    arguments
+        .next()
+        .is_none()
+        .then(|| (output.clone(), error.clone()))
 }

@@ -1,11 +1,10 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate, AggregateId, AggregateType, BoundedContext, BoundedContextId, DecisionDescriptor,
-    DecisionId, DecisionImplementationDescriptor, DecisionInputDescriptor,
-    DecisionOutputDescriptor, DecisionOwnerId, DecisionOwnerType, DomainIdentity, DomainService,
-    DomainServiceId, DomainServiceType, Entity, EntityId, EntityType, ValueObject, ValueObjectId,
-    ValueObjectOwnerId, ValueObjectType,
+    Aggregate, AggregateId, AggregateType, BoundedContext, BoundedContextId,
+    DecisionInputDescriptor, DecisionOutputDescriptor, DecisionOwnerId, DecisionOwnerType,
+    DomainIdentity, Entity, EntityId, EntityType, ScalarType, ValueObject, ValueObjectType,
+    domain_decisions,
 };
 
 #[derive(BoundedContext)]
@@ -16,318 +15,121 @@ struct Lending;
 #[domain(owner = ApplicationRoot)]
 struct ApplicationId(u64);
 
-#[derive(Entity)]
-#[domain(
-    id = "application-root",
-    label = "Application root",
-    owner = LoanApplication,
-    decisions = [contracts::ApplicationReview]
-)]
-struct ApplicationRoot {
-    #[domain(identity)]
-    id: ApplicationId,
-    decision_recorded: bool,
-    approved: bool,
-    rationale: String,
-}
-
 #[derive(Aggregate)]
 #[domain(
     id = "loan-application",
     label = "Loan application",
     context = Lending,
     root = ApplicationRoot,
-    actions = [contracts::ApplicationActions],
-    decisions = [
-        contracts::ApplicationEligibility,
-        contracts::ApplicationRouting
-    ]
+    decisions
 )]
 struct LoanApplication;
 
-#[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
+#[derive(Entity)]
 #[domain(
-    id = "underwriting-facts",
-    label = "Underwriting facts",
+    id = "application-root",
+    label = "Application root",
     owner = LoanApplication,
-    decisions = [contracts::FactsValidation]
+    decisions
 )]
-struct UnderwritingFacts {
-    annual_income: u64,
-    monthly_obligations: u64,
-    requested_amount: u64,
-    collateral_value: u64,
-    identity_verified: bool,
+struct ApplicationRoot {
+    #[domain(identity)]
+    id: ApplicationId,
 }
 
 #[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
-#[domain(
-    id = "decision-outcome",
-    label = "Decision outcome",
-    owner = LoanApplication
-)]
+#[domain(id = "decision-outcome", label = "Decision outcome", owner = LoanApplication)]
 struct DecisionOutcome {
-    approved: bool,
     rationale: String,
 }
 
-#[derive(DomainService)]
-#[domain(
-    id = "risk-policy",
-    label = "Risk policy",
-    context = Lending,
-    decisions = [contracts::PortfolioPolicy]
-)]
-struct RiskPolicy;
-
-mod contracts {
-    use domain::{domain_actions, domain_decisions};
-
-    #[domain_actions(aggregate)]
-    pub trait ApplicationActions {
-        #[action(id = "evaluate", label = "Evaluate application")]
-        fn evaluate(root: &mut super::ApplicationRoot, input: super::UnderwritingFacts) -> bool;
-    }
-
-    #[domain_decisions(aggregate)]
-    pub trait ApplicationEligibility {
-        #[decision(id = "assess-affordability", label = "Assess affordability")]
-        fn assess_affordability(input: super::UnderwritingFacts) -> super::DecisionOutcome;
-
-        #[decision(id = "assess-collateral", label = "Assess collateral")]
-        fn assess_collateral(input: super::UnderwritingFacts) -> super::DecisionOutcome;
-    }
-
-    #[domain_decisions(aggregate)]
-    pub trait ApplicationRouting {
-        #[decision(id = "route-automatically", label = "Route automatically")]
-        fn route_automatically(input: super::UnderwritingFacts) -> super::DecisionOutcome;
-    }
-
-    #[domain_decisions(entity)]
-    pub trait ApplicationReview {
-        #[decision(id = "verify-identity", label = "Verify identity")]
-        fn verify_identity(input: super::UnderwritingFacts) -> super::DecisionOutcome;
-    }
-
-    #[domain_decisions(value_object)]
-    pub trait FactsValidation {
-        #[decision(id = "validate-facts", label = "Validate facts")]
-        fn validate_facts(input: super::UnderwritingFacts) -> super::DecisionOutcome;
-    }
-
-    #[domain_decisions(domain_service)]
-    pub trait PortfolioPolicy {
-        #[decision(id = "within-portfolio-limit", label = "Within portfolio limit")]
-        fn within_portfolio_limit(input: super::UnderwritingFacts) -> super::DecisionOutcome;
-    }
+#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
+#[domain(id = "decision-denial", label = "Decision denial", owner = LoanApplication)]
+enum DecisionDenial {
+    Unaffordable,
+    IdentityNotVerified,
 }
 
-impl contracts::ApplicationActions for LoanApplication {
-    fn evaluate(root: &mut ApplicationRoot, input: UnderwritingFacts) -> bool {
-        let outcome = <Self as contracts::ApplicationEligibility>::assess_affordability(input);
-        root.decision_recorded = true;
-        root.approved = outcome.approved;
-        root.rationale = outcome.rationale;
-        root.approved
-    }
-}
-
-impl contracts::ApplicationEligibility for LoanApplication {
-    fn assess_affordability(input: UnderwritingFacts) -> DecisionOutcome {
-        evaluated_outcome(
-            input.annual_income >= input.monthly_obligations.saturating_mul(36),
-            "Income supports the debt burden",
-            "Debt burden exceeds policy",
-        )
-    }
-
-    fn assess_collateral(input: UnderwritingFacts) -> DecisionOutcome {
-        evaluated_outcome(
-            input.collateral_value >= input.requested_amount,
-            "Collateral covers the request",
-            "Collateral does not cover the request",
-        )
-    }
-}
-
-impl contracts::ApplicationRouting for LoanApplication {
-    fn route_automatically(input: UnderwritingFacts) -> DecisionOutcome {
-        evaluated_outcome(
-            input.requested_amount <= 250_000,
-            "Application can use automatic review",
-            "Application requires manual review",
-        )
-    }
-}
-
-impl contracts::ApplicationReview for ApplicationRoot {
-    fn verify_identity(input: UnderwritingFacts) -> DecisionOutcome {
-        evaluated_outcome(
-            input.identity_verified,
-            "Applicant identity is verified",
-            "Applicant identity is not verified",
-        )
-    }
-}
-
-impl contracts::FactsValidation for UnderwritingFacts {
-    fn validate_facts(input: UnderwritingFacts) -> DecisionOutcome {
-        evaluated_outcome(
-            input.annual_income > 0 && input.requested_amount > 0,
-            "Underwriting facts are complete",
-            "Underwriting facts are incomplete",
-        )
-    }
-}
-
-impl contracts::PortfolioPolicy for RiskPolicy {
-    fn within_portfolio_limit(input: UnderwritingFacts) -> DecisionOutcome {
-        evaluated_outcome(
-            input.requested_amount <= 500_000,
-            "Request is within the portfolio limit",
-            "Request exceeds the portfolio limit",
-        )
-    }
-}
-
-fn evaluated_outcome(
-    approved: bool,
-    approval_rationale: &str,
-    denial_rationale: &str,
-) -> DecisionOutcome {
-    DecisionOutcome {
-        approved,
-        rationale: if approved {
-            approval_rationale.to_owned()
+#[domain_decisions(aggregate)]
+impl LoanApplication {
+    #[decision(id = "assess-affordability", label = "Assess affordability")]
+    fn assess_affordability(
+        annual_income: u64,
+        monthly_obligations: u64,
+    ) -> Result<DecisionOutcome, DecisionDenial> {
+        if annual_income >= monthly_obligations.saturating_mul(36) {
+            Ok(DecisionOutcome {
+                rationale: "Income supports the debt burden".to_owned(),
+            })
         } else {
-            denial_rationale.to_owned()
-        },
+            Err(DecisionDenial::Unaffordable)
+        }
+    }
+
+    #[decision(id = "route-automatically", label = "Route automatically")]
+    fn route_automatically(requested_amount: u64) -> Result<DecisionOutcome, DecisionDenial> {
+        if requested_amount == 0 {
+            return Err(DecisionDenial::Unaffordable);
+        }
+        Ok(DecisionOutcome {
+            rationale: if requested_amount <= 250_000 {
+                "Automatic review"
+            } else {
+                "Manual review"
+            }
+            .to_owned(),
+        })
+    }
+
+    #[decision(id = "system-ready", label = "System ready")]
+    #[allow(clippy::unnecessary_wraps)]
+    const fn system_ready() -> Result<bool, u8> {
+        Ok(true)
+    }
+
+    #[decision(id = "classify", label = "Classify")]
+    fn classify(r#type: String) -> Result<bool, u8> {
+        if r#type.into_bytes().is_empty() {
+            Err(0)
+        } else {
+            Ok(true)
+        }
     }
 }
 
-const fn eligible_facts() -> UnderwritingFacts {
-    UnderwritingFacts {
-        annual_income: 120_000,
-        monthly_obligations: 2_000,
-        requested_amount: 180_000,
-        collateral_value: 220_000,
-        identity_verified: true,
-    }
-}
-
-const fn unaffordable_facts() -> UnderwritingFacts {
-    UnderwritingFacts {
-        annual_income: 36_000,
-        monthly_obligations: 1_500,
-        requested_amount: 100_000,
-        collateral_value: 120_000,
-        identity_verified: true,
-    }
-}
-
-const fn application_root() -> ApplicationRoot {
-    ApplicationRoot {
-        id: ApplicationId(41),
-        decision_recorded: false,
-        approved: false,
-        rationale: String::new(),
-    }
-}
-
-fn local_ids(contract: &[DecisionDescriptor]) -> Vec<&'static str> {
-    contract.iter().map(|decision| decision.id.local).collect()
-}
-
-const fn expected_descriptor(
-    owner: DecisionOwnerId,
-    local: &'static str,
-    label: &'static str,
-) -> DecisionDescriptor {
-    DecisionDescriptor {
-        id: DecisionId { owner, local },
-        label,
-        input: DecisionInputDescriptor::ValueObject(UnderwritingFacts::DESCRIPTOR.id),
-        output: DecisionOutputDescriptor::ValueObject(DecisionOutcome::DESCRIPTOR.id),
-        implementation: DecisionImplementationDescriptor::Rust,
+#[domain_decisions(entity)]
+impl ApplicationRoot {
+    #[decision(id = "verify-identity", label = "Verify identity")]
+    fn verify_identity(verified: bool) -> Result<(), DecisionDenial> {
+        verified
+            .then_some(())
+            .ok_or(DecisionDenial::IdentityNotVerified)
     }
 }
 
 #[test]
-fn ordinary_trait_calls_execute_for_all_owner_kinds() {
+fn ordinary_inherent_calls_return_typed_results() {
     assert_eq!(
-        <LoanApplication as contracts::ApplicationEligibility>::assess_affordability(
-            eligible_facts()
-        ),
-        evaluated_outcome(
-            true,
-            "Income supports the debt burden",
-            "Debt burden exceeds policy"
-        )
+        LoanApplication::assess_affordability(120_000, 2_000),
+        Ok(DecisionOutcome {
+            rationale: "Income supports the debt burden".to_owned(),
+        })
     );
     assert_eq!(
-        <LoanApplication as contracts::ApplicationEligibility>::assess_collateral(eligible_facts()),
-        evaluated_outcome(
-            true,
-            "Collateral covers the request",
-            "Collateral does not cover the request"
-        )
+        LoanApplication::assess_affordability(36_000, 1_500),
+        Err(DecisionDenial::Unaffordable)
     );
+    assert_eq!(ApplicationRoot::verify_identity(true), Ok(()));
     assert_eq!(
-        <LoanApplication as contracts::ApplicationRouting>::route_automatically(eligible_facts()),
-        evaluated_outcome(
-            true,
-            "Application can use automatic review",
-            "Application requires manual review"
-        )
+        ApplicationRoot::verify_identity(false),
+        Err(DecisionDenial::IdentityNotVerified)
     );
-    assert_eq!(
-        <ApplicationRoot as contracts::ApplicationReview>::verify_identity(eligible_facts()),
-        evaluated_outcome(
-            true,
-            "Applicant identity is verified",
-            "Applicant identity is not verified"
-        )
-    );
-    assert_eq!(
-        <UnderwritingFacts as contracts::FactsValidation>::validate_facts(eligible_facts()),
-        evaluated_outcome(
-            true,
-            "Underwriting facts are complete",
-            "Underwriting facts are incomplete"
-        )
-    );
-    assert_eq!(
-        <RiskPolicy as contracts::PortfolioPolicy>::within_portfolio_limit(eligible_facts()),
-        evaluated_outcome(
-            true,
-            "Request is within the portfolio limit",
-            "Request exceeds the portfolio limit"
-        )
-    );
+    assert_eq!(LoanApplication::system_ready(), Ok(true));
+    assert_eq!(LoanApplication::classify("standard".to_owned()), Ok(true));
 }
 
 #[test]
-fn action_interprets_a_negative_structured_decision_without_an_error_return() {
-    let mut root = application_root();
-
-    let approved = <LoanApplication as contracts::ApplicationActions>::evaluate(
-        &mut root,
-        unaffordable_facts(),
-    );
-
-    assert!(!approved);
-    assert!(root.decision_recorded);
-    assert!(!root.approved);
-    assert_eq!(root.rationale, "Debt burden exceeds policy");
-    assert_eq!(
-        <LoanApplication as AggregateType>::ACTION_CONTRACTS[0][0].error,
-        None
-    );
-}
-
-#[test]
-fn decision_owner_ids_match_each_domain_owner_descriptor() {
+fn decision_owner_ids_match_aggregate_and_entity_descriptors() {
     assert_eq!(
         LoanApplication::DESCRIPTOR.id,
         AggregateId {
@@ -343,20 +145,6 @@ fn decision_owner_ids_match_each_domain_owner_descriptor() {
         }
     );
     assert_eq!(
-        UnderwritingFacts::DESCRIPTOR.id,
-        ValueObjectId {
-            owner: ValueObjectOwnerId::Aggregate(LoanApplication::DESCRIPTOR.id),
-            local: "underwriting-facts",
-        }
-    );
-    assert_eq!(
-        RiskPolicy::DESCRIPTOR.id,
-        DomainServiceId {
-            context: BoundedContextId("lending"),
-            local: "risk-policy",
-        }
-    );
-    assert_eq!(
         LoanApplication::DECISION_OWNER_ID,
         DecisionOwnerId::Aggregate(LoanApplication::DESCRIPTOR.id)
     );
@@ -364,107 +152,48 @@ fn decision_owner_ids_match_each_domain_owner_descriptor() {
         ApplicationRoot::DECISION_OWNER_ID,
         DecisionOwnerId::Entity(ApplicationRoot::DESCRIPTOR.id)
     );
-    assert_eq!(
-        UnderwritingFacts::DECISION_OWNER_ID,
-        DecisionOwnerId::ValueObject(UnderwritingFacts::DESCRIPTOR.id)
-    );
-    assert_eq!(
-        RiskPolicy::DECISION_OWNER_ID,
-        DecisionOwnerId::DomainService(RiskPolicy::DESCRIPTOR.id)
-    );
 }
 
 #[test]
-fn decision_contract_attachments_preserve_trait_and_method_source_order() {
-    let aggregate_contracts = <LoanApplication as AggregateType>::DECISION_CONTRACTS;
-    let entity_contracts = <ApplicationRoot as EntityType>::DECISION_CONTRACTS;
-    let value_object_contracts = <UnderwritingFacts as ValueObjectType>::DECISION_CONTRACTS;
-    let service_contracts = <RiskPolicy as DomainServiceType>::DECISION_CONTRACTS;
+fn generated_descriptors_preserve_parameters_result_and_source_order() {
+    let aggregate = <LoanApplication as AggregateType>::DECISION_CONTRACTS[0];
+    let entity = <ApplicationRoot as EntityType>::DECISION_CONTRACTS[0];
 
-    assert_eq!(aggregate_contracts.len(), 2);
+    assert_eq!(aggregate.len(), 4);
+    assert_eq!(aggregate[0].id.local, "assess-affordability");
+    assert_eq!(aggregate[1].id.local, "route-automatically");
+    assert_eq!(aggregate[0].parameters.len(), 2);
+    assert_eq!(aggregate[0].parameters[0].name, "annual_income");
     assert_eq!(
-        aggregate_contracts[0],
-        <LoanApplication as contracts::ApplicationEligibility>::__DOMAIN_DECISIONS
+        aggregate[0].parameters[0].input,
+        DecisionInputDescriptor::Scalar(ScalarType::U64)
     );
     assert_eq!(
-        aggregate_contracts[1],
-        <LoanApplication as contracts::ApplicationRouting>::__DOMAIN_DECISIONS
+        aggregate[0].output,
+        Some(DecisionOutputDescriptor::ValueObject(
+            DecisionOutcome::DESCRIPTOR.id
+        ))
     );
     assert_eq!(
-        local_ids(aggregate_contracts[0]),
-        ["assess-affordability", "assess-collateral"]
+        aggregate[0].error,
+        Some(DecisionOutputDescriptor::ValueObject(
+            DecisionDenial::DESCRIPTOR.id
+        ))
     );
-    assert_eq!(local_ids(aggregate_contracts[1]), ["route-automatically"]);
+    assert!(aggregate[2].parameters.is_empty());
     assert_eq!(
-        entity_contracts,
-        &[<ApplicationRoot as contracts::ApplicationReview>::__DOMAIN_DECISIONS]
-    );
-    assert_eq!(local_ids(entity_contracts[0]), ["verify-identity"]);
-    assert_eq!(
-        value_object_contracts,
-        &[<UnderwritingFacts as contracts::FactsValidation>::__DOMAIN_DECISIONS]
-    );
-    assert_eq!(local_ids(value_object_contracts[0]), ["validate-facts"]);
-    assert_eq!(
-        service_contracts,
-        &[<RiskPolicy as contracts::PortfolioPolicy>::__DOMAIN_DECISIONS]
-    );
-    assert_eq!(local_ids(service_contracts[0]), ["within-portfolio-limit"]);
-}
-
-#[test]
-fn generated_descriptors_include_value_object_contracts_and_rust_implementation() {
-    let aggregate_contracts = <LoanApplication as AggregateType>::DECISION_CONTRACTS;
-    let entity_contracts = <ApplicationRoot as EntityType>::DECISION_CONTRACTS;
-    let value_object_contracts = <UnderwritingFacts as ValueObjectType>::DECISION_CONTRACTS;
-    let service_contracts = <RiskPolicy as DomainServiceType>::DECISION_CONTRACTS;
-
-    assert_eq!(
-        aggregate_contracts[0][0],
-        expected_descriptor(
-            DecisionOwnerId::Aggregate(LoanApplication::DESCRIPTOR.id),
-            "assess-affordability",
-            "Assess affordability"
-        )
+        aggregate[2].output,
+        Some(DecisionOutputDescriptor::Scalar(ScalarType::Bool))
     );
     assert_eq!(
-        aggregate_contracts[0][1],
-        expected_descriptor(
-            DecisionOwnerId::Aggregate(LoanApplication::DESCRIPTOR.id),
-            "assess-collateral",
-            "Assess collateral"
-        )
+        aggregate[2].error,
+        Some(DecisionOutputDescriptor::Scalar(ScalarType::U8))
     );
+    assert_eq!(aggregate[3].parameters[0].name, "type");
     assert_eq!(
-        aggregate_contracts[1][0],
-        expected_descriptor(
-            DecisionOwnerId::Aggregate(LoanApplication::DESCRIPTOR.id),
-            "route-automatically",
-            "Route automatically"
-        )
+        aggregate[3].parameters[0].input,
+        DecisionInputDescriptor::Scalar(ScalarType::String)
     );
-    assert_eq!(
-        entity_contracts[0][0],
-        expected_descriptor(
-            DecisionOwnerId::Entity(ApplicationRoot::DESCRIPTOR.id),
-            "verify-identity",
-            "Verify identity"
-        )
-    );
-    assert_eq!(
-        value_object_contracts[0][0],
-        expected_descriptor(
-            DecisionOwnerId::ValueObject(UnderwritingFacts::DESCRIPTOR.id),
-            "validate-facts",
-            "Validate facts"
-        )
-    );
-    assert_eq!(
-        service_contracts[0][0],
-        expected_descriptor(
-            DecisionOwnerId::DomainService(RiskPolicy::DESCRIPTOR.id),
-            "within-portfolio-limit",
-            "Within portfolio limit"
-        )
-    );
+    assert_eq!(entity[0].id.local, "verify-identity");
+    assert_eq!(entity[0].output, None);
 }

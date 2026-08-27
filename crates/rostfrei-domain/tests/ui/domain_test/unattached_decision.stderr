@@ -1,0 +1,17 @@
+error[E0277]: the trait bound `Owner: domain::__private::AttachedDecisionProvider` is not satisfied
+  --> tests/ui/domain_test/unattached_decision.rs:32:24
+   |
+32 | #[domain_decision_test(Owner::DECIDE)]
+   |                        ^^^^^ unsatisfied trait bound
+   |
+help: the trait `domain::__private::AttachedDecisionProvider` is not implemented for `Owner`
+  --> tests/ui/domain_test/unattached_decision.rs:22:1
+   |
+22 | struct Owner;
+   | ^^^^^^^^^^^^
+note: required by a bound in `assert_attached`
+  --> tests/ui/domain_test/unattached_decision.rs:32:1
+   |
+32 | #[domain_decision_test(Owner::DECIDE)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `assert_attached`
+   = note: this error originates in the attribute macro `domain_decision_test` (in Nightly builds, run with -Z macro-backtrace for more info)

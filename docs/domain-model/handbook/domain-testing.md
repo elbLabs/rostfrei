@@ -22,8 +22,7 @@ fn available_bicycle_can_be_rented() {
 
 ```rust
 #[domain_decision_test(
-    <RentalFleetAggregate as RentalEligibilityDecisions>
-        ::ASSESS_RENTAL_ELIGIBILITY
+    RentalFleetAggregate::ASSESS_RENTAL_ELIGIBILITY
 )]
 fn maintenance_blocks_rental() {
     verify_rental_eligibility();
@@ -54,13 +53,21 @@ Each Domain Test links to exactly one primary subject. An Action test does not a
 
 ## Typed Links
 
-Action, Decision, and Invariant tests use an owner-qualified generated reference:
+Action and Invariant tests use an owner-qualified generated trait reference:
 
 ```text
 <Owner as ContractTrait>::STABLE_REFERENCE
 ```
 
-The reference is derived from the subject's stable ID. Removing the subject, using the wrong owner, or naming an unknown reference causes the test target to fail compilation.
+Decision tests use an owner-associated reference:
+
+```text
+Owner::STABLE_REFERENCE
+```
+
+References are derived from stable subject IDs. Removing the subject, using the
+wrong owner, naming an unknown reference, or testing an unattached Decision
+causes the test target to fail compilation.
 
 Lifecycle tests use the lifecycle type. The type must implement `EntityLifecycleType`.
 

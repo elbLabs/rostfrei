@@ -10,7 +10,18 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     let context = &attributes.context;
     let root = &attributes.root;
     let actions = &attributes.actions;
-    let decisions = &attributes.decisions;
+    let decision_contracts = attributes.decisions.then(|| {
+        quote! {
+            const DECISION_CONTRACTS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
+                <Self as #domain_path::__private::DecisionProvider>::DECISIONS,
+            ];
+        }
+    });
+    let decision_attachment = attributes.decisions.then(|| {
+        quote! {
+            impl #domain_path::__private::AttachedDecisionProvider for #name {}
+        }
+    });
     let invariants = &attributes.invariants;
     let events = attributes.events.iter().flatten();
 
@@ -36,9 +47,7 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
             const ACTION_CONTRACTS: &'static [&'static [#domain_path::ActionDescriptor]] = &[
                 #(<Self as #actions>::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE,)*
             ];
-            const DECISION_CONTRACTS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
-                #(<Self as #decisions>::__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE,)*
-            ];
+            #decision_contracts
             const INVARIANT_CONTRACTS: &'static [&'static [#domain_path::InvariantDescriptor]] = &[
                 #(<Self as #invariants>::__DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE,)*
             ];
@@ -46,5 +55,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
                 #(<#events as #domain_path::DomainEventType>::DESCRIPTOR,)*
             ];
         }
+        #decision_attachment
     }
 }

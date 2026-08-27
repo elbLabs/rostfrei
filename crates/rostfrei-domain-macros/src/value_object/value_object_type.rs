@@ -15,7 +15,6 @@ pub fn assemble(
     let label = &attributes.label;
     let owner = &attributes.owner;
     let actions = &attributes.actions;
-    let decisions = &attributes.decisions;
     let invariants = &attributes.invariants;
     let shape = assemble_shape(domain_path, shape);
     quote! {
@@ -34,9 +33,6 @@ pub fn assemble(
                 };
             const ACTION_CONTRACTS: &'static [&'static [#domain_path::ActionDescriptor]] = &[
                 #(<Self as #actions>::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE,)*
-            ];
-            const DECISION_CONTRACTS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
-                #(<Self as #decisions>::__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE,)*
             ];
             const INVARIANT_CONTRACTS: &'static [&'static [#domain_path::InvariantDescriptor]] = &[
                 #(<Self as #invariants>::__DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE,)*

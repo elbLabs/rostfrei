@@ -1,9 +1,7 @@
-use crate::{AggregateId, DomainServiceId, EntityId, ValueObjectId};
+use crate::{AggregateId, EntityId};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DecisionOwnerId {
     Aggregate(AggregateId),
-    DomainService(DomainServiceId),
     Entity(EntityId),
-    ValueObject(ValueObjectId),
 }

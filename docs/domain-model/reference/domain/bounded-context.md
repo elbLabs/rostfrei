@@ -39,9 +39,9 @@ definitions, but it owns no business state.
 - An [Entity](entity.md) belongs to an aggregate.
 - A [Value Object](value-object.md) belongs to the bounded context, an aggregate,
   or an entity. A context-owned Value Object is shared only within that context.
-- A [Decision](decision.md) belongs to its aggregate, entity, value object, or
-  domain service. Any Action in this bounded context may call a Decision whose
-  Rust contract is visible; the compiler does not enforce call permissions.
+- A [Decision](decision.md) belongs to an aggregate or entity. Any Action in this
+  bounded context may call a Decision whose Rust function is visible; the
+  compiler does not enforce call permissions.
 
 ## Boundaries
 

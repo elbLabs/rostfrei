@@ -17,7 +17,18 @@ pub fn assemble(
     let label = &attributes.label;
     let owner = &attributes.owner;
     let actions = &attributes.actions;
-    let decisions = &attributes.decisions;
+    let decision_contracts = attributes.decisions.then(|| {
+        quote! {
+            const DECISION_CONTRACTS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
+                <Self as #domain_path::__private::DecisionProvider>::DECISIONS,
+            ];
+        }
+    });
+    let decision_attachment = attributes.decisions.then(|| {
+        quote! {
+            impl #domain_path::__private::AttachedDecisionProvider for #name {}
+        }
+    });
     let invariants = &attributes.invariants;
     let lifecycle = attributes.lifecycle.as_ref().map(|lifecycle| {
         quote! {
@@ -52,12 +63,11 @@ pub fn assemble(
             const ACTION_CONTRACTS: &'static [&'static [#domain_path::ActionDescriptor]] = &[
                 #(<Self as #actions>::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE,)*
             ];
-            const DECISION_CONTRACTS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
-                #(<Self as #decisions>::__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE,)*
-            ];
+            #decision_contracts
             const INVARIANT_CONTRACTS: &'static [&'static [#domain_path::InvariantDescriptor]] = &[
                 #(<Self as #invariants>::__DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE,)*
             ];
         }
+        #decision_attachment
     }
 }

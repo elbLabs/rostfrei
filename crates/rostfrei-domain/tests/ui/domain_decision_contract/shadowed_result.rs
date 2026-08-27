@@ -1,6 +1,8 @@
-#![allow(dead_code)]
+use core::marker::PhantomData;
 
-use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, ValueObject, domain_decisions};
+use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, domain_decisions};
+
+struct Result<T, E>(T, PhantomData<E>);
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -21,21 +23,12 @@ struct Root {
 #[domain(id = "owner", label = "Owner", context = Context, root = Root, decisions)]
 struct Owner;
 
-#[derive(ValueObject)]
-#[domain(id = "output", label = "Output", owner = Owner)]
-struct Output(u8);
-
 #[domain_decisions(aggregate)]
 impl Owner {
     #[decision(id = "decide", label = "Decide")]
-    fn decide(value: u8, accepted: bool) -> Result<Output, Output> {
-        accepted.then_some(Output(value)).ok_or(Output(value))
+    fn decide() -> Result<(), ()> {
+        Result((), PhantomData)
     }
 }
 
-fn main() {
-    let Ok(output) = Owner::decide(1, true) else {
-        panic!("decision should succeed");
-    };
-    assert_eq!(output.0, 1);
-}
+fn main() {}

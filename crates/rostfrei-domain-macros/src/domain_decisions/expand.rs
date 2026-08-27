@@ -1,20 +1,15 @@
 use proc_macro2::TokenStream;
-use syn::{Item, ItemTrait};
 
 pub fn expand(args: TokenStream, tokens: TokenStream) -> syn::Result<TokenStream> {
-    match syn::parse2(tokens)? {
-        Item::Trait(item) => expand_trait(args, item),
-        item => Err(syn::Error::new_spanned(
-            item,
-            "domain_decisions may only be applied to a trait",
-        )),
-    }
-}
-
-fn expand_trait(args: TokenStream, mut item: ItemTrait) -> syn::Result<TokenStream> {
     let owner_kind = super::arguments::parse(args)?;
-    super::trait_validation::validate(&item)?;
-    let decisions = super::decision_collection::collect(&mut item.items)?;
+    let mut input = super::input::parse(tokens)?;
+    let decisions = super::decision_collection::collect(&mut input.item.items)?;
     let domain_path = crate::helper::domain_api_path::resolve()?;
-    super::assembly::assemble(&domain_path, item, &decisions, owner_kind)
+    Ok(super::assembly::assemble(
+        &domain_path,
+        &input.item,
+        &input.owner,
+        &decisions,
+        owner_kind,
+    ))
 }

@@ -1,5 +1,5 @@
 error: duplicate decision id
-  --> tests/ui/domain_decision_contract/duplicate_decision_id.rs:11:21
+  --> tests/ui/domain_decision_contract/duplicate_decision_id.rs:12:21
    |
-11 |     #[decision(id = "decide", label = "Second")]
+12 |     #[decision(id = "decide", label = "Second")]
    |                     ^^^^^^^^

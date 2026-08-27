@@ -1,5 +1,5 @@
-error: decisions cannot have generic parameters
- --> tests/ui/domain_decision_contract/generic_method.rs:9:15
+error: decisions cannot be async, unsafe, extern, variadic, generic, or have where clauses
+ --> tests/ui/domain_decision_contract/generic_method.rs:8:5
   |
-9 |     fn decide<T>(input: Input) -> Output;
-  |               ^
+8 |     fn decide<T>() -> Result<(), ()> {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

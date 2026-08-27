@@ -1,12 +1,8 @@
 #![allow(dead_code)]
 
-use domain::__private::DomainModelBuilder;
 use domain::{
-    Aggregate, BoundedContext, BoundedContextId, DecisionDescriptor, DecisionId,
-    DecisionImplementationDescriptor, DecisionInputDescriptor, DecisionOutputDescriptor,
-    DecisionOwnerId, DomainIdentity, DomainModelError, DomainService, DomainServiceDescriptor,
-    DomainServiceId, DomainServiceType, Entity, ValueObject, ValueObjectType, domain_decisions,
-    domain_model,
+    Aggregate, BoundedContext, DomainIdentity, DomainModelError, Entity, ValueObject,
+    domain_decisions, domain_model,
 };
 use serde_json::{Value, json};
 
@@ -18,61 +14,33 @@ struct ProjectionContext;
 #[domain(owner = ProjectionRoot)]
 struct ProjectionIdentity(u64);
 
-#[domain_decisions(aggregate)]
-trait PrimaryAggregateDecisions {
-    #[decision(id = "evaluate-first", label = "Evaluate first")]
-    fn evaluate_first(input: ProjectionInput) -> ProjectionOutput;
-
-    #[decision(id = "evaluate-second", label = "Evaluate second")]
-    fn evaluate_second(input: ProjectionInput) -> ProjectionOutput;
-}
-
-#[domain_decisions(aggregate)]
-trait SharedAggregateDecisions {
-    #[decision(id = "shared", label = "Aggregate shared")]
-    fn shared(input: ProjectionInput) -> ProjectionOutput;
-}
-
 #[derive(Aggregate)]
 #[domain(
     id = "projection-aggregate",
     label = "Projection aggregate",
     context = ProjectionContext,
     root = ProjectionRoot,
-    decisions = [PrimaryAggregateDecisions, SharedAggregateDecisions]
+    decisions
 )]
 struct ProjectionAggregate;
-
-#[domain_decisions(entity)]
-trait SharedEntityDecisions {
-    #[decision(id = "shared", label = "Entity shared")]
-    fn shared(input: ProjectionInput) -> ProjectionOutput;
-}
 
 #[derive(Entity)]
 #[domain(
     id = "projection-root",
     label = "Projection root",
     owner = ProjectionAggregate,
-    decisions = [SharedEntityDecisions]
+    decisions
 )]
 struct ProjectionRoot {
     #[domain(identity)]
     id: ProjectionIdentity,
 }
 
-#[domain_decisions(value_object)]
-trait SharedValueObjectDecisions {
-    #[decision(id = "shared", label = "Value object shared")]
-    fn shared(input: ProjectionInput) -> ProjectionOutput;
-}
-
-#[derive(ValueObject)]
+#[derive(ValueObject, Clone, Copy)]
 #[domain(
     id = "projection-input",
     label = "Projection input",
-    owner = ProjectionAggregate,
-    decisions = [SharedValueObjectDecisions]
+    owner = ProjectionAggregate
 )]
 struct ProjectionInput(u64);
 
@@ -84,56 +52,43 @@ struct ProjectionInput(u64);
 )]
 struct ProjectionOutput(bool);
 
-#[domain_decisions(domain_service)]
-trait SharedServiceDecisions {
-    #[decision(id = "shared", label = "Domain service shared")]
-    fn shared(input: ProjectionInput) -> ProjectionOutput;
-}
-
-#[derive(DomainService)]
+#[derive(ValueObject)]
 #[domain(
-    id = "projection-service",
-    label = "Projection service",
-    context = ProjectionContext,
-    decisions = [SharedServiceDecisions]
+    id = "projection-error",
+    label = "Projection error",
+    owner = ProjectionAggregate
 )]
-struct ProjectionService;
+struct ProjectionError;
 
-const fn projection_output() -> ProjectionOutput {
-    ProjectionOutput(true)
-}
-
-impl PrimaryAggregateDecisions for ProjectionAggregate {
-    fn evaluate_first(_input: ProjectionInput) -> ProjectionOutput {
-        projection_output()
+#[domain_decisions(aggregate)]
+impl ProjectionAggregate {
+    #[decision(id = "evaluate", label = "Evaluate")]
+    const fn evaluate(
+        input: ProjectionInput,
+        threshold: u64,
+    ) -> Result<ProjectionOutput, ProjectionError> {
+        if input.0 >= threshold {
+            Ok(ProjectionOutput(true))
+        } else {
+            Err(ProjectionError)
+        }
     }
 
-    fn evaluate_second(_input: ProjectionInput) -> ProjectionOutput {
-        projection_output()
-    }
-}
-
-impl SharedAggregateDecisions for ProjectionAggregate {
-    fn shared(_input: ProjectionInput) -> ProjectionOutput {
-        projection_output()
-    }
-}
-
-impl SharedEntityDecisions for ProjectionRoot {
-    fn shared(_input: ProjectionInput) -> ProjectionOutput {
-        projection_output()
+    #[decision(id = "shared", label = "Aggregate shared")]
+    fn shared(input: ProjectionInput) -> Result<(), ProjectionError> {
+        (input.0 > 0).then_some(()).ok_or(ProjectionError)
     }
 }
 
-impl SharedValueObjectDecisions for ProjectionInput {
-    fn shared(_input: ProjectionInput) -> ProjectionOutput {
-        projection_output()
-    }
-}
-
-impl SharedServiceDecisions for ProjectionService {
-    fn shared(_input: ProjectionInput) -> ProjectionOutput {
-        projection_output()
+#[domain_decisions(entity)]
+impl ProjectionRoot {
+    #[decision(id = "shared", label = "Entity shared")]
+    const fn shared(input: ProjectionInput) -> Result<ProjectionOutput, ProjectionError> {
+        if input.0 > 0 {
+            Ok(ProjectionOutput(true))
+        } else {
+            Err(ProjectionError)
+        }
     }
 }
 
@@ -143,80 +98,16 @@ fn projected_model() -> Result<Value, DomainModelError> {
         aggregates: [ProjectionAggregate],
         entities: [ProjectionRoot],
         identities: [ProjectionIdentity],
-        value_objects: [ProjectionInput, ProjectionOutput],
-        services: [ProjectionService],
+        value_objects: [ProjectionInput, ProjectionOutput, ProjectionError],
+        services: [],
         commands: [],
         errors: [],
         query_groups: [],
     }
 }
 
-#[domain_decisions(domain_service)]
-trait FirstDuplicateDecisions {
-    #[decision(id = "duplicate", label = "First duplicate")]
-    fn first(input: ProjectionInput) -> ProjectionOutput;
-}
-
-#[domain_decisions(domain_service)]
-trait SecondDuplicateDecisions {
-    #[decision(id = "duplicate", label = "Second duplicate")]
-    fn second(input: ProjectionInput) -> ProjectionOutput;
-}
-
-#[derive(DomainService)]
-#[domain(
-    id = "duplicate-service",
-    label = "Duplicate service",
-    context = ProjectionContext,
-    decisions = [FirstDuplicateDecisions, SecondDuplicateDecisions]
-)]
-struct DuplicateService;
-
-impl FirstDuplicateDecisions for DuplicateService {
-    fn first(_input: ProjectionInput) -> ProjectionOutput {
-        projection_output()
-    }
-}
-
-impl SecondDuplicateDecisions for DuplicateService {
-    fn second(_input: ProjectionInput) -> ProjectionOutput {
-        projection_output()
-    }
-}
-
-const MISMATCHED_SERVICE_ID: DomainServiceId = DomainServiceId {
-    context: BoundedContextId("decision-projection"),
-    local: "mismatched-service",
-};
-const FOREIGN_SERVICE_ID: DomainServiceId = DomainServiceId {
-    context: BoundedContextId("decision-projection"),
-    local: "foreign-service",
-};
-const MISMATCHED_DECISIONS: &[DecisionDescriptor] = &[DecisionDescriptor {
-    id: DecisionId {
-        owner: DecisionOwnerId::DomainService(FOREIGN_SERVICE_ID),
-        local: "mismatched",
-    },
-    label: "Mismatched",
-    input: DecisionInputDescriptor::ValueObject(ProjectionInput::DESCRIPTOR.id),
-    output: DecisionOutputDescriptor::ValueObject(ProjectionOutput::DESCRIPTOR.id),
-    implementation: DecisionImplementationDescriptor::Rust,
-}];
-
-struct MismatchedService;
-
-impl DomainServiceType for MismatchedService {
-    type Context = ProjectionContext;
-
-    const DESCRIPTOR: DomainServiceDescriptor = DomainServiceDescriptor {
-        id: MISMATCHED_SERVICE_ID,
-        label: "Mismatched service",
-    };
-    const DECISION_CONTRACTS: &'static [&'static [DecisionDescriptor]] = &[MISMATCHED_DECISIONS];
-}
-
 #[test]
-fn projects_an_attached_rust_decision_as_exact_json() {
+fn projects_result_signature_and_named_parameters_as_exact_json() {
     assert_eq!(
         projected_model().expect("decision model projection should succeed")["decisions"][0],
         json!({
@@ -228,22 +119,31 @@ fn projects_an_attached_rust_decision_as_exact_json() {
                         "local": "projection-aggregate",
                     },
                 },
-                "local": "evaluate-first",
+                "local": "evaluate",
             },
-            "label": "Evaluate first",
-            "input": {
-                "kind": "valueObject",
-                "id": {
-                    "owner": {
-                        "kind": "aggregate",
+            "label": "Evaluate",
+            "parameters": [
+                {
+                    "name": "input",
+                    "input": {
+                        "kind": "valueObject",
                         "id": {
-                            "context": "decision-projection",
-                            "local": "projection-aggregate",
+                            "owner": {
+                                "kind": "aggregate",
+                                "id": {
+                                    "context": "decision-projection",
+                                    "local": "projection-aggregate",
+                                },
+                            },
+                            "local": "projection-input",
                         },
                     },
-                    "local": "projection-input",
                 },
-            },
+                {
+                    "name": "threshold",
+                    "input": { "kind": "scalar", "scalar": "u64" },
+                },
+            ],
             "output": {
                 "kind": "valueObject",
                 "id": {
@@ -257,101 +157,33 @@ fn projects_an_attached_rust_decision_as_exact_json() {
                     "local": "projection-output",
                 },
             },
+            "error": {
+                "kind": "valueObject",
+                "id": {
+                    "owner": {
+                        "kind": "aggregate",
+                        "id": {
+                            "context": "decision-projection",
+                            "local": "projection-aggregate",
+                        },
+                    },
+                    "local": "projection-error",
+                },
+            },
             "implementation": { "kind": "rust" },
         })
     );
 }
 
 #[test]
-fn preserves_owner_attachment_and_source_order_for_all_owner_kinds() {
+fn preserves_owner_and_method_order_and_allows_local_ids_on_different_owners() {
     let model = projected_model().expect("decision model projection should succeed");
-    let order = model["decisions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|decision| {
-            (
-                decision["id"]["owner"]["kind"].as_str().unwrap(),
-                decision["id"]["local"].as_str().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        order,
-        [
-            ("aggregate", "evaluate-first"),
-            ("aggregate", "evaluate-second"),
-            ("aggregate", "shared"),
-            ("entity", "shared"),
-            ("valueObject", "shared"),
-            ("domainService", "shared"),
-        ]
-    );
-}
-
-#[test]
-fn rejects_duplicate_decision_ids_across_attached_traits() {
-    let error = domain_model! {
-        contexts: [],
-        aggregates: [],
-        entities: [],
-        identities: [],
-        value_objects: [],
-        services: [DuplicateService],
-        commands: [],
-        errors: [],
-        query_groups: [],
-    }
-    .expect_err("duplicate decision ids should be rejected");
-
-    assert_eq!(
-        error,
-        DomainModelError::DuplicateDecisionId {
-            id: Box::new(DecisionId {
-                owner: DecisionOwnerId::DomainService(DuplicateService::DESCRIPTOR.id),
-                local: "duplicate",
-            }),
-        }
-    );
-    assert_eq!(
-        error.to_string(),
-        "duplicate DecisionId: DecisionId { owner: DomainService(DomainServiceId { context: BoundedContextId(\"decision-projection\"), local: \"duplicate-service\" }), local: \"duplicate\" }"
-    );
-}
-
-#[test]
-fn rejects_a_trusted_manual_descriptor_with_a_different_owner() {
-    let mut builder = DomainModelBuilder::new();
-    let error = builder
-        .add_domain_service_type::<MismatchedService>()
-        .expect_err("a mismatched decision owner should be rejected");
-
-    assert_eq!(
-        error,
-        DomainModelError::DecisionDescriptorOwnerMismatch {
-            id: Box::new(MISMATCHED_DECISIONS[0].id),
-        }
-    );
-    assert_eq!(
-        error.to_string(),
-        "decision descriptor owner mismatch: DecisionId { owner: DomainService(DomainServiceId { context: BoundedContextId(\"decision-projection\"), local: \"foreign-service\" }), local: \"mismatched\" }"
-    );
-}
-
-#[test]
-fn accepts_the_same_local_id_on_different_owners() {
-    let model = projected_model().expect("decision model projection should succeed");
-    let owner_kinds = model["decisions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|decision| decision["id"]["local"] == "shared")
-        .map(|decision| decision["id"]["owner"]["kind"].as_str().unwrap())
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        owner_kinds,
-        ["aggregate", "entity", "valueObject", "domainService"]
-    );
+    let decisions = model["decisions"].as_array().unwrap();
+    assert_eq!(decisions.len(), 3);
+    assert_eq!(decisions[0]["id"]["local"], "evaluate");
+    assert_eq!(decisions[1]["id"]["local"], "shared");
+    assert_eq!(decisions[1]["id"]["owner"]["kind"], "aggregate");
+    assert_eq!(decisions[2]["id"]["local"], "shared");
+    assert_eq!(decisions[2]["id"]["owner"]["kind"], "entity");
+    assert_eq!(decisions[1]["output"], Value::Null);
 }

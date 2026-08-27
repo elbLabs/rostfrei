@@ -16,7 +16,7 @@ pub struct BikeRental;
     context = BikeRental,
     root = RentalFleet,
     actions = [RentalFleetActionContract],
-    decisions = [RentalEligibilityDecisions],
+    decisions,
     events = [RentalFleetImported, BicycleRented]
 )]
 pub struct RentalFleetAggregate;
@@ -190,19 +190,6 @@ pub enum BicycleAvailability {
 
 #[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
 #[domain(
-    id = "rental-eligibility-input",
-    label = "Rental eligibility input",
-    owner = RentalFleetAggregate
-)]
-pub(crate) struct RentalEligibilityInput {
-    #[domain(value_object)]
-    pub(crate) status: BicycleStatus,
-    #[domain(value_object)]
-    pub(crate) condition: BicycleCondition,
-}
-
-#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
-#[domain(
     id = "rental-denial-reason",
     label = "Rental denial reason",
     owner = RentalFleetAggregate
@@ -210,20 +197,6 @@ pub(crate) struct RentalEligibilityInput {
 pub(crate) enum RentalDenialReason {
     AlreadyRented,
     MaintenanceRequired,
-}
-
-#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
-#[domain(
-    id = "rental-eligibility-decision",
-    label = "Rental eligibility decision",
-    owner = RentalFleetAggregate
-)]
-pub(crate) enum RentalEligibilityDecision {
-    Allowed,
-    Denied {
-        #[domain(value_object)]
-        reason: RentalDenialReason,
-    },
 }
 
 #[derive(DomainCommand, Clone, Debug, Eq, PartialEq)]
@@ -305,24 +278,19 @@ pub struct BicycleUnavailable {
 }
 
 #[domain_decisions(aggregate)]
-pub(crate) trait RentalEligibilityDecisions {
+impl RentalFleetAggregate {
     #[decision(id = "assess-rental-eligibility", label = "Assess rental eligibility")]
-    fn assess_rental_eligibility(input: RentalEligibilityInput) -> RentalEligibilityDecision;
-}
-
-impl RentalEligibilityDecisions for RentalFleetAggregate {
-    fn assess_rental_eligibility(input: RentalEligibilityInput) -> RentalEligibilityDecision {
-        if input.status == BicycleStatus::Rented {
-            RentalEligibilityDecision::Denied {
-                reason: RentalDenialReason::AlreadyRented,
-            }
-        } else if input.condition == BicycleCondition::MaintenanceRequired {
-            RentalEligibilityDecision::Denied {
-                reason: RentalDenialReason::MaintenanceRequired,
-            }
-        } else {
-            RentalEligibilityDecision::Allowed
+    pub(crate) fn assess_rental_eligibility(
+        status: BicycleStatus,
+        condition: BicycleCondition,
+    ) -> Result<(), RentalDenialReason> {
+        if status == BicycleStatus::Rented {
+            return Err(RentalDenialReason::AlreadyRented);
         }
+        if condition == BicycleCondition::MaintenanceRequired {
+            return Err(RentalDenialReason::MaintenanceRequired);
+        }
+        Ok(())
     }
 }
 
@@ -373,19 +341,13 @@ impl RentalFleetActions for AggregateInstance<RentalFleetAggregate> {
                 .ok_or_else(|| BicycleUnavailable {
                     bicycle_id: input.clone(),
                 })?;
-            let decision =
-                RentalFleetAggregate::assess_rental_eligibility(RentalEligibilityInput {
-                    status: bicycle.status,
-                    condition: bicycle.condition,
-                });
-            match decision {
-                RentalEligibilityDecision::Allowed => BicycleRented {
-                    fleet_id: root.fleet_id.clone(),
+            RentalFleetAggregate::assess_rental_eligibility(bicycle.status, bicycle.condition)
+                .map_err(|_| BicycleUnavailable {
                     bicycle_id: input.clone(),
-                },
-                RentalEligibilityDecision::Denied { .. } => {
-                    return Err(BicycleUnavailable { bicycle_id: input });
-                }
+                })?;
+            BicycleRented {
+                fleet_id: root.fleet_id.clone(),
+                bicycle_id: input.clone(),
             }
         };
 
@@ -428,20 +390,18 @@ mod tests {
     #[test]
     fn rental_eligibility_returns_a_typed_denial_reason() {
         assert_eq!(
-            RentalFleetAggregate::assess_rental_eligibility(RentalEligibilityInput {
-                status: BicycleStatus::Available,
-                condition: BicycleCondition::MaintenanceRequired,
-            }),
-            RentalEligibilityDecision::Denied {
-                reason: RentalDenialReason::MaintenanceRequired,
-            }
+            RentalFleetAggregate::assess_rental_eligibility(
+                BicycleStatus::Available,
+                BicycleCondition::MaintenanceRequired,
+            ),
+            Err(RentalDenialReason::MaintenanceRequired)
         );
         assert_eq!(
-            RentalFleetAggregate::assess_rental_eligibility(RentalEligibilityInput {
-                status: BicycleStatus::Available,
-                condition: BicycleCondition::Serviceable,
-            }),
-            RentalEligibilityDecision::Allowed
+            RentalFleetAggregate::assess_rental_eligibility(
+                BicycleStatus::Available,
+                BicycleCondition::Serviceable,
+            ),
+            Ok(())
         );
     }
 }

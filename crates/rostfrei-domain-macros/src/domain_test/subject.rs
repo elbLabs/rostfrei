@@ -8,7 +8,7 @@ use super::DomainTestKind;
 
 pub(super) enum DomainTestSubjectInput {
     Action(TypedSubject),
-    Decision(TypedSubject),
+    Decision(DecisionSubject),
     Invariant(TypedSubject),
     Lifecycle(TypePath),
 }
@@ -16,7 +16,6 @@ pub(super) enum DomainTestSubjectInput {
 #[derive(Clone, Copy)]
 enum TypedSubjectKind {
     Action,
-    Decision,
     Invariant,
 }
 
@@ -27,20 +26,26 @@ pub(super) struct TypedSubject {
     span: Span,
 }
 
+pub(super) struct DecisionSubject {
+    owner: TypePath,
+    reference: Ident,
+    span: Span,
+}
+
 impl DomainTestSubjectInput {
-    pub(crate) fn parse(kind: DomainTestKind, args: TokenStream) -> syn::Result<Self> {
+    pub(super) fn parse(kind: DomainTestKind, args: TokenStream) -> syn::Result<Self> {
         match kind {
             DomainTestKind::Action => parse_typed(kind, args).map(Self::Action),
-            DomainTestKind::Decision => parse_typed(kind, args).map(Self::Decision),
+            DomainTestKind::Decision => parse_decision(args).map(Self::Decision),
             DomainTestKind::Invariant => parse_typed(kind, args).map(Self::Invariant),
             DomainTestKind::Lifecycle => parse_lifecycle(args).map(Self::Lifecycle),
         }
     }
 
-    pub(crate) fn assemble(&self, domain_path: &Path) -> TokenStream {
+    pub(super) fn assemble(&self, domain_path: &Path) -> TokenStream {
         match self {
             Self::Action(subject) => subject.assemble(domain_path, TypedSubjectKind::Action),
-            Self::Decision(subject) => subject.assemble(domain_path, TypedSubjectKind::Decision),
+            Self::Decision(subject) => subject.assemble(domain_path),
             Self::Invariant(subject) => subject.assemble(domain_path, TypedSubjectKind::Invariant),
             Self::Lifecycle(lifecycle) => quote_spanned! {lifecycle.path.span()=>
                 #domain_path::DomainTestSubject::Lifecycle(
@@ -55,45 +60,51 @@ impl TypedSubject {
     fn assemble(&self, domain_path: &Path, kind: TypedSubjectKind) -> TokenStream {
         let owner = &self.owner;
         let trait_path = &self.trait_path;
-        let hidden_reference = hidden_reference(kind, &self.reference);
         let span = self.span;
-        let (marker, descriptor, reference, variant) = match kind {
+        let (marker, descriptor, reference, variant, subject) = match kind {
             TypedSubjectKind::Action => (
                 format_ident!("__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE"),
                 format_ident!("ActionDescriptor"),
                 format_ident!("ActionReference"),
                 format_ident!("Action"),
-            ),
-            TypedSubjectKind::Decision => (
-                format_ident!("__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE"),
-                format_ident!("DecisionDescriptor"),
-                format_ident!("DecisionReference"),
-                format_ident!("Decision"),
+                "ACTION",
             ),
             TypedSubjectKind::Invariant => (
                 format_ident!("__DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE"),
                 format_ident!("InvariantDescriptor"),
                 format_ident!("InvariantReference"),
                 format_ident!("Invariant"),
+                "INVARIANT",
             ),
         };
-        let reference_type = match kind {
-            DomainTestKind::Decision => {
-                quote_spanned! {span=> #domain_path::#reference<#owner, _, _>}
-            }
-            DomainTestKind::Action | DomainTestKind::Invariant => {
-                quote_spanned! {span=> #domain_path::#reference<#owner>}
-            }
-            DomainTestKind::Lifecycle => unreachable!(),
-        };
+        let hidden_reference = hidden_reference(subject, &self.reference);
 
         quote_spanned! {span=>
             {
                 let _: &'static [#domain_path::#descriptor] =
                     <#owner as #trait_path>::#marker;
-                let reference: #reference_type =
+                let reference: #domain_path::#reference<#owner> =
                     <#owner as #trait_path>::#hidden_reference;
                 #domain_path::DomainTestSubject::#variant(reference.id())
+            }
+        }
+    }
+}
+
+impl DecisionSubject {
+    fn assemble(&self, domain_path: &Path) -> TokenStream {
+        let owner = &self.owner;
+        let hidden_reference = hidden_reference("DECISION", &self.reference);
+        let span = self.span;
+        quote_spanned! {span=>
+            {
+                fn assert_attached<T: #domain_path::__private::AttachedDecisionProvider>() {}
+                let _ = assert_attached::<#owner>;
+                let _: &'static [#domain_path::DecisionDescriptor] =
+                    <#owner as #domain_path::__private::DecisionProvider>::DECISIONS;
+                let reference: #domain_path::DecisionReference<#owner> =
+                    #owner::#hidden_reference;
+                #domain_path::DomainTestSubject::Decision(reference.id())
             }
         }
     }
@@ -167,6 +178,59 @@ fn parse_lifecycle(args: TokenStream) -> syn::Result<TypePath> {
     Ok(lifecycle)
 }
 
+fn parse_decision(args: TokenStream) -> syn::Result<DecisionSubject> {
+    let path: ExprPath = syn::parse2(args).map_err(|error| {
+        syn::Error::new(
+            error.span(),
+            "decision tests require exactly one owner-qualified reference in the form `Owner::REFERENCE`",
+        )
+    })?;
+    if !path.attrs.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &path,
+            "decision test references cannot have attributes",
+        ));
+    }
+    if path.qself.is_some() || path.path.segments.len() < 2 {
+        return Err(syn::Error::new_spanned(
+            path,
+            "decision tests require an owner-qualified reference in the form `Owner::REFERENCE`",
+        ));
+    }
+    let Some(reference) = path.path.segments.last() else {
+        return Err(syn::Error::new_spanned(
+            path,
+            "decision tests require an owner-qualified reference in the form `Owner::REFERENCE`",
+        ));
+    };
+    if !matches!(reference.arguments, PathArguments::None) {
+        return Err(syn::Error::new_spanned(
+            reference,
+            "decision tests require an owner-qualified reference in the form `Owner::REFERENCE`",
+        ));
+    }
+    validate_canonical_reference(DomainTestKind::Decision, &reference.ident)?;
+    let owner_segment_count = path.path.segments.len().saturating_sub(1);
+    let owner = TypePath {
+        qself: None,
+        path: Path {
+            leading_colon: path.path.leading_colon,
+            segments: path
+                .path
+                .segments
+                .iter()
+                .take(owner_segment_count)
+                .cloned()
+                .collect(),
+        },
+    };
+    Ok(DecisionSubject {
+        owner,
+        reference: reference.ident.clone(),
+        span: reference.ident.span(),
+    })
+}
+
 fn reference_shape_error(kind: DomainTestKind, tokens: impl quote::ToTokens) -> syn::Error {
     syn::Error::new_spanned(
         tokens,
@@ -212,14 +276,9 @@ fn canonical_reference_error(kind: DomainTestKind, reference: &Ident) -> syn::Er
     )
 }
 
-fn hidden_reference(kind: TypedSubjectKind, reference: &Ident) -> Ident {
-    let subject = match kind {
-        TypedSubjectKind::Action => "ACTION",
-        TypedSubjectKind::Decision => "DECISION",
-        TypedSubjectKind::Invariant => "INVARIANT",
-    };
+fn hidden_reference(subject: &str, reference: &Ident) -> Ident {
     Ident::new(
-        &format!("__DOMAIN_{}_REFERENCE_{}", subject, reference.unraw()),
+        &format!("__DOMAIN_{subject}_REFERENCE_{}", reference.unraw()),
         reference.span(),
     )
 }

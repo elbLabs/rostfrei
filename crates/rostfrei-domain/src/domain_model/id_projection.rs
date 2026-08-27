@@ -40,20 +40,9 @@ pub(super) fn decision_owner(id: DecisionOwnerId) -> Value {
             "kind": "aggregate",
             "id": aggregate(id),
         }),
-        DecisionOwnerId::DomainService(id) => json!({
-            "kind": "domainService",
-            "id": {
-                "context": id.context.0,
-                "local": id.local,
-            },
-        }),
         DecisionOwnerId::Entity(id) => json!({
             "kind": "entity",
             "id": entity(id),
-        }),
-        DecisionOwnerId::ValueObject(id) => json!({
-            "kind": "valueObject",
-            "id": value_object(id),
         }),
     }
 }

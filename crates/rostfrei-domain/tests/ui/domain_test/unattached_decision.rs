@@ -1,4 +1,6 @@
-use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, domain_decisions};
+use domain::{
+    Aggregate, BoundedContext, DomainIdentity, Entity, domain_decision_test, domain_decisions,
+};
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -19,12 +21,15 @@ struct Root {
 #[domain(id = "owner", label = "Owner", context = Context, root = Root)]
 struct Owner;
 
-#[domain_decisions(entity)]
+#[domain_decisions(aggregate)]
 impl Owner {
     #[decision(id = "decide", label = "Decide")]
     fn decide() -> Result<(), ()> {
         Ok(())
     }
 }
+
+#[domain_decision_test(Owner::DECIDE)]
+fn unattached_decision() {}
 
 fn main() {}

@@ -3,9 +3,8 @@ use std::io::{self, Write};
 use serde_json::json;
 
 use crate::{
-    ActionId, ActionOwnerId, AggregateId, BoundedContextId, DecisionId, DecisionOwnerId,
-    DomainServiceId, EntityId, EntityLifecycleId, InvariantId, InvariantOwnerId, ValueObjectId,
-    ValueObjectOwnerId,
+    ActionId, ActionOwnerId, AggregateId, BoundedContextId, DecisionId, DecisionOwnerId, EntityId,
+    EntityLifecycleId, InvariantId, InvariantOwnerId, ValueObjectId, ValueObjectOwnerId,
 };
 
 use super::{DomainTestDescriptor, DomainTestSubject, emitter, projection};
@@ -18,10 +17,6 @@ const AGGREGATE: AggregateId = AggregateId {
 const ENTITY: EntityId = EntityId {
     aggregate: AGGREGATE,
     local: "line-item",
-};
-const SERVICE: DomainServiceId = DomainServiceId {
-    context: CONTEXT,
-    local: "checkout",
 };
 const VALUE_OBJECT: ValueObjectId = ValueObjectId {
     owner: ValueObjectOwnerId::Entity(ENTITY),
@@ -49,17 +44,17 @@ fn projects_subjects_with_model_id_shapes() {
         ),
         (
             DomainTestSubject::Decision(DecisionId {
-                owner: DecisionOwnerId::DomainService(SERVICE),
-                local: "can-checkout",
+                owner: DecisionOwnerId::Aggregate(AGGREGATE),
+                local: "can-submit",
             }),
             json!({
                 "kind": "decision",
                 "id": {
                     "owner": {
-                        "kind": "domainService",
-                        "id": { "context": "sales", "local": "checkout" },
+                        "kind": "aggregate",
+                        "id": { "context": "sales", "local": "order" },
                     },
-                    "local": "can-checkout",
+                    "local": "can-submit",
                 },
             }),
         ),
