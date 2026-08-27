@@ -16,6 +16,7 @@ mod entity;
 mod entity_lifecycle;
 mod field;
 mod invariant;
+mod json_wire;
 mod value_object;
 
 pub mod extension {
@@ -68,6 +69,7 @@ pub use invariant::{
     InvariantOwnerId, InvariantOwnerType, InvariantReference, InvariantViolation,
     ValueObjectInvariantOwnerType,
 };
+pub use json_wire::{JsonCommandPayload, JsonErrorPayload};
 pub use rostfrei_domain_macros::{
     Aggregate, BoundedContext, DomainCommand, DomainError, DomainEvent, DomainIdentity,
     DomainService, Entity, EntityLifecycle, ValueObject, domain_action_test, domain_actions,
@@ -88,6 +90,8 @@ pub mod __private {
     };
     pub use crate::domain_model::DomainModelBuilder;
     pub use crate::domain_test::emit_domain_test_metadata as emit_domain_test_descriptor;
+    pub use serde;
+    pub use serde_json;
 }
 
 #[macro_export]

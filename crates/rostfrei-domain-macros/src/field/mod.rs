@@ -8,6 +8,7 @@ mod shape;
 pub use assembly::{
     assemble_assertions_with_path, assemble_descriptors_with_path, assemble_scalar,
 };
+pub(crate) use ir::Wrapper;
 pub use ir::{Field, Role};
 pub use naming::extract;
 pub use scalar::classify as classify_scalar;

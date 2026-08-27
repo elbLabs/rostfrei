@@ -22,8 +22,9 @@ pub trait CommandDefinition: Sized + Send + Sync + 'static {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct CommandIdentity {
+    pub aggregate_type: String,
     pub command_name: &'static str,
     pub schema_version: u32,
 }
@@ -39,8 +40,9 @@ pub struct CommandDescriptor {
 }
 
 impl CommandDescriptor {
-    pub const fn identity(&self) -> CommandIdentity {
+    pub fn identity(&self) -> CommandIdentity {
         CommandIdentity {
+            aggregate_type: self.aggregate_type.clone(),
             command_name: self.command_name,
             schema_version: self.schema_version,
         }
@@ -117,7 +119,7 @@ struct RegisteredCommand {
 #[derive(Debug, Default)]
 pub struct DomainRegistry {
     modules: BTreeMap<&'static str, ModuleDescriptor>,
-    commands: BTreeMap<&'static str, BTreeMap<u32, RegisteredCommand>>,
+    commands: BTreeMap<&'static str, BTreeMap<u32, Vec<RegisteredCommand>>>,
     aggregates: BTreeSet<String>,
 }
 
@@ -135,13 +137,21 @@ impl DomainRegistry {
             self.commands
                 .entry(command.command_name)
                 .or_default()
-                .insert(
-                    command.schema_version,
-                    RegisteredCommand {
-                        module_name: descriptor.module_name,
-                        descriptor: command.clone(),
-                    },
-                );
+                .entry(command.schema_version)
+                .or_default()
+                .push(RegisteredCommand {
+                    module_name: descriptor.module_name,
+                    descriptor: command.clone(),
+                });
+            self.commands
+                .get_mut(command.command_name)
+                .and_then(|versions| versions.get_mut(&command.schema_version))
+                .expect("registered command identity exists")
+                .sort_by(|left, right| {
+                    left.descriptor
+                        .aggregate_type
+                        .cmp(&right.descriptor.aggregate_type)
+                });
         }
         self.modules.insert(descriptor.module_name, descriptor);
         Ok(())
@@ -159,13 +169,24 @@ impl DomainRegistry {
         self.commands
             .values()
             .flat_map(BTreeMap::values)
+            .flatten()
             .map(|registered| &registered.descriptor)
     }
 
-    pub fn command(&self, command_name: &str, schema_version: u32) -> Option<&CommandDescriptor> {
+    pub fn command(
+        &self,
+        aggregate_type: &str,
+        command_name: &str,
+        schema_version: u32,
+    ) -> Option<&CommandDescriptor> {
         self.commands
             .get(command_name)
             .and_then(|versions| versions.get(&schema_version))
+            .and_then(|registered| {
+                registered
+                    .iter()
+                    .find(|command| command.descriptor.aggregate_type == aggregate_type)
+            })
             .map(|registered| &registered.descriptor)
     }
 
@@ -237,5 +258,10 @@ impl DomainRegistry {
         self.commands
             .get(command.command_name)
             .and_then(|versions| versions.get(&command.schema_version))
+            .and_then(|registered| {
+                registered.iter().find(|registered| {
+                    registered.descriptor.aggregate_type == command.aggregate_type
+                })
+            })
     }
 }

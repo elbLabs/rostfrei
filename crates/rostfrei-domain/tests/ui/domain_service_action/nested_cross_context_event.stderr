@@ -18,7 +18,7 @@ note: required for `Placed` to implement `ActionOutputType<DomainServiceActionOu
    |                                                                                       ^^^^^^
    = note: associated types for the current `impl` cannot be restricted in `where` clauses
    = note: 1 redundant requirement hidden
-   = note: required for `Option<Placed>` to implement `ActionOutputType<DomainServiceActionOutput<Service>>`
+   = note: required for `std::option::Option<Placed>` to implement `ActionOutputType<DomainServiceActionOutput<Service>>`
 note: required by a bound in `Actions`
   --> tests/ui/domain_service_action/nested_cross_context_event.rs:32:1
    |
@@ -48,7 +48,7 @@ note: required for `Placed` to implement `ActionOutputType<DomainServiceActionOu
    |                                                                                       ^^^^^^
    = note: associated types for the current `impl` cannot be restricted in `where` clauses
    = note: 1 redundant requirement hidden
-   = note: required for `Option<Placed>` to implement `ActionOutputType<DomainServiceActionOutput<Service>>`
+   = note: required for `std::option::Option<Placed>` to implement `ActionOutputType<DomainServiceActionOutput<Service>>`
 note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
   --> tests/ui/domain_service_action/nested_cross_context_event.rs:32:1
    |

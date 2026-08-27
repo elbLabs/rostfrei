@@ -4,8 +4,8 @@ use domain::{
     Aggregate as DomainAggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandType,
     DomainEvent, DomainIdentity, Entity,
 };
-use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance, CommandHandler};
-use rostfrei_domain_runtime::{domain_module, Apply, Initialize};
+use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance};
+use rostfrei_domain_runtime::{domain_command_handler, domain_module, Apply, Initialize};
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::{Deserialize, Serialize};
 
@@ -58,27 +58,22 @@ impl Apply<CatalogOpened> for CatalogRoot {
     }
 }
 
-impl CommandHandler<OpenCatalog> for CatalogAggregate {
-    type Rejection = ();
+trait CatalogRuntimeActions {
+    fn open_catalog(&mut self, command: &OpenCatalog) -> Result<(), std::convert::Infallible>;
+}
 
-    fn handle(
-        _command: &OpenCatalog,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.raise(CatalogOpened);
+impl CatalogRuntimeActions for AggregateInstance<CatalogAggregate> {
+    fn open_catalog(&mut self, _command: &OpenCatalog) -> Result<(), std::convert::Infallible> {
+        self.raise(CatalogOpened);
         Ok(())
     }
 }
 
+domain_command_handler!(OpenCatalog => open_catalog);
+
 domain_module! {
     struct CatalogModule {
-        name: "catalog",
-        commands: [
-            OpenCatalog => {
-                name: "catalog.open-catalog",
-                version: 1,
-            },
-        ],
+        commands: [OpenCatalog],
     }
 }
 
@@ -87,7 +82,9 @@ fn registers_runtime_metadata_from_the_domain_command() {
     let mut registry = DomainRegistry::new();
     registry.register_module::<CatalogModule>().unwrap();
 
-    let descriptor = registry.command("catalog.open-catalog", 1).unwrap();
+    let descriptor = registry
+        .command("catalog/catalog", "open-catalog", 1)
+        .unwrap();
 
     assert_eq!(descriptor.aggregate_type, "catalog/catalog");
     assert_eq!(descriptor.domain_command(), Some(&OpenCatalog::DESCRIPTOR));

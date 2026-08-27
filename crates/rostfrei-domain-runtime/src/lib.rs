@@ -19,9 +19,9 @@ pub trait AggregateRuntime:
 
 #[doc(hidden)]
 pub mod __private {
-    pub use domain::DomainCommandType;
+    pub use domain::{DomainCommandOwnerType, DomainCommandType};
     pub use rostfrei_core as core;
-    pub use rostfrei_core::Aggregate;
+    pub use rostfrei_core::{Aggregate, AggregateInstance, CommandHandler};
     pub use rostfrei_registry::{
         CommandDefinition, CommandDescriptor, DomainModule, ModuleDescriptor,
     };
@@ -44,6 +44,13 @@ pub mod __private {
         }
     }
 
+    pub const fn assert_same_command_namespace(left: &str, right: &str) {
+        assert!(
+            strings_equal(left, right),
+            "domain module commands must belong to the same namespace"
+        );
+    }
+
     const fn strings_equal(left: &str, right: &str) -> bool {
         let left = left.as_bytes();
         let right = right.as_bytes();
@@ -63,10 +70,94 @@ pub mod __private {
 
 /// Generates rostfrei command and module registrations from domain command types.
 ///
-/// The domain model supplies command ownership and structural metadata. The binding
-/// supplies only runtime wire names and schema versions.
+/// The generated form derives ownership, local wire names, schema versions, and
+/// structural metadata from the domain model. The explicit form overrides the
+/// module name and command wire identities.
 #[macro_export]
 macro_rules! domain_module {
+    (
+        $(#[$attribute:meta])*
+        $visibility:vis struct $module:ident {
+            commands: [$first:ty $(, $command:ty)* $(,)?] $(,)?
+        }
+    ) => {
+        impl $crate::__private::CommandDefinition for $first {
+            type Aggregate = <$first as $crate::__private::DomainCommandType>::Owner;
+
+            const COMMAND_NAME: &'static str =
+                <$first as $crate::__private::DomainCommandType>::LOCAL_ID;
+            const SCHEMA_VERSION: u32 =
+                <$first as $crate::__private::DomainCommandType>::SCHEMA_VERSION;
+
+            fn descriptor() -> $crate::__private::CommandDescriptor {
+                $crate::__private::CommandDescriptor {
+                    command_name: <Self as $crate::__private::CommandDefinition>::COMMAND_NAME,
+                    schema_version: <Self as $crate::__private::CommandDefinition>::SCHEMA_VERSION,
+                    aggregate_type: <Self::Aggregate as $crate::__private::Aggregate>::aggregate_type().into_owned(),
+                    rust_command_type: $crate::__private::type_name::<Self>(),
+                    rust_aggregate_type: $crate::__private::type_name::<Self::Aggregate>(),
+                    domain_command: ::core::option::Option::Some(
+                        <Self as $crate::__private::DomainCommandType>::DESCRIPTOR,
+                    ),
+                }
+            }
+        }
+
+        $(
+            impl $crate::__private::CommandDefinition for $command {
+                type Aggregate = <$command as $crate::__private::DomainCommandType>::Owner;
+
+                const COMMAND_NAME: &'static str =
+                    <$command as $crate::__private::DomainCommandType>::LOCAL_ID;
+                const SCHEMA_VERSION: u32 =
+                    <$command as $crate::__private::DomainCommandType>::SCHEMA_VERSION;
+
+                fn descriptor() -> $crate::__private::CommandDescriptor {
+                    $crate::__private::CommandDescriptor {
+                        command_name: <Self as $crate::__private::CommandDefinition>::COMMAND_NAME,
+                        schema_version: <Self as $crate::__private::CommandDefinition>::SCHEMA_VERSION,
+                        aggregate_type: <Self::Aggregate as $crate::__private::Aggregate>::aggregate_type().into_owned(),
+                        rust_command_type: $crate::__private::type_name::<Self>(),
+                        rust_aggregate_type: $crate::__private::type_name::<Self::Aggregate>(),
+                        domain_command: ::core::option::Option::Some(
+                            <Self as $crate::__private::DomainCommandType>::DESCRIPTOR,
+                        ),
+                    }
+                }
+            }
+        )*
+
+        const _: () = {
+            $(
+                $crate::__private::assert_same_command_namespace(
+                    <<$first as $crate::__private::DomainCommandType>::Owner as
+                        $crate::__private::DomainCommandOwnerType>::DOMAIN_COMMAND_NAMESPACE,
+                    <<$command as $crate::__private::DomainCommandType>::Owner as
+                        $crate::__private::DomainCommandOwnerType>::DOMAIN_COMMAND_NAMESPACE,
+                );
+            )*
+        };
+
+        $(#[$attribute])*
+        $visibility struct $module;
+
+        impl $crate::__private::DomainModule for $module {
+            const MODULE_NAME: &'static str =
+                <<$first as $crate::__private::DomainCommandType>::Owner as
+                    $crate::__private::DomainCommandOwnerType>::DOMAIN_COMMAND_NAMESPACE;
+
+            fn descriptor() -> $crate::__private::ModuleDescriptor {
+                $crate::__private::ModuleDescriptor {
+                    module_name: Self::MODULE_NAME,
+                    commands: ::std::vec![
+                        <$first as $crate::__private::CommandDefinition>::descriptor(),
+                        $(<$command as $crate::__private::CommandDefinition>::descriptor()),*
+                    ],
+                }
+            }
+        }
+    };
+
     (
         $(#[$attribute:meta])*
         $visibility:vis struct $module:ident {
@@ -90,8 +181,8 @@ macro_rules! domain_module {
 
                 fn descriptor() -> $crate::__private::CommandDescriptor {
                     $crate::__private::CommandDescriptor {
-                        command_name: Self::COMMAND_NAME,
-                        schema_version: Self::SCHEMA_VERSION,
+                        command_name: <Self as $crate::__private::CommandDefinition>::COMMAND_NAME,
+                        schema_version: <Self as $crate::__private::CommandDefinition>::SCHEMA_VERSION,
                         aggregate_type: <Self::Aggregate as $crate::__private::Aggregate>::aggregate_type().into_owned(),
                         rust_command_type: $crate::__private::type_name::<Self>(),
                         rust_aggregate_type: $crate::__private::type_name::<Self::Aggregate>(),
@@ -116,6 +207,25 @@ macro_rules! domain_module {
                         $(<$command as $crate::__private::CommandDefinition>::descriptor()),+
                     ],
                 }
+            }
+        }
+    };
+}
+
+/// Connects a domain command to an aggregate-instance action method.
+#[macro_export]
+macro_rules! domain_command_handler {
+    ($command:ty => $method:ident) => {
+        impl $crate::__private::CommandHandler<$command>
+            for <$command as $crate::__private::DomainCommandType>::Owner
+        {
+            type Rejection = <$command as $crate::__private::DomainCommandType>::Rejection;
+
+            fn handle(
+                command: &$command,
+                aggregate: &mut $crate::__private::AggregateInstance<Self>,
+            ) -> ::core::result::Result<(), Self::Rejection> {
+                aggregate.$method(command)
             }
         }
     };

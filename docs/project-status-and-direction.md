@@ -51,14 +51,17 @@ are projected from each aggregate's `events = [...]` attachment rather than a
 second flat inventory.
 
 The canonical `Aggregate` derive generates the core aggregate definition, a
-doc-hidden aggregate event representation, concrete recording conversions,
+doc-hidden aggregate event representation, concrete event conversions,
 root `Apply` dispatch, and default JSON codec behavior. `Executor::new(store)`
 needs no codec. Unknown event types, unsupported versions, and malformed JSON
 fail replay closed; custom `EventCodec` implementations remain explicit
-overrides. The runtime bridge's `domain_module!` macro derives command ownership
-and structural metadata from `DomainCommandType` and preserves the rich command
-descriptor in `DomainRegistry`. Standalone `Command` and `Module` derives remain
-available for direct kernel users.
+overrides. The runtime bridge's `domain_module!` macro derives command ownership,
+the module namespace, local command name, default schema version, and structural
+metadata from `DomainCommandType`, preserving the rich command descriptor in
+`DomainRegistry`. Runtime command identity is aggregate type, local command name,
+and schema version, so different aggregates may use the same local name. An
+explicit registration form and standalone `Command` and `Module` derives remain
+available for custom wire names and direct kernel users.
 
 rostfrei Studio is implemented as a read-only compiled-model browser and Cargo
 diagnostic client. It does not yet provide event timelines, aggregate state
@@ -71,11 +74,14 @@ command acceptance or rejection, predicted domain events, and completion.
 Simulation depends only on read-only event history and never appends or
 publishes. The optional HTTP adapter requires a bearer capability, and trace
 payloads are redacted unless a deployment explicitly supplies another policy.
-The included journal is bounded and in-memory; durable traces, production-grade
-authorization, automatic discovery, generated wire codecs, live dispatch,
-inspection views, and the Studio client remain deferred.
+The included journal and concurrent simulation admission are bounded and
+in-memory; retention is pressure-based and idempotency lasts only while an
+operation remains retained. Durable traces, production-grade authorization,
+automatic discovery, generated wire schemas, live dispatch, inspection views,
+and the Studio client remain deferred.
 Default JSON domain-event codecs are implemented by the compiled aggregate
-contract; generated command wire codecs remain deferred.
+contract. Commands and domain errors can opt into generated conventional JSON
+payloads with `#[domain(json)]`; custom command codecs remain explicit overrides.
 
 The NATS event store writes one JetStream message per domain event. Multi-event
 commits use the NATS ADR-50 atomic batch protocol, with one shared batch identity
@@ -164,7 +170,7 @@ The three operational modes are deliberately distinct:
 3. Replace runtime model-assembly panics and unversioned JSON with structured
    diagnostics and a versioned projection.
 4. Mature the implemented erased simulation slice with durable operation traces,
-   generated wire codecs, and production authorization without introducing
+   generated wire schemas, and production authorization without introducing
    transport concerns into the kernel.
 5. Add aggregate inspection and redaction.
 6. Generate command, event, rejection, and inspection schemas.

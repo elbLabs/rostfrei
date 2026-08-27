@@ -9,10 +9,10 @@ Accepted.
 An aggregate definition exposes associated state and event types plus an
 `apply` transition. Initialization receives the stream identity, so state that
 embeds its aggregate identity does not rely on `Default` or out-of-band state.
-A typed command handler records events through a decision context; recording an
-event applies it immediately so later decisions in the same command observe the
-new state. Pending events remain in the execution context, never in aggregate
-state.
+A typed command handler receives an `AggregateInstance`. Raising an event applies
+it immediately so later actions and decisions in the same command observe the
+new state. The instance owns its uncommitted events, while the domain root remains
+free of runtime bookkeeping.
 
 Aggregates do not implement Serde and do not receive wire envelopes, broker
 headers, clocks, IDs, or storage handles. An `EventCodec` maps typed aggregate
@@ -20,7 +20,7 @@ events to and from bounded `NewEvent` and `RecordedEvent` values. Unknown event
 types or schema versions and malformed payloads are explicit replay failures.
 In the compiled-model path, the canonical `Aggregate` derive generates the
 aggregate-wide event representation from its attached concrete domain events.
-Applications record and apply those concrete events and do not declare that
+Applications raise those concrete events and do not declare that
 representation. The generated representation uses JSON automatically; each
 payload supplies its stable event ID and schema version and implements Serde.
 Applications provide an explicit `EventCodec` only when they need custom DTOs,

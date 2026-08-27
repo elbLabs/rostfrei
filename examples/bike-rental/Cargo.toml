@@ -1,6 +1,6 @@
 [package]
 name = "bike-rental"
-default-run = "bike-rental"
+default-run = "bike-rental-api"
 version.workspace = true
 edition = "2024"
 rust-version.workspace = true

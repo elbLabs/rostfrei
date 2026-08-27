@@ -3,20 +3,18 @@ use std::{convert::Infallible, sync::Arc};
 use rostfrei::{
     Aggregate, AggregateInstance, Apply, CommandHandler, ContentFingerprint, DomainRegistry,
     EventHistory, EventStore, ExecutionError, ExecutionMetadata, Executor, Initialize, OperationId,
-    RegistrationError, StreamAggregateId, StreamAggregateType, StreamId, domain_module,
+    RegistrationError, StreamAggregateId, StreamAggregateType, StreamId, domain_command_handler,
+    domain_module,
 };
-use rostfrei_control_plane::{CommandWireCodec, CommandWireCodecError, ControlPlaneBuilder};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use rostfrei_control_plane::ControlPlaneBuilder;
 use thiserror::Error;
 
 use crate::rental::{
-    Bicycle, BicycleCondition, BicycleId, BicycleRented, BicycleStatus, BicycleUnavailable,
-    FleetId, ImportedBicycle, RentBicycle, RentalFleet, RentalFleetAggregate, RentalFleetImported,
-    decide_rental,
+    Bicycle, BicycleCondition, BicycleId, BicycleRented, BicycleStatus, FleetId, ImportedBicycle,
+    RentBicycle, RentalFleet, RentalFleetActions, RentalFleetAggregate, RentalFleetImported,
 };
 
-pub const COMMAND_NAME: &str = "bike-rental.rent-bicycle";
+pub const COMMAND_NAME: &str = "rent-bicycle";
 pub const DEMO_FLEET_ID: &str = "city-fleet";
 
 impl Initialize<RentalFleetAggregate> for RentalFleet {
@@ -54,58 +52,11 @@ impl Apply<BicycleRented> for RentalFleet {
     }
 }
 
-impl CommandHandler<RentBicycle> for RentalFleetAggregate {
-    type Rejection = BicycleUnavailable;
-
-    fn handle(
-        command: &RentBicycle,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        let event = decide_rental(aggregate.state(), command)?;
-        aggregate.raise(event);
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct RentBicycleWireCodec;
-
-impl CommandWireCodec<RentBicycle> for RentBicycleWireCodec {
-    fn decode(&self, payload: &Value) -> Result<RentBicycle, CommandWireCodecError> {
-        #[derive(Deserialize)]
-        struct Wire {
-            bicycle_id: String,
-        }
-
-        let wire: Wire = serde_json::from_value(payload.clone())
-            .map_err(|error| CommandWireCodecError::new(error.to_string()))?;
-        let bicycle_id = BicycleId::new(wire.bicycle_id).ok_or_else(|| {
-            CommandWireCodecError::new("bicycle_id must be non-empty and trimmed")
-        })?;
-        Ok(RentBicycle { bicycle_id })
-    }
-
-    fn encode_rejection(
-        &self,
-        rejection: &BicycleUnavailable,
-    ) -> Result<Value, CommandWireCodecError> {
-        Ok(json!({
-            "code": "BICYCLE_UNAVAILABLE",
-            "message": "The requested bicycle cannot currently be rented.",
-            "bicycle_id": rejection.bicycle_id.as_str(),
-        }))
-    }
-}
+domain_command_handler!(RentBicycle => rent_bicycle);
 
 domain_module! {
     pub struct BikeRentalRuntimeModule {
-        name: "bike-rental",
-        commands: [
-            RentBicycle => {
-                name: "bike-rental.rent-bicycle",
-                version: 1,
-            },
-        ],
+        commands: [RentBicycle],
     }
 }
 

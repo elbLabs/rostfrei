@@ -7,12 +7,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rostfrei_core::{AggregateId, ContentFingerprint, EventHistory, OperationId};
+use rostfrei_core::{
+    AggregateId, ContentFingerprint, EventHistory, EventStoreErrorKind, OperationId,
+    SimulationError,
+};
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::{
     operation::{subscribe, NewOperation, OperationRecord},
@@ -20,12 +23,13 @@ use crate::{
         stream_id, CommandKey, ErasedCommandSimulator, RuntimeBindings, RuntimeDecision,
         RuntimeSimulationError,
     },
-    CommandWireCodec, OperationEventKind, OperationResult, OperationSnapshot,
+    CommandWireCodec, DomainJsonWireCodec, OperationEventKind, OperationResult, OperationSnapshot,
     OperationSubscription, PredictedDomainEvent, RuntimeRegistrationError, SubscriptionError,
 };
 
 pub const MAX_COMMAND_PAYLOAD_LEN: usize = 1024 * 1024;
 const DEFAULT_MAXIMUM_OPERATIONS: usize = 1024;
+const DEFAULT_MAXIMUM_CONCURRENT_SIMULATIONS: usize = 32;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +102,8 @@ pub enum SubmissionError {
     IdentityConflict,
     #[error("operation capacity is exhausted")]
     CapacityExhausted,
+    #[error("simulation concurrency is exhausted")]
+    ConcurrencyExhausted,
     #[error("operation was not found")]
     NotFound,
     #[error(transparent)]
@@ -108,6 +114,7 @@ pub struct ControlPlaneBuilder {
     history: Arc<dyn EventHistory>,
     bindings: RuntimeBindings,
     maximum_operations: usize,
+    maximum_concurrent_simulations: usize,
     trace_payload_policy: Arc<dyn TracePayloadPolicy>,
 }
 
@@ -117,6 +124,7 @@ impl ControlPlaneBuilder {
             history,
             bindings: RuntimeBindings::new(registry),
             maximum_operations: DEFAULT_MAXIMUM_OPERATIONS,
+            maximum_concurrent_simulations: DEFAULT_MAXIMUM_CONCURRENT_SIMULATIONS,
             trace_payload_policy: Arc::new(RedactTracePayloads),
         }
     }
@@ -124,6 +132,15 @@ impl ControlPlaneBuilder {
     #[must_use]
     pub fn with_maximum_operations(mut self, maximum_operations: usize) -> Self {
         self.maximum_operations = maximum_operations;
+        self
+    }
+
+    #[must_use]
+    pub fn with_maximum_concurrent_simulations(
+        mut self,
+        maximum_concurrent_simulations: usize,
+    ) -> Self {
+        self.maximum_concurrent_simulations = maximum_concurrent_simulations;
         self
     }
 
@@ -150,6 +167,17 @@ impl ControlPlaneBuilder {
         Ok(self)
     }
 
+    pub fn register_json<Command>(&mut self) -> Result<&mut Self, RuntimeRegistrationError>
+    where
+        Command: CommandDefinition + domain::JsonCommandPayload,
+        <Command::Aggregate as rostfrei_core::Aggregate>::State: Send,
+        <Command::Aggregate as rostfrei_core::Aggregate>::Event: rostfrei_core::Event + Send,
+        <Command::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection:
+            domain::JsonErrorPayload,
+    {
+        self.register::<Command, _>(DomainJsonWireCodec)
+    }
+
     pub fn register_with_codec<Command, Codec, Wire>(
         &mut self,
         event_codec: Codec,
@@ -169,12 +197,17 @@ impl ControlPlaneBuilder {
 
     pub fn build(self) -> Result<ControlPlane, RuntimeRegistrationError> {
         self.bindings.validate()?;
+        let maximum_concurrent_simulations = self
+            .maximum_concurrent_simulations
+            .min(self.maximum_operations)
+            .min(Semaphore::MAX_PERMITS);
         Ok(ControlPlane {
             inner: Arc::new(ControlPlaneInner {
                 history: self.history,
                 simulators: self.bindings.simulators,
                 operations: Mutex::new(OperationTable::default()),
                 maximum_operations: self.maximum_operations,
+                simulation_permits: Arc::new(Semaphore::new(maximum_concurrent_simulations)),
                 generated_ids: AtomicU64::new(0),
                 trace_payload_policy: self.trace_payload_policy,
             }),
@@ -187,6 +220,7 @@ struct ControlPlaneInner {
     simulators: HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
     operations: Mutex<OperationTable>,
     maximum_operations: usize,
+    simulation_permits: Arc<Semaphore>,
     generated_ids: AtomicU64,
     trace_payload_policy: Arc<dyn TracePayloadPolicy>,
 }
@@ -198,6 +232,10 @@ struct OperationTable {
 }
 
 impl OperationTable {
+    fn has_terminal(&self) -> bool {
+        self.records.values().any(|record| record.is_terminal())
+    }
+
     fn evict_terminal(&mut self) -> bool {
         for _ in 0..self.insertion_order.len() {
             let operation_id = self
@@ -232,18 +270,14 @@ impl ControlPlane {
         request: SimulationRequest,
         idempotency_key: Option<&str>,
     ) -> Result<OperationSnapshot, SubmissionError> {
-        let key = CommandKey::new(command, request.schema_version);
-        let simulator = self
-            .inner
-            .simulators
-            .get(&key)
-            .filter(|simulator| simulator.descriptor().aggregate_type == aggregate_type)
-            .cloned()
-            .ok_or_else(|| SubmissionError::UnknownCommand {
+        let key = CommandKey::new(aggregate_type, command, request.schema_version);
+        let simulator = self.inner.simulators.get(&key).cloned().ok_or_else(|| {
+            SubmissionError::UnknownCommand {
                 aggregate_type: aggregate_type.to_owned(),
                 command: command.to_owned(),
                 schema_version: request.schema_version,
-            })?;
+            }
+        })?;
         let aggregate_id = AggregateId::new(aggregate_id)
             .map_err(|error| SubmissionError::InvalidAggregateId(error.to_string()))?;
         let operation_id = match idempotency_key {
@@ -274,7 +308,7 @@ impl ControlPlane {
             aggregate_id: aggregate_id.as_str(),
         });
 
-        {
+        let permit = {
             let mut operations = self.inner.operations.lock().await;
             if let Some(existing) = operations.records.get(&operation_key) {
                 if existing.fingerprint().await != fingerprint.to_hex() {
@@ -283,20 +317,28 @@ impl ControlPlane {
                 return Ok(existing.snapshot().await);
             }
             if operations.records.len() >= self.inner.maximum_operations
-                && !operations.evict_terminal()
+                && !operations.has_terminal()
             {
                 return Err(SubmissionError::CapacityExhausted);
+            }
+            let permit = Arc::clone(&self.inner.simulation_permits)
+                .try_acquire_owned()
+                .map_err(|_| SubmissionError::ConcurrencyExhausted)?;
+            if operations.records.len() >= self.inner.maximum_operations {
+                assert!(operations.evict_terminal());
             }
             operations.insertion_order.push_back(operation_key.clone());
             operations
                 .records
                 .insert(operation_key, Arc::clone(&record));
-        }
+            permit
+        };
 
         let queued = record.snapshot().await;
         let control_plane = self.clone();
         let panic_record = Arc::clone(&record);
         let execution = tokio::spawn(async move {
+            let _permit = permit;
             control_plane
                 .run_simulation(
                     record,
@@ -501,7 +543,22 @@ fn runtime_failure(error: RuntimeSimulationError) -> (&'static str, String) {
         RuntimeSimulationError::InvalidPayload(error) => {
             ("invalid-command-payload", error.to_string())
         }
-        RuntimeSimulationError::Simulation(error) => ("simulation-failed", error),
+        RuntimeSimulationError::Simulation(SimulationError::Codec(error)) => {
+            ("event-codec-failed", error.to_string())
+        }
+        RuntimeSimulationError::Simulation(SimulationError::Store(error)) => {
+            let code = match error.kind() {
+                EventStoreErrorKind::CorruptHistory => "corrupt-history",
+                EventStoreErrorKind::Unavailable
+                | EventStoreErrorKind::CapacityExhausted
+                | EventStoreErrorKind::ConfigurationMismatch => "history-unavailable",
+                EventStoreErrorKind::Conflict | EventStoreErrorKind::IdentityConflict => {
+                    "history-conflict"
+                }
+                EventStoreErrorKind::InvalidRequest => "invalid-runtime",
+            };
+            (code, error.to_string())
+        }
         RuntimeSimulationError::RejectionEncoding(error) => {
             ("rejection-encoding-failed", error.to_string())
         }
@@ -519,16 +576,39 @@ fn request_fingerprint(
     payload: &[u8],
 ) -> ContentFingerprint {
     let mut framed = Vec::new();
+    let schema_version = schema_version.to_be_bytes();
     for value in [
+        b"rostfrei:simulation-request:v1".as_slice(),
         aggregate_type.as_bytes(),
         aggregate_id.as_bytes(),
         command.as_bytes(),
+        schema_version.as_slice(),
+        payload,
     ] {
-        framed.extend_from_slice(&value.len().to_be_bytes());
+        let length = u64::try_from(value.len()).expect("request parts fit in u64");
+        framed.extend_from_slice(&length.to_be_bytes());
         framed.extend_from_slice(value);
     }
-    framed.extend_from_slice(&schema_version.to_be_bytes());
-    framed.extend_from_slice(&payload.len().to_be_bytes());
-    framed.extend_from_slice(payload);
     ContentFingerprint::digest(framed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_fingerprints_use_deterministic_fixed_width_framing() {
+        let fingerprint = request_fingerprint(
+            "bike-rental/rental-fleet",
+            "city-fleet",
+            "rent-bicycle",
+            1,
+            br#"{"bicycle_id":"bike-42"}"#,
+        );
+
+        assert_eq!(
+            fingerprint.to_hex(),
+            "6e05cbaf829bc0bfa276ca081d504f8c1c234577c46d1b3a49ab8d8a38b2d4c9"
+        );
+    }
 }

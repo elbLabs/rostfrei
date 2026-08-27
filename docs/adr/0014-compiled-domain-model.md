@@ -32,7 +32,7 @@ schema version, fields, and the default JSON payload contract. An aggregate's
 membership. The aggregate derive generates the owned descriptors, a doc-hidden
 aggregate event representation, concrete event conversions, `Apply<Event>`
 dispatch to the declared root, JSON encoding and fail-closed replay decoding.
-Applications record concrete events through `DecisionContext` and never declare
+Applications raise concrete events through `AggregateInstance` and never declare
 or use the generated representation.
 
 `domain_model!` projects each aggregate's attached events automatically in
@@ -53,11 +53,12 @@ Normal applications depend on the `rostfrei` facade and use `rostfrei::Aggregate
 `rostfrei::Executor` with `#[rostfrei(...)]`. Implementation crates and generated
 event representations are not part of normal application syntax.
 
-Domain actions are not automatically invoked as event-sourced command handlers.
-The model permits actions that mutate an aggregate root directly, while the
-rostfrei kernel changes state by recording and applying events. Runtime
-handlers therefore remain explicit until one coherent execution contract is
-defined.
+Executable aggregate actions are extension methods on `AggregateInstance`; they
+validate against current state and raise events rather than mutating the root
+directly. `domain_command_handler!` generates the thin `CommandHandler` adapter
+from a domain command to such a method. The separate action and decision metadata
+contracts remain explicit because Rust procedural macros cannot discover
+independent trait implementations.
 
 ## Consequences
 
