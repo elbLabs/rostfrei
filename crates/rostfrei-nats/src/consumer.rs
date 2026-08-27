@@ -33,12 +33,21 @@ use crate::{
 
 pub const MAX_QUARANTINE_RECORD_BYTES: usize = 2 * 1024 * 1024;
 pub const DEFAULT_QUARANTINE_RETRY_DELAY: Duration = Duration::from_secs(1);
+const MAX_QUARANTINE_PAYLOAD_PREFIX_BYTES: usize = 16 * 1024;
+const MAX_QUARANTINE_PAYLOAD_PREFIX_BASE64_BYTES: usize =
+    (MAX_QUARANTINE_PAYLOAD_PREFIX_BYTES / 3) * 4;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct QuarantineRecord {
     message_id: String,
     address: String,
     payload_base64: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    payload_size: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    payload_sha256: Option<String>,
+    #[serde(default)]
+    payload_truncated: bool,
     metadata: CallerMetadata,
     trace_context: Option<TraceContext>,
     reason: String,
@@ -61,6 +70,18 @@ impl QuarantineRecord {
 
     pub fn payload_base64(&self) -> &str {
         &self.payload_base64
+    }
+
+    pub const fn payload_size(&self) -> Option<usize> {
+        self.payload_size
+    }
+
+    pub fn payload_sha256(&self) -> Option<&str> {
+        self.payload_sha256.as_deref()
+    }
+
+    pub const fn payload_truncated(&self) -> bool {
+        self.payload_truncated
     }
 
     pub const fn metadata(&self) -> &CallerMetadata {
@@ -296,6 +317,8 @@ where
             quarantine_publish_timeout,
             &message,
             raw,
+            attempt,
+            config.maximum_delivery_attempts(),
         )
         .await;
     };
@@ -313,6 +336,8 @@ where
             quarantine_publish_timeout,
             &message,
             record,
+            attempt,
+            config.maximum_delivery_attempts(),
         )
         .await;
     }
@@ -407,6 +432,8 @@ where
                 quarantine_publish_timeout,
                 message,
                 record,
+                attempt,
+                config.maximum_delivery_attempts(),
             )
             .await
         }
@@ -423,6 +450,8 @@ where
                 quarantine_publish_timeout,
                 message,
                 record,
+                attempt,
+                config.maximum_delivery_attempts(),
             )
             .await
         }
@@ -520,10 +549,14 @@ fn quarantine_record<A>(
 where
     A: PublishableAddress,
 {
+    let payload = delivery.payload();
     QuarantineRecord {
         message_id: delivery.message_id().as_str().to_owned(),
         address: delivery.address().as_str().to_owned(),
-        payload_base64: BASE64.encode(delivery.payload()),
+        payload_base64: BASE64.encode(payload),
+        payload_size: Some(payload.len()),
+        payload_sha256: Some(sha256_hex(payload)),
+        payload_truncated: false,
         metadata: delivery.metadata().clone(),
         trace_context: delivery.trace_context().cloned(),
         reason: reason.to_owned(),
@@ -546,16 +579,23 @@ fn raw_quarantine_record(
     let headers = message.headers.as_ref();
     let message_id = headers
         .and_then(|headers| single_header(headers, "Nats-Msg-Id").ok().flatten())
-        .unwrap_or("missing")
-        .to_owned();
+        .and_then(|value| MessageId::new(value).ok())
+        .map_or_else(
+            || "missing-or-invalid".to_owned(),
+            |value| value.as_str().to_owned(),
+        );
     let metadata = headers
         .and_then(|headers| caller_metadata(headers).ok())
         .unwrap_or_default();
     let trace_context = headers.and_then(|headers| trace_context(headers).ok().flatten());
+    let payload = message.payload.as_ref();
     QuarantineRecord {
         message_id,
         address: message.subject.to_string(),
-        payload_base64: BASE64.encode(&message.payload),
+        payload_base64: BASE64.encode(payload),
+        payload_size: Some(payload.len()),
+        payload_sha256: Some(sha256_hex(payload)),
+        payload_truncated: false,
         metadata,
         trace_context,
         reason: reason.to_owned(),
@@ -574,14 +614,23 @@ async fn quarantine_or_nak(
     publish_timeout: Duration,
     source: &jetstream::Message,
     record: QuarantineRecord,
+    attempt: u32,
+    maximum_delivery_attempts: u32,
 ) -> Result<(), ConsumeError> {
     if publish_quarantine(context, quarantine_stream, publish_timeout, &record)
         .await
         .is_err()
     {
-        return apply_ack(source, AckKind::Nak(Some(DEFAULT_QUARANTINE_RETRY_DELAY))).await;
+        if quarantine_retry_available(attempt, maximum_delivery_attempts) {
+            return apply_ack(source, AckKind::Nak(Some(DEFAULT_QUARANTINE_RETRY_DELAY))).await;
+        }
+        return Err(ConsumeError::new(ConsumeErrorKind::Quarantine));
     }
     apply_ack(source, AckKind::Term).await
+}
+
+const fn quarantine_retry_available(attempt: u32, maximum_delivery_attempts: u32) -> bool {
+    attempt < maximum_delivery_attempts
 }
 
 async fn publish_quarantine(
@@ -590,13 +639,7 @@ async fn publish_quarantine(
     publish_timeout: Duration,
     record: &QuarantineRecord,
 ) -> Result<(), NatsError> {
-    let payload = serde_json::to_vec(record).map_err(|_| NatsError::Serialization)?;
-    if payload.len() > MAX_QUARANTINE_RECORD_BYTES {
-        return Err(NatsError::PayloadTooLarge {
-            actual: payload.len(),
-            maximum: MAX_QUARANTINE_RECORD_BYTES,
-        });
-    }
+    let payload = encode_quarantine_record(record)?;
     let message_id = quarantine_message_id(record);
     let subject = quarantine_subject(&record.address)?;
     let headers = safe_headers(&CallerMetadata::new(), record.trace_context.as_ref());
@@ -611,6 +654,27 @@ async fn publish_quarantine(
     )
     .await
     .map(|_| ())
+}
+
+fn encode_quarantine_record(record: &QuarantineRecord) -> Result<Vec<u8>, NatsError> {
+    let payload = serde_json::to_vec(record).map_err(|_| NatsError::Serialization)?;
+    if payload.len() <= MAX_QUARANTINE_RECORD_BYTES {
+        return Ok(payload);
+    }
+
+    let mut fallback = record.clone();
+    fallback
+        .payload_base64
+        .truncate(MAX_QUARANTINE_PAYLOAD_PREFIX_BASE64_BYTES);
+    fallback.payload_truncated = true;
+    let payload = serde_json::to_vec(&fallback).map_err(|_| NatsError::Serialization)?;
+    if payload.len() > MAX_QUARANTINE_RECORD_BYTES {
+        return Err(NatsError::PayloadTooLarge {
+            actual: payload.len(),
+            maximum: MAX_QUARANTINE_RECORD_BYTES,
+        });
+    }
+    Ok(payload)
 }
 
 fn quarantine_subject(address: &str) -> Result<String, NatsError> {
@@ -638,6 +702,14 @@ fn quarantine_message_id(record: &QuarantineRecord) -> String {
     id
 }
 
+fn sha256_hex(payload: &[u8]) -> String {
+    let mut output = String::with_capacity(64);
+    for byte in Sha256::digest(payload) {
+        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    output
+}
+
 async fn apply_ack(message: &jetstream::Message, kind: AckKind) -> Result<(), ConsumeError> {
     message
         .double_ack_with(kind)
@@ -649,6 +721,26 @@ async fn apply_ack(message: &jetstream::Message, kind: AckKind) -> Result<(), Co
 mod tests {
     use super::*;
 
+    fn record(payload: &[u8]) -> QuarantineRecord {
+        QuarantineRecord {
+            message_id: "message-1".to_owned(),
+            address: "fast-inbox.command.commercial-access.evaluate".to_owned(),
+            payload_base64: BASE64.encode(payload),
+            payload_size: Some(payload.len()),
+            payload_sha256: Some(sha256_hex(payload)),
+            payload_truncated: false,
+            metadata: CallerMetadata::new(),
+            trace_context: None,
+            reason: "invalid source message".to_owned(),
+            attempt: 1,
+            pending: 0,
+            source_sequence: 42,
+            consumer_sequence: 7,
+            source_stream: "FAST_INBOX_COMMANDS".to_owned(),
+            source_consumer: "fast-inbox--commercial-access--evaluate--v1".to_owned(),
+        }
+    }
+
     #[test]
     fn quarantine_subject_stays_inside_the_application_namespace() {
         assert_eq!(
@@ -656,5 +748,72 @@ mod tests {
             "fast-inbox.quarantine.command.commercial-access.evaluate"
         );
         assert!(quarantine_subject("invalid").is_err());
+    }
+
+    #[test]
+    fn quarantine_publication_retries_are_bounded() {
+        assert!(quarantine_retry_available(1, 3));
+        assert!(quarantine_retry_available(2, 3));
+        assert!(!quarantine_retry_available(3, 3));
+        assert!(!quarantine_retry_available(4, 3));
+    }
+
+    #[test]
+    fn quarantine_record_preserves_a_payload_that_fits() {
+        let original = b"small payload";
+
+        let encoded = encode_quarantine_record(&record(original)).unwrap();
+        let decoded: QuarantineRecord = serde_json::from_slice(&encoded).unwrap();
+
+        assert!(!decoded.payload_truncated());
+        assert_eq!(decoded.payload_size(), Some(original.len()));
+        assert_eq!(
+            decoded.payload_sha256(),
+            Some(sha256_hex(original).as_str())
+        );
+        assert_eq!(BASE64.decode(decoded.payload_base64()).unwrap(), original);
+    }
+
+    #[test]
+    fn oversized_quarantine_record_uses_a_bounded_payload_prefix() {
+        let original = vec![0x5a; MAX_QUARANTINE_RECORD_BYTES];
+
+        let encoded = encode_quarantine_record(&record(&original)).unwrap();
+        let decoded: QuarantineRecord = serde_json::from_slice(&encoded).unwrap();
+        let prefix = BASE64.decode(decoded.payload_base64()).unwrap();
+
+        assert!(encoded.len() <= MAX_QUARANTINE_RECORD_BYTES);
+        assert!(decoded.payload_truncated());
+        assert_eq!(decoded.payload_size(), Some(original.len()));
+        assert_eq!(
+            decoded.payload_sha256(),
+            Some(sha256_hex(&original).as_str())
+        );
+        assert!(prefix.len() <= MAX_QUARANTINE_PAYLOAD_PREFIX_BYTES);
+        assert_eq!(prefix, original[..prefix.len()]);
+    }
+
+    #[test]
+    fn existing_quarantine_records_remain_readable() {
+        let legacy = serde_json::json!({
+            "message_id": "message-1",
+            "address": "fast-inbox.command.commercial-access.evaluate",
+            "payload_base64": "cGF5bG9hZA==",
+            "metadata": {},
+            "trace_context": null,
+            "reason": "invalid source message",
+            "attempt": 1,
+            "pending": 0,
+            "source_sequence": 42,
+            "consumer_sequence": 7,
+            "source_stream": "FAST_INBOX_COMMANDS",
+            "source_consumer": "fast-inbox--commercial-access--evaluate--v1"
+        });
+
+        let record: QuarantineRecord = serde_json::from_value(legacy).unwrap();
+
+        assert_eq!(record.payload_size(), None);
+        assert_eq!(record.payload_sha256(), None);
+        assert!(!record.payload_truncated());
     }
 }
