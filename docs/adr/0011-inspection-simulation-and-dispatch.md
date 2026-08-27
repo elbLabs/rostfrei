@@ -20,15 +20,15 @@ supports explicit field omission and redaction before data leaves the runtime.
 
 Simulation returns the base stream version, command outcome, rejection or
 predicted events, and an inspected state difference. A simulated branch never
-rewrites authoritative history. Tooling must visually and technically separate
-simulation from live dispatch. Live dispatch is disabled unless deployment
+rewrites authoritative history. Tooling must technically separate simulation
+from live dispatch. Live dispatch is disabled unless deployment
 configuration, authorization, and auditing permit it.
 
 ## Consequences
 
 Developers and AI tools can explore real histories and test commands without
 mutating production data. Sensitive aggregate fields are protected at the
-server boundary rather than by UI convention. Deterministic aggregate handlers
+server boundary rather than by client convention. Deterministic aggregate handlers
 are directly simulatable; commands involving external effects require a future
 execution-journal seam and cannot be represented as safely simulated until that
 contract exists.
