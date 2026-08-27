@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     seed_demo(&store).await?;
 
     let history: Arc<dyn EventHistory> = Arc::new(store);
-    let mut builder = control_plane_builder(history)?
+    let mut builder = control_plane_builder(history)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder.register_json::<RentBicycle>()?;
     let control_plane = builder.build()?;

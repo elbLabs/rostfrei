@@ -19,8 +19,11 @@ pub fn expand(args: TokenStream, tokens: TokenStream) -> syn::Result<TokenStream
 }
 
 fn expand_trait(args: TokenStream, item: ItemTrait) -> syn::Result<TokenStream> {
-    match contract_arguments::parse(args)? {
-        contract_arguments::ContractKind::Aggregate => expand_aggregate_trait(item),
+    let arguments = contract_arguments::parse(args)?;
+    match arguments.kind {
+        contract_arguments::ContractKind::Aggregate => {
+            expand_aggregate_trait(item, arguments.instance_trait)
+        }
         contract_arguments::ContractKind::Entity => expand_entity_trait(item),
         contract_arguments::ContractKind::ValueObject => expand_value_object_trait(item),
         contract_arguments::ContractKind::DomainService => expand_domain_service_trait(item),
@@ -43,12 +46,29 @@ fn expand_value_object_trait(item: ItemTrait) -> syn::Result<TokenStream> {
     value_object_trait_assembly::assemble(&domain_path, item, &actions)
 }
 
-fn expand_aggregate_trait(item: ItemTrait) -> syn::Result<TokenStream> {
+fn expand_aggregate_trait(
+    item: ItemTrait,
+    instance_trait: Option<syn::Ident>,
+) -> syn::Result<TokenStream> {
     let mut item = public_trait_input::validate(item, "aggregate")?;
     let mut actions = trait_attributes::extract(&mut item.items)?;
-    aggregate_trait_validation::validate(&item.items, &mut actions)?;
+    if instance_trait.is_some() {
+        aggregate_trait_validation::validate_instance(&item.items, &mut actions)?;
+    } else {
+        aggregate_trait_validation::validate(&item.items, &mut actions)?;
+    }
     let domain_path = crate::helper::domain_api_path::resolve()?;
-    aggregate_trait_assembly::assemble(&domain_path, item, &actions)
+    let runtime_path = instance_trait
+        .as_ref()
+        .map(|_| crate::helper::runtime_api_path::resolve())
+        .transpose()?;
+    aggregate_trait_assembly::assemble(
+        &domain_path,
+        runtime_path.as_ref(),
+        item,
+        &actions,
+        instance_trait.as_ref(),
+    )
 }
 
 fn expand_domain_service_trait(item: ItemTrait) -> syn::Result<TokenStream> {

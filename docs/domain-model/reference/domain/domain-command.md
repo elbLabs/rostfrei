@@ -7,7 +7,8 @@ kind: reference
 
 ## Definition
 
-A **Domain Command** is the structured request accepted by an Action.
+A **Domain Command** is a structured application request routed to an Aggregate
+or Domain Service command handler.
 
 ```rust
 #[derive(DomainCommand)]
@@ -17,6 +18,7 @@ A **Domain Command** is the structured request accepted by an Action.
     owner = RentalFleetAggregate,
     rejection = BicycleUnavailable,
     json,
+    runtime,
 )]
 struct RentBicycle {
     #[domain(identity)]
@@ -43,6 +45,11 @@ objects with no unknown fields, tuple payloads are exact-length arrays, and unit
 commands accept `null` or an empty object. Applications can instead register an
 explicit command wire codec.
 
+The opt-in `runtime` flag generates the command's runtime definition from its
+modeled owner, ID, and schema version. Use it for commands that will be bound to
+an executable Aggregate. Metadata-only commands omit it and do not require a
+runtime Aggregate or command handler.
+
 Commands must be inventoried explicitly:
 
 ```rust
@@ -53,12 +60,11 @@ domain_model! {
 ```
 
 The compiled model projects these descriptors in top-level `domainCommands`.
-An action input contains only `{ "kind": "domainCommand", "id": ... }`; fields
-remain on the command inventory item. The link is inferred from the Rust input
-type. There is no action command attribute.
+Commands are not Action inputs. A command handler translates command fields into
+one or more scalar, Value Object, or aggregate-owned Domain Identity Action
+inputs and coordinates those Actions.
+This keeps message metadata, idempotency, routing, and wire concerns outside the
+domain behavior contract.
 
-The command owner must exactly equal the action owner. Scalars and Value
-Objects remain valid action inputs for compatibility, while commands cannot be
-used by Entity or Value Object actions. Explicit model construction rejects a
-duplicate `DomainCommandId`; it does not require commands to be referenced or
-limit a command to one action.
+Explicit model construction rejects a duplicate `DomainCommandId`; it does not
+require a command to map one-to-one to an Action.

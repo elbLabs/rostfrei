@@ -5,13 +5,13 @@ use std::sync::{
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateInstance, AggregateType, AppendOutcome, CommandHandler,
-    CommittedDomainEvent, ContentFingerprint, DomainEventDispatchOutcome, DomainEventHandler,
-    DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError,
-    EnvelopeError, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind, EventHistory,
-    EventStore, EventStoreError, EventStoreErrorKind, ExecutionError, ExecutionMetadata,
-    ExecutionOutcome, Executor, ExpectedVersion, InMemoryEventStore, NewEvent, OperationId,
-    RecordedEvent, SimulationDecision, StreamId, StreamVersion,
+    Aggregate, AggregateId, AggregateInstance, AggregateType, AppendOutcome, CommandExecutionError,
+    CommandHandler, CommandOutcome, CommandReceipt, CommandResult, CommittedDomainEvent,
+    ContentFingerprint, DomainEventDispatchOutcome, DomainEventHandler, DomainEventHandlerError,
+    DomainEventHandlerErrorKind, DomainEventRegistrationError, EnvelopeError, EventBatch,
+    EventCodec, EventCodecError, EventCodecErrorKind, EventHistory, EventStore, EventStoreError,
+    EventStoreErrorKind, ExecutionMetadata, Executor, ExpectedVersion, InMemoryEventStore,
+    NewEvent, OperationId, RecordedEvent, SimulationDecision, StreamId, StreamVersion,
 };
 use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_messaging_core::{CausationId, CorrelationId};
@@ -656,7 +656,10 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
         .execute::<Account, _>(import_metadata, &import)
         .await
         .expect("honest NoStream import should succeed");
-    assert!(matches!(imported, ExecutionOutcome::Appended(_)));
+    let CommandOutcome::Accepted(imported) = imported else {
+        panic!("honest NoStream import should be accepted");
+    };
+    assert!(matches!(imported, CommandReceipt::Appended(_)));
     let imported_payload: ImportedPayload =
         serde_json::from_slice(imported.events()[0].payload()).expect("valid import payload");
     assert_eq!(imported_payload.source_system, "legacy-ledger");
@@ -674,6 +677,9 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
         .execute::<Account, _>(credit_metadata.clone(), &credit)
         .await
         .expect("command should observe replayed imported balance");
+    let CommandOutcome::Accepted(credited) = credited else {
+        panic!("credit should be accepted");
+    };
     assert_eq!(credited.events().len(), 2);
     let observed = AccountCodec
         .decode(&credited.events()[1])
@@ -684,7 +690,10 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
         .execute::<Account, _>(credit_metadata.clone(), &credit)
         .await
         .expect("same operation should be an exact replay");
-    assert!(matches!(retried, ExecutionOutcome::ExactReplay(_)));
+    let CommandOutcome::Accepted(retried) = retried else {
+        panic!("exact retry should remain accepted");
+    };
+    assert!(matches!(retried, CommandReceipt::ExactReplay(_)));
     assert_eq!(retried.events(), credited.events());
 
     let changed_causation = metadata(&stream, "credit-operation", "credit-five-and-observe")
@@ -700,7 +709,7 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
         .expect_err("metadata is part of exact operation identity");
     assert!(matches!(
         metadata_conflict,
-        ExecutionError::Store(ref error)
+        CommandExecutionError::Store(ref error)
             if error.kind() == EventStoreErrorKind::IdentityConflict
     ));
 
@@ -715,10 +724,10 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
             &AccountCommand::RecordThenReject,
         )
         .await
-        .expect_err("domain rejection should be returned");
+        .expect("domain rejection is a completed command outcome");
     assert!(matches!(
         rejection,
-        ExecutionError::Rejected(AccountRejection::Deliberate)
+        CommandOutcome::Rejected(AccountRejection::Deliberate)
     ));
     assert_eq!(
         executor
@@ -746,6 +755,9 @@ async fn executor_uses_derived_json_events_without_codec_configuration() {
         )
         .await
         .expect("default JSON event encoding should succeed");
+    let CommandOutcome::Accepted(first) = first else {
+        panic!("deposit should be accepted");
+    };
     assert_eq!(first.events()[0].event_type(), "money-deposited");
     assert_eq!(first.events()[0].schema_version(), 2);
     assert_eq!(first.events()[0].payload(), br#"{"amount":7}"#);
@@ -781,7 +793,34 @@ async fn executor_uses_derived_json_events_without_codec_configuration() {
         )
         .await
         .expect("derived JSON events should replay without codec configuration");
+    let CommandOutcome::Accepted(second) = second else {
+        panic!("deposit should be accepted");
+    };
     assert_eq!(second.events()[0].payload(), br#"{"amount":3}"#);
+}
+
+#[tokio::test]
+async fn executor_returns_an_accepted_no_events_receipt_without_appending() {
+    let stream = stream("no-op-execution");
+    let executor = Executor::with_codec(InMemoryEventStore::new(), AccountCodec);
+
+    let result: CommandResult<AccountRejection> = executor
+        .execute::<Account, _>(
+            metadata(&stream, "no-op-execution", "no-op"),
+            &AccountCommand::NoOp,
+        )
+        .await;
+
+    assert_eq!(
+        result.expect("no-op execution should complete"),
+        CommandOutcome::Accepted(CommandReceipt::NoEvents)
+    );
+    assert!(executor
+        .store()
+        .load(&stream)
+        .await
+        .expect("load no-op history")
+        .is_empty());
 }
 
 #[tokio::test]
@@ -789,7 +828,7 @@ async fn simulation_replays_history_and_returns_encoded_predictions_without_appe
     let stream = stream("simulated-account");
     let store = InMemoryEventStore::new();
     let executor = Executor::with_codec(store.clone(), AccountCodec);
-    executor
+    let seed = executor
         .execute::<Account, _>(
             metadata(&stream, "simulation-seed", "import-ten"),
             &AccountCommand::Import {
@@ -799,6 +838,10 @@ async fn simulation_replays_history_and_returns_encoded_predictions_without_appe
         )
         .await
         .expect("simulation history seed should append");
+    assert!(matches!(
+        seed,
+        CommandOutcome::Accepted(CommandReceipt::Appended(_))
+    ));
     let history_before = store.load(&stream).await.expect("load seeded history");
     let simulation_metadata = metadata(
         &stream,
@@ -905,7 +948,7 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
         .expect_err("unknown event types must fail replay");
     assert!(matches!(
         error,
-        ExecutionError::Codec(ref codec_error)
+        CommandExecutionError::Codec(ref codec_error)
             if codec_error.kind() == EventCodecErrorKind::UnknownEventType
     ));
 
@@ -929,7 +972,7 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
         .expect_err("malformed payloads must fail replay");
     assert!(matches!(
         error,
-        ExecutionError::Codec(ref codec_error)
+        CommandExecutionError::Codec(ref codec_error)
             if codec_error.kind() == EventCodecErrorKind::MalformedPayload
     ));
 
@@ -954,7 +997,7 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
         .expect_err("unknown event schema versions must fail replay");
     assert!(matches!(
         error,
-        ExecutionError::Codec(ref codec_error)
+        CommandExecutionError::Codec(ref codec_error)
             if codec_error.kind() == EventCodecErrorKind::UnsupportedSchemaVersion
     ));
 }
@@ -974,7 +1017,10 @@ async fn executor_retries_conflicts_with_a_hard_bound() {
         )
         .await
         .expect("executor should retry one optimistic conflict");
-    assert!(matches!(outcome, ExecutionOutcome::Appended(_)));
+    assert!(matches!(
+        outcome,
+        CommandOutcome::Accepted(CommandReceipt::Appended(_))
+    ));
     assert_eq!(
         successful.store().append_attempts.load(Ordering::Relaxed),
         2
@@ -995,7 +1041,7 @@ async fn executor_retries_conflicts_with_a_hard_bound() {
         .expect_err("executor must stop at its configured retry bound");
     assert!(matches!(
         error,
-        ExecutionError::Store(ref store_error)
+        CommandExecutionError::Store(ref store_error)
             if store_error.kind() == EventStoreErrorKind::Conflict
     ));
     assert_eq!(exhausted.store().append_attempts.load(Ordering::Relaxed), 3);

@@ -53,17 +53,17 @@ Domain Service actions are declared in an unrestricted public contract trait:
 #[domain_actions(domain_service)]
 pub trait TransferActions {
     #[action(id = "transfer", label = "Transfer funds")]
-    fn transfer(input: TransferFunds)
+    fn transfer(input: TransferInput)
         -> Result<Option<Vec<FundsTransferred>>, TransferDenied>;
 }
 ```
 
-Every method is an associated function with no receiver and zero or one business
-parameter named `input`. A command input must be owned by that exact Domain
-Service, and a returned error must be owned by that exact service. Successful
-outputs may include Domain Events owned by Aggregates in the service's Context,
-including through supported `Option` and `Vec` wrappers; events from another
-Context are rejected.
+Every method is an associated function with no receiver and zero or one scalar
+or Value Object business parameter named `input`. Commands are handled outside
+the Action and mapped into that domain input. A returned error must be owned by
+that exact service. Successful outputs may include Domain Events owned by
+Aggregates in the service's Context, including through supported `Option` and
+`Vec` wrappers; events from another Context are rejected.
 
 Attach contracts through `actions = [TraitPath, ...]` on the Domain Service. The
 service must implement each attached trait; implementing a trait without

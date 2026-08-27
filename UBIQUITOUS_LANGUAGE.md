@@ -33,6 +33,8 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | **Stream version** | The one-based position of a domain event in an aggregate stream, with version zero representing no stream. | Revision, broker sequence |
 | **Commit** | The atomic, non-empty ordered set of domain events produced by one accepted operation. | Message batch, transaction record |
 | **Operation** | One identified request to execute a command against an aggregate stream, including the stable identity used for exact retry. | Delivery attempt, consumer attempt |
+| **Command outcome** | The completed business result of command execution: accepted with a command receipt, or rejected with a modeled reason. | Execution status, handler result |
+| **Command receipt** | The result detail for an accepted command: newly appended events, an exact replay, or no events. A no-events receipt is not durable in this release. | Publish receipt, broker acknowledgement |
 | **Replay** | Reconstruction of aggregate state by applying its domain events in stream-version order. | Load row, restore snapshot |
 | **EventStore** | The port that loads an aggregate stream and atomically appends a commit at an expected version. | Repository, KV store, message publisher |
 
@@ -93,6 +95,9 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
   retry.
 - **Rejection** is not an infrastructure failure. A rejection is an expected
   business outcome; storage, codec, and broker failures remain errors.
+- **Command receipt** and **publish receipt** are not synonyms. A command receipt
+  describes accepted aggregate execution; a publish receipt describes broker
+  acknowledgement of an application message.
 - **Aggregate state** is reconstructed state, not a NATS KV value or the
   authoritative persistence record.
 - **Application name** is not a JetStream stream name. rostfrei derives stream

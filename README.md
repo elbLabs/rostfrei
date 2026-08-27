@@ -1,6 +1,6 @@
 # rostfrei
 
-<img width="160" height="160" alt="raccoon_smith" src="https://github.com/user-attachments/assets/498043fe-2f24-4ba8-b61e-04c7bb2fbb13" /> 
+<img width="160" height="160" alt="raccoon_smith" src="https://github.com/user-attachments/assets/498043fe-2f24-4ba8-b61e-04c7bb2fbb13" />
 
 rostfrei is a Rust domain-modeling, event-sourcing, and messaging platform. It
 keeps domain aggregates independent from persistence, serialization, and brokers

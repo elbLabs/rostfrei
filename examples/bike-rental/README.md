@@ -5,9 +5,15 @@ compiled domain metadata without depending on a production application:
 
 - `RentalFleetAggregate` owns the fleet and its bicycles;
 - `RentBicycle` is a public aggregate command;
-- `AssessRentalEligibility` is a Rust decision;
+- `AssessRentalEligibility` returns an allowed outcome or a typed denial reason;
 - `BicycleRented` and `BicycleUnavailable` describe action outcomes; and
 - `BicycleAvailabilityQueries` exposes a read-only availability query.
+
+The public command maps its payload to the `BicycleId` domain identity. The
+modeled Action returns `BicycleRented`; a generated aggregate-instance adapter
+raises and applies that event only when the Action succeeds. Neither the Action
+nor the Decision receives the command message, and application code does not
+call `AggregateInstance::raise`.
 
 Print the compiled domain model:
 

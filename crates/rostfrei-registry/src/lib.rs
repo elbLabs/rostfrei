@@ -1,11 +1,13 @@
 use std::any::type_name;
 use std::collections::{BTreeMap, BTreeSet};
 
-use rostfrei_core::{Aggregate, CommandHandler};
+use rostfrei_core::Aggregate;
 use thiserror::Error;
 
+const DIRECT_COMMAND_REGISTRATION: &str = "<direct command registration>";
+
 pub trait CommandDefinition: Sized + Send + Sync + 'static {
-    type Aggregate: Aggregate + CommandHandler<Self>;
+    type Aggregate: Aggregate;
 
     const COMMAND_NAME: &'static str;
     const SCHEMA_VERSION: u32;
@@ -72,19 +74,19 @@ pub enum RegistrationError {
     #[error("domain module `{module_name}` is already registered")]
     DuplicateModuleName { module_name: &'static str },
     #[error(
-        "domain module `{module_name}` contains a command with an empty name ({rust_command_type})"
+        "registration `{module_name}` contains a command with an empty name ({rust_command_type})"
     )]
     EmptyCommandName {
         module_name: &'static str,
         rust_command_type: &'static str,
     },
-    #[error("command `{command_name}` in domain module `{module_name}` has schema version zero")]
+    #[error("command `{command_name}` in registration `{module_name}` has schema version zero")]
     ZeroSchemaVersion {
         module_name: &'static str,
         command_name: &'static str,
     },
     #[error(
-        "command `{command_name}` version {schema_version} in domain module `{module_name}` has an empty aggregate type"
+        "command `{command_name}` version {schema_version} in registration `{module_name}` has an empty aggregate type"
     )]
     EmptyAggregateType {
         module_name: &'static str,
@@ -100,7 +102,7 @@ pub enum RegistrationError {
         schema_version: u32,
     },
     #[error(
-        "command `{command_name}` version {schema_version} from domain module `{attempted_module_name}` is already registered by domain module `{existing_module_name}`"
+        "command `{command_name}` version {schema_version} from registration `{attempted_module_name}` is already registered by registration `{existing_module_name}`"
     )]
     DuplicateCommandIdentityAcrossModules {
         command_name: &'static str,
@@ -133,27 +135,20 @@ impl DomainRegistry {
         self.validate(&descriptor)?;
 
         for command in &descriptor.commands {
-            self.aggregates.insert(command.aggregate_type.clone());
-            self.commands
-                .entry(command.command_name)
-                .or_default()
-                .entry(command.schema_version)
-                .or_default()
-                .push(RegisteredCommand {
-                    module_name: descriptor.module_name,
-                    descriptor: command.clone(),
-                });
-            self.commands
-                .get_mut(command.command_name)
-                .and_then(|versions| versions.get_mut(&command.schema_version))
-                .expect("registered command identity exists")
-                .sort_by(|left, right| {
-                    left.descriptor
-                        .aggregate_type
-                        .cmp(&right.descriptor.aggregate_type)
-                });
+            self.insert_command(descriptor.module_name, command.clone());
         }
         self.modules.insert(descriptor.module_name, descriptor);
+        Ok(())
+    }
+
+    pub fn register_command<C: CommandDefinition>(&mut self) -> Result<(), RegistrationError> {
+        let command = C::descriptor();
+        let registration = ModuleDescriptor {
+            module_name: DIRECT_COMMAND_REGISTRATION,
+            commands: vec![command.clone()],
+        };
+        self.validate_commands(&registration)?;
+        self.insert_command(DIRECT_COMMAND_REGISTRATION, command);
         Ok(())
     }
 
@@ -212,6 +207,10 @@ impl DomainRegistry {
             });
         }
 
+        self.validate_commands(module)
+    }
+
+    fn validate_commands(&self, module: &ModuleDescriptor) -> Result<(), RegistrationError> {
         let mut identities = BTreeSet::new();
         for command in &module.commands {
             if command.command_name.trim().is_empty() {
@@ -263,5 +262,24 @@ impl DomainRegistry {
                     registered.descriptor.aggregate_type == command.aggregate_type
                 })
             })
+    }
+
+    fn insert_command(&mut self, module_name: &'static str, command: CommandDescriptor) {
+        self.aggregates.insert(command.aggregate_type.clone());
+        let registered = self
+            .commands
+            .entry(command.command_name)
+            .or_default()
+            .entry(command.schema_version)
+            .or_default();
+        registered.push(RegisteredCommand {
+            module_name,
+            descriptor: command,
+        });
+        registered.sort_by(|left, right| {
+            left.descriptor
+                .aggregate_type
+                .cmp(&right.descriptor.aggregate_type)
+        });
     }
 }

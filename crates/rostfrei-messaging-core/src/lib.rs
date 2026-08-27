@@ -37,7 +37,7 @@ pub use publish::{
 };
 pub use query::{
     ApplicationErrorCode, QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryOptions,
-    QueryOutcome, QueryRequest, QueryRequester, QueryResponse, QueryServer,
+    QueryOutcome, QueryRequest, QueryRequester, QueryResponse, QueryResult, QueryServer,
     MAX_APPLICATION_ERROR_CODE_BYTES, MAX_QUERY_ERROR_MESSAGE_BYTES, MAX_QUERY_TIMEOUT,
 };
 pub use scope::{ApplicationName, BoundedContext, BoundedContextName, MAX_SCOPE_NAME_BYTES};

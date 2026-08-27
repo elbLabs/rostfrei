@@ -1,10 +1,10 @@
-use crate::{DomainCommandId, ScalarType, ValueObjectId};
+use crate::{DomainIdentityId, ScalarType, ValueObjectId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ActionInputDescriptor {
     Scalar(ScalarType),
     ValueObject(ValueObjectId),
-    DomainCommand(DomainCommandId),
+    DomainIdentity(DomainIdentityId),
 }
 
 pub trait ActionInputType<Owner>: 'static {

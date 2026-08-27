@@ -434,6 +434,8 @@ where
     }
 }
 
+pub type QueryResult<T> = Result<QueryResponse<T>, QueryRequestError>;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QueryOptions {
     timeout: Duration,
@@ -482,7 +484,7 @@ where
         address: &QueryAddress,
         request: QueryRequest<Request>,
         options: QueryOptions,
-    ) -> Result<QueryResponse<Response>, QueryRequestError>;
+    ) -> QueryResult<Response>;
 }
 
 #[async_trait]

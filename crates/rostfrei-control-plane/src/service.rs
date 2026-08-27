@@ -119,7 +119,11 @@ pub struct ControlPlaneBuilder {
 }
 
 impl ControlPlaneBuilder {
-    pub fn new(history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
+    pub fn new(history: Arc<dyn EventHistory>) -> Self {
+        Self::with_registry(history, DomainRegistry::new())
+    }
+
+    pub fn with_registry(history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
         Self {
             history,
             bindings: RuntimeBindings::new(registry),
@@ -159,6 +163,7 @@ impl ControlPlaneBuilder {
     ) -> Result<&mut Self, RuntimeRegistrationError>
     where
         Command: CommandDefinition,
+        Command::Aggregate: rostfrei_core::CommandHandler<Command>,
         <Command::Aggregate as rostfrei_core::Aggregate>::State: Send,
         <Command::Aggregate as rostfrei_core::Aggregate>::Event: rostfrei_core::Event + Send,
         Wire: CommandWireCodec<Command> + 'static,
@@ -170,6 +175,7 @@ impl ControlPlaneBuilder {
     pub fn register_json<Command>(&mut self) -> Result<&mut Self, RuntimeRegistrationError>
     where
         Command: CommandDefinition + domain::JsonCommandPayload,
+        Command::Aggregate: rostfrei_core::CommandHandler<Command>,
         <Command::Aggregate as rostfrei_core::Aggregate>::State: Send,
         <Command::Aggregate as rostfrei_core::Aggregate>::Event: rostfrei_core::Event + Send,
         <Command::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection:
@@ -185,6 +191,7 @@ impl ControlPlaneBuilder {
     ) -> Result<&mut Self, RuntimeRegistrationError>
     where
         Command: CommandDefinition,
+        Command::Aggregate: rostfrei_core::CommandHandler<Command>,
         <Command::Aggregate as rostfrei_core::Aggregate>::State: Send,
         <Command::Aggregate as rostfrei_core::Aggregate>::Event: Send,
         Codec: rostfrei_core::EventCodec<Command::Aggregate> + Clone + Send + Sync + 'static,

@@ -3,9 +3,9 @@
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
-    Aggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandType, DomainError,
-    DomainErrorType, DomainEvent, DomainEventType, DomainIdentity, Entity, domain_actions,
-    domain_model,
+    Aggregate, AggregateType, BoundedContext, DomainCommand, DomainError, DomainErrorType,
+    DomainEvent, DomainEventType, DomainIdentity, Entity, ValueObject, ValueObjectType,
+    domain_actions, domain_model,
 };
 
 #[derive(BoundedContext)]
@@ -59,6 +59,10 @@ pub struct Account;
 #[domain(id = "rename-account", label = "Rename account", owner = Account)]
 pub struct RenameAccount;
 
+#[derive(ValueObject)]
+#[domain(id = "rename-account-input", label = "Rename account input", owner = Account)]
+pub struct RenameAccountInput;
+
 #[derive(DomainEvent, Debug, Eq, PartialEq)]
 #[domain(id = "account-changed", label = "Account changed")]
 pub struct AccountChanged;
@@ -84,7 +88,7 @@ mod contracts {
         #[action(id = "rename", label = "Rename account")]
         fn rename(
             root: &mut super::AccountRootAlias,
-            input: super::RenameAccount,
+            input: super::RenameAccountInput,
         ) -> Result<super::AccountChanged, super::AccountDenied>;
     }
 
@@ -112,7 +116,7 @@ impl contracts::AccountLifecycle for Account {
 
     fn rename(
         root: &mut AccountRootAlias,
-        _input: RenameAccount,
+        _input: RenameAccountInput,
     ) -> Result<AccountChanged, AccountDenied> {
         root.name = "Renamed".to_owned();
         root.revision += 1;
@@ -308,7 +312,7 @@ fn public_aggregate_contracts_are_invocable_with_concrete_and_aliased_roots() {
         AccountChanged
     );
     assert_eq!(
-        <Account as contracts::AccountLifecycle>::rename(&mut root, RenameAccount),
+        <Account as contracts::AccountLifecycle>::rename(&mut root, RenameAccountInput),
         Ok(AccountChanged)
     );
     <Account as contracts::AccountMaintenance>::freeze(&mut root);
@@ -349,8 +353,8 @@ fn aggregate_action_contracts_preserve_attachment_and_method_order_and_descripto
     assert_eq!(contracts[0][0].error, None);
     assert_eq!(
         contracts[0][1].input,
-        Some(ActionInputDescriptor::DomainCommand(
-            RenameAccount::DESCRIPTOR.id
+        Some(ActionInputDescriptor::ValueObject(
+            RenameAccountInput::DESCRIPTOR.id
         ))
     );
     assert_eq!(
@@ -380,7 +384,7 @@ fn model_projects_attached_then_extension_actions_and_omits_unlisted_contracts()
         aggregates: [Account, OmittedActionsAggregate, EmptyActionsAggregate],
         entities: [AccountRoot],
         identities: [AccountId],
-        value_objects: [],
+        value_objects: [RenameAccountInput],
         services: [],
         commands: [RenameAccount],
         errors: [AccountDenied],

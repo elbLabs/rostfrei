@@ -8,8 +8,8 @@ use super::{
     action_reference_validation::{self, ActionReferenceInventory},
     field_projection,
     id_projection::{
-        action as action_id, domain_command as domain_command_id, domain_error as domain_error_id,
-        domain_event as domain_event_id, value_object as value_object_id,
+        action as action_id, domain_error as domain_error_id, domain_event as domain_event_id,
+        domain_identity as domain_identity_id, value_object as value_object_id,
     },
 };
 
@@ -147,10 +147,9 @@ fn action_input(descriptor: ActionInputDescriptor) -> Value {
         ActionInputDescriptor::ValueObject(id) => {
             json!({ "kind": "valueObject", "id": value_object_id(id) })
         }
-        ActionInputDescriptor::DomainCommand(id) => json!({
-            "kind": "domainCommand",
-            "id": domain_command_id(id),
-        }),
+        ActionInputDescriptor::DomainIdentity(id) => {
+            json!({ "kind": "domainIdentity", "id": domain_identity_id(id) })
+        }
     }
 }
 

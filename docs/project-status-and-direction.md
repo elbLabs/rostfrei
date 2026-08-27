@@ -41,6 +41,10 @@ deterministic transitions. Recording applies immediately to live state. The
 executor owns load, replay, command handling, event encoding, append, exact
 retry detection, and bounded conflict retry. Aggregate state does not depend on
 Serde, NATS, clocks, or storage handles.
+Command execution returns an accepted receipt or a modeled rejection as its
+business outcome; only EventStore and codec failures occupy the execution error
+channel. Accepted receipts distinguish appended events, exact replay, and
+accepted no-event decisions.
 
 The domain-model layer is now part of rostfrei. It compiles annotated Rust
 types into structured metadata for bounded contexts, aggregates, entities,
@@ -55,13 +59,13 @@ doc-hidden aggregate event representation, concrete event conversions,
 root `Apply` dispatch, and default JSON codec behavior. `Executor::new(store)`
 needs no codec. Unknown event types, unsupported versions, and malformed JSON
 fail replay closed; custom `EventCodec` implementations remain explicit
-overrides. The runtime bridge's `domain_module!` macro derives command ownership,
-the module namespace, local command name, default schema version, and structural
-metadata from `DomainCommandType`, preserving the rich command descriptor in
-`DomainRegistry`. Runtime command identity is aggregate type, local command name,
-and schema version, so different aggregates may use the same local name. An
-explicit registration form and standalone `Command` and `Module` derives remain
-available for custom wire names and direct kernel users.
+overrides. `DomainCommand` derives runtime command ownership, local command name,
+schema version, and structural metadata. Registering an executable command
+binding inserts that descriptor into `DomainRegistry`; `domain_module!` is an
+optional grouping mechanism rather than a prerequisite. Runtime command identity
+is aggregate type, local command name, and schema version, so different
+aggregates may use the same local name. Standalone `Command` and `Module` derives
+remain available for direct kernel users.
 
 The first headless control-plane slice provides explicitly registered command
 deserialization and erased simulation over normal typed aggregate handlers. It
@@ -89,6 +93,9 @@ deduplication window.
 Messaging supports typed commands, integration events, and queries; bounded
 wire envelopes; PubAck-confirmed publication; durable pull consumers; delayed
 retry; bounded delivery attempts; quarantine; and Core NATS request/reply.
+Query requesters expose `QueryResult<T>`, keeping transport and protocol failures
+outside `QueryResponse<T>` while application query errors remain response
+outcomes.
 Application-first addresses and application-derived stream topology make one
 validated application name the normal configuration boundary. Bounded contexts
 derive authoritative domain-event stream names, subjects, and persisted scope
