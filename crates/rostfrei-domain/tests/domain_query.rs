@@ -39,6 +39,7 @@ impl CatalogAggregate {
     }
 
     #[query(id = "contains", label = "Contains")]
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn contains(root: &CatalogRoot, input: &u64) -> bool {
         root.count as u64 == *input
     }

@@ -22,7 +22,7 @@ pub fn validate(input: &DeriveInput) -> Result<ValidatedInput<'_>> {
     }
 }
 
-pub fn normalize(input: ValidatedInput<'_>) -> Result<Shape> {
+pub fn normalize(input: &ValidatedInput<'_>) -> Result<Shape> {
     match input {
         ValidatedInput::Struct(fields) => Ok(Shape::Struct {
             fields: crate::field::extract(fields)?,

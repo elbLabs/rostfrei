@@ -26,8 +26,8 @@ impl ActionReferenceInventory {
     }
 }
 
-pub(super) fn validate(
-    descriptors: impl IntoIterator<Item = ActionDescriptor>,
+pub(super) fn validate<'a>(
+    descriptors: impl IntoIterator<Item = &'a ActionDescriptor>,
     inventory: &ActionReferenceInventory,
 ) {
     for descriptor in descriptors {
@@ -35,7 +35,7 @@ pub(super) fn validate(
     }
 }
 
-fn validate_references(descriptor: ActionDescriptor, inventory: &ActionReferenceInventory) {
+fn validate_references(descriptor: &ActionDescriptor, inventory: &ActionReferenceInventory) {
     if let Some(input) = descriptor.input {
         validate_input_reference(descriptor.id, input, inventory);
     }

@@ -159,6 +159,7 @@ fn describes_mixed_tagged_enum_exactly() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn projects_tagged_enum_variant_shapes_exactly() {
     let model = domain_model! {
         contexts: [TaggedValues],
