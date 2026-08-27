@@ -362,11 +362,21 @@ async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() 
         .context
         .durable_name("consume", 1)
         .expect("durable name");
-    let config = ConsumerConfig::new(name, durable, address.clone(), Duration::from_secs(5), 4, 3)
-        .expect("consumer config");
-    provision_durable_consumer(fixture.connection.jetstream(), &fixture.topology, &config)
-        .await
-        .expect("provision durable consumer");
+    let config = ConsumerConfig::new(
+        name,
+        durable,
+        address.clone(),
+        Duration::from_secs(10),
+        Duration::from_secs(5),
+        4,
+        3,
+    )
+    .expect("consumer config");
+    let provisioned =
+        provision_durable_consumer(fixture.connection.jetstream(), &fixture.topology, &config)
+            .await
+            .expect("provision durable consumer");
+    assert_eq!(provisioned.config.ack_wait, Duration::from_secs(10));
     provision_durable_consumer(fixture.connection.jetstream(), &fixture.topology, &config)
         .await
         .expect("repeated durable provisioning must be idempotent");

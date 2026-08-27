@@ -367,7 +367,7 @@ where
         description: Some(config.name().as_str().to_owned()),
         deliver_policy: DeliverPolicy::All,
         ack_policy: AckPolicy::Explicit,
-        ack_wait: config.processing_timeout(),
+        ack_wait: config.ack_wait(),
         // The adapter enforces the bound so it can quarantine before terminating delivery.
         max_deliver: -1,
         filter_subject: config.address().as_str().to_owned(),
@@ -400,6 +400,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use rostfrei_messaging_core::{CommandAddress, ConsumerName, DurableName};
+
     use super::*;
 
     #[test]
@@ -468,6 +470,24 @@ mod tests {
             .streams()
             .iter()
             .all(|stream| stream.max_bytes == 64 * 1024 * 1024));
+    }
+
+    #[test]
+    fn durable_consumer_uses_the_configured_ack_wait() {
+        let config = ConsumerConfig::new(
+            ConsumerName::new("acme", "orders", "fulfillment", 1).unwrap(),
+            DurableName::new("acme", "orders", "fulfillment", 1).unwrap(),
+            CommandAddress::new("acme", "orders", "place-order").unwrap(),
+            Duration::from_secs(45),
+            Duration::from_secs(30),
+            1,
+            5,
+        )
+        .unwrap();
+
+        let durable = durable_consumer_config(&config).unwrap();
+
+        assert_eq!(durable.ack_wait, Duration::from_secs(45));
     }
 
     #[test]

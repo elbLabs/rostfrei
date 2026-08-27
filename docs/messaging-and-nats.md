@@ -34,7 +34,7 @@ The bounded-context event store derives:
 
 ```text
 FAST_INBOX__COMMERCIAL_ACCESS_DOMAIN_EVENTS
-fast-inbox.domain.commercial-access.>
+fast-inbox.domain.commercial-access.aggregate.*
 ```
 
 Individual aggregate histories use opaque subjects below that prefix. Stored
@@ -66,6 +66,20 @@ consumers reject addresses or durable names belonging to another application.
 Command consumers and private domain-event consumers also remain in their
 configured bounded context; integration-event consumers may cross contexts
 inside the same application.
+
+## Consumer deadlines
+
+Durable consumers configure separate deadlines for application processing and
+broker acknowledgement. `processing_timeout` bounds one handler invocation;
+`ack_wait` controls when JetStream may redeliver an unacknowledged message and
+must be strictly greater than `processing_timeout`.
+
+The NATS adapter sends progress acknowledgements while a handler is running and
+once more before applying its final disposition. Applications should still
+leave meaningful headroom for scheduling and acknowledgement latency, for
+example a 30-second processing timeout with a 45-second ACK wait. Existing
+durables must be reprovisioned with the new ACK wait before upgraded consumers
+start, because runtime startup rejects mismatched durable policy.
 
 ## Overrides
 
