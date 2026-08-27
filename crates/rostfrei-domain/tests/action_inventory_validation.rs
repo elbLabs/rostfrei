@@ -10,8 +10,8 @@ use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainCommand, DomainCommandType,
     DomainError, DomainErrorId, DomainErrorOwnerId, DomainErrorType, DomainEvent, DomainEventId,
-    DomainIdentity, DomainService, DomainServiceId, Entity, EntityId, ValueObject, ValueObjectId,
-    ValueObjectOwnerId, ValueObjectType, domain_actions,
+    DomainIdentity, DomainIdentityId, DomainService, DomainServiceId, Entity, EntityId,
+    ValueObject, ValueObjectId, ValueObjectOwnerId, ValueObjectType, domain_actions,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("action-inventory");
@@ -35,10 +35,7 @@ const OUTPUT_VALUE_ID: ValueObjectId = ValueObjectId {
     owner: ValueObjectOwnerId::Entity(ENTITY_ID),
     local: "output-value",
 };
-const AGGREGATE_ACTION_INPUT_ID: ValueObjectId = ValueObjectId {
-    owner: ValueObjectOwnerId::Aggregate(AGGREGATE_ID),
-    local: "aggregate-action-input",
-};
+const INVENTORY_IDENTITY_ID: DomainIdentityId = DomainIdentityId { owner: ENTITY_ID };
 const SERVICE_ID: DomainServiceId = DomainServiceId {
     context: CONTEXT_ID,
     local: "inventory-service",
@@ -105,7 +102,7 @@ pub trait AggregateActions {
     #[action(id = "aggregate-action", label = "Aggregate action")]
     fn execute(
         root: &mut InventoryEntity,
-        input: AggregateActionInput,
+        input: InventoryEntityIdentity,
     ) -> Result<InventoryEvent, AggregateError>;
 }
 
@@ -141,7 +138,7 @@ pub struct InventoryEntity {
 impl AggregateActions for InventoryAggregate {
     fn execute(
         _root: &mut InventoryEntity,
-        _input: AggregateActionInput,
+        _input: InventoryEntityIdentity,
     ) -> Result<InventoryEvent, AggregateError> {
         Ok(InventoryEvent)
     }
@@ -160,14 +157,6 @@ impl EntityActions for InventoryEntity {
     owner = InventoryAggregate
 )]
 pub struct AggregateCommand;
-
-#[derive(ValueObject)]
-#[domain(
-    id = "aggregate-action-input",
-    label = "Aggregate action input",
-    owner = InventoryAggregate
-)]
-pub struct AggregateActionInput;
 
 #[derive(DomainEvent)]
 #[domain(id = "inventory-event", label = "Inventory event")]
@@ -466,17 +455,22 @@ fn accepts_references_added_after_all_owner_actions_are_registered() {
     builder.add_domain_error(ValueError::DESCRIPTOR);
     builder.add_value_object(InputValue::DESCRIPTOR);
     builder.add_value_object(OutputValue::DESCRIPTOR);
-    builder.add_value_object(AggregateActionInput::DESCRIPTOR);
     builder.add_value_object(ServiceActionInput::DESCRIPTOR);
     builder.add_domain_identity_type::<InventoryEntityIdentity>();
 
     let model = builder.finish();
 
-    assert_eq!(model["actions"].as_array().unwrap().len(), 4);
+    let actions = model["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 4);
+    assert_eq!(actions[0]["input"]["kind"], "domainIdentity");
+    assert_eq!(
+        actions[0]["input"]["id"]["owner"]["local"],
+        "inventory-entity"
+    );
 }
 
 #[test]
-fn aggregate_reports_missing_value_object_input() {
+fn aggregate_reports_missing_domain_identity_input() {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_aggregate_type::<InventoryAggregate>();
@@ -490,9 +484,9 @@ fn aggregate_reports_missing_value_object_input() {
                 owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
                 local: "aggregate-action",
             },
-            AGGREGATE_ACTION_INPUT_ID,
+            INVENTORY_IDENTITY_ID,
             "input",
-            "value_objects",
+            "identities",
         )
     );
 }

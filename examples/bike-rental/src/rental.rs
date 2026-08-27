@@ -228,23 +228,6 @@ pub struct RentBicycle {
     pub bicycle_id: BicycleId,
 }
 
-#[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
-#[domain(
-    id = "rent-bicycle-input",
-    label = "Rent bicycle input",
-    owner = RentalFleetAggregate
-)]
-pub struct RentBicycleInput {
-    #[domain(identity)]
-    bicycle_id: BicycleId,
-}
-
-impl RentBicycleInput {
-    pub fn new(bicycle_id: BicycleId) -> Self {
-        Self { bicycle_id }
-    }
-}
-
 #[derive(ValueObject, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[domain(
     id = "imported-bicycle",
@@ -354,7 +337,7 @@ pub trait RentalFleetActionContract {
     #[action(id = "rent-bicycle", label = "Rent bicycle")]
     fn rent_bicycle(
         root: &RentalFleet,
-        input: RentBicycleInput,
+        input: BicycleId,
     ) -> Result<BicycleRented, BicycleUnavailable>;
 }
 
@@ -371,14 +354,14 @@ impl RentalFleetActionContract for RentalFleetAggregate {
 
     fn rent_bicycle(
         root: &RentalFleet,
-        input: RentBicycleInput,
+        input: BicycleId,
     ) -> Result<BicycleRented, BicycleUnavailable> {
         let bicycle = root
             .bicycles
             .iter()
-            .find(|bicycle| bicycle.bicycle_id == input.bicycle_id)
+            .find(|bicycle| bicycle.bicycle_id == input)
             .ok_or_else(|| BicycleUnavailable {
-                bicycle_id: input.bicycle_id.clone(),
+                bicycle_id: input.clone(),
             })?;
         let decision = Self::assess_rental_eligibility(RentalEligibilityInput {
             status: bicycle.status,
@@ -387,11 +370,11 @@ impl RentalFleetActionContract for RentalFleetAggregate {
         match decision {
             RentalEligibilityDecision::Allowed => Ok(BicycleRented {
                 fleet_id: root.fleet_id.clone(),
-                bicycle_id: input.bicycle_id,
+                bicycle_id: input,
             }),
-            RentalEligibilityDecision::Denied { .. } => Err(BicycleUnavailable {
-                bicycle_id: input.bicycle_id,
-            }),
+            RentalEligibilityDecision::Denied { .. } => {
+                Err(BicycleUnavailable { bicycle_id: input })
+            }
         }
     }
 }

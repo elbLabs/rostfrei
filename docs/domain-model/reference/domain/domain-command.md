@@ -61,7 +61,8 @@ domain_model! {
 
 The compiled model projects these descriptors in top-level `domainCommands`.
 Commands are not Action inputs. A command handler translates command fields into
-one or more scalar or Value Object Action inputs and coordinates those Actions.
+one or more scalar, Value Object, or aggregate-owned Domain Identity Action
+inputs and coordinates those Actions.
 This keeps message metadata, idempotency, routing, and wire concerns outside the
 domain behavior contract.
 

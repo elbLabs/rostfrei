@@ -49,7 +49,7 @@ function model(): DomainModel {
     domainErrors: [{ id: { owner: { kind: 'aggregate', id: sales }, local: 'rejected' }, label: 'Order Rejected', code: 'REJECTED', message: 'Rejected', fields: [] }],
     actions: [
       { id: { owner: { kind: 'aggregate', id: sales }, local: 'place' }, label: 'Place',
-        input: { kind: 'domainCommand', id: { owner: { kind: 'aggregate', id: sales }, local: 'place' } },
+        input: { kind: 'domainIdentity', id: orderIdentity },
         output: { kind: 'domainEvent', id: { aggregate: sales, local: 'placed' } },
         error: { owner: { kind: 'aggregate', id: sales }, local: 'rejected' } },
       { id: { owner: { kind: 'entity', id: line }, local: 'clear' }, label: 'Clear', input: null, output: null, error: null },
@@ -106,7 +106,7 @@ describe('buildDomainIndex', () => {
   it('groups behavior and resolves linked recursive types and top-level labels', () => {
     const index = buildDomainIndex(model())
     const aggregate = index.selections.get(aggregateKey(sales))!
-    expect(aggregate.behavior.actions[0]).toMatchObject({ visibility: 'Public', input: { name: 'Place Order' }, output: { name: 'Order Placed' }, error: { name: 'Order Rejected' } })
+    expect(aggregate.behavior.actions[0]).toMatchObject({ visibility: 'Public', input: { name: 'Identity of Order' }, output: { name: 'Order Placed' }, error: { name: 'Order Rejected' } })
     expect(aggregate.behavior.queries[0]!.output).toEqual({ kind: 'optional', value: { kind: 'reference', name: 'Order Status', key: valueObjectKey(status) } })
     expect(aggregate.behavior.invariants[0]!.label).toBe('Has lines')
     expect(index.selections.get(entityKey(line))!.behavior.actions[0]).toMatchObject({ visibility: 'Internal', input: null, output: { kind: 'unit', name: '()' } })

@@ -22,12 +22,14 @@ const ownedByAggregate = { kind: 'aggregate' as const, id: aggregateId }
 const statusId = { owner: ownedByAggregate, local: 'bicycle-status' }
 const availabilityId = { owner: ownedByAggregate, local: 'bicycle-availability' }
 const decisionInputId = { owner: ownedByAggregate, local: 'rental-eligibility-input' }
-const decisionOutputId = { owner: ownedByAggregate, local: 'rental-eligibility' }
+const decisionOutputId = { owner: ownedByAggregate, local: 'rental-eligibility-decision' }
 
 let index: DomainIndex
 
 beforeAll(() => {
-  const stdout = execFileSync('cargo', ['run', '--quiet', '--locked', '-p', 'bike-rental'], {
+  const stdout = execFileSync('cargo', [
+    'run', '--quiet', '--locked', '-p', 'bike-rental', '--bin', 'bike-rental-model',
+  ], {
     cwd: repositoryRoot,
     encoding: 'utf8',
     timeout: CARGO_TIMEOUT_MS,
@@ -51,23 +53,28 @@ describe('Bike rental compiler output', () => {
       },
       output: {
         kind: 'reference',
-        name: 'Rental eligibility',
+        name: 'Rental eligibility decision',
         key: valueObjectKey(decisionOutputId),
       },
       implementation: { kind: 'rust' },
     })
   })
 
-  it('indexes the public aggregate action, internal entity action, and query', () => {
+  it('indexes the public aggregate actions, internal entity action, and query', () => {
     const aggregate = index.selections.get(aggregateKey(aggregateId))!
     const bicycle = index.selections.get(entityKey(bicycleId))!
+    const rent = aggregate.behavior.actions.find((action) => action.id === 'rent-bicycle')!
 
-    expect(aggregate.behavior.actions).toHaveLength(1)
-    expect(aggregate.behavior.actions[0]).toMatchObject({
+    expect(aggregate.behavior.actions).toHaveLength(2)
+    expect(rent).toMatchObject({
       id: 'rent-bicycle',
       label: 'Rent bicycle',
       visibility: 'Public',
-      input: { kind: 'reference', name: 'Rent bicycle' },
+      input: {
+        kind: 'reference',
+        name: 'Identity of Bicycle',
+        key: identityKey({ owner: bicycleId }),
+      },
       output: { kind: 'reference', name: 'Bicycle rented' },
       error: { kind: 'reference', name: 'Bicycle unavailable' },
     })
@@ -108,9 +115,9 @@ describe('Bike rental compiler output', () => {
 
   it('links the event and error to their producing action', () => {
     const aggregate = index.selections.get(aggregateKey(aggregateId))!
-    const action = aggregate.behavior.actions[0]!
-    const event = aggregate.behavior.domainEvents[0]!
-    const error = aggregate.behavior.domainErrors[0]!
+    const action = aggregate.behavior.actions.find((item) => item.id === 'rent-bicycle')!
+    const event = aggregate.behavior.domainEvents.find((item) => item.stableId === 'bicycle-rented')!
+    const error = aggregate.behavior.domainErrors.find((item) => item.stableId === 'bicycle-unavailable')!
 
     expect(event).toMatchObject({
       stableId: 'bicycle-rented',

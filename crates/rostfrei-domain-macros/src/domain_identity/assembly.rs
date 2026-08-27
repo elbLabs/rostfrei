@@ -55,6 +55,13 @@ pub fn assemble(
 
         #assertion
 
+        impl #domain_path::ActionInputType<<#owner as #domain_path::EntityType>::Owner> for #name {
+            const DESCRIPTOR: #domain_path::ActionInputDescriptor =
+                #domain_path::ActionInputDescriptor::DomainIdentity(
+                    <Self as #domain_path::DomainIdentityType>::DESCRIPTOR.id,
+                );
+        }
+
         impl #domain_path::QueryInputType<<#owner as #domain_path::EntityType>::Owner> for #name {
             const DESCRIPTOR: #domain_path::QueryInputDescriptor =
                 #domain_path::QueryInputDescriptor::DomainIdentity(

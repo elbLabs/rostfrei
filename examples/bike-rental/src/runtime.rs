@@ -10,8 +10,8 @@ use thiserror::Error;
 
 use crate::rental::{
     Bicycle, BicycleCondition, BicycleId, BicycleRented, BicycleStatus, FleetId,
-    ImportRentalFleetInput, ImportedBicycle, RentBicycle, RentBicycleInput, RentalFleet,
-    RentalFleetActions, RentalFleetAggregate, RentalFleetImported,
+    ImportRentalFleetInput, ImportedBicycle, RentBicycle, RentalFleet, RentalFleetActions,
+    RentalFleetAggregate, RentalFleetImported,
 };
 
 pub const DEMO_FLEET_ID: &str = "city-fleet";
@@ -58,7 +58,7 @@ impl CommandHandler<RentBicycle> for RentalFleetAggregate {
         command: &RentBicycle,
         aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        aggregate.rent_bicycle(RentBicycleInput::new(command.bicycle_id.clone()))
+        aggregate.rent_bicycle(command.bicycle_id.clone())
     }
 }
 

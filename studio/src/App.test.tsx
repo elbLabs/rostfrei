@@ -94,7 +94,7 @@ const domainModel: DomainModel = {
   actions: [{
     id: { owner: { kind: 'aggregate', id: orders }, local: 'submit' },
     label: 'Submit customer order',
-    input: { kind: 'domainCommand', id: { owner: { kind: 'aggregate', id: orders }, local: 'submit' } },
+    input: { kind: 'domainIdentity', id: orderIdentity },
     output: { kind: 'domainEvent', id: { aggregate: orders, local: 'submitted' } },
     error: { owner: { kind: 'aggregate', id: orders }, local: 'invalid' },
   }, {
@@ -328,8 +328,10 @@ describe('rostfrei Studio', () => {
     await user.click(screen.getByRole('tab', { name: /Behavior/ }))
     const behavior = screen.getAllByRole('tabpanel').find((panel) => !panel.hasAttribute('inert'))!
 
-    expect(within(behavior).getByText('Submit customer order', { selector: '[data-slot="card-title"]' })).toBeInTheDocument()
-    expect(within(behavior).getByText('Submit Order')).toBeInTheDocument()
+    const action = within(behavior)
+      .getByText('Submit customer order', { selector: '[data-slot="card-title"]' })
+      .closest('[id]') as HTMLElement
+    expect(within(action).getByRole('button', { name: 'Open Identity of Customer Order' })).toBeInTheDocument()
     expect(within(behavior).getByText('Current status')).toBeInTheDocument()
     const queries = within(behavior).getByRole('heading', { name: 'Queries' }).closest('section') as HTMLElement
     expect(within(queries).getByLabelText('Option<Order Status>')).toBeInTheDocument()
