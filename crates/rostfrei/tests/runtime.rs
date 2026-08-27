@@ -46,6 +46,7 @@ struct BalanceObserved {
     label = "Account",
     context = Banking,
     root = Account,
+    actions = [account_actions::AccountActionContract],
     events = [MoneyDeposited, BalanceObserved]
 )]
 struct AccountAggregate;
@@ -72,6 +73,33 @@ impl Apply<BalanceObserved> for Account {
     }
 }
 
+mod account_actions {
+    use super::{Account, AccountAggregate, BalanceObserved, MoneyDeposited};
+
+    #[rostfrei::domain_actions(aggregate(instance = AccountActions))]
+    pub trait AccountActionContract {
+        #[action(id = "deposit", label = "Deposit money")]
+        fn deposit(root: &Account, input: i64) -> MoneyDeposited;
+
+        #[action(id = "observe-balance", label = "Observe balance")]
+        fn observe_balance(root: &Account) -> BalanceObserved;
+    }
+
+    impl AccountActionContract for AccountAggregate {
+        fn deposit(_root: &Account, input: i64) -> MoneyDeposited {
+            MoneyDeposited { amount: input }
+        }
+
+        fn observe_balance(root: &Account) -> BalanceObserved {
+            BalanceObserved {
+                balance: root.balance,
+            }
+        }
+    }
+}
+
+use account_actions::AccountActions as _;
+
 struct DepositAndObserve {
     account_id: &'static str,
     amount: i64,
@@ -87,12 +115,8 @@ impl CommandHandler<DepositAndObserve> for AccountAggregate {
         if aggregate.state().id.0 != command.account_id {
             return Err("stream identity was not used to initialize the aggregate");
         }
-        aggregate.raise(MoneyDeposited {
-            amount: command.amount,
-        });
-        aggregate.raise(BalanceObserved {
-            balance: aggregate.state().balance,
-        });
+        aggregate.deposit(command.amount);
+        aggregate.observe_balance();
         Ok(())
     }
 }
@@ -195,7 +219,7 @@ fn metadata(stream_id: &StreamId, operation: &str) -> ExecutionMetadata {
 }
 
 #[tokio::test]
-async fn compiled_aggregate_records_applies_stores_and_replays_concrete_events() {
+async fn command_composes_generated_actions_and_replays_their_events() {
     let stream = stream("account-1");
     let executor = Executor::new(InMemoryEventStore::new());
 
