@@ -1,20 +1,19 @@
 use std::{convert::Infallible, sync::Arc};
 
 use rostfrei::{
-    Aggregate, AggregateInstance, Apply, CommandHandler, ContentFingerprint, DomainRegistry,
-    EventHistory, EventStore, ExecutionError, ExecutionMetadata, Executor, Initialize, OperationId,
-    RegistrationError, StreamAggregateId, StreamAggregateType, StreamId, domain_command_handler,
-    domain_module,
+    Aggregate, AggregateInstance, Apply, CommandExecutionError, CommandHandler, CommandOutcome,
+    ContentFingerprint, EventHistory, EventStore, ExecutionMetadata, Executor, Initialize,
+    OperationId, StreamAggregateId, StreamAggregateType, StreamId,
 };
 use rostfrei_control_plane::ControlPlaneBuilder;
 use thiserror::Error;
 
 use crate::rental::{
-    Bicycle, BicycleCondition, BicycleId, BicycleRented, BicycleStatus, FleetId, ImportedBicycle,
-    RentBicycle, RentalFleet, RentalFleetActions, RentalFleetAggregate, RentalFleetImported,
+    Bicycle, BicycleCondition, BicycleId, BicycleRented, BicycleStatus, FleetId,
+    ImportRentalFleetInput, ImportedBicycle, RentBicycle, RentBicycleInput, RentalFleet,
+    RentalFleetActions, RentalFleetAggregate, RentalFleetImported,
 };
 
-pub const COMMAND_NAME: &str = "rent-bicycle";
 pub const DEMO_FLEET_ID: &str = "city-fleet";
 
 impl Initialize<RentalFleetAggregate> for RentalFleet {
@@ -52,20 +51,19 @@ impl Apply<BicycleRented> for RentalFleet {
     }
 }
 
-domain_command_handler!(RentBicycle => rent_bicycle);
+impl CommandHandler<RentBicycle> for RentalFleetAggregate {
+    type Rejection = <RentBicycle as rostfrei::DomainCommandType>::Rejection;
 
-domain_module! {
-    pub struct BikeRentalRuntimeModule {
-        commands: [RentBicycle],
+    fn handle(
+        command: &RentBicycle,
+        aggregate: &mut AggregateInstance<Self>,
+    ) -> Result<(), Self::Rejection> {
+        aggregate.rent_bicycle(RentBicycleInput::new(command.bicycle_id.clone()))
     }
 }
 
-pub fn control_plane_builder(
-    history: Arc<dyn EventHistory>,
-) -> Result<ControlPlaneBuilder, RegistrationError> {
-    let mut registry = DomainRegistry::new();
-    registry.register_module::<BikeRentalRuntimeModule>()?;
-    Ok(ControlPlaneBuilder::new(history, registry))
+pub fn control_plane_builder(history: Arc<dyn EventHistory>) -> ControlPlaneBuilder {
+    ControlPlaneBuilder::new(history)
 }
 
 pub fn demo_stream() -> StreamId {
@@ -87,10 +85,7 @@ impl CommandHandler<ImportDemoFleet> for RentalFleetAggregate {
         command: &ImportDemoFleet,
         aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        aggregate.raise(RentalFleetImported {
-            fleet_id: aggregate.state().fleet_id().clone(),
-            bicycles: command.bicycles.clone(),
-        });
+        aggregate.import_rental_fleet(ImportRentalFleetInput::new(command.bicycles.clone()));
         Ok(())
     }
 }
@@ -98,7 +93,7 @@ impl CommandHandler<ImportDemoFleet> for RentalFleetAggregate {
 #[derive(Debug, Error)]
 pub enum SeedError {
     #[error(transparent)]
-    Execution(#[from] ExecutionError<Infallible>),
+    Execution(#[from] CommandExecutionError),
 }
 
 pub async fn seed_demo<S>(store: &S) -> Result<(), SeedError>
@@ -125,8 +120,11 @@ where
             },
         ],
     };
-    Executor::new(store.clone())
+    let outcome = Executor::new(store.clone())
         .execute::<RentalFleetAggregate, _>(metadata, &command)
         .await?;
-    Ok(())
+    match outcome {
+        CommandOutcome::Accepted(_) => Ok(()),
+        CommandOutcome::Rejected(rejection) => match rejection {},
+    }
 }

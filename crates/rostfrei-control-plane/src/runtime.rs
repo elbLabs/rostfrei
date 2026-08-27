@@ -7,7 +7,7 @@ use rostfrei_core::{
     Aggregate, AggregateId, ContentFingerprint, Event, EventCodec, EventHistory, ExecutionMetadata,
     Executor, JsonEventCodec, NewEvent, OperationId, SimulationDecision, SimulationError, StreamId,
 };
-use rostfrei_registry::{CommandDefinition, CommandDescriptor, DomainRegistry};
+use rostfrei_registry::{CommandDefinition, CommandDescriptor, DomainRegistry, RegistrationError};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -34,6 +34,7 @@ impl CommandWireCodecError {
 pub trait CommandWireCodec<Command>: Send + Sync
 where
     Command: CommandDefinition,
+    Command::Aggregate: rostfrei_core::CommandHandler<Command>,
 {
     fn decode(&self, payload: &Value) -> Result<Command, CommandWireCodecError>;
 
@@ -51,6 +52,7 @@ pub struct DomainJsonWireCodec;
 impl<Command> CommandWireCodec<Command> for DomainJsonWireCodec
 where
     Command: CommandDefinition + JsonCommandPayload,
+    Command::Aggregate: rostfrei_core::CommandHandler<Command>,
     <<Command as CommandDefinition>::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection:
         JsonErrorPayload,
 {
@@ -72,11 +74,8 @@ where
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum RuntimeRegistrationError {
-    #[error("command `{command}` version {schema_version} is not in the domain registry")]
-    MissingDescriptor {
-        command: &'static str,
-        schema_version: u32,
-    },
+    #[error(transparent)]
+    Registry(#[from] RegistrationError),
     #[error("command `{command}` version {schema_version} is already bound")]
     DuplicateBinding {
         command: &'static str,
@@ -155,6 +154,7 @@ pub(crate) trait ErasedCommandSimulator: Send + Sync {
 struct TypedCommandSimulator<Command, Codec, Wire>
 where
     Command: CommandDefinition,
+    Command::Aggregate: rostfrei_core::CommandHandler<Command>,
 {
     descriptor: CommandDescriptor,
     event_codec: Codec,
@@ -166,6 +166,7 @@ where
 impl<Command, Codec, Wire> ErasedCommandSimulator for TypedCommandSimulator<Command, Codec, Wire>
 where
     Command: CommandDefinition,
+    Command::Aggregate: rostfrei_core::CommandHandler<Command>,
     <Command::Aggregate as Aggregate>::State: Send,
     <Command::Aggregate as rostfrei_core::Aggregate>::Event: Send,
     Codec: EventCodec<Command::Aggregate> + Clone + Send + Sync + 'static,
@@ -253,6 +254,7 @@ impl RuntimeBindings {
     ) -> Result<(), RuntimeRegistrationError>
     where
         Command: CommandDefinition,
+        Command::Aggregate: rostfrei_core::CommandHandler<Command>,
         <Command::Aggregate as Aggregate>::State: Send,
         <Command::Aggregate as Aggregate>::Event: Event + Send,
         Wire: CommandWireCodec<Command> + 'static,
@@ -267,13 +269,14 @@ impl RuntimeBindings {
     ) -> Result<(), RuntimeRegistrationError>
     where
         Command: CommandDefinition,
+        Command::Aggregate: rostfrei_core::CommandHandler<Command>,
         <Command::Aggregate as Aggregate>::State: Send,
         <Command::Aggregate as Aggregate>::Event: Send,
         Codec: EventCodec<Command::Aggregate> + Clone + Send + Sync + 'static,
         Wire: CommandWireCodec<Command> + 'static,
     {
         let expected_descriptor = Command::descriptor();
-        let descriptor = self
+        let descriptor = match self
             .registry
             .command(
                 &expected_descriptor.aggregate_type,
@@ -281,16 +284,19 @@ impl RuntimeBindings {
                 Command::SCHEMA_VERSION,
             )
             .cloned()
-            .ok_or(RuntimeRegistrationError::MissingDescriptor {
-                command: Command::COMMAND_NAME,
-                schema_version: Command::SCHEMA_VERSION,
-            })?;
-        if descriptor != expected_descriptor {
-            return Err(RuntimeRegistrationError::DescriptorMismatch {
-                command: Command::COMMAND_NAME,
-                schema_version: Command::SCHEMA_VERSION,
-            });
-        }
+        {
+            Some(descriptor) if descriptor != expected_descriptor => {
+                return Err(RuntimeRegistrationError::DescriptorMismatch {
+                    command: Command::COMMAND_NAME,
+                    schema_version: Command::SCHEMA_VERSION,
+                });
+            }
+            Some(descriptor) => descriptor,
+            None => {
+                self.registry.register_command::<Command>()?;
+                expected_descriptor
+            }
+        };
         let key = CommandKey::new(
             &descriptor.aggregate_type,
             Command::COMMAND_NAME,

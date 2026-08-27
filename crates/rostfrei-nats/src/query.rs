@@ -12,7 +12,7 @@ use rostfrei_messaging_core::{
     ApplicationErrorCode, ApplicationName, CallerMetadata, CorrelationId, MessageId,
     MessageTimestamp, QueryAddress, QueryErrorClassification, QueryErrorPayload, QueryHandler,
     QueryOptions, QueryRequest, QueryRequestError, QueryRequestErrorKind, QueryRequester,
-    QueryResponse, QueryServer, QueryServerError, QueryServerErrorKind, SchemaVersion,
+    QueryResponse, QueryResult, QueryServer, QueryServerError, QueryServerErrorKind, SchemaVersion,
     TraceContext, MAX_CONCURRENCY, MAX_ENVELOPE_BYTES, MAX_PROCESSING_TIMEOUT,
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -55,7 +55,7 @@ where
         address: &QueryAddress,
         request: QueryRequest<Request>,
         options: QueryOptions,
-    ) -> Result<QueryResponse<Response>, QueryRequestError> {
+    ) -> QueryResult<Response> {
         if address.application() != self.application.as_str() {
             return Err(QueryRequestError::new(QueryRequestErrorKind::Rejected));
         }

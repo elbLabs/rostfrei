@@ -31,7 +31,7 @@ pub struct CatalogRoot {
     label = "Catalog",
     context = Catalog,
     root = CatalogRoot,
-    actions = [CatalogCommandActions]
+    actions = [CatalogActions]
 )]
 pub struct CatalogAggregate;
 
@@ -99,13 +99,13 @@ struct JsonTuple(String, u32);
 struct JsonUnit;
 
 #[domain_actions(aggregate)]
-pub trait CatalogCommandActions {
+pub trait CatalogActions {
     #[action(id = "apply-status", label = "Apply status")]
-    fn apply_status(root: &mut CatalogRoot, input: ChangeStatus);
+    fn apply_status(root: &mut CatalogRoot, input: Status);
 }
 
-impl CatalogCommandActions for CatalogAggregate {
-    fn apply_status(root: &mut CatalogRoot, input: ChangeStatus) {
+impl CatalogActions for CatalogAggregate {
+    fn apply_status(root: &mut CatalogRoot, input: Status) {
         let _ = (root, input);
     }
 }
@@ -113,14 +113,14 @@ impl CatalogCommandActions for CatalogAggregate {
 #[domain_actions(domain_service)]
 pub trait CatalogSyncActions {
     #[action(id = "start-sync", label = "Start sync")]
-    fn start_sync(input: SyncCatalog);
+    fn start_sync(input: Status);
 
     #[action(id = "inspect-status", label = "Inspect status")]
     fn inspect_status(input: Status);
 }
 
 impl CatalogSyncActions for CatalogSync {
-    fn start_sync(input: SyncCatalog) {
+    fn start_sync(input: Status) {
         let _ = input;
     }
 
@@ -184,9 +184,15 @@ fn inventories_aggregate_and_domain_service_commands() {
     assert_eq!(model["domainCommands"][1]["id"]["local"], "sync-catalog");
     assert_eq!(
         model["actions"][0]["input"]["id"],
-        model["domainCommands"][0]["id"]
+        model["valueObjects"][0]["id"]
     );
-    assert_eq!(model["actions"][2]["input"]["kind"], "valueObject");
+    assert!(
+        model["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|action| action["input"]["kind"] == "valueObject")
+    );
 }
 
 #[test]

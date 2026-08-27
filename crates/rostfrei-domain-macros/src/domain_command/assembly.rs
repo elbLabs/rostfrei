@@ -43,13 +43,6 @@ pub fn assemble(
                 };
         }
 
-        impl #domain_path::ActionInputType<#owner> for #name {
-            const DESCRIPTOR: #domain_path::ActionInputDescriptor =
-                #domain_path::ActionInputDescriptor::DomainCommand(
-                    <Self as #domain_path::DomainCommandType>::DESCRIPTOR.id,
-                );
-        }
-
         #assertions
         #decode_json
     }

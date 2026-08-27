@@ -8,11 +8,10 @@ use domain::__private::DomainModelBuilder;
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
-    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainCommand, DomainCommandId,
-    DomainCommandOwnerId, DomainCommandType, DomainError, DomainErrorId, DomainErrorOwnerId,
-    DomainErrorType, DomainEvent, DomainEventId, DomainIdentity, DomainService, DomainServiceId,
-    Entity, EntityId, ValueObject, ValueObjectId, ValueObjectOwnerId, ValueObjectType,
-    domain_actions,
+    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainCommand, DomainCommandType,
+    DomainError, DomainErrorId, DomainErrorOwnerId, DomainErrorType, DomainEvent, DomainEventId,
+    DomainIdentity, DomainService, DomainServiceId, Entity, EntityId, ValueObject, ValueObjectId,
+    ValueObjectOwnerId, ValueObjectType, domain_actions,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("action-inventory");
@@ -36,9 +35,17 @@ const OUTPUT_VALUE_ID: ValueObjectId = ValueObjectId {
     owner: ValueObjectOwnerId::Entity(ENTITY_ID),
     local: "output-value",
 };
+const AGGREGATE_ACTION_INPUT_ID: ValueObjectId = ValueObjectId {
+    owner: ValueObjectOwnerId::Aggregate(AGGREGATE_ID),
+    local: "aggregate-action-input",
+};
 const SERVICE_ID: DomainServiceId = DomainServiceId {
     context: CONTEXT_ID,
     local: "inventory-service",
+};
+const SERVICE_ACTION_INPUT_ID: ValueObjectId = ValueObjectId {
+    owner: ValueObjectOwnerId::BoundedContext(CONTEXT_ID),
+    local: "service-action-input",
 };
 const EXTENSION_SERVICE_ID: DomainServiceId = DomainServiceId {
     context: CONTEXT_ID,
@@ -52,17 +59,9 @@ const ORDERED_INPUT_ID: ValueObjectId = ValueObjectId {
     owner: ValueObjectOwnerId::Entity(ORDERED_ENTITY_ID),
     local: "ordered-input",
 };
-const AGGREGATE_COMMAND_ID: DomainCommandId = DomainCommandId {
-    owner: DomainCommandOwnerId::Aggregate(AGGREGATE_ID),
-    local: "aggregate-command",
-};
-const SERVICE_COMMAND_ID: DomainCommandId = DomainCommandId {
-    owner: DomainCommandOwnerId::DomainService(SERVICE_ID),
-    local: "service-command",
-};
-const MISSING_COMMAND_ID: DomainCommandId = DomainCommandId {
-    owner: DomainCommandOwnerId::DomainService(EXTENSION_SERVICE_ID),
-    local: "missing-command",
+const EXTENSION_INPUT_ID: ValueObjectId = ValueObjectId {
+    owner: ValueObjectOwnerId::BoundedContext(CONTEXT_ID),
+    local: "extension-input",
 };
 const EVENT_ID: DomainEventId = DomainEventId {
     aggregate: AGGREGATE_ID,
@@ -106,7 +105,7 @@ pub trait AggregateActions {
     #[action(id = "aggregate-action", label = "Aggregate action")]
     fn execute(
         root: &mut InventoryEntity,
-        input: AggregateCommand,
+        input: AggregateActionInput,
     ) -> Result<InventoryEvent, AggregateError>;
 }
 
@@ -142,7 +141,7 @@ pub struct InventoryEntity {
 impl AggregateActions for InventoryAggregate {
     fn execute(
         _root: &mut InventoryEntity,
-        _input: AggregateCommand,
+        _input: AggregateActionInput,
     ) -> Result<InventoryEvent, AggregateError> {
         Ok(InventoryEvent)
     }
@@ -161,6 +160,14 @@ impl EntityActions for InventoryEntity {
     owner = InventoryAggregate
 )]
 pub struct AggregateCommand;
+
+#[derive(ValueObject)]
+#[domain(
+    id = "aggregate-action-input",
+    label = "Aggregate action input",
+    owner = InventoryAggregate
+)]
+pub struct AggregateActionInput;
 
 #[derive(DomainEvent)]
 #[domain(id = "inventory-event", label = "Inventory event")]
@@ -205,7 +212,7 @@ struct EntityError;
 #[domain_actions(domain_service)]
 pub trait ServiceActions {
     #[action(id = "service-action", label = "Service action")]
-    fn execute(input: ServiceCommand) -> Result<InventoryEvent, ServiceError>;
+    fn execute(input: ServiceActionInput) -> Result<InventoryEvent, ServiceError>;
 }
 
 #[derive(DomainService)]
@@ -218,7 +225,7 @@ pub trait ServiceActions {
 pub struct InventoryService;
 
 impl ServiceActions for InventoryService {
-    fn execute(_input: ServiceCommand) -> Result<InventoryEvent, ServiceError> {
+    fn execute(_input: ServiceActionInput) -> Result<InventoryEvent, ServiceError> {
         Ok(InventoryEvent)
     }
 }
@@ -230,6 +237,14 @@ impl ServiceActions for InventoryService {
     owner = InventoryService
 )]
 pub struct ServiceCommand;
+
+#[derive(ValueObject)]
+#[domain(
+    id = "service-action-input",
+    label = "Service action input",
+    owner = InventoryContext
+)]
+pub struct ServiceActionInput;
 
 #[derive(DomainError)]
 #[domain(
@@ -279,6 +294,14 @@ struct ValueError;
     context = InventoryContext
 )]
 struct ExtensionService;
+
+#[derive(ValueObject)]
+#[domain(
+    id = "extension-input",
+    label = "Extension input",
+    owner = InventoryContext
+)]
+struct ExtensionInput;
 
 #[derive(DomainIdentity)]
 #[domain(owner = OrderedEntity)]
@@ -339,7 +362,7 @@ impl ActionGroupType for DeterministicExtension {
 
     const ACTIONS: &'static [ActionDescriptor] = &[extension_action(
         "deterministic",
-        Some(ActionInputDescriptor::DomainCommand(MISSING_COMMAND_ID)),
+        Some(ActionInputDescriptor::ValueObject(EXTENSION_INPUT_ID)),
         Some(ActionOutputDescriptor::DomainEvent(MISSING_EVENT_ID)),
         Some(MISSING_ERROR_ID),
     )];
@@ -443,6 +466,8 @@ fn accepts_references_added_after_all_owner_actions_are_registered() {
     builder.add_domain_error(ValueError::DESCRIPTOR);
     builder.add_value_object(InputValue::DESCRIPTOR);
     builder.add_value_object(OutputValue::DESCRIPTOR);
+    builder.add_value_object(AggregateActionInput::DESCRIPTOR);
+    builder.add_value_object(ServiceActionInput::DESCRIPTOR);
     builder.add_domain_identity_type::<InventoryEntityIdentity>();
 
     let model = builder.finish();
@@ -451,7 +476,7 @@ fn accepts_references_added_after_all_owner_actions_are_registered() {
 }
 
 #[test]
-fn aggregate_reports_missing_command_input() {
+fn aggregate_reports_missing_value_object_input() {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_aggregate_type::<InventoryAggregate>();
@@ -465,9 +490,9 @@ fn aggregate_reports_missing_command_input() {
                 owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
                 local: "aggregate-action",
             },
-            AGGREGATE_COMMAND_ID,
+            AGGREGATE_ACTION_INPUT_ID,
             "input",
-            "commands",
+            "value_objects",
         )
     );
 }
@@ -477,7 +502,7 @@ fn domain_service_reports_missing_event_output() {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<InventoryService>();
-        builder.add_domain_command(ServiceCommand::DESCRIPTOR);
+        builder.add_value_object(ServiceActionInput::DESCRIPTOR);
         builder.finish();
     });
 
@@ -595,22 +620,14 @@ fn reports_descriptor_failures_in_input_output_error_order() {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<ExtensionService>();
         builder.add_action_extension::<DeterministicExtension>();
-        builder.add_domain_command(domain::DomainCommandDescriptor {
-            id: MISSING_COMMAND_ID,
-            label: "Missing command",
-            fields: &[],
-        });
+        builder.add_value_object(ExtensionInput::DESCRIPTOR);
         builder.finish();
     });
     let error_message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<ExtensionService>();
         builder.add_action_extension::<DeterministicExtension>();
-        builder.add_domain_command(domain::DomainCommandDescriptor {
-            id: MISSING_COMMAND_ID,
-            label: "Missing command",
-            fields: &[],
-        });
+        builder.add_value_object(ExtensionInput::DESCRIPTOR);
         builder.add_domain_event(domain::DomainEventDescriptor {
             id: MISSING_EVENT_ID,
             label: "Missing event",
@@ -624,9 +641,9 @@ fn reports_descriptor_failures_in_input_output_error_order() {
         input_message,
         violation(
             extension_action_id("deterministic"),
-            MISSING_COMMAND_ID,
+            EXTENSION_INPUT_ID,
             "input",
-            "commands",
+            "value_objects",
         )
     );
     assert_eq!(
