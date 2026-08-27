@@ -47,7 +47,7 @@ authoritative domain-event stream:
   <application>.quarantine.>
 
 <APPLICATION>__<BOUNDED_CONTEXT>_DOMAIN_EVENTS
-  <application>.domain.<bounded-context>.>
+  <application>.domain.<bounded-context>.aggregate.*
 ```
 
 Uppercase stream tokens replace kebab-case hyphens with underscores. Subject
@@ -86,7 +86,14 @@ classification, environment variables, and operator composition.
 Two applications can safely share one NATS account because their first subject
 tokens and JetStream filters are disjoint. NATS permissions can grant or deny an
 entire application through `<application>.>`. A bounded context is explicit in
-every business address and authoritative domain-event subject.
+every business address and authoritative domain-event subject. Restricting an
+authoritative stream to aggregate subjects also keeps its global stream sequence
+contiguous for domain-event consumers using the same filter.
+
+Existing domain-event streams configured with the broader
+`<application>.domain.<bounded-context>.>` filter fail runtime verification until
+an operator updates or recreates them. Streams that contain non-aggregate
+messages require an explicit migration rather than an in-place filter change.
 
 The previous kind-first messaging convention is intentionally breaking. It was
 unreleased and receives no dual-publish or dual-consume compatibility layer.

@@ -34,7 +34,7 @@ The bounded-context event store derives:
 
 ```text
 FAST_INBOX__COMMERCIAL_ACCESS_DOMAIN_EVENTS
-fast-inbox.domain.commercial-access.>
+fast-inbox.domain.commercial-access.aggregate.*
 ```
 
 Individual aggregate histories use opaque subjects below that prefix. Stored
