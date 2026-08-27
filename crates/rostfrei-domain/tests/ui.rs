@@ -183,6 +183,7 @@ fn checks_domain_decision_contracts() {
     cases.compile_fail("tests/ui/domain_decision_contract/raw_scalar_input.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/raw_scalar_output.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/receiver.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/reference_signature_mismatch.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/reserved_associated_item.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/result_output.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/trait_generics.rs");

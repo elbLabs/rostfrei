@@ -77,12 +77,21 @@ impl TypedSubject {
                 format_ident!("Invariant"),
             ),
         };
+        let reference_type = match kind {
+            DomainTestKind::Decision => {
+                quote_spanned! {span=> #domain_path::#reference<#owner, _, _>}
+            }
+            DomainTestKind::Action | DomainTestKind::Invariant => {
+                quote_spanned! {span=> #domain_path::#reference<#owner>}
+            }
+            DomainTestKind::Lifecycle => unreachable!(),
+        };
 
         quote_spanned! {span=>
             {
                 let _: &'static [#domain_path::#descriptor] =
                     <#owner as #trait_path>::#marker;
-                let reference: #domain_path::#reference<#owner> =
+                let reference: #reference_type =
                     <#owner as #trait_path>::#hidden_reference;
                 #domain_path::DomainTestSubject::#variant(reference.id())
             }

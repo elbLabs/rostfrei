@@ -99,11 +99,13 @@ fn append(
     for reference in references {
         let ident = reference.ident;
         let id = &reference.decision.id;
+        let input = &reference.decision.input;
+        let output = &reference.decision.output;
         item.items.push(syn::parse2(quote_spanned! {id.span()=>
             #[doc(hidden)]
             #[allow(dead_code)]
-            const #ident: #domain_path::DecisionReference<Self> =
-                #domain_path::DecisionReference::<Self>::__from_local(#id);
+            const #ident: #domain_path::DecisionReference<Self, #input, #output> =
+                #domain_path::DecisionReference::<Self, #input, #output>::__from_local(#id);
         })?);
     }
     Ok(())
