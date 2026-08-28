@@ -65,16 +65,13 @@ fn expand_aggregate_trait(
         aggregate_trait_validation::validate(&item.items, &mut actions)?;
     }
     let domain_path = crate::helper::domain_api_path::resolve()?;
-    let runtime_path = instance_trait
-        .map(|_| crate::helper::runtime_api_path::resolve())
+    let instance = instance_trait
+        .map(|instance_trait| {
+            crate::helper::runtime_api_path::resolve()
+                .map(|runtime_path| (runtime_path, instance_trait))
+        })
         .transpose()?;
-    aggregate_trait_assembly::assemble(
-        &domain_path,
-        runtime_path.as_ref(),
-        item,
-        &actions,
-        instance_trait,
-    )
+    aggregate_trait_assembly::assemble(&domain_path, instance, item, &actions)
 }
 
 fn expand_domain_service_trait(item: ItemTrait) -> syn::Result<TokenStream> {

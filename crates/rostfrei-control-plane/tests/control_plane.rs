@@ -693,7 +693,10 @@ impl EventCodec<TestAggregate> for FailingEventCodec {
     }
 
     fn decode(&self, _event: &RecordedEvent) -> Result<TestEvent, EventCodecError> {
-        unreachable!("the test history is empty")
+        Err(EventCodecError::new(
+            EventCodecErrorKind::MalformedPayload,
+            "unexpected event in empty test history",
+        ))
     }
 }
 
@@ -721,7 +724,10 @@ impl EventCodec<TestAggregate> for BinaryEventCodec {
     }
 
     fn decode(&self, _event: &RecordedEvent) -> Result<TestEvent, EventCodecError> {
-        unreachable!("the test history is empty")
+        Err(EventCodecError::new(
+            EventCodecErrorKind::MalformedPayload,
+            "unexpected event in empty test history",
+        ))
     }
 }
 
@@ -755,7 +761,9 @@ impl CommandWireCodec<TestCommand> for PanickingWireCodec {
     }
 
     fn encode_rejection(&self, _rejection: &TestRejection) -> Result<Value, CommandWireCodecError> {
-        unreachable!("decode always panics")
+        Err(CommandWireCodecError::new(
+            "rejection encoding is unavailable after command decoding panics",
+        ))
     }
 }
 
