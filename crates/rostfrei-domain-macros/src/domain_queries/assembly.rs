@@ -6,7 +6,7 @@ use super::attributes::Query;
 
 pub fn assemble(
     domain_path: &Path,
-    item: ItemImpl,
+    item: &ItemImpl,
     owner: &TypePath,
     group: &Ident,
     queries: &[Query],
@@ -57,8 +57,8 @@ fn assertions(domain_path: &Path, owner: &TypePath, query: &Query) -> TokenStrea
     quote_spanned! {span=>
         const _: () = {
             fn assert_owner<T: #domain_path::AggregateType>() {}
-            let _ = assert_owner::<#owner>;
             fn assert_root(value: &<#owner as #domain_path::AggregateType>::Root) -> &<#owner as #domain_path::AggregateType>::Root { value }
+            let _ = assert_owner::<#owner>;
             let _: fn(&#root) -> &#root = assert_root;
         };
     }

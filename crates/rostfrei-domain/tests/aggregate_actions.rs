@@ -118,7 +118,7 @@ impl contracts::AccountLifecycle for Account {
         root: &mut AccountRootAlias,
         _input: RenameAccountInput,
     ) -> Result<AccountChanged, AccountDenied> {
-        root.name = "Renamed".to_owned();
+        "Renamed".clone_into(&mut root.name);
         root.revision += 1;
         Ok(AccountChanged)
     }

@@ -65,7 +65,7 @@ impl ActionProjection {
             self.actions
                 .iter()
                 .chain(&self.extensions)
-                .map(|(descriptor, _)| *descriptor),
+                .map(|(descriptor, _)| descriptor),
             inventory,
         );
     }
@@ -98,12 +98,12 @@ impl ActionProjection {
         descriptors: &'static [ActionDescriptor],
     ) {
         for (index, descriptor) in descriptors.iter().enumerate() {
-            self.validate_owner(expected_owner, descriptor);
+            Self::validate_owner(expected_owner, descriptor);
             self.validate_id(descriptor.id, &descriptors[..index]);
         }
     }
 
-    fn validate_owner(&self, expected_owner: ActionOwnerId, descriptor: &ActionDescriptor) {
+    fn validate_owner(expected_owner: ActionOwnerId, descriptor: &ActionDescriptor) {
         if descriptor.id.owner != expected_owner {
             panic!("action descriptor owner mismatch: {:?}", descriptor.id);
         }
@@ -126,12 +126,12 @@ impl ActionProjection {
         target.extend(
             descriptors
                 .iter()
-                .map(|descriptor| (*descriptor, action(*descriptor))),
+                .map(|descriptor| (*descriptor, action(descriptor))),
         );
     }
 }
 
-fn action(descriptor: ActionDescriptor) -> Value {
+fn action(descriptor: &ActionDescriptor) -> Value {
     json!({
         "id": action_id(descriptor.id),
         "label": descriptor.label,

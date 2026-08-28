@@ -60,6 +60,7 @@ async fn json_body(response: axum::response::Response) -> Value {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
     let (control_plane, store) = fixture().await;
     let history_before = store.load(&demo_stream()).await.unwrap();

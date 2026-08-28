@@ -34,7 +34,7 @@ pub fn parse_entity(signature: &Signature) -> syn::Result<ParsedSignature> {
         ));
     }
     let input = parse_business_inputs(signature.inputs.iter().skip(1), 1, "entity")?;
-    parsed(None, input, signature)
+    Ok(parsed(None, input, signature))
 }
 
 pub fn parse_domain_service(signature: &Signature) -> syn::Result<ParsedSignature> {
@@ -45,7 +45,7 @@ pub fn parse_domain_service(signature: &Signature) -> syn::Result<ParsedSignatur
         ));
     }
     let input = parse_business_inputs(signature.inputs.iter(), 1, "domain service")?;
-    parsed(None, input, signature)
+    Ok(parsed(None, input, signature))
 }
 
 pub fn parse_value_object(signature: &Signature) -> syn::Result<ParsedSignature> {
@@ -79,7 +79,7 @@ pub fn parse_value_object(signature: &Signature) -> syn::Result<ParsedSignature>
             input
         }
     };
-    parsed(None, input, signature)
+    Ok(parsed(None, input, signature))
 }
 
 pub fn parse_aggregate(signature: &Signature) -> syn::Result<ParsedSignature> {
@@ -127,7 +127,7 @@ fn parse_aggregate_root(signature: &Signature, mutable: bool) -> syn::Result<Par
         ));
     }
     let input = parse_business_inputs(signature.inputs.iter().skip(1), 1, "aggregate")?;
-    parsed(Some((*reference.elem).clone()), input, signature)
+    Ok(parsed(Some((*reference.elem).clone()), input, signature))
 }
 
 fn parse_business_inputs<'a>(
@@ -171,22 +171,18 @@ fn validate_pattern(pattern: &Pat, expected: &str) -> syn::Result<()> {
     Ok(())
 }
 
-fn parsed(
-    root: Option<Type>,
-    input: Option<Type>,
-    signature: &Signature,
-) -> syn::Result<ParsedSignature> {
+fn parsed(root: Option<Type>, input: Option<Type>, signature: &Signature) -> ParsedSignature {
     let output = match &signature.output {
         ReturnType::Default => syn::parse_quote_spanned!(signature.span()=> ()),
         ReturnType::Type(_, output) => (**output).clone(),
     };
     let (output, error) = split_result(output);
-    Ok(ParsedSignature {
+    ParsedSignature {
         root,
         input,
         output,
         error,
-    })
+    }
 }
 
 fn split_result(output: Type) -> (Type, Option<Type>) {
