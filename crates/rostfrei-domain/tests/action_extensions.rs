@@ -223,16 +223,16 @@ impl ActionGroupType for AttachedDuplicateExtension {
         &[action(ActionOwnerId::Aggregate(AGGREGATE_ID), "attached")];
 }
 
-fn action_locals(model: &serde_json::Value) -> Vec<&str> {
+fn action_locals(model: &serde_json::Value) -> Result<Vec<&str>, &'static str> {
     model["actions"]
         .as_array()
-        .unwrap()
+        .ok_or("domain model actions should be an array")?
         .iter()
         .map(|action| {
             action
                 .pointer("/id/local")
                 .and_then(serde_json::Value::as_str)
-                .unwrap()
+                .ok_or("domain action should have a string ID local part")
         })
         .collect()
 }
@@ -253,7 +253,7 @@ fn accepts_extensions_for_every_registered_action_owner_kind() {
     let model = builder.finish();
 
     assert_eq!(
-        action_locals(&model),
+        action_locals(&model).unwrap(),
         [
             "attached",
             "extension-one",
@@ -275,7 +275,7 @@ fn extensions_follow_attached_contracts_and_preserve_extension_order() {
     let model = builder.finish();
 
     assert_eq!(
-        action_locals(&model),
+        action_locals(&model).unwrap(),
         [
             "attached",
             "extension-one",
@@ -360,7 +360,7 @@ fn domain_model_accepts_optional_action_extensions_and_still_allows_omission() {
     };
 
     assert_eq!(
-        action_locals(&extended),
+        action_locals(&extended).unwrap(),
         [
             "attached",
             "extension-one",
@@ -368,5 +368,5 @@ fn domain_model_accepts_optional_action_extensions_and_still_allows_omission() {
             "extension-three",
         ]
     );
-    assert_eq!(action_locals(&omitted), ["attached"]);
+    assert_eq!(action_locals(&omitted).unwrap(), ["attached"]);
 }

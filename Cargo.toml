@@ -47,7 +47,7 @@ all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "warn", priority = -2 }
 
-unwrap_used = "warn"
+unwrap_used = "deny"
 expect_used = "deny"
 indexing_slicing = "deny"
 missing_const_for_fn = "deny"

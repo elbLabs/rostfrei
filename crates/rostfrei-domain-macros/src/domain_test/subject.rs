@@ -111,11 +111,13 @@ fn parse_typed(kind: DomainTestKind, args: TokenStream) -> syn::Result<TypedSubj
     };
     if qself.as_token.is_none()
         || qself.position == 0
-        || path.path.segments.len() != qself.position + 1
+        || path.path.segments.len().checked_sub(1) != Some(qself.position)
     {
         return Err(reference_shape_error(kind, &path.path));
     }
-    let reference_segment = path.path.segments.last().unwrap();
+    let Some(reference_segment) = path.path.segments.last() else {
+        return Err(reference_shape_error(kind, &path.path));
+    };
     if !matches!(reference_segment.arguments, PathArguments::None) {
         return Err(reference_shape_error(kind, reference_segment));
     }

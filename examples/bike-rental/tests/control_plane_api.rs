@@ -19,6 +19,8 @@ use tower::ServiceExt as _;
 
 const API_TOKEN: &str = "integration-test-capability";
 
+type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+
 async fn fixture()
 -> Result<(ControlPlane, InMemoryEventStore, StreamId), Box<dyn std::error::Error>> {
     let store = InMemoryEventStore::new();
@@ -31,16 +33,16 @@ async fn fixture()
     Ok((builder.build()?, store, stream))
 }
 
-fn app(control_plane: ControlPlane) -> axum::Router {
-    http::router(control_plane, HttpConfig::new(API_TOKEN).unwrap())
+fn app(control_plane: ControlPlane) -> TestResult<axum::Router> {
+    Ok(http::router(control_plane, HttpConfig::new(API_TOKEN)?))
 }
 
 fn authorize(request: axum::http::request::Builder) -> axum::http::request::Builder {
     request.header("authorization", format!("Bearer {API_TOKEN}"))
 }
 
-fn simulation_request(operation_id: &str, bicycle_id: &str) -> Request<Body> {
-    Request::builder()
+fn simulation_request(operation_id: &str, bicycle_id: &str) -> TestResult<Request<Body>> {
+    Ok(Request::builder()
         .method("POST")
         .uri("/v1/contexts/bike-rental/aggregates/rental-fleet/city-fleet/commands/rent-bicycle/simulate")
         .header("content-type", "application/json")
@@ -52,13 +54,12 @@ fn simulation_request(operation_id: &str, bicycle_id: &str) -> Request<Body> {
                 "payload": { "bicycle_id": bicycle_id }
             })
             .to_string(),
-        ))
-        .unwrap()
+        ))?)
 }
 
-async fn json_body(response: axum::response::Response) -> Value {
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    serde_json::from_slice(&bytes).unwrap()
+async fn json_body(response: axum::response::Response) -> TestResult<Value> {
+    let bytes = response.into_body().collect().await?.to_bytes();
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
 #[tokio::test]
@@ -74,11 +75,11 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
         return;
     };
     let history_before = store.load(&demo_stream).await.unwrap();
-    let app = app(control_plane);
+    let app = app(control_plane).unwrap();
 
     let response = app
         .clone()
-        .oneshot(simulation_request("operation-accepted", "bike-42"))
+        .oneshot(simulation_request("operation-accepted", "bike-42").unwrap())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::ACCEPTED);
@@ -86,7 +87,7 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
         response.headers().get("location").unwrap(),
         "/v1/operations/operation-accepted"
     );
-    let queued = json_body(response).await;
+    let queued = json_body(response).await.unwrap();
     assert_eq!(queued["operationId"], "operation-accepted");
     assert_eq!(queued["status"], "queued");
 
@@ -130,7 +131,7 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
         )
         .await
         .unwrap();
-    let completed = json_body(response).await;
+    let completed = json_body(response).await.unwrap();
     assert_eq!(completed["status"], "completed");
     assert_eq!(completed["result"]["decision"], "accepted");
     assert_eq!(completed["result"]["baseStreamVersion"], 1);
@@ -202,29 +203,32 @@ async fn rejection_and_idempotency_have_explicit_http_outcomes() {
         return;
     };
     let history_before = store.load(&demo_stream).await.unwrap();
-    let app = app(control_plane);
+    let app = app(control_plane).unwrap();
 
     let first = app
         .clone()
-        .oneshot(simulation_request("operation-rejected", "bike-99"))
+        .oneshot(simulation_request("operation-rejected", "bike-99").unwrap())
         .await
         .unwrap();
     assert_eq!(first.status(), StatusCode::ACCEPTED);
 
     let repeated = app
         .clone()
-        .oneshot(simulation_request("operation-rejected", "bike-99"))
+        .oneshot(simulation_request("operation-rejected", "bike-99").unwrap())
         .await
         .unwrap();
     assert_eq!(repeated.status(), StatusCode::ACCEPTED);
 
     let conflict = app
         .clone()
-        .oneshot(simulation_request("operation-rejected", "bike-42"))
+        .oneshot(simulation_request("operation-rejected", "bike-42").unwrap())
         .await
         .unwrap();
     assert_eq!(conflict.status(), StatusCode::CONFLICT);
-    assert_eq!(json_body(conflict).await["code"], "identity-conflict");
+    assert_eq!(
+        json_body(conflict).await.unwrap()["code"],
+        "identity-conflict"
+    );
 
     let trace = app
         .clone()
@@ -254,7 +258,7 @@ async fn rejection_and_idempotency_have_explicit_http_outcomes() {
         )
         .await
         .unwrap();
-    let completed = json_body(response).await;
+    let completed = json_body(response).await.unwrap();
     assert_eq!(completed["result"]["decision"], "rejected");
     assert_eq!(completed["result"]["baseStreamVersion"], 1);
     assert_eq!(completed["result"]["appended"], false);
