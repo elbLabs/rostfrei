@@ -66,9 +66,13 @@ impl SubjectFilter {
         }
 
         let tokens = value.split('.').collect::<Vec<_>>();
+        let final_index = tokens
+            .len()
+            .checked_sub(1)
+            .ok_or(NatsError::Configuration)?;
         if tokens.iter().any(|token| token.is_empty())
             || tokens.iter().enumerate().any(|(index, token)| {
-                (*token == ">" && index + 1 != tokens.len())
+                (*token == ">" && index != final_index)
                     || (token.contains('>') && *token != ">")
                     || (token.contains('*') && *token != "*")
             })

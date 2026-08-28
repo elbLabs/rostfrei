@@ -181,10 +181,17 @@ impl FromStr for ContentFingerprint {
 
 const fn decode_hex(value: u8) -> Option<u8> {
     match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
+        b'0'..=b'9' => value.checked_sub(b'0'),
+        b'a'..=b'f' => checked_hex_offset(value, b'a'),
+        b'A'..=b'F' => checked_hex_offset(value, b'A'),
         _ => None,
+    }
+}
+
+const fn checked_hex_offset(value: u8, base: u8) -> Option<u8> {
+    match value.checked_sub(base) {
+        Some(offset) => offset.checked_add(10),
+        None => None,
     }
 }
 
@@ -308,6 +315,58 @@ fn lower_hex_digit(nibble: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fingerprint_hex_decoding_preserves_all_nibble_values() {
+        for (digit, expected_byte) in [
+            ('0', 0x00),
+            ('1', 0x11),
+            ('2', 0x22),
+            ('3', 0x33),
+            ('4', 0x44),
+            ('5', 0x55),
+            ('6', 0x66),
+            ('7', 0x77),
+            ('8', 0x88),
+            ('9', 0x99),
+            ('a', 0xaa),
+            ('b', 0xbb),
+            ('c', 0xcc),
+            ('d', 0xdd),
+            ('e', 0xee),
+            ('f', 0xff),
+            ('A', 0xaa),
+            ('B', 0xbb),
+            ('C', 0xcc),
+            ('D', 0xdd),
+            ('E', 0xee),
+            ('F', 0xff),
+        ] {
+            let encoded = digit.to_string().repeat(64);
+            assert_eq!(
+                ContentFingerprint::from_hex(&encoded).unwrap().as_bytes(),
+                &[expected_byte; 32]
+            );
+        }
+    }
+
+    #[test]
+    fn fingerprint_hex_decoding_rejects_bytes_adjacent_to_accepted_ranges() {
+        for invalid in ['/', ':', '@', 'G', '`', 'g'] {
+            let encoded = format!("{invalid}{}", "0".repeat(63));
+            assert_eq!(
+                ContentFingerprint::from_hex(&encoded),
+                Err(IdentityError::InvalidFingerprint)
+            );
+        }
+
+        let encoded = format!("é{}", "0".repeat(62));
+        assert_eq!(encoded.len(), 64);
+        assert_eq!(
+            ContentFingerprint::from_hex(&encoded),
+            Err(IdentityError::InvalidFingerprint)
+        );
+    }
 
     #[test]
     fn derived_identities_preserve_canonical_hash_bytes() {

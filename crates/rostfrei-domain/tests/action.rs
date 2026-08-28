@@ -97,7 +97,7 @@ impl contracts::MailboxManagementActions for Mailbox {
 impl Mailbox {
     #[must_use]
     const fn unchanged(value: usize) -> usize {
-        value + 1
+        value.saturating_add(1)
     }
 }
 
@@ -182,7 +182,7 @@ impl restricted_contracts::CounterActions for Counter {
     }
 
     fn increment(self, input: u8) -> std::result::Result<Self, CounterDenied> {
-        Ok(Self(self.0 + input))
+        self.0.checked_add(input).map(Self).ok_or(CounterDenied)
     }
 }
 

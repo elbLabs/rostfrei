@@ -369,7 +369,10 @@ where
 
     let handling = timeout(config.processing_timeout(), handler.handle(delivery));
     tokio::pin!(handling);
-    let progress_interval = config.ack_wait() / 2;
+    let progress_interval = config
+        .ack_wait()
+        .checked_div(2)
+        .ok_or(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
     let progress = sleep(progress_interval);
     tokio::pin!(progress);
 
@@ -382,7 +385,10 @@ where
             }
             () = &mut progress => {
                 send_progress(message).await?;
-                progress.as_mut().reset(Instant::now() + progress_interval);
+                let next_progress = Instant::now()
+                    .checked_add(progress_interval)
+                    .ok_or(ConsumeError::new(ConsumeErrorKind::Unavailable))?;
+                progress.as_mut().reset(next_progress);
             }
         }
     }

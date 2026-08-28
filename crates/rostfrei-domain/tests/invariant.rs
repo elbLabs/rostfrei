@@ -75,7 +75,7 @@ impl AllocationBounds for Product {
     }
 
     fn available_nonnegative(candidate: &ProductRoot) -> Option<InvariantViolation> {
-        (candidate.stock - candidate.reserved < 0)
+        (candidate.stock < candidate.reserved)
             .then(|| InvariantViolation::new("available", "must be nonnegative"))
     }
 }

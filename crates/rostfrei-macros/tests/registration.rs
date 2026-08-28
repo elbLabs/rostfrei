@@ -22,7 +22,7 @@ impl Aggregate for Account {
 
     fn apply(state: &mut Self::State, event: &Self::Event) {
         let AccountEvent::Deposited(amount) = event;
-        state.balance += amount;
+        state.balance = state.balance.saturating_add(*amount);
     }
 }
 
@@ -39,6 +39,14 @@ impl CommandHandler<Deposit> for Account {
         command: &Deposit,
         aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
+        if aggregate
+            .state()
+            .balance
+            .checked_add(command.amount)
+            .is_none()
+        {
+            return Err(());
+        }
         aggregate.raise(AccountEvent::Deposited(command.amount));
         Ok(())
     }
