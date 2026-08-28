@@ -186,6 +186,7 @@ impl EventStore for InMemoryEventStore {
             .or_default()
             .extend(recorded.iter().cloned());
         state.event_count = new_count;
+        drop(state);
 
         Ok(AppendOutcome::Appended(recorded))
     }
