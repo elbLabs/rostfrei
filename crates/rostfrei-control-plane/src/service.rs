@@ -1,8 +1,8 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -18,13 +18,13 @@ use thiserror::Error;
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::{
-    operation::{subscribe, NewOperation, OperationRecord},
-    runtime::{
-        stream_id, CommandKey, ErasedCommandSimulator, RuntimeBindings, RuntimeDecision,
-        RuntimeSimulationError,
-    },
     CommandWireCodec, DomainJsonWireCodec, OperationEventKind, OperationResult, OperationSnapshot,
     OperationSubscription, PredictedDomainEvent, RuntimeRegistrationError, SubscriptionError,
+    operation::{NewOperation, OperationRecord, subscribe},
+    runtime::{
+        CommandKey, ErasedCommandSimulator, RuntimeBindings, RuntimeDecision,
+        RuntimeSimulationError, stream_id,
+    },
 };
 
 pub const MAX_COMMAND_PAYLOAD_LEN: usize = 1024 * 1024;

@@ -6,13 +6,13 @@ error[E0277]: the trait bound `Result<bool, Error>: QueryOutputType<First>` is n
    |
    = help: the following other types implement trait `QueryOutputType<Aggregate>`:
              `FirstId` implements `QueryOutputType<<FirstRoot as EntityType>::Owner>`
+             `Option<T>` implements `QueryOutputType<Aggregate>`
              `SecondId` implements `QueryOutputType<<SecondRoot as EntityType>::Owner>`
              `Vec<T>` implements `QueryOutputType<Aggregate>`
              `bool` implements `QueryOutputType<Aggregate>`
              `char` implements `QueryOutputType<Aggregate>`
              `f32` implements `QueryOutputType<Aggregate>`
              `f64` implements `QueryOutputType<Aggregate>`
-             `i128` implements `QueryOutputType<Aggregate>`
            and $N others
 
 error[E0277]: the trait bound `Event: QueryOutputType<First>` is not satisfied
@@ -28,13 +28,13 @@ help: the trait `QueryOutputType<First>` is not implemented for `Event`
    | ^^^^^^^^^^^^
    = help: the following other types implement trait `QueryOutputType<Aggregate>`:
              `FirstId` implements `QueryOutputType<<FirstRoot as EntityType>::Owner>`
+             `Option<T>` implements `QueryOutputType<Aggregate>`
              `SecondId` implements `QueryOutputType<<SecondRoot as EntityType>::Owner>`
              `Vec<T>` implements `QueryOutputType<Aggregate>`
              `bool` implements `QueryOutputType<Aggregate>`
              `char` implements `QueryOutputType<Aggregate>`
              `f32` implements `QueryOutputType<Aggregate>`
              `f64` implements `QueryOutputType<Aggregate>`
-             `i128` implements `QueryOutputType<Aggregate>`
            and $N others
 
 error[E0277]: the trait bound `Error: QueryOutputType<First>` is not satisfied
@@ -50,13 +50,13 @@ help: the trait `QueryOutputType<First>` is not implemented for `Error`
    | ^^^^^^^^^^^^
    = help: the following other types implement trait `QueryOutputType<Aggregate>`:
              `FirstId` implements `QueryOutputType<<FirstRoot as EntityType>::Owner>`
+             `Option<T>` implements `QueryOutputType<Aggregate>`
              `SecondId` implements `QueryOutputType<<SecondRoot as EntityType>::Owner>`
              `Vec<T>` implements `QueryOutputType<Aggregate>`
              `bool` implements `QueryOutputType<Aggregate>`
              `char` implements `QueryOutputType<Aggregate>`
              `f32` implements `QueryOutputType<Aggregate>`
              `f64` implements `QueryOutputType<Aggregate>`
-             `i128` implements `QueryOutputType<Aggregate>`
            and $N others
 
 error[E0277]: the trait bound `Plain: QueryOutputType<First>` is not satisfied
@@ -72,13 +72,13 @@ help: the trait `QueryOutputType<First>` is not implemented for `Plain`
    | ^^^^^^^^^^^^
    = help: the following other types implement trait `QueryOutputType<Aggregate>`:
              `FirstId` implements `QueryOutputType<<FirstRoot as EntityType>::Owner>`
+             `Option<T>` implements `QueryOutputType<Aggregate>`
              `SecondId` implements `QueryOutputType<<SecondRoot as EntityType>::Owner>`
              `Vec<T>` implements `QueryOutputType<Aggregate>`
              `bool` implements `QueryOutputType<Aggregate>`
              `char` implements `QueryOutputType<Aggregate>`
              `f32` implements `QueryOutputType<Aggregate>`
              `f64` implements `QueryOutputType<Aggregate>`
-             `i128` implements `QueryOutputType<Aggregate>`
            and $N others
 
 error[E0277]: the trait bound `Command: QueryInputType<First>` is not satisfied

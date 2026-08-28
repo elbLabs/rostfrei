@@ -20,8 +20,8 @@ mod stream_policy;
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -36,16 +36,16 @@ use rostfrei_messaging_core::{
     QueryHandler, QueryOptions, QueryOutcome, QueryRequest, QueryRequestErrorKind, QueryRequester,
     QueryResponse, QueryServer, QueryServerErrorKind, RetryDelay, SchemaVersion, TraceContext,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use connection::{connect, NatsConnection};
+use connection::{NatsConnection, connect};
 use consumer::{NatsConsumerFactory, QuarantineRecord};
 use messaging_config::{MessagingTopology, NatsConnectionConfig, QueueGroup, StreamName};
 use provisioning::{
-    provision_application_messaging, provision_durable_consumer, ApplicationMessagingConfig,
+    ApplicationMessagingConfig, provision_application_messaging, provision_durable_consumer,
 };
-use publish::{NatsPublisher, CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE};
-use query::{NatsQueryServerConfig, CORRELATION_ID_HEADER, REQUEST_ID_HEADER};
+use publish::{CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE, NatsPublisher};
+use query::{CORRELATION_ID_HEADER, NatsQueryServerConfig, REQUEST_ID_HEADER};
 
 const TEST_NATS_URL_ENV: &str = "ROSTFREI_NATS_URL";
 const TRACE_PARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";

@@ -418,12 +418,12 @@ fn validate_history(
         };
 
         let operation_identity = (event.commit_id(), event.operation_fingerprint());
-        if let Some(previous) = operations.insert(event.operation_id(), operation_identity) {
-            if previous != operation_identity {
-                return Err(corrupt(
-                    "loaded history reuses an operation identity across different commits",
-                ));
-            }
+        if let Some(previous) = operations.insert(event.operation_id(), operation_identity)
+            && previous != operation_identity
+        {
+            return Err(corrupt(
+                "loaded history reuses an operation identity across different commits",
+            ));
         }
     }
     if current_commit.is_some() {

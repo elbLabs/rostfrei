@@ -9,19 +9,19 @@ use async_nats::{
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use rostfrei_messaging_core::{
-    ApplicationErrorCode, ApplicationName, CallerMetadata, CorrelationId, MessageId,
-    MessageTimestamp, QueryAddress, QueryErrorClassification, QueryErrorPayload, QueryHandler,
-    QueryOptions, QueryRequest, QueryRequestError, QueryRequestErrorKind, QueryRequester,
-    QueryResponse, QueryResult, QueryServer, QueryServerError, QueryServerErrorKind, SchemaVersion,
-    TraceContext, MAX_CONCURRENCY, MAX_ENVELOPE_BYTES, MAX_PROCESSING_TIMEOUT,
+    ApplicationErrorCode, ApplicationName, CallerMetadata, CorrelationId, MAX_CONCURRENCY,
+    MAX_ENVELOPE_BYTES, MAX_PROCESSING_TIMEOUT, MessageId, MessageTimestamp, QueryAddress,
+    QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryOptions, QueryRequest,
+    QueryRequestError, QueryRequestErrorKind, QueryRequester, QueryResponse, QueryResult,
+    QueryServer, QueryServerError, QueryServerErrorKind, SchemaVersion, TraceContext,
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use tokio::time::timeout;
 
 use crate::{
     error::NatsError,
     messaging_config::QueueGroup,
-    publish::{safe_headers, CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE},
+    publish::{CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE, safe_headers},
 };
 
 pub const REQUEST_ID_HEADER: &str = "rostfrei-Control-Request-Id";

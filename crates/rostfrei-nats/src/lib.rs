@@ -12,27 +12,26 @@ mod publish;
 mod query;
 mod stream_policy;
 
-pub use connection::{connect, ConnectionHealth, NatsConnection};
-pub use consumer::{NatsConsumerFactory, QuarantineRecord, MAX_QUARANTINE_RECORD_BYTES};
+pub use connection::{ConnectionHealth, NatsConnection, connect};
+pub use consumer::{MAX_QUARANTINE_RECORD_BYTES, NatsConsumerFactory, QuarantineRecord};
 pub use domain_event_consumer::{
-    provision_domain_event_consumer, DomainEventConsumerError, DomainEventConsumerErrorKind,
-    NatsDomainEventConsumer, NatsDomainEventConsumerConfig,
+    DomainEventConsumerError, DomainEventConsumerErrorKind, NatsDomainEventConsumer,
+    NatsDomainEventConsumerConfig, provision_domain_event_consumer,
 };
 pub use error::{NatsError, NatsErrorKind};
-pub use event_store::{provision_event_store, NatsEventStore};
+pub use event_store::{NatsEventStore, provision_event_store};
 pub use event_store_config::{
-    NatsEventStoreConfig, DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
-    DEFAULT_EVENT_STORE_MAX_STREAM_BYTES, DEFAULT_EVENT_STORE_PUBACK_TIMEOUT,
-    DEFAULT_EVENT_STORE_REPLICAS,
+    DEFAULT_EVENT_STORE_MAX_EVENT_BYTES, DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
+    DEFAULT_EVENT_STORE_PUBACK_TIMEOUT, DEFAULT_EVENT_STORE_REPLICAS, NatsEventStoreConfig,
 };
 pub use messaging_config::{
-    MessagingTopology, NatsConnectionConfig, QueueGroup, ServerVersion, StreamName, SubjectFilter,
-    MINIMUM_NATS_SERVER_VERSION,
+    MINIMUM_NATS_SERVER_VERSION, MessagingTopology, NatsConnectionConfig, QueueGroup,
+    ServerVersion, StreamName, SubjectFilter,
 };
 pub use provisioning::{
+    ApplicationMessagingConfig, StreamProvisioningConfig, StreamRetention, StreamStorage,
     provision_application_messaging, provision_durable_consumer, provision_stream,
-    verify_application_messaging, verify_stream, ApplicationMessagingConfig,
-    StreamProvisioningConfig, StreamRetention, StreamStorage,
+    verify_application_messaging, verify_stream,
 };
 pub use publish::{NatsPublishAck, NatsPublisher};
 pub use query::{NatsQueryRequester, NatsQueryServer, NatsQueryServerConfig};

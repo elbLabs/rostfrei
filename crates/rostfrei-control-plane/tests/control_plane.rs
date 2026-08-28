@@ -8,15 +8,15 @@ use axum::{
 };
 #[cfg(feature = "http")]
 use http_body_util::BodyExt as _;
-#[cfg(feature = "http")]
-use rostfrei_control_plane::{
-    http::{self, HttpConfig},
-    MAX_COMMAND_PAYLOAD_LEN,
-};
 use rostfrei_control_plane::{
     CommandWireCodec, CommandWireCodecError, ControlPlane, ControlPlaneBuilder,
     ExposeTracePayloadsForLocalDevelopment, RuntimeRegistrationError, SimulationRequest,
     SubmissionError, SubscriptionError,
+};
+#[cfg(feature = "http")]
+use rostfrei_control_plane::{
+    MAX_COMMAND_PAYLOAD_LEN,
+    http::{self, HttpConfig},
 };
 use rostfrei_core::{
     Aggregate, AggregateInstance, CommandHandler, Event, EventCodec, EventCodecError,
@@ -25,7 +25,7 @@ use rostfrei_core::{
 };
 use rostfrei_registry::{CommandDefinition, DomainModule, DomainRegistry, ModuleDescriptor};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::Notify;
 #[cfg(feature = "http")]
 use tower::ServiceExt as _;
@@ -36,8 +36,7 @@ const COMMAND_NAME: &str = "test-command";
 #[cfg(feature = "http")]
 const API_TOKEN: &str = "integration-test-capability";
 #[cfg(feature = "http")]
-const SIMULATION_PATH: &str =
-    "/v1/contexts/test-context/aggregates/test-aggregate/aggregate-1/commands/test-command/simulate";
+const SIMULATION_PATH: &str = "/v1/contexts/test-context/aggregates/test-aggregate/aggregate-1/commands/test-command/simulate";
 
 struct TestAggregate;
 
@@ -366,12 +365,16 @@ async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
     .await;
     let (accepted, accepted_trace) =
         terminal_operation_with_trace(&control_plane, "redacted-accepted").await;
-    assert!(accepted["result"]["predictedEvents"][0]
-        .get("payload")
-        .is_none());
-    assert!(accepted["result"]["predictedEvents"][0]
-        .get("payloadBase64")
-        .is_none());
+    assert!(
+        accepted["result"]["predictedEvents"][0]
+            .get("payload")
+            .is_none()
+    );
+    assert!(
+        accepted["result"]["predictedEvents"][0]
+            .get("payloadBase64")
+            .is_none()
+    );
     assert!(!accepted_trace.contains("accepted outcome details"));
 
     submit(

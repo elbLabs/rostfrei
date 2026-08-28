@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     Aggregate, AggregateType, Event, EventCodec, EventCodecErrorKind, EventVariant, JsonEventCodec,
-    RecordedEvent, MAX_EVENT_TYPE_LEN,
+    MAX_EVENT_TYPE_LEN, RecordedEvent,
 };
 
 pub struct CommittedDomainEvent<'a, E> {

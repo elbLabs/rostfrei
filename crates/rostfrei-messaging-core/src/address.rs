@@ -1,8 +1,8 @@
 use std::{fmt, str::FromStr};
 
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
-use crate::{scope::validate_scope_segment, ContractError, ContractErrorKind};
+use crate::{ContractError, ContractErrorKind, scope::validate_scope_segment};
 
 pub const COMMAND_ADDRESS_CONVENTION: &str = "<application>.command.<context>.<name>";
 pub const INTEGRATION_EVENT_ADDRESS_CONVENTION: &str = "<application>.integration.<context>.<name>";
