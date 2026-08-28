@@ -16,6 +16,18 @@ pub trait JsonErrorPayload {
 
 impl JsonErrorPayload for Infallible {
     fn encode_json(&self) -> Result<Value, String> {
-        match *self {}
+        Err("an infallible domain error cannot be encoded as JSON".to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Infallible, JsonErrorPayload};
+
+    #[test]
+    fn infallible_implements_json_error_payload() {
+        fn assert_json_error_payload<T: JsonErrorPayload>() {}
+
+        assert_json_error_payload::<Infallible>();
     }
 }

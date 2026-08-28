@@ -106,7 +106,7 @@ struct Line {
 }
 
 impl LineBounds for Line {
-    fn positive_quantity(candidate: &Line) -> Option<InvariantViolation> {
+    fn positive_quantity(candidate: &Self) -> Option<InvariantViolation> {
         (candidate.quantity <= 0).then(|| InvariantViolation::new("quantity", "must be positive"))
     }
 }
@@ -128,7 +128,7 @@ trait SkuBounds {
 struct Sku(String);
 
 impl SkuBounds for Sku {
-    fn not_blank(candidate: &Sku) -> Option<InvariantViolation> {
+    fn not_blank(candidate: &Self) -> Option<InvariantViolation> {
         candidate
             .0
             .trim()
