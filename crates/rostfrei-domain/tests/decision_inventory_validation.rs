@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
-use std::any::Any;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+mod support;
+
+use support::{ExpectedPanicError, panic_message};
 
 use domain::__private::DomainModelBuilder;
 use domain::{
@@ -68,21 +69,6 @@ impl InventoryDecisions for InventoryService {
     }
 }
 
-fn panic_message(operation: impl FnOnce()) -> String {
-    let payload = catch_unwind(AssertUnwindSafe(operation)).expect_err("operation should panic");
-    panic_payload(payload)
-}
-
-fn panic_payload(payload: Box<dyn Any + Send>) -> String {
-    match payload.downcast::<String>() {
-        Ok(message) => *message,
-        Err(payload) => payload.downcast::<&'static str>().map_or_else(
-            |_| panic!("panic payload should be a String or &'static str"),
-            |message| (*message).to_owned(),
-        ),
-    }
-}
-
 fn violation(missing_id: ValueObjectId, location: &str) -> String {
     format!(
         "Decision reference inventory violation: decision {DECISION_ID:?} references missing {missing_id:?} at descriptor location `{location}`; add it to domain_model! inventory key `value_objects`"
@@ -107,32 +93,35 @@ fn accepts_references_registered_after_the_owner() {
 }
 
 #[test]
-fn reports_a_missing_input_value_object() {
+fn reports_a_missing_input_value_object() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = owner_builder();
         builder.add_value_object(InventoryOutput::DESCRIPTOR);
         builder.finish();
-    });
+    })?;
 
     assert_eq!(message, violation(INPUT_ID, "input"));
+    Ok(())
 }
 
 #[test]
-fn reports_a_missing_output_value_object() {
+fn reports_a_missing_output_value_object() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = owner_builder();
         builder.add_value_object(InventoryInput::DESCRIPTOR);
         builder.finish();
-    });
+    })?;
 
     assert_eq!(message, violation(OUTPUT_ID, "output"));
+    Ok(())
 }
 
 #[test]
-fn validates_input_before_output_deterministically() {
+fn validates_input_before_output_deterministically() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         owner_builder().finish();
-    });
+    })?;
 
     assert_eq!(message, violation(INPUT_ID, "input"));
+    Ok(())
 }

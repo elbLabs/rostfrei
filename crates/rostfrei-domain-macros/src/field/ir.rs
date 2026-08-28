@@ -1,4 +1,4 @@
-use syn::{LitStr, TypePath};
+use syn::{LitStr, Member, TypePath};
 
 #[derive(Clone)]
 pub enum Wrapper {
@@ -40,6 +40,7 @@ pub enum Role {
 #[derive(Clone)]
 pub struct Field {
     pub name: LitStr,
+    pub member: Member,
     pub base: TypePath,
     pub wrappers: Vec<Wrapper>,
     pub role: Role,

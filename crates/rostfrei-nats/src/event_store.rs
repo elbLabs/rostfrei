@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::fmt::Write as _;
 
 use async_nats::{
     HeaderMap, Request,
@@ -26,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::event_store_config::NatsEventStoreConfig;
+use crate::hex::encode_lower_hex;
 use crate::stream_policy::{is_stream_not_found, stream_config_mismatches};
 
 const LEGACY_EVENT_SCHEMA_VERSION: u16 = 1;
@@ -202,7 +202,7 @@ impl NatsEventStore {
         subject: &str,
         sequence: u64,
         commit_id: &CommitId,
-        expected_events: &[RecordedEvent],
+        expected_events: &RecordedBatch,
     ) -> Result<(), EventStoreError> {
         let history = self.load_history(stream_id).await?;
         let stored = history
@@ -210,7 +210,7 @@ impl NatsEventStore {
             .iter()
             .find(|commit| commit.batch.commit_id() == commit_id)
             .ok_or_else(|| corrupt("published commit was not visible in aggregate history"))?;
-        if stored.events != expected_events {
+        if stored.events.as_slice() != expected_events.events() {
             return Err(corrupt("published commit contains different events"));
         }
 
@@ -236,7 +236,7 @@ impl NatsEventStore {
             &message.headers,
             message.payload.as_ref(),
         )?;
-        if decoded.recorded != *expected_events.last().expect("event batch is non-empty") {
+        if &decoded.recorded != expected_events.last() {
             return Err(corrupt("PubAck sequence contains a different final event"));
         }
         Ok(())
@@ -289,7 +289,7 @@ impl EventStore for NatsEventStore {
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
         );
-        let payloads = encode_events(&self.config, stream_id, &batch, &recorded)?;
+        let payloads = encode_events(&self.config, stream_id, &batch, recorded.events())?;
         for payload in &payloads {
             if payload.len() > self.config.max_event_bytes() {
                 return Err(invalid(format!(
@@ -333,7 +333,7 @@ impl EventStore for NatsEventStore {
             &recorded,
         )
         .await?;
-        Ok(AppendOutcome::Appended(recorded))
+        Ok(AppendOutcome::Appended(recorded.into_events()))
     }
 }
 
@@ -375,6 +375,37 @@ struct History {
 struct StoredCommit {
     batch: EventBatch,
     events: Vec<RecordedEvent>,
+}
+
+struct RecordedBatch {
+    events: Vec<RecordedEvent>,
+    last: RecordedEvent,
+}
+
+impl RecordedBatch {
+    fn new(events: Vec<RecordedEvent>) -> Result<Self, EventStoreError> {
+        let last = events
+            .last()
+            .cloned()
+            .ok_or_else(|| invalid("event batch is empty"))?;
+        Ok(Self { events, last })
+    }
+
+    fn events(&self) -> &[RecordedEvent] {
+        &self.events
+    }
+
+    fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    const fn last(&self) -> &RecordedEvent {
+        &self.last
+    }
+
+    fn into_events(self) -> Vec<RecordedEvent> {
+        self.events
+    }
 }
 
 #[derive(Default)]
@@ -735,16 +766,8 @@ impl HistoryBuilder {
         }
 
         self.current_version = expected_version;
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(PendingCommit::is_complete)
-        {
-            let stored = self
-                .pending
-                .take()
-                .expect("completed pending commit exists")
-                .finish()?;
+        if let Some(pending) = self.pending.take_if(|pending| pending.is_complete()) {
+            let stored = pending.finish()?;
             self.history.events.extend(stored.events.iter().cloned());
             self.history.commits.push(stored);
         }
@@ -965,11 +988,7 @@ fn new_atomic_batch_id(client: &async_nats::Client, commit_id: &CommitId) -> Str
     let mut hasher = Sha256::new();
     hasher.update(client.new_inbox().as_bytes());
     hasher.update(commit_id.as_str().as_bytes());
-    let mut output = String::with_capacity(64);
-    for byte in hasher.finalize() {
-        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    output
+    encode_lower_hex(hasher.finalize())
 }
 
 fn validate_atomic_headers(
@@ -1049,7 +1068,7 @@ fn record_batch(
     stream_id: &StreamId,
     current_version: StreamVersion,
     batch: &EventBatch,
-) -> Result<Vec<RecordedEvent>, EventStoreError> {
+) -> Result<RecordedBatch, EventStoreError> {
     let mut version = current_version;
     let mut recorded = Vec::with_capacity(batch.events().len());
     let event_count = u32::try_from(batch.events().len())
@@ -1084,7 +1103,7 @@ fn record_batch(
         }
         recorded.push(recorded_event);
     }
-    Ok(recorded)
+    RecordedBatch::new(recorded)
 }
 
 fn same_batch(stored: &EventBatch, incoming: &EventBatch) -> bool {
@@ -1130,11 +1149,7 @@ fn event_checksum(
         schema_version,
         event,
     })?;
-    let mut output = String::with_capacity(64);
-    for byte in Sha256::digest(input) {
-        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    Ok(output)
+    Ok(encode_lower_hex(Sha256::digest(input)))
 }
 
 fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventStoreError> {
@@ -1345,7 +1360,7 @@ mod tests {
         )
         .unwrap();
         let recorded = record_batch(&stream_id, StreamVersion::ZERO, &batch).unwrap();
-        let payload = encode_events(&config, &stream_id, &batch, &recorded)
+        let payload = encode_events(&config, &stream_id, &batch, recorded.events())
             .unwrap()
             .remove(0);
         let subject = config.aggregate_subject(

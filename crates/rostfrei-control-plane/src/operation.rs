@@ -3,10 +3,15 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use rostfrei_core::MAX_EVENTS_PER_BATCH;
 use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::{Mutex, watch};
+
+const MAX_COMPLETION_TRACE_EVENTS: usize = MAX_EVENTS_PER_BATCH + 2;
+const TRACE_LIMIT_FAILURE_CODE: &str = "invalid-runtime";
+const TRACE_LIMIT_FAILURE_MESSAGE: &str = "operation trace exceeds its bounded event limit";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -142,6 +147,7 @@ struct OperationState {
     fingerprint: String,
     snapshot: OperationSnapshot,
     events: Vec<OperationEvent>,
+    next_event_id: u64,
 }
 
 pub(crate) struct OperationRecord {
@@ -174,6 +180,7 @@ impl OperationRecord {
                     failure: None,
                 },
                 events: vec![event],
+                next_event_id: 2,
             }),
             changed,
             terminal: AtomicBool::new(false),
@@ -189,10 +196,15 @@ impl OperationRecord {
     }
 
     pub async fn start(&self) {
-        self.append(OperationEventKind::Started, |snapshot| {
-            snapshot.status = OperationStatus::Running;
-        })
-        .await;
+        let mut state = self.state.lock().await;
+        if state.snapshot.status != OperationStatus::Queued {
+            return;
+        }
+        push_event(&mut state, OperationEventKind::Started);
+        state.snapshot.status = OperationStatus::Running;
+        let latest = state.snapshot.latest_event_id;
+        drop(state);
+        self.changed.send_replace(latest);
     }
 
     pub async fn complete(&self, result: OperationResult, events: Vec<OperationEventKind>) {
@@ -204,12 +216,20 @@ impl OperationRecord {
         if state.snapshot.status.is_terminal() {
             return;
         }
-        for kind in events {
-            push_event(&mut state, kind);
+        if events.len() > MAX_COMPLETION_TRACE_EVENTS {
+            fail_state(
+                &mut state,
+                TRACE_LIMIT_FAILURE_CODE,
+                TRACE_LIMIT_FAILURE_MESSAGE.to_owned(),
+            );
+        } else {
+            for kind in events {
+                push_event(&mut state, kind);
+            }
+            push_event(&mut state, OperationEventKind::Completed { decision });
+            state.snapshot.status = OperationStatus::Completed;
+            state.snapshot.result = Some(result);
         }
-        push_event(&mut state, OperationEventKind::Completed { decision });
-        state.snapshot.status = OperationStatus::Completed;
-        state.snapshot.result = Some(result);
         self.terminal.store(true, Ordering::Release);
         let latest = state.snapshot.latest_event_id;
         drop(state);
@@ -221,15 +241,7 @@ impl OperationRecord {
         if state.snapshot.status.is_terminal() {
             return;
         }
-        push_event(
-            &mut state,
-            OperationEventKind::Failed {
-                code,
-                message: message.clone(),
-            },
-        );
-        state.snapshot.status = OperationStatus::Failed;
-        state.snapshot.failure = Some(OperationFailure { code, message });
+        fail_state(&mut state, code, message);
         self.terminal.store(true, Ordering::Release);
         let latest = state.snapshot.latest_event_id;
         drop(state);
@@ -238,15 +250,6 @@ impl OperationRecord {
 
     pub fn is_terminal(&self) -> bool {
         self.terminal.load(Ordering::Acquire)
-    }
-
-    async fn append(&self, kind: OperationEventKind, update: impl FnOnce(&mut OperationSnapshot)) {
-        let mut state = self.state.lock().await;
-        push_event(&mut state, kind);
-        update(&mut state.snapshot);
-        let latest = state.snapshot.latest_event_id;
-        drop(state);
-        self.changed.send_replace(latest);
     }
 
     async fn subscription(
@@ -269,17 +272,27 @@ impl OperationRecord {
 }
 
 fn push_event(state: &mut OperationState, kind: OperationEventKind) {
-    let id = state
-        .snapshot
-        .latest_event_id
-        .checked_add(1)
-        .expect("bounded operation traces cannot exhaust u64 event IDs");
+    let id = state.next_event_id;
+    state.next_event_id = state.next_event_id.saturating_add(1);
     state.events.push(OperationEvent {
         id,
         operation_id: state.snapshot.operation_id.clone(),
         kind,
     });
     state.snapshot.latest_event_id = id;
+}
+
+fn fail_state(state: &mut OperationState, code: &'static str, message: String) {
+    push_event(
+        state,
+        OperationEventKind::Failed {
+            code,
+            message: message.clone(),
+        },
+    );
+    state.snapshot.status = OperationStatus::Failed;
+    state.snapshot.result = None;
+    state.snapshot.failure = Some(OperationFailure { code, message });
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -324,4 +337,82 @@ pub(crate) async fn subscribe(
     after: u64,
 ) -> Result<OperationSubscription, SubscriptionError> {
     record.subscription(after).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(operation_id: &str) -> Arc<OperationRecord> {
+        OperationRecord::new(NewOperation {
+            operation_id: operation_id.to_owned(),
+            fingerprint: "fingerprint".to_owned(),
+            command: "test-command",
+            schema_version: 1,
+            aggregate_type: "test-context/test-aggregate",
+            aggregate_id: "aggregate-1",
+        })
+    }
+
+    #[tokio::test]
+    async fn bounded_traces_keep_ordered_ids_and_emit_events_for_terminal_transitions() {
+        let completed = record("maximum-trace");
+        completed.start().await;
+        completed
+            .complete(
+                OperationResult::Rejected {
+                    base_stream_version: 0,
+                    rejection: Value::Null,
+                    appended: false,
+                    published: false,
+                },
+                vec![OperationEventKind::CommandAccepted; MAX_COMPLETION_TRACE_EVENTS],
+            )
+            .await;
+        let completed_state = completed.state.lock().await;
+        assert_eq!(completed_state.snapshot.status, OperationStatus::Completed);
+        assert_eq!(
+            completed_state.snapshot.latest_event_id,
+            completed_state.events.last().map_or(0, |event| event.id)
+        );
+        assert!(completed_state.events.windows(2).all(|events| {
+            matches!(events, [previous, current] if current.id == previous.id.saturating_add(1))
+        }));
+        assert!(matches!(
+            completed_state.events.last().map(|event| &event.kind),
+            Some(OperationEventKind::Completed { .. })
+        ));
+        drop(completed_state);
+
+        let oversized = record("oversized-trace");
+        oversized.start().await;
+        oversized
+            .complete(
+                OperationResult::Rejected {
+                    base_stream_version: 0,
+                    rejection: Value::Null,
+                    appended: false,
+                    published: false,
+                },
+                vec![OperationEventKind::CommandAccepted; MAX_COMPLETION_TRACE_EVENTS + 1],
+            )
+            .await;
+        let oversized_state = oversized.state.lock().await;
+        assert_eq!(oversized_state.snapshot.status, OperationStatus::Failed);
+        assert_eq!(oversized_state.snapshot.latest_event_id, 3);
+        assert!(matches!(
+            oversized_state.events.last().map(|event| &event.kind),
+            Some(OperationEventKind::Failed {
+                code: TRACE_LIMIT_FAILURE_CODE,
+                message,
+            }) if message == TRACE_LIMIT_FAILURE_MESSAGE
+        ));
+        assert_eq!(
+            oversized_state.snapshot.failure,
+            Some(OperationFailure {
+                code: TRACE_LIMIT_FAILURE_CODE,
+                message: TRACE_LIMIT_FAILURE_MESSAGE.to_owned(),
+            })
+        );
+    }
 }

@@ -1,8 +1,10 @@
 #![allow(dead_code)]
 
-use std::any::Any;
 use std::fmt::Debug;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+
+mod support;
+
+use support::{ExpectedPanicError, panic_message};
 
 use domain::__private::DomainModelBuilder;
 use domain::extension::ActionGroupType;
@@ -469,21 +471,6 @@ impl ActionGroupType for OrderedExtension {
     }];
 }
 
-fn panic_message(operation: impl FnOnce()) -> String {
-    let payload = catch_unwind(AssertUnwindSafe(operation)).expect_err("operation should panic");
-    panic_payload(payload)
-}
-
-fn panic_payload(payload: Box<dyn Any + Send>) -> String {
-    match payload.downcast::<String>() {
-        Ok(message) => *message,
-        Err(payload) => payload.downcast::<&'static str>().map_or_else(
-            |_| panic!("panic payload should be a String or &'static str"),
-            |message| (*message).to_owned(),
-        ),
-    }
-}
-
 fn violation(
     action_id: ActionId,
     missing_id: impl Debug,
@@ -533,12 +520,12 @@ fn accepts_references_added_after_all_owner_actions_are_registered() {
 }
 
 #[test]
-fn aggregate_reports_missing_domain_identity_input() {
+fn aggregate_reports_missing_domain_identity_input() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_aggregate_type::<InventoryAggregate>();
         builder.finish();
-    });
+    })?;
 
     assert_eq!(
         message,
@@ -552,16 +539,17 @@ fn aggregate_reports_missing_domain_identity_input() {
             "identities",
         )
     );
+    Ok(())
 }
 
 #[test]
-fn domain_service_reports_missing_event_output() {
+fn domain_service_reports_missing_event_output() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<InventoryService>();
         builder.add_value_object(ServiceActionInput::DESCRIPTOR);
         builder.finish();
-    });
+    })?;
 
     assert_eq!(
         message,
@@ -575,15 +563,16 @@ fn domain_service_reports_missing_event_output() {
             "events",
         )
     );
+    Ok(())
 }
 
 #[test]
-fn entity_reports_missing_value_object_input() {
+fn entity_reports_missing_value_object_input() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_entity_type::<InventoryEntity>();
         builder.finish();
-    });
+    })?;
 
     assert_eq!(
         message,
@@ -597,16 +586,17 @@ fn entity_reports_missing_value_object_input() {
             "value_objects",
         )
     );
+    Ok(())
 }
 
 #[test]
-fn entity_reports_missing_value_object_output() {
+fn entity_reports_missing_value_object_output() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_entity_type::<InventoryEntity>();
         builder.add_value_object(InputValue::DESCRIPTOR);
         builder.finish();
-    });
+    })?;
 
     assert_eq!(
         message,
@@ -620,16 +610,17 @@ fn entity_reports_missing_value_object_output() {
             "value_objects",
         )
     );
+    Ok(())
 }
 
 #[test]
-fn value_object_reports_missing_error() {
+fn value_object_reports_missing_error() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_value_object_type::<InventoryValue>();
         builder.add_value_object(InputValue::DESCRIPTOR);
         builder.finish();
-    });
+    })?;
 
     assert_eq!(
         message,
@@ -643,16 +634,17 @@ fn value_object_reports_missing_error() {
             "errors",
         )
     );
+    Ok(())
 }
 
 #[test]
-fn traverses_deeply_nested_optional_list_outputs() {
+fn traverses_deeply_nested_optional_list_outputs() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<ExtensionService>();
         builder.add_action_extension::<NestedExtension>();
         builder.finish();
-    });
+    })?;
 
     assert_eq!(
         message,
@@ -663,10 +655,11 @@ fn traverses_deeply_nested_optional_list_outputs() {
             "events",
         )
     );
+    Ok(())
 }
 
 #[test]
-fn reports_missing_raised_event() {
+fn reports_missing_raised_event() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_aggregate_type::<InventoryAggregate>();
@@ -674,7 +667,7 @@ fn reports_missing_raised_event() {
         builder.add_domain_identity_type::<InventoryEntityIdentity>();
         builder.add_domain_error(AggregateError::DESCRIPTOR);
         builder.finish();
-    });
+    })?;
 
     assert_eq!(
         message,
@@ -688,16 +681,17 @@ fn reports_missing_raised_event() {
             "events",
         )
     );
+    Ok(())
 }
 
 #[test]
-fn rejects_raised_events_on_non_aggregate_actions() {
+fn rejects_raised_events_on_non_aggregate_actions() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<ExtensionService>();
         builder.add_action_extension::<NonAggregateRaisedEventExtension>();
         builder.finish();
-    });
+    })?;
 
     assert_eq!(
         message,
@@ -706,10 +700,11 @@ fn rejects_raised_events_on_non_aggregate_actions() {
             extension_action_id("invalid-raised-event-owner")
         )
     );
+    Ok(())
 }
 
 #[test]
-fn rejects_another_aggregates_raised_event() {
+fn rejects_another_aggregates_raised_event() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_aggregate_type::<InventoryAggregate>();
@@ -717,7 +712,7 @@ fn rejects_another_aggregates_raised_event() {
         builder.add_domain_identity_type::<InventoryEntityIdentity>();
         builder.add_domain_error(AggregateError::DESCRIPTOR);
         builder.finish();
-    });
+    })?;
     let action_id = ActionId {
         owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
         local: "foreign-raised-event",
@@ -729,23 +724,24 @@ fn rejects_another_aggregates_raised_event() {
             "Action raised-event owner violation: action {action_id:?} declares event {FOREIGN_EVENT_ID:?} owned by another Aggregate"
         )
     );
+    Ok(())
 }
 
 #[test]
-fn reports_descriptor_failures_in_input_output_error_order() {
+fn reports_descriptor_failures_in_input_output_error_order() -> Result<(), ExpectedPanicError> {
     let input_message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<ExtensionService>();
         builder.add_action_extension::<DeterministicExtension>();
         builder.finish();
-    });
+    })?;
     let output_message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<ExtensionService>();
         builder.add_action_extension::<DeterministicExtension>();
         builder.add_value_object(ExtensionInput::DESCRIPTOR);
         builder.finish();
-    });
+    })?;
     let error_message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<ExtensionService>();
@@ -758,7 +754,7 @@ fn reports_descriptor_failures_in_input_output_error_order() {
             fields: &[],
         });
         builder.finish();
-    });
+    })?;
 
     assert_eq!(
         input_message,
@@ -787,16 +783,17 @@ fn reports_descriptor_failures_in_input_output_error_order() {
             "errors",
         )
     );
+    Ok(())
 }
 
 #[test]
-fn validates_attached_actions_before_extensions() {
+fn validates_attached_actions_before_extensions() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_entity_type::<OrderedEntity>();
         builder.add_action_extension::<OrderedExtension>();
         builder.finish();
-    });
+    })?;
 
     assert_eq!(
         message,
@@ -810,16 +807,17 @@ fn validates_attached_actions_before_extensions() {
             "value_objects",
         )
     );
+    Ok(())
 }
 
 #[test]
-fn action_group_extension_reports_dangling_reference() {
+fn action_group_extension_reports_dangling_reference() -> Result<(), ExpectedPanicError> {
     let message = panic_message(|| {
         let mut builder = DomainModelBuilder::new();
         builder.add_domain_service_type::<ExtensionService>();
         builder.add_action_extension::<DanglingExtension>();
         builder.finish();
-    });
+    })?;
 
     assert_eq!(
         message,
@@ -830,4 +828,5 @@ fn action_group_extension_reports_dangling_reference() {
             "events",
         )
     );
+    Ok(())
 }
