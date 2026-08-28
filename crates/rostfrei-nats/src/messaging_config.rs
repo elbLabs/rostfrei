@@ -199,7 +199,7 @@ impl MessagingTopology {
     }
 }
 
-pub(crate) fn application_stream_token(application: &ApplicationName) -> String {
+fn application_stream_token(application: &ApplicationName) -> String {
     application
         .as_str()
         .bytes()

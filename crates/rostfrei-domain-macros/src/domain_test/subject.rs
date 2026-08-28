@@ -6,7 +6,7 @@ use syn::{ExprPath, Path, PathArguments, Type, TypePath};
 
 use super::DomainTestKind;
 
-pub(crate) enum DomainTestSubjectInput {
+pub(super) enum DomainTestSubjectInput {
     Action(TypedSubject),
     Decision(TypedSubject),
     Invariant(TypedSubject),
@@ -20,7 +20,7 @@ enum TypedSubjectKind {
     Invariant,
 }
 
-pub(crate) struct TypedSubject {
+pub(super) struct TypedSubject {
     owner: Box<Type>,
     trait_path: Path,
     reference: Ident,

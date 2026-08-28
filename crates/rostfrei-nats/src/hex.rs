@@ -1,4 +1,4 @@
-pub(crate) fn encode_lower_hex(bytes: impl IntoIterator<Item = u8>) -> String {
+pub fn encode_lower_hex(bytes: impl IntoIterator<Item = u8>) -> String {
     let bytes = bytes.into_iter();
     let capacity = bytes.size_hint().0.saturating_mul(2);
     let mut encoded = String::with_capacity(capacity);

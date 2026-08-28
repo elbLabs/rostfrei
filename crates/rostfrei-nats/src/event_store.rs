@@ -429,14 +429,14 @@ struct PendingCommit {
     events: Vec<RecordedEvent>,
 }
 
-pub(crate) struct DecodedEvent {
-    pub(crate) batch_id: String,
-    pub(crate) commit_id: CommitId,
-    pub(crate) operation_id: OperationId,
-    pub(crate) operation_fingerprint: ContentFingerprint,
-    pub(crate) event_ordinal: usize,
-    pub(crate) event_count: usize,
-    pub(crate) recorded: RecordedEvent,
+pub struct DecodedEvent {
+    pub batch_id: String,
+    pub commit_id: CommitId,
+    pub operation_id: OperationId,
+    pub operation_fingerprint: ContentFingerprint,
+    pub event_ordinal: usize,
+    pub event_count: usize,
+    pub recorded: RecordedEvent,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -560,7 +560,7 @@ fn decode_event(
 }
 
 #[allow(dead_code)]
-pub(crate) fn decode_consumed_event(
+pub fn decode_consumed_event(
     config: &NatsEventStoreConfig,
     subject: &str,
     headers: &HeaderMap,

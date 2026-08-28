@@ -106,10 +106,7 @@ impl BoundedContext {
     }
 }
 
-pub(crate) fn validate_scope_segment(
-    value: &str,
-    field: &'static str,
-) -> Result<(), ContractError> {
+pub fn validate_scope_segment(value: &str, field: &'static str) -> Result<(), ContractError> {
     validate_scope_name(value.to_owned(), field).map(|_| ())
 }
 

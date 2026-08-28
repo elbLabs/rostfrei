@@ -64,9 +64,13 @@ mod contracts {
         #[action(id = "transfer", label = "Transfer mail")]
         fn transfer(input: u8) -> ::std::result::Result<u8, super::TransferDenied>;
     }
+}
+
+pub mod restricted_contracts {
+    use domain::domain_actions;
 
     #[domain_actions(entity)]
-    pub(crate) trait MessageActions {
+    pub(super) trait MessageActions {
         #[action(id = "is-read", label = "Is read")]
         fn is_read(&self) -> bool;
 
@@ -75,7 +79,7 @@ mod contracts {
     }
 
     #[domain_actions(value_object)]
-    pub(crate) trait CounterActions {
+    pub(super) trait CounterActions {
         #[action(id = "new", label = "New counter")]
         fn new(input: u8) -> Self;
 
@@ -136,7 +140,7 @@ struct MessageId(u64);
     id = "message",
     label = "Message",
     owner = Mailbox,
-    actions = [contracts::MessageActions]
+    actions = [restricted_contracts::MessageActions]
 )]
 struct Message {
     #[domain(identity)]
@@ -148,7 +152,7 @@ struct Message {
 #[domain(id = "message-denied", label = "Message denied", owner = Message, code = "MESSAGE_DENIED", message = "Message denied.")]
 struct MessageDenied;
 
-impl contracts::MessageActions for Message {
+impl restricted_contracts::MessageActions for Message {
     fn is_read(&self) -> bool {
         self.read
     }
@@ -164,7 +168,7 @@ impl contracts::MessageActions for Message {
     id = "counter",
     label = "Counter",
     owner = Mailbox,
-    actions = [contracts::CounterActions]
+    actions = [restricted_contracts::CounterActions]
 )]
 struct Counter(u8);
 
@@ -172,7 +176,7 @@ struct Counter(u8);
 #[domain(id = "counter-denied", label = "Counter denied", owner = Counter, code = "COUNTER_DENIED", message = "Counter denied.")]
 struct CounterDenied;
 
-impl contracts::CounterActions for Counter {
+impl restricted_contracts::CounterActions for Counter {
     fn new(input: u8) -> Self {
         Self(input)
     }
@@ -185,9 +189,9 @@ impl contracts::CounterActions for Counter {
 #[test]
 fn supports_owner_specific_action_signatures() {
     use contracts::{
-        CounterActions as _, MailTransferActions as _, MailboxArchivalActions as _,
-        MailboxManagementActions as _, MessageActions as _,
+        MailTransferActions as _, MailboxArchivalActions as _, MailboxManagementActions as _,
     };
+    use restricted_contracts::{CounterActions as _, MessageActions as _};
 
     let mut root = MailboxRoot {
         id: MailboxId(1),

@@ -158,10 +158,7 @@ impl IntegrationEventPublisher for NatsPublisher {
     }
 }
 
-pub(crate) fn safe_headers(
-    metadata: &CallerMetadata,
-    trace_context: Option<&TraceContext>,
-) -> HeaderMap {
+pub fn safe_headers(metadata: &CallerMetadata, trace_context: Option<&TraceContext>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     for (name, value) in metadata.iter() {
         headers.insert(name.to_owned(), value.to_owned());
@@ -175,7 +172,7 @@ pub(crate) fn safe_headers(
     headers
 }
 
-pub(crate) async fn publish_confirmed(
+pub async fn publish_confirmed(
     context: &jetstream::Context,
     subject: &str,
     payload: &[u8],

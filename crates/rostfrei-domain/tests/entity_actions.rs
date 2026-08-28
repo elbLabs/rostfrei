@@ -5,13 +5,13 @@ use domain::{
     Entity, EntityType, ScalarType, ValueObject, ValueObjectType, domain_actions, domain_model,
 };
 
-mod contracts {
+pub mod contracts {
     use domain::domain_actions;
 
     use super::Title;
 
     #[domain_actions(entity)]
-    pub(crate) trait TaskWorkflow {
+    pub(super) trait TaskWorkflow {
         #[action(id = "rename", label = "Rename task")]
         fn rename(&mut self, input: Title) -> Title;
 
