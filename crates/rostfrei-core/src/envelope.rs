@@ -95,7 +95,7 @@ impl NewEvent {
         })
     }
 
-    pub fn event_id(&self) -> &EventId {
+    pub const fn event_id(&self) -> &EventId {
         &self.event_id
     }
 
@@ -171,11 +171,11 @@ impl EventBatch {
         self
     }
 
-    pub fn commit_id(&self) -> &CommitId {
+    pub const fn commit_id(&self) -> &CommitId {
         &self.commit_id
     }
 
-    pub fn operation_id(&self) -> &OperationId {
+    pub const fn operation_id(&self) -> &OperationId {
         &self.operation_id
     }
 
@@ -308,7 +308,7 @@ impl RecordedEvent {
         self
     }
 
-    pub fn stream_id(&self) -> &StreamId {
+    pub const fn stream_id(&self) -> &StreamId {
         &self.stream_id
     }
 
@@ -316,15 +316,15 @@ impl RecordedEvent {
         self.stream_version
     }
 
-    pub fn event_id(&self) -> &EventId {
+    pub const fn event_id(&self) -> &EventId {
         &self.event_id
     }
 
-    pub fn commit_id(&self) -> &CommitId {
+    pub const fn commit_id(&self) -> &CommitId {
         &self.commit_id
     }
 
-    pub fn operation_id(&self) -> &OperationId {
+    pub const fn operation_id(&self) -> &OperationId {
         &self.operation_id
     }
 

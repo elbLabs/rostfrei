@@ -15,7 +15,7 @@ pub struct Given<A: Aggregate> {
 }
 
 impl<A: Aggregate> Given<A> {
-    pub fn state(&self) -> &A::State {
+    pub const fn state(&self) -> &A::State {
         self.aggregate.state()
     }
 
@@ -44,7 +44,7 @@ pub struct Then<A: Aggregate, Rejection> {
 }
 
 impl<A: Aggregate, Rejection> Then<A, Rejection> {
-    pub fn state(&self) -> &A::State {
+    pub const fn state(&self) -> &A::State {
         &self.state
     }
 

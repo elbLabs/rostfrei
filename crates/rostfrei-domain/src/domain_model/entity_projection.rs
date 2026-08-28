@@ -15,7 +15,7 @@ pub(super) struct EntityProjection {
 }
 
 impl EntityProjection {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             entities: Vec::new(),
             lifecycles: LifecycleProjection::new(),

@@ -12,7 +12,7 @@ pub(super) struct FieldReferenceInventory {
 }
 
 impl FieldReferenceInventory {
-    pub(super) fn new(
+    pub(super) const fn new(
         identities: Vec<DomainIdentityId>,
         entities: Vec<EntityId>,
         value_objects: Vec<ValueObjectId>,

@@ -386,14 +386,14 @@ struct RecordingDomainEventHandler {
 }
 
 impl RecordingDomainEventHandler {
-    fn succeeding() -> Self {
+    const fn succeeding() -> Self {
         Self {
             failure: None,
             handled: Mutex::new(Vec::new()),
         }
     }
 
-    fn failing(kind: DomainEventHandlerErrorKind) -> Self {
+    const fn failing(kind: DomainEventHandlerErrorKind) -> Self {
         Self {
             failure: Some(kind),
             handled: Mutex::new(Vec::new()),

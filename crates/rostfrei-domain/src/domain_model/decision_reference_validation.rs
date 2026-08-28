@@ -8,7 +8,7 @@ pub(super) struct DecisionReferenceInventory {
 }
 
 impl DecisionReferenceInventory {
-    pub(super) fn new(value_objects: Vec<ValueObjectId>) -> Self {
+    pub(super) const fn new(value_objects: Vec<ValueObjectId>) -> Self {
         Self { value_objects }
     }
 }

@@ -134,13 +134,13 @@ impl ControlPlaneBuilder {
     }
 
     #[must_use]
-    pub fn with_maximum_operations(mut self, maximum_operations: usize) -> Self {
+    pub const fn with_maximum_operations(mut self, maximum_operations: usize) -> Self {
         self.maximum_operations = maximum_operations;
         self
     }
 
     #[must_use]
-    pub fn with_maximum_concurrent_simulations(
+    pub const fn with_maximum_concurrent_simulations(
         mut self,
         maximum_concurrent_simulations: usize,
     ) -> Self {

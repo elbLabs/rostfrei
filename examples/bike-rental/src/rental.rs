@@ -35,7 +35,7 @@ pub struct RentalFleet {
 }
 
 impl RentalFleet {
-    pub fn new(fleet_id: FleetId, bicycles: Vec<Bicycle>) -> Self {
+    pub const fn new(fleet_id: FleetId, bicycles: Vec<Bicycle>) -> Self {
         Self { fleet_id, bicycles }
     }
 
@@ -43,7 +43,7 @@ impl RentalFleet {
         &self.bicycles
     }
 
-    pub fn fleet_id(&self) -> &FleetId {
+    pub const fn fleet_id(&self) -> &FleetId {
         &self.fleet_id
     }
 
@@ -76,7 +76,11 @@ pub struct Bicycle {
 }
 
 impl Bicycle {
-    pub fn new(bicycle_id: BicycleId, status: BicycleStatus, condition: BicycleCondition) -> Self {
+    pub const fn new(
+        bicycle_id: BicycleId,
+        status: BicycleStatus,
+        condition: BicycleCondition,
+    ) -> Self {
         Self {
             bicycle_id,
             status,
@@ -84,15 +88,15 @@ impl Bicycle {
         }
     }
 
-    pub fn bicycle_id(&self) -> &BicycleId {
+    pub const fn bicycle_id(&self) -> &BicycleId {
         &self.bicycle_id
     }
 
-    pub fn status(&self) -> BicycleStatus {
+    pub const fn status(&self) -> BicycleStatus {
         self.status
     }
 
-    pub fn condition(&self) -> BicycleCondition {
+    pub const fn condition(&self) -> BicycleCondition {
         self.condition
     }
 }
@@ -263,7 +267,7 @@ pub struct ImportRentalFleetInput {
 }
 
 impl ImportRentalFleetInput {
-    pub fn new(bicycles: Vec<ImportedBicycle>) -> Self {
+    pub const fn new(bicycles: Vec<ImportedBicycle>) -> Self {
         Self { bicycles }
     }
 }

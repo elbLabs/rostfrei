@@ -92,7 +92,7 @@ impl contracts::MailboxManagementActions for Mailbox {
 
 impl Mailbox {
     #[must_use]
-    fn unchanged(value: usize) -> usize {
+    const fn unchanged(value: usize) -> usize {
         value + 1
     }
 }

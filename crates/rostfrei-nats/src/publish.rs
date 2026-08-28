@@ -219,7 +219,7 @@ pub(crate) async fn publish_confirmed(
     })
 }
 
-fn core_publish_error(error: &NatsError) -> PublishError {
+const fn core_publish_error(error: &NatsError) -> PublishError {
     let kind = match error {
         NatsError::Configuration => CorePublishErrorKind::InvalidConfiguration,
         NatsError::PublishTimeout => CorePublishErrorKind::Timeout,
@@ -275,4 +275,16 @@ fn is_publish_expectation_error(error: &JetStreamPublishError) -> bool {
 fn is_message_too_large_error(error: &JetStreamPublishError) -> bool {
     publish_api_error_code(error)
         == Some(async_nats::jetstream::ErrorCode::STREAM_MESSAGE_EXCEEDS_MAXIMUM)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CORE_TIMEOUT_ERROR: PublishError = core_publish_error(&NatsError::PublishTimeout);
+
+    #[test]
+    fn core_publish_errors_are_const_mapped() {
+        assert_eq!(CORE_TIMEOUT_ERROR.kind(), CorePublishErrorKind::Timeout);
+    }
 }

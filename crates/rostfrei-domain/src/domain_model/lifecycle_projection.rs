@@ -13,7 +13,7 @@ pub(super) struct LifecycleProjection {
 }
 
 impl LifecycleProjection {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             descriptors: Vec::new(),
         }

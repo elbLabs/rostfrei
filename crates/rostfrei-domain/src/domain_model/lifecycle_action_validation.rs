@@ -6,7 +6,7 @@ pub(super) struct LifecycleActionInventory {
 }
 
 impl LifecycleActionInventory {
-    pub(super) fn new(attached: Vec<ActionId>, extensions: Vec<ActionId>) -> Self {
+    pub(super) const fn new(attached: Vec<ActionId>, extensions: Vec<ActionId>) -> Self {
         Self {
             attached,
             extensions,

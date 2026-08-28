@@ -93,7 +93,7 @@ struct RecordingHandler {
 }
 
 impl RecordingHandler {
-    fn new(sender: mpsc::UnboundedSender<HandledEvent>, failures: usize) -> Self {
+    const fn new(sender: mpsc::UnboundedSender<HandledEvent>, failures: usize) -> Self {
         Self {
             sender,
             failures_remaining: AtomicUsize::new(failures),
@@ -102,7 +102,7 @@ impl RecordingHandler {
         }
     }
 
-    fn blocking(sender: mpsc::UnboundedSender<HandledEvent>) -> Self {
+    const fn blocking(sender: mpsc::UnboundedSender<HandledEvent>) -> Self {
         Self {
             sender,
             failures_remaining: AtomicUsize::new(1),

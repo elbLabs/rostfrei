@@ -98,7 +98,7 @@ trait SharedServiceDecisions {
 )]
 struct ProjectionService;
 
-fn projection_output() -> ProjectionOutput {
+const fn projection_output() -> ProjectionOutput {
     ProjectionOutput(true)
 }
 

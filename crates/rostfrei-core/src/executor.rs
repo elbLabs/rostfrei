@@ -19,13 +19,13 @@ pub struct Executor<S, C = JsonEventCodec> {
 }
 
 impl<S> Executor<S, JsonEventCodec> {
-    pub fn new(store: S) -> Self {
+    pub const fn new(store: S) -> Self {
         Self::with_codec(store, JsonEventCodec)
     }
 }
 
 impl<S, C> Executor<S, C> {
-    pub fn with_codec(store: S, codec: C) -> Self {
+    pub const fn with_codec(store: S, codec: C) -> Self {
         Self {
             store,
             codec,
@@ -34,7 +34,7 @@ impl<S, C> Executor<S, C> {
     }
 
     #[must_use]
-    pub fn with_max_conflict_retries(mut self, maximum_conflict_retries: usize) -> Self {
+    pub const fn with_max_conflict_retries(mut self, maximum_conflict_retries: usize) -> Self {
         self.maximum_conflict_retries = maximum_conflict_retries;
         self
     }
@@ -438,4 +438,20 @@ fn corrupt(message: &'static str) -> EventStoreError {
 
 fn invalid_request(message: impl Into<String>) -> EventStoreError {
     EventStoreError::new(EventStoreErrorKind::InvalidRequest, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONST_EXECUTOR: Executor<(), ()> =
+        Executor::with_codec((), ()).with_max_conflict_retries(4);
+    const DEFAULT_CONST_EXECUTOR: Executor<()> = Executor::new(());
+
+    #[test]
+    fn executor_configuration_is_const_constructible() {
+        assert_eq!(*CONST_EXECUTOR.store(), ());
+        assert_eq!(*CONST_EXECUTOR.codec(), ());
+        assert_eq!(*DEFAULT_CONST_EXECUTOR.store(), ());
+    }
 }

@@ -52,7 +52,7 @@ pub struct BoundedContext {
 }
 
 impl BoundedContext {
-    pub fn new(application: ApplicationName, name: BoundedContextName) -> Self {
+    pub const fn new(application: ApplicationName, name: BoundedContextName) -> Self {
         Self { application, name }
     }
 

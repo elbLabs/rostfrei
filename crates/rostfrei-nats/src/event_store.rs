@@ -60,7 +60,7 @@ impl NatsEventStore {
         Ok(Self { context, config })
     }
 
-    pub fn config(&self) -> &NatsEventStoreConfig {
+    pub const fn config(&self) -> &NatsEventStoreConfig {
         &self.config
     }
 
@@ -395,7 +395,7 @@ impl RecordedBatch {
         &self.events
     }
 
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         self.events.len()
     }
 
@@ -817,7 +817,7 @@ impl PendingCommit {
         Ok(())
     }
 
-    fn is_complete(&self) -> bool {
+    const fn is_complete(&self) -> bool {
         self.events.len() == self.event_count as usize
     }
 
