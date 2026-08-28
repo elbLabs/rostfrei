@@ -243,7 +243,9 @@ impl NatsDomainEventConsumer {
             let commit_id = first.event.decoded.commit_id.clone();
             let mut live_deliveries = LiveDeliveries::new(first.delivery);
             commit.push(first.event);
-            let remaining = event_count as usize - commit.len();
+            let remaining = event_count.checked_sub(commit.len()).ok_or_else(|| {
+                invalid_committed_event("committed event batch exceeds its declared count")
+            })?;
             if remaining > 0 {
                 let mut remaining_deliveries = consumer
                     .batch()
@@ -254,7 +256,7 @@ impl NatsDomainEventConsumer {
                     .map_err(|error| {
                         unavailable(format!("failed to continue durable delivery: {error}"))
                     })?;
-                while commit.len() < event_count as usize {
+                while commit.len() < event_count {
                     let message = tokio::select! {
                         changed = shutdown.changed() => {
                             if changed.is_err() || *shutdown.borrow() {
@@ -365,11 +367,13 @@ impl NatsDomainEventConsumer {
         if first.decoded.event_ordinal == 0 {
             return Ok(Vec::new());
         }
+        let event_ordinal = u64::try_from(first.decoded.event_ordinal)
+            .map_err(|_| invalid_committed_event("commit ordinal cannot be represented"))?;
         let start_sequence = first
             .stream_sequence
-            .checked_sub(u64::from(first.decoded.event_ordinal))
+            .checked_sub(event_ordinal)
             .ok_or_else(|| invalid_committed_event("commit start sequence underflowed"))?;
-        let mut prefix = Vec::with_capacity(first.decoded.event_ordinal as usize);
+        let mut prefix = Vec::with_capacity(first.decoded.event_ordinal);
         for sequence in start_sequence..first.stream_sequence {
             let raw = stream.get_raw_message(sequence).await.map_err(|error| {
                 unavailable(format!(
@@ -548,8 +552,7 @@ fn validate_next_event(
     let previous = commit
         .last()
         .ok_or_else(|| invalid_committed_event("committed event batch is empty"))?;
-    let expected_ordinal = u32::try_from(commit.len())
-        .map_err(|_| invalid_committed_event("commit ordinal cannot be represented"))?;
+    let expected_ordinal = commit.len();
     if next.decoded.event_ordinal != expected_ordinal
         || next.decoded.event_count != first.event_count
         || next.decoded.batch_id != first.batch_id

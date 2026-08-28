@@ -298,6 +298,8 @@ impl EventStore for NatsEventStore {
                 )));
             }
         }
+        let recorded_count = u64::try_from(recorded.len())
+            .map_err(|_| invalid("event batch count cannot be represented"))?;
         let batch_id = new_atomic_batch_id(&self.context.client(), batch.commit_id());
         let ack = match publish_atomic_batch(
             &self.context,
@@ -319,7 +321,7 @@ impl EventStore for NatsEventStore {
             || ack.sequence == 0
             || ack.sequence <= history.last_subject_stream_sequence
             || ack.batch.as_deref() != Some(batch_id.as_str())
-            || ack.count != Some(recorded.len() as u64)
+            || ack.count != Some(recorded_count)
         {
             return Err(corrupt(
                 "atomic PubAck returned incompatible stream, sequence, or batch metadata",
@@ -423,7 +425,7 @@ struct PendingCommit {
     commit_id: CommitId,
     operation_id: OperationId,
     operation_fingerprint: ContentFingerprint,
-    event_count: u32,
+    event_count: usize,
     events: Vec<RecordedEvent>,
 }
 
@@ -432,8 +434,8 @@ pub(crate) struct DecodedEvent {
     pub(crate) commit_id: CommitId,
     pub(crate) operation_id: OperationId,
     pub(crate) operation_fingerprint: ContentFingerprint,
-    pub(crate) event_ordinal: u32,
-    pub(crate) event_count: u32,
+    pub(crate) event_ordinal: usize,
+    pub(crate) event_count: usize,
     pub(crate) recorded: RecordedEvent,
 }
 
@@ -637,10 +639,11 @@ fn decode_event_inner(
     {
         return Err(corrupt("stored event is on the wrong aggregate subject"));
     }
-    if wire.event.commit_event_count == 0
-        || wire.event.commit_event_count as usize > MAX_EVENTS_PER_BATCH
-        || wire.event.commit_event_ordinal >= wire.event.commit_event_count
-    {
+    let event_count = usize::try_from(wire.event.commit_event_count)
+        .map_err(|_| corrupt("stored event has invalid commit coordinates"))?;
+    let event_ordinal = usize::try_from(wire.event.commit_event_ordinal)
+        .map_err(|_| corrupt("stored event has invalid commit coordinates"))?;
+    if event_count == 0 || event_count > MAX_EVENTS_PER_BATCH || event_ordinal >= event_count {
         return Err(corrupt("stored event has invalid commit coordinates"));
     }
     if wire.event.stream_version == 0 {
@@ -720,8 +723,8 @@ fn decode_event_inner(
         commit_id,
         operation_id,
         operation_fingerprint,
-        event_ordinal: wire.event.commit_event_ordinal,
-        event_count: wire.event.commit_event_count,
+        event_ordinal,
+        event_count,
         recorded,
     })
 }
@@ -796,8 +799,7 @@ impl PendingCommit {
     }
 
     fn push(&mut self, decoded: DecodedEvent) -> Result<(), EventStoreError> {
-        let expected_ordinal = u32::try_from(self.events.len())
-            .map_err(|_| corrupt("stored event ordinal cannot be represented"))?;
+        let expected_ordinal = self.events.len();
         let first = self
             .events
             .first()
@@ -818,7 +820,7 @@ impl PendingCommit {
     }
 
     const fn is_complete(&self) -> bool {
-        self.events.len() == self.event_count as usize
+        self.events.len() == self.event_count
     }
 
     fn finish(self) -> Result<StoredCommit, EventStoreError> {
