@@ -56,6 +56,8 @@ panic_in_result_fn = "warn"
 unreachable = "deny"
 uninhabited_references = "deny"
 use_self = "deny"
+derive_partial_eq_without_eq = "deny"
+tuple_array_conversions = "deny"
 
 significant_drop_in_scrutinee = "deny"
 significant_drop_tightening = "deny"

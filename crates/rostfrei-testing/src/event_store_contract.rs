@@ -493,12 +493,11 @@ pub async fn try_concurrent_append_has_one_winner<Store: EventStore>(
     let stream = stream("concurrent")?;
     let first = batch(&stream, "concurrent-a", "a", &[b"a"])?;
     let second = batch(&stream, "concurrent-b", "b", &[b"b"])?;
-    let (first_result, second_result) = tokio::join!(
+    let results: [_; 2] = tokio::join!(
         store.append(&stream, ExpectedVersion::NoStream, first),
         store.append(&stream, ExpectedVersion::NoStream, second),
-    );
-
-    let results = [first_result, second_result];
+    )
+    .into();
     assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
     assert_eq!(
         results

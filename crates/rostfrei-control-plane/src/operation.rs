@@ -35,7 +35,7 @@ pub enum CompletedDecision {
     Rejected,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PredictedDomainEvent {
     pub ordinal: u32,
@@ -48,7 +48,7 @@ pub struct PredictedDomainEvent {
     pub payload_base64: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(
     tag = "decision",
     rename_all = "camelCase",
@@ -69,7 +69,7 @@ pub enum OperationResult {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationSnapshot {
     pub operation_id: String,
@@ -93,7 +93,7 @@ pub struct OperationFailure {
     pub message: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationEvent {
     pub id: u64,
@@ -102,7 +102,7 @@ pub struct OperationEvent {
     pub kind: OperationEventKind,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(
     tag = "type",
     rename_all = "kebab-case",
