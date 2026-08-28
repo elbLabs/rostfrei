@@ -5,7 +5,7 @@ error[E0271]: type mismatch resolving `<Option<Name> as SameType>::Type == Name`
    |      ^^^^^^^ expected `Name`, found `Option<Name>`
    |
    = note: expected struct `Name`
-                found enum `std::option::Option<Name>`
+                found enum `Option<Name>`
 note: required by a bound in `Actions`
   --> tests/ui/value_object_action/optional_self_output.rs:7:1
    |
@@ -22,7 +22,7 @@ error[E0271]: type mismatch resolving `<Option<Name> as SameType>::Type == Name`
    |          ^^^^^^^^^^^ expected `Name`, found `Option<Name>`
    |
    = note: expected struct `Name`
-                found enum `std::option::Option<Name>`
+                found enum `Option<Name>`
 note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
   --> tests/ui/value_object_action/optional_self_output.rs:7:1
    |

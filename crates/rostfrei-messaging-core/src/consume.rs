@@ -1,12 +1,12 @@
 use std::{fmt, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{
-    scope::validate_scope_segment, AddressKind, CallerMetadata, ConsumeError, ContractError,
-    ContractErrorKind, MessageBuildError, MessageId, PublishableAddress, TraceContext,
-    MAX_MESSAGE_PAYLOAD_BYTES,
+    AddressKind, CallerMetadata, ConsumeError, ContractError, ContractErrorKind,
+    MAX_MESSAGE_PAYLOAD_BYTES, MessageBuildError, MessageId, PublishableAddress, TraceContext,
+    scope::validate_scope_segment,
 };
 
 pub const CONSUMER_NAME_CONVENTION: &str = "<application>--<context>--<purpose>--v<major>";
@@ -14,8 +14,8 @@ pub const DURABLE_NAME_CONVENTION: &str = "<application>--<context>--<purpose>--
 pub const MAX_CONSUMER_NAME_BYTES: usize = 256;
 pub const MAX_CONCURRENCY: usize = 1024;
 pub const MAX_DELIVERY_ATTEMPTS: u32 = 1000;
-pub const MAX_PROCESSING_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
-pub const MAX_RETRY_DELAY: Duration = Duration::from_secs(24 * 60 * 60);
+pub const MAX_PROCESSING_TIMEOUT: Duration = Duration::from_hours(24);
+pub const MAX_RETRY_DELAY: Duration = Duration::from_hours(24);
 pub const MAX_QUARANTINE_REASON_BYTES: usize = 512;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -558,31 +558,35 @@ mod tests {
         let address = CommandAddress::new("acme", "orders", "place-order").unwrap();
         let consumer = ConsumerName::new("acme", "orders", "fulfillment", 1).unwrap();
         let durable = DurableName::new("acme", "orders", "fulfillment", 1).unwrap();
-        assert!(ConsumerConfig::new(
-            consumer.clone(),
-            durable.clone(),
-            address.clone(),
-            Duration::from_secs(30),
-            Duration::ZERO,
-            1,
-            5,
-        )
-        .is_err());
+        assert!(
+            ConsumerConfig::new(
+                consumer.clone(),
+                durable.clone(),
+                address.clone(),
+                Duration::from_secs(30),
+                Duration::ZERO,
+                1,
+                5,
+            )
+            .is_err()
+        );
         for ack_wait in [
             Duration::ZERO,
             Duration::from_secs(29),
             Duration::from_secs(30),
         ] {
-            assert!(ConsumerConfig::new(
-                consumer.clone(),
-                durable.clone(),
-                address.clone(),
-                ack_wait,
-                Duration::from_secs(30),
-                1,
-                5,
-            )
-            .is_err());
+            assert!(
+                ConsumerConfig::new(
+                    consumer.clone(),
+                    durable.clone(),
+                    address.clone(),
+                    ack_wait,
+                    Duration::from_secs(30),
+                    1,
+                    5,
+                )
+                .is_err()
+            );
         }
         let config = ConsumerConfig::new(
             consumer.clone(),
@@ -596,16 +600,18 @@ mod tests {
         .unwrap();
         assert_eq!(config.ack_wait(), Duration::from_secs(45));
         assert_eq!(config.processing_timeout(), Duration::from_secs(30));
-        assert!(ConsumerConfig::new(
-            consumer,
-            durable,
-            address,
-            Duration::from_secs(45),
-            Duration::from_secs(30),
-            1,
-            0,
-        )
-        .is_err());
+        assert!(
+            ConsumerConfig::new(
+                consumer,
+                durable,
+                address,
+                Duration::from_secs(45),
+                Duration::from_secs(30),
+                1,
+                0,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -647,16 +653,18 @@ mod tests {
 
         let integration_event =
             crate::IntegrationEventAddress::new("acme", "orders", "order-placed").unwrap();
-        assert!(ConsumerConfig::new(
-            name,
-            durable,
-            integration_event,
-            Duration::from_secs(45),
-            Duration::from_secs(30),
-            1,
-            5,
-        )
-        .is_ok());
+        assert!(
+            ConsumerConfig::new(
+                name,
+                durable,
+                integration_event,
+                Duration::from_secs(45),
+                Duration::from_secs(30),
+                1,
+                5,
+            )
+            .is_ok()
+        );
     }
 
     #[test]

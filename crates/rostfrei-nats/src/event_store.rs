@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use async_nats::{
+    HeaderMap, Request,
     header::{
         NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL, NATS_BATCH_ID, NATS_BATCH_SEQUENCE,
         NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, NATS_EXPECTED_STREAM, NATS_REQUIRED_API_LEVEL,
@@ -11,15 +12,14 @@ use async_nats::{
         response::Response,
         stream::{Config, LastRawMessageErrorKind},
     },
-    HeaderMap, Request,
 };
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint, EventBatch,
     EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind, ExecutionMetadata,
-    ExpectedVersion, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
-    MAX_EVENTS_PER_BATCH,
+    ExpectedVersion, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent, StreamId,
+    StreamVersion,
 };
 use rostfrei_messaging_core::{CausationId, CorrelationId};
 use serde::{Deserialize, Serialize};

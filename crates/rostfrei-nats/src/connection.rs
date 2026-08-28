@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use async_nats::{jetstream, Client, ConnectOptions, Event};
+use async_nats::{Client, ConnectOptions, Event, jetstream};
 use rostfrei_messaging_core::ApplicationName;
 use tokio::{sync::watch, time::timeout};
 
@@ -8,7 +8,7 @@ use crate::{
     consumer::NatsConsumerFactory,
     error::NatsError,
     messaging_config::{MessagingTopology, NatsConnectionConfig},
-    provisioning::{verify_application_messaging, verify_stream, ApplicationMessagingConfig},
+    provisioning::{ApplicationMessagingConfig, verify_application_messaging, verify_stream},
     publish::NatsPublisher,
     query::{NatsQueryRequester, NatsQueryServer, NatsQueryServerConfig},
 };
