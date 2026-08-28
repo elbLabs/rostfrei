@@ -165,6 +165,7 @@ where
     where
         A: Aggregate + CommandHandler<Command>,
         C: EventCodec<A>,
+        Command: Sync,
     {
         let (aggregate, history) = self.load_and_replay::<A>(metadata.stream_id()).await?;
         let base_version = current_version(&history);
@@ -241,6 +242,7 @@ where
     where
         A: Aggregate + CommandHandler<Command>,
         C: EventCodec<A>,
+        Command: Sync,
     {
         let mut remaining_conflict_retries = self.maximum_conflict_retries;
         loop {

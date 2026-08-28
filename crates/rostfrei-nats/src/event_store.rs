@@ -190,10 +190,10 @@ impl NatsEventStore {
         batch: &EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
         let history = self.load_history(stream_id).await?;
-        match Self::resolve_existing(&history, batch)? {
-            Some(events) => Ok(AppendOutcome::ExactReplay(events)),
-            None => Err(conflict("aggregate changed during append")),
-        }
+        Self::resolve_existing(&history, batch)?.map_or_else(
+            || Err(conflict("aggregate changed during append")),
+            |events| Ok(AppendOutcome::ExactReplay(events)),
+        )
     }
 
     async fn verify_published_commit(
