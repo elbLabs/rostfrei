@@ -228,7 +228,12 @@ fn action_locals(model: &serde_json::Value) -> Vec<&str> {
         .as_array()
         .unwrap()
         .iter()
-        .map(|action| action["id"]["local"].as_str().unwrap())
+        .map(|action| {
+            action
+                .pointer("/id/local")
+                .and_then(serde_json::Value::as_str)
+                .unwrap()
+        })
         .collect()
 }
 

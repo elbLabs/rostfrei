@@ -30,18 +30,18 @@ pub mod __private {
     pub use crate::{AggregateRuntime, Apply, Initialize};
 
     pub const fn assert_unique_event_ids(ids: &[&str]) {
-        let mut left = 0;
-        while left < ids.len() {
-            let mut right = left + 1;
-            while right < ids.len() {
-                assert!(
-                    !strings_equal(ids[left], ids[right]),
-                    "duplicate domain event ID in aggregate"
-                );
-                right += 1;
-            }
-            left += 1;
+        let Some((left, remaining)) = ids.split_first() else {
+            return;
+        };
+        let mut right = remaining;
+        while let Some((candidate, rest)) = right.split_first() {
+            assert!(
+                !strings_equal(left, candidate),
+                "duplicate domain event ID in aggregate"
+            );
+            right = rest;
         }
+        assert_unique_event_ids(remaining);
     }
 
     pub const fn assert_same_command_namespace(left: &str, right: &str) {
@@ -52,19 +52,21 @@ pub mod __private {
     }
 
     const fn strings_equal(left: &str, right: &str) -> bool {
-        let left = left.as_bytes();
-        let right = right.as_bytes();
-        if left.len() != right.len() {
-            return false;
-        }
-        let mut index = 0;
-        while index < left.len() {
-            if left[index] != right[index] {
-                return false;
+        let mut left = left.as_bytes();
+        let mut right = right.as_bytes();
+        loop {
+            match (left.split_first(), right.split_first()) {
+                (Some((left_byte, left_rest)), Some((right_byte, right_rest))) => {
+                    if *left_byte != *right_byte {
+                        return false;
+                    }
+                    left = left_rest;
+                    right = right_rest;
+                }
+                (None, None) => return true,
+                _ => return false,
             }
-            index += 1;
         }
-        true
     }
 }
 

@@ -36,7 +36,11 @@ pub async fn no_stream_and_exact_versions<Store: EventStore>(store: &Store) {
         .append(&version_stream, ExpectedVersion::NoStream, first)
         .await
         .expect("NoStream should append to an absent stream");
-    assert_eq!(outcome.events()[0].stream_version(), StreamVersion::new(1));
+    assert_eq!(outcome.events().len(), 1);
+    let Some(event) = outcome.events().first() else {
+        return;
+    };
+    assert_eq!(event.stream_version(), StreamVersion::new(1));
 
     let second = batch(&version_stream, "versions-2", "two", &[b"second"]);
     let outcome = store
@@ -47,7 +51,11 @@ pub async fn no_stream_and_exact_versions<Store: EventStore>(store: &Store) {
         )
         .await
         .expect("Exact should append at the matching current version");
-    assert_eq!(outcome.events()[0].stream_version(), StreamVersion::new(2));
+    assert_eq!(outcome.events().len(), 1);
+    let Some(event) = outcome.events().first() else {
+        return;
+    };
+    assert_eq!(event.stream_version(), StreamVersion::new(2));
 
     let exact_zero_stream = stream("exact-zero");
     let invalid = batch(&exact_zero_stream, "exact-zero", "zero", &[b"event"]);
@@ -89,14 +97,16 @@ pub async fn atomic_ordered_batch<Store: EventStore>(store: &Store) {
         );
         assert_eq!(event.commit_event_count(), 3);
     }
-    assert_eq!(loaded[0].payload(), b"first");
-    assert_eq!(loaded[1].payload(), b"second");
-    assert_eq!(loaded[2].payload(), b"third");
-    assert!(
-        loaded
-            .windows(2)
-            .all(|pair| pair[0].commit_id() == pair[1].commit_id())
-    );
+    let [first, second, third] = loaded.as_slice() else {
+        return;
+    };
+    assert_eq!(first.payload(), b"first");
+    assert_eq!(second.payload(), b"second");
+    assert_eq!(third.payload(), b"third");
+    assert!(loaded.windows(2).all(|pair| match pair {
+        [first, second] => first.commit_id() == second.commit_id(),
+        _ => false,
+    }));
 }
 
 pub async fn stream_isolation<Store: EventStore>(store: &Store) {
@@ -129,8 +139,14 @@ pub async fn stream_isolation<Store: EventStore>(store: &Store) {
         .expect("load should succeed");
     assert_eq!(first.len(), 1);
     assert_eq!(second.len(), 1);
-    assert_eq!(first[0].payload(), b"a");
-    assert_eq!(second[0].payload(), b"b");
+    let [first] = first.as_slice() else {
+        return;
+    };
+    let [second] = second.as_slice() else {
+        return;
+    };
+    assert_eq!(first.payload(), b"a");
+    assert_eq!(second.payload(), b"b");
 }
 
 pub async fn identities_are_stream_scoped<Store: EventStore>(store: &Store) {
@@ -214,15 +230,19 @@ pub async fn exact_retry<Store: EventStore>(store: &Store) {
         .expect("exact retry must succeed despite a now-stale expectation");
     assert!(matches!(replay, AppendOutcome::ExactReplay(_)));
     assert_eq!(replay.events(), first.events());
+    assert!(!replay.events().is_empty());
+    let Some(replayed_event) = replay.events().first() else {
+        return;
+    };
     assert_eq!(
-        replay.events()[0]
+        replayed_event
             .correlation_id()
             .expect("stored correlation")
             .as_str(),
         "retry-correlation"
     );
     assert_eq!(
-        replay.events()[0]
+        replayed_event
             .causation_id()
             .expect("stored causation")
             .as_str(),

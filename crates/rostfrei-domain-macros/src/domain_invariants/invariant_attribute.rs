@@ -6,28 +6,28 @@ pub struct InvariantAttribute {
 }
 
 pub fn extract(method: &mut TraitItemFn) -> syn::Result<InvariantAttribute> {
-    let positions: Vec<_> = method
-        .attrs
-        .iter()
-        .enumerate()
-        .filter(|(_, attribute)| attribute.path().is_ident("invariant"))
-        .map(|(position, _)| position)
-        .collect();
+    let position = {
+        let mut positions = method
+            .attrs
+            .iter()
+            .enumerate()
+            .filter(|(_, attribute)| attribute.path().is_ident("invariant"));
+        let Some((position, _)) = positions.next() else {
+            return Err(syn::Error::new_spanned(
+                &method.sig.ident,
+                "domain invariant contract methods require exactly one invariant attribute",
+            ));
+        };
+        if let Some((_, duplicate)) = positions.next() {
+            return Err(syn::Error::new_spanned(
+                duplicate,
+                "duplicate invariant attribute",
+            ));
+        }
+        position
+    };
 
-    if positions.is_empty() {
-        return Err(syn::Error::new_spanned(
-            &method.sig.ident,
-            "domain invariant contract methods require exactly one invariant attribute",
-        ));
-    }
-    if positions.len() > 1 {
-        return Err(syn::Error::new_spanned(
-            &method.attrs[positions[1]],
-            "duplicate invariant attribute",
-        ));
-    }
-
-    parse(&method.attrs.remove(positions[0]))
+    parse(&method.attrs.remove(position))
 }
 
 fn parse(attribute: &Attribute) -> syn::Result<InvariantAttribute> {

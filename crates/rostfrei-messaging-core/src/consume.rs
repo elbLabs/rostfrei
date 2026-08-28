@@ -513,11 +513,17 @@ fn parse_delivery_name(value: String, field: &'static str) -> Result<String, Con
             field,
         ));
     }
-    let segments = value.split("--").collect::<Vec<_>>();
-    if segments.len() != 4 {
+    let mut segments = value.split("--");
+    let (Some(application), Some(context), Some(purpose), Some(version), None) = (
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+    ) else {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
-    }
-    let Some(version) = segments[3].strip_prefix('v') else {
+    };
+    let Some(version) = version.strip_prefix('v') else {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
     };
     let major_version = version
@@ -526,7 +532,7 @@ fn parse_delivery_name(value: String, field: &'static str) -> Result<String, Con
     if version != major_version.to_string() {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
     }
-    build_delivery_name(segments[0], segments[1], segments[2], major_version, field)?;
+    build_delivery_name(application, context, purpose, major_version, field)?;
     Ok(value)
 }
 

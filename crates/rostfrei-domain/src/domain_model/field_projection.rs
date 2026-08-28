@@ -57,7 +57,7 @@ pub(super) fn semantic_scalar_value(descriptor: SemanticScalarDescriptor) -> Val
     })
 }
 
-fn scalar_name(scalar: ScalarType) -> &'static str {
+pub(super) fn scalar_name(scalar: ScalarType) -> &'static str {
     match scalar {
         ScalarType::Bool => "bool",
         ScalarType::String => "string",

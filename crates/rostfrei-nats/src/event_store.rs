@@ -775,14 +775,18 @@ impl PendingCommit {
     fn push(&mut self, decoded: DecodedEvent) -> Result<(), EventStoreError> {
         let expected_ordinal = u32::try_from(self.events.len())
             .map_err(|_| corrupt("stored event ordinal cannot be represented"))?;
+        let first = self
+            .events
+            .first()
+            .ok_or_else(|| corrupt("stored commit is empty"))?;
         if decoded.event_ordinal != expected_ordinal
             || decoded.event_count != self.event_count
             || decoded.batch_id != self.batch_id
             || decoded.commit_id != self.commit_id
             || decoded.operation_id != self.operation_id
             || decoded.operation_fingerprint != self.operation_fingerprint
-            || decoded.recorded.correlation_id() != self.events[0].correlation_id()
-            || decoded.recorded.causation_id() != self.events[0].causation_id()
+            || decoded.recorded.correlation_id() != first.correlation_id()
+            || decoded.recorded.causation_id() != first.causation_id()
         {
             return Err(corrupt("stored commit metadata is inconsistent"));
         }
@@ -795,6 +799,12 @@ impl PendingCommit {
     }
 
     fn finish(self) -> Result<StoredCommit, EventStoreError> {
+        let first = self
+            .events
+            .first()
+            .ok_or_else(|| corrupt("stored commit is empty"))?;
+        let correlation_id = first.correlation_id().cloned();
+        let causation_id = first.causation_id().cloned();
         let new_events = self
             .events
             .iter()
@@ -815,11 +825,11 @@ impl PendingCommit {
             new_events,
         )
         .map_err(|error| corrupt(format!("invalid stored event batch: {error}")))?;
-        if let Some(correlation_id) = self.events[0].correlation_id() {
-            batch = batch.with_correlation_id(correlation_id.clone());
+        if let Some(correlation_id) = correlation_id {
+            batch = batch.with_correlation_id(correlation_id);
         }
-        if let Some(causation_id) = self.events[0].causation_id() {
-            batch = batch.with_causation_id(causation_id.clone());
+        if let Some(causation_id) = causation_id {
+            batch = batch.with_causation_id(causation_id);
         }
         Ok(StoredCommit {
             batch,

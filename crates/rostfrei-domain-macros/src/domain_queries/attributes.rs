@@ -15,20 +15,22 @@ pub fn extract(items: &mut [ImplItem]) -> syn::Result<Vec<Query>> {
     for item in items {
         match item {
             ImplItem::Fn(method) => {
-                let positions: Vec<_> = method
-                    .attrs
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, attribute)| attribute.path().is_ident("query"))
-                    .map(|(position, _)| position)
-                    .collect();
-                if positions.len() > 1 {
-                    return Err(syn::Error::new_spanned(
-                        &method.attrs[positions[1]],
-                        "duplicate query attribute",
-                    ));
-                }
-                if let Some(position) = positions.first().copied() {
+                let position = {
+                    let mut positions = method
+                        .attrs
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, attribute)| attribute.path().is_ident("query"));
+                    let position = positions.next().map(|(position, _)| position);
+                    if let Some((_, duplicate)) = positions.next() {
+                        return Err(syn::Error::new_spanned(
+                            duplicate,
+                            "duplicate query attribute",
+                        ));
+                    }
+                    position
+                };
+                if let Some(position) = position {
                     let attribute = method.attrs.remove(position);
                     let (id, label) = parse(&attribute)?;
                     queries.push(Query {

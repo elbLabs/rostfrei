@@ -99,7 +99,7 @@ impl ActionProjection {
     ) {
         for (index, descriptor) in descriptors.iter().enumerate() {
             Self::validate_owner(expected_owner, descriptor);
-            self.validate_id(descriptor.id, &descriptors[..index]);
+            self.validate_id(descriptor.id, descriptors.iter().take(index));
         }
     }
 
@@ -109,8 +109,8 @@ impl ActionProjection {
         }
     }
 
-    fn validate_id(&self, id: ActionId, preceding: &[ActionDescriptor]) {
-        if self.has_id(id) || preceding.iter().any(|descriptor| descriptor.id == id) {
+    fn validate_id<'a>(&self, id: ActionId, preceding: impl Iterator<Item = &'a ActionDescriptor>) {
+        if self.has_id(id) || preceding.into_iter().any(|descriptor| descriptor.id == id) {
             panic!("duplicate ActionId: {id:?}");
         }
     }
