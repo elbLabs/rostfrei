@@ -45,7 +45,7 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
-nursery = { level = "warn", priority = -2 }
+nursery = { level = "deny", priority = -1 }
 
 unwrap_used = "deny"
 expect_used = "deny"
@@ -61,6 +61,7 @@ tuple_array_conversions = "deny"
 future_not_send = "deny"
 option_if_let_else = "deny"
 redundant_pub_crate = "deny"
+manual_assert = "deny"
 
 significant_drop_in_scrutinee = "deny"
 significant_drop_tightening = "deny"
@@ -70,7 +71,6 @@ unimplemented = "deny"
 todo = "deny"
 exit = "deny"
 
-manual_assert = "allow"
 
 arithmetic_side_effects = "deny"
 as_conversions = "deny"
