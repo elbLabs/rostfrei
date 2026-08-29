@@ -7,8 +7,8 @@ mod rent_bicycle;
 mod return_bicycle;
 
 use rostfrei::{
-    Aggregate, AggregateInstance, DomainIdentity, Entity, Initialize, StreamAggregateId, StreamId,
-    domain_actions,
+    Aggregate, AggregateInstance, DomainIdentity, Entity, Initialize, StreamAggregateId,
+    StreamAggregateType, StreamId, domain_actions,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +34,14 @@ pub use return_bicycle::{BicycleNotRented, BicycleReturned, ReturnBicycle};
     events = [RentalFleetImported, BicycleAdded, BicycleRented, BicycleReturned]
 )]
 pub struct RentalFleetAggregate;
+
+pub fn stream_id(aggregate_id: &str) -> Result<StreamId, &'static str> {
+    let aggregate_type = StreamAggregateType::new(RentalFleetAggregate::aggregate_type())
+        .map_err(|_| "invalid rental fleet aggregate type")?;
+    let aggregate_id =
+        StreamAggregateId::new(aggregate_id).map_err(|_| "invalid rental fleet ID")?;
+    Ok(StreamId::new(aggregate_type, aggregate_id))
+}
 
 #[derive(Entity, Debug)]
 #[domain(
