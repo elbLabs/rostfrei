@@ -1,7 +1,7 @@
 use std::{mem::size_of, time::Duration};
 
 use async_nats::jetstream::stream::{Config, DiscardPolicy, RetentionPolicy, StorageType};
-use rostfrei_core::{EventStoreError, EventStoreErrorKind};
+use rostfrei_core::{EventStoreError, EventStoreErrorKind, StreamId};
 use rostfrei_messaging_core::{ApplicationName, BoundedContext, BoundedContextName};
 use sha2::{Digest, Sha256};
 
@@ -9,15 +9,18 @@ use crate::hex::encode_lower_hex;
 
 const MAX_STREAM_NAME_LEN: usize = 255;
 const MAX_EVENT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_ATOMIC_HEADER_BYTES: usize = 4 * 1024;
 const DUPLICATE_WINDOW: Duration = Duration::from_mins(2);
 pub const DEFAULT_EVENT_STORE_MAX_STREAM_BYTES: i64 = 10 * 1024 * 1024 * 1024;
-pub const DEFAULT_EVENT_STORE_MAX_EVENT_BYTES: usize = 2 * 1024 * 1024;
+pub const DEFAULT_EVENT_STORE_MAX_EVENT_BYTES: usize = 512 * 1024;
+pub const LEGACY_EVENT_STORE_MAX_EVENT_BYTES: usize = 2 * 1024 * 1024;
 pub const DEFAULT_EVENT_STORE_REPLICAS: usize = 1;
 pub const DEFAULT_EVENT_STORE_PUBACK_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct EventByteLimit {
     value: usize,
+    wire_value: usize,
     nats_value: i32,
     comparison_value: i64,
 }
@@ -25,8 +28,9 @@ struct EventByteLimit {
 impl EventByteLimit {
     const DEFAULT: Self = Self {
         value: DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
-        nats_value: 2 * 1024 * 1024,
-        comparison_value: 2 * 1024 * 1024,
+        wire_value: 516 * 1024,
+        nats_value: 516 * 1024,
+        comparison_value: 512 * 1024,
     };
 
     fn new(value: usize) -> Result<Self, EventStoreError> {
@@ -35,11 +39,17 @@ impl EventByteLimit {
                 "maximum event bytes must be between 1 and {MAX_EVENT_BYTES}"
             )));
         }
-        let nats_value = i32::try_from(value)
+        let wire_value = value
+            .checked_add(MAX_ATOMIC_HEADER_BYTES)
+            .ok_or_else(|| invalid("maximum wire message bytes overflowed"))?;
+        let nats_value = i32::try_from(wire_value).map_err(|_| {
+            invalid("maximum wire message bytes cannot be represented by JetStream")
+        })?;
+        let comparison_value = i64::try_from(value)
             .map_err(|_| invalid("maximum event bytes cannot be represented by JetStream"))?;
-        let comparison_value = i64::from(nats_value);
         Ok(Self {
             value,
+            wire_value,
             nats_value,
             comparison_value,
         })
@@ -137,6 +147,10 @@ impl NatsEventStoreConfig {
         self.max_event_bytes.value
     }
 
+    pub(crate) const fn max_wire_message_bytes(&self) -> usize {
+        self.max_event_bytes.wire_value
+    }
+
     pub const fn replicas(&self) -> usize {
         self.replicas
     }
@@ -158,10 +172,38 @@ impl NatsEventStoreConfig {
         format!("{}.aggregate.*", self.subject_prefix)
     }
 
+    pub fn transaction_subject(&self, primary_stream_id: &StreamId, operation_id: &str) -> String {
+        let digest = digest_parts(&[
+            primary_stream_id.aggregate_type().as_str().as_bytes(),
+            primary_stream_id.aggregate_id().as_str().as_bytes(),
+            operation_id.as_bytes(),
+        ]);
+        format!("{}.transaction.{digest}", self.subject_prefix)
+    }
+
+    pub fn transaction_guard_subject(
+        &self,
+        primary_stream_id: &StreamId,
+        operation_id: &str,
+        ordinal: usize,
+    ) -> String {
+        format!(
+            "{}.guard.{ordinal}",
+            self.transaction_subject(primary_stream_id, operation_id)
+        )
+    }
+
+    pub fn transaction_subject_filter(&self) -> String {
+        format!("{}.transaction.>", self.subject_prefix)
+    }
+
     pub fn stream_config(&self) -> Config {
         Config {
             name: self.stream_name.clone(),
-            subjects: vec![self.subject_filter()],
+            subjects: vec![
+                self.aggregate_subject_filter(),
+                self.transaction_subject_filter(),
+            ],
             retention: RetentionPolicy::Limits,
             storage: StorageType::File,
             discard: DiscardPolicy::New,
@@ -277,6 +319,13 @@ mod tests {
             "fast-inbox.domain.commercial-access.aggregate.*"
         );
         assert_eq!(config.subject_filter(), config.aggregate_subject_filter());
+        assert_eq!(
+            config.stream_config().subjects,
+            vec![
+                "fast-inbox.domain.commercial-access.aggregate.*",
+                "fast-inbox.domain.commercial-access.transaction.>",
+            ]
+        );
     }
 
     #[test]
@@ -314,7 +363,7 @@ mod tests {
         assert_eq!(config.max_messages, -1);
         assert_eq!(config.max_messages_per_subject, -1);
         assert_eq!(config.max_bytes, 8 * 1024 * 1024);
-        assert_eq!(config.max_message_size, 1024 * 1024);
+        assert_eq!(config.max_message_size, 1024 * 1024 + 4 * 1024);
         assert!(config.max_age.is_zero());
         assert!(!config.no_ack);
         assert!(config.deny_delete);
@@ -336,6 +385,9 @@ mod tests {
             config.max_event_bytes(),
             DEFAULT_EVENT_STORE_MAX_EVENT_BYTES
         );
+        assert_eq!(config.max_event_bytes(), 512 * 1024);
+        assert_eq!(config.max_wire_message_bytes(), 516 * 1024);
+        assert_eq!(config.stream_config().max_message_size, 516 * 1024);
         assert_eq!(config.replicas(), DEFAULT_EVENT_STORE_REPLICAS);
         assert_eq!(config.puback_timeout(), DEFAULT_EVENT_STORE_PUBACK_TIMEOUT);
     }

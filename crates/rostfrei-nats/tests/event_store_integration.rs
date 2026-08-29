@@ -12,11 +12,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_nats::jetstream::message::PublishMessage;
 use event_store::{NatsEventStore, provision_event_store};
-use event_store_config::NatsEventStoreConfig;
+use event_store_config::{
+    DEFAULT_EVENT_STORE_MAX_EVENT_BYTES, LEGACY_EVENT_STORE_MAX_EVENT_BYTES, NatsEventStoreConfig,
+};
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventStore,
-    EventStoreError, EventStoreErrorKind, ExecutionMetadata, ExpectedVersion, NewEvent,
-    OperationId, RecordedEvent, StreamId, StreamVersion,
+    EventStoreError, EventStoreErrorKind, EventTransaction, ExecutionMetadata, ExpectedVersion,
+    NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion, TransactionAppendOutcome,
+    TransactionParticipant,
 };
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
 use rostfrei_testing::event_store_contract;
@@ -41,6 +44,14 @@ fn checked_add_i64(value: i64, increment: i64, context: &'static str) -> TestRes
         .ok_or_else(|| format!("{context} exceeds i64").into())
 }
 
+fn check(condition: bool, context: &'static str) -> TestResult<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(context.into())
+    }
+}
+
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test]
@@ -54,10 +65,19 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     let context = connect_context(&url)
         .await
         .expect("real NATS JetStream context");
+    legacy_history_remains_readable_after_lower_limit_provisioning(&context)
+        .await
+        .expect("legacy history migration coverage");
+    legacy_event_store_policy_is_upgraded(&context)
+        .await
+        .expect("legacy stream policy migration coverage");
+    max_payload_is_validated_before_provisioning(&context)
+        .await
+        .expect("maximum payload validation coverage");
     let (bounded_context, stream_name) = unique_names("contract").expect("unique contract names");
     let config = NatsEventStoreConfig::new(&bounded_context, stream_name)
         .expect("valid integration config")
-        .with_storage_limits(64 * 1024 * 1024, 2 * 1024 * 1024)
+        .with_storage_limits(64 * 1024 * 1024, 512 * 1024)
         .expect("valid integration storage limits");
 
     let missing = NatsEventStore::connect(context.clone(), config.clone()).await;
@@ -79,6 +99,9 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     event_store_contract::try_run(|| store.clone())
         .await
         .expect("event-store contract");
+    transaction_contract_and_wire_policy(&store, &context, &config)
+        .await
+        .expect("transaction contract and wire policy");
 
     let concurrent_stream = stream("concurrent-atomic-batches").expect("concurrent stream id");
     let concurrent_results: [_; 2] = tokio::join!(
@@ -400,6 +423,544 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         capacity.history_after, capacity.history_before,
         "capacity failure must not store an event prefix"
     );
+}
+
+async fn legacy_event_store_policy_is_upgraded(
+    context: &async_nats::jetstream::Context,
+) -> TestResult<()> {
+    let (bounded_context, stream_name) = unique_names("legacy-policy-upgrade")?;
+    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
+        .with_storage_limits(64 * 1024 * 1024, 512 * 1024)?;
+    let mut legacy = config.stream_config();
+    legacy.subjects = vec![config.aggregate_subject_filter()];
+    legacy.max_message_size = i32::try_from(config.max_event_bytes())?;
+    context.create_stream(legacy).await?;
+
+    provision_event_store(context, &config).await?;
+    let upgraded = context.get_stream(config.stream_name()).await?;
+    check(
+        upgraded.cached_info().config.subjects == config.stream_config().subjects,
+        "legacy stream subjects were not upgraded",
+    )?;
+    check(
+        upgraded.cached_info().config.max_message_size == config.stream_config().max_message_size,
+        "legacy stream message size was not upgraded",
+    )
+}
+
+async fn legacy_history_remains_readable_after_lower_limit_provisioning(
+    context: &async_nats::jetstream::Context,
+) -> TestResult<()> {
+    const HISTORICAL_WRITE_LIMIT: usize = 768 * 1024;
+    const HISTORICAL_PAYLOAD_BYTES: usize = 400 * 1024;
+
+    if context.client().max_payload() < HISTORICAL_WRITE_LIMIT + 4 * 1024 {
+        eprintln!("NATS max_payload is too small for legacy event-store migration coverage");
+        return Ok(());
+    }
+    let (bounded_context, stream_name) = unique_names("legacy-limit-migration")?;
+    let current = NatsEventStoreConfig::new(&bounded_context, &stream_name)?
+        .with_storage_limits(64 * 1024 * 1024, DEFAULT_EVENT_STORE_MAX_EVENT_BYTES)?;
+    let historical = NatsEventStoreConfig::new(&bounded_context, &stream_name)?
+        .with_storage_limits(64 * 1024 * 1024, HISTORICAL_WRITE_LIMIT)?;
+    let mut legacy_policy = historical.stream_config();
+    legacy_policy.max_message_size = i32::try_from(LEGACY_EVENT_STORE_MAX_EVENT_BYTES)?;
+    context.create_stream(legacy_policy).await?;
+
+    let historical_store = NatsEventStore::connect(context.clone(), historical).await?;
+    let aggregate = stream("legacy-limit-migration")?;
+    let historical_payload = vec![7; HISTORICAL_PAYLOAD_BYTES];
+    historical_store
+        .append(
+            &aggregate,
+            ExpectedVersion::NoStream,
+            owned_payload_batch(
+                &aggregate,
+                "legacy-limit-operation",
+                "legacy-limit-content",
+                historical_payload.clone(),
+            )?,
+        )
+        .await?;
+    let aggregate_subject = current.aggregate_subject(
+        aggregate.aggregate_type().as_str(),
+        aggregate.aggregate_id().as_str(),
+    );
+    let mut legacy_stream = context.get_stream(current.stream_name()).await?;
+    let raw = legacy_stream
+        .get_last_raw_message_by_subject(&aggregate_subject)
+        .await?;
+    check(
+        raw.payload.len() > current.max_event_bytes(),
+        "historical event did not exceed the current write limit",
+    )?;
+    check(
+        raw.payload.len() <= LEGACY_EVENT_STORE_MAX_EVENT_BYTES,
+        "historical event exceeded the legacy read limit",
+    )?;
+
+    let mut legacy_policy = legacy_stream.cached_info().config.clone();
+    legacy_policy.subjects = vec![current.aggregate_subject_filter()];
+    context.create_or_update_stream(legacy_policy).await?;
+    provision_event_store(context, &current).await?;
+
+    legacy_stream = context.get_stream(current.stream_name()).await?;
+    check(
+        legacy_stream.cached_info().config.max_message_size
+            == i32::try_from(LEGACY_EVENT_STORE_MAX_EVENT_BYTES)?,
+        "legacy stream message capacity was not preserved",
+    )?;
+    check(
+        legacy_stream.cached_info().config.subjects == current.stream_config().subjects,
+        "legacy stream subjects were not migrated",
+    )?;
+    let current_store = NatsEventStore::connect(context.clone(), current.clone()).await?;
+    let loaded = current_store.load(&aggregate).await?;
+    check(loaded.len() == 1, "legacy history has the wrong length")?;
+    check(
+        loaded
+            .first()
+            .is_some_and(|event| event.payload() == historical_payload),
+        "legacy event payload changed during migration",
+    )?;
+
+    let oversized = current_store
+        .append(
+            &aggregate,
+            ExpectedVersion::Exact(StreamVersion::new(1)),
+            owned_payload_batch(
+                &aggregate,
+                "current-limit-operation",
+                "current-limit-content",
+                vec![8; HISTORICAL_PAYLOAD_BYTES],
+            )?,
+        )
+        .await;
+    check(
+        matches!(oversized, Err(ref error) if error.kind() == EventStoreErrorKind::InvalidRequest),
+        "current writes did not obey the lower configured event limit",
+    )
+}
+
+async fn max_payload_is_validated_before_provisioning(
+    context: &async_nats::jetstream::Context,
+) -> TestResult<()> {
+    const MAX_CONFIGURED_EVENT_BYTES: usize = 64 * 1024 * 1024;
+    const ATOMIC_HEADER_ALLOWANCE: usize = 4 * 1024;
+
+    let negotiated = context.client().max_payload();
+    let max_event_bytes = negotiated.min(MAX_CONFIGURED_EVENT_BYTES);
+    let max_wire_message_bytes = checked_add_usize(
+        max_event_bytes,
+        ATOMIC_HEADER_ALLOWANCE,
+        "maximum wire message bytes",
+    )?;
+    if max_wire_message_bytes <= negotiated {
+        return Ok(());
+    }
+    let (bounded_context, stream_name) = unique_names("max-payload-validation")?;
+    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
+        .with_storage_limits(i64::try_from(max_event_bytes)?, max_event_bytes)?;
+
+    let result = provision_event_store(context, &config).await;
+    check(
+        matches!(
+            result,
+            Err(ref error)
+                if error.kind() == EventStoreErrorKind::ConfigurationMismatch
+                    && error.message().contains("NATS max_payload")
+        ),
+        "wire messages larger than max_payload were not rejected as a configuration mismatch",
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+async fn transaction_contract_and_wire_policy(
+    store: &NatsEventStore,
+    context: &async_nats::jetstream::Context,
+    config: &NatsEventStoreConfig,
+) -> TestResult<()> {
+    let primary = stream("transaction-primary")?;
+    let secondary = stream("transaction-secondary")?;
+    let observed = stream("transaction-observed")?;
+    let operation = "multi-stream-operation";
+    let operation_id = OperationId::new(operation)?;
+    let fingerprint = ContentFingerprint::digest(operation);
+
+    store
+        .append(
+            &observed,
+            ExpectedVersion::NoStream,
+            batch(&observed, operation, operation, &[b"observed"])?,
+        )
+        .await?;
+
+    let transaction = EventTransaction::new(
+        operation_id.clone(),
+        fingerprint,
+        vec![
+            TransactionParticipant::new(
+                primary.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch(
+                    &primary,
+                    operation,
+                    operation,
+                    &[b"debited", b"audited"],
+                )?),
+            ),
+            TransactionParticipant::new(
+                secondary.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch(&secondary, operation, operation, &[b"credited"])?),
+            ),
+            TransactionParticipant::new(
+                observed.clone(),
+                ExpectedVersion::Exact(StreamVersion::new(1)),
+                None,
+            ),
+        ],
+    );
+    let outcome = store.append_transaction(transaction.clone()).await?;
+    check(
+        matches!(&outcome, TransactionAppendOutcome::Appended(_)),
+        "multi-stream transaction was not reported as appended",
+    )?;
+    check(
+        outcome.receipt().events().len() == 3,
+        "transaction receipt has the wrong event count",
+    )?;
+    check(
+        outcome.receipt().streams().len() == 3,
+        "transaction receipt has the wrong participant count",
+    )?;
+    let observed_receipt = outcome
+        .receipt()
+        .streams()
+        .get(2)
+        .ok_or_else(|| "transaction receipt has no observed participant".to_owned())?;
+    check(
+        observed_receipt.events().is_empty(),
+        "read-only participant unexpectedly recorded events",
+    )?;
+    check(
+        observed_receipt.base_version() == StreamVersion::new(1),
+        "read-only participant has the wrong base version",
+    )?;
+    check(
+        store.load(&primary).await?.len() == 2,
+        "primary transaction history has the wrong length",
+    )?;
+    check(
+        store.load(&secondary).await?.len() == 1,
+        "secondary transaction history has the wrong length",
+    )?;
+
+    let mut stream_info = context.get_stream(config.stream_name()).await?;
+    let primary_subject = config.aggregate_subject(
+        primary.aggregate_type().as_str(),
+        primary.aggregate_id().as_str(),
+    );
+    let secondary_subject = config.aggregate_subject(
+        secondary.aggregate_type().as_str(),
+        secondary.aggregate_id().as_str(),
+    );
+    let mut batch_id = None;
+    for (subject, expected_transaction_ordinals) in [
+        (primary_subject.as_str(), &[0_u64, 1][..]),
+        (secondary_subject.as_str(), &[2_u64][..]),
+    ] {
+        let mut next_sequence = 1_u64;
+        for expected_transaction_ordinal in expected_transaction_ordinals {
+            let message = stream_info
+                .get_first_raw_message_by_subject(subject, next_sequence)
+                .await?;
+            next_sequence = checked_add_u64(
+                message.sequence,
+                1,
+                "next transaction event stream sequence",
+            )?;
+            let wire: serde_json::Value = serde_json::from_slice(&message.payload)?;
+            check(
+                wire.pointer("/schemaVersion")
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(4),
+                "transaction event has the wrong schema version",
+            )?;
+            check(
+                wire.pointer("/event/transactionEventOrdinal")
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(*expected_transaction_ordinal),
+                "transaction event has the wrong transaction ordinal",
+            )?;
+            check(
+                wire.pointer("/event/transactionEventCount")
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(3),
+                "transaction event has the wrong transaction event count",
+            )?;
+            check(
+                message.headers.get("Nats-Batch-Commit").is_none(),
+                "transaction event unexpectedly has a batch commit header",
+            )?;
+            let expected_batch_sequence = checked_add_u64(
+                *expected_transaction_ordinal,
+                1,
+                "expected transaction batch sequence",
+            )?
+            .to_string();
+            check(
+                message
+                    .headers
+                    .get("Nats-Batch-Sequence")
+                    .map(async_nats::HeaderValue::as_str)
+                    == Some(expected_batch_sequence.as_str()),
+                "transaction event has the wrong batch sequence",
+            )?;
+            let stored_batch_id = message
+                .headers
+                .get("Nats-Batch-Id")
+                .ok_or_else(|| "transaction event has no batch identity".to_owned())?
+                .as_str();
+            if let Some(expected_batch_id) = &batch_id {
+                check(
+                    stored_batch_id == expected_batch_id,
+                    "transaction events do not share one batch identity",
+                )?;
+            } else {
+                batch_id = Some(stored_batch_id.to_owned());
+            }
+        }
+    }
+
+    let observed_subject = config.aggregate_subject(
+        observed.aggregate_type().as_str(),
+        observed.aggregate_id().as_str(),
+    );
+    let observed_message = stream_info
+        .get_last_raw_message_by_subject(&observed_subject)
+        .await?;
+    let guard_subject = config.transaction_guard_subject(&primary, operation, 0);
+    let guard = stream_info
+        .get_last_raw_message_by_subject(&guard_subject)
+        .await?;
+    check(
+        guard
+            .headers
+            .get("Nats-Expected-Last-Subject-Sequence-Subject")
+            .map(async_nats::HeaderValue::as_str)
+            == Some(observed_subject.as_str()),
+        "read guard targets the wrong subject",
+    )?;
+    let observed_sequence = observed_message.sequence.to_string();
+    check(
+        guard
+            .headers
+            .get("Nats-Expected-Last-Subject-Sequence")
+            .map(async_nats::HeaderValue::as_str)
+            == Some(observed_sequence.as_str()),
+        "read guard has the wrong expected sequence",
+    )?;
+    check(
+        guard
+            .headers
+            .get("Nats-Batch-Sequence")
+            .map(async_nats::HeaderValue::as_str)
+            == Some("4"),
+        "read guard has the wrong batch sequence",
+    )?;
+    let guard_wire: serde_json::Value = serde_json::from_slice(&guard.payload)?;
+    check(
+        guard_wire
+            .pointer("/operationId")
+            .and_then(serde_json::Value::as_str)
+            == Some(operation),
+        "read guard has the wrong operation identity",
+    )?;
+
+    let receipt_subject = config.transaction_subject(&primary, operation);
+    let receipt = stream_info
+        .get_last_raw_message_by_subject(&receipt_subject)
+        .await?;
+    check(
+        receipt
+            .headers
+            .get("Nats-Batch-Sequence")
+            .map(async_nats::HeaderValue::as_str)
+            == Some("5"),
+        "transaction receipt has the wrong batch sequence",
+    )?;
+    check(
+        receipt
+            .headers
+            .get("Nats-Batch-Commit")
+            .map(async_nats::HeaderValue::as_str)
+            == Some("1"),
+        "transaction receipt has no batch commit marker",
+    )?;
+    check(
+        receipt
+            .headers
+            .get("Nats-Expected-Last-Subject-Sequence")
+            .map(async_nats::HeaderValue::as_str)
+            == Some("0"),
+        "transaction receipt has the wrong duplicate guard",
+    )?;
+    check(
+        receipt
+            .headers
+            .get("Nats-Batch-Id")
+            .map(async_nats::HeaderValue::as_str)
+            == batch_id.as_deref(),
+        "transaction receipt has the wrong batch identity",
+    )?;
+    let receipt_wire: serde_json::Value = serde_json::from_slice(&receipt.payload)?;
+    check(
+        receipt_wire
+            .pointer("/schemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            == Some(1),
+        "transaction receipt has the wrong schema version",
+    )?;
+    check(
+        receipt_wire
+            .pointer("/receipt/operationId")
+            .and_then(serde_json::Value::as_str)
+            == Some(operation),
+        "transaction receipt has the wrong operation identity",
+    )?;
+    check(
+        receipt_wire
+            .pointer("/receipt/participants")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len)
+            == Some(3),
+        "transaction receipt has the wrong participant count",
+    )?;
+
+    let messages_before_replay = stream_info.info().await?.state.messages;
+    let replay = store.append_transaction(transaction.clone()).await?;
+    check(
+        replay.is_exact_replay(),
+        "exact transaction retry was not reported as a replay",
+    )?;
+    check(
+        replay.receipt().events() == outcome.receipt().events(),
+        "exact transaction replay returned a different receipt",
+    )?;
+    let changed_expectations = EventTransaction::new(
+        operation_id.clone(),
+        fingerprint,
+        vec![
+            TransactionParticipant::new(
+                primary.clone(),
+                ExpectedVersion::Exact(StreamVersion::ZERO),
+                Some(batch(
+                    &primary,
+                    operation,
+                    operation,
+                    &[b"debited", b"audited"],
+                )?),
+            ),
+            TransactionParticipant::new(
+                secondary.clone(),
+                ExpectedVersion::Exact(StreamVersion::new(99)),
+                Some(batch(&secondary, operation, operation, &[b"credited"])?),
+            ),
+            TransactionParticipant::new(observed.clone(), ExpectedVersion::NoStream, None),
+        ],
+    );
+    check(
+        store
+            .append_transaction(changed_expectations)
+            .await?
+            .is_exact_replay(),
+        "exact retry did not ignore changed expectations",
+    )?;
+    check(
+        stream_info.info().await?.state.messages == messages_before_replay,
+        "exact replay published another transaction",
+    )?;
+    check(
+        store
+            .load_transaction_receipt(&primary, &operation_id)
+            .await?
+            .is_some(),
+        "transaction receipt lookup returned no receipt",
+    )?;
+
+    let changed = EventTransaction::new(
+        operation_id,
+        ContentFingerprint::digest("changed-transaction"),
+        vec![
+            TransactionParticipant::new(
+                primary.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch(
+                    &primary,
+                    operation,
+                    "changed-transaction",
+                    &[b"changed"],
+                )?),
+            ),
+            TransactionParticipant::new(
+                observed,
+                ExpectedVersion::Exact(StreamVersion::new(1)),
+                None,
+            ),
+        ],
+    );
+    let changed_result = store.append_transaction(changed).await;
+    check(
+        matches!(
+            changed_result,
+            Err(ref error) if error.kind() == EventStoreErrorKind::IdentityConflict
+        ),
+        "reused primary transaction identity did not conflict",
+    )?;
+
+    let stale_stream = stream("transaction-stale-read")?;
+    store
+        .append(
+            &stale_stream,
+            ExpectedVersion::NoStream,
+            batch(
+                &stale_stream,
+                "transaction-stale-seed",
+                "transaction-stale-seed",
+                &[b"seed"],
+            )?,
+        )
+        .await?;
+    let untouched = stream("transaction-conflict-untouched")?;
+    let conflict_operation = "transaction-conflict";
+    let conflict = store
+        .append_transaction(EventTransaction::new(
+            OperationId::new(conflict_operation)?,
+            ContentFingerprint::digest(conflict_operation),
+            vec![
+                TransactionParticipant::new(
+                    untouched.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(
+                        &untouched,
+                        conflict_operation,
+                        conflict_operation,
+                        &[b"must-not-append"],
+                    )?),
+                ),
+                TransactionParticipant::new(stale_stream, ExpectedVersion::NoStream, None),
+            ],
+        ))
+        .await;
+    check(
+        matches!(conflict, Err(ref error) if error.kind() == EventStoreErrorKind::Conflict),
+        "stale read guard did not reject the transaction",
+    )?;
+    check(
+        store.load(&untouched).await?.is_empty(),
+        "a rejected transaction appended an event prefix",
+    )
 }
 
 struct CapacityObservations {

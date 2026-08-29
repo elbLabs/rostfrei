@@ -212,11 +212,23 @@ impl NatsDomainEventConsumer {
             let consumer_info = consumer.get_info().await.map_err(|error| {
                 unavailable(format!("failed to inspect durable progress: {error}"))
             })?;
-            let expected_sequence = consumer_info
+            let search_start = consumer_info
                 .ack_floor
                 .stream_sequence
                 .checked_add(1)
                 .ok_or_else(|| invalid_committed_event("durable sequence space overflowed"))?;
+            let expected_sequence = stream
+                .get_first_raw_message_by_subject(
+                    &self.event_store.aggregate_subject_filter(),
+                    search_start,
+                )
+                .await
+                .map_err(|error| {
+                    unavailable(format!(
+                        "failed to locate the durable's earliest unresolved event: {error}"
+                    ))
+                })?
+                .sequence;
             if first.event.stream_sequence != expected_sequence {
                 tracing::warn!(
                     durable = %self.config.durable_name(),
@@ -234,20 +246,17 @@ impl NatsDomainEventConsumer {
             let mut commit = self
                 .reconstruct_acknowledged_prefix(&stream, &first.event)
                 .await?;
-            if commit.is_empty() && first.event.decoded.event_ordinal != 0 {
-                return Err(invalid_committed_event(
-                    "durable delivery started inside a committed event batch",
-                ));
-            }
-            if !commit.is_empty() {
+            if commit.is_empty() {
+                validate_first_event(&first.event)?;
+            } else {
                 validate_next_event(&commit, &first.event)?;
             }
-            let event_count = first.event.decoded.event_count;
+            let event_count = first.event.decoded.transaction_event_count;
             let commit_id = first.event.decoded.commit_id.clone();
             let mut live_deliveries = LiveDeliveries::new(first.delivery);
             commit.push(first.event);
             let remaining = event_count.checked_sub(commit.len()).ok_or_else(|| {
-                invalid_committed_event("committed event batch exceeds its declared count")
+                invalid_committed_event("committed transaction exceeds its declared event count")
             })?;
             if remaining > 0 {
                 let mut remaining_deliveries = consumer
@@ -279,6 +288,7 @@ impl NatsDomainEventConsumer {
                     commit.push(next.event);
                 }
             }
+            validate_complete_transaction(&commit)?;
 
             match timeout(
                 self.config.processing_timeout(),
@@ -367,16 +377,18 @@ impl NatsDomainEventConsumer {
         stream: &jetstream::stream::Stream,
         first: &BufferedDomainEvent,
     ) -> Result<Vec<BufferedDomainEvent>, DomainEventConsumerError> {
-        if first.decoded.event_ordinal == 0 {
+        if first.decoded.transaction_event_ordinal == 0 {
             return Ok(Vec::new());
         }
-        let event_ordinal = u64::try_from(first.decoded.event_ordinal)
-            .map_err(|_| invalid_committed_event("commit ordinal cannot be represented"))?;
+        let transaction_event_ordinal = u64::try_from(first.decoded.transaction_event_ordinal)
+            .map_err(|_| {
+                invalid_committed_event("transaction event ordinal cannot be represented")
+            })?;
         let start_sequence = first
             .stream_sequence
-            .checked_sub(event_ordinal)
+            .checked_sub(transaction_event_ordinal)
             .ok_or_else(|| invalid_committed_event("commit start sequence underflowed"))?;
-        let mut prefix = Vec::with_capacity(first.decoded.event_ordinal);
+        let mut prefix = Vec::with_capacity(first.decoded.transaction_event_ordinal);
         for sequence in start_sequence..first.stream_sequence {
             let raw = stream.get_raw_message(sequence).await.map_err(|error| {
                 unavailable(format!(
@@ -395,11 +407,7 @@ impl NatsDomainEventConsumer {
                 decoded,
             };
             if prefix.is_empty() {
-                if event.decoded.event_ordinal != 0 {
-                    return Err(invalid_committed_event(
-                        "acknowledged commit prefix does not start at ordinal zero",
-                    ));
-                }
+                validate_first_event(&event)?;
             } else {
                 validate_next_event(&prefix, &event)?;
             }
@@ -555,28 +563,67 @@ fn validate_next_event(
     let previous = commit
         .last()
         .ok_or_else(|| invalid_committed_event("committed event batch is empty"))?;
-    let expected_ordinal = commit.len();
-    if next.decoded.event_ordinal != expected_ordinal
-        || next.decoded.event_count != first.event_count
-        || next.decoded.batch_id != first.batch_id
-        || next.decoded.commit_id != first.commit_id
-        || next.decoded.operation_id != first.operation_id
-        || next.decoded.operation_fingerprint != first.operation_fingerprint
-        || next.decoded.recorded.stream_id() != first.recorded.stream_id()
-        || next.decoded.recorded.correlation_id() != first.recorded.correlation_id()
-        || next.decoded.recorded.causation_id() != first.recorded.causation_id()
-        || next.decoded.recorded.stream_version().value()
-            != previous
+    let same_stream = next.decoded.recorded.stream_id() == previous.decoded.recorded.stream_id();
+    let stream_coordinates_valid = if same_stream {
+        next.decoded.commit_id == previous.decoded.commit_id
+            && previous.decoded.event_ordinal.checked_add(1) == Some(next.decoded.event_ordinal)
+            && next.decoded.event_count == previous.decoded.event_count
+            && previous
                 .decoded
                 .recorded
                 .stream_version()
                 .value()
                 .checked_add(1)
-                .unwrap_or(0)
-        || next.stream_sequence != previous.stream_sequence.checked_add(1).unwrap_or(0)
+                == Some(next.decoded.recorded.stream_version().value())
+    } else {
+        previous.decoded.event_ordinal.checked_add(1) == Some(previous.decoded.event_count)
+            && next.decoded.event_ordinal == 0
+            && !commit.iter().any(|event| {
+                event.decoded.recorded.stream_id() == next.decoded.recorded.stream_id()
+            })
+    };
+    if next.decoded.transaction_event_ordinal != commit.len()
+        || next.decoded.transaction_event_count != first.transaction_event_count
+        || next.decoded.batch_id != first.batch_id
+        || next.decoded.operation_id != first.operation_id
+        || next.decoded.operation_fingerprint != first.operation_fingerprint
+        || next.decoded.recorded.correlation_id() != first.recorded.correlation_id()
+        || next.decoded.recorded.causation_id() != first.recorded.causation_id()
+        || !stream_coordinates_valid
+        || previous.stream_sequence.checked_add(1) != Some(next.stream_sequence)
     {
         return Err(invalid_committed_event(
             "committed event batch is missing, reordered, or inconsistent",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_first_event(first: &BufferedDomainEvent) -> Result<(), DomainEventConsumerError> {
+    if first.decoded.transaction_event_ordinal != 0 || first.decoded.event_ordinal != 0 {
+        return Err(invalid_committed_event(
+            "committed transaction does not start at the first event of a local batch",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_complete_transaction(
+    commit: &[BufferedDomainEvent],
+) -> Result<(), DomainEventConsumerError> {
+    let first = commit
+        .first()
+        .ok_or_else(|| invalid_committed_event("committed transaction is empty"))?;
+    let last = commit
+        .last()
+        .ok_or_else(|| invalid_committed_event("committed transaction is empty"))?;
+    if commit.len() != first.decoded.transaction_event_count
+        || last.decoded.transaction_event_ordinal.checked_add(1)
+            != Some(first.decoded.transaction_event_count)
+        || last.decoded.event_ordinal.checked_add(1) != Some(last.decoded.event_count)
+    {
+        return Err(invalid_committed_event(
+            "committed transaction ends inside a local event batch",
         ));
     }
     Ok(())
@@ -670,6 +717,10 @@ fn invalid_committed_event(message: impl Into<String>) -> DomainEventConsumerErr
 
 #[cfg(test)]
 mod tests {
+    use rostfrei_core::{
+        AggregateId, AggregateType, ContentFingerprint, ExecutionMetadata, OperationId,
+        RecordedEvent, StreamId, StreamVersion,
+    };
     use rostfrei_messaging_core::{ApplicationName, ConsumerName, DurableName};
 
     use super::*;
@@ -695,7 +746,40 @@ mod tests {
             .unwrap()
             .filter_subject;
 
-        assert_eq!(stream_subjects, vec![consumer_subject]);
+        assert!(stream_subjects.contains(&consumer_subject));
+    }
+
+    #[test]
+    fn transaction_grouping_rejects_early_stream_switch() {
+        let source = stream_id("source");
+        let destination = stream_id("destination");
+        let first = buffered_event(&source, 1, 0, 2, 0, 2, 1);
+        let next = buffered_event(&destination, 1, 0, 1, 1, 2, 2);
+
+        let error = validate_next_event(&[first], &next).unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            DomainEventConsumerErrorKind::InvalidCommittedEvent
+        );
+    }
+
+    #[test]
+    fn transaction_grouping_rejects_incomplete_final_local_commit() {
+        let source = stream_id("source");
+        let destination = stream_id("destination");
+        let first = buffered_event(&source, 1, 0, 1, 0, 2, 1);
+        let final_event = buffered_event(&destination, 1, 0, 2, 1, 2, 2);
+        let mut commit = vec![first];
+        validate_next_event(&commit, &final_event).unwrap();
+        commit.push(final_event);
+
+        let error = validate_complete_transaction(&commit).unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            DomainEventConsumerErrorKind::InvalidCommittedEvent
+        );
     }
 
     #[test]
@@ -748,5 +832,60 @@ mod tests {
                 .kind(),
             DomainEventConsumerErrorKind::InvalidConfiguration
         );
+    }
+
+    fn stream_id(id: &str) -> StreamId {
+        StreamId::new(
+            AggregateType::new("test").unwrap(),
+            AggregateId::new(id).unwrap(),
+        )
+    }
+
+    fn buffered_event(
+        stream_id: &StreamId,
+        stream_version: u64,
+        event_ordinal: usize,
+        event_count: usize,
+        transaction_event_ordinal: usize,
+        transaction_event_count: usize,
+        stream_sequence: u64,
+    ) -> BufferedDomainEvent {
+        let operation_id = OperationId::new("transaction-operation").unwrap();
+        let operation_fingerprint = ContentFingerprint::digest("transaction-operation");
+        let metadata = ExecutionMetadata::new(
+            stream_id.clone(),
+            operation_id.clone(),
+            operation_fingerprint,
+        );
+        let commit_event_ordinal = u32::try_from(event_ordinal).unwrap();
+        let commit_event_count = u32::try_from(event_count).unwrap();
+        let recorded = RecordedEvent::new_in_commit(
+            stream_id.clone(),
+            StreamVersion::new(stream_version),
+            metadata.event_id(commit_event_ordinal),
+            metadata.commit_id().clone(),
+            operation_id.clone(),
+            operation_fingerprint,
+            commit_event_ordinal,
+            commit_event_count,
+            "test-event",
+            1,
+            Vec::new(),
+        )
+        .unwrap();
+        BufferedDomainEvent {
+            stream_sequence,
+            decoded: DecodedEvent {
+                batch_id: "transaction-batch".to_owned(),
+                commit_id: metadata.commit_id().clone(),
+                operation_id,
+                operation_fingerprint,
+                event_ordinal,
+                event_count,
+                transaction_event_ordinal,
+                transaction_event_count,
+                recorded,
+            },
+        }
     }
 }
