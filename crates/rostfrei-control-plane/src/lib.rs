@@ -7,8 +7,8 @@ mod service;
 pub mod http;
 
 pub use dispatch::{
-    DispatchAdapter, DispatchError, DispatchErrorKind, DispatchInvocation, DispatchReceipt,
-    dispatch_fingerprint,
+    DispatchAdapter, DispatchError, DispatchErrorKind, DispatchInvocation, DispatchObserver,
+    DispatchOutcome, DispatchPublication, DispatchReceipt, DispatchRejection, dispatch_fingerprint,
 };
 pub use operation::{
     CompletedDecision, OperationEvent, OperationEventKind, OperationResult, OperationSnapshot,

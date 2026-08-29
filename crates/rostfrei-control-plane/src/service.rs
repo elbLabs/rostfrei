@@ -19,9 +19,9 @@ use tokio::sync::{Mutex, Semaphore};
 
 use crate::{
     CommandWireCodec, DispatchAdapter, DispatchError, DispatchErrorKind, DispatchInvocation,
-    DispatchReceipt, DomainJsonWireCodec, OperationEventKind, OperationResult, OperationSnapshot,
-    OperationSubscription, PredictedDomainEvent, RuntimeRegistrationError, SubscriptionError,
-    dispatch_fingerprint,
+    DispatchObserver, DispatchOutcome, DispatchPublication, DispatchReceipt, DomainJsonWireCodec,
+    OperationEventKind, OperationResult, OperationSnapshot, OperationSubscription,
+    PredictedDomainEvent, RuntimeRegistrationError, SubscriptionError, dispatch_fingerprint,
     operation::{NewOperation, OperationRecord, subscribe},
     runtime::{
         CommandKey, ErasedCommandSimulator, RuntimeBindings, RuntimeDecision,
@@ -280,6 +280,48 @@ struct ControlPlaneInner {
     dispatch_permits: Arc<Semaphore>,
     generated_ids: AtomicU64,
     trace_payload_policy: Arc<dyn TracePayloadPolicy>,
+}
+
+struct OperationDispatchObserver {
+    record: Arc<OperationRecord>,
+    publication: Mutex<Option<DispatchPublication>>,
+}
+
+impl OperationDispatchObserver {
+    fn new(record: Arc<OperationRecord>) -> Self {
+        Self {
+            record,
+            publication: Mutex::new(None),
+        }
+    }
+
+    async fn matches(&self, receipt: &DispatchReceipt) -> bool {
+        self.publication
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|publication| {
+                publication.command_message_id() == receipt.command_message_id()
+                    && publication.duplicate() == receipt.duplicate()
+            })
+    }
+}
+
+#[async_trait::async_trait]
+impl DispatchObserver for OperationDispatchObserver {
+    async fn command_published(&self, publication: DispatchPublication) {
+        let mut observed = self.publication.lock().await;
+        if observed.is_some() {
+            return;
+        }
+        self.record
+            .command_published(
+                publication.command_message_id().to_owned(),
+                publication.duplicate(),
+            )
+            .await;
+        *observed = Some(publication);
+    }
 }
 
 #[derive(Default)]
@@ -666,8 +708,22 @@ impl ControlPlane {
             schema_version,
             payload,
         );
-        match dispatcher.dispatch(invocation).await {
-            Ok(receipt) => complete_published(&record, receipt).await,
+        let observer = Arc::new(OperationDispatchObserver::new(Arc::clone(&record)));
+        match dispatcher.dispatch(invocation, observer.clone()).await {
+            Ok(receipt) if observer.matches(&receipt).await => {
+                complete_dispatch(&record, receipt, self.inner.trace_payload_policy.as_ref()).await;
+            }
+            Ok(_) => {
+                record
+                    .fail(
+                        "invalid-dispatch-receipt",
+                        self.inner.trace_payload_policy.failure_message(
+                            "dispatch completed without a matching publication observation"
+                                .to_owned(),
+                        ),
+                    )
+                    .await;
+            }
             Err(error) => {
                 let (code, message) = dispatch_failure(&error);
                 record
@@ -730,10 +786,13 @@ async fn complete_accepted(
     record
         .complete(
             OperationResult::Accepted {
-                base_stream_version,
+                base_stream_version: Some(base_stream_version),
                 predicted_events: events,
-                appended: false,
+                appended: Some(false),
                 published: false,
+                command_message_id: None,
+                response_message_id: None,
+                duplicate: None,
             },
             trace,
         )
@@ -744,10 +803,13 @@ async fn complete_rejected(record: &OperationRecord, base_stream_version: u64, r
     record
         .complete(
             OperationResult::Rejected {
-                base_stream_version,
+                base_stream_version: Some(base_stream_version),
                 rejection: rejection.clone(),
-                appended: false,
+                appended: Some(false),
                 published: false,
+                command_message_id: None,
+                response_message_id: None,
+                duplicate: None,
             },
             vec![
                 OperationEventKind::HistoryReplayed {
@@ -759,19 +821,50 @@ async fn complete_rejected(record: &OperationRecord, base_stream_version: u64, r
         .await;
 }
 
-async fn complete_published(record: &OperationRecord, receipt: DispatchReceipt) {
-    record
-        .complete(
-            OperationResult::Published {
-                duplicate: receipt.duplicate(),
-                appended: false,
-                published: true,
-            },
-            vec![OperationEventKind::CommandPublished {
-                duplicate: receipt.duplicate(),
-            }],
-        )
-        .await;
+async fn complete_dispatch(
+    record: &OperationRecord,
+    receipt: DispatchReceipt,
+    trace_payload_policy: &dyn TracePayloadPolicy,
+) {
+    let (command_message_id, response_message_id, duplicate, outcome) = receipt.into_parts();
+    let responded = OperationEventKind::CommandResponded {
+        response_message_id: response_message_id.clone(),
+    };
+    match outcome {
+        DispatchOutcome::Accepted => {
+            record
+                .complete(
+                    OperationResult::Accepted {
+                        base_stream_version: None,
+                        predicted_events: Vec::new(),
+                        appended: None,
+                        published: true,
+                        command_message_id: Some(command_message_id),
+                        response_message_id: Some(response_message_id),
+                        duplicate: Some(duplicate),
+                    },
+                    vec![responded, OperationEventKind::CommandAccepted],
+                )
+                .await;
+        }
+        DispatchOutcome::Rejected(rejection) => {
+            let rejection = trace_payload_policy.rejection(rejection.into_value());
+            record
+                .complete(
+                    OperationResult::Rejected {
+                        base_stream_version: None,
+                        rejection: rejection.clone(),
+                        appended: None,
+                        published: true,
+                        command_message_id: Some(command_message_id),
+                        response_message_id: Some(response_message_id),
+                        duplicate: Some(duplicate),
+                    },
+                    vec![responded, OperationEventKind::CommandRejected { rejection }],
+                )
+                .await;
+        }
+    }
 }
 
 fn dispatch_failure(error: &DispatchError) -> (&'static str, String) {
@@ -781,6 +874,7 @@ fn dispatch_failure(error: &DispatchError) -> (&'static str, String) {
         DispatchErrorKind::Timeout => "dispatch-timeout",
         DispatchErrorKind::Unavailable => "dispatch-unavailable",
         DispatchErrorKind::InvalidConfiguration => "dispatch-misconfigured",
+        DispatchErrorKind::InvalidResponse => "invalid-dispatch-response",
     };
     (code, error.message().to_owned())
 }

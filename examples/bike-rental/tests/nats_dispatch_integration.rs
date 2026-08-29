@@ -13,7 +13,10 @@ use bike_rental::{
 };
 use rostfrei::EventHistory;
 use rostfrei_control_plane::{ControlPlane, DispatchRequest, OperationResult, SimulationRequest};
-use rostfrei_messaging_core::{CommandPublisher, MessageConsumerFactory as _, MessageHandler};
+use rostfrei_messaging_core::{
+    CommandPublisher, CommandResponse, CommandResponseOutcome, CommandResponsePublisher,
+    CommandResponseReader, MessageConsumerFactory as _, MessageHandler,
+};
 use rostfrei_nats::{NatsConnection, NatsConnectionConfig, ServerVersion, connect};
 use serde_json::json;
 use tokio::{
@@ -50,18 +53,25 @@ async fn run_dispatch_test(
 ) -> TestResult {
     let store = config.connect_store(connection).await?;
     seed_demo(&store).await?;
+    let publisher = Arc::new(connection.publisher(config.messaging().topology().clone()));
+    let response_publisher: Arc<dyn CommandResponsePublisher> = publisher.clone();
+    let response_reader: Arc<dyn CommandResponseReader> =
+        Arc::new(connection.command_response_reader(config.messaging().topology().clone()));
     let consumer = connection
         .consumer_factory(config.messaging().topology().clone())
         .create(config.command_consumer().clone())?;
-    let handler: Arc<dyn MessageHandler<_>> =
-        Arc::new(RentBicycleMessageHandler::new(store.clone()));
+    let handler: Arc<dyn MessageHandler<_>> = Arc::new(RentBicycleMessageHandler::new(
+        store.clone(),
+        response_publisher,
+        Arc::clone(&response_reader),
+    ));
     let consumer_task = tokio::spawn(async move { consumer.run(handler).await });
 
     let test = async {
-        let publisher: Arc<dyn CommandPublisher> =
-            Arc::new(connection.publisher(config.messaging().topology().clone()));
+        let command_publisher: Arc<dyn CommandPublisher> = publisher.clone();
         let adapter = Arc::new(NatsCommandDispatchAdapter::new(
-            publisher,
+            command_publisher,
+            response_reader,
             config.command_address().clone(),
         ));
         let history: Arc<dyn EventHistory> = Arc::new(store.clone());
@@ -70,14 +80,35 @@ async fn run_dispatch_test(
         builder.register_dispatch::<RentBicycle>(adapter)?;
         let control_plane = builder.build()?;
 
-        dispatch(&control_plane, "real-rental-first").await?;
+        let first = dispatch(&control_plane, "real-rental-first").await?;
+        ensure(
+            matches!(
+                first,
+                OperationResult::Accepted {
+                    published: true,
+                    ..
+                }
+            ),
+            "first dispatch did not complete as accepted",
+        )?;
         wait_for_history_len(&store, 2).await?;
-        dispatch(&control_plane, "real-rental-second").await?;
+        let second = dispatch(&control_plane, "real-rental-second").await?;
+        ensure(
+            matches!(
+                second,
+                OperationResult::Rejected {
+                    published: true,
+                    ..
+                }
+            ),
+            "second dispatch did not complete as rejected",
+        )?;
         wait_for_command_stream_empty(connection, config).await?;
         ensure(
             store.load(&demo_stream()).await?.len() == 2,
             "the rejected second rental appended an event",
         )?;
+        assert_retained_responses(connection, config).await?;
 
         control_plane
             .submit_simulation(
@@ -102,7 +133,7 @@ async fn run_dispatch_test(
     test
 }
 
-async fn dispatch(control_plane: &ControlPlane, operation_id: &str) -> TestResult {
+async fn dispatch(control_plane: &ControlPlane, operation_id: &str) -> TestResult<OperationResult> {
     control_plane
         .submit_dispatch(
             "bike-rental/rental-fleet",
@@ -116,9 +147,43 @@ async fn dispatch(control_plane: &ControlPlane, operation_id: &str) -> TestResul
         )
         .await?;
     let operation = terminal_operation(control_plane, operation_id).await?;
+    operation
+        .result
+        .ok_or_else(|| io::Error::other("dispatch completed without a terminal result").into())
+}
+
+async fn assert_retained_responses(
+    connection: &NatsConnection,
+    config: &BikeRentalNatsConfig,
+) -> TestResult {
+    let mut stream = connection
+        .jetstream()
+        .get_stream(
+            config
+                .messaging()
+                .topology()
+                .command_response_stream()
+                .as_str(),
+        )
+        .await?;
+    let info = stream.info().await?;
     ensure(
-        matches!(operation.result, Some(OperationResult::Published { .. })),
-        "dispatch did not receive a JetStream publication acknowledgement",
+        info.state.messages == 2,
+        "response stream did not retain two outcomes",
+    )?;
+    let mut accepted = 0;
+    let mut rejected = 0;
+    for sequence in 1..=info.state.last_sequence {
+        let stored = stream.get_raw_message(sequence).await?;
+        let response: CommandResponse = serde_json::from_slice(&stored.payload)?;
+        match response.outcome() {
+            CommandResponseOutcome::Accepted => accepted += 1,
+            CommandResponseOutcome::Rejected(_) => rejected += 1,
+        }
+    }
+    ensure(
+        accepted == 1 && rejected == 1,
+        "response stream did not retain accepted and rejected outcomes",
     )
 }
 
@@ -178,6 +243,11 @@ async fn cleanup(connection: &NatsConnection, config: &BikeRentalNatsConfig) -> 
     let mut first_error = None;
     let stream_names = [
         config.messaging().topology().command_stream().as_str(),
+        config
+            .messaging()
+            .topology()
+            .command_response_stream()
+            .as_str(),
         config
             .messaging()
             .topology()

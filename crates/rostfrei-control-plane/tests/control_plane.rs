@@ -10,9 +10,9 @@ use axum::{
 use http_body_util::BodyExt as _;
 use rostfrei_control_plane::{
     CommandWireCodec, CommandWireCodecError, ControlPlane, ControlPlaneBuilder, DispatchAdapter,
-    DispatchError, DispatchErrorKind, DispatchInvocation, DispatchReceipt, DispatchRequest,
-    ExposeTracePayloadsForLocalDevelopment, RuntimeRegistrationError, SimulationRequest,
-    SubmissionError, SubscriptionError,
+    DispatchError, DispatchErrorKind, DispatchInvocation, DispatchObserver, DispatchPublication,
+    DispatchReceipt, DispatchRejection, DispatchRequest, ExposeTracePayloadsForLocalDevelopment,
+    RuntimeRegistrationError, SimulationRequest, SubmissionError, SubscriptionError,
 };
 #[cfg(feature = "http")]
 use rostfrei_control_plane::{
@@ -252,7 +252,11 @@ impl RecordingDispatcher {
     fn successful() -> Self {
         Self {
             invocations: Arc::new(Mutex::new(Vec::new())),
-            result: Ok(DispatchReceipt::new(false)),
+            result: Ok(DispatchReceipt::accepted(
+                "command-message-1",
+                "response-message-1",
+                false,
+            )),
         }
     }
 }
@@ -262,8 +266,17 @@ impl DispatchAdapter for RecordingDispatcher {
     async fn dispatch(
         &self,
         invocation: DispatchInvocation,
+        observer: Arc<dyn DispatchObserver>,
     ) -> Result<DispatchReceipt, DispatchError> {
         self.invocations.lock().await.push(invocation);
+        if let Ok(receipt) = &self.result {
+            observer
+                .command_published(DispatchPublication::new(
+                    receipt.command_message_id(),
+                    receipt.duplicate(),
+                ))
+                .await;
+        }
         self.result.clone()
     }
 }
@@ -288,8 +301,16 @@ impl DispatchAdapter for LimitedDispatcher {
     async fn dispatch(
         &self,
         _invocation: DispatchInvocation,
+        observer: Arc<dyn DispatchObserver>,
     ) -> Result<DispatchReceipt, DispatchError> {
-        Ok(DispatchReceipt::new(false))
+        observer
+            .command_published(DispatchPublication::new("limited-command", false))
+            .await;
+        Ok(DispatchReceipt::accepted(
+            "limited-command",
+            "limited-response",
+            false,
+        ))
     }
 }
 
@@ -331,7 +352,7 @@ async fn terminal_operation_with_trace(
 }
 
 #[tokio::test]
-async fn dispatch_is_explicit_idempotent_and_reports_publication_only() {
+async fn accepted_dispatch_traces_publication_before_terminal_response_and_is_idempotent() {
     let dispatcher = RecordingDispatcher::successful();
     let invocations = Arc::clone(&dispatcher.invocations);
     let control_plane = dispatch_control_plane(dispatcher);
@@ -354,12 +375,27 @@ async fn dispatch_is_explicit_idempotent_and_reports_publication_only() {
         terminal_operation_with_trace(&control_plane, "dispatch-operation").await;
 
     assert_eq!(operation["mode"], "dispatch");
-    assert_eq!(operation["result"]["decision"], "published");
-    assert_eq!(operation["result"]["appended"], false);
+    assert_eq!(operation["result"]["decision"], "accepted");
+    assert!(operation["result"].get("appended").is_none());
     assert_eq!(operation["result"]["published"], true);
+    assert_eq!(operation["result"]["commandMessageId"], "command-message-1");
+    assert_eq!(
+        operation["result"]["responseMessageId"],
+        "response-message-1"
+    );
+    assert_eq!(operation["result"]["duplicate"], false);
+    assert!(operation["result"].get("baseStreamVersion").is_none());
     assert!(trace.contains("command-published"));
+    assert!(trace.contains("command-message-1"));
+    assert!(trace.contains("command-responded"));
+    assert!(trace.contains("response-message-1"));
     assert!(!trace.contains("history-replayed"));
-    assert!(!trace.contains("command-accepted"));
+    assert!(trace.contains("command-accepted"));
+    let published = trace.find("command-published").unwrap();
+    let responded = trace.find("command-responded").unwrap();
+    let accepted = trace.find("command-accepted").unwrap();
+    let completed = trace.find("completed").unwrap();
+    assert!(published < responded && responded < accepted && accepted < completed);
 
     control_plane
         .submit_dispatch(
@@ -393,6 +429,94 @@ async fn dispatch_is_explicit_idempotent_and_reports_publication_only() {
     assert_eq!(invocation.aggregate_type(), AGGREGATE_TYPE);
     assert_eq!(invocation.aggregate_id().as_str(), "aggregate-1");
     assert_eq!(invocation.command(), COMMAND_NAME);
+}
+
+#[tokio::test]
+async fn rejected_dispatch_is_terminal_and_obeys_the_trace_payload_policy() {
+    let rejection = DispatchRejection::new(
+        "conflict",
+        "TEST_REJECTION",
+        "private rejection message",
+        Some(json!({ "private": "details" })),
+    );
+    let dispatcher = RecordingDispatcher {
+        invocations: Arc::new(Mutex::new(Vec::new())),
+        result: Ok(DispatchReceipt::rejected(
+            "rejected-command",
+            "rejected-response",
+            true,
+            rejection.clone(),
+        )),
+    };
+    let control_plane = dispatch_control_plane(dispatcher);
+    control_plane
+        .submit_dispatch(
+            AGGREGATE_TYPE,
+            "aggregate-1",
+            COMMAND_NAME,
+            DispatchRequest {
+                schema_version: 1,
+                payload: json!({ "reject": true }),
+            },
+            "rejected-dispatch",
+        )
+        .await
+        .unwrap();
+    let (operation, trace) =
+        terminal_operation_with_trace(&control_plane, "rejected-dispatch").await;
+    assert_eq!(operation["result"]["decision"], "rejected");
+    assert!(operation["result"].get("appended").is_none());
+    assert_eq!(operation["result"]["published"], true);
+    assert_eq!(operation["result"]["commandMessageId"], "rejected-command");
+    assert_eq!(
+        operation["result"]["responseMessageId"],
+        "rejected-response"
+    );
+    assert_eq!(operation["result"]["duplicate"], true);
+    assert_eq!(
+        operation["result"]["rejection"],
+        json!({ "redacted": true })
+    );
+    assert!(trace.contains("command-responded"));
+    assert!(trace.contains("command-rejected"));
+    assert!(!trace.contains("private rejection message"));
+    assert!(!trace.contains("private\":\"details"));
+
+    let mut builder = builder(Arc::new(InMemoryEventStore::new()))
+        .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
+    builder.register::<TestCommand, _>(TestWireCodec).unwrap();
+    builder
+        .register_dispatch::<TestCommand>(Arc::new(RecordingDispatcher {
+            invocations: Arc::new(Mutex::new(Vec::new())),
+            result: Ok(DispatchReceipt::rejected(
+                "exposed-command",
+                "exposed-response",
+                false,
+                rejection,
+            )),
+        }))
+        .unwrap();
+    let exposed = builder.build().unwrap();
+    exposed
+        .submit_dispatch(
+            AGGREGATE_TYPE,
+            "aggregate-1",
+            COMMAND_NAME,
+            DispatchRequest {
+                schema_version: 1,
+                payload: json!({ "reject": true }),
+            },
+            "exposed-rejection",
+        )
+        .await
+        .unwrap();
+    let exposed = terminal_operation(&exposed, "exposed-rejection").await;
+    assert_eq!(exposed["result"]["rejection"]["classification"], "conflict");
+    assert_eq!(exposed["result"]["rejection"]["code"], "TEST_REJECTION");
+    assert_eq!(
+        exposed["result"]["rejection"]["details"],
+        json!({ "private": "details" })
+    );
 }
 
 #[tokio::test]
@@ -560,14 +684,13 @@ async fn http_requires_a_bearer_capability_and_reports_invalid_input() {
 #[cfg(feature = "http")]
 #[tokio::test]
 async fn dispatch_http_uses_a_separate_capability_and_requires_idempotency() {
-    let app = http::router(
-        dispatch_control_plane(RecordingDispatcher::successful()),
-        HttpConfig::new(API_TOKEN).unwrap(),
-    )
-    .merge(http::dispatch_router(
-        dispatch_control_plane(RecordingDispatcher::successful()),
-        DispatchHttpConfig::new(DISPATCH_TOKEN).unwrap(),
-    ));
+    let control_plane = dispatch_control_plane(RecordingDispatcher::successful());
+    let app = http::router(control_plane.clone(), HttpConfig::new(API_TOKEN).unwrap()).merge(
+        http::dispatch_router(
+            control_plane,
+            DispatchHttpConfig::new(DISPATCH_TOKEN).unwrap(),
+        ),
+    );
     let body = || {
         Body::from(
             json!({
@@ -613,6 +736,7 @@ async fn dispatch_http_uses_a_separate_capability_and_requires_idempotency() {
     );
 
     let accepted = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -627,6 +751,31 @@ async fn dispatch_http_uses_a_separate_capability_and_requires_idempotency() {
         .unwrap();
     assert_eq!(accepted.status(), StatusCode::ACCEPTED);
     assert_eq!(json_body(accepted).await["mode"], "dispatch");
+
+    let completion = app
+        .oneshot(
+            authorize(Request::builder())
+                .uri("/v1/operations/http-dispatch/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(completion.status(), StatusCode::OK);
+    let completion = String::from_utf8(
+        completion
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(completion.contains("event: command.published"));
+    assert!(completion.contains("event: command.responded"));
+    assert!(completion.contains("event: command.accepted"));
+    assert!(completion.contains("event: operation.completed"));
 }
 
 #[tokio::test]

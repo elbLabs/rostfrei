@@ -6,18 +6,23 @@ use std::{
 use async_trait::async_trait;
 use rostfrei::{
     Aggregate, CommandDefinition, CommandExecutionError, CommandOutcome, ContentFingerprint,
-    EventStore, EventStoreError, EventStoreErrorKind, ExecutionMetadata, Executor,
-    JsonCommandPayload, OperationId as CoreOperationId,
+    DomainErrorType, EventStore, EventStoreError, EventStoreErrorKind, ExecutionMetadata, Executor,
+    JsonCommandPayload, JsonErrorPayload, OperationId as CoreOperationId, StreamId,
 };
 use rostfrei_control_plane::{
-    DispatchAdapter, DispatchError, DispatchErrorKind, DispatchInvocation, DispatchReceipt,
-    dispatch_fingerprint,
+    DispatchAdapter, DispatchError, DispatchErrorKind, DispatchInvocation, DispatchObserver,
+    DispatchPublication, DispatchReceipt, DispatchRejection, dispatch_fingerprint,
 };
 use rostfrei_messaging_core::{
-    ApplicationName, BoundedContext, CommandAddress, CommandEnvelope, CommandPublisher,
-    ConsumerConfig, ContractError, DeliveryDisposition, EnvelopeContext, MAX_ENVELOPE_BYTES,
-    MessageBuildError, MessageDelivery, MessageHandler, MessageId, MessageTimestamp, OperationId,
-    OutboundMessage, PublishErrorKind, QuarantineReason, RetryDelay, SchemaVersion,
+    ApplicationErrorCode, ApplicationName, BoundedContext, COMMAND_RESPONSE_SCHEMA_VERSION,
+    CausationId, CommandAddress, CommandEnvelope, CommandPublisher, CommandRejection,
+    CommandRejectionClassification, CommandResponse, CommandResponseAddress,
+    CommandResponseOutcome, CommandResponsePublisher, CommandResponseReadError,
+    CommandResponseReadErrorKind, CommandResponseReader, ConsumerConfig, ContractError,
+    DeliveryDisposition, EnvelopeContext, MAX_ENVELOPE_BYTES, MessageBuildError, MessageDelivery,
+    MessageHandler, MessageId, MessageTimestamp, OperationId, OutboundMessage, PublishError,
+    PublishErrorKind, PublishReceipt, QuarantineReason, RetryDelay, SchemaVersion,
+    derive_command_response_address,
 };
 use rostfrei_nats::{
     ApplicationMessagingConfig, NatsConnection, NatsError, NatsEventStore, NatsEventStoreConfig,
@@ -28,7 +33,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    rental::{RentBicycle, RentalFleetAggregate},
+    rental::{BicycleUnavailable, RentBicycle, RentalFleetAggregate},
     runtime::rental_fleet_stream,
 };
 
@@ -41,6 +46,8 @@ const CONSUMER_CONCURRENCY: usize = 4;
 const MAXIMUM_DELIVERY_ATTEMPTS: u32 = 5;
 const MAXIMUM_PUBLISH_ATTEMPTS: usize = 3;
 const PUBLISH_RETRY_DELAY: Duration = Duration::from_millis(100);
+const COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const COMMAND_RESPONSE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(100);
 const COMMAND_ENVELOPE_OVERHEAD: usize = 64 * 1024;
 const MAXIMUM_COMMAND_PAYLOAD_LEN: usize =
     MAX_ENVELOPE_BYTES.saturating_sub(COMMAND_ENVELOPE_OVERHEAD);
@@ -180,22 +187,31 @@ impl DispatchedCommand {
 
 pub struct NatsCommandDispatchAdapter {
     publisher: Arc<dyn CommandPublisher>,
+    response_reader: Arc<dyn CommandResponseReader>,
     address: CommandAddress,
 }
 
 impl NatsCommandDispatchAdapter {
-    pub fn new(publisher: Arc<dyn CommandPublisher>, address: CommandAddress) -> Self {
-        Self { publisher, address }
+    pub fn new(
+        publisher: Arc<dyn CommandPublisher>,
+        response_reader: Arc<dyn CommandResponseReader>,
+        address: CommandAddress,
+    ) -> Self {
+        Self {
+            publisher,
+            response_reader,
+            address,
+        }
     }
 
     async fn publish(
         &self,
         message: OutboundMessage<CommandAddress>,
-    ) -> Result<DispatchReceipt, DispatchError> {
+    ) -> Result<PublishReceipt, DispatchError> {
         let mut attempts_remaining = MAXIMUM_PUBLISH_ATTEMPTS;
         loop {
             match self.publisher.publish_command(message.clone()).await {
-                Ok(receipt) => return Ok(DispatchReceipt::new(receipt.duplicate())),
+                Ok(receipt) => return Ok(receipt),
                 Err(error)
                     if attempts_remaining > 1
                         && matches!(
@@ -210,6 +226,40 @@ impl NatsCommandDispatchAdapter {
             }
         }
     }
+
+    async fn read_response(
+        &self,
+        response_address: &CommandResponseAddress,
+        operation_id: &OperationId,
+        command_message_id: &MessageId,
+    ) -> Result<CommandResponse, DispatchError> {
+        loop {
+            match self
+                .response_reader
+                .read_command_response(
+                    response_address,
+                    operation_id,
+                    command_message_id,
+                    COMMAND_RESPONSE_TIMEOUT,
+                )
+                .await
+            {
+                Ok(response) => return Ok(response),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        CommandResponseReadErrorKind::Timeout
+                            | CommandResponseReadErrorKind::Unavailable
+                    ) =>
+                {
+                    if error.kind() == CommandResponseReadErrorKind::Unavailable {
+                        tokio::time::sleep(PUBLISH_RETRY_DELAY).await;
+                    }
+                }
+                Err(error) => return Err(response_read_dispatch_error(error)),
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -221,6 +271,7 @@ impl DispatchAdapter for NatsCommandDispatchAdapter {
     async fn dispatch(
         &self,
         invocation: DispatchInvocation,
+        observer: Arc<dyn DispatchObserver>,
     ) -> Result<DispatchReceipt, DispatchError> {
         if invocation.aggregate_type() != RentalFleetAggregate::aggregate_type()
             || invocation.command() != RentBicycle::COMMAND_NAME
@@ -243,12 +294,13 @@ impl DispatchAdapter for NatsCommandDispatchAdapter {
         let message_id =
             command_message_id(operation_id.as_str(), invocation.operation_fingerprint())
                 .map_err(|error| contract_dispatch_error(&error))?;
+        let correlation_id = rostfrei_messaging_core::CorrelationId::new(operation_id.as_str())
+            .map_err(|error| contract_dispatch_error(&error))?;
         let envelope = CommandEnvelope::new(
             EnvelopeContext::new(
                 message_id.clone(),
                 messaging_schema_version(invocation.schema_version())?,
-                rostfrei_messaging_core::CorrelationId::new(operation_id.as_str())
-                    .map_err(|error| contract_dispatch_error(&error))?,
+                correlation_id.clone(),
                 None,
             ),
             operation_id,
@@ -258,18 +310,89 @@ impl DispatchAdapter for NatsCommandDispatchAdapter {
         .map_err(|error| message_dispatch_error(&error))?;
         let message = OutboundMessage::json(self.address.clone(), message_id, &envelope)
             .map_err(|error| message_dispatch_error(&error))?;
-        self.publish(message).await
+        let publication = self.publish(message).await?;
+        observer
+            .command_published(DispatchPublication::new(
+                envelope.message_id().as_str(),
+                publication.duplicate(),
+            ))
+            .await;
+        let response_address = derive_command_response_address(
+            &self.address,
+            envelope.operation_id(),
+            envelope.message_id(),
+        )
+        .map_err(|error| contract_dispatch_error(&error))?;
+        let response = self
+            .read_response(
+                &response_address,
+                envelope.operation_id(),
+                envelope.message_id(),
+            )
+            .await?;
+        if response.command_address() != &self.address
+            || response.operation_id() != envelope.operation_id()
+            || response.command_message_id() != envelope.message_id()
+            || response.schema_version().get() != COMMAND_RESPONSE_SCHEMA_VERSION
+            || response.correlation_id() != &correlation_id
+        {
+            return Err(DispatchError::new(
+                DispatchErrorKind::InvalidResponse,
+                "command response context does not match the command",
+            ));
+        }
+        dispatch_receipt(response, publication.duplicate())
     }
 }
 
 #[derive(Clone)]
 pub struct RentBicycleMessageHandler<S> {
     store: S,
+    response_publisher: Arc<dyn CommandResponsePublisher>,
+    response_reader: Arc<dyn CommandResponseReader>,
 }
 
 impl<S> RentBicycleMessageHandler<S> {
-    pub const fn new(store: S) -> Self {
-        Self { store }
+    pub fn new(
+        store: S,
+        response_publisher: Arc<dyn CommandResponsePublisher>,
+        response_reader: Arc<dyn CommandResponseReader>,
+    ) -> Self {
+        Self {
+            store,
+            response_publisher,
+            response_reader,
+        }
+    }
+
+    async fn publish_response(
+        &self,
+        message: OutboundMessage<rostfrei_messaging_core::CommandResponseAddress>,
+    ) -> Result<PublishReceipt, PublishError>
+    where
+        S: Sync,
+    {
+        let mut attempts_remaining = MAXIMUM_PUBLISH_ATTEMPTS;
+        loop {
+            match self
+                .response_publisher
+                .publish_command_response(message.clone())
+                .await
+            {
+                Ok(receipt) => return Ok(receipt),
+                Err(error)
+                    if attempts_remaining > 1
+                        && matches!(
+                            error.kind(),
+                            PublishErrorKind::Timeout | PublishErrorKind::Unavailable
+                        ) =>
+                {
+                    attempts_remaining = attempts_remaining.saturating_sub(1);
+                    tokio::time::sleep(PUBLISH_RETRY_DELAY).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 }
 
@@ -279,26 +402,87 @@ where
     S: EventStore + Clone + Send + Sync + 'static,
 {
     async fn handle(&self, delivery: MessageDelivery<CommandAddress>) -> DeliveryDisposition {
-        match execute_delivery(self.store.clone(), &delivery).await {
-            Ok((operation_id, CommandOutcome::Accepted(receipt))) => {
-                tracing::info!(
-                    operation_id = %operation_id,
-                    message_id = %delivery.message_id(),
-                    events = receipt.events().len(),
-                    exact_replay = receipt.is_exact_replay(),
-                    "bike-rental command accepted"
-                );
-                DeliveryDisposition::Acknowledge
+        let prepared = match prepare_delivery(&delivery) {
+            Ok(prepared) => prepared,
+            Err(DeliveryFailure::Invalid) => {
+                return quarantine_disposition("invalid bike-rental command envelope");
             }
-            Ok((operation_id, CommandOutcome::Rejected(_))) => {
-                tracing::info!(
-                    operation_id = %operation_id,
-                    message_id = %delivery.message_id(),
-                    "bike-rental command rejected"
-                );
-                DeliveryDisposition::Acknowledge
+            Err(DeliveryFailure::Transient | DeliveryFailure::MandatoryResponse) => {
+                return retry_disposition();
             }
-            Err(DeliveryFailure::Transient) => retry_disposition(),
+        };
+        match reconcile_persisted_response(self.response_reader.as_ref(), &delivery, &prepared)
+            .await
+        {
+            Ok(Some(response)) => {
+                tracing::info!(
+                    operation_id = %prepared.envelope.operation_id(),
+                    message_id = %delivery.message_id(),
+                    response_message_id = %response.message_id(),
+                    "bike-rental command response already persisted"
+                );
+                return DeliveryDisposition::Acknowledge;
+            }
+            Ok(None) => {}
+            Err(DeliveryFailure::Transient | DeliveryFailure::MandatoryResponse) => {
+                return retry_disposition();
+            }
+            Err(DeliveryFailure::Invalid) => {
+                return quarantine_disposition("invalid bike-rental command response");
+            }
+        }
+
+        match execute_delivery(self.store.clone(), &delivery, prepared).await {
+            Ok(executed) => {
+                let operation_id = executed.operation_id.clone();
+                let response_message_id = executed.response.message_id().clone();
+                let Ok(response) = OutboundMessage::json(
+                    executed.response_address,
+                    response_message_id.clone(),
+                    &executed.response,
+                ) else {
+                    return retry_disposition();
+                };
+                match self.publish_response(response).await {
+                    Ok(publication) => {
+                        match executed.summary {
+                            ExecutionSummary::Accepted {
+                                events,
+                                exact_replay,
+                            } => tracing::info!(
+                                operation_id = %operation_id,
+                                message_id = %delivery.message_id(),
+                                response_message_id = %response_message_id,
+                                response_duplicate = publication.duplicate(),
+                                events,
+                                exact_replay,
+                                "bike-rental command accepted"
+                            ),
+                            ExecutionSummary::Rejected => tracing::info!(
+                                operation_id = %operation_id,
+                                message_id = %delivery.message_id(),
+                                response_message_id = %response_message_id,
+                                response_duplicate = publication.duplicate(),
+                                "bike-rental command rejected"
+                            ),
+                        }
+                        DeliveryDisposition::Acknowledge
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            operation_id = %operation_id,
+                            message_id = %delivery.message_id(),
+                            response_message_id = %response_message_id,
+                            error = %error,
+                            "bike-rental command response publication failed"
+                        );
+                        retry_disposition()
+                    }
+                }
+            }
+            Err(DeliveryFailure::Transient | DeliveryFailure::MandatoryResponse) => {
+                retry_disposition()
+            }
             Err(DeliveryFailure::Invalid) => {
                 quarantine_disposition("invalid bike-rental command envelope")
             }
@@ -310,21 +494,33 @@ where
 enum DeliveryFailure {
     Invalid,
     Transient,
+    MandatoryResponse,
 }
 
-async fn execute_delivery<S>(
-    store: S,
+struct ExecutedDelivery {
+    operation_id: OperationId,
+    response_address: CommandResponseAddress,
+    response: CommandResponse,
+    summary: ExecutionSummary,
+}
+
+enum ExecutionSummary {
+    Accepted { events: usize, exact_replay: bool },
+    Rejected,
+}
+
+struct PreparedDelivery {
+    envelope: CommandEnvelope<DispatchedCommand>,
+    command: RentBicycle,
+    stream: StreamId,
+    fingerprint: ContentFingerprint,
+    response_address: CommandResponseAddress,
+    response_message_id: MessageId,
+}
+
+fn prepare_delivery(
     delivery: &MessageDelivery<CommandAddress>,
-) -> Result<
-    (
-        OperationId,
-        CommandOutcome<<RentBicycle as rostfrei::DomainCommandType>::Rejection>,
-    ),
-    DeliveryFailure,
->
-where
-    S: EventStore + Clone,
-{
+) -> Result<PreparedDelivery, DeliveryFailure> {
     let envelope: CommandEnvelope<DispatchedCommand> =
         serde_json::from_slice(delivery.payload()).map_err(|_| DeliveryFailure::Invalid)?;
     if envelope.message_id() != delivery.message_id()
@@ -353,19 +549,134 @@ where
         rental_fleet_stream(&dispatched.aggregate_id).map_err(|_| DeliveryFailure::Invalid)?;
     let command =
         RentBicycle::decode_json(&dispatched.payload).map_err(|_| DeliveryFailure::Invalid)?;
+    let response_address = derive_command_response_address(
+        delivery.address(),
+        envelope.operation_id(),
+        delivery.message_id(),
+    )
+    .map_err(|_| DeliveryFailure::MandatoryResponse)?;
+    let response_message_id = command_response_message_id(delivery.message_id())
+        .map_err(|_| DeliveryFailure::MandatoryResponse)?;
+    Ok(PreparedDelivery {
+        envelope,
+        command,
+        stream,
+        fingerprint,
+        response_address,
+        response_message_id,
+    })
+}
+
+async fn reconcile_persisted_response(
+    response_reader: &dyn CommandResponseReader,
+    delivery: &MessageDelivery<CommandAddress>,
+    prepared: &PreparedDelivery,
+) -> Result<Option<CommandResponse>, DeliveryFailure> {
+    match response_reader
+        .read_command_response(
+            &prepared.response_address,
+            prepared.envelope.operation_id(),
+            delivery.message_id(),
+            COMMAND_RESPONSE_RECONCILIATION_TIMEOUT,
+        )
+        .await
+    {
+        Ok(response)
+            if response.message_id() == &prepared.response_message_id
+                && response.command_message_id() == delivery.message_id()
+                && response.command_address() == delivery.address()
+                && response.operation_id() == prepared.envelope.operation_id()
+                && response.schema_version().get() == COMMAND_RESPONSE_SCHEMA_VERSION
+                && response.correlation_id() == prepared.envelope.correlation_id() =>
+        {
+            Ok(Some(response))
+        }
+        Ok(_) => Err(DeliveryFailure::Invalid),
+        Err(error) => match error.kind() {
+            CommandResponseReadErrorKind::Timeout => Ok(None),
+            CommandResponseReadErrorKind::Unavailable => Err(DeliveryFailure::Transient),
+            _ => Err(DeliveryFailure::Invalid),
+        },
+    }
+}
+
+async fn execute_delivery<S>(
+    store: S,
+    delivery: &MessageDelivery<CommandAddress>,
+    prepared: PreparedDelivery,
+) -> Result<ExecutedDelivery, DeliveryFailure>
+where
+    S: EventStore + Clone,
+{
+    let PreparedDelivery {
+        envelope,
+        command,
+        stream,
+        fingerprint,
+        response_address,
+        response_message_id,
+    } = prepared;
     let operation_id = envelope.operation_id().clone();
     let core_operation_id =
         CoreOperationId::new(operation_id.as_str()).map_err(|_| DeliveryFailure::Invalid)?;
-    let mut metadata = ExecutionMetadata::new(stream, core_operation_id, fingerprint)
-        .with_correlation_id(envelope.correlation_id().clone());
-    if let Some(causation_id) = envelope.causation_id() {
-        metadata = metadata.with_causation_id(causation_id.clone());
-    }
+    let command_causation_id =
+        CausationId::new(delivery.message_id().as_str()).map_err(|_| DeliveryFailure::Invalid)?;
+    let metadata = ExecutionMetadata::new(stream, core_operation_id, fingerprint)
+        .with_correlation_id(envelope.correlation_id().clone())
+        .with_causation_id(command_causation_id);
     let outcome = Executor::new(store)
         .execute::<RentalFleetAggregate, _>(metadata, &command)
         .await
         .map_err(classify_execution_error)?;
-    Ok((operation_id, outcome))
+    let correlation_id = envelope.correlation_id().clone();
+    let (response, summary) = match outcome {
+        CommandOutcome::Accepted(receipt) => (
+            CommandResponse::accepted(
+                response_message_id,
+                delivery.message_id().clone(),
+                delivery.address().clone(),
+                operation_id.clone(),
+                correlation_id,
+            )
+            .map_err(|_| DeliveryFailure::MandatoryResponse)?,
+            ExecutionSummary::Accepted {
+                events: receipt.events().len(),
+                exact_replay: receipt.is_exact_replay(),
+            },
+        ),
+        CommandOutcome::Rejected(rejection) => {
+            let descriptor = <BicycleUnavailable as DomainErrorType>::DESCRIPTOR;
+            let details = rejection
+                .encode_json()
+                .map_err(|_| DeliveryFailure::MandatoryResponse)?;
+            let rejection = CommandRejection::new(
+                CommandRejectionClassification::Conflict,
+                ApplicationErrorCode::new(descriptor.code)
+                    .map_err(|_| DeliveryFailure::MandatoryResponse)?,
+                descriptor.message,
+                Some(details),
+            )
+            .map_err(|_| DeliveryFailure::MandatoryResponse)?;
+            (
+                CommandResponse::rejected(
+                    response_message_id,
+                    delivery.message_id().clone(),
+                    delivery.address().clone(),
+                    operation_id.clone(),
+                    correlation_id,
+                    rejection,
+                )
+                .map_err(|_| DeliveryFailure::MandatoryResponse)?,
+                ExecutionSummary::Rejected,
+            )
+        }
+    };
+    Ok(ExecutedDelivery {
+        operation_id,
+        response_address,
+        response,
+        summary,
+    })
 }
 
 fn classify_execution_error(error: CommandExecutionError) -> DeliveryFailure {
@@ -417,6 +728,14 @@ fn command_message_id(
     MessageId::new(ContentFingerprint::digest(identity).to_hex())
 }
 
+fn command_response_message_id(command_message_id: &MessageId) -> Result<MessageId, ContractError> {
+    let identity = format!(
+        "rostfrei:command-response-message:v1:{}",
+        command_message_id.as_str()
+    );
+    MessageId::new(ContentFingerprint::digest(identity).to_hex())
+}
+
 fn current_timestamp() -> Result<MessageTimestamp, DispatchError> {
     let milliseconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -448,6 +767,55 @@ fn publish_dispatch_error(error: rostfrei_messaging_core::PublishError) -> Dispa
         _ => DispatchErrorKind::Unavailable,
     };
     DispatchError::new(kind, error.to_string())
+}
+
+fn response_read_dispatch_error(error: CommandResponseReadError) -> DispatchError {
+    let kind = match error.kind() {
+        CommandResponseReadErrorKind::Timeout => DispatchErrorKind::Timeout,
+        CommandResponseReadErrorKind::Unavailable => DispatchErrorKind::Unavailable,
+        CommandResponseReadErrorKind::InvalidConfiguration => {
+            DispatchErrorKind::InvalidConfiguration
+        }
+        _ => DispatchErrorKind::InvalidResponse,
+    };
+    DispatchError::new(kind, error.to_string())
+}
+
+fn dispatch_receipt(
+    response: CommandResponse,
+    duplicate: bool,
+) -> Result<DispatchReceipt, DispatchError> {
+    let command_message_id = response.command_message_id().as_str().to_owned();
+    let response_message_id = response.message_id().as_str().to_owned();
+    match response.into_outcome() {
+        CommandResponseOutcome::Accepted => Ok(DispatchReceipt::accepted(
+            command_message_id,
+            response_message_id,
+            duplicate,
+        )),
+        CommandResponseOutcome::Rejected(rejection) => {
+            let rejection = serde_json::from_value::<DispatchRejection>(
+                serde_json::to_value(rejection).map_err(|_| {
+                    DispatchError::new(
+                        DispatchErrorKind::InvalidResponse,
+                        "command rejection could not be represented",
+                    )
+                })?,
+            )
+            .map_err(|_| {
+                DispatchError::new(
+                    DispatchErrorKind::InvalidResponse,
+                    "command rejection could not be represented",
+                )
+            })?;
+            Ok(DispatchReceipt::rejected(
+                command_message_id,
+                response_message_id,
+                duplicate,
+                rejection,
+            ))
+        }
+    }
 }
 
 pub fn execution_fingerprint(command: &DispatchedCommand) -> ContentFingerprint {

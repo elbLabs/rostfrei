@@ -28,7 +28,6 @@ impl OperationStatus {
 pub enum CompletedDecision {
     Accepted,
     Rejected,
-    Published,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -52,21 +51,32 @@ pub struct PredictedDomainEvent {
 )]
 pub enum OperationResult {
     Accepted {
-        base_stream_version: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base_stream_version: Option<u64>,
         predicted_events: Vec<PredictedDomainEvent>,
-        appended: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        appended: Option<bool>,
         published: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        command_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        response_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duplicate: Option<bool>,
     },
     Rejected {
-        base_stream_version: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base_stream_version: Option<u64>,
         rejection: Value,
-        appended: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        appended: Option<bool>,
         published: bool,
-    },
-    Published {
-        duplicate: bool,
-        appended: bool,
-        published: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        command_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        response_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duplicate: Option<bool>,
     },
 }
 
@@ -112,13 +122,30 @@ pub struct OperationEvent {
 pub enum OperationEventKind {
     Queued,
     Started,
-    HistoryReplayed { base_stream_version: u64 },
+    HistoryReplayed {
+        base_stream_version: u64,
+    },
     CommandAccepted,
-    PredictedDomainEvent { event: PredictedDomainEvent },
-    CommandRejected { rejection: Value },
-    CommandPublished { duplicate: bool },
-    Completed { decision: CompletedDecision },
-    Failed { code: &'static str, message: String },
+    PredictedDomainEvent {
+        event: PredictedDomainEvent,
+    },
+    CommandRejected {
+        rejection: Value,
+    },
+    CommandPublished {
+        command_message_id: String,
+        duplicate: bool,
+    },
+    CommandResponded {
+        response_message_id: String,
+    },
+    Completed {
+        decision: CompletedDecision,
+    },
+    Failed {
+        code: &'static str,
+        message: String,
+    },
 }
 
 impl OperationEventKind {
@@ -131,6 +158,7 @@ impl OperationEventKind {
             Self::PredictedDomainEvent { .. } => "domain-event.predicted",
             Self::CommandRejected { .. } => "command.rejected",
             Self::CommandPublished { .. } => "command.published",
+            Self::CommandResponded { .. } => "command.responded",
             Self::Completed { .. } => "operation.completed",
             Self::Failed { .. } => "operation.failed",
         }
@@ -208,7 +236,6 @@ impl OperationRecord {
         let decision = match result {
             OperationResult::Accepted { .. } => CompletedDecision::Accepted,
             OperationResult::Rejected { .. } => CompletedDecision::Rejected,
-            OperationResult::Published { .. } => CompletedDecision::Published,
         };
         let mut state = self.state.lock().await;
         if state.snapshot.status.is_terminal() {
@@ -246,12 +273,26 @@ impl OperationRecord {
         self.changed.send_replace(latest);
     }
 
+    pub async fn command_published(&self, command_message_id: String, duplicate: bool) {
+        self.append(
+            OperationEventKind::CommandPublished {
+                command_message_id,
+                duplicate,
+            },
+            |_| {},
+        )
+        .await;
+    }
+
     pub fn is_terminal(&self) -> bool {
         self.terminal.load(Ordering::Acquire)
     }
 
     async fn append(&self, kind: OperationEventKind, update: impl FnOnce(&mut OperationSnapshot)) {
         let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() {
+            return;
+        }
         push_event(&mut state, kind);
         update(&mut state.snapshot);
         let latest = state.snapshot.latest_event_id;

@@ -29,7 +29,7 @@ async fn example_serves_distinct_dispatch_and_simulation_modes() {
     assert!(body.contains("rent-bicycle"));
     assert!(body.contains("value=\"dispatch\""));
     assert!(body.contains("value=\"simulate\""));
-    assert!(body.contains("publication is not a business acceptance"));
+    assert!(body.contains("waits for the durable accepted or rejected response"));
     assert!(body.contains("/v1/operations/"));
     assert!(body.contains("last-event-id"));
     assert!(body.contains("operation.failed"));

@@ -12,6 +12,7 @@ pub enum NatsErrorKind {
     PayloadTooLarge,
     PublishTimeout,
     PublishExpectation,
+    IdentityConflict,
     StreamNotFound,
     ConsumerNotFound,
     Publish,
@@ -44,6 +45,8 @@ pub enum NatsError {
     PublishTimeout,
     #[error("NATS publish expectation was not satisfied")]
     PublishExpectation,
+    #[error("NATS message identity conflicts with an existing message")]
+    IdentityConflict,
     #[error("NATS stream was not found")]
     StreamNotFound,
     #[error("NATS durable consumer was not found")]
@@ -80,6 +83,7 @@ impl NatsError {
             Self::PayloadTooLarge { .. } | Self::MessageTooLarge => NatsErrorKind::PayloadTooLarge,
             Self::PublishTimeout => NatsErrorKind::PublishTimeout,
             Self::PublishExpectation => NatsErrorKind::PublishExpectation,
+            Self::IdentityConflict => NatsErrorKind::IdentityConflict,
             Self::StreamNotFound => NatsErrorKind::StreamNotFound,
             Self::ConsumerNotFound => NatsErrorKind::ConsumerNotFound,
             Self::Publish => NatsErrorKind::Publish,
