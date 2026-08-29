@@ -41,18 +41,22 @@ and provisioning API.
 [`examples/bike-rental`](examples/bike-rental) is a self-contained public
 example with an aggregate action, a decision, a query, a domain event, and a
 domain error. It also contains a runnable local control-plane server that
-replays a seeded fleet, simulates `RentBicycle`, and streams the operation trace
-without appending or publishing. The aggregate identity in the API is qualified
-by its bounded context, and `#[domain(json)]` supplies the example's generated
-command and rejection JSON while aggregate event JSON comes from the compiled
-aggregate codec.
+publishes `RentBicycle` through NATS, executes it against `NatsEventStore`, and
+can separately simulate the command without mutation. The aggregate identity in
+the API is qualified by its bounded context, and `#[domain(json)]` supplies the
+example's generated command and rejection JSON while aggregate event JSON comes
+from the compiled aggregate codec.
 
 A control-plane instance receives one explicit read-only `EventHistory` and
-exposes only commands with matching executable bindings. When that history is a
-`NatsEventStore`, its configuration fixes the application and bounded-context
-stream scope; the context-qualified HTTP route must address that same history.
-Operation status and traces are retained only in memory, payloads are redacted
-by default, and local deployments must opt in explicitly to expose them.
+exposes only commands with matching executable bindings. Live dispatch also
+requires an explicit command-specific `DispatchAdapter` and separately mounted,
+separately authorized HTTP router. A dispatch operation reports confirmed
+publication rather than claiming that the asynchronous business command was
+accepted. When history is a `NatsEventStore`, its configuration fixes the
+application and bounded-context stream scope; the context-qualified HTTP route
+must address that same history. Operation status and traces are retained only
+in memory, payloads are redacted by default, and local deployments must opt in
+explicitly to expose them.
 
 rostfrei does not provision infrastructure during service startup. Operators
 use the explicit provisioning APIs with bounded, application-scoped defaults

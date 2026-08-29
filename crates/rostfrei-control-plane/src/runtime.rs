@@ -11,7 +11,7 @@ use rostfrei_registry::{CommandDefinition, CommandDescriptor, DomainRegistry, Re
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::operation::PredictedDomainEvent;
+use crate::{DispatchAdapter, operation::PredictedDomainEvent};
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error("{message}")]
@@ -91,6 +91,16 @@ pub enum RuntimeRegistrationError {
         command: &'static str,
         schema_version: u32,
     },
+    #[error("command `{command}` version {schema_version} already has a dispatch binding")]
+    DuplicateDispatchBinding {
+        command: &'static str,
+        schema_version: u32,
+    },
+    #[error("command `{command}` version {schema_version} has no simulation binding")]
+    DispatchWithoutSimulationBinding {
+        command: &'static str,
+        schema_version: u32,
+    },
 }
 
 #[derive(Clone, Debug, Error)]
@@ -141,6 +151,8 @@ impl CommandKey {
 pub(crate) trait ErasedCommandSimulator: Send + Sync {
     fn descriptor(&self) -> &CommandDescriptor;
 
+    fn validate_payload(&self, payload: &Value) -> Result<(), CommandWireCodecError>;
+
     async fn simulate(
         &self,
         history: Arc<dyn EventHistory>,
@@ -174,6 +186,10 @@ where
 {
     fn descriptor(&self) -> &CommandDescriptor {
         &self.descriptor
+    }
+
+    fn validate_payload(&self, payload: &Value) -> Result<(), CommandWireCodecError> {
+        self.wire_codec.decode(payload).map(|_| ())
     }
 
     async fn simulate(
@@ -238,6 +254,7 @@ fn predicted_event(
 pub(crate) struct RuntimeBindings {
     pub registry: DomainRegistry,
     pub simulators: HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
+    pub dispatchers: HashMap<CommandKey, Arc<dyn DispatchAdapter>>,
 }
 
 impl RuntimeBindings {
@@ -245,6 +262,7 @@ impl RuntimeBindings {
         Self {
             registry,
             simulators: HashMap::new(),
+            dispatchers: HashMap::new(),
         }
     }
 
@@ -334,6 +352,35 @@ impl RuntimeBindings {
                 });
             }
         }
+        Ok(())
+    }
+
+    pub fn register_dispatch<Command>(
+        &mut self,
+        adapter: Arc<dyn DispatchAdapter>,
+    ) -> Result<(), RuntimeRegistrationError>
+    where
+        Command: CommandDefinition,
+    {
+        let descriptor = Command::descriptor();
+        let key = CommandKey::new(
+            descriptor.aggregate_type,
+            Command::COMMAND_NAME,
+            Command::SCHEMA_VERSION,
+        );
+        if !self.simulators.contains_key(&key) {
+            return Err(RuntimeRegistrationError::DispatchWithoutSimulationBinding {
+                command: Command::COMMAND_NAME,
+                schema_version: Command::SCHEMA_VERSION,
+            });
+        }
+        if self.dispatchers.contains_key(&key) {
+            return Err(RuntimeRegistrationError::DuplicateDispatchBinding {
+                command: Command::COMMAND_NAME,
+                schema_version: Command::SCHEMA_VERSION,
+            });
+        }
+        self.dispatchers.insert(key, adapter);
         Ok(())
     }
 }

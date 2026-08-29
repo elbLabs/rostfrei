@@ -75,6 +75,42 @@ Command consumers and private domain-event consumers also remain in their
 configured bounded context; integration-event consumers may cross contexts
 inside the same application.
 
+## Command dispatch
+
+The control plane keeps simulation and live publication on separate routes. A
+deployment registers a command-specific `DispatchAdapter` and explicitly mounts
+the dispatch router with its own bearer capability:
+
+```text
+POST /v1/contexts/{context}/aggregates/{aggregate}/{id}/commands/{command}/dispatch
+```
+
+Dispatch requires `Idempotency-Key`. The target aggregate, command contract,
+schema version, operation identity, and payload are carried in a versioned
+command envelope. Consumers recompute the operation fingerprint before calling
+`Executor::execute`; they do not trust a producer-supplied fingerprint.
+Broker deduplication IDs bind the operation identity to that fingerprint, so a
+duplicate PubAck confirms an exact wire retry rather than different content
+submitted under a reused operation identity.
+The example NATS adapter makes bounded retries for publication timeouts and
+broker unavailability with the same message identity before reporting a
+terminal operation failure.
+Adapters may declare a lower payload limit than the control-plane maximum so
+envelope overhead is rejected during admission rather than after publication
+work has started.
+
+A JetStream PubAck proves publication only. The control-plane operation emits
+`command.published` and completes with `decision: published`; aggregate
+acceptance, rejection, and appended events require a separate execution outcome
+contract. Business rejection is acknowledged by the command consumer and does
+not append an event.
+
+The same adapter is used across environments. Local and production deployments
+use stable application scopes. Real-server tests create a globally unique
+application scope, provision its normal messaging and event-store resources,
+and delete the command, integration-event, quarantine, and domain-event streams
+after the test.
+
 ## Consumer deadlines
 
 Durable consumers configure separate deadlines for application processing and

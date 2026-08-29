@@ -28,6 +28,7 @@ impl OperationStatus {
 pub enum CompletedDecision {
     Accepted,
     Rejected,
+    Published,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -59,6 +60,11 @@ pub enum OperationResult {
     Rejected {
         base_stream_version: u64,
         rejection: Value,
+        appended: bool,
+        published: bool,
+    },
+    Published {
+        duplicate: bool,
         appended: bool,
         published: bool,
     },
@@ -110,6 +116,7 @@ pub enum OperationEventKind {
     CommandAccepted,
     PredictedDomainEvent { event: PredictedDomainEvent },
     CommandRejected { rejection: Value },
+    CommandPublished { duplicate: bool },
     Completed { decision: CompletedDecision },
     Failed { code: &'static str, message: String },
 }
@@ -123,6 +130,7 @@ impl OperationEventKind {
             Self::CommandAccepted => "command.accepted",
             Self::PredictedDomainEvent { .. } => "domain-event.predicted",
             Self::CommandRejected { .. } => "command.rejected",
+            Self::CommandPublished { .. } => "command.published",
             Self::Completed { .. } => "operation.completed",
             Self::Failed { .. } => "operation.failed",
         }
@@ -136,6 +144,7 @@ pub(crate) struct NewOperation<'a> {
     pub schema_version: u32,
     pub aggregate_type: &'a str,
     pub aggregate_id: &'a str,
+    pub mode: &'static str,
 }
 
 struct OperationState {
@@ -163,7 +172,7 @@ impl OperationRecord {
                 fingerprint: operation.fingerprint,
                 snapshot: OperationSnapshot {
                     operation_id: operation.operation_id,
-                    mode: "simulate",
+                    mode: operation.mode,
                     status: OperationStatus::Queued,
                     command: operation.command.to_owned(),
                     schema_version: operation.schema_version,
@@ -199,6 +208,7 @@ impl OperationRecord {
         let decision = match result {
             OperationResult::Accepted { .. } => CompletedDecision::Accepted,
             OperationResult::Rejected { .. } => CompletedDecision::Rejected,
+            OperationResult::Published { .. } => CompletedDecision::Published,
         };
         let mut state = self.state.lock().await;
         if state.snapshot.status.is_terminal() {
