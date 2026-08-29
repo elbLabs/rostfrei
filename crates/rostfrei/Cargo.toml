@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-async-trait.workspace = true
 rostfrei-core = { path = "../rostfrei-core", version = "0.1.0" }
 rostfrei-domain = { path = "../rostfrei-domain", version = "0.1.0" }
 rostfrei-domain-runtime = { path = "../rostfrei-domain-runtime", version = "0.1.0" }
@@ -15,9 +14,10 @@ rostfrei-registry = { path = "../rostfrei-registry", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
+async-trait.workspace = true
 trybuild.workspace = true
 
 [lints]
