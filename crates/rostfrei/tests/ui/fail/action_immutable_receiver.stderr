@@ -1,0 +1,5 @@
+error: executable aggregate actions require a mutable &mut self receiver
+ --> tests/ui/fail/action_immutable_receiver.rs:6:16
+  |
+6 |     fn deposit(&self);
+  |                ^^^^^
