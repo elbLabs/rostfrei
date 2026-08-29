@@ -3,7 +3,7 @@ use std::{env, path::PathBuf, sync::Arc};
 use bike_rental::{
     domain_model,
     nats_runtime::BikeRentalNatsRuntime,
-    rental::{AddBicycle, RentBicycle, ReturnBicycle},
+    rental_fleet::{AddBicycle, RentBicycle, ReturnBicycle},
     runtime::{RentBicycleInputOptions, ReturnBicycleInputOptions, tracer_builder},
 };
 use rostfrei::EventHistory;

@@ -37,7 +37,7 @@ use tokio::{
 };
 
 use crate::{
-    rental::{
+    rental_fleet::{
         AddBicycle, BicycleId, BicycleRented, FleetId, RentBicycle, RentalFleetAggregate,
         ReturnBicycle,
     },

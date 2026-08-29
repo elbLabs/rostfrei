@@ -3,7 +3,7 @@
     reason = "static test fixture identities must be valid"
 )]
 
-use bike_rental::rental::{
+use bike_rental::rental_fleet::{
     BicycleAdded, BicycleAvailability, BicycleCondition, BicycleId, BicycleNotRented,
     BicycleRented, BicycleReturned, BicycleStatus, BicycleUnavailable, FleetId, ImportedBicycle,
     RentBicycle, RentalFleetActions, RentalFleetAggregate, RentalFleetImported,

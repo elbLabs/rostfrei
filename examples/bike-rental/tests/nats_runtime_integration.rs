@@ -23,7 +23,7 @@ use axum::{
 };
 use bike_rental::{
     nats_runtime::{BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsRuntime},
-    rental::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
+    rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
     runtime::{demo_stream, tracer_builder},
 };
 use http_body_util::BodyExt as _;

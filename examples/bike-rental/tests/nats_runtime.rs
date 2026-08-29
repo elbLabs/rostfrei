@@ -7,7 +7,7 @@ use bike_rental::{
         BicycleRentalStarted, BicycleRentalStartedHandler, BicycleRentedIntegrationMapper,
         BikeRentalCommand, BikeRentalNatsConfig,
     },
-    rental::{BicycleId, BicycleRented, RentBicycle, RentalFleetAggregate},
+    rental_fleet::{BicycleId, BicycleRented, RentBicycle, RentalFleetAggregate},
     runtime::{demo_stream, seed_demo},
 };
 use rostfrei::{

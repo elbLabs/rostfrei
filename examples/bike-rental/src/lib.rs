@@ -1,6 +1,5 @@
-mod domain_model;
+mod domain;
 pub mod nats_runtime;
-pub mod rental;
 pub mod runtime;
 
-pub use domain_model::domain_model;
+pub use domain::{BikeRental, domain_model, rental_fleet};
