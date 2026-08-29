@@ -1,5 +1,0 @@
-error: domain decision contract traits cannot be auto traits
- --> tests/ui/domain_decision_contract/auto_trait.rs:4:1
-  |
-4 | auto trait Decisions {}
-  | ^^^^

@@ -17,7 +17,20 @@ pub fn assemble(
     let label = &attributes.label;
     let owner = &attributes.owner;
     let actions = &attributes.actions;
-    let decisions = &attributes.decisions;
+    let decision_groups = &attributes.decisions;
+    let decision_attachments = decision_groups.iter().map(|group| {
+        quote! {
+            impl #domain_path::AttachedDecisionGroup<#group> for #name {}
+        }
+    });
+    let decision_assertions = (!decision_groups.is_empty()).then(|| {
+        quote! {
+            const _: () = {
+                fn assert_owner<Group: #domain_path::DecisionGroupType<Owner = #name>>() {}
+                #(let _ = assert_owner::<#decision_groups>;)*
+            };
+        }
+    });
     let invariants = &attributes.invariants;
     let lifecycle = attributes.lifecycle.as_ref().map(|lifecycle| {
         quote! {
@@ -52,12 +65,15 @@ pub fn assemble(
             const ACTION_CONTRACTS: &'static [&'static [#domain_path::ActionDescriptor]] = &[
                 #(<Self as #actions>::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE,)*
             ];
-            const DECISION_CONTRACTS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
-                #(<Self as #decisions>::__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE,)*
+            const DECISION_GROUPS: &'static [&'static [#domain_path::DecisionDescriptor]] = &[
+                #(<#decision_groups as #domain_path::DecisionGroupType>::DECISIONS,)*
             ];
             const INVARIANT_CONTRACTS: &'static [&'static [#domain_path::InvariantDescriptor]] = &[
                 #(<Self as #invariants>::__DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE,)*
             ];
         }
+
+        #decision_assertions
+        #(#decision_attachments)*
     }
 }

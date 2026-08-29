@@ -67,7 +67,14 @@ into one or more Action inputs rather than being passed to Actions directly.
 and schema version. Registering a command runtime binding inserts that descriptor
 into the registry when it is not already present. `domain_module!` remains an
 optional grouping mechanism, not a prerequisite for command registration and
-not a declaration of every modeled domain capability.
+not a declaration of every modeled domain capability. Decision metadata is
+attached to explicit inherent aggregate or entity impl blocks.
+
+The Decision-specific attachment, signature, outcome, testing, and model shape
+contracts were subsequently refined by
+[ADR 0016](0016-decision-policies-groups-and-outcomes.md). Its explicit groups
+and `DecisionOutcome` enum contract supersede earlier single-block and
+`Result`-shaped Decision details without superseding the rest of this ADR.
 
 ## Consequences
 

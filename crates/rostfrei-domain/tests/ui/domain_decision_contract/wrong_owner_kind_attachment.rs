@@ -1,35 +1,38 @@
-use domain::{BoundedContext, DomainService, ValueObject, domain_decisions};
+use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, domain_decisions};
+use domain::DecisionOutcome;
+
+struct Decisions;
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
 struct Context;
 
-#[derive(ValueObject)]
-#[domain(id = "input", label = "Input", owner = Context)]
-struct Input(u8);
+#[derive(DomainIdentity)]
+#[domain(owner = Root)]
+struct RootId(u8);
 
-#[derive(ValueObject)]
-#[domain(id = "output", label = "Output", owner = Context)]
-struct Output(u8);
-
-#[domain_decisions(entity)]
-trait Decisions {
-    #[decision(id = "decide", label = "Decide")]
-    fn decide(input: Input) -> Output;
+#[derive(Entity)]
+#[domain(id = "root", label = "Root", owner = Owner)]
+struct Root {
+    #[domain(identity)]
+    id: RootId,
 }
 
-#[derive(DomainService)]
-#[domain(
-    id = "service",
-    label = "Service",
-    context = Context,
-    decisions = [Decisions]
-)]
-struct Service;
+#[derive(Aggregate)]
+#[domain(id = "owner", label = "Owner", context = Context, root = Root)]
+struct Owner;
 
-impl Decisions for Service {
-    fn decide(input: Input) -> Output {
-        Output(input.0)
+#[derive(DecisionOutcome)]
+enum Outcome {
+    #[outcome(id = "done", label = "Done")]
+    Done,
+}
+
+#[domain_decisions(entity, group = Decisions)]
+impl Owner {
+    #[decision(id = "decide", label = "Decide")]
+    fn decide() -> Outcome {
+        Outcome::Done
     }
 }
 

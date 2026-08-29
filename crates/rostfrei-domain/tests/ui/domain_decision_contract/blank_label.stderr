@@ -1,5 +1,0 @@
-error: label must not be empty
- --> tests/ui/domain_decision_contract/blank_label.rs:8:38
-  |
-8 |     #[decision(id = "blank", label = "  ")]
-  |                                      ^^^^

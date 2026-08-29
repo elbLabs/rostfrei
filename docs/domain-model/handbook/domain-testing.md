@@ -22,13 +22,16 @@ fn available_bicycle_can_be_rented() {
 
 ```rust
 #[domain_decision_test(
-    <RentalFleetAggregate as RentalEligibilityDecisions>
-        ::ASSESS_RENTAL_ELIGIBILITY
+    RentalFleetAggregate::ASSESS_RENTAL_ELIGIBILITY
 )]
 fn maintenance_blocks_rental() {
     verify_rental_eligibility();
 }
 ```
+
+Decision tests should exercise the returned `DecisionOutcome` variants directly.
+The test attribute links the test to the Decision as a whole; it does not label a
+variant as accepted or denied and does not infer which outcomes the test covers.
 
 ## Invariant Tests
 
@@ -54,13 +57,29 @@ Each Domain Test links to exactly one primary subject. An Action test does not a
 
 ## Typed Links
 
-Action, Decision, and Invariant tests use an owner-qualified generated reference:
+Action and Invariant tests use an owner-qualified generated trait reference:
 
 ```text
 <Owner as ContractTrait>::STABLE_REFERENCE
 ```
 
-The reference is derived from the subject's stable ID. Removing the subject, using the wrong owner, or naming an unknown reference causes the test target to fail compilation.
+Decision tests retain readable owner-associated attribute syntax:
+
+```text
+Owner::STABLE_REFERENCE
+```
+
+The Decision macro generates a doc-hidden `DecisionReference<Group>` anchor for
+each stable Decision ID. `domain_decision_test` resolves the readable syntax to
+that group-typed anchor and requires `Group` to be attached to exactly `Owner`.
+The syntax is for the test attribute; ordinary application calls continue to use
+the authored inherent function name.
+
+References are derived from stable subject IDs. Removing the subject, using the
+wrong owner, naming an unknown reference, attaching the group to a different
+owner, or testing a Decision whose exact group is unattached causes the test
+target to fail compilation. This remains exact even when one owner has multiple
+Decision groups.
 
 Lifecycle tests use the lifecycle type. The type must implement `EntityLifecycleType`.
 

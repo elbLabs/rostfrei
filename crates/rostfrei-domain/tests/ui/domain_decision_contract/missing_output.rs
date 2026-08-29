@@ -1,11 +1,12 @@
 use domain::domain_decisions;
 
-struct Input;
+struct Owner;
+struct Group;
 
-#[domain_decisions(entity)]
-trait Decisions {
+#[domain_decisions(aggregate, group = Group)]
+impl Owner {
     #[decision(id = "decide", label = "Decide")]
-    fn decide(input: Input);
+    fn decide() {}
 }
 
 fn main() {}

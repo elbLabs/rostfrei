@@ -53,7 +53,12 @@ impl Attributes {
                 if decisions.is_some() {
                     return Err(meta.error("duplicate decisions"));
                 }
-                decisions = Some(crate::helper::decision_paths::parse(meta.value()?)?);
+                if !meta.input.peek(syn::Token![=]) {
+                    return Err(meta.error(
+                        "bare `decisions` is no longer supported; use `decisions = [GroupA, module::GroupB]`",
+                    ));
+                }
+                decisions = Some(crate::helper::decision_group_paths::parse(meta.value()?)?);
                 return Ok(());
             }
             if meta.path.is_ident("invariants") {

@@ -1,8 +1,8 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    ActionId, ActionOwnerId, AggregateId, DecisionId, DecisionOwnerId, DomainCommandId,
-    DomainErrorId, DomainEventId, DomainIdentityId, EntityId, EntityLifecycleId,
+    ActionId, ActionOwnerId, AggregateId, DecisionId, DecisionOutcomeId, DecisionOwnerId,
+    DomainCommandId, DomainErrorId, DomainEventId, DomainIdentityId, EntityId, EntityLifecycleId,
     EntityLifecycleStateId, InvariantId, InvariantOwnerId, QueryId, ScalarType, ValueObjectId,
 };
 
@@ -54,10 +54,16 @@ pub enum DomainModelError {
     DuplicateDecisionId {
         id: Box<DecisionId>,
     },
+    DecisionWithoutOutcomes {
+        decision_id: Box<DecisionId>,
+    },
+    DuplicateDecisionOutcomeId {
+        id: Box<DecisionOutcomeId>,
+    },
     DecisionReferenceInventoryViolation {
         decision_id: Box<DecisionId>,
         value_object_id: Box<ValueObjectId>,
-        location: &'static str,
+        location: String,
     },
     FieldReferenceInventoryViolation {
         reference: DomainModelReference,
@@ -162,13 +168,13 @@ impl fmt::Display for DomainModelError {
                 action_id,
                 event_id,
             } => fmt_raised_owner(formatter, action_id, Some(event_id)),
-            Self::UnregisteredDecisionOwner { owner } => {
-                write!(formatter, "unregistered decision owner: {owner:?}")
-            }
-            Self::DecisionDescriptorOwnerMismatch { id } => {
-                write!(formatter, "decision descriptor owner mismatch: {id:?}")
-            }
+            Self::UnregisteredDecisionOwner { owner } => fmt_unregistered_owner(formatter, owner),
+            Self::DecisionDescriptorOwnerMismatch { id } => fmt_decision_owner(formatter, id),
             Self::DuplicateDecisionId { id } => write!(formatter, "duplicate DecisionId: {id:?}"),
+            Self::DecisionWithoutOutcomes { decision_id } => {
+                fmt_empty_decision(formatter, decision_id)
+            }
+            Self::DuplicateDecisionOutcomeId { id } => fmt_duplicate_outcome(formatter, id),
             Self::DecisionReferenceInventoryViolation {
                 decision_id,
                 value_object_id,
@@ -179,9 +185,7 @@ impl fmt::Display for DomainModelError {
                 location,
                 inventory_key,
             } => fmt_field_reference(formatter, reference, location, inventory_key),
-            Self::UnregisteredInvariantOwner { owner } => {
-                write!(formatter, "unregistered invariant owner: {owner:?}")
-            }
+            Self::UnregisteredInvariantOwner { owner } => fmt_unregistered_inv(formatter, owner),
             Self::InvariantDescriptorOwnerMismatch { id } => {
                 write!(formatter, "invariant descriptor owner mismatch: {id:?}")
             }
@@ -251,6 +255,38 @@ fn fmt_duplicate(
     id: impl fmt::Debug,
 ) -> fmt::Result {
     write!(formatter, "duplicate {kind}: {id:?}")
+}
+
+fn fmt_unregistered_owner(
+    formatter: &mut fmt::Formatter<'_>,
+    owner: &DecisionOwnerId,
+) -> fmt::Result {
+    write!(formatter, "unregistered decision owner: {owner:?}")
+}
+
+fn fmt_duplicate_outcome(
+    formatter: &mut fmt::Formatter<'_>,
+    id: &DecisionOutcomeId,
+) -> fmt::Result {
+    fmt_duplicate(formatter, "DecisionOutcomeId", id)
+}
+
+fn fmt_unregistered_inv(
+    formatter: &mut fmt::Formatter<'_>,
+    owner: &InvariantOwnerId,
+) -> fmt::Result {
+    write!(formatter, "unregistered invariant owner: {owner:?}")
+}
+
+fn fmt_decision_owner(formatter: &mut fmt::Formatter<'_>, id: &DecisionId) -> fmt::Result {
+    write!(formatter, "decision descriptor owner mismatch: {id:?}")
+}
+
+fn fmt_empty_decision(formatter: &mut fmt::Formatter<'_>, decision_id: &DecisionId) -> fmt::Result {
+    write!(
+        formatter,
+        "decision must declare at least one active outcome: {decision_id:?}"
+    )
 }
 
 fn fmt_raised_owner(

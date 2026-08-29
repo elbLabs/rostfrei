@@ -1,30 +1,30 @@
-use domain::{BoundedContext, DomainService, ValueObject, domain_decisions};
+use domain::{Aggregate, BoundedContext, DomainIdentity, Entity};
+
+struct MissingGroup;
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
 struct Context;
 
-#[derive(ValueObject)]
-#[domain(id = "input", label = "Input", owner = Context)]
-struct Input(u8);
+#[derive(DomainIdentity)]
+#[domain(owner = Root)]
+struct RootId(u8);
 
-#[derive(ValueObject)]
-#[domain(id = "output", label = "Output", owner = Context)]
-struct Output(u8);
-
-#[domain_decisions(domain_service)]
-trait Decisions {
-    #[decision(id = "decide", label = "Decide")]
-    fn decide(input: Input) -> Output;
+#[derive(Entity)]
+#[domain(id = "root", label = "Root", owner = Owner)]
+struct Root {
+    #[domain(identity)]
+    id: RootId,
 }
 
-#[derive(DomainService)]
+#[derive(Aggregate)]
 #[domain(
-    id = "service",
-    label = "Service",
+    id = "owner",
+    label = "Owner",
     context = Context,
-    decisions = [Decisions]
+    root = Root,
+    decisions = [MissingGroup]
 )]
-struct Service;
+struct Owner;
 
 fn main() {}

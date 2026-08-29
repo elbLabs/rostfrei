@@ -1,5 +1,0 @@
-error: decision input parameter must use an owned type, not a reference
- --> tests/ui/domain_decision_contract/borrowed_input.rs:9:22
-  |
-9 |     fn decide(input: &Input) -> Output;
-  |                      ^^^^^^

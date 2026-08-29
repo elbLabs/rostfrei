@@ -50,7 +50,7 @@ fn rents_an_available_serviceable_bicycle() {
 }
 
 #[test]
-fn rejects_an_unavailable_bicycle_without_changing_it() {
+fn rejects_a_maintenance_required_bicycle_without_changing_it() {
     let mut fleet = fleet(
         BicycleStatus::Available,
         BicycleCondition::MaintenanceRequired,
@@ -66,6 +66,50 @@ fn rejects_an_unavailable_bicycle_without_changing_it() {
         fleet.state().bicycles()[0].status(),
         BicycleStatus::Available
     );
+}
+
+#[test]
+fn rejects_an_already_rented_bicycle_without_raising_an_event() {
+    let mut fleet = fleet(BicycleStatus::Rented, BicycleCondition::Serviceable).unwrap();
+    let bicycle_id = BicycleId::new("bike-42").unwrap();
+
+    let error = fleet.rent_bicycle(bicycle_id.clone()).unwrap_err();
+
+    assert_eq!(error, BicycleUnavailable { bicycle_id });
+    assert!(fleet.uncommitted_events().is_empty());
+    assert_eq!(fleet.state().bicycles()[0].status(), BicycleStatus::Rented);
+}
+
+#[test]
+fn model_projects_rental_eligibility_outcomes_in_declaration_order() {
+    let model = bike_rental::domain_model().expect("bike-rental domain model");
+    let decisions = model["decisions"].as_array().unwrap();
+    let decision = decisions
+        .iter()
+        .find(|decision| decision["id"]["local"] == "assess-rental-eligibility")
+        .expect("rental eligibility decision");
+
+    assert_eq!(
+        decision["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|outcome| {
+                (
+                    outcome["id"]["local"].as_str().unwrap(),
+                    outcome["label"].as_str().unwrap(),
+                    outcome["shape"]["kind"].as_str().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [
+            ("eligible", "Eligible", "unit"),
+            ("already-rented", "Already rented", "unit"),
+            ("maintenance-required", "Maintenance required", "unit"),
+        ]
+    );
+    assert!(decision.get("output").is_none());
+    assert!(decision.get("error").is_none());
 }
 
 #[test]

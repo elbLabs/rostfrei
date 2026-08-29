@@ -48,7 +48,7 @@ An allowed internal child Action returns its typed output and its owned state or
 value change.
 
 The parent may use that output without inspecting the child Action's Decision
-outputs or state representation.
+outcomes or state representation.
 
 ## Denied Result
 

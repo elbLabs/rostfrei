@@ -31,11 +31,15 @@ pub use action::{
 };
 pub use aggregate::{AggregateDescriptor, AggregateId, AggregateType};
 pub use bounded_context::{BoundedContextDescriptor, BoundedContextId, BoundedContextType};
+#[doc(hidden)]
+pub use decision::AttachedDecisionGroup;
 pub use decision::{
-    AggregateDecisionOwnerType, DecisionDescriptor, DecisionId, DecisionImplementationDescriptor,
-    DecisionInputDescriptor, DecisionInputType, DecisionOutputDescriptor, DecisionOutputType,
-    DecisionOwnerId, DecisionOwnerType, DecisionReference, DomainServiceDecisionOwnerType,
-    EntityDecisionOwnerType, ValueObjectDecisionOwnerType,
+    AggregateDecisionOwnerType, DecisionDescriptor, DecisionGroupType, DecisionId,
+    DecisionImplementationDescriptor, DecisionInputDescriptor, DecisionInputType,
+    DecisionOutcomeDescriptor, DecisionOutcomeId, DecisionOutcomeNamedFieldDescriptor,
+    DecisionOutcomeShapeDescriptor, DecisionOutcomeType, DecisionOutcomeValueDescriptor,
+    DecisionOutcomeValueType, DecisionOwnerId, DecisionOwnerType, DecisionParameterDescriptor,
+    DecisionReference, EntityDecisionOwnerType,
 };
 pub use domain_command::{
     DomainCommandDescriptor, DomainCommandId, DomainCommandOwnerId, DomainCommandOwnerType,
@@ -72,10 +76,10 @@ pub use invariant::{
 };
 pub use json_wire::{JsonCommandPayload, JsonErrorPayload};
 pub use rostfrei_domain_macros::{
-    Aggregate, BoundedContext, DomainCommand, DomainError, DomainEvent, DomainIdentity,
-    DomainService, Entity, EntityLifecycle, ValueObject, domain_action_test, domain_actions,
-    domain_decision_test, domain_decisions, domain_invariant_test, domain_invariants,
-    domain_lifecycle_test, domain_queries,
+    Aggregate, BoundedContext, DecisionOutcome, DomainCommand, DomainError, DomainEvent,
+    DomainIdentity, DomainService, Entity, EntityLifecycle, ValueObject, domain_action_test,
+    domain_actions, domain_decision_test, domain_decisions, domain_invariant_test,
+    domain_invariants, domain_lifecycle_test, domain_queries,
 };
 pub use value_object::{
     ValueObjectDescriptor, ValueObjectId, ValueObjectOwnerId, ValueObjectOwnerType,
@@ -89,6 +93,7 @@ pub mod __private {
         AggregateActionOutput, DomainServiceActionOutput, EntityActionOutput, SameType,
         ValueObjectActionOutput,
     };
+    pub use crate::decision::AttachedDecisionGroup;
     pub use crate::domain_model::{DomainModelBuilder, try_build};
     pub use crate::domain_test::emit_domain_test_metadata as emit_domain_test_descriptor;
     pub use serde;

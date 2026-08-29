@@ -54,6 +54,7 @@ fn checks_domain_test_attributes() {
     cases.compile_fail("tests/ui/domain_test/existing_test.rs");
     cases.compile_fail("tests/ui/domain_test/invalid_signature.rs");
     cases.compile_fail("tests/ui/domain_test/non_function.rs");
+    cases.compile_fail("tests/ui/domain_test/unattached_decision.rs");
     cases.compile_fail("tests/ui/domain_test/unknown_action_reference.rs");
     cases.compile_fail("tests/ui/domain_test/non_lifecycle.rs");
 }
@@ -146,57 +147,26 @@ fn checks_value_object_action_contracts() {
 fn checks_domain_decision_contracts() {
     let cases = trybuild::TestCases::new();
     cases.pass("tests/ui/domain_decision_contract/aggregate.rs");
-    cases.pass("tests/ui/domain_decision_contract/domain_service.rs");
+    cases.pass("tests/ui/domain_decision_contract/borrowed_input.rs");
+    cases.pass("tests/ui/domain_decision_contract/cfg.rs");
+    cases.pass("tests/ui/domain_decision_contract/duplicate_impl.rs");
     cases.pass("tests/ui/domain_decision_contract/entity.rs");
-    cases.pass("tests/ui/domain_decision_contract/value_object.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/async_method.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/auto_trait.rs");
+    cases.pass("tests/ui/domain_decision_contract/public_cross_module.rs");
+    cases.pass("tests/ui/domain_decision_contract/shadowed_result.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/bad_macro_kind.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/blank_label.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/borrowed_input.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/default_method.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/destructured_input.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/duplicate_decision_attribute.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/decision_outcome_duplicate_metadata.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/decision_outcome_invalid_target.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/decision_outcome_missing_metadata.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/decision_outcome_unsupported_payload.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/duplicate_decision_id.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/duplicate_decision_key.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/duplicate_decision_path.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/duplicate_decisions_key.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/empty_trait.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/existing_supertrait.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/extern_method.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/generic_method.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/generated_reference_collision.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/incomplete_implementation.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/invalid_decision_id.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/malformed_decisions_list.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/method_where_clause.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/misnamed_input.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/missing_decision_id.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/missing_decision_label.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/missing_implementation.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/missing_macro_kind.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/missing_output.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/multiple_inputs.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/multiple_macro_kinds.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/mutable_input.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/nested_reference_input.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/non_trait_target.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/option_output.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/raw_scalar_input.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/raw_scalar_output.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/receiver.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/reserved_associated_item.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/result_output.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/trait_generics.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/trait_where_clause.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/unannotated_attachment.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/unit_output.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/unsafe_method.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/unsafe_trait.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/unsupported_decision_metadata.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/unsupported_trait_item.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/variadic_method.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/vec_output.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/zero_inputs.rs");
 }
 
 #[test]

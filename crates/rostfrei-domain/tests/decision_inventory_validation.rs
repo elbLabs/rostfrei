@@ -1,68 +1,97 @@
 #![allow(dead_code)]
 
 use domain::__private::DomainModelBuilder;
+use domain::DecisionOutcome;
 use domain::{
-    BoundedContext, BoundedContextId, DecisionId, DecisionOwnerId, DomainModelError, DomainService,
-    DomainServiceId, ValueObject, ValueObjectId, ValueObjectOwnerId, ValueObjectType,
-    domain_decisions,
+    Aggregate, AggregateId, BoundedContext, BoundedContextId, DecisionId, DecisionOwnerId,
+    DomainIdentity, DomainModelError, Entity, ValueObject, ValueObjectId, ValueObjectOwnerId,
+    ValueObjectType, domain_decisions,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("decision-inventory");
-const SERVICE_ID: DomainServiceId = DomainServiceId {
+const AGGREGATE_ID: AggregateId = AggregateId {
     context: CONTEXT_ID,
-    local: "inventory-service",
+    local: "inventory-aggregate",
 };
 const INPUT_ID: ValueObjectId = ValueObjectId {
     owner: ValueObjectOwnerId::BoundedContext(CONTEXT_ID),
     local: "inventory-input",
 };
-const OUTPUT_ID: ValueObjectId = ValueObjectId {
+const ACCEPTED_ID: ValueObjectId = ValueObjectId {
     owner: ValueObjectOwnerId::BoundedContext(CONTEXT_ID),
-    local: "inventory-output",
+    local: "inventory-accepted",
+};
+const REJECTED_ID: ValueObjectId = ValueObjectId {
+    owner: ValueObjectOwnerId::BoundedContext(CONTEXT_ID),
+    local: "inventory-rejected",
 };
 const DECISION_ID: DecisionId = DecisionId {
-    owner: DecisionOwnerId::DomainService(SERVICE_ID),
+    owner: DecisionOwnerId::Aggregate(AGGREGATE_ID),
     local: "evaluate",
 };
+
+struct InventoryDecisions;
 
 #[derive(BoundedContext)]
 #[domain(id = "decision-inventory", label = "Decision inventory")]
 struct InventoryContext;
 
-#[derive(ValueObject)]
+#[derive(DomainIdentity)]
+#[domain(owner = InventoryRoot)]
+struct InventoryIdentity(u64);
+
+#[derive(Aggregate)]
 #[domain(
-    id = "inventory-input",
-    label = "Inventory input",
-    owner = InventoryContext
+    id = "inventory-aggregate",
+    label = "Inventory aggregate",
+    context = InventoryContext,
+    root = InventoryRoot,
+    decisions = [InventoryDecisions]
 )]
+struct InventoryAggregate;
+
+#[derive(Entity)]
+#[domain(id = "inventory-root", label = "Inventory root", owner = InventoryAggregate)]
+struct InventoryRoot {
+    #[domain(identity)]
+    id: InventoryIdentity,
+}
+
+#[derive(ValueObject, Clone, Copy)]
+#[domain(id = "inventory-input", label = "Inventory input", owner = InventoryContext)]
 struct InventoryInput(u64);
 
 #[derive(ValueObject)]
-#[domain(
-    id = "inventory-output",
-    label = "Inventory output",
-    owner = InventoryContext
-)]
-struct InventoryOutput(bool);
+#[domain(id = "inventory-accepted", label = "Inventory accepted", owner = InventoryContext)]
+struct InventoryAccepted(bool);
 
-#[domain_decisions(domain_service)]
-trait InventoryDecisions {
-    #[decision(id = "evaluate", label = "Evaluate")]
-    fn evaluate(input: InventoryInput) -> InventoryOutput;
+#[derive(ValueObject)]
+#[domain(id = "inventory-rejected", label = "Inventory rejected", owner = InventoryContext)]
+struct InventoryRejected;
+
+#[derive(DecisionOutcome)]
+enum InventoryOutcome {
+    #[outcome(id = "accepted", label = "Accepted")]
+    Accepted(InventoryAccepted, bool),
+    #[outcome(id = "rejected", label = "Rejected")]
+    Rejected {
+        reason: InventoryRejected,
+        retryable: bool,
+    },
 }
 
-#[derive(DomainService)]
-#[domain(
-    id = "inventory-service",
-    label = "Inventory service",
-    context = InventoryContext,
-    decisions = [InventoryDecisions]
-)]
-struct InventoryService;
-
-impl InventoryDecisions for InventoryService {
-    fn evaluate(_input: InventoryInput) -> InventoryOutput {
-        InventoryOutput(true)
+#[domain_decisions(aggregate, group = InventoryDecisions)]
+impl InventoryAggregate {
+    #[decision(id = "evaluate", label = "Evaluate")]
+    const fn evaluate(input: InventoryInput) -> InventoryOutcome {
+        if input.0 > 0 {
+            InventoryOutcome::Accepted(InventoryAccepted(true), true)
+        } else {
+            InventoryOutcome::Rejected {
+                reason: InventoryRejected,
+                retryable: false,
+            }
+        }
     }
 }
 
@@ -74,7 +103,7 @@ fn violation(missing_id: ValueObjectId, location: &str) -> String {
 
 fn owner_builder() -> Result<DomainModelBuilder, DomainModelError> {
     let mut builder = DomainModelBuilder::new();
-    builder.add_domain_service_type::<InventoryService>()?;
+    builder.add_aggregate_type::<InventoryAggregate>()?;
     Ok(builder)
 }
 
@@ -82,7 +111,8 @@ fn owner_builder() -> Result<DomainModelBuilder, DomainModelError> {
 fn accepts_references_registered_after_the_owner() {
     let mut builder = owner_builder().unwrap();
     builder.add_value_object(InventoryInput::DESCRIPTOR);
-    builder.add_value_object(InventoryOutput::DESCRIPTOR);
+    builder.add_value_object(InventoryAccepted::DESCRIPTOR);
+    builder.add_value_object(InventoryRejected::DESCRIPTOR);
 
     let model = builder.finish().unwrap();
 
@@ -92,50 +122,71 @@ fn accepts_references_registered_after_the_owner() {
 #[test]
 fn reports_a_missing_input_value_object() {
     let mut builder = owner_builder().unwrap();
-    builder.add_value_object(InventoryOutput::DESCRIPTOR);
+    builder.add_value_object(InventoryAccepted::DESCRIPTOR);
+    builder.add_value_object(InventoryRejected::DESCRIPTOR);
 
     let error = builder.finish().unwrap_err();
 
-    assert_eq!(error.to_string(), violation(INPUT_ID, "input"));
+    assert_eq!(
+        error.to_string(),
+        violation(INPUT_ID, "parameters[0].input")
+    );
     assert_eq!(
         error,
         DomainModelError::DecisionReferenceInventoryViolation {
             decision_id: Box::new(DECISION_ID),
             value_object_id: Box::new(INPUT_ID),
-            location: "input",
+            location: "parameters[0].input".to_owned(),
         }
     );
 }
 
 #[test]
-fn reports_a_missing_output_value_object() {
+fn reports_a_missing_tuple_outcome_value_object() {
     let mut builder = owner_builder().unwrap();
     builder.add_value_object(InventoryInput::DESCRIPTOR);
+    builder.add_value_object(InventoryRejected::DESCRIPTOR);
 
     let error = builder.finish().unwrap_err();
+    let location = "outcomes[0].shape.fields[0]";
 
-    assert_eq!(error.to_string(), violation(OUTPUT_ID, "output"));
+    assert_eq!(error.to_string(), violation(ACCEPTED_ID, location));
     assert_eq!(
         error,
         DomainModelError::DecisionReferenceInventoryViolation {
             decision_id: Box::new(DECISION_ID),
-            value_object_id: Box::new(OUTPUT_ID),
-            location: "output",
+            value_object_id: Box::new(ACCEPTED_ID),
+            location: location.to_owned(),
         }
     );
 }
 
 #[test]
-fn validates_input_before_output_deterministically() {
-    let error = owner_builder().unwrap().finish().unwrap_err();
+fn reports_a_missing_struct_outcome_value_object() {
+    let mut builder = owner_builder().unwrap();
+    builder.add_value_object(InventoryInput::DESCRIPTOR);
+    builder.add_value_object(InventoryAccepted::DESCRIPTOR);
 
-    assert_eq!(error.to_string(), violation(INPUT_ID, "input"));
+    let error = builder.finish().unwrap_err();
+    let location = "outcomes[1].shape.fields[0].value";
+
+    assert_eq!(error.to_string(), violation(REJECTED_ID, location));
     assert_eq!(
         error,
         DomainModelError::DecisionReferenceInventoryViolation {
             decision_id: Box::new(DECISION_ID),
-            value_object_id: Box::new(INPUT_ID),
-            location: "input",
+            value_object_id: Box::new(REJECTED_ID),
+            location: location.to_owned(),
         }
+    );
+}
+
+#[test]
+fn validates_parameters_then_outcomes_in_source_and_field_order() {
+    let error = owner_builder().unwrap().finish().unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        violation(INPUT_ID, "parameters[0].input")
     );
 }

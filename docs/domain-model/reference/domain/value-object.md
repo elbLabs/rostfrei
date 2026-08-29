@@ -22,20 +22,19 @@ Value Objects remain local to their owner.
 A value object owns:
 
 - its value shape
-- its attached decisions and invariant contracts
+- its attached invariant contracts
 - its internal actions
 
 A Value Object Action may call any visible Decision in the same Bounded Context.
 The compiler does not enforce Action call permissions. Attached invariant
 contracts remain local to the Value Object.
 
-## Decisions
-
-Value Object Decision contracts use `#[domain_decisions(value_object)]`. The
-Value Object implements each contract attached through
-`decisions = [TraitPath, ...]`. Attachment identifies ownership and projection;
-it does not limit the Decision to Value Object-owned Actions. See
-[Decision](decision.md).
+A Value Object cannot own a Decision or Decision group. A supported Value Object
+may be passed to a Decision by value or top-level immutable reference; both forms
+produce the same Decision input metadata. A `DecisionOutcome` tuple or named
+variant may also carry a Value Object as a payload field. The outcome enum is a
+Decision return contract, not itself a Value Object, and its variants do not use
+Value Object variant metadata.
 
 ## Invariants
 
@@ -294,4 +293,6 @@ deferred.
 - A [Bounded Context](bounded-context.md) may own Value Object definitions shared
   within that context.
 - An [Aggregate](aggregate.md) or [Entity](entity.md) may own local Value Objects.
+- A [Decision](decision.md) may take a Value Object as input or carry one in an
+  outcome payload, but a Value Object cannot own Decisions.
 - An [Action](action.md) may invoke value-object behavior internally.

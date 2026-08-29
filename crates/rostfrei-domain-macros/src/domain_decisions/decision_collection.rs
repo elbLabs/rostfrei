@@ -1,70 +1,49 @@
 use std::collections::HashSet;
 
-use syn::{TraitItem, TraitItemFn};
+use syn::{ImplItem, ImplItemFn};
 
 use super::decision::Decision;
 
-pub fn collect(items: &mut [TraitItem]) -> syn::Result<Vec<Decision>> {
-    if items.is_empty() {
-        return Err(syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "domain decision contract traits require at least one method",
-        ));
-    }
-
-    let mut decisions = Vec::with_capacity(items.len());
+pub fn collect(items: &mut [ImplItem]) -> syn::Result<Vec<Decision>> {
+    let mut decisions = Vec::new();
     let mut ids = HashSet::new();
     for item in items {
-        let TraitItem::Fn(method) = item else {
-            return Err(syn::Error::new_spanned(
-                item,
-                "domain decision contract traits may only contain decision methods",
-            ));
+        let ImplItem::Fn(method) = item else {
+            continue;
         };
-        decisions.push(collect_method(method, &mut ids)?);
+        if let Some(decision) = collect_method(method, &mut ids)? {
+            decisions.push(decision);
+        }
+    }
+    if decisions.is_empty() {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "domain_decisions requires at least one #[decision(...)] method",
+        ));
     }
     Ok(decisions)
 }
 
-fn collect_method(method: &mut TraitItemFn, ids: &mut HashSet<String>) -> syn::Result<Decision> {
-    validate_method_name(method)?;
-    validate_body(method)?;
+fn collect_method(
+    method: &mut ImplItemFn,
+    ids: &mut HashSet<String>,
+) -> syn::Result<Option<Decision>> {
+    let Some(attribute) = super::decision_attribute::extract(method)? else {
+        return Ok(None);
+    };
     let types = super::signature::parse(&method.sig)?;
-    let attribute = super::decision_attribute::extract(method)?;
     crate::helper::id::validate(&attribute.id)?;
     crate::helper::label::validate(&attribute.label)?;
     validate_unique_id(&attribute.id, ids)?;
-
-    Ok(Decision {
+    Ok(Some(Decision {
+        name: method.sig.ident.clone(),
+        visibility: method.vis.clone(),
+        cfg_attributes: super::cfg_attributes::collect(&method.attrs),
         id: attribute.id,
         label: attribute.label,
-        input: types.input,
-        output: types.output,
-    })
-}
-
-fn validate_method_name(method: &TraitItemFn) -> syn::Result<()> {
-    let name = method.sig.ident.to_string();
-    if matches!(
-        name.as_str(),
-        "__DOMAIN_DECISIONS" | "__DOMAIN_DECISIONS_TRAIT_REQUIRES_DOMAIN_DECISIONS_ATTRIBUTE"
-    ) {
-        return Err(syn::Error::new_spanned(
-            &method.sig.ident,
-            format!("`{name}` is reserved by domain_decisions"),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_body(method: &TraitItemFn) -> syn::Result<()> {
-    if let Some(default) = &method.default {
-        return Err(syn::Error::new_spanned(
-            default,
-            "domain decision contract methods cannot have default bodies",
-        ));
-    }
-    Ok(())
+        parameters: types.parameters,
+        return_type: types.return_type,
+    }))
 }
 
 fn validate_unique_id(id: &syn::LitStr, ids: &mut HashSet<String>) -> syn::Result<()> {

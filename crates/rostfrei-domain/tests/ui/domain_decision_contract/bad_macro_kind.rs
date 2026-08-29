@@ -1,6 +1,15 @@
 use domain::domain_decisions;
 
-#[domain_decisions(application)]
-trait Decisions {}
+struct Owner;
+struct Group;
+struct Outcome;
+
+#[domain_decisions(domain_service, group = Group)]
+impl Owner {
+    #[decision(id = "decide", label = "Decide")]
+    fn decide() -> Outcome {
+        Outcome
+    }
+}
 
 fn main() {}
