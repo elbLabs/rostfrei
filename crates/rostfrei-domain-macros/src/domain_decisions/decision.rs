@@ -2,7 +2,8 @@ use syn::{Attribute, Ident, LitStr, Type, Visibility};
 
 pub struct Parameter {
     pub name: Ident,
-    pub ty: Type,
+    pub signature_type: Type,
+    pub descriptor_type: Type,
 }
 
 pub struct Decision {
@@ -12,6 +13,5 @@ pub struct Decision {
     pub id: LitStr,
     pub label: LitStr,
     pub parameters: Vec<Parameter>,
-    pub output: Type,
-    pub error: Type,
+    pub return_type: Type,
 }

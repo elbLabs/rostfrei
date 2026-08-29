@@ -42,8 +42,7 @@ fn collect_method(
         id: attribute.id,
         label: attribute.label,
         parameters: types.parameters,
-        output: types.output,
-        error: types.error,
+        return_type: types.return_type,
     }))
 }
 

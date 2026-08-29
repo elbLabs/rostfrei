@@ -133,12 +133,11 @@ fn assemble_decision_contracts(domain_path: &Path, name: &Ident) -> TokenStream 
                 );
         }
 
-        impl #domain_path::DecisionOutputType for #name {
-            const DESCRIPTOR: Option<#domain_path::DecisionOutputDescriptor> = Some(
-                #domain_path::DecisionOutputDescriptor::ValueObject(
+        impl #domain_path::DecisionOutcomeValueType for #name {
+            const DESCRIPTOR: #domain_path::DecisionOutcomeValueDescriptor =
+                #domain_path::DecisionOutcomeValueDescriptor::ValueObject(
                     <Self as #domain_path::ValueObjectType>::DESCRIPTOR.id,
-                ),
-            );
+                );
         }
     }
 }

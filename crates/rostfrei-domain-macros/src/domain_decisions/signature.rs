@@ -1,21 +1,20 @@
-use syn::{FnArg, GenericArgument, Pat, PathArguments, ReturnType, Signature, Type, TypePath};
+use syn::visit_mut::VisitMut;
+use syn::{FnArg, GenericParam, Pat, ReturnType, Signature, Type, TypeReference};
 
 use super::decision::Parameter;
 
 pub struct DecisionTypes {
     pub parameters: Vec<Parameter>,
-    pub output: Type,
-    pub error: Type,
+    pub return_type: Type,
 }
 
 pub fn parse(signature: &Signature) -> syn::Result<DecisionTypes> {
     validate_qualifiers(signature)?;
     let parameters = parse_parameters(signature)?;
-    let (output, error) = parse_output(signature)?;
+    let return_type = parse_return_type(signature)?;
     Ok(DecisionTypes {
         parameters,
-        output,
-        error,
+        return_type,
     })
 }
 
@@ -24,13 +23,23 @@ fn validate_qualifiers(signature: &Signature) -> syn::Result<()> {
         || signature.asyncness.is_some()
         || signature.unsafety.is_some()
         || signature.abi.is_some()
-        || !signature.generics.params.is_empty()
         || signature.generics.where_clause.is_some()
     {
         return Err(syn::Error::new_spanned(
             signature,
-            "decisions cannot be async, unsafe, extern, variadic, generic, or have where clauses",
+            "decisions cannot be async, unsafe, extern, variadic, or have where clauses",
         ));
+    }
+    if let Some(parameter) = signature.generics.params.first() {
+        let message = match parameter {
+            GenericParam::Lifetime(_) => {
+                "decisions cannot declare named lifetime generics; use an elided reference or an explicit `'static` reference"
+            }
+            GenericParam::Type(_) | GenericParam::Const(_) => {
+                "decisions cannot declare type or const generics"
+            }
+        };
+        return Err(syn::Error::new_spanned(parameter, message));
     }
     Ok(())
 }
@@ -53,10 +62,11 @@ fn parse_parameter(input: &FnArg) -> syn::Result<Parameter> {
         return Err(syn::Error::new_spanned(input, "unexpected receiver"));
     };
     let name = validate_parameter_pattern(&input.pat)?;
-    validate_owned_type(&input.ty)?;
+    let descriptor_type = parameter_descriptor_type(&input.ty)?;
     Ok(Parameter {
         name,
-        ty: (*input.ty).clone(),
+        signature_type: (*input.ty).clone(),
+        descriptor_type,
     })
 }
 
@@ -81,67 +91,91 @@ fn invalid_parameter_pattern(pattern: impl quote::ToTokens) -> syn::Error {
     )
 }
 
-fn validate_owned_type(ty: &Type) -> syn::Result<()> {
-    match ty {
-        Type::Group(group) => validate_owned_type(&group.elem),
-        Type::Paren(paren) => validate_owned_type(&paren.elem),
-        Type::Reference(_) => Err(syn::Error::new_spanned(
-            ty,
-            "decision parameters must use owned types, not references",
-        )),
-        _ => Ok(()),
+fn parameter_descriptor_type(authored: &Type) -> syn::Result<Type> {
+    if let Type::Reference(reference) = transparent_type(authored) {
+        referenced_parameter_type(reference)
+    } else {
+        reject_nested_reference(authored)?;
+        Ok(authored.clone())
     }
 }
 
-fn parse_output(signature: &Signature) -> syn::Result<(Type, Type)> {
-    let output = match &signature.output {
+fn referenced_parameter_type(reference: &TypeReference) -> syn::Result<Type> {
+    if reference.mutability.is_some() {
+        return Err(syn::Error::new_spanned(
+            reference,
+            "decision parameters cannot use mutable references; use `&T` or owned `T`",
+        ));
+    }
+    if let Some(lifetime) = &reference.lifetime
+        && lifetime.ident != "static"
+    {
+        return Err(syn::Error::new_spanned(
+            lifetime,
+            "decision parameter references must use an elided lifetime or explicit `'static`",
+        ));
+    }
+    reject_nested_reference(&reference.elem)?;
+    Ok((*reference.elem).clone())
+}
+
+fn transparent_type(mut ty: &Type) -> &Type {
+    loop {
+        ty = match ty {
+            Type::Group(group) => &group.elem,
+            Type::Paren(paren) => &paren.elem,
+            _ => return ty,
+        };
+    }
+}
+
+fn reject_nested_reference(ty: &Type) -> syn::Result<()> {
+    let mut finder = ReferenceFinder::default();
+    let mut ty = ty.clone();
+    finder.visit_type_mut(&mut ty);
+    finder.reference.map_or(Ok(()), |reference| {
+        Err(syn::Error::new_spanned(
+            reference,
+            "decision parameter types cannot contain nested references",
+        ))
+    })
+}
+
+#[derive(Default)]
+struct ReferenceFinder {
+    reference: Option<TypeReference>,
+}
+
+impl VisitMut for ReferenceFinder {
+    fn visit_type_reference_mut(&mut self, reference: &mut TypeReference) {
+        if self.reference.is_none() {
+            self.reference = Some(reference.clone());
+        }
+    }
+}
+
+fn parse_return_type(signature: &Signature) -> syn::Result<Type> {
+    let return_type = match &signature.output {
         ReturnType::Default => {
             return Err(syn::Error::new_spanned(
                 &signature.ident,
-                "decisions must return Result<T, E>",
+                "decisions must declare an explicit owned return type implementing DecisionOutcomeType",
             ));
         }
-        ReturnType::Type(_, output) => output.as_ref(),
+        ReturnType::Type(_, return_type) => return_type.as_ref(),
     };
-    split_result(output)
-        .ok_or_else(|| syn::Error::new_spanned(output, "decisions must return Result<T, E>"))
+    reject_return_references(return_type)?;
+    Ok(return_type.clone())
 }
 
-fn split_result(output: &Type) -> Option<(Type, Type)> {
-    let Type::Path(TypePath { qself: None, path }) = output else {
-        return None;
-    };
-    let names: Vec<_> = path
-        .segments
-        .iter()
-        .map(|segment| segment.ident.to_string())
-        .collect();
-    if names.as_slice() != ["Result"]
-        && names.as_slice() != ["core", "result", "Result"]
-        && names.as_slice() != ["std", "result", "Result"]
-    {
-        return None;
-    }
-    if path
-        .segments
-        .iter()
-        .take(path.segments.len().saturating_sub(1))
-        .any(|segment| !matches!(segment.arguments, PathArguments::None))
-    {
-        return None;
-    }
-    let PathArguments::AngleBracketed(arguments) = &path.segments.last()?.arguments else {
-        return None;
-    };
-    let mut arguments = arguments.args.iter();
-    let GenericArgument::Type(output) = arguments.next()? else {
-        return None;
-    };
-    let GenericArgument::Type(error) = arguments.next()? else {
-        return None;
-    };
-    arguments
-        .next()
-        .is_none()
-        .then(|| (output.clone(), error.clone()))
+fn reject_return_references(return_type: &Type) -> syn::Result<()> {
+    let mut finder = ReferenceFinder::default();
+    let mut return_type = return_type.clone();
+    finder.visit_type_mut(&mut return_type);
+    finder.reference.map_or(Ok(()), |reference| {
+        Err(syn::Error::new_spanned(
+            reference,
+            "decision return types must be owned and cannot contain references",
+        ))
+    })
 }

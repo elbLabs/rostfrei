@@ -1,4 +1,10 @@
-use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, domain_decisions};
+#![allow(dead_code)]
+
+use domain::DecisionOutcome;
+use domain::{Aggregate, AggregateType, BoundedContext, DomainIdentity, Entity, domain_decisions};
+
+struct FirstDecisions;
+struct SecondDecisions;
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -16,23 +22,38 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "owner", label = "Owner", context = Context, root = Root, decisions)]
+#[domain(
+    id = "owner",
+    label = "Owner",
+    context = Context,
+    root = Root,
+    decisions = [FirstDecisions, SecondDecisions]
+)]
 struct Owner;
 
-#[domain_decisions(aggregate)]
+#[derive(DecisionOutcome)]
+enum Outcome {
+    #[outcome(id = "done", label = "Done")]
+    Done,
+}
+
+#[domain_decisions(aggregate, group = FirstDecisions)]
 impl Owner {
     #[decision(id = "first", label = "First")]
-    fn first() -> Result<(), ()> {
-        Ok(())
+    fn first() -> Outcome {
+        Outcome::Done
     }
 }
 
-#[domain_decisions(aggregate)]
+#[domain_decisions(aggregate, group = SecondDecisions)]
 impl Owner {
     #[decision(id = "second", label = "Second")]
-    fn second() -> Result<(), ()> {
-        Ok(())
+    fn second() -> Outcome {
+        Outcome::Done
     }
 }
 
-fn main() {}
+fn main() {
+    assert_eq!(Owner::DECISION_GROUPS.len(), 2);
+    let _ = (Owner::first(), Owner::second());
+}

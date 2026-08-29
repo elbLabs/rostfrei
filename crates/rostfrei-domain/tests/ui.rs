@@ -147,19 +147,25 @@ fn checks_value_object_action_contracts() {
 fn checks_domain_decision_contracts() {
     let cases = trybuild::TestCases::new();
     cases.pass("tests/ui/domain_decision_contract/aggregate.rs");
+    cases.pass("tests/ui/domain_decision_contract/borrowed_input.rs");
     cases.pass("tests/ui/domain_decision_contract/cfg.rs");
+    cases.pass("tests/ui/domain_decision_contract/duplicate_impl.rs");
     cases.pass("tests/ui/domain_decision_contract/entity.rs");
     cases.pass("tests/ui/domain_decision_contract/public_cross_module.rs");
+    cases.pass("tests/ui/domain_decision_contract/shadowed_result.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/bad_macro_kind.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/borrowed_input.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/decision_outcome_duplicate_metadata.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/decision_outcome_invalid_target.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/decision_outcome_missing_metadata.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/decision_outcome_unsupported_payload.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/duplicate_decision_id.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/duplicate_impl.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/generic_method.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/missing_implementation.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/missing_output.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/mutable_input.rs");
+    cases.compile_fail("tests/ui/domain_decision_contract/nested_reference_input.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/non_trait_target.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/receiver.rs");
-    cases.compile_fail("tests/ui/domain_decision_contract/shadowed_result.rs");
     cases.compile_fail("tests/ui/domain_decision_contract/wrong_owner_kind_attachment.rs");
 }
 

@@ -1,11 +1,21 @@
 #![allow(dead_code)]
 
+use domain::DecisionOutcome;
 use domain::{
     Aggregate, AggregateId, AggregateType, BoundedContext, BoundedContextId,
-    DecisionInputDescriptor, DecisionOutputDescriptor, DecisionOwnerId, DecisionOwnerType,
-    DomainIdentity, Entity, EntityId, EntityType, ScalarType, ValueObject, ValueObjectType,
-    domain_decisions,
+    DecisionInputDescriptor, DecisionOutcomeShapeDescriptor, DecisionOutcomeType,
+    DecisionOutcomeValueDescriptor, DecisionOwnerId, DecisionOwnerType, DomainIdentity, Entity,
+    EntityId, EntityType, ScalarType, ValueObject, ValueObjectType, domain_decisions,
 };
+
+struct AffordabilityDecisions;
+
+mod routing {
+    #[allow(clippy::redundant_pub_crate)]
+    pub(super) struct RoutingDecisions;
+}
+
+struct RootDecisions;
 
 #[derive(BoundedContext)]
 #[domain(id = "lending", label = "Lending")]
@@ -21,7 +31,7 @@ struct ApplicationId(u64);
     label = "Loan application",
     context = Lending,
     root = ApplicationRoot,
-    decisions
+    decisions = [AffordabilityDecisions, routing::RoutingDecisions]
 )]
 struct LoanApplication;
 
@@ -30,7 +40,7 @@ struct LoanApplication;
     id = "application-root",
     label = "Application root",
     owner = LoanApplication,
-    decisions
+    decisions = [RootDecisions]
 )]
 struct ApplicationRoot {
     #[domain(identity)]
@@ -38,8 +48,8 @@ struct ApplicationRoot {
 }
 
 #[derive(ValueObject, Clone, Debug, Eq, PartialEq)]
-#[domain(id = "decision-outcome", label = "Decision outcome", owner = LoanApplication)]
-struct DecisionOutcome {
+#[domain(id = "approval-evidence", label = "Approval evidence", owner = LoanApplication)]
+struct ApprovalEvidence {
     rationale: String,
 }
 
@@ -50,82 +60,147 @@ enum DecisionDenial {
     IdentityNotVerified,
 }
 
-#[domain_decisions(aggregate)]
+#[derive(ValueObject)]
+#[domain(id = "classification", label = "Classification", owner = LoanApplication)]
+struct Classification(String);
+
+#[derive(DecisionOutcome, Debug, Eq, PartialEq)]
+enum ApplicationOutcome {
+    #[outcome(id = "ready", label = "Ready")]
+    Ready,
+    #[outcome(id = "approved", label = "Approved")]
+    Approved(ApprovalEvidence, bool, u16),
+    #[outcome(id = "declined", label = "Declined")]
+    Declined {
+        denial: DecisionDenial,
+        retryable: bool,
+        rank: u8,
+    },
+}
+
+#[derive(DecisionOutcome)]
+enum CfgFieldOutcome {
+    #[outcome(id = "tuple", label = "Tuple")]
+    Tuple(u8, #[cfg(any())] MissingTupleFieldType, #[cfg(test)] bool),
+    #[outcome(id = "struct", label = "Struct")]
+    Struct {
+        first: u16,
+        #[cfg(any())]
+        missing: MissingNamedFieldType,
+        #[cfg(test)]
+        last: bool,
+    },
+}
+
+#[domain_decisions(aggregate, group = AffordabilityDecisions)]
 impl LoanApplication {
     #[decision(id = "assess-affordability", label = "Assess affordability")]
-    fn assess_affordability(
-        annual_income: u64,
-        monthly_obligations: u64,
-    ) -> Result<DecisionOutcome, DecisionDenial> {
+    fn assess_affordability(annual_income: u64, monthly_obligations: u64) -> ApplicationOutcome {
         if annual_income >= monthly_obligations.saturating_mul(36) {
-            Ok(DecisionOutcome {
-                rationale: "Income supports the debt burden".to_owned(),
-            })
+            ApplicationOutcome::Approved(
+                ApprovalEvidence {
+                    rationale: "Income supports the debt burden".to_owned(),
+                },
+                true,
+                100,
+            )
         } else {
-            Err(DecisionDenial::Unaffordable)
-        }
-    }
-
-    #[decision(id = "route-automatically", label = "Route automatically")]
-    fn route_automatically(requested_amount: u64) -> Result<DecisionOutcome, DecisionDenial> {
-        if requested_amount == 0 {
-            return Err(DecisionDenial::Unaffordable);
-        }
-        Ok(DecisionOutcome {
-            rationale: if requested_amount <= 250_000 {
-                "Automatic review"
-            } else {
-                "Manual review"
+            ApplicationOutcome::Declined {
+                denial: DecisionDenial::Unaffordable,
+                retryable: true,
+                rank: 1,
             }
-            .to_owned(),
-        })
+        }
     }
 
     #[decision(id = "system-ready", label = "System ready")]
-    #[allow(clippy::unnecessary_wraps)]
-    const fn system_ready() -> Result<bool, u8> {
-        Ok(true)
+    const fn system_ready() -> ApplicationOutcome {
+        ApplicationOutcome::Ready
+    }
+}
+
+#[domain_decisions(aggregate, group = routing::RoutingDecisions)]
+impl LoanApplication {
+    #[decision(id = "classify-owned", label = "Classify owned")]
+    fn classify_owned(r#type: Classification) -> ApplicationOutcome {
+        if r#type.0.into_bytes().is_empty() {
+            ApplicationOutcome::Declined {
+                denial: DecisionDenial::Unaffordable,
+                retryable: true,
+                rank: 2,
+            }
+        } else {
+            ApplicationOutcome::Ready
+        }
     }
 
-    #[decision(id = "classify", label = "Classify")]
-    fn classify(r#type: String) -> Result<bool, u8> {
-        if r#type.into_bytes().is_empty() {
-            Err(0)
+    #[decision(id = "classify-borrowed", label = "Classify borrowed")]
+    const fn classify_borrowed(r#type: &Classification) -> ApplicationOutcome {
+        if r#type.0.is_empty() {
+            ApplicationOutcome::Declined {
+                denial: DecisionDenial::Unaffordable,
+                retryable: true,
+                rank: 2,
+            }
         } else {
-            Ok(true)
+            ApplicationOutcome::Ready
         }
     }
 }
 
-#[domain_decisions(entity)]
+#[domain_decisions(entity, group = RootDecisions)]
 impl ApplicationRoot {
     #[decision(id = "verify-identity", label = "Verify identity")]
-    fn verify_identity(verified: bool) -> Result<(), DecisionDenial> {
-        verified
-            .then_some(())
-            .ok_or(DecisionDenial::IdentityNotVerified)
+    const fn verify_identity(verified: bool) -> ApplicationOutcome {
+        if verified {
+            ApplicationOutcome::Ready
+        } else {
+            ApplicationOutcome::Declined {
+                denial: DecisionDenial::IdentityNotVerified,
+                retryable: false,
+                rank: 3,
+            }
+        }
     }
 }
 
 #[test]
-fn ordinary_inherent_calls_return_typed_results() {
+fn ordinary_inherent_calls_return_typed_outcomes() {
     assert_eq!(
         LoanApplication::assess_affordability(120_000, 2_000),
-        Ok(DecisionOutcome {
-            rationale: "Income supports the debt burden".to_owned(),
-        })
+        ApplicationOutcome::Approved(
+            ApprovalEvidence {
+                rationale: "Income supports the debt burden".to_owned(),
+            },
+            true,
+            100,
+        )
     );
     assert_eq!(
         LoanApplication::assess_affordability(36_000, 1_500),
-        Err(DecisionDenial::Unaffordable)
+        ApplicationOutcome::Declined {
+            denial: DecisionDenial::Unaffordable,
+            retryable: true,
+            rank: 1,
+        }
     );
-    assert_eq!(ApplicationRoot::verify_identity(true), Ok(()));
+    assert_eq!(LoanApplication::system_ready(), ApplicationOutcome::Ready);
+    assert_eq!(
+        LoanApplication::classify_owned(Classification("standard".to_owned())),
+        ApplicationOutcome::Ready
+    );
+    assert_eq!(
+        LoanApplication::classify_borrowed(&Classification("standard".to_owned())),
+        ApplicationOutcome::Ready
+    );
     assert_eq!(
         ApplicationRoot::verify_identity(false),
-        Err(DecisionDenial::IdentityNotVerified)
+        ApplicationOutcome::Declined {
+            denial: DecisionDenial::IdentityNotVerified,
+            retryable: false,
+            rank: 3,
+        }
     );
-    assert_eq!(LoanApplication::system_ready(), Ok(true));
-    assert_eq!(LoanApplication::classify("standard".to_owned()), Ok(true));
 }
 
 #[test]
@@ -155,45 +230,101 @@ fn decision_owner_ids_match_aggregate_and_entity_descriptors() {
 }
 
 #[test]
-fn generated_descriptors_preserve_parameters_result_and_source_order() {
-    let aggregate = <LoanApplication as AggregateType>::DECISION_CONTRACTS[0];
-    let entity = <ApplicationRoot as EntityType>::DECISION_CONTRACTS[0];
+fn generated_descriptors_preserve_group_method_and_outcome_order() {
+    let aggregate = <LoanApplication as AggregateType>::DECISION_GROUPS;
+    let entity = <ApplicationRoot as EntityType>::DECISION_GROUPS;
 
-    assert_eq!(aggregate.len(), 4);
-    assert_eq!(aggregate[0].id.local, "assess-affordability");
-    assert_eq!(aggregate[1].id.local, "route-automatically");
-    assert_eq!(aggregate[0].parameters.len(), 2);
-    assert_eq!(aggregate[0].parameters[0].name, "annual_income");
+    assert_eq!(aggregate.len(), 2);
     assert_eq!(
-        aggregate[0].parameters[0].input,
-        DecisionInputDescriptor::Scalar(ScalarType::U64)
+        aggregate[0]
+            .iter()
+            .map(|decision| decision.id.local)
+            .collect::<Vec<_>>(),
+        ["assess-affordability", "system-ready"]
     );
     assert_eq!(
-        aggregate[0].output,
-        Some(DecisionOutputDescriptor::ValueObject(
-            DecisionOutcome::DESCRIPTOR.id
-        ))
+        aggregate[1]
+            .iter()
+            .map(|decision| decision.id.local)
+            .collect::<Vec<_>>(),
+        ["classify-owned", "classify-borrowed"]
+    );
+    assert_eq!(entity[0][0].id.local, "verify-identity");
+
+    let outcomes = aggregate[0][0].outcomes;
+    assert_eq!(
+        outcomes
+            .iter()
+            .map(|outcome| outcome.local_id)
+            .collect::<Vec<_>>(),
+        ["ready", "approved", "declined"]
+    );
+    assert_eq!(outcomes[0].shape, DecisionOutcomeShapeDescriptor::Unit);
+    assert_eq!(
+        outcomes[1].shape,
+        DecisionOutcomeShapeDescriptor::Tuple {
+            fields: &[
+                DecisionOutcomeValueDescriptor::ValueObject(ApprovalEvidence::DESCRIPTOR.id),
+                DecisionOutcomeValueDescriptor::Scalar(ScalarType::Bool),
+                DecisionOutcomeValueDescriptor::Scalar(ScalarType::U16),
+            ],
+        }
+    );
+    let DecisionOutcomeShapeDescriptor::Struct { fields } = outcomes[2].shape else {
+        panic!("declined should retain its named struct shape");
+    };
+    assert_eq!(
+        fields.iter().map(|field| field.name).collect::<Vec<_>>(),
+        ["denial", "retryable", "rank"]
     );
     assert_eq!(
-        aggregate[0].error,
-        Some(DecisionOutputDescriptor::ValueObject(
-            DecisionDenial::DESCRIPTOR.id
-        ))
+        fields.iter().map(|field| field.value).collect::<Vec<_>>(),
+        [
+            DecisionOutcomeValueDescriptor::ValueObject(DecisionDenial::DESCRIPTOR.id),
+            DecisionOutcomeValueDescriptor::Scalar(ScalarType::Bool),
+            DecisionOutcomeValueDescriptor::Scalar(ScalarType::U8),
+        ]
     );
-    assert!(aggregate[2].parameters.is_empty());
+}
+
+#[test]
+fn owned_and_borrowed_inputs_have_equivalent_descriptor_metadata() {
+    let routing = <LoanApplication as AggregateType>::DECISION_GROUPS[1];
+    assert_eq!(routing[0].parameters.len(), 1);
+    assert_eq!(routing[0].parameters, routing[1].parameters);
+    assert_eq!(routing[0].parameters[0].name, "type");
     assert_eq!(
-        aggregate[2].output,
-        Some(DecisionOutputDescriptor::Scalar(ScalarType::Bool))
+        routing[0].parameters[0].input,
+        DecisionInputDescriptor::ValueObject(Classification::DESCRIPTOR.id)
+    );
+}
+
+#[test]
+fn field_cfg_filters_tuple_and_struct_metadata_and_type_assertions() {
+    let outcomes = <CfgFieldOutcome as DecisionOutcomeType>::OUTCOMES;
+
+    assert_eq!(outcomes.len(), 2);
+    assert_eq!(
+        outcomes[0].shape,
+        DecisionOutcomeShapeDescriptor::Tuple {
+            fields: &[
+                DecisionOutcomeValueDescriptor::Scalar(ScalarType::U8),
+                DecisionOutcomeValueDescriptor::Scalar(ScalarType::Bool),
+            ],
+        }
+    );
+    let DecisionOutcomeShapeDescriptor::Struct { fields } = outcomes[1].shape else {
+        panic!("cfg-filtered named fields should retain a struct shape");
+    };
+    assert_eq!(
+        fields.iter().map(|field| field.name).collect::<Vec<_>>(),
+        ["first", "last"]
     );
     assert_eq!(
-        aggregate[2].error,
-        Some(DecisionOutputDescriptor::Scalar(ScalarType::U8))
+        fields.iter().map(|field| field.value).collect::<Vec<_>>(),
+        [
+            DecisionOutcomeValueDescriptor::Scalar(ScalarType::U16),
+            DecisionOutcomeValueDescriptor::Scalar(ScalarType::Bool),
+        ]
     );
-    assert_eq!(aggregate[3].parameters[0].name, "type");
-    assert_eq!(
-        aggregate[3].parameters[0].input,
-        DecisionInputDescriptor::Scalar(ScalarType::String)
-    );
-    assert_eq!(entity[0].id.local, "verify-identity");
-    assert_eq!(entity[0].output, None);
 }

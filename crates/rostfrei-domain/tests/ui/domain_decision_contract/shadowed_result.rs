@@ -1,8 +1,15 @@
-use core::marker::PhantomData;
+#![allow(dead_code)]
 
+use domain::DecisionOutcome;
 use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, domain_decisions};
 
-struct Result<T, E>(T, PhantomData<E>);
+struct Decisions;
+
+#[derive(DecisionOutcome)]
+enum Result {
+    #[outcome(id = "done", label = "Done")]
+    Done,
+}
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -20,15 +27,23 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "owner", label = "Owner", context = Context, root = Root, decisions)]
+#[domain(
+    id = "owner",
+    label = "Owner",
+    context = Context,
+    root = Root,
+    decisions = [Decisions]
+)]
 struct Owner;
 
-#[domain_decisions(aggregate)]
+#[domain_decisions(aggregate, group = Decisions)]
 impl Owner {
     #[decision(id = "decide", label = "Decide")]
-    fn decide() -> Result<(), ()> {
-        Result((), PhantomData)
+    fn decide() -> Result {
+        Result::Done
     }
 }
 
-fn main() {}
+fn main() {
+    let _ = Owner::decide();
+}

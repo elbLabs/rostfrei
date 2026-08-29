@@ -1,5 +1,5 @@
 error: decisions must be associated functions without a receiver
- --> tests/ui/domain_decision_contract/receiver.rs:8:15
-  |
-8 |     fn decide(&self) -> Result<(), ()> {
-  |               ^^^^^
+  --> tests/ui/domain_decision_contract/receiver.rs:10:15
+   |
+10 |     fn decide(&self) -> Outcome {
+   |               ^^^^^

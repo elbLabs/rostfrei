@@ -1,6 +1,10 @@
+use domain::DecisionOutcome;
 use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, domain_decision_test, domain_decisions,
 };
+
+struct AttachedDecisions;
+struct UnattachedDecisions;
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -18,18 +22,38 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "owner", label = "Owner", context = Context, root = Root)]
+#[domain(
+    id = "owner",
+    label = "Owner",
+    context = Context,
+    root = Root,
+    decisions = [AttachedDecisions]
+)]
 struct Owner;
 
-#[domain_decisions(aggregate)]
+#[derive(DecisionOutcome)]
+enum Outcome {
+    #[outcome(id = "done", label = "Done")]
+    Done,
+}
+
+#[domain_decisions(aggregate, group = AttachedDecisions)]
 impl Owner {
-    #[decision(id = "decide", label = "Decide")]
-    fn decide() -> Result<(), ()> {
-        Ok(())
+    #[decision(id = "attached", label = "Attached")]
+    fn attached() -> Outcome {
+        Outcome::Done
     }
 }
 
-#[domain_decision_test(Owner::DECIDE)]
-fn unattached_decision() {}
+#[domain_decisions(aggregate, group = UnattachedDecisions)]
+impl Owner {
+    #[decision(id = "unattached", label = "Unattached")]
+    fn unattached() -> Outcome {
+        Outcome::Done
+    }
+}
+
+#[domain_decision_test(Owner::UNATTACHED)]
+fn rejects_the_exact_unattached_group() {}
 
 fn main() {}

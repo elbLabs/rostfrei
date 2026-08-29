@@ -19,8 +19,8 @@ An aggregate owns:
 
 - its root state
 - its entities and value objects
-- its aggregate actions, attached decisions, attached invariant contracts, and
-  lifecycle
+- its aggregate actions, ordered attached Decision groups, attached invariant
+  contracts, and lifecycle
 - the consistency of changes within its boundary
 
 An aggregate orchestrates behavior of its contained entities and value objects.
@@ -121,10 +121,17 @@ for shared contract, ordering, and trusted descriptor-extension rules.
 
 ## Decisions
 
-Aggregate Decisions are inherent associated functions declared in a
-`#[domain_decisions(aggregate)]` impl block. The `decisions` marker on the
-Aggregate derive attaches the block for projection. It does not limit the
-Decision to Aggregate-owned Actions. See [Decision](decision.md).
+Aggregate Decisions are stateless associated functions declared on inherent
+Aggregate impls. Each impl names a user-declared group marker with
+`#[domain_decisions(aggregate, group = GroupType)]`; the macro has no visibility
+option, so the marker and functions use normal Rust visibility.
+
+The Aggregate explicitly attaches zero or more groups with
+`decisions = [GroupA, GroupB]`. Attachment order is projection order, followed by
+method source order within each group. A group must name this exact Aggregate as
+its owner. Groups are organizational and are not projected into model JSON. The
+attachment does not limit a Decision to Aggregate-owned Actions. See
+[Decision](decision.md).
 
 ## Invariants
 

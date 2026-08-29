@@ -48,7 +48,7 @@ A denial at any domain step enters
 
 ```text
 Lifecycle denial
-Action gate denial
+Action translation of a relevant Decision outcome
 Child denial
 Complete invariant violations
 Delegated Aggregate denial

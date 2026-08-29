@@ -6,7 +6,7 @@ pub struct Attributes {
     pub context: TypePath,
     pub root: TypePath,
     pub actions: Vec<Path>,
-    pub decisions: bool,
+    pub decisions: Vec<Path>,
     pub invariants: Vec<Path>,
     pub events: Option<Vec<Path>>,
 }
@@ -19,7 +19,7 @@ impl Attributes {
         let mut context = None;
         let mut root = None;
         let mut actions = None;
-        let mut decisions = false;
+        let mut decisions = None;
         let mut invariants = None;
         let mut events = None;
 
@@ -60,13 +60,15 @@ impl Attributes {
                 return Ok(());
             }
             if meta.path.is_ident("decisions") {
-                if decisions {
+                if decisions.is_some() {
                     return Err(meta.error("duplicate decisions"));
                 }
-                if meta.input.peek(syn::Token![=]) {
-                    return Err(meta.error("decisions is a marker and accepts no value"));
+                if !meta.input.peek(syn::Token![=]) {
+                    return Err(meta.error(
+                        "bare `decisions` is no longer supported; use `decisions = [GroupA, module::GroupB]`",
+                    ));
                 }
-                decisions = true;
+                decisions = Some(crate::helper::decision_group_paths::parse(meta.value()?)?);
                 return Ok(());
             }
             if meta.path.is_ident("invariants") {
@@ -96,7 +98,7 @@ impl Attributes {
             context,
             root,
             actions: actions.unwrap_or_default(),
-            decisions,
+            decisions: decisions.unwrap_or_default(),
             invariants: invariants.unwrap_or_default(),
             events,
         })

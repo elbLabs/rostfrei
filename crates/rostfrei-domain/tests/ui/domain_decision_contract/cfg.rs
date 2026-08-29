@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
+use domain::DecisionOutcome;
 use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, domain_decisions};
+
+struct Decisions;
 
 #[derive(BoundedContext)]
 #[domain(id = "context", label = "Context")]
@@ -18,39 +21,60 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "owner", label = "Owner", context = Context, root = Root, decisions)]
+#[domain(
+    id = "owner",
+    label = "Owner",
+    context = Context,
+    root = Root,
+    decisions = [Decisions]
+)]
 struct Owner;
 
-#[domain_decisions(aggregate)]
+#[derive(DecisionOutcome)]
+enum Outcome {
+    #[outcome(id = "enabled", label = "Enabled")]
+    Enabled,
+    #[cfg(any())]
+    #[outcome(id = "disabled", label = "Disabled")]
+    Disabled,
+}
+
+#[domain_decisions(aggregate, group = Decisions)]
 impl Owner {
     #[decision(id = "enabled", label = "Enabled")]
     #[cfg_attr(all(), inline)]
-    fn enabled() -> Result<(), ()> {
-        Ok(())
+    fn enabled() -> Outcome {
+        Outcome::Enabled
     }
 
     #[cfg(any())]
     #[decision(id = "disabled", label = "Disabled")]
-    fn disabled() -> Result<(), ()> {
-        Ok(())
+    fn disabled() -> Outcome {
+        Outcome::Disabled
     }
 
     #[cfg_attr(all(), cfg(any()))]
     #[decision(id = "conditionally-disabled", label = "Conditionally disabled")]
-    fn conditionally_disabled() -> Result<(), ()> {
-        Ok(())
+    fn conditionally_disabled() -> Outcome {
+        Outcome::Enabled
     }
 }
 
-#[domain_decisions(aggregate)]
+#[cfg(any())]
+struct DisabledDecisions;
+
+#[cfg(any())]
+struct DisabledOwner;
+
+#[domain_decisions(aggregate, group = DisabledDecisions)]
 #[cfg_attr(all(), cfg(any()))]
 impl DisabledOwner {
     #[decision(id = "disabled", label = "Disabled")]
-    fn disabled() -> Result<(), ()> {
-        Ok(())
+    fn disabled() -> Outcome {
+        Outcome::Enabled
     }
 }
 
 fn main() {
-    assert_eq!(Owner::enabled(), Ok(()));
+    let _ = Owner::enabled();
 }

@@ -8,6 +8,7 @@ pub fn assemble(
     domain_path: &Path,
     item: &ItemImpl,
     owner: &TypePath,
+    group: &TypePath,
     decisions: &[Decision],
     owner_kind: OwnerKind,
 ) -> TokenStream {
@@ -17,7 +18,7 @@ pub fn assemble(
         .map(|decision| descriptor(domain_path, owner, decision));
     let references = decisions
         .iter()
-        .map(|decision| reference(domain_path, owner, decision));
+        .map(|decision| reference(domain_path, group, decision));
     let signature_assertions = decisions
         .iter()
         .map(|decision| signature_assertion(owner, decision, &impl_cfg_attributes));
@@ -37,7 +38,9 @@ pub fn assemble(
         #(#signature_assertions)*
 
         #(#impl_cfg_attributes)*
-        impl #domain_path::__private::DecisionProvider for #owner {
+        impl #domain_path::DecisionGroupType for #group {
+            type Owner = #owner;
+
             const DECISIONS: &'static [#domain_path::DecisionDescriptor] = &[
                 #(#descriptors),*
             ];
@@ -60,7 +63,7 @@ fn descriptor(domain_path: &Path, owner: &TypePath, decision: &Decision) -> Toke
             parameter.name.to_string().trim_start_matches("r#"),
             parameter.name.span(),
         );
-        let ty = &parameter.ty;
+        let ty = &parameter.descriptor_type;
         quote! {
             #domain_path::DecisionParameterDescriptor {
                 name: #name,
@@ -68,8 +71,7 @@ fn descriptor(domain_path: &Path, owner: &TypePath, decision: &Decision) -> Toke
             }
         }
     });
-    let output = &decision.output;
-    let error = &decision.error;
+    let return_type = &decision.return_type;
     quote! {
         #(#cfg_attributes)*
         #domain_path::DecisionDescriptor {
@@ -79,14 +81,13 @@ fn descriptor(domain_path: &Path, owner: &TypePath, decision: &Decision) -> Toke
             },
             label: #label,
             parameters: &[#(#parameters),*],
-            output: <#output as #domain_path::DecisionOutputType>::DESCRIPTOR,
-            error: <#error as #domain_path::DecisionOutputType>::DESCRIPTOR,
+            outcomes: <#return_type as #domain_path::DecisionOutcomeType>::OUTCOMES,
             implementation: #domain_path::DecisionImplementationDescriptor::Rust,
         }
     }
 }
 
-fn reference(domain_path: &Path, owner: &TypePath, decision: &Decision) -> TokenStream {
+fn reference(domain_path: &Path, group: &TypePath, decision: &Decision) -> TokenStream {
     let id = &decision.id;
     let name = super::decision_reference_name::hidden_from_decision_id(id);
     let visibility = &decision.visibility;
@@ -95,8 +96,8 @@ fn reference(domain_path: &Path, owner: &TypePath, decision: &Decision) -> Token
         #(#cfg_attributes)*
         #[doc(hidden)]
         #[allow(dead_code)]
-        #visibility const #name: #domain_path::DecisionReference<#owner> =
-            #domain_path::DecisionReference::<#owner>::__from_local(#id);
+        #visibility const #name: #domain_path::DecisionReference<#group> =
+            #domain_path::DecisionReference::<#group>::__from_local(#id);
     }
 }
 
@@ -107,15 +108,16 @@ fn signature_assertion(
 ) -> TokenStream {
     let name = &decision.name;
     let cfg_attributes = &decision.cfg_attributes;
-    let parameters = decision.parameters.iter().map(|parameter| &parameter.ty);
-    let output = &decision.output;
-    let error = &decision.error;
+    let parameters = decision
+        .parameters
+        .iter()
+        .map(|parameter| &parameter.signature_type);
+    let return_type = &decision.return_type;
     quote_spanned! {name.span()=>
         #(#impl_cfg_attributes)*
         #(#cfg_attributes)*
         const _: () = {
-            let _: fn(#(#parameters),*) -> ::core::result::Result<#output, #error> =
-                #owner::#name;
+            let _: fn(#(#parameters),*) -> #return_type = #owner::#name;
         };
     }
 }

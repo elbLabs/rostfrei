@@ -1,17 +1,19 @@
 use domain::domain_decisions;
 
 struct Owner;
+struct Group;
+struct Outcome;
 
-#[domain_decisions(aggregate)]
+#[domain_decisions(aggregate, group = Group)]
 impl Owner {
     #[decision(id = "decide", label = "First")]
-    fn first() -> Result<(), ()> {
-        Ok(())
+    fn first() -> Outcome {
+        Outcome
     }
 
     #[decision(id = "decide", label = "Second")]
-    fn second() -> Result<(), ()> {
-        Ok(())
+    fn second() -> Outcome {
+        Outcome
     }
 }
 

@@ -1,5 +1,6 @@
 pub mod action_paths;
 pub mod action_reference;
+pub mod decision_group_paths;
 pub mod domain_api_path;
 pub mod domain_attribute;
 pub mod error_code;

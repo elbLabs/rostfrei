@@ -1,0 +1,5 @@
+error: decision parameter types cannot contain nested references
+  --> tests/ui/domain_decision_contract/nested_reference_input.rs:11:29
+   |
+11 |     fn decide(input: Option<&Input>) -> Outcome {
+   |                             ^^^^^^

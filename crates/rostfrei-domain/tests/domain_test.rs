@@ -1,5 +1,6 @@
 #![allow(dead_code, non_snake_case, private_bounds, private_interfaces)]
 
+use domain::DecisionOutcome;
 use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle, EntityLifecycleType,
     InvariantOwnerType, InvariantViolation, ValueObject, domain_action_test, domain_actions,
@@ -18,6 +19,16 @@ struct DecisionInput(bool);
 #[derive(ValueObject, Debug, Eq, PartialEq)]
 #[domain(id = "decision-output", label = "Decision output", owner = TestAggregate)]
 struct DecisionOutput(bool);
+
+#[derive(DecisionOutcome, Debug, Eq, PartialEq)]
+enum TestDecisionOutcome {
+    #[outcome(id = "accepted", label = "Accepted")]
+    Accepted(DecisionOutput),
+    #[outcome(id = "rejected", label = "Rejected")]
+    Rejected,
+}
+
+struct TestDecisions;
 
 #[domain_actions(aggregate)]
 pub trait AggregateActions {
@@ -78,19 +89,19 @@ struct TestRoot {
     context = Testing,
     root = TestRoot,
     actions = [AggregateActions],
-    decisions,
+    decisions = [TestDecisions],
     invariants = [AggregateInvariants],
 )]
 struct TestAggregate;
 
-#[domain_decisions(aggregate)]
+#[domain_decisions(aggregate, group = TestDecisions)]
 impl TestAggregate {
     #[decision(id = "accept", label = "Accept")]
-    const fn accept(input: DecisionInput) -> Result<DecisionOutput, DecisionOutput> {
+    const fn accept(input: DecisionInput) -> TestDecisionOutcome {
         if input.0 {
-            Ok(DecisionOutput(true))
+            TestDecisionOutcome::Accepted(DecisionOutput(true))
         } else {
-            Err(DecisionOutput(false))
+            TestDecisionOutcome::Rejected
         }
     }
 }
@@ -146,7 +157,7 @@ fn CASE_DISTINCT_TEST_NAME() {}
 fn decision_tests_keep_the_authored_body() {
     assert_eq!(
         TestAggregate::accept(DecisionInput(true)),
-        Ok(DecisionOutput(true))
+        TestDecisionOutcome::Accepted(DecisionOutput(true))
     );
 }
 

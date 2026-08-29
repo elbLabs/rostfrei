@@ -1,5 +1,5 @@
 use super::{
-    DecisionId, DecisionImplementationDescriptor, DecisionOutputDescriptor,
+    DecisionId, DecisionImplementationDescriptor, DecisionOutcomeDescriptor,
     DecisionParameterDescriptor,
 };
 
@@ -8,7 +8,6 @@ pub struct DecisionDescriptor {
     pub id: DecisionId,
     pub label: &'static str,
     pub parameters: &'static [DecisionParameterDescriptor],
-    pub output: Option<DecisionOutputDescriptor>,
-    pub error: Option<DecisionOutputDescriptor>,
+    pub outcomes: &'static [DecisionOutcomeDescriptor],
     pub implementation: DecisionImplementationDescriptor,
 }

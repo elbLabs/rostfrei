@@ -1,0 +1,17 @@
+error: DecisionOutcome variants require exactly one outcome attribute
+ --> tests/ui/domain_decision_contract/decision_outcome_missing_metadata.rs:5:5
+  |
+5 |     Missing,
+  |     ^^^^^^^
+
+error: missing outcome id
+  --> tests/ui/domain_decision_contract/decision_outcome_missing_metadata.rs:10:5
+   |
+10 |     #[outcome(label = "Missing ID")]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: missing outcome label
+  --> tests/ui/domain_decision_contract/decision_outcome_missing_metadata.rs:16:5
+   |
+16 |     #[outcome(id = "missing-label")]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

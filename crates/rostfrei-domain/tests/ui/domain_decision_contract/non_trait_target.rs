@@ -1,6 +1,8 @@
 use domain::domain_decisions;
 
-#[domain_decisions(aggregate)]
+struct Group;
+
+#[domain_decisions(aggregate, group = Group)]
 struct Owner;
 
 fn main() {}
