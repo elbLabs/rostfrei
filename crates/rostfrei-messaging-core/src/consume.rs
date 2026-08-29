@@ -169,7 +169,10 @@ where
             ));
         }
         if name.context() != durable_name.context()
-            || (address.kind() == AddressKind::Command && name.context() != address.context())
+            || (matches!(
+                address.kind(),
+                AddressKind::Command | AddressKind::CommandResponse
+            ) && name.context() != address.context())
         {
             return Err(ContractError::new(
                 ContractErrorKind::InvalidFormat,
@@ -652,6 +655,24 @@ mod tests {
             name.clone(),
             durable.clone(),
             command,
+            Duration::from_secs(45),
+            Duration::from_secs(30),
+            1,
+            5,
+        )
+        .unwrap_err();
+        assert_eq!(error.field(), "consumer bounded-context scope");
+
+        let command_response = crate::CommandResponseAddress::new(
+            "acme",
+            "orders",
+            "0d0cb197be2a6e138e30cb34bb8b735e691293cec88cb6835f1e7088c480731c",
+        )
+        .unwrap();
+        let error = ConsumerConfig::new(
+            name.clone(),
+            durable.clone(),
+            command_response,
             Duration::from_secs(45),
             Duration::from_secs(30),
             1,

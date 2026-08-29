@@ -5,6 +5,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use crate::{ContractError, ContractErrorKind, scope::validate_scope_segment};
 
 pub const COMMAND_ADDRESS_CONVENTION: &str = "<application>.command.<context>.<name>";
+pub const COMMAND_RESPONSE_ADDRESS_CONVENTION: &str =
+    "<application>.command-response.<context>.<name>";
 pub const INTEGRATION_EVENT_ADDRESS_CONVENTION: &str = "<application>.integration.<context>.<name>";
 pub const QUERY_ADDRESS_CONVENTION: &str = "<application>.query.<context>.<name>";
 pub const MAX_ADDRESS_BYTES: usize = 256;
@@ -13,6 +15,7 @@ pub const MAX_ADDRESS_SEGMENT_BYTES: usize = 64;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AddressKind {
     Command,
+    CommandResponse,
     IntegrationEvent,
     Query,
 }
@@ -21,6 +24,7 @@ impl AddressKind {
     pub const fn segment(self) -> &'static str {
         match self {
             Self::Command => "command",
+            Self::CommandResponse => "command-response",
             Self::IntegrationEvent => "integration",
             Self::Query => "query",
         }
@@ -37,6 +41,35 @@ impl CommandAddress {
 
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
         parse_address(value.into(), AddressKind::Command).map(Self)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn application(&self) -> &str {
+        segment(&self.0, 0)
+    }
+
+    pub fn context(&self) -> &str {
+        segment(&self.0, 2)
+    }
+
+    pub fn name(&self) -> &str {
+        segment(&self.0, 3)
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CommandResponseAddress(String);
+
+impl CommandResponseAddress {
+    pub fn new(application: &str, context: &str, name: &str) -> Result<Self, ContractError> {
+        build_address(AddressKind::CommandResponse, application, context, name).map(Self)
+    }
+
+    pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
+        parse_address(value.into(), AddressKind::CommandResponse).map(Self)
     }
 
     pub fn as_str(&self) -> &str {
@@ -117,6 +150,7 @@ impl QueryAddress {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum MessageAddress {
     Command(CommandAddress),
+    CommandResponse(CommandResponseAddress),
     IntegrationEvent(IntegrationEventAddress),
     Query(QueryAddress),
 }
@@ -147,6 +181,7 @@ impl MessageAddress {
         let kind = value.split('.').nth(1).unwrap_or_default();
         match kind {
             "command" => CommandAddress::parse(value).map(Self::Command),
+            "command-response" => CommandResponseAddress::parse(value).map(Self::CommandResponse),
             "integration" => IntegrationEventAddress::parse(value).map(Self::IntegrationEvent),
             "query" => QueryAddress::parse(value).map(Self::Query),
             _ => Err(ContractError::new(
@@ -159,6 +194,7 @@ impl MessageAddress {
     pub const fn kind(&self) -> AddressKind {
         match self {
             Self::Command(_) => AddressKind::Command,
+            Self::CommandResponse(_) => AddressKind::CommandResponse,
             Self::IntegrationEvent(_) => AddressKind::IntegrationEvent,
             Self::Query(_) => AddressKind::Query,
         }
@@ -167,6 +203,7 @@ impl MessageAddress {
     pub fn as_str(&self) -> &str {
         match self {
             Self::Command(address) => address.as_str(),
+            Self::CommandResponse(address) => address.as_str(),
             Self::IntegrationEvent(address) => address.as_str(),
             Self::Query(address) => address.as_str(),
         }
@@ -175,6 +212,7 @@ impl MessageAddress {
     pub fn application(&self) -> &str {
         match self {
             Self::Command(address) => address.application(),
+            Self::CommandResponse(address) => address.application(),
             Self::IntegrationEvent(address) => address.application(),
             Self::Query(address) => address.application(),
         }
@@ -183,6 +221,7 @@ impl MessageAddress {
     pub fn context(&self) -> &str {
         match self {
             Self::Command(address) => address.context(),
+            Self::CommandResponse(address) => address.context(),
             Self::IntegrationEvent(address) => address.context(),
             Self::Query(address) => address.context(),
         }
@@ -203,6 +242,7 @@ pub trait PublishableAddress:
 }
 
 impl private::Sealed for CommandAddress {}
+impl private::Sealed for CommandResponseAddress {}
 impl private::Sealed for IntegrationEventAddress {}
 
 impl PublishableAddress for CommandAddress {
@@ -220,6 +260,24 @@ impl PublishableAddress for CommandAddress {
 
     fn kind(&self) -> AddressKind {
         AddressKind::Command
+    }
+}
+
+impl PublishableAddress for CommandResponseAddress {
+    fn as_str(&self) -> &str {
+        self.as_str()
+    }
+
+    fn application(&self) -> &str {
+        self.application()
+    }
+
+    fn context(&self) -> &str {
+        self.context()
+    }
+
+    fn kind(&self) -> AddressKind {
+        AddressKind::CommandResponse
     }
 }
 
@@ -351,6 +409,12 @@ impl From<CommandAddress> for MessageAddress {
     }
 }
 
+impl From<CommandResponseAddress> for MessageAddress {
+    fn from(value: CommandResponseAddress) -> Self {
+        Self::CommandResponse(value)
+    }
+}
+
 impl From<IntegrationEventAddress> for MessageAddress {
     fn from(value: IntegrationEventAddress) -> Self {
         Self::IntegrationEvent(value)
@@ -387,6 +451,38 @@ impl Serialize for CommandAddress {
 }
 
 impl<'de> Deserialize<'de> for CommandAddress {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::parse(String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+impl fmt::Display for CommandResponseAddress {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for CommandResponseAddress {
+    type Err = ContractError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::parse(value)
+    }
+}
+
+impl Serialize for CommandResponseAddress {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for CommandResponseAddress {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -499,10 +595,16 @@ mod tests {
     #[test]
     fn explicit_addresses_follow_four_segment_conventions() {
         let command = CommandAddress::new("acme", "orders", "place-order").unwrap();
+        let command_response =
+            CommandResponseAddress::new("acme", "orders", "a".repeat(64).as_str()).unwrap();
         let event = IntegrationEventAddress::new("acme", "orders", "order-placed").unwrap();
         let query = QueryAddress::new("acme", "orders", "find-order").unwrap();
 
         assert_eq!(command.as_str(), "acme.command.orders.place-order");
+        assert_eq!(
+            command_response.as_str(),
+            format!("acme.command-response.orders.{}", "a".repeat(64))
+        );
         assert_eq!(event.as_str(), "acme.integration.orders.order-placed");
         assert_eq!(query.as_str(), "acme.query.orders.find-order");
         assert_eq!(query.application(), "acme");
@@ -517,6 +619,12 @@ mod tests {
                 .unwrap()
                 .kind(),
             AddressKind::Query
+        );
+        assert_eq!(
+            MessageAddress::parse(format!("acme.command-response.orders.{}", "a".repeat(64)))
+                .unwrap()
+                .kind(),
+            AddressKind::CommandResponse
         );
         assert_eq!(
             CommandAddress::parse("acme.query.orders.find-order")
@@ -544,5 +652,11 @@ mod tests {
             serde_json::from_str("\"acme.query.orders.find-order\"").unwrap();
         assert_eq!(parsed.name(), "find-order");
         assert!(serde_json::from_str::<QueryAddress>("\"acme.query.orders.*\"").is_err());
+        let response: CommandResponseAddress = serde_json::from_str(&format!(
+            "\"acme.command-response.orders.{}\"",
+            "a".repeat(64)
+        ))
+        .unwrap();
+        assert_eq!(response.name().len(), 64);
     }
 }
