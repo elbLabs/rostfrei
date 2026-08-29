@@ -2,7 +2,13 @@ use syn::{LitStr, TraitItem};
 
 use super::action::Action;
 
-pub fn extract(items: &mut [TraitItem]) -> syn::Result<Vec<Action>> {
+#[derive(Clone, Copy)]
+pub enum RaisesPolicy {
+    Forbidden,
+    Required,
+}
+
+pub fn extract(items: &mut [TraitItem], raises_policy: RaisesPolicy) -> syn::Result<Vec<Action>> {
     if items.is_empty() {
         return Err(syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -44,10 +50,11 @@ pub fn extract(items: &mut [TraitItem]) -> syn::Result<Vec<Action>> {
             ));
         }
         let attribute = method.attrs.remove(positions[0]);
-        let (id, label) = parse(&attribute)?;
+        let (id, label, raises) = parse(&attribute, raises_policy)?;
         actions.push(Action {
             id,
             label,
+            raises,
             syntax: method.sig.clone(),
             signature: None,
         });
@@ -55,9 +62,13 @@ pub fn extract(items: &mut [TraitItem]) -> syn::Result<Vec<Action>> {
     Ok(actions)
 }
 
-fn parse(attribute: &syn::Attribute) -> syn::Result<(LitStr, LitStr)> {
+fn parse(
+    attribute: &syn::Attribute,
+    raises_policy: RaisesPolicy,
+) -> syn::Result<(LitStr, LitStr, Vec<syn::Path>)> {
     let mut id = None;
     let mut label = None;
+    let mut raises = None;
     attribute.parse_nested_meta(|meta| {
         if meta.path.is_ident("id") {
             if id.is_some() {
@@ -73,11 +84,37 @@ fn parse(attribute: &syn::Attribute) -> syn::Result<(LitStr, LitStr)> {
             label = Some(meta.value()?.parse::<LitStr>()?);
             return Ok(());
         }
+        if meta.path.is_ident("raises") {
+            if matches!(raises_policy, RaisesPolicy::Forbidden) {
+                return Err(
+                    meta.error("raises is only supported by executable aggregate action contracts")
+                );
+            }
+            if raises.is_some() {
+                return Err(meta.error("duplicate raises"));
+            }
+            raises = Some(crate::helper::event_paths::parse(meta.value()?)?);
+            return Ok(());
+        }
         Err(meta.error("unsupported action attribute"))
     })?;
     let id = id.ok_or_else(|| syn::Error::new_spanned(attribute, "missing id"))?;
     let label = label.ok_or_else(|| syn::Error::new_spanned(attribute, "missing label"))?;
-    Ok((id, label))
+    let raises = match (raises_policy, raises) {
+        (RaisesPolicy::Forbidden, None) => Vec::new(),
+        (RaisesPolicy::Forbidden, Some(_)) => unreachable!("forbidden raises returned early"),
+        (RaisesPolicy::Required, None) => {
+            return Err(syn::Error::new_spanned(attribute, "missing raises"));
+        }
+        (RaisesPolicy::Required, Some(raises)) if raises.is_empty() => {
+            return Err(syn::Error::new_spanned(
+                attribute,
+                "executable aggregate actions must declare at least one raised event",
+            ));
+        }
+        (RaisesPolicy::Required, Some(raises)) => raises,
+    };
+    Ok((id, label, raises))
 }
 
 fn reserved_name(item: &TraitItem) -> Option<&'static str> {

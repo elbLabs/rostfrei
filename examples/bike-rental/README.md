@@ -10,10 +10,8 @@ compiled domain metadata without depending on a production application:
 - `BicycleAvailabilityQueries` exposes a read-only availability query.
 
 The public command maps its payload to the `BicycleId` domain identity. The
-modeled Action returns `BicycleRented`; a generated aggregate-instance adapter
-raises and applies that event only when the Action succeeds. Neither the Action
-nor the Decision receives the command message, and application code does not
-call `AggregateInstance::raise`.
+modeled Action validates the request and explicitly raises `BicycleRented` on
+success. Neither the Action nor the Decision receives the command message.
 
 Print the compiled domain model:
 

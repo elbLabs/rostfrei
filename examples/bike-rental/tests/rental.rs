@@ -72,8 +72,25 @@ fn model_projects_each_executable_fleet_action_once() {
                 && action["id"]["owner"]["id"]["context"] == "bike-rental"
                 && action["id"]["owner"]["id"]["local"] == "rental-fleet"
         })
-        .map(|action| action["id"]["local"].as_str().unwrap())
         .collect::<Vec<_>>();
 
-    assert_eq!(fleet_actions, ["import-rental-fleet", "rent-bicycle"]);
+    assert_eq!(
+        fleet_actions
+            .iter()
+            .map(|action| action["id"]["local"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["import-rental-fleet", "rent-bicycle"]
+    );
+    assert!(
+        fleet_actions
+            .iter()
+            .all(|action| action["output"].is_null())
+    );
+    assert_eq!(
+        fleet_actions
+            .iter()
+            .map(|action| action["raises"][0]["local"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["rental-fleet-imported", "bicycle-rented"]
+    );
 }

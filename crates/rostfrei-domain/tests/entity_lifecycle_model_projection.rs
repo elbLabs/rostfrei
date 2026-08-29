@@ -59,6 +59,7 @@ const ACTIONS: &[ActionDescriptor] = &[
         label: "Activate",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     },
     ActionDescriptor {
@@ -66,6 +67,7 @@ const ACTIONS: &[ActionDescriptor] = &[
         label: "Inspect",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     },
     ActionDescriptor {
@@ -73,6 +75,7 @@ const ACTIONS: &[ActionDescriptor] = &[
         label: "Archive",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     },
 ];

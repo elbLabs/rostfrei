@@ -1,0 +1,5 @@
+error: executable aggregate actions require an &mut self receiver
+  --> tests/ui/fail/action_implicit_event_return.rs:11:8
+   |
+11 |     fn deposit(root: &Account, input: i64) -> MoneyDeposited;
+   |        ^^^^^^^

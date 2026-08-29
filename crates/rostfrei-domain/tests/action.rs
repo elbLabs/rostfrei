@@ -244,6 +244,7 @@ fn preserves_descriptor_shape_and_source_order() {
                 domain::ScalarType::String,
             )),
             output: None,
+            raises: &[],
             error: None,
         }
     );

@@ -74,26 +74,25 @@ impl Apply<BalanceObserved> for Account {
 }
 
 mod account_actions {
-    use super::{Account, AccountAggregate, BalanceObserved, MoneyDeposited};
+    use super::{AccountAggregate, AggregateInstance, BalanceObserved, MoneyDeposited};
 
     #[rostfrei::domain_actions(aggregate(instance = AccountActions))]
     pub trait AccountActionContract {
-        #[action(id = "deposit", label = "Deposit money")]
-        fn deposit(root: &Account, input: i64) -> MoneyDeposited;
-
-        #[action(id = "observe-balance", label = "Observe balance")]
-        fn observe_balance(root: &Account) -> BalanceObserved;
+        #[action(
+            id = "deposit-and-observe",
+            label = "Deposit money and observe balance",
+            raises = [MoneyDeposited, BalanceObserved]
+        )]
+        fn deposit_and_observe(&mut self, input: i64);
     }
 
-    impl AccountActionContract for AccountAggregate {
-        fn deposit(_root: &Account, input: i64) -> MoneyDeposited {
-            MoneyDeposited { amount: input }
-        }
+    impl AccountActions for AggregateInstance<AccountAggregate> {
+        fn deposit_and_observe(&mut self, input: i64) {
+            self.raise(MoneyDeposited { amount: input });
 
-        fn observe_balance(root: &Account) -> BalanceObserved {
-            BalanceObserved {
-                balance: root.balance,
-            }
+            self.raise(BalanceObserved {
+                balance: self.state().balance,
+            });
         }
     }
 }
@@ -115,8 +114,7 @@ impl CommandHandler<DepositAndObserve> for AccountAggregate {
         if aggregate.state().id.0 != command.account_id {
             return Err("stream identity was not used to initialize the aggregate");
         }
-        aggregate.deposit(command.amount);
-        aggregate.observe_balance();
+        aggregate.deposit_and_observe(command.amount);
         Ok(())
     }
 }
@@ -219,7 +217,7 @@ fn metadata(stream_id: &StreamId, operation: &str) -> ExecutionMetadata {
 }
 
 #[tokio::test]
-async fn command_composes_generated_actions_and_replays_their_events() {
+async fn command_executes_an_explicit_multi_event_action_and_replays_its_events() {
     let stream = stream("account-1");
     let executor = Executor::new(InMemoryEventStore::new());
 
@@ -277,6 +275,20 @@ async fn command_composes_generated_actions_and_replays_their_events() {
             .expect("deposit handler lock")
             .as_slice(),
         &[MoneyDeposited { amount: 7 }]
+    );
+}
+
+#[test]
+fn executable_action_models_every_event_type_it_may_raise() {
+    let action = <AccountAggregate as rostfrei::AggregateType>::ACTION_CONTRACTS[0][0];
+
+    assert_eq!(action.output, None);
+    assert_eq!(
+        action.raises,
+        &[
+            <MoneyDeposited as rostfrei::DomainEventType>::DESCRIPTOR.id,
+            <BalanceObserved as rostfrei::DomainEventType>::DESCRIPTOR.id,
+        ]
     );
 }
 

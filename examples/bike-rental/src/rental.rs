@@ -1,6 +1,6 @@
 use rostfrei::{
-    Aggregate, BoundedContext, DomainCommand, DomainError, DomainEvent, DomainIdentity, Entity,
-    ValueObject, domain_actions, domain_decisions, domain_queries,
+    Aggregate, AggregateInstance, BoundedContext, DomainCommand, DomainError, DomainEvent,
+    DomainIdentity, Entity, ValueObject, domain_actions, domain_decisions, domain_queries,
 };
 use serde::{Deserialize, Serialize};
 
@@ -328,54 +328,57 @@ impl BicycleStatusActions for Bicycle {
 
 #[domain_actions(aggregate(instance = RentalFleetActions))]
 pub trait RentalFleetActionContract {
-    #[action(id = "import-rental-fleet", label = "Import rental fleet")]
-    fn import_rental_fleet(
-        root: &RentalFleet,
-        input: ImportRentalFleetInput,
-    ) -> RentalFleetImported;
+    #[action(
+        id = "import-rental-fleet",
+        label = "Import rental fleet",
+        raises = [RentalFleetImported]
+    )]
+    fn import_rental_fleet(&mut self, input: ImportRentalFleetInput);
 
-    #[action(id = "rent-bicycle", label = "Rent bicycle")]
-    fn rent_bicycle(
-        root: &RentalFleet,
-        input: BicycleId,
-    ) -> Result<BicycleRented, BicycleUnavailable>;
+    #[action(
+        id = "rent-bicycle",
+        label = "Rent bicycle",
+        raises = [BicycleRented]
+    )]
+    fn rent_bicycle(&mut self, input: BicycleId) -> Result<(), BicycleUnavailable>;
 }
 
-impl RentalFleetActionContract for RentalFleetAggregate {
-    fn import_rental_fleet(
-        root: &RentalFleet,
-        input: ImportRentalFleetInput,
-    ) -> RentalFleetImported {
-        RentalFleetImported {
-            fleet_id: root.fleet_id.clone(),
+impl RentalFleetActions for AggregateInstance<RentalFleetAggregate> {
+    fn import_rental_fleet(&mut self, input: ImportRentalFleetInput) {
+        self.raise(RentalFleetImported {
+            fleet_id: self.state().fleet_id.clone(),
             bicycles: input.bicycles,
-        }
+        });
     }
 
-    fn rent_bicycle(
-        root: &RentalFleet,
-        input: BicycleId,
-    ) -> Result<BicycleRented, BicycleUnavailable> {
-        let bicycle = root
-            .bicycles
-            .iter()
-            .find(|bicycle| bicycle.bicycle_id == input)
-            .ok_or_else(|| BicycleUnavailable {
-                bicycle_id: input.clone(),
-            })?;
-        let decision = Self::assess_rental_eligibility(RentalEligibilityInput {
-            status: bicycle.status,
-            condition: bicycle.condition,
-        });
-        match decision {
-            RentalEligibilityDecision::Allowed => Ok(BicycleRented {
-                fleet_id: root.fleet_id.clone(),
-                bicycle_id: input,
-            }),
-            RentalEligibilityDecision::Denied { .. } => {
-                Err(BicycleUnavailable { bicycle_id: input })
+    fn rent_bicycle(&mut self, input: BicycleId) -> Result<(), BicycleUnavailable> {
+        let event = {
+            let root = self.state();
+            let bicycle = root
+                .bicycles
+                .iter()
+                .find(|bicycle| bicycle.bicycle_id == input)
+                .ok_or_else(|| BicycleUnavailable {
+                    bicycle_id: input.clone(),
+                })?;
+            let decision =
+                RentalFleetAggregate::assess_rental_eligibility(RentalEligibilityInput {
+                    status: bicycle.status,
+                    condition: bicycle.condition,
+                });
+            match decision {
+                RentalEligibilityDecision::Allowed => BicycleRented {
+                    fleet_id: root.fleet_id.clone(),
+                    bicycle_id: input.clone(),
+                },
+                RentalEligibilityDecision::Denied { .. } => {
+                    return Err(BicycleUnavailable { bicycle_id: input });
+                }
             }
-        }
+        };
+
+        self.raise(event);
+        Ok(())
     }
 }
 
