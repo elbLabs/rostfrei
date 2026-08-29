@@ -155,17 +155,13 @@ impl fmt::Display for DomainModelError {
                 location,
                 inventory_key,
             } => fmt_action_reference(formatter, action_id, reference, location, inventory_key),
-            Self::ActionRaisedEventOwnerNotAggregate { action_id } => write!(
-                formatter,
-                "Action raised-event owner violation: action {action_id:?} is not owned by an Aggregate"
-            ),
+            Self::ActionRaisedEventOwnerNotAggregate { action_id: id } => {
+                fmt_raised_owner(formatter, id, None)
+            }
             Self::ActionRaisedEventOwnerMismatch {
                 action_id,
                 event_id,
-            } => write!(
-                formatter,
-                "Action raised-event owner violation: action {action_id:?} declares event {event_id:?} owned by another Aggregate"
-            ),
+            } => fmt_raised_owner(formatter, action_id, Some(event_id)),
             Self::UnregisteredDecisionOwner { owner } => {
                 write!(formatter, "unregistered decision owner: {owner:?}")
             }
@@ -189,9 +185,7 @@ impl fmt::Display for DomainModelError {
             Self::InvariantDescriptorOwnerMismatch { id } => {
                 write!(formatter, "invariant descriptor owner mismatch: {id:?}")
             }
-            Self::DuplicateInvariantId { id } => {
-                write!(formatter, "duplicate InvariantId: {id:?}")
-            }
+            Self::DuplicateInvariantId { id } => fmt_duplicate(formatter, "InvariantId", id),
             Self::LifecycleExtensionOnlyAction {
                 lifecycle_id,
                 action_id,
@@ -238,13 +232,11 @@ impl fmt::Display for DomainModelError {
                 semantic,
             } => fmt_semantic_scalar_mismatch(formatter, *canonical, *semantic),
             Self::DuplicateDomainIdentityId { id } => {
-                write!(formatter, "duplicate DomainIdentityId: {id:?}")
+                fmt_duplicate(formatter, "DomainIdentityId", id)
             }
-            Self::DuplicateDomainEventId { id } => {
-                write!(formatter, "duplicate DomainEventId: {id:?}")
-            }
+            Self::DuplicateDomainEventId { id } => fmt_duplicate(formatter, "DomainEventId", id),
             Self::DuplicateDomainCommandId { id } => {
-                write!(formatter, "duplicate DomainCommandId: {id:?}")
+                fmt_duplicate(formatter, "DomainCommandId", id)
             }
             Self::DuplicateQueryId { id } => write!(formatter, "duplicate QueryId: {id:?}"),
         }
@@ -252,6 +244,31 @@ impl fmt::Display for DomainModelError {
 }
 
 impl Error for DomainModelError {}
+
+fn fmt_duplicate(
+    formatter: &mut fmt::Formatter<'_>,
+    kind: &str,
+    id: impl fmt::Debug,
+) -> fmt::Result {
+    write!(formatter, "duplicate {kind}: {id:?}")
+}
+
+fn fmt_raised_owner(
+    formatter: &mut fmt::Formatter<'_>,
+    action_id: &ActionId,
+    event_id: Option<&DomainEventId>,
+) -> fmt::Result {
+    match event_id {
+        None => write!(
+            formatter,
+            "Action raised-event owner violation: action {action_id:?} is not owned by an Aggregate"
+        ),
+        Some(event_id) => write!(
+            formatter,
+            "Action raised-event owner violation: action {action_id:?} declares event {event_id:?} owned by another Aggregate"
+        ),
+    }
+}
 
 fn fmt_action_reference(
     formatter: &mut fmt::Formatter<'_>,

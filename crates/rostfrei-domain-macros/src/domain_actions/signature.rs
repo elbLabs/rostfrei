@@ -115,7 +115,7 @@ pub fn parse_aggregate_instance(signature: &Signature) -> syn::Result<ParsedSign
             "executable aggregate action receivers cannot have an explicit lifetime",
         ));
     }
-    let input = parse_business_inputs(signature.inputs.iter().skip(1), 1, "aggregate")?;
+    let input = parse_business_inputs(signature.inputs.iter().skip(1), "aggregate")?;
     let parsed = parsed(None, input, signature);
     if !is_unit(&parsed.output) {
         return Err(syn::Error::new_spanned(
