@@ -69,6 +69,25 @@ The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual decisions are
 recorded in [`docs/adr`](docs/adr).
 
+## Development
+
+The repository pins Rust 1.98 with Clippy and rustfmt through
+[`rust-toolchain.toml`](rust-toolchain.toml).
+
+Enable the tracked Git hooks once per checkout:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The pre-commit hook runs Clippy for every workspace package, target, and feature:
+
+```sh
+cargo clippy --workspace --all-targets --all-features
+```
+
+A commit is rejected when Clippy reports an error.
+
 ## License
 
 Copyright (c) 2026 elbtech.dev.
