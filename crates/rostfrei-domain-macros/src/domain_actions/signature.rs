@@ -118,7 +118,7 @@ pub fn parse_aggregate_instance(signature: &Signature) -> syn::Result<ParsedSign
         ));
     }
     let input = parse_business_inputs(signature.inputs.iter().skip(1), 1, "aggregate")?;
-    let parsed = parsed(None, input, signature)?;
+    let parsed = parsed(None, input, signature);
     if !is_unit(&parsed.output) {
         return Err(syn::Error::new_spanned(
             &signature.output,
