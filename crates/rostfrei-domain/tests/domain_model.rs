@@ -75,6 +75,7 @@ struct MailboxOpened;
 struct TransferDenied;
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn compiles_explicit_domain_model_to_json() {
     let model = domain_model! {
         contexts: [Inbox],
@@ -86,7 +87,8 @@ fn compiles_explicit_domain_model_to_json() {
         commands: [],
         errors: [TransferDenied],
         query_groups: [],
-    };
+    }
+    .expect("explicit domain model should be valid");
 
     assert_eq!(
         model,
@@ -228,6 +230,7 @@ fn compiles_explicit_domain_model_to_json() {
                 "label": "Close mailbox",
                 "input": null,
                 "output": null,
+                "raises": [],
                 "error": null,
             }, {
                 "id": {
@@ -243,6 +246,7 @@ fn compiles_explicit_domain_model_to_json() {
                 "label": "Open mailbox",
                 "input": null,
                 "output": null,
+                "raises": [],
                 "error": null,
             }],
             "decisions": [],
@@ -273,7 +277,8 @@ fn supports_empty_declaration_lists() {
         commands: [],
         errors: [],
         query_groups: [],
-    };
+    }
+    .expect("empty domain model should be valid");
 
     assert!(
         model

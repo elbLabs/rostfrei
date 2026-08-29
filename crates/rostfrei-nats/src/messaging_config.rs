@@ -66,9 +66,13 @@ impl SubjectFilter {
         }
 
         let tokens = value.split('.').collect::<Vec<_>>();
+        let final_index = tokens
+            .len()
+            .checked_sub(1)
+            .ok_or(NatsError::Configuration)?;
         if tokens.iter().any(|token| token.is_empty())
             || tokens.iter().enumerate().any(|(index, token)| {
-                (*token == ">" && index + 1 != tokens.len())
+                (*token == ">" && index != final_index)
                     || (token.contains('>') && *token != ">")
                     || (token.contains('*') && *token != "*")
             })
@@ -139,6 +143,7 @@ impl fmt::Display for QueueGroup {
 pub struct MessagingTopology {
     application: ApplicationName,
     command: StreamName,
+    command_response: StreamName,
     integration_event: StreamName,
     quarantine: StreamName,
 }
@@ -150,8 +155,31 @@ impl MessagingTopology {
         integration_event_stream: StreamName,
         quarantine_stream: StreamName,
     ) -> Result<Self, NatsError> {
-        if command_stream == integration_event_stream
+        let command_response_stream = StreamName::new(format!(
+            "{}_COMMAND_RESPONSES",
+            application_stream_token(&application)
+        ))?;
+        Self::new_with_command_response_stream(
+            application,
+            command_stream,
+            command_response_stream,
+            integration_event_stream,
+            quarantine_stream,
+        )
+    }
+
+    pub fn new_with_command_response_stream(
+        application: ApplicationName,
+        command_stream: StreamName,
+        command_response_stream: StreamName,
+        integration_event_stream: StreamName,
+        quarantine_stream: StreamName,
+    ) -> Result<Self, NatsError> {
+        if command_stream == command_response_stream
+            || command_stream == integration_event_stream
             || command_stream == quarantine_stream
+            || command_response_stream == integration_event_stream
+            || command_response_stream == quarantine_stream
             || integration_event_stream == quarantine_stream
         {
             return Err(NatsError::Configuration);
@@ -159,6 +187,7 @@ impl MessagingTopology {
         Ok(Self {
             application,
             command: command_stream,
+            command_response: command_response_stream,
             integration_event: integration_event_stream,
             quarantine: quarantine_stream,
         })
@@ -166,9 +195,10 @@ impl MessagingTopology {
 
     pub fn for_application(application: &ApplicationName) -> Result<Self, NatsError> {
         let prefix = application_stream_token(application);
-        Self::new(
+        Self::new_with_command_response_stream(
             application.clone(),
             StreamName::new(format!("{prefix}_COMMANDS"))?,
+            StreamName::new(format!("{prefix}_COMMAND_RESPONSES"))?,
             StreamName::new(format!("{prefix}_INTEGRATION_EVENTS"))?,
             StreamName::new(format!("{prefix}_QUARANTINE"))?,
         )
@@ -182,6 +212,10 @@ impl MessagingTopology {
         &self.command
     }
 
+    pub const fn command_response_stream(&self) -> &StreamName {
+        &self.command_response
+    }
+
     pub const fn integration_event_stream(&self) -> &StreamName {
         &self.integration_event
     }
@@ -193,13 +227,14 @@ impl MessagingTopology {
     pub const fn stream_for(&self, kind: AddressKind) -> Option<&StreamName> {
         match kind {
             AddressKind::Command => Some(&self.command),
+            AddressKind::CommandResponse => Some(&self.command_response),
             AddressKind::IntegrationEvent => Some(&self.integration_event),
             AddressKind::Query => None,
         }
     }
 }
 
-pub(crate) fn application_stream_token(application: &ApplicationName) -> String {
+fn application_stream_token(application: &ApplicationName) -> String {
     application
         .as_str()
         .bytes()
@@ -239,7 +274,7 @@ impl ServerVersion {
         self.patch
     }
 
-    fn validate(self) -> Result<(), NatsError> {
+    const fn validate(self) -> Result<(), NatsError> {
         if self.major < 1 || self.minor < 0 || self.patch < 0 {
             return Err(NatsError::Configuration);
         }
@@ -333,7 +368,7 @@ impl NatsConnectionConfig {
         &self.client_name
     }
 
-    pub fn server_count(&self) -> usize {
+    pub const fn server_count(&self) -> usize {
         self.server_urls.len()
     }
 
@@ -376,17 +411,39 @@ impl fmt::Debug for NatsConnectionConfig {
 mod tests {
     use super::*;
 
+    const VALID_SERVER_VERSION: Result<(), NatsError> = ServerVersion::new(2, 10, 0).validate();
+    const INVALID_SERVER_VERSION: Result<(), NatsError> = ServerVersion::new(0, 10, 0).validate();
+
+    #[test]
+    fn server_versions_are_const_validated() {
+        assert!(VALID_SERVER_VERSION.is_ok());
+        assert!(INVALID_SERVER_VERSION.is_err());
+    }
+
     #[test]
     fn custom_topology_rejects_aliased_stream_roles() {
         let application = ApplicationName::new("fast-inbox").unwrap();
         let shared = StreamName::new("FAST_INBOX_SHARED").unwrap();
 
-        assert!(MessagingTopology::new(
-            application,
-            shared.clone(),
-            shared,
-            StreamName::new("FAST_INBOX_QUARANTINE").unwrap(),
-        )
-        .is_err());
+        assert!(
+            MessagingTopology::new(
+                application,
+                shared.clone(),
+                shared,
+                StreamName::new("FAST_INBOX_QUARANTINE").unwrap(),
+            )
+            .is_err()
+        );
+
+        assert!(
+            MessagingTopology::new_with_command_response_stream(
+                ApplicationName::new("fast-inbox").unwrap(),
+                StreamName::new("FAST_INBOX_COMMANDS").unwrap(),
+                StreamName::new("FAST_INBOX_COMMANDS").unwrap(),
+                StreamName::new("FAST_INBOX_INTEGRATION_EVENTS").unwrap(),
+                StreamName::new("FAST_INBOX_QUARANTINE").unwrap(),
+            )
+            .is_err()
+        );
     }
 }

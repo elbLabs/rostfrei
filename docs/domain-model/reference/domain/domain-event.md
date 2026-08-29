@@ -15,9 +15,9 @@ It describes a fact that happened, not a command or request to perform work.
 
 An event belongs to exactly one [Aggregate](aggregate.md).
 
-An aggregate action returns only events owned by that exact Aggregate, after its
-behavior succeeds and all required invariants hold. It cannot return an event
-owned by another Aggregate, including one in the same Context.
+An executable Aggregate Action explicitly raises only events owned by that exact
+Aggregate, after its denial checks and required invariants succeed. It cannot
+raise an event owned by another Aggregate, including one in the same Context.
 
 Internal [Entity](entity.md) and [Value Object](value-object.md) actions do not
 emit events directly. Their aggregate emits the resulting domain event.

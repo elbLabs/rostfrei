@@ -241,9 +241,11 @@ fn duplicate_command_across_modules_fails_atomically() {
         }
     );
     assert!(registry.module("overlapping").is_none());
-    assert!(registry
-        .command("new-aggregate", "new-command", 1)
-        .is_none());
+    assert!(
+        registry
+            .command("new-aggregate", "new-command", 1)
+            .is_none()
+    );
     assert_eq!(registry.modules().count(), 1);
     assert_eq!(registry.commands().count(), 2);
     assert_eq!(registry.aggregates().collect::<Vec<_>>(), ["bank-account"]);

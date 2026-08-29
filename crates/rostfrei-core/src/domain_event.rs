@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     Aggregate, AggregateType, Event, EventCodec, EventCodecErrorKind, EventVariant, JsonEventCodec,
-    RecordedEvent, MAX_EVENT_TYPE_LEN,
+    MAX_EVENT_TYPE_LEN, RecordedEvent,
 };
 
 pub struct CommittedDomainEvent<'a, E> {
@@ -14,7 +14,7 @@ pub struct CommittedDomainEvent<'a, E> {
 }
 
 impl<'a, E> CommittedDomainEvent<'a, E> {
-    fn new(recorded: &'a RecordedEvent, event: E) -> Self {
+    const fn new(recorded: &'a RecordedEvent, event: E) -> Self {
         Self { recorded, event }
     }
 

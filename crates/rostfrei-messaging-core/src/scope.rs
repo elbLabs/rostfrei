@@ -1,10 +1,10 @@
 use std::{fmt, str::FromStr};
 
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{
-    address::{CommandAddress, IntegrationEventAddress, QueryAddress},
     ConsumerName, ContractError, ContractErrorKind, DurableName,
+    address::{CommandAddress, CommandResponseAddress, IntegrationEventAddress, QueryAddress},
 };
 
 pub const MAX_SCOPE_NAME_BYTES: usize = 64;
@@ -52,7 +52,7 @@ pub struct BoundedContext {
 }
 
 impl BoundedContext {
-    pub fn new(application: ApplicationName, name: BoundedContextName) -> Self {
+    pub const fn new(application: ApplicationName, name: BoundedContextName) -> Self {
         Self { application, name }
     }
 
@@ -73,6 +73,13 @@ impl BoundedContext {
         name: &str,
     ) -> Result<IntegrationEventAddress, ContractError> {
         IntegrationEventAddress::new(self.application.as_str(), self.name.as_str(), name)
+    }
+
+    pub fn command_response_address(
+        &self,
+        name: &str,
+    ) -> Result<CommandResponseAddress, ContractError> {
+        CommandResponseAddress::new(self.application.as_str(), self.name.as_str(), name)
     }
 
     pub fn query_address(&self, name: &str) -> Result<QueryAddress, ContractError> {
@@ -106,10 +113,7 @@ impl BoundedContext {
     }
 }
 
-pub(crate) fn validate_scope_segment(
-    value: &str,
-    field: &'static str,
-) -> Result<(), ContractError> {
+pub fn validate_scope_segment(value: &str, field: &'static str) -> Result<(), ContractError> {
     validate_scope_name(value.to_owned(), field).map(|_| ())
 }
 
@@ -197,6 +201,16 @@ mod tests {
         assert_eq!(
             context.command_address("evaluate").unwrap().as_str(),
             "fast-inbox.command.commercial-access.evaluate"
+        );
+        assert_eq!(
+            context
+                .command_response_address("a".repeat(64).as_str())
+                .unwrap()
+                .as_str(),
+            format!(
+                "fast-inbox.command-response.commercial-access.{}",
+                "a".repeat(64)
+            )
         );
         assert_eq!(
             context

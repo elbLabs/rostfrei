@@ -9,8 +9,9 @@ kind: reference
 
 An **Action** is a named domain operation.
 
-It receives input, evaluates its domain behavior, and produces an allowed result
-or a modeled denial.
+It receives domain input, evaluates its domain behavior, and either completes or
+returns a modeled denial. An executable Aggregate Action changes state only by
+explicitly raising Domain Events.
 
 ## Ownership
 
@@ -37,15 +38,16 @@ attached to their owner:
 
 ```rust
 mod contracts {
-    use domain::domain_actions;
+    use rostfrei::domain_actions;
 
     #[domain_actions(aggregate(instance = MailboxAggregateActions))]
     pub trait MailboxActions {
-        #[action(id = "rename", label = "Rename mailbox")]
-        fn rename(
-            root: &super::MailboxRoot,
-            input: String,
-        ) -> Result<super::MailboxRenamed, super::RenameDenied>;
+        #[action(
+            id = "rename",
+            label = "Rename mailbox",
+            raises = [super::MailboxRenamed]
+        )]
+        fn rename(&mut self, input: String) -> Result<(), super::RenameDenied>;
     }
 }
 
@@ -56,67 +58,70 @@ mod contracts {
     context = Mail,
     root = MailboxRoot,
     actions = [contracts::MailboxActions],
+    events = [MailboxRenamed],
 )]
 pub struct Mailbox;
 
-impl contracts::MailboxActions for Mailbox {
-    fn rename(
-        root: &MailboxRoot,
-        input: String,
-    ) -> Result<MailboxRenamed, RenameDenied> {
+impl contracts::MailboxAggregateActions for AggregateInstance<Mailbox> {
+    fn rename(&mut self, input: String) -> Result<(), RenameDenied> {
         validate_name(&input)?;
-        Ok(MailboxRenamed {
-            mailbox_id: root.id.clone(),
+
+        self.raise(MailboxRenamed {
+            mailbox_id: self.state().id.clone(),
             name: input,
-        })
+        });
+        Ok(())
     }
 }
 ```
 
 The `instance` option generates the executable extension trait named by the
-option. Its method evaluates the authored Action against immutable state and
-raises, applies, and records the returned event only on success:
+option. The application implements that trait for `AggregateInstance<Aggregate>`
+and explicitly calls `self.raise(event)`. `raise` applies the event immediately
+and records it as uncommitted:
 
 ```rust
 aggregate.rename(name)?;
 ```
 
 Every contract must name its owner kind explicitly: use
-`#[domain_actions(aggregate)]` for a public Aggregate contract,
+`#[domain_actions(aggregate(instance = TraitName))]` for an executable public
+Aggregate contract, `#[domain_actions(aggregate)]` for a metadata-only Aggregate
+contract,
 `#[domain_actions(entity)]` for an internal Entity contract,
 `#[domain_actions(value_object)]` for an internal Value Object contract, or
 `#[domain_actions(domain_service)]` for a public Domain Service contract. Bare
 `#[domain_actions]` is not an action contract declaration.
 
 A contract trait is non-generic, has no existing supertraits, and contains at
-least one method. Every method has exactly one
-`#[action(id = "...", label = "...")]` and no default body; other trait items
-are rejected. Executable Aggregate methods begin with `root: &RootType`.
-Metadata-only Aggregate methods begin with `root: &mut RootType`. Entity methods
-begin with `&self` or `&mut self`. Value Object methods are either associated
-constructors with exactly one `input` or transformations taking `self` by value
-and zero or one `input`. Domain Service methods are associated functions with no
-receiver and zero or one `input`.
+least one method. Every method has exactly one `#[action(...)]` and no default
+body; other trait items are rejected. Executable Aggregate methods begin with
+`&mut self` and declare a non-empty `raises = [EventType, ...]`. Metadata-only
+Aggregate methods begin with `root: &mut RootType`. Entity methods begin with
+`&self` or `&mut self`. Value Object methods are either associated constructors
+with exactly one `input` or transformations taking `self` by value and zero or
+one `input`. Domain Service methods are associated functions with no receiver
+and zero or one `input`.
 
 Each `actions = [TraitPath, ...]` entry on an Aggregate, Entity, Value Object, or
 Domain Service attaches one contract. Paths cannot contain generic arguments,
 use qualified-self syntax, or be repeated. The attached contract kind must match
-the owner, and the owner must implement every attached trait. Implementing a
-trait does not attach it.
+the owner. For an executable Aggregate contract,
+`AggregateInstance<Aggregate>` must implement the generated instance trait.
+Implementing a trait does not attach it.
 
-Calls follow ordinary Rust trait rules. Fully qualified syntax works without an
-import:
-
-```rust
-<Mailbox as contracts::MailboxActions>::rename(&mut root, name);
-```
-
-For owner-associated or method-call syntax, bring the trait into scope:
+Bring the generated instance trait into scope to call the Action on
+`AggregateInstance`:
 
 ```rust
-use contracts::MailboxActions as _;
-Mailbox::rename(&mut root, name);
+use contracts::MailboxAggregateActions as _;
+aggregate.rename(name)?;
 ```
+
+One executable Action may explicitly raise zero or more events, including
+multiple event types. Every raise immediately updates state, so later code and
+later Actions see the resulting state. If the command handler ultimately
+rejects, the executor discards all staged events.
 
 Entity contracts similarly use method-call syntax once their trait is in scope.
 For a Value Object contract, importing the trait enables owner-associated
@@ -167,9 +172,10 @@ extension's owner is registered, its descriptor slice is non-empty, every
 descriptor owner exactly equals the declared owner's `ActionOwnerId`, and every
 `ActionId` is unique across attached contracts and all extensions.
 
-The Rust signature is the action contract. Action attributes contain only the
-descriptor metadata `id` and `label`; inputs, successful outputs, and errors are
-not repeated in attributes.
+The Rust signature is the action contract. Action attributes contain descriptor
+metadata. Every Action declares `id` and `label`; executable Aggregate Actions
+also declare the event types they may raise through `raises`. The macro cannot
+infer event types from a separate implementation body.
 
 Action inputs are canonical scalars or Value Objects. An Aggregate Action can
 also accept a Domain Identity belonging to an Entity in that Aggregate. Commands
@@ -190,8 +196,9 @@ Supported signatures are:
   `root: &mut RootType`, followed by zero or one `input`. `RootType` must equal
   `<Owner as AggregateType>::Root`.
 - Executable Aggregate contract trait declared with `aggregate(instance = ...)`:
-  associated function whose first parameter is immutable `root: &RootType`,
-  followed by zero or one `input`.
+  method with an `&mut self` receiver followed by zero or one `input`. It returns
+  `()` or `Result<(), Error>` and declares one or more possible event types with
+  `raises = [...]`.
 - Entity contract trait: method with an `&self` or `&mut self` receiver, followed
   by zero or one `input`. Explicit receiver lifetimes and typed receivers are
   unsupported.
@@ -214,21 +221,26 @@ Objects, Domain Events, and wrapped outputs such as `Option<Self>` or `Vec<Self>
 do not. Its error, when present, must be owned by that exact Value Object.
 
 Other successful outputs may be unit, a scalar, a Value Object, or any supported
-`Option` and `Vec` nesting of those types. An Aggregate Action may also return a
-Domain Event owned by that exact Aggregate. A Domain Service Action may return
-an event owned by any Aggregate whose Context is exactly the service Context.
-Entity Actions cannot return Domain Events. These event rules apply recursively
-through every `Option` and `Vec` wrapper.
+`Option` and `Vec` nesting of those types. A metadata-only Aggregate Action may
+also return a Domain Event owned by that exact Aggregate. A Domain Service Action
+may return an event owned by any Aggregate whose Context is exactly the service
+Context. Entity Actions cannot return Domain Events. These event rules apply
+recursively through every `Option` and `Vec` wrapper.
 
 Derived output types implement these contracts automatically. A manual
 `ActionOutputType<Contract>` implementation is a trusted extension of the
 compiler contract and is responsible for preserving the same ownership rules.
 
-An executable Aggregate Action is intentionally narrower: its successful output
-is one direct Domain Event owned by that Aggregate. The generated instance
-adapter converts that event into the Aggregate's executable event type. Unit,
-scalar, Value Object, `Option`, and `Vec` outputs remain available to descriptive
-Aggregate contracts but cannot be used by the generated event-sourced adapter.
+An executable Aggregate Action is intentionally different: its successful
+output is unit, while the implementation explicitly raises zero or more events.
+Every type in `raises` must be owned and registered by that exact Aggregate.
+`raises` declares possible event types, not cardinality or runtime order; the
+implementation may conditionally raise a type or raise it more than once.
+The macro validates every declared type but does not inspect the implementation
+body, so keeping the declaration and explicit `raise` calls aligned remains the
+author's responsibility. `AggregateInstance::raise` independently rejects event
+types not registered by the Aggregate. Metadata-only Aggregate contracts retain
+their descriptive output forms.
 
 ## Decisions
 
@@ -302,17 +314,19 @@ ActionDescriptor {
     },
     label: "Assign todo",
     input: Some(ActionInputDescriptor::ValueObject(AssignTodoInput::DESCRIPTOR.id)),
-    output: Some(ActionOutputDescriptor::DomainEvent(TodoAssigned::DESCRIPTOR.id)),
+    output: None,
+    raises: &[TodoAssigned::DESCRIPTOR.id],
     error: Some(TodoAssignmentDenied::DESCRIPTOR.id),
 }
 ```
 
-Compiled JSON uses `input`, `output`, and `error` on every action, with `null`
-for absent contracts. Inputs reference scalar, Value Object, or Domain Identity
-contracts.
+Compiled JSON uses `input`, `output`, `raises`, and `error` on every action, with
+`null` for absent singular contracts and `[]` for no raised event declarations.
+Inputs reference scalar, Value Object, or Domain Identity contracts.
 Successful values preserve optional/list wrappers and reference scalar, Value
 Object, or Domain Event contracts by kind. Errors are projected as
-`DomainErrorId` references.
+`DomainErrorId` references. `raises` contains `DomainEventId` references in
+declaration order.
 
 ## Boundaries
 

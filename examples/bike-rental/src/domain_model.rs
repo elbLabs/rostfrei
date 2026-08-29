@@ -7,7 +7,7 @@ use crate::rental::{
     RentalEligibilityInput, RentalFleet, RentalFleetAggregate,
 };
 
-pub fn domain_model() -> serde_json::Value {
+pub fn domain_model() -> Result<serde_json::Value, rostfrei::DomainModelError> {
     domain_model! {
         contexts: [BikeRental],
         aggregates: [RentalFleetAggregate],

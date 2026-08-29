@@ -6,10 +6,11 @@ Accepted; address and topology ownership partially superseded by ADR 0015.
 
 ## Decision
 
-`rostfrei-messaging-core` owns validated command, integration-event, and query
-addresses; bounded envelopes; correlation and causation metadata; publishing
-ports; consumer dispositions; and stable query error classifications. It has no
-broker dependency.
+`rostfrei-messaging-core` owns validated command, command-response,
+integration-event, and query addresses; bounded envelopes; correlation and
+causation metadata; publishing and durable response-reading ports; consumer
+dispositions; and stable application error classifications. It has no broker
+dependency.
 
 `rostfrei-nats` owns connection lifecycle, JetStream publication with PubAck
 confirmation, durable pull consumers, ACK/NAK/term translation, Core NATS

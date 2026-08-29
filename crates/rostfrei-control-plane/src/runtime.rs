@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use domain::{JsonCommandPayload, JsonErrorPayload};
 use rostfrei_core::{
     Aggregate, AggregateId, ContentFingerprint, Event, EventCodec, EventHistory, ExecutionMetadata,
@@ -11,7 +11,7 @@ use rostfrei_registry::{CommandDefinition, CommandDescriptor, DomainRegistry, Re
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::operation::PredictedDomainEvent;
+use crate::{DispatchAdapter, operation::PredictedDomainEvent};
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error("{message}")]
@@ -91,10 +91,20 @@ pub enum RuntimeRegistrationError {
         command: &'static str,
         schema_version: u32,
     },
+    #[error("command `{command}` version {schema_version} already has a dispatch binding")]
+    DuplicateDispatchBinding {
+        command: &'static str,
+        schema_version: u32,
+    },
+    #[error("command `{command}` version {schema_version} has no simulation binding")]
+    DispatchWithoutSimulationBinding {
+        command: &'static str,
+        schema_version: u32,
+    },
 }
 
 #[derive(Clone, Debug, Error)]
-pub(crate) enum RuntimeSimulationError {
+pub enum RuntimeSimulationError {
     #[error("invalid command payload: {0}")]
     InvalidPayload(CommandWireCodecError),
     #[error(transparent)]
@@ -105,7 +115,7 @@ pub(crate) enum RuntimeSimulationError {
     StreamVersionOverflow,
 }
 
-pub(crate) enum RuntimeDecision {
+pub enum RuntimeDecision {
     Accepted {
         base_stream_version: u64,
         events: Vec<PredictedDomainEvent>,
@@ -117,7 +127,7 @@ pub(crate) enum RuntimeDecision {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct CommandKey {
+pub struct CommandKey {
     pub aggregate_type: String,
     pub command: String,
     pub schema_version: u32,
@@ -138,8 +148,10 @@ impl CommandKey {
 }
 
 #[async_trait]
-pub(crate) trait ErasedCommandSimulator: Send + Sync {
+pub trait ErasedCommandSimulator: Send + Sync {
     fn descriptor(&self) -> &CommandDescriptor;
+
+    fn validate_payload(&self, payload: &Value) -> Result<(), CommandWireCodecError>;
 
     async fn simulate(
         &self,
@@ -174,6 +186,10 @@ where
 {
     fn descriptor(&self) -> &CommandDescriptor {
         &self.descriptor
+    }
+
+    fn validate_payload(&self, payload: &Value) -> Result<(), CommandWireCodecError> {
+        self.wire_codec.decode(payload).map(|_| ())
     }
 
     async fn simulate(
@@ -235,9 +251,10 @@ fn predicted_event(
     })
 }
 
-pub(crate) struct RuntimeBindings {
+pub struct RuntimeBindings {
     pub registry: DomainRegistry,
     pub simulators: HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
+    pub dispatchers: HashMap<CommandKey, Arc<dyn DispatchAdapter>>,
 }
 
 impl RuntimeBindings {
@@ -245,6 +262,7 @@ impl RuntimeBindings {
         Self {
             registry,
             simulators: HashMap::new(),
+            dispatchers: HashMap::new(),
         }
     }
 
@@ -336,9 +354,38 @@ impl RuntimeBindings {
         }
         Ok(())
     }
+
+    pub fn register_dispatch<Command>(
+        &mut self,
+        adapter: Arc<dyn DispatchAdapter>,
+    ) -> Result<(), RuntimeRegistrationError>
+    where
+        Command: CommandDefinition,
+    {
+        let descriptor = Command::descriptor();
+        let key = CommandKey::new(
+            descriptor.aggregate_type,
+            Command::COMMAND_NAME,
+            Command::SCHEMA_VERSION,
+        );
+        if !self.simulators.contains_key(&key) {
+            return Err(RuntimeRegistrationError::DispatchWithoutSimulationBinding {
+                command: Command::COMMAND_NAME,
+                schema_version: Command::SCHEMA_VERSION,
+            });
+        }
+        if self.dispatchers.contains_key(&key) {
+            return Err(RuntimeRegistrationError::DuplicateDispatchBinding {
+                command: Command::COMMAND_NAME,
+                schema_version: Command::SCHEMA_VERSION,
+            });
+        }
+        self.dispatchers.insert(key, adapter);
+        Ok(())
+    }
 }
 
-pub(crate) fn stream_id(
+pub fn stream_id(
     descriptor: &CommandDescriptor,
     aggregate_id: AggregateId,
 ) -> Result<StreamId, rostfrei_core::IdentityError> {

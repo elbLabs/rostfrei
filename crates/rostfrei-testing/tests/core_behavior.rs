@@ -1,6 +1,9 @@
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc, Mutex,
+use std::{
+    fmt,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use async_trait::async_trait;
@@ -15,8 +18,44 @@ use rostfrei_core::{
 };
 use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_messaging_core::{CausationId, CorrelationId};
-use rostfrei_testing::{event_store_contract, given, DomainEventHandlerHarness};
+use rostfrei_testing::{DomainEventHandlerHarness, event_store_contract, given};
 use serde::{Deserialize, Serialize};
+
+type TestResult<T = ()> = Result<T, TestError>;
+
+#[derive(Debug)]
+enum TestError {
+    InvalidFixture {
+        context: &'static str,
+        message: String,
+    },
+    Operation {
+        context: &'static str,
+        message: String,
+    },
+}
+
+impl fmt::Display for TestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidFixture { context, message } => {
+                write!(formatter, "{context}: invalid test fixture: {message}")
+            }
+            Self::Operation { context, message } => {
+                write!(formatter, "{context}: test operation failed: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TestError {}
+
+fn fixture_error(context: &'static str, error: impl fmt::Display) -> TestError {
+    TestError::InvalidFixture {
+        context,
+        message: error.to_string(),
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ImportProvenance {
@@ -69,7 +108,9 @@ impl Aggregate for Account {
                 state.imported = true;
                 state.balance = *opening_balance;
             }
-            AccountEvent::Credited { amount } => state.balance += amount,
+            AccountEvent::Credited { amount } => {
+                state.balance = state.balance.wrapping_add(*amount);
+            }
             AccountEvent::BalanceObserved { balance } => {
                 state.last_observed_balance = Some(*balance);
             }
@@ -295,7 +336,7 @@ impl Initialize<AutomaticAccountDefinition> for AutomaticAccountRoot {
 
 impl Apply<MoneyDeposited> for AutomaticAccountRoot {
     fn apply(&mut self, event: &MoneyDeposited) {
-        self.balance += event.amount;
+        self.balance = self.balance.wrapping_add(event.amount);
     }
 }
 
@@ -330,7 +371,12 @@ impl DomainEventHandler<MoneyDeposited> for RecordingAutomaticEventHandler {
     ) -> Result<(), DomainEventHandlerError> {
         self.events
             .lock()
-            .expect("automatic event recording lock")
+            .map_err(|error| {
+                DomainEventHandlerError::new(
+                    DomainEventHandlerErrorKind::OperatorBlocking,
+                    format!("automatic event recording lock was poisoned: {error}"),
+                )
+            })?
             .push(event.event().clone());
         Ok(())
     }
@@ -342,14 +388,14 @@ struct RecordingDomainEventHandler {
 }
 
 impl RecordingDomainEventHandler {
-    fn succeeding() -> Self {
+    const fn succeeding() -> Self {
         Self {
             failure: None,
             handled: Mutex::new(Vec::new()),
         }
     }
 
-    fn failing(kind: DomainEventHandlerErrorKind) -> Self {
+    const fn failing(kind: DomainEventHandlerErrorKind) -> Self {
         Self {
             failure: Some(kind),
             handled: Mutex::new(Vec::new()),
@@ -368,7 +414,12 @@ impl DomainEventHandler<AccountEvent> for RecordingDomainEventHandler {
         }
         self.handled
             .lock()
-            .expect("handler recording lock")
+            .map_err(|error| {
+                DomainEventHandlerError::new(
+                    DomainEventHandlerErrorKind::OperatorBlocking,
+                    format!("handler recording lock was poisoned: {error}"),
+                )
+            })?
             .push((event.event().clone(), event.recorded().clone()));
         Ok(())
     }
@@ -443,19 +494,26 @@ fn decode_json<T: for<'de> Deserialize<'de>>(payload: &[u8]) -> Result<T, EventC
     })
 }
 
-fn stream(id: &str) -> StreamId {
-    StreamId::new(
-        AggregateType::new("Account").expect("valid aggregate type"),
-        AggregateId::new(id).expect("valid aggregate id"),
-    )
+fn stream(id: &str) -> TestResult<StreamId> {
+    let aggregate_type = AggregateType::new("Account")
+        .map_err(|error| fixture_error("account aggregate type", error))?;
+    let aggregate_id =
+        AggregateId::new(id).map_err(|error| fixture_error("account aggregate ID", error))?;
+    Ok(StreamId::new(aggregate_type, aggregate_id))
 }
 
-fn metadata(stream: &StreamId, operation: &str, command_content: &str) -> ExecutionMetadata {
-    ExecutionMetadata::new(
+fn metadata(
+    stream: &StreamId,
+    operation: &str,
+    command_content: &str,
+) -> TestResult<ExecutionMetadata> {
+    let operation_id = OperationId::new(operation)
+        .map_err(|error| fixture_error("account operation ID", error))?;
+    Ok(ExecutionMetadata::new(
         stream.clone(),
-        OperationId::new(operation).expect("valid operation id"),
+        operation_id,
         ContentFingerprint::digest(command_content),
-    )
+    ))
 }
 
 fn provenance() -> ImportProvenance {
@@ -473,10 +531,29 @@ async fn in_memory_store_satisfies_reusable_contract() {
 }
 
 #[tokio::test]
+async fn reusable_contract_reports_errors_and_legacy_wrapper_fails_closed() {
+    let result = event_store_contract::try_run(|| InMemoryEventStore::with_capacity(0)).await;
+    assert!(matches!(
+        result,
+        Err(event_store_contract::ContractTestError::Store {
+            context: "NoStream should append to an absent stream",
+            ..
+        })
+    ));
+
+    let assertion = tokio::spawn(async {
+        event_store_contract::run(|| InMemoryEventStore::with_capacity(0)).await;
+    })
+    .await;
+    assert!(matches!(assertion, Err(error) if error.is_panic()));
+}
+
+#[tokio::test]
 async fn domain_event_handlers_decode_typed_events_preserve_metadata_and_classify_results() {
     let correlation = CorrelationId::new("correlation-1").expect("correlation identity");
     let causation = CausationId::new("command-1").expect("causation identity");
     let event = recorded_account_event("account-credited", 1, br#"{"amount":7}"#)
+        .expect("valid credited account event fixture")
         .with_correlation_id(correlation.clone())
         .with_causation_id(causation.clone());
     let handler = Arc::new(RecordingDomainEventHandler::succeeding());
@@ -500,9 +577,11 @@ async fn domain_event_handlers_decode_typed_events_preserve_metadata_and_classif
         assert_eq!(records[0].1.causation_id(), Some(&causation));
         assert_eq!(records[0].1.commit_event_ordinal(), 0);
         assert_eq!(records[0].1.commit_event_count(), 1);
+        drop(records);
     }
 
-    let ignored = recorded_account_event("account-debited", 1, br#"{"amount":2}"#);
+    let ignored = recorded_account_event("account-debited", 1, br#"{"amount":2}"#)
+        .expect("valid unregistered account event fixture");
     assert_eq!(
         harness
             .handle(&ignored)
@@ -577,7 +656,8 @@ async fn expected_domain_events_fail_closed_for_schema_payload_and_registration_
         DomainEventRegistrationError::AggregateConflict { .. }
     ));
 
-    let unsupported = recorded_account_event("account-credited", 99, br#"{"amount":1}"#);
+    let unsupported = recorded_account_event("account-credited", 99, br#"{"amount":1}"#)
+        .expect("valid unsupported-schema account event fixture");
     assert_eq!(
         harness
             .handle(&unsupported)
@@ -586,7 +666,8 @@ async fn expected_domain_events_fail_closed_for_schema_payload_and_registration_
             .kind(),
         DomainEventHandlerErrorKind::InvalidCommittedEvent
     );
-    let malformed = recorded_account_event("account-credited", 1, b"not-json");
+    let malformed = recorded_account_event("account-credited", 1, b"not-json")
+        .expect("valid malformed-payload account event fixture");
     assert_eq!(
         harness
             .handle(&malformed)
@@ -597,9 +678,13 @@ async fn expected_domain_events_fail_closed_for_schema_payload_and_registration_
     );
 }
 
-fn recorded_account_event(event_type: &str, schema_version: u32, payload: &[u8]) -> RecordedEvent {
-    let stream = stream("handled-account");
-    let metadata = metadata(&stream, "handled-operation", "handled-content");
+fn recorded_account_event(
+    event_type: &str,
+    schema_version: u32,
+    payload: &[u8],
+) -> TestResult<RecordedEvent> {
+    let stream = stream("handled-account")?;
+    let metadata = metadata(&stream, "handled-operation", "handled-content")?;
     RecordedEvent::new(
         stream,
         StreamVersion::new(1),
@@ -611,7 +696,7 @@ fn recorded_account_event(event_type: &str, schema_version: u32, payload: &[u8])
         schema_version,
         payload,
     )
-    .expect("recorded account event")
+    .map_err(|error| fixture_error("recorded account event", error))
 }
 
 #[test]
@@ -620,7 +705,7 @@ fn given_when_then_exposes_live_state_and_replay_equivalence() {
         opening_balance: 10,
         provenance: provenance(),
     }];
-    let stream = stream("given-account");
+    let stream = stream("given-account").expect("valid given account stream fixture");
     let then = given::<Account, _>(&stream, history.clone())
         .when(&AccountCommand::CreditThenObserve { amount: 5 });
 
@@ -644,9 +729,10 @@ fn given_when_then_exposes_live_state_and_replay_equivalence() {
 
 #[tokio::test]
 async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
-    let stream = stream("imported-account");
+    let stream = stream("imported-account").expect("valid imported account stream fixture");
     let executor = Executor::with_codec(InMemoryEventStore::new(), AccountCodec);
-    let import_metadata = metadata(&stream, "import-operation", "stable-import-command");
+    let import_metadata = metadata(&stream, "import-operation", "stable-import-command")
+        .expect("valid import execution metadata fixture");
     let import = AccountCommand::Import {
         opening_balance: 10,
         provenance: provenance(),
@@ -668,6 +754,7 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
     assert_eq!(imported_payload.import_batch, "migration-17");
 
     let credit_metadata = metadata(&stream, "credit-operation", "credit-five-and-observe")
+        .expect("valid credit execution metadata fixture")
         .with_correlation_id(
             CorrelationId::new("credit-correlation").expect("credit correlation identity"),
         )
@@ -697,6 +784,7 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
     assert_eq!(retried.events(), credited.events());
 
     let changed_causation = metadata(&stream, "credit-operation", "credit-five-and-observe")
+        .expect("valid conflicting execution metadata fixture")
         .with_correlation_id(
             CorrelationId::new("credit-correlation").expect("credit correlation identity"),
         )
@@ -720,7 +808,8 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
         .expect("load should succeed");
     let rejection = executor
         .execute::<Account, _>(
-            metadata(&stream, "rejected-operation", "record-then-reject"),
+            metadata(&stream, "rejected-operation", "record-then-reject")
+                .expect("valid rejected execution metadata fixture"),
             &AccountCommand::RecordThenReject,
         )
         .await
@@ -750,7 +839,8 @@ async fn executor_uses_derived_json_events_without_codec_configuration() {
 
     let first = executor
         .execute::<AutomaticAccountDefinition, _>(
-            metadata(&stream, "automatic-deposit-1", "deposit-seven"),
+            metadata(&stream, "automatic-deposit-1", "deposit-seven")
+                .expect("valid first automatic deposit metadata fixture"),
             &DepositMoney { amount: 7 },
         )
         .await
@@ -788,7 +878,8 @@ async fn executor_uses_derived_json_events_without_codec_configuration() {
 
     let second = executor
         .execute::<AutomaticAccountDefinition, _>(
-            metadata(&stream, "automatic-deposit-2", "deposit-three"),
+            metadata(&stream, "automatic-deposit-2", "deposit-three")
+                .expect("valid second automatic deposit metadata fixture"),
             &DepositMoney { amount: 3 },
         )
         .await
@@ -801,12 +892,13 @@ async fn executor_uses_derived_json_events_without_codec_configuration() {
 
 #[tokio::test]
 async fn executor_returns_an_accepted_no_events_receipt_without_appending() {
-    let stream = stream("no-op-execution");
+    let stream = stream("no-op-execution").expect("valid no-op execution stream fixture");
     let executor = Executor::with_codec(InMemoryEventStore::new(), AccountCodec);
 
     let result: CommandResult<AccountRejection> = executor
         .execute::<Account, _>(
-            metadata(&stream, "no-op-execution", "no-op"),
+            metadata(&stream, "no-op-execution", "no-op")
+                .expect("valid no-op execution metadata fixture"),
             &AccountCommand::NoOp,
         )
         .await;
@@ -815,22 +907,25 @@ async fn executor_returns_an_accepted_no_events_receipt_without_appending() {
         result.expect("no-op execution should complete"),
         CommandOutcome::Accepted(CommandReceipt::NoEvents)
     );
-    assert!(executor
-        .store()
-        .load(&stream)
-        .await
-        .expect("load no-op history")
-        .is_empty());
+    assert!(
+        executor
+            .store()
+            .load(&stream)
+            .await
+            .expect("load no-op history")
+            .is_empty()
+    );
 }
 
 #[tokio::test]
 async fn simulation_replays_history_and_returns_encoded_predictions_without_appending() {
-    let stream = stream("simulated-account");
+    let stream = stream("simulated-account").expect("valid simulated account stream fixture");
     let store = InMemoryEventStore::new();
     let executor = Executor::with_codec(store.clone(), AccountCodec);
     let seed = executor
         .execute::<Account, _>(
-            metadata(&stream, "simulation-seed", "import-ten"),
+            metadata(&stream, "simulation-seed", "import-ten")
+                .expect("valid simulation seed metadata fixture"),
             &AccountCommand::Import {
                 opening_balance: 10,
                 provenance: provenance(),
@@ -847,7 +942,8 @@ async fn simulation_replays_history_and_returns_encoded_predictions_without_appe
         &stream,
         "simulated-credit",
         "simulated-credit-five-and-observe",
-    );
+    )
+    .expect("valid credit simulation metadata fixture");
 
     let outcome = executor
         .simulate::<Account, _>(
@@ -880,12 +976,13 @@ async fn simulation_replays_history_and_returns_encoded_predictions_without_appe
 
 #[tokio::test]
 async fn simulation_returns_typed_rejection_and_discards_pending_events_without_appending() {
-    let stream = stream("rejected-simulation");
+    let stream = stream("rejected-simulation").expect("valid rejected simulation stream fixture");
     let executor = Executor::with_codec(ForcedConflictStore::new(1), AccountCodec);
 
     let outcome = executor
         .simulate::<Account, _>(
-            metadata(&stream, "simulated-rejection", "record-then-reject"),
+            metadata(&stream, "simulated-rejection", "record-then-reject")
+                .expect("valid rejected simulation metadata fixture"),
             &AccountCommand::RecordThenReject,
         )
         .await
@@ -897,23 +994,26 @@ async fn simulation_returns_typed_rejection_and_discards_pending_events_without_
         &SimulationDecision::Rejected(AccountRejection::Deliberate)
     );
     assert_eq!(executor.store().append_attempts.load(Ordering::Relaxed), 0);
-    assert!(executor
-        .store()
-        .load(&stream)
-        .await
-        .expect("rejected simulation history")
-        .is_empty());
+    assert!(
+        executor
+            .store()
+            .load(&stream)
+            .await
+            .expect("rejected simulation history")
+            .is_empty()
+    );
 }
 
 #[tokio::test]
 async fn simulation_accepts_zero_events_with_read_only_object_safe_history() {
-    let stream = stream("no-op-simulation");
+    let stream = stream("no-op-simulation").expect("valid no-op simulation stream fixture");
     let history: Arc<dyn EventHistory> = Arc::new(EmptyEventHistory);
     let executor = Executor::with_codec(history, AccountCodec);
 
     let outcome = executor
         .simulate::<Account, _>(
-            metadata(&stream, "simulated-no-op", "no-op"),
+            metadata(&stream, "simulated-no-op", "no-op")
+                .expect("valid no-op simulation metadata fixture"),
             &AccountCommand::NoOp,
         )
         .await
@@ -928,7 +1028,7 @@ async fn simulation_accepts_zero_events_with_read_only_object_safe_history() {
 
 #[tokio::test]
 async fn executor_fails_closed_for_unknown_and_malformed_events() {
-    let unknown_stream = stream("unknown-codec");
+    let unknown_stream = stream("unknown-codec").expect("valid unknown-codec stream fixture");
     let unknown_store = InMemoryEventStore::new();
     append_raw(
         &unknown_store,
@@ -937,11 +1037,13 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
         "unknown-event",
         b"{}",
     )
-    .await;
+    .await
+    .expect("unknown-event history seed should append");
     let unknown_executor = Executor::with_codec(unknown_store, AccountCodec);
     let error = unknown_executor
         .execute::<Account, _>(
-            metadata(&unknown_stream, "after-unknown", "noop"),
+            metadata(&unknown_stream, "after-unknown", "noop")
+                .expect("valid post-unknown-event metadata fixture"),
             &AccountCommand::NoOp,
         )
         .await
@@ -952,7 +1054,7 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
             if codec_error.kind() == EventCodecErrorKind::UnknownEventType
     ));
 
-    let malformed_stream = stream("malformed-codec");
+    let malformed_stream = stream("malformed-codec").expect("valid malformed-codec stream fixture");
     let malformed_store = InMemoryEventStore::new();
     append_raw(
         &malformed_store,
@@ -961,11 +1063,13 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
         "account-credited",
         b"not-json",
     )
-    .await;
+    .await
+    .expect("malformed-event history seed should append");
     let malformed_executor = Executor::with_codec(malformed_store, AccountCodec);
     let error = malformed_executor
         .execute::<Account, _>(
-            metadata(&malformed_stream, "after-malformed", "noop"),
+            metadata(&malformed_stream, "after-malformed", "noop")
+                .expect("valid post-malformed-event metadata fixture"),
             &AccountCommand::NoOp,
         )
         .await
@@ -976,7 +1080,8 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
             if codec_error.kind() == EventCodecErrorKind::MalformedPayload
     ));
 
-    let unknown_version_stream = stream("unknown-version-codec");
+    let unknown_version_stream =
+        stream("unknown-version-codec").expect("valid unknown-version-codec stream fixture");
     let unknown_version_store = InMemoryEventStore::new();
     append_raw_version(
         &unknown_version_store,
@@ -986,11 +1091,13 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
         99,
         br#"{"amount":1}"#,
     )
-    .await;
+    .await
+    .expect("unknown-version history seed should append");
     let unknown_version_executor = Executor::with_codec(unknown_version_store, AccountCodec);
     let error = unknown_version_executor
         .execute::<Account, _>(
-            metadata(&unknown_version_stream, "after-unknown-version", "noop"),
+            metadata(&unknown_version_stream, "after-unknown-version", "noop")
+                .expect("valid post-unknown-version metadata fixture"),
             &AccountCommand::NoOp,
         )
         .await
@@ -1004,12 +1111,13 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
 
 #[tokio::test]
 async fn executor_retries_conflicts_with_a_hard_bound() {
-    let successful_stream = stream("retry-conflict");
+    let successful_stream = stream("retry-conflict").expect("valid retry stream fixture");
     let successful = Executor::with_codec(ForcedConflictStore::new(1), AccountCodec)
         .with_max_conflict_retries(1);
     let outcome = successful
         .execute::<Account, _>(
-            metadata(&successful_stream, "retry-once", "import"),
+            metadata(&successful_stream, "retry-once", "import")
+                .expect("valid retry execution metadata fixture"),
             &AccountCommand::Import {
                 opening_balance: 1,
                 provenance: provenance(),
@@ -1026,12 +1134,14 @@ async fn executor_retries_conflicts_with_a_hard_bound() {
         2
     );
 
-    let exhausted_stream = stream("exhaust-conflict");
+    let exhausted_stream =
+        stream("exhaust-conflict").expect("valid exhausted-retry stream fixture");
     let exhausted = Executor::with_codec(ForcedConflictStore::new(3), AccountCodec)
         .with_max_conflict_retries(2);
     let error = exhausted
         .execute::<Account, _>(
-            metadata(&exhausted_stream, "retry-three", "import"),
+            metadata(&exhausted_stream, "retry-three", "import")
+                .expect("valid exhausted-retry execution metadata fixture"),
             &AccountCommand::Import {
                 opening_balance: 1,
                 provenance: provenance(),
@@ -1050,8 +1160,9 @@ async fn executor_retries_conflicts_with_a_hard_bound() {
 #[tokio::test]
 async fn capacity_failure_is_atomic() {
     let store = InMemoryEventStore::with_capacity(1);
-    let stream = stream("capacity");
-    let metadata = metadata(&stream, "capacity-operation", "two-events");
+    let stream = stream("capacity").expect("valid capacity stream fixture");
+    let metadata = metadata(&stream, "capacity-operation", "two-events")
+        .expect("valid capacity execution metadata fixture");
     let batch = EventBatch::new(
         metadata.commit_id().clone(),
         metadata.operation_id().clone(),
@@ -1079,11 +1190,13 @@ async fn capacity_failure_is_atomic() {
         .await
         .expect_err("capacity should reject the whole batch");
     assert_eq!(error.kind(), EventStoreErrorKind::CapacityExhausted);
-    assert!(store
-        .load(&stream)
-        .await
-        .expect("load should succeed")
-        .is_empty());
+    assert!(
+        store
+            .load(&stream)
+            .await
+            .expect("load should succeed")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -1109,8 +1222,8 @@ async fn append_raw(
     operation: &str,
     event_type: &str,
     payload: &[u8],
-) {
-    append_raw_version(store, stream, operation, event_type, 1, payload).await;
+) -> TestResult {
+    append_raw_version(store, stream, operation, event_type, 1, payload).await
 }
 
 async fn append_raw_version(
@@ -1120,23 +1233,27 @@ async fn append_raw_version(
     event_type: &str,
     schema_version: u32,
     payload: &[u8],
-) {
+) -> TestResult {
     let metadata = metadata(
         stream,
         operation,
         payload.escape_ascii().to_string().as_str(),
-    );
+    )?;
     let event = NewEvent::new(metadata.event_id(0), event_type, schema_version, payload)
-        .expect("valid raw event envelope");
+        .map_err(|error| fixture_error("raw event envelope", error))?;
     let batch = EventBatch::new(
         metadata.commit_id().clone(),
         metadata.operation_id().clone(),
         metadata.operation_fingerprint(),
         vec![event],
     )
-    .expect("non-empty batch");
+    .map_err(|error| fixture_error("raw event batch", error))?;
     store
         .append(stream, ExpectedVersion::NoStream, batch)
         .await
-        .expect("raw seed append should succeed");
+        .map_err(|error| TestError::Operation {
+            context: "raw seed append",
+            message: error.to_string(),
+        })?;
+    Ok(())
 }

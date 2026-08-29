@@ -3,8 +3,8 @@ use syn::DeriveInput;
 
 use super::{assembly, attributes::Attributes, input, runtime, validation};
 
-pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
-    let syntax_fields = input::extract(&input)?;
+pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
+    let syntax_fields = input::extract(input)?;
     let fields = crate::field::extract(syntax_fields)?;
     let attributes = Attributes::parse(&input.attrs)?;
     validation::validate(&attributes, &fields)?;

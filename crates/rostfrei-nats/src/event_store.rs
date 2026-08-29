@@ -1,7 +1,7 @@
 use std::collections::HashSet;
-use std::fmt::Write as _;
 
 use async_nats::{
+    HeaderMap, Request,
     header::{
         NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL, NATS_BATCH_ID, NATS_BATCH_SEQUENCE,
         NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, NATS_EXPECTED_STREAM, NATS_REQUIRED_API_LEVEL,
@@ -11,21 +11,21 @@ use async_nats::{
         response::Response,
         stream::{Config, LastRawMessageErrorKind},
     },
-    HeaderMap, Request,
 };
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint, EventBatch,
     EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind, ExecutionMetadata,
-    ExpectedVersion, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
-    MAX_EVENTS_PER_BATCH,
+    ExpectedVersion, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent, StreamId,
+    StreamVersion,
 };
 use rostfrei_messaging_core::{CausationId, CorrelationId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::event_store_config::NatsEventStoreConfig;
+use crate::hex::encode_lower_hex;
 use crate::stream_policy::{is_stream_not_found, stream_config_mismatches};
 
 const LEGACY_EVENT_SCHEMA_VERSION: u16 = 1;
@@ -60,7 +60,7 @@ impl NatsEventStore {
         Ok(Self { context, config })
     }
 
-    pub fn config(&self) -> &NatsEventStoreConfig {
+    pub const fn config(&self) -> &NatsEventStoreConfig {
         &self.config
     }
 
@@ -126,7 +126,11 @@ impl NatsEventStore {
                 &message.headers,
                 message.payload.as_ref(),
             )?;
-            if decoded.event_ordinal + 1 == decoded.event_count {
+            let next_event_ordinal = decoded
+                .event_ordinal
+                .checked_add(1)
+                .ok_or_else(|| corrupt("stored event has invalid commit coordinates"))?;
+            if next_event_ordinal == decoded.event_count {
                 last_commit_stream_sequence = message.sequence;
             }
             history.push(decoded)?;
@@ -190,10 +194,10 @@ impl NatsEventStore {
         batch: &EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
         let history = self.load_history(stream_id).await?;
-        match Self::resolve_existing(&history, batch)? {
-            Some(events) => Ok(AppendOutcome::ExactReplay(events)),
-            None => Err(conflict("aggregate changed during append")),
-        }
+        Self::resolve_existing(&history, batch)?.map_or_else(
+            || Err(conflict("aggregate changed during append")),
+            |events| Ok(AppendOutcome::ExactReplay(events)),
+        )
     }
 
     async fn verify_published_commit(
@@ -202,7 +206,7 @@ impl NatsEventStore {
         subject: &str,
         sequence: u64,
         commit_id: &CommitId,
-        expected_events: &[RecordedEvent],
+        expected_events: &RecordedBatch,
     ) -> Result<(), EventStoreError> {
         let history = self.load_history(stream_id).await?;
         let stored = history
@@ -210,7 +214,7 @@ impl NatsEventStore {
             .iter()
             .find(|commit| commit.batch.commit_id() == commit_id)
             .ok_or_else(|| corrupt("published commit was not visible in aggregate history"))?;
-        if stored.events != expected_events {
+        if stored.events.as_slice() != expected_events.events() {
             return Err(corrupt("published commit contains different events"));
         }
 
@@ -236,7 +240,7 @@ impl NatsEventStore {
             &message.headers,
             message.payload.as_ref(),
         )?;
-        if decoded.recorded != *expected_events.last().expect("event batch is non-empty") {
+        if &decoded.recorded != expected_events.last() {
             return Err(corrupt("PubAck sequence contains a different final event"));
         }
         Ok(())
@@ -289,7 +293,7 @@ impl EventStore for NatsEventStore {
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
         );
-        let payloads = encode_events(&self.config, stream_id, &batch, &recorded)?;
+        let payloads = encode_events(&self.config, stream_id, &batch, recorded.events())?;
         for payload in &payloads {
             if payload.len() > self.config.max_event_bytes() {
                 return Err(invalid(format!(
@@ -298,6 +302,8 @@ impl EventStore for NatsEventStore {
                 )));
             }
         }
+        let recorded_count = u64::try_from(recorded.len())
+            .map_err(|_| invalid("event batch count cannot be represented"))?;
         let batch_id = new_atomic_batch_id(&self.context.client(), batch.commit_id());
         let ack = match publish_atomic_batch(
             &self.context,
@@ -319,7 +325,7 @@ impl EventStore for NatsEventStore {
             || ack.sequence == 0
             || ack.sequence <= history.last_subject_stream_sequence
             || ack.batch.as_deref() != Some(batch_id.as_str())
-            || ack.count != Some(recorded.len() as u64)
+            || ack.count != Some(recorded_count)
         {
             return Err(corrupt(
                 "atomic PubAck returned incompatible stream, sequence, or batch metadata",
@@ -333,7 +339,7 @@ impl EventStore for NatsEventStore {
             &recorded,
         )
         .await?;
-        Ok(AppendOutcome::Appended(recorded))
+        Ok(AppendOutcome::Appended(recorded.into_events()))
     }
 }
 
@@ -377,6 +383,37 @@ struct StoredCommit {
     events: Vec<RecordedEvent>,
 }
 
+struct RecordedBatch {
+    events: Vec<RecordedEvent>,
+    last: RecordedEvent,
+}
+
+impl RecordedBatch {
+    fn new(events: Vec<RecordedEvent>) -> Result<Self, EventStoreError> {
+        let last = events
+            .last()
+            .cloned()
+            .ok_or_else(|| invalid("event batch is empty"))?;
+        Ok(Self { events, last })
+    }
+
+    fn events(&self) -> &[RecordedEvent] {
+        &self.events
+    }
+
+    const fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    const fn last(&self) -> &RecordedEvent {
+        &self.last
+    }
+
+    fn into_events(self) -> Vec<RecordedEvent> {
+        self.events
+    }
+}
+
 #[derive(Default)]
 struct HistoryBuilder {
     history: History,
@@ -392,18 +429,18 @@ struct PendingCommit {
     commit_id: CommitId,
     operation_id: OperationId,
     operation_fingerprint: ContentFingerprint,
-    event_count: u32,
+    event_count: usize,
     events: Vec<RecordedEvent>,
 }
 
-pub(crate) struct DecodedEvent {
-    pub(crate) batch_id: String,
-    pub(crate) commit_id: CommitId,
-    pub(crate) operation_id: OperationId,
-    pub(crate) operation_fingerprint: ContentFingerprint,
-    pub(crate) event_ordinal: u32,
-    pub(crate) event_count: u32,
-    pub(crate) recorded: RecordedEvent,
+pub struct DecodedEvent {
+    pub batch_id: String,
+    pub commit_id: CommitId,
+    pub operation_id: OperationId,
+    pub operation_fingerprint: ContentFingerprint,
+    pub event_ordinal: usize,
+    pub event_count: usize,
+    pub recorded: RecordedEvent,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -527,7 +564,7 @@ fn decode_event(
 }
 
 #[allow(dead_code)]
-pub(crate) fn decode_consumed_event(
+pub fn decode_consumed_event(
     config: &NatsEventStoreConfig,
     subject: &str,
     headers: &HeaderMap,
@@ -606,10 +643,11 @@ fn decode_event_inner(
     {
         return Err(corrupt("stored event is on the wrong aggregate subject"));
     }
-    if wire.event.commit_event_count == 0
-        || wire.event.commit_event_count as usize > MAX_EVENTS_PER_BATCH
-        || wire.event.commit_event_ordinal >= wire.event.commit_event_count
-    {
+    let event_count = usize::try_from(wire.event.commit_event_count)
+        .map_err(|_| corrupt("stored event has invalid commit coordinates"))?;
+    let event_ordinal = usize::try_from(wire.event.commit_event_ordinal)
+        .map_err(|_| corrupt("stored event has invalid commit coordinates"))?;
+    if event_count == 0 || event_count > MAX_EVENTS_PER_BATCH || event_ordinal >= event_count {
         return Err(corrupt("stored event has invalid commit coordinates"));
     }
     if wire.event.stream_version == 0 {
@@ -689,8 +727,8 @@ fn decode_event_inner(
         commit_id,
         operation_id,
         operation_fingerprint,
-        event_ordinal: wire.event.commit_event_ordinal,
-        event_count: wire.event.commit_event_count,
+        event_ordinal,
+        event_count,
         recorded,
     })
 }
@@ -735,16 +773,8 @@ impl HistoryBuilder {
         }
 
         self.current_version = expected_version;
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(PendingCommit::is_complete)
-        {
-            let stored = self
-                .pending
-                .take()
-                .expect("completed pending commit exists")
-                .finish()?;
+        if let Some(pending) = self.pending.take_if(|pending| pending.is_complete()) {
+            let stored = pending.finish()?;
             self.history.events.extend(stored.events.iter().cloned());
             self.history.commits.push(stored);
         }
@@ -773,16 +803,19 @@ impl PendingCommit {
     }
 
     fn push(&mut self, decoded: DecodedEvent) -> Result<(), EventStoreError> {
-        let expected_ordinal = u32::try_from(self.events.len())
-            .map_err(|_| corrupt("stored event ordinal cannot be represented"))?;
+        let expected_ordinal = self.events.len();
+        let first = self
+            .events
+            .first()
+            .ok_or_else(|| corrupt("stored commit is empty"))?;
         if decoded.event_ordinal != expected_ordinal
             || decoded.event_count != self.event_count
             || decoded.batch_id != self.batch_id
             || decoded.commit_id != self.commit_id
             || decoded.operation_id != self.operation_id
             || decoded.operation_fingerprint != self.operation_fingerprint
-            || decoded.recorded.correlation_id() != self.events[0].correlation_id()
-            || decoded.recorded.causation_id() != self.events[0].causation_id()
+            || decoded.recorded.correlation_id() != first.correlation_id()
+            || decoded.recorded.causation_id() != first.causation_id()
         {
             return Err(corrupt("stored commit metadata is inconsistent"));
         }
@@ -790,11 +823,17 @@ impl PendingCommit {
         Ok(())
     }
 
-    fn is_complete(&self) -> bool {
-        self.events.len() == self.event_count as usize
+    const fn is_complete(&self) -> bool {
+        self.events.len() == self.event_count
     }
 
     fn finish(self) -> Result<StoredCommit, EventStoreError> {
+        let first = self
+            .events
+            .first()
+            .ok_or_else(|| corrupt("stored commit is empty"))?;
+        let correlation_id = first.correlation_id().cloned();
+        let causation_id = first.causation_id().cloned();
         let new_events = self
             .events
             .iter()
@@ -815,11 +854,11 @@ impl PendingCommit {
             new_events,
         )
         .map_err(|error| corrupt(format!("invalid stored event batch: {error}")))?;
-        if let Some(correlation_id) = self.events[0].correlation_id() {
-            batch = batch.with_correlation_id(correlation_id.clone());
+        if let Some(correlation_id) = correlation_id {
+            batch = batch.with_correlation_id(correlation_id);
         }
-        if let Some(causation_id) = self.events[0].causation_id() {
-            batch = batch.with_causation_id(causation_id.clone());
+        if let Some(causation_id) = causation_id {
+            batch = batch.with_causation_id(causation_id);
         }
         Ok(StoredCommit {
             batch,
@@ -854,11 +893,17 @@ async fn publish_atomic_batch(
 ) -> Result<AtomicPublishAck, AtomicBatchPublishError> {
     let event_count = payloads.len();
     for (index, payload) in payloads.into_iter().enumerate() {
+        let one_based_sequence = index.checked_add(1).ok_or_else(|| {
+            AtomicBatchPublishError::Store(EventStoreError::new(
+                EventStoreErrorKind::CapacityExhausted,
+                "atomic batch sequence space is exhausted",
+            ))
+        })?;
         let mut headers = HeaderMap::new();
         headers.insert("Content-Type", "application/json");
         headers.insert(NATS_REQUIRED_API_LEVEL, ATOMIC_BATCH_API_LEVEL);
         headers.insert(NATS_BATCH_ID, batch_id);
-        headers.insert(NATS_BATCH_SEQUENCE, (index + 1).to_string());
+        headers.insert(NATS_BATCH_SEQUENCE, one_based_sequence.to_string());
         if index == 0 {
             headers.insert(NATS_EXPECTED_STREAM, config.stream_name());
             headers.insert(
@@ -866,7 +911,7 @@ async fn publish_atomic_batch(
                 expected_last_subject_sequence.to_string(),
             );
         }
-        if index + 1 == event_count {
+        if one_based_sequence == event_count {
             headers.insert(NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL);
         }
 
@@ -886,7 +931,7 @@ async fn publish_atomic_batch(
                 )))
             })?;
 
-        if index + 1 != event_count {
+        if one_based_sequence != event_count {
             if message.payload.is_empty() {
                 continue;
             }
@@ -955,11 +1000,7 @@ fn new_atomic_batch_id(client: &async_nats::Client, commit_id: &CommitId) -> Str
     let mut hasher = Sha256::new();
     hasher.update(client.new_inbox().as_bytes());
     hasher.update(commit_id.as_str().as_bytes());
-    let mut output = String::with_capacity(64);
-    for byte in hasher.finalize() {
-        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    output
+    encode_lower_hex(hasher.finalize())
 }
 
 fn validate_atomic_headers(
@@ -979,7 +1020,10 @@ fn validate_atomic_headers(
     let batch_sequence = required_single_header(headers, "Nats-Batch-Sequence")?
         .parse::<u32>()
         .map_err(|_| corrupt("stored event has an invalid atomic batch sequence"))?;
-    if batch_sequence != event_ordinal + 1 {
+    let one_based_sequence = event_ordinal
+        .checked_add(1)
+        .ok_or_else(|| corrupt("stored event has an invalid atomic batch sequence"))?;
+    if batch_sequence != one_based_sequence {
         return Err(corrupt(
             "stored event atomic batch sequence does not match its commit ordinal",
         ));
@@ -1005,7 +1049,7 @@ fn validate_atomic_headers(
         ));
     }
     let commit = optional_single_header(headers, "Nats-Batch-Commit")?;
-    if event_ordinal + 1 == event_count {
+    if one_based_sequence == event_count {
         if commit != Some(NATS_BATCH_COMMIT_FINAL) {
             return Err(corrupt("stored commit has no atomic final event"));
         }
@@ -1039,7 +1083,7 @@ fn record_batch(
     stream_id: &StreamId,
     current_version: StreamVersion,
     batch: &EventBatch,
-) -> Result<Vec<RecordedEvent>, EventStoreError> {
+) -> Result<RecordedBatch, EventStoreError> {
     let mut version = current_version;
     let mut recorded = Vec::with_capacity(batch.events().len());
     let event_count = u32::try_from(batch.events().len())
@@ -1074,7 +1118,7 @@ fn record_batch(
         }
         recorded.push(recorded_event);
     }
-    Ok(recorded)
+    RecordedBatch::new(recorded)
 }
 
 fn same_batch(stored: &EventBatch, incoming: &EventBatch) -> bool {
@@ -1120,11 +1164,7 @@ fn event_checksum(
         schema_version,
         event,
     })?;
-    let mut output = String::with_capacity(64);
-    for byte in Sha256::digest(input) {
-        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    Ok(output)
+    Ok(encode_lower_hex(Sha256::digest(input)))
 }
 
 fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventStoreError> {
@@ -1335,7 +1375,7 @@ mod tests {
         )
         .unwrap();
         let recorded = record_batch(&stream_id, StreamVersion::ZERO, &batch).unwrap();
-        let payload = encode_events(&config, &stream_id, &batch, &recorded)
+        let payload = encode_events(&config, &stream_id, &batch, recorded.events())
             .unwrap()
             .remove(0);
         let subject = config.aggregate_subject(

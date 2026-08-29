@@ -63,7 +63,7 @@ fn assemble_json_encoder(domain_path: &Path, name: &Ident, fields: &Fields) -> T
         let wire_name = field
             .ident
             .as_ref()
-            .map_or_else(|| index.to_string(), |ident| ident.to_string())
+            .map_or_else(|| index.to_string(), std::string::ToString::to_string)
             .trim_start_matches("r#")
             .to_owned();
         quote! {

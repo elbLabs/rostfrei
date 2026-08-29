@@ -4,8 +4,8 @@ use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
     Aggregate, AggregateType, BoundedContext, DomainCommand, DomainError, DomainErrorType,
-    DomainEvent, DomainEventType, DomainIdentity, Entity, ValueObject, ValueObjectType,
-    domain_actions, domain_model,
+    DomainEvent, DomainEventType, DomainIdentity, DomainModelError, Entity, ValueObject,
+    ValueObjectType, domain_actions, domain_model,
 };
 
 #[derive(BoundedContext)]
@@ -40,7 +40,7 @@ trait AccountRootActions {
 
 impl AccountRootActions for AccountRoot {
     fn touch_root(&mut self) {
-        self.revision += 1;
+        self.revision = self.revision.saturating_add(1);
     }
 }
 
@@ -110,7 +110,7 @@ mod contracts {
 
 impl contracts::AccountLifecycle for Account {
     fn open(root: &mut AccountRoot) -> AccountChanged {
-        root.revision += 1;
+        root.revision = root.revision.saturating_add(1);
         AccountChanged
     }
 
@@ -118,15 +118,16 @@ impl contracts::AccountLifecycle for Account {
         root: &mut AccountRootAlias,
         _input: RenameAccountInput,
     ) -> Result<AccountChanged, AccountDenied> {
-        root.name = "Renamed".to_owned();
-        root.revision += 1;
+        let revision = root.revision.checked_add(1).ok_or(AccountDenied)?;
+        "Renamed".clone_into(&mut root.name);
+        root.revision = revision;
         Ok(AccountChanged)
     }
 }
 
 impl contracts::AccountMaintenance for Account {
     fn freeze(root: &mut AccountRoot) {
-        root.revision += 1;
+        root.revision = root.revision.saturating_add(1);
     }
 
     fn revision(root: &mut AccountRootAlias) -> u32 {
@@ -136,7 +137,7 @@ impl contracts::AccountMaintenance for Account {
 
 impl contracts::ImplementedOnly for Account {
     fn implemented_only(root: &mut AccountRoot) {
-        root.revision += 1;
+        root.revision = root.revision.saturating_add(1);
     }
 }
 
@@ -153,6 +154,7 @@ impl ActionGroupType for AccountExtensionActions {
         label: "Account extension action",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     }];
 }
@@ -170,6 +172,7 @@ impl ActionGroupType for DuplicateAccountExtensionActions {
         label: "Duplicate open",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     }];
 }
@@ -390,7 +393,8 @@ fn model_projects_attached_then_extension_actions_and_omits_unlisted_contracts()
         errors: [AccountDenied],
         action_extensions: [AccountExtensionActions],
         query_groups: [],
-    };
+    }
+    .expect("aggregate action domain model should be valid");
 
     let actions = model["actions"].as_array().unwrap();
     assert_eq!(
@@ -424,9 +428,8 @@ fn model_projects_attached_then_extension_actions_and_omits_unlisted_contracts()
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_across_attached_aggregate_traits() {
-    let _ = domain_model! {
+    let error = domain_model! {
         contexts: [],
         aggregates: [DuplicateAggregate],
         entities: [],
@@ -436,13 +439,23 @@ fn rejects_duplicate_action_id_across_attached_aggregate_traits() {
         commands: [],
         errors: [],
         query_groups: [],
+    }
+    .expect_err("duplicate attached aggregate actions should be rejected");
+    let id = ActionId {
+        owner: ActionOwnerId::Aggregate(DuplicateAggregate::DESCRIPTOR.id),
+        local: "duplicate",
     };
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId { id: Box::new(id) }
+    );
+    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_between_attached_and_extension_groups() {
-    let _ = domain_model! {
+    let error = domain_model! {
         contexts: [],
         aggregates: [Account],
         entities: [],
@@ -453,5 +466,16 @@ fn rejects_duplicate_action_id_between_attached_and_extension_groups() {
         errors: [],
         action_extensions: [DuplicateAccountExtensionActions],
         query_groups: [],
+    }
+    .expect_err("an extension duplicating an attached aggregate action should be rejected");
+    let id = ActionId {
+        owner: ActionOwnerId::Aggregate(Account::DESCRIPTOR.id),
+        local: "open",
     };
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId { id: Box::new(id) }
+    );
+    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
 }

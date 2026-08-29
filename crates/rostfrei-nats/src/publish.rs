@@ -1,18 +1,19 @@
 use std::{error::Error as _, time::Duration};
 
 use async_nats::{
+    HeaderMap,
     jetstream::{
         self,
         context::{PublishError as JetStreamPublishError, PublishErrorKind},
         message::PublishMessage,
     },
-    HeaderMap,
 };
 use async_trait::async_trait;
 use rostfrei_messaging_core::{
-    CallerMetadata, CommandAddress, CommandPublisher, IntegrationEventAddress,
-    IntegrationEventPublisher, OutboundMessage, PublishError,
-    PublishErrorKind as CorePublishErrorKind, PublishReceipt, PublishableAddress, TraceContext,
+    CallerMetadata, CommandAddress, CommandPublisher, CommandResponse, CommandResponseAddress,
+    CommandResponsePublisher, IntegrationEventAddress, IntegrationEventPublisher, OutboundMessage,
+    PublishError, PublishErrorKind as CorePublishErrorKind, PublishReceipt, PublishableAddress,
+    TraceContext, derive_command_response_address,
 };
 use tokio::time::timeout;
 
@@ -98,6 +99,27 @@ impl NatsPublisher {
         .await
     }
 
+    pub async fn publish_command_response_with_ack(
+        &self,
+        message: OutboundMessage<CommandResponseAddress>,
+        publish_timeout: Duration,
+    ) -> Result<NatsPublishAck, NatsError> {
+        if message.address().application() != self.topology.application().as_str() {
+            return Err(NatsError::InvalidMessage);
+        }
+        let response = decode_outbound_command_response(&message)?;
+        let headers = safe_headers(message.metadata(), message.trace_context());
+        publish_immutable_command_response(
+            &self.context,
+            &message,
+            &response,
+            self.topology.command_response_stream(),
+            headers,
+            publish_timeout,
+        )
+        .await
+    }
+
     async fn publish_with_ack<A>(
         &self,
         message: OutboundMessage<A>,
@@ -146,6 +168,19 @@ impl CommandPublisher for NatsPublisher {
 }
 
 #[async_trait]
+impl CommandResponsePublisher for NatsPublisher {
+    async fn publish_command_response(
+        &self,
+        message: OutboundMessage<CommandResponseAddress>,
+    ) -> Result<PublishReceipt, PublishError> {
+        self.publish_command_response_with_ack(message, self.publish_timeout)
+            .await
+            .map(|ack| PublishReceipt::new(ack.duplicate()))
+            .map_err(|error| core_publish_error(&error))
+    }
+}
+
+#[async_trait]
 impl IntegrationEventPublisher for NatsPublisher {
     async fn publish_integration_event(
         &self,
@@ -158,10 +193,7 @@ impl IntegrationEventPublisher for NatsPublisher {
     }
 }
 
-pub(crate) fn safe_headers(
-    metadata: &CallerMetadata,
-    trace_context: Option<&TraceContext>,
-) -> HeaderMap {
+pub fn safe_headers(metadata: &CallerMetadata, trace_context: Option<&TraceContext>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     for (name, value) in metadata.iter() {
         headers.insert(name.to_owned(), value.to_owned());
@@ -175,7 +207,7 @@ pub(crate) fn safe_headers(
     headers
 }
 
-pub(crate) async fn publish_confirmed(
+pub async fn publish_confirmed(
     context: &jetstream::Context,
     subject: &str,
     payload: &[u8],
@@ -219,13 +251,152 @@ pub(crate) async fn publish_confirmed(
     })
 }
 
-fn core_publish_error(error: &NatsError) -> PublishError {
+async fn publish_immutable_command_response(
+    context: &jetstream::Context,
+    message: &OutboundMessage<CommandResponseAddress>,
+    response: &CommandResponse,
+    expected_stream: &StreamName,
+    mut headers: HeaderMap,
+    publish_timeout: Duration,
+) -> Result<NatsPublishAck, NatsError> {
+    if publish_timeout.is_zero() {
+        return Err(NatsError::Configuration);
+    }
+
+    headers.insert(CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE);
+    let publish = PublishMessage::build()
+        .payload(message.payload().to_vec().into())
+        .headers(headers)
+        .message_id(message.message_id().as_str())
+        .expected_stream(expected_stream.as_str())
+        .expected_last_subject_sequence(0);
+    let result = timeout(publish_timeout, async {
+        let acknowledgement = context
+            .send_publish(message.address().as_str().to_owned(), publish)
+            .await
+            .map_err(|error| classify_publish_error(&error))?;
+        acknowledgement
+            .await
+            .map_err(|error| classify_publish_error(&error))
+    })
+    .await
+    .map_err(|_| NatsError::PublishTimeout)?;
+
+    match result {
+        Ok(acknowledgement) if !acknowledgement.duplicate => {
+            if acknowledgement.stream != expected_stream.as_str() || acknowledgement.sequence == 0 {
+                return Err(NatsError::PublishExpectation);
+            }
+            Ok(NatsPublishAck {
+                stream: expected_stream.clone(),
+                sequence: acknowledgement.sequence,
+                duplicate: false,
+            })
+        }
+        Ok(_) | Err(NatsError::PublishExpectation) => {
+            let sequence = verify_existing_command_response(
+                context,
+                expected_stream,
+                message.address().as_str(),
+                message.payload(),
+                message.message_id().as_str(),
+                response,
+                publish_timeout,
+            )
+            .await?;
+            Ok(NatsPublishAck {
+                stream: expected_stream.clone(),
+                sequence,
+                duplicate: true,
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+async fn verify_existing_command_response(
+    context: &jetstream::Context,
+    expected_stream: &StreamName,
+    subject: &str,
+    payload: &[u8],
+    message_id: &str,
+    response: &CommandResponse,
+    operation_timeout: Duration,
+) -> Result<u64, NatsError> {
+    timeout(operation_timeout, async {
+        let stream = context
+            .get_stream(expected_stream.as_str())
+            .await
+            .map_err(|_| NatsError::StreamNotFound)?;
+        let stored = stream
+            .get_last_raw_message_by_subject(subject)
+            .await
+            .map_err(|error| {
+                if matches!(
+                    error.kind(),
+                    jetstream::stream::LastRawMessageErrorKind::NoMessageFound
+                ) {
+                    NatsError::IdentityConflict
+                } else {
+                    NatsError::Publish
+                }
+            })?;
+        if stored.subject.as_str() != subject
+            || stored.sequence == 0
+            || stored.payload.as_ref() != payload
+            || one_optional_header(&stored.headers, CONTENT_TYPE_HEADER)? != Some(JSON_CONTENT_TYPE)
+            || one_optional_header(&stored.headers, "Nats-Msg-Id")? != Some(message_id)
+        {
+            return Err(NatsError::IdentityConflict);
+        }
+        let stored_response: CommandResponse =
+            serde_json::from_slice(&stored.payload).map_err(|_| NatsError::IdentityConflict)?;
+        if stored_response.message_id().as_str() != message_id || &stored_response != response {
+            return Err(NatsError::IdentityConflict);
+        }
+        Ok(stored.sequence)
+    })
+    .await
+    .map_err(|_| NatsError::PublishTimeout)?
+}
+
+fn decode_outbound_command_response(
+    message: &OutboundMessage<CommandResponseAddress>,
+) -> Result<CommandResponse, NatsError> {
+    let response: CommandResponse =
+        serde_json::from_slice(message.payload()).map_err(|_| NatsError::InvalidMessage)?;
+    let expected_address = derive_command_response_address(
+        response.command_address(),
+        response.operation_id(),
+        response.command_message_id(),
+    )
+    .map_err(|_| NatsError::InvalidMessage)?;
+    if response.message_id() != message.message_id() || &expected_address != message.address() {
+        return Err(NatsError::InvalidMessage);
+    }
+    Ok(response)
+}
+
+fn one_optional_header<'a>(
+    headers: &'a HeaderMap,
+    name: &str,
+) -> Result<Option<&'a str>, NatsError> {
+    let mut values = headers.get_all(name.to_owned());
+    let first = values.next().map(async_nats::HeaderValue::as_str);
+    if values.next().is_some() {
+        return Err(NatsError::IdentityConflict);
+    }
+    Ok(first)
+}
+
+const fn core_publish_error(error: &NatsError) -> PublishError {
     let kind = match error {
         NatsError::Configuration => CorePublishErrorKind::InvalidConfiguration,
         NatsError::PublishTimeout => CorePublishErrorKind::Timeout,
         NatsError::PayloadTooLarge { .. }
         | NatsError::MessageTooLarge
         | NatsError::PublishExpectation
+        | NatsError::IdentityConflict
         | NatsError::InvalidMessage => CorePublishErrorKind::Rejected,
         _ => CorePublishErrorKind::Unavailable,
     };
@@ -275,4 +446,65 @@ fn is_publish_expectation_error(error: &JetStreamPublishError) -> bool {
 fn is_message_too_large_error(error: &JetStreamPublishError) -> bool {
     publish_api_error_code(error)
         == Some(async_nats::jetstream::ErrorCode::STREAM_MESSAGE_EXCEEDS_MAXIMUM)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rostfrei_messaging_core::{
+        CorrelationId, MessageId, OperationId, derive_command_response_address,
+    };
+
+    const CORE_TIMEOUT_ERROR: PublishError = core_publish_error(&NatsError::PublishTimeout);
+
+    #[test]
+    fn outbound_command_response_identity_must_match_payload() {
+        let command = CommandAddress::new("acme", "orders", "place-order").unwrap();
+        let operation = OperationId::new("operation-1").unwrap();
+        let command_message_id = MessageId::new("command-1").unwrap();
+        let address =
+            derive_command_response_address(&command, &operation, &command_message_id).unwrap();
+        let response = CommandResponse::accepted(
+            MessageId::new("response-1").unwrap(),
+            command_message_id,
+            command,
+            operation,
+            CorrelationId::new("correlation-1").unwrap(),
+        )
+        .unwrap();
+        let valid =
+            OutboundMessage::json(address.clone(), response.message_id().clone(), &response)
+                .unwrap();
+        assert_eq!(decode_outbound_command_response(&valid).unwrap(), response);
+
+        let mismatched_address = derive_command_response_address(
+            &CommandAddress::new("acme", "orders", "cancel-order").unwrap(),
+            response.operation_id(),
+            response.command_message_id(),
+        )
+        .unwrap();
+        let mismatched_subject =
+            OutboundMessage::json(mismatched_address, response.message_id().clone(), &response)
+                .unwrap();
+        assert_eq!(
+            decode_outbound_command_response(&mismatched_subject).unwrap_err(),
+            NatsError::InvalidMessage
+        );
+
+        let invalid = OutboundMessage::json(
+            address,
+            MessageId::new("different-response").unwrap(),
+            &response,
+        )
+        .unwrap();
+        assert_eq!(
+            decode_outbound_command_response(&invalid).unwrap_err(),
+            NatsError::InvalidMessage
+        );
+    }
+
+    #[test]
+    fn core_publish_errors_are_const_mapped() {
+        assert_eq!(CORE_TIMEOUT_ERROR.kind(), CorePublishErrorKind::Timeout);
+    }
 }

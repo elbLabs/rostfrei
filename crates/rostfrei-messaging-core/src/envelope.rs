@@ -1,4 +1,4 @@
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::{
     CausationId, CorrelationId, MessageBuildError, MessageId, MessageTimestamp, OperationId,
@@ -267,7 +267,7 @@ where
     }
 }
 
-pub(crate) fn validate_serialized_size<T>(value: &T) -> Result<(), MessageBuildError>
+pub fn validate_serialized_size<T>(value: &T) -> Result<(), MessageBuildError>
 where
     T: Serialize + ?Sized,
 {
@@ -286,7 +286,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MessageBuildErrorKind, MAX_ENVELOPE_BYTES};
+    use crate::{MAX_ENVELOPE_BYTES, MessageBuildErrorKind};
 
     fn context() -> EnvelopeContext {
         EnvelopeContext::new(

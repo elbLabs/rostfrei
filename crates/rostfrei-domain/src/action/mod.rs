@@ -6,7 +6,7 @@ mod group_type;
 mod id;
 mod input;
 mod internal_owner_type;
-pub(crate) mod output;
+pub mod output;
 mod owner_id;
 mod owner_type;
 mod public_owner_type;

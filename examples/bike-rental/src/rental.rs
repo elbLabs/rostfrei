@@ -1,6 +1,7 @@
 use rostfrei::{
-    Aggregate, BoundedContext, DomainCommand, DomainError, DomainEvent, DomainIdentity, Entity,
-    ValueObject, domain_actions, domain_decisions, domain_queries,
+    Aggregate, AggregateInstance, BoundedContext, DomainCommand, DomainError, DomainEvent,
+    DomainIdentity, Entity, StreamAggregateId, ValueObject, domain_actions, domain_decisions,
+    domain_queries,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +35,7 @@ pub struct RentalFleet {
 }
 
 impl RentalFleet {
-    pub fn new(fleet_id: FleetId, bicycles: Vec<Bicycle>) -> Self {
+    pub const fn new(fleet_id: FleetId, bicycles: Vec<Bicycle>) -> Self {
         Self { fleet_id, bicycles }
     }
 
@@ -42,7 +43,7 @@ impl RentalFleet {
         &self.bicycles
     }
 
-    pub fn fleet_id(&self) -> &FleetId {
+    pub const fn fleet_id(&self) -> &FleetId {
         &self.fleet_id
     }
 
@@ -58,6 +59,7 @@ impl RentalFleet {
 }
 
 #[derive(Entity, Debug)]
+#[allow(clippy::struct_field_names)]
 #[domain(
     id = "bicycle",
     label = "Bicycle",
@@ -74,7 +76,11 @@ pub struct Bicycle {
 }
 
 impl Bicycle {
-    pub fn new(bicycle_id: BicycleId, status: BicycleStatus, condition: BicycleCondition) -> Self {
+    pub const fn new(
+        bicycle_id: BicycleId,
+        status: BicycleStatus,
+        condition: BicycleCondition,
+    ) -> Self {
         Self {
             bicycle_id,
             status,
@@ -82,15 +88,15 @@ impl Bicycle {
         }
     }
 
-    pub fn bicycle_id(&self) -> &BicycleId {
+    pub const fn bicycle_id(&self) -> &BicycleId {
         &self.bicycle_id
     }
 
-    pub fn status(&self) -> BicycleStatus {
+    pub const fn status(&self) -> BicycleStatus {
         self.status
     }
 
-    pub fn condition(&self) -> BicycleCondition {
+    pub const fn condition(&self) -> BicycleCondition {
         self.condition
     }
 }
@@ -109,6 +115,12 @@ impl FleetId {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl From<&StreamAggregateId> for FleetId {
+    fn from(value: &StreamAggregateId) -> Self {
+        Self(value.as_str().to_owned())
     }
 }
 
@@ -255,7 +267,7 @@ pub struct ImportRentalFleetInput {
 }
 
 impl ImportRentalFleetInput {
-    pub fn new(bicycles: Vec<ImportedBicycle>) -> Self {
+    pub const fn new(bicycles: Vec<ImportedBicycle>) -> Self {
         Self { bicycles }
     }
 }
@@ -328,54 +340,57 @@ impl BicycleStatusActions for Bicycle {
 
 #[domain_actions(aggregate(instance = RentalFleetActions))]
 pub trait RentalFleetActionContract {
-    #[action(id = "import-rental-fleet", label = "Import rental fleet")]
-    fn import_rental_fleet(
-        root: &RentalFleet,
-        input: ImportRentalFleetInput,
-    ) -> RentalFleetImported;
+    #[action(
+        id = "import-rental-fleet",
+        label = "Import rental fleet",
+        raises = [RentalFleetImported]
+    )]
+    fn import_rental_fleet(&mut self, input: ImportRentalFleetInput);
 
-    #[action(id = "rent-bicycle", label = "Rent bicycle")]
-    fn rent_bicycle(
-        root: &RentalFleet,
-        input: BicycleId,
-    ) -> Result<BicycleRented, BicycleUnavailable>;
+    #[action(
+        id = "rent-bicycle",
+        label = "Rent bicycle",
+        raises = [BicycleRented]
+    )]
+    fn rent_bicycle(&mut self, input: BicycleId) -> Result<(), BicycleUnavailable>;
 }
 
-impl RentalFleetActionContract for RentalFleetAggregate {
-    fn import_rental_fleet(
-        root: &RentalFleet,
-        input: ImportRentalFleetInput,
-    ) -> RentalFleetImported {
-        RentalFleetImported {
-            fleet_id: root.fleet_id.clone(),
+impl RentalFleetActions for AggregateInstance<RentalFleetAggregate> {
+    fn import_rental_fleet(&mut self, input: ImportRentalFleetInput) {
+        self.raise(RentalFleetImported {
+            fleet_id: self.state().fleet_id.clone(),
             bicycles: input.bicycles,
-        }
+        });
     }
 
-    fn rent_bicycle(
-        root: &RentalFleet,
-        input: BicycleId,
-    ) -> Result<BicycleRented, BicycleUnavailable> {
-        let bicycle = root
-            .bicycles
-            .iter()
-            .find(|bicycle| bicycle.bicycle_id == input)
-            .ok_or_else(|| BicycleUnavailable {
-                bicycle_id: input.clone(),
-            })?;
-        let decision = Self::assess_rental_eligibility(RentalEligibilityInput {
-            status: bicycle.status,
-            condition: bicycle.condition,
-        });
-        match decision {
-            RentalEligibilityDecision::Allowed => Ok(BicycleRented {
-                fleet_id: root.fleet_id.clone(),
-                bicycle_id: input,
-            }),
-            RentalEligibilityDecision::Denied { .. } => {
-                Err(BicycleUnavailable { bicycle_id: input })
+    fn rent_bicycle(&mut self, input: BicycleId) -> Result<(), BicycleUnavailable> {
+        let event = {
+            let root = self.state();
+            let bicycle = root
+                .bicycles
+                .iter()
+                .find(|bicycle| bicycle.bicycle_id == input)
+                .ok_or_else(|| BicycleUnavailable {
+                    bicycle_id: input.clone(),
+                })?;
+            let decision =
+                RentalFleetAggregate::assess_rental_eligibility(RentalEligibilityInput {
+                    status: bicycle.status,
+                    condition: bicycle.condition,
+                });
+            match decision {
+                RentalEligibilityDecision::Allowed => BicycleRented {
+                    fleet_id: root.fleet_id.clone(),
+                    bicycle_id: input.clone(),
+                },
+                RentalEligibilityDecision::Denied { .. } => {
+                    return Err(BicycleUnavailable { bicycle_id: input });
+                }
             }
-        }
+        };
+
+        self.raise(event);
+        Ok(())
     }
 }
 

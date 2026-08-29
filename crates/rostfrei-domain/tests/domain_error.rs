@@ -66,7 +66,7 @@ fn generated_json_errors_preserve_canonical_code_and_message() {
     );
 }
 
-fn descriptor(
+const fn descriptor(
     owner: DomainErrorOwnerId,
     local: &'static str,
     label: &'static str,
