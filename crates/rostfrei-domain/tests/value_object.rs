@@ -226,9 +226,11 @@ fn enum_value_objects_compose_in_fields_and_project_to_json() {
     };
     assert_eq!(selection_value.kinds, Some(vec![CategoryKind::Resource]));
 
-    let ValueObjectShapeDescriptor::Struct { fields } = CategorySelection::DESCRIPTOR.shape else {
-        panic!()
-    };
+    let fields = match CategorySelection::DESCRIPTOR.shape {
+        ValueObjectShapeDescriptor::Struct { fields } => Some(fields),
+        _ => None,
+    }
+    .expect("CategorySelection should have a struct descriptor");
     let selection = fields[0];
     assert!(
         matches!(selection.value.kind, FieldKind::ValueObject(id) if id == CategoryKind::DESCRIPTOR.id)
@@ -258,7 +260,8 @@ fn enum_value_objects_compose_in_fields_and_project_to_json() {
         errors: [],
 
         query_groups: [],
-    };
+    }
+    .expect("enum value object model projection should succeed");
     let category_kind = &model["valueObjects"][0];
     assert_eq!(category_kind["id"]["local"], "category-kind");
     assert_eq!(

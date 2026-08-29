@@ -171,7 +171,8 @@ fn projects_tagged_enum_variant_shapes_exactly() {
         commands: [],
         errors: [],
         query_groups: [],
-    };
+    }
+    .expect("tagged value object model projection should succeed");
 
     let tagged = &model["valueObjects"][1];
     assert_eq!(

@@ -151,16 +151,15 @@ impl DomainEventHandler<TestEvent> for RecordingHandler {
 #[tokio::test]
 #[ignore = "requires NATS Server 2.12 configured by ROSTFREI_NATS_URL"]
 #[allow(clippy::too_many_lines)]
-async fn durable_domain_event_consumers_preserve_history_order_and_independent_progress(
-) -> TestResult<()> {
+async fn durable_domain_event_consumers_preserve_history_order_and_independent_progress() {
     let Ok(url) = std::env::var("ROSTFREI_NATS_URL") else {
         eprintln!("ROSTFREI_NATS_URL is not set; skipping real NATS integration test");
-        return Ok(());
+        return;
     };
     let client = async_nats::connect(url).await.expect("NATS connection");
     assert!(client.is_server_compatible(2, 12, 0));
     let context = async_nats::jetstream::new(client.clone());
-    let suffix = unique_suffix()?;
+    let suffix = unique_suffix().expect("unique test suffix");
     let bounded_context = ApplicationName::new(format!("rostfrei-{suffix}"))
         .expect("application name")
         .bounded_context("domain-event-consumer")
@@ -179,8 +178,10 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         .await
         .expect("event store");
 
-    let first_config = consumer_config(&bounded_context, &format!("history-{suffix}"))?;
-    let second_config = consumer_config(&bounded_context, &format!("independent-{suffix}"))?;
+    let first_config = consumer_config(&bounded_context, &format!("history-{suffix}"))
+        .expect("first consumer config");
+    let second_config = consumer_config(&bounded_context, &format!("independent-{suffix}"))
+        .expect("second consumer config");
     provision_domain_event_consumer(&context, &event_store_config, &first_config)
         .await
         .expect("first durable provisioning");
@@ -196,22 +197,23 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         first_config.clone(),
         first_handler,
     )
-    .await?;
+    .await
+    .expect("first consumer connection");
     let (first_shutdown_tx, first_shutdown_rx) = watch::channel(false);
     let mut first_task =
         tokio::spawn(async move { first_consumer.run_until_shutdown(first_shutdown_rx).await });
 
-    let first_stream = stream("first")?;
+    let first_stream = stream("first").expect("first stream id");
     let first_outcome = store
         .append(
             &first_stream,
             ExpectedVersion::NoStream,
-            batch(&first_stream, "first-operation", &["first"])?,
+            batch(&first_stream, "first-operation", &["first"]).expect("first event batch"),
         )
         .await
         .expect("committed event");
     let first_delivery = tokio::select! {
-        delivery = receive(&mut first_rx) => delivery?,
+        delivery = receive(&mut first_rx) => delivery.expect("first handler delivery"),
         result = &mut first_task => panic!("first durable stopped before delivery: {result:?}"),
     };
     assert_eq!(first_delivery.value, "first");
@@ -219,7 +221,9 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         first_delivery.event_id,
         first_outcome.events()[0].event_id().as_str()
     );
-    wait_for_ack(&context, &event_store_config, &first_config).await?;
+    wait_for_ack(&context, &event_store_config, &first_config)
+        .await
+        .expect("first durable acknowledgement");
 
     let mut event_stream = context
         .get_stream(event_store_config.stream_name())
@@ -246,12 +250,21 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         second_config.clone(),
         Arc::new(RecordingHandler::new(second_tx, 0)),
     )
-    .await?;
+    .await
+    .expect("second consumer connection");
     let (second_shutdown_tx, second_shutdown_rx) = watch::channel(false);
     let second_task =
         tokio::spawn(async move { second_consumer.run_until_shutdown(second_shutdown_rx).await });
-    assert_eq!(receive(&mut second_rx).await?.value, "first");
-    wait_for_ack(&context, &event_store_config, &second_config).await?;
+    assert_eq!(
+        receive(&mut second_rx)
+            .await
+            .expect("second handler delivery")
+            .value,
+        "first"
+    );
+    wait_for_ack(&context, &event_store_config, &second_config)
+        .await
+        .expect("second durable acknowledgement");
 
     assert_eq!(
         store
@@ -282,22 +295,29 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         first_config.clone(),
         Arc::new(RecordingHandler::new(restart_tx, 0)),
     )
-    .await?;
+    .await
+    .expect("restarted consumer connection");
     let (restart_shutdown_tx, restart_shutdown_rx) = watch::channel(false);
     let restart_task =
         tokio::spawn(async move { restarted.run_until_shutdown(restart_shutdown_rx).await });
-    let next_stream = stream("next")?;
+    let next_stream = stream("next").expect("next stream id");
     store
         .append(
             &next_stream,
             ExpectedVersion::NoStream,
-            batch(&next_stream, "next-operation", &["next"])?,
+            batch(&next_stream, "next-operation", &["next"]).expect("next event batch"),
         )
         .await
         .expect("next event");
-    assert_eq!(receive(&mut restart_rx).await?.value, "next");
+    assert_eq!(
+        receive(&mut restart_rx)
+            .await
+            .expect("restarted consumer next delivery")
+            .value,
+        "next"
+    );
 
-    let ordered_stream = stream("ordered")?;
+    let ordered_stream = stream("ordered").expect("ordered stream id");
     store
         .append(
             &ordered_stream,
@@ -306,14 +326,21 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
                 &ordered_stream,
                 "ordered-operation",
                 &["one", "two", "three"],
-            )?,
+            )
+            .expect("ordered event batch"),
         )
         .await
         .expect("multi-event commit");
     let ordered = [
-        receive(&mut restart_rx).await?,
-        receive(&mut restart_rx).await?,
-        receive(&mut restart_rx).await?,
+        receive(&mut restart_rx)
+            .await
+            .expect("first ordered delivery"),
+        receive(&mut restart_rx)
+            .await
+            .expect("second ordered delivery"),
+        receive(&mut restart_rx)
+            .await
+            .expect("third ordered delivery"),
     ];
     let first_ordered_stream = ordered[0].stream_id.clone();
     assert_eq!(
@@ -333,7 +360,8 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         .expect("restart task join")
         .expect("clean restart shutdown");
 
-    let retry_config = consumer_config(&bounded_context, &format!("retry-{suffix}"))?;
+    let retry_config = consumer_config(&bounded_context, &format!("retry-{suffix}"))
+        .expect("retry consumer config");
     provision_domain_event_consumer(&context, &event_store_config, &retry_config)
         .await
         .expect("retry durable provisioning");
@@ -345,11 +373,14 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         retry_config.clone(),
         retry_handler.clone(),
     )
-    .await?;
+    .await
+    .expect("retry consumer connection");
     let (retry_shutdown_tx, retry_shutdown_rx) = watch::channel(false);
     let retry_task =
         tokio::spawn(async move { retry_consumer.run_until_shutdown(retry_shutdown_rx).await });
-    let retried = receive(&mut retry_rx).await?;
+    let retried = receive(&mut retry_rx)
+        .await
+        .expect("retried handler delivery");
     assert_eq!(
         retried.event_id,
         first_outcome.events()[0].event_id().as_str()
@@ -383,7 +414,8 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         blocked_config.clone(),
         Arc::new(RecordingHandler::blocking(blocked_tx)),
     )
-    .await?;
+    .await
+    .expect("blocked consumer connection");
     let (_blocked_shutdown_tx, blocked_shutdown_rx) = watch::channel(false);
     let blocked_result = tokio::time::timeout(
         Duration::from_secs(5),
@@ -404,7 +436,8 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         blocked_config,
         Arc::new(RecordingHandler::new(unblocked_tx, 0)),
     )
-    .await?;
+    .await
+    .expect("unblocked consumer connection");
     let (unblocked_shutdown_tx, unblocked_shutdown_rx) = watch::channel(false);
     let unblocked_task = tokio::spawn(async move {
         unblocked_consumer
@@ -412,7 +445,10 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
             .await
     });
     assert_eq!(
-        receive(&mut unblocked_rx).await?.event_id,
+        receive(&mut unblocked_rx)
+            .await
+            .expect("unblocked handler delivery")
+            .event_id,
         first_outcome.events()[0].event_id().as_str(),
         "a restart must not skip and cumulatively ACK the blocked event"
     );
@@ -424,13 +460,15 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         .expect("unblocked task join")
         .expect("clean unblocked shutdown");
 
-    stage_uncommitted_batch(&client, &event_store_config).await?;
+    let staged_response_payload = stage_uncommitted_batch(&client, &event_store_config)
+        .await
+        .expect("stage uncommitted batch");
+    assert!(staged_response_payload.is_empty());
     let stream_info = event_stream.info().await.expect("stream info");
     assert_eq!(
         stream_info.state.messages, 5,
         "staged ADR-50 messages stay invisible"
     );
-    Ok(())
 }
 
 async fn connect_consumer(
@@ -529,7 +567,7 @@ async fn wait_for_ack(
 async fn stage_uncommitted_batch(
     client: &async_nats::Client,
     config: &NatsEventStoreConfig,
-) -> TestResult<()> {
+) -> TestResult<Vec<u8>> {
     let staged_stream = stream("staged")?;
     let subject = config.aggregate_subject(
         staged_stream.aggregate_type().as_str(),
@@ -551,8 +589,7 @@ async fn stage_uncommitted_batch(
                 .timeout(Some(Duration::from_secs(2))),
         )
         .await?;
-    assert!(response.payload.is_empty());
-    Ok(())
+    Ok(response.payload.to_vec())
 }
 
 fn unique_suffix() -> TestResult<String> {

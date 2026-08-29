@@ -7,6 +7,7 @@ use crate::{
 
 use super::{
     decision_reference_validation::{self, DecisionReferenceInventory},
+    error::DomainModelError,
     id_projection::{decision_owner as decision_owner_id, value_object as value_object_id},
 };
 
@@ -33,58 +34,73 @@ impl DecisionProjection {
         &mut self,
         expected_owner: DecisionOwnerId,
         descriptors: &'static [DecisionDescriptor],
-    ) {
-        self.validate_registered_owner(expected_owner);
-        self.validate_group(expected_owner, descriptors);
+    ) -> Result<(), DomainModelError> {
+        self.validate_registered_owner(expected_owner)?;
+        self.validate_group(expected_owner, descriptors)?;
         self.decisions.extend(
             descriptors
                 .iter()
                 .map(|descriptor| (*descriptor, decision(*descriptor))),
         );
+        Ok(())
     }
 
-    pub(super) fn validate_references(&self, inventory: &DecisionReferenceInventory) {
+    pub(super) fn validate_references(
+        &self,
+        inventory: &DecisionReferenceInventory,
+    ) -> Result<(), DomainModelError> {
         decision_reference_validation::validate(
             self.decisions.iter().map(|(descriptor, _)| *descriptor),
             inventory,
-        );
+        )
     }
 
     pub(super) fn into_values(self) -> Vec<Value> {
         self.decisions.into_iter().map(|(_, value)| value).collect()
     }
 
-    fn validate_registered_owner(&self, owner: DecisionOwnerId) {
+    fn validate_registered_owner(&self, owner: DecisionOwnerId) -> Result<(), DomainModelError> {
         if !self.registered_owners.contains(&owner) {
-            panic!("unregistered decision owner: {owner:?}");
+            return Err(DomainModelError::UnregisteredDecisionOwner {
+                owner: Box::new(owner),
+            });
         }
+        Ok(())
     }
 
     fn validate_group(
         &self,
         expected_owner: DecisionOwnerId,
         descriptors: &'static [DecisionDescriptor],
-    ) {
+    ) -> Result<(), DomainModelError> {
         for (index, descriptor) in descriptors.iter().enumerate() {
-            Self::validate_owner(expected_owner, descriptor);
-            self.validate_id(descriptor.id, descriptors.iter().take(index));
+            Self::validate_owner(expected_owner, descriptor)?;
+            self.validate_id(descriptor.id, descriptors.iter().take(index))?;
         }
+        Ok(())
     }
 
-    fn validate_owner(expected_owner: DecisionOwnerId, descriptor: &DecisionDescriptor) {
+    fn validate_owner(
+        expected_owner: DecisionOwnerId,
+        descriptor: &DecisionDescriptor,
+    ) -> Result<(), DomainModelError> {
         if descriptor.id.owner != expected_owner {
-            panic!("decision descriptor owner mismatch: {:?}", descriptor.id);
+            return Err(DomainModelError::DecisionDescriptorOwnerMismatch {
+                id: Box::new(descriptor.id),
+            });
         }
+        Ok(())
     }
 
     fn validate_id<'a>(
         &self,
         id: DecisionId,
         preceding: impl Iterator<Item = &'a DecisionDescriptor>,
-    ) {
+    ) -> Result<(), DomainModelError> {
         if self.has_id(id) || preceding.into_iter().any(|descriptor| descriptor.id == id) {
-            panic!("duplicate DecisionId: {id:?}");
+            return Err(DomainModelError::DuplicateDecisionId { id: Box::new(id) });
         }
+        Ok(())
     }
 
     fn has_id(&self, id: DecisionId) -> bool {

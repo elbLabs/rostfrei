@@ -310,13 +310,13 @@ fn metadata(stream_id: &StreamId, operation: &str) -> TestResult<ExecutionMetada
 }
 
 #[tokio::test]
-async fn command_composes_generated_actions_and_replays_their_events() -> TestResult {
-    let stream = stream("account-1")?;
+async fn command_composes_generated_actions_and_replays_their_events() {
+    let stream = stream("account-1").expect("valid account stream fixture");
     let executor = Executor::new(InMemoryEventStore::new());
 
     let first = executor
         .execute::<AccountAggregate, _>(
-            metadata(&stream, "deposit-1")?,
+            metadata(&stream, "deposit-1").expect("valid first deposit metadata fixture"),
             &DepositAndObserve {
                 account_id: "account-1",
                 amount: 7,
@@ -336,7 +336,7 @@ async fn command_composes_generated_actions_and_replays_their_events() -> TestRe
 
     let second = executor
         .execute::<AccountAggregate, _>(
-            metadata(&stream, "deposit-2")?,
+            metadata(&stream, "deposit-2").expect("valid second deposit metadata fixture"),
             &DepositAndObserve {
                 account_id: "account-1",
                 amount: 3,
@@ -369,7 +369,6 @@ async fn command_composes_generated_actions_and_replays_their_events() -> TestRe
             .as_slice(),
         &[MoneyDeposited { amount: 7 }]
     );
-    Ok(())
 }
 
 #[test]
@@ -451,30 +450,35 @@ fn compiled_aggregate_stream_type_includes_its_bounded_context() {
 }
 
 #[tokio::test]
-async fn generated_json_replay_fails_closed() -> TestResult {
+async fn generated_json_replay_fails_closed() {
     assert_eq!(
-        replay_error("unknown-event", 1, b"{}").await?,
+        replay_error("unknown-event", 1, b"{}")
+            .await
+            .expect("unknown event replay reaches codec classification"),
         EventCodecErrorKind::UnknownEventType
     );
     assert_eq!(
-        replay_error("money-deposited", 1, br#"{"amount":4}"#).await?,
+        replay_error("money-deposited", 1, br#"{"amount":4}"#)
+            .await
+            .expect("unsupported schema replay reaches codec classification"),
         EventCodecErrorKind::UnsupportedSchemaVersion
     );
     assert_eq!(
-        replay_error("money-deposited", 2, b"not-json").await?,
+        replay_error("money-deposited", 2, b"not-json")
+            .await
+            .expect("malformed payload replay reaches codec classification"),
         EventCodecErrorKind::MalformedPayload
     );
-    Ok(())
 }
 
 #[tokio::test]
-async fn custom_codec_remains_an_explicit_override_without_naming_the_generated_enum() -> TestResult
-{
-    let stream = stream("custom-account")?;
+async fn custom_codec_remains_an_explicit_override_without_naming_the_generated_enum() {
+    let stream = stream("custom-account").expect("valid custom codec stream fixture");
     let executor = Executor::with_codec(InMemoryEventStore::new(), TextEventCodec);
     let outcome = executor
         .execute::<AccountAggregate, _>(
-            metadata(&stream, "custom-deposit")?,
+            metadata(&stream, "custom-deposit")
+                .expect("valid custom codec execution metadata fixture"),
             &DepositAndObserve {
                 account_id: "custom-account",
                 amount: 11,
@@ -488,7 +492,6 @@ async fn custom_codec_remains_an_explicit_override_without_naming_the_generated_
 
     assert_eq!(outcome.events()[0].payload(), b"deposit:11");
     assert_eq!(outcome.events()[1].payload(), b"observed:11");
-    Ok(())
 }
 
 #[test]
@@ -503,7 +506,8 @@ fn domain_model_projects_attached_events_once_in_aggregate_declaration_order() {
         commands: [],
         errors: [],
         query_groups: [],
-    };
+    }
+    .expect("runtime test domain model projection");
     let events = model["domainEvents"].as_array().expect("domain events");
 
     assert_eq!(events.len(), 2);

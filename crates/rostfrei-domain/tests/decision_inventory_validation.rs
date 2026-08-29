@@ -1,13 +1,10 @@
 #![allow(dead_code)]
 
-mod support;
-
-use support::{ExpectedPanicError, panic_message};
-
 use domain::__private::DomainModelBuilder;
 use domain::{
-    BoundedContext, BoundedContextId, DecisionId, DecisionOwnerId, DomainService, DomainServiceId,
-    ValueObject, ValueObjectId, ValueObjectOwnerId, ValueObjectType, domain_decisions,
+    BoundedContext, BoundedContextId, DecisionId, DecisionOwnerId, DomainModelError, DomainService,
+    DomainServiceId, ValueObject, ValueObjectId, ValueObjectOwnerId, ValueObjectType,
+    domain_decisions,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("decision-inventory");
@@ -75,53 +72,70 @@ fn violation(missing_id: ValueObjectId, location: &str) -> String {
     )
 }
 
-fn owner_builder() -> DomainModelBuilder {
+fn owner_builder() -> Result<DomainModelBuilder, DomainModelError> {
     let mut builder = DomainModelBuilder::new();
-    builder.add_domain_service_type::<InventoryService>();
-    builder
+    builder.add_domain_service_type::<InventoryService>()?;
+    Ok(builder)
 }
 
 #[test]
 fn accepts_references_registered_after_the_owner() {
-    let mut builder = owner_builder();
+    let mut builder = owner_builder().unwrap();
     builder.add_value_object(InventoryInput::DESCRIPTOR);
     builder.add_value_object(InventoryOutput::DESCRIPTOR);
 
-    let model = builder.finish();
+    let model = builder.finish().unwrap();
 
     assert_eq!(model["decisions"].as_array().unwrap().len(), 1);
 }
 
 #[test]
-fn reports_a_missing_input_value_object() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = owner_builder();
-        builder.add_value_object(InventoryOutput::DESCRIPTOR);
-        builder.finish();
-    })?;
+fn reports_a_missing_input_value_object() {
+    let mut builder = owner_builder().unwrap();
+    builder.add_value_object(InventoryOutput::DESCRIPTOR);
 
-    assert_eq!(message, violation(INPUT_ID, "input"));
-    Ok(())
+    let error = builder.finish().unwrap_err();
+
+    assert_eq!(error.to_string(), violation(INPUT_ID, "input"));
+    assert_eq!(
+        error,
+        DomainModelError::DecisionReferenceInventoryViolation {
+            decision_id: Box::new(DECISION_ID),
+            value_object_id: Box::new(INPUT_ID),
+            location: "input",
+        }
+    );
 }
 
 #[test]
-fn reports_a_missing_output_value_object() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        let mut builder = owner_builder();
-        builder.add_value_object(InventoryInput::DESCRIPTOR);
-        builder.finish();
-    })?;
+fn reports_a_missing_output_value_object() {
+    let mut builder = owner_builder().unwrap();
+    builder.add_value_object(InventoryInput::DESCRIPTOR);
 
-    assert_eq!(message, violation(OUTPUT_ID, "output"));
-    Ok(())
+    let error = builder.finish().unwrap_err();
+
+    assert_eq!(error.to_string(), violation(OUTPUT_ID, "output"));
+    assert_eq!(
+        error,
+        DomainModelError::DecisionReferenceInventoryViolation {
+            decision_id: Box::new(DECISION_ID),
+            value_object_id: Box::new(OUTPUT_ID),
+            location: "output",
+        }
+    );
 }
 
 #[test]
-fn validates_input_before_output_deterministically() -> Result<(), ExpectedPanicError> {
-    let message = panic_message(|| {
-        owner_builder().finish();
-    })?;
+fn validates_input_before_output_deterministically() {
+    let error = owner_builder().unwrap().finish().unwrap_err();
 
-    assert_eq!(message, violation(INPUT_ID, "input"));
-    Ok(())
+    assert_eq!(error.to_string(), violation(INPUT_ID, "input"));
+    assert_eq!(
+        error,
+        DomainModelError::DecisionReferenceInventoryViolation {
+            decision_id: Box::new(DECISION_ID),
+            value_object_id: Box::new(INPUT_ID),
+            location: "input",
+        }
+    );
 }

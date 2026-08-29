@@ -1,7 +1,8 @@
 use crate::{AggregateId, DomainIdentityId, EntityId, ValueObjectId};
 
-use super::field_reference_collection::{
-    FieldDescriptorLocation, FieldReference, FieldReferenceRecord,
+use super::{
+    error::{DomainModelError, DomainModelReference},
+    field_reference_collection::{FieldDescriptorLocation, FieldReference, FieldReferenceRecord},
 };
 
 pub(super) struct FieldReferenceInventory {
@@ -30,39 +31,58 @@ impl FieldReferenceInventory {
 pub(super) fn validate(
     references: impl IntoIterator<Item = FieldReferenceRecord>,
     inventory: &FieldReferenceInventory,
-) {
+) -> Result<(), DomainModelError> {
     for record in references {
         match record.reference {
             FieldReference::DomainIdentity(id) => {
                 if !inventory.identities.contains(&id) {
-                    missing_reference(id, record.location, "identities");
+                    return Err(missing_reference(
+                        DomainModelReference::DomainIdentity(Box::new(id)),
+                        record.location,
+                        "identities",
+                    ));
                 }
             }
             FieldReference::Entity(id) => {
                 if !inventory.entities.contains(&id) {
-                    missing_reference(id, record.location, "entities");
+                    return Err(missing_reference(
+                        DomainModelReference::Entity(Box::new(id)),
+                        record.location,
+                        "entities",
+                    ));
                 }
             }
             FieldReference::ValueObject(id) => {
                 if !inventory.value_objects.contains(&id) {
-                    missing_reference(id, record.location, "value_objects");
+                    return Err(missing_reference(
+                        DomainModelReference::ValueObject(Box::new(id)),
+                        record.location,
+                        "value_objects",
+                    ));
                 }
             }
             FieldReference::Aggregate(id) => {
                 if !inventory.aggregates.contains(&id) {
-                    missing_reference(id, record.location, "aggregates");
+                    return Err(missing_reference(
+                        DomainModelReference::Aggregate(Box::new(id)),
+                        record.location,
+                        "aggregates",
+                    ));
                 }
             }
         }
     }
+    Ok(())
 }
 
 fn missing_reference(
-    item_id: impl std::fmt::Debug,
+    reference: DomainModelReference,
     location: FieldDescriptorLocation,
-    inventory_key: &str,
-) -> ! {
-    panic!(
-        "Field reference inventory violation: field references missing {item_id:?} at descriptor location `{location}`; add it to domain_model! inventory key `{inventory_key}`"
-    );
+    inventory_key: &'static str,
+) -> DomainModelError {
+    DomainModelError::FieldReferenceInventoryViolation {
+        reference,
+        location: location.to_string(),
+        inventory_key,
+    }
 }

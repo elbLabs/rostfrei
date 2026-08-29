@@ -4,8 +4,9 @@ use domain::__private::DomainModelBuilder;
 use domain::{
     Aggregate, BoundedContext, BoundedContextId, DecisionDescriptor, DecisionId,
     DecisionImplementationDescriptor, DecisionInputDescriptor, DecisionOutputDescriptor,
-    DecisionOwnerId, DomainIdentity, DomainService, DomainServiceDescriptor, DomainServiceId,
-    DomainServiceType, Entity, ValueObject, ValueObjectType, domain_decisions, domain_model,
+    DecisionOwnerId, DomainIdentity, DomainModelError, DomainService, DomainServiceDescriptor,
+    DomainServiceId, DomainServiceType, Entity, ValueObject, ValueObjectType, domain_decisions,
+    domain_model,
 };
 use serde_json::{Value, json};
 
@@ -136,7 +137,7 @@ impl SharedServiceDecisions for ProjectionService {
     }
 }
 
-fn projected_model() -> Value {
+fn projected_model() -> Result<Value, DomainModelError> {
     domain_model! {
         contexts: [ProjectionContext],
         aggregates: [ProjectionAggregate],
@@ -217,7 +218,7 @@ impl DomainServiceType for MismatchedService {
 #[test]
 fn projects_an_attached_rust_decision_as_exact_json() {
     assert_eq!(
-        projected_model()["decisions"][0],
+        projected_model().expect("decision model projection should succeed")["decisions"][0],
         json!({
             "id": {
                 "owner": {
@@ -263,7 +264,7 @@ fn projects_an_attached_rust_decision_as_exact_json() {
 
 #[test]
 fn preserves_owner_attachment_and_source_order_for_all_owner_kinds() {
-    let model = projected_model();
+    let model = projected_model().expect("decision model projection should succeed");
     let order = model["decisions"]
         .as_array()
         .unwrap()
@@ -290,9 +291,8 @@ fn preserves_owner_attachment_and_source_order_for_all_owner_kinds() {
 }
 
 #[test]
-#[should_panic(expected = "duplicate DecisionId")]
 fn rejects_duplicate_decision_ids_across_attached_traits() {
-    let _ = domain_model! {
+    let error = domain_model! {
         contexts: [],
         aggregates: [],
         entities: [],
@@ -302,19 +302,46 @@ fn rejects_duplicate_decision_ids_across_attached_traits() {
         commands: [],
         errors: [],
         query_groups: [],
-    };
+    }
+    .expect_err("duplicate decision ids should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateDecisionId {
+            id: Box::new(DecisionId {
+                owner: DecisionOwnerId::DomainService(DuplicateService::DESCRIPTOR.id),
+                local: "duplicate",
+            }),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "duplicate DecisionId: DecisionId { owner: DomainService(DomainServiceId { context: BoundedContextId(\"decision-projection\"), local: \"duplicate-service\" }), local: \"duplicate\" }"
+    );
 }
 
 #[test]
-#[should_panic(expected = "decision descriptor owner mismatch")]
 fn rejects_a_trusted_manual_descriptor_with_a_different_owner() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_domain_service_type::<MismatchedService>();
+    let error = builder
+        .add_domain_service_type::<MismatchedService>()
+        .expect_err("a mismatched decision owner should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::DecisionDescriptorOwnerMismatch {
+            id: Box::new(MISMATCHED_DECISIONS[0].id),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "decision descriptor owner mismatch: DecisionId { owner: DomainService(DomainServiceId { context: BoundedContextId(\"decision-projection\"), local: \"foreign-service\" }), local: \"mismatched\" }"
+    );
 }
 
 #[test]
 fn accepts_the_same_local_id_on_different_owners() {
-    let model = projected_model();
+    let model = projected_model().expect("decision model projection should succeed");
     let owner_kinds = model["decisions"]
         .as_array()
         .unwrap()

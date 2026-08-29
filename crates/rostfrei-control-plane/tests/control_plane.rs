@@ -789,9 +789,11 @@ async fn non_json_predictions_are_exposed_as_base64_only_when_explicitly_enabled
 #[derive(Clone, Copy)]
 struct PanickingWireCodec;
 
+struct DeliberateCommandCodecPanic;
+
 impl CommandWireCodec<TestCommand> for PanickingWireCodec {
     fn decode(&self, _payload: &Value) -> Result<TestCommand, CommandWireCodecError> {
-        panic!("deliberate command codec panic")
+        std::panic::resume_unwind(Box::new(DeliberateCommandCodecPanic))
     }
 
     fn encode_rejection(&self, _rejection: &TestRejection) -> Result<Value, CommandWireCodecError> {
