@@ -28,10 +28,12 @@ are invoked only by their owning Aggregate or Entity.
 Action input contains business data for the requested behavior.
 
 An Action accepts zero or one business input parameter named `input`. Multiple
-business values are grouped into one type. An Aggregate Action additionally
-receives its owned state first as `root: &mut RootType`; that root is not
-business input. Entity Actions use `&self` or `&mut self`, while Value Object
-transformations consume `self`.
+business values are grouped into one type. An executable Aggregate Action
+uses `&mut self` on `AggregateInstance` and reads state through `self.state()`;
+that state is not business input. It changes state only through explicit
+`self.raise(event)` calls. Metadata-only Aggregate Actions use
+`root: &mut RootType`. Entity Actions use `&self` or `&mut self`, while Value
+Object transformations consume `self`.
 
 It does not define transport, aggregate identity, repository access,
 persistence, or deployment.
@@ -39,6 +41,11 @@ persistence, or deployment.
 ## Owner Boundary
 
 An Aggregate Action starts behavior within one Aggregate boundary.
+
+A command handler may call multiple Aggregate Actions, and each Action may raise
+zero or more events. Every raise makes the resulting state visible to subsequent
+code. A rejection from the handler discards the complete staged event set, so
+the command remains the atomic orchestration boundary.
 
 A Domain Service Action starts coordination across public Aggregate Actions in
 one [Bounded Context](../reference/domain/bounded-context.md).

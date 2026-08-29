@@ -229,6 +229,7 @@ fn compiles_explicit_domain_model_to_json() {
                 "label": "Close mailbox",
                 "input": null,
                 "output": null,
+                "raises": [],
                 "error": null,
             }, {
                 "id": {
@@ -244,6 +245,7 @@ fn compiles_explicit_domain_model_to_json() {
                 "label": "Open mailbox",
                 "input": null,
                 "output": null,
+                "raises": [],
                 "error": null,
             }],
             "decisions": [],

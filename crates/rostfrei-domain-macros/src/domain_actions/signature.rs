@@ -87,7 +87,45 @@ pub fn parse_aggregate(signature: &Signature) -> syn::Result<ParsedSignature> {
 }
 
 pub fn parse_aggregate_instance(signature: &Signature) -> syn::Result<ParsedSignature> {
-    parse_aggregate_root(signature, false)
+    let Some(FnArg::Receiver(receiver)) = signature.inputs.first() else {
+        return Err(syn::Error::new_spanned(
+            &signature.ident,
+            "executable aggregate actions require an &mut self receiver",
+        ));
+    };
+    if receiver.colon_token.is_some() {
+        return Err(syn::Error::new_spanned(
+            receiver,
+            "executable aggregate actions do not support typed receivers",
+        ));
+    }
+    let Some((_, lifetime)) = &receiver.reference else {
+        return Err(syn::Error::new_spanned(
+            receiver,
+            "executable aggregate actions require an &mut self receiver",
+        ));
+    };
+    if receiver.mutability.is_none() {
+        return Err(syn::Error::new_spanned(
+            receiver,
+            "executable aggregate actions require a mutable &mut self receiver",
+        ));
+    }
+    if let Some(lifetime) = lifetime {
+        return Err(syn::Error::new_spanned(
+            lifetime,
+            "executable aggregate action receivers cannot have an explicit lifetime",
+        ));
+    }
+    let input = parse_business_inputs(signature.inputs.iter().skip(1), 1, "aggregate")?;
+    let parsed = parsed(None, input, signature)?;
+    if !is_unit(&parsed.output) {
+        return Err(syn::Error::new_spanned(
+            &signature.output,
+            "executable aggregate actions must return () or Result<(), DomainError>",
+        ));
+    }
+    Ok(parsed)
 }
 
 fn parse_aggregate_root(signature: &Signature, mutable: bool) -> syn::Result<ParsedSignature> {
@@ -224,4 +262,8 @@ fn split_result(output: Type) -> (Type, Option<Type>) {
     } else {
         (output, None)
     }
+}
+
+fn is_unit(ty: &Type) -> bool {
+    matches!(ty, Type::Tuple(tuple) if tuple.elems.is_empty())
 }

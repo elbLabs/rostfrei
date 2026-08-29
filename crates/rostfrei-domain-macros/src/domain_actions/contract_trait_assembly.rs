@@ -148,6 +148,10 @@ fn assemble_descriptor(
         || quote!(None),
         |error| quote!(Some(<#error as #domain_path::DomainErrorType>::DESCRIPTOR.id)),
     );
+    let raises = action
+        .raises
+        .iter()
+        .map(|event| quote!(<#event as #domain_path::DomainEventType>::DESCRIPTOR.id));
     quote! {
         #domain_path::ActionDescriptor {
             id: #domain_path::ActionId {
@@ -159,6 +163,7 @@ fn assemble_descriptor(
             output: <#output as #domain_path::ActionOutputType<
                 #output_owner<Self>
             >>::DESCRIPTOR,
+            raises: &[#(#raises),*],
             error: #error,
         }
     }
