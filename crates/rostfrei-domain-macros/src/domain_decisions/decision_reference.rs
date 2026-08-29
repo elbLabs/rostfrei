@@ -78,7 +78,7 @@ fn validate_trait_item_collisions(
     Ok(())
 }
 
-fn trait_item_identifier(item: &TraitItem) -> Option<&Ident> {
+const fn trait_item_identifier(item: &TraitItem) -> Option<&Ident> {
     match item {
         TraitItem::Const(item) => Some(&item.ident),
         TraitItem::Fn(item) => Some(&item.sig.ident),

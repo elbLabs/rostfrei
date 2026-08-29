@@ -2,13 +2,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Ident, Path};
 
-use super::attributes::Attributes;
-
-pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> TokenStream {
-    let events = attributes
-        .events
-        .as_ref()
-        .expect("event registration assembly requires aggregate events");
+pub fn assemble(domain_path: &Path, name: &Ident, events: &[Path]) -> TokenStream {
     let ownership = events.iter().map(|event| {
         quote! {
             impl #domain_path::DomainEventType for #event {

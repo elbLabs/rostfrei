@@ -35,7 +35,12 @@ fn extract_newtype(input: &DeriveInput) -> Result<TypePath> {
             "DomainIdentity only supports non-generic tuple structs with exactly one field",
         ));
     }
-    let field = fields.unnamed.first().unwrap();
+    let Some(field) = fields.unnamed.first() else {
+        return Err(syn::Error::new_spanned(
+            fields,
+            "DomainIdentity only supports non-generic tuple structs with exactly one field",
+        ));
+    };
     if let Some(attribute) = field
         .attrs
         .iter()

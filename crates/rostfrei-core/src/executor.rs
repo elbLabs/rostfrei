@@ -19,13 +19,13 @@ pub struct Executor<S, C = JsonEventCodec> {
 }
 
 impl<S> Executor<S, JsonEventCodec> {
-    pub fn new(store: S) -> Self {
+    pub const fn new(store: S) -> Self {
         Self::with_codec(store, JsonEventCodec)
     }
 }
 
 impl<S, C> Executor<S, C> {
-    pub fn with_codec(store: S, codec: C) -> Self {
+    pub const fn with_codec(store: S, codec: C) -> Self {
         Self {
             store,
             codec,
@@ -34,7 +34,7 @@ impl<S, C> Executor<S, C> {
     }
 
     #[must_use]
-    pub fn with_max_conflict_retries(mut self, maximum_conflict_retries: usize) -> Self {
+    pub const fn with_max_conflict_retries(mut self, maximum_conflict_retries: usize) -> Self {
         self.maximum_conflict_retries = maximum_conflict_retries;
         self
     }
@@ -165,6 +165,7 @@ where
     where
         A: Aggregate + CommandHandler<Command>,
         C: EventCodec<A>,
+        Command: Sync,
     {
         let (aggregate, history) = self.load_and_replay::<A>(metadata.stream_id()).await?;
         let base_version = current_version(&history);
@@ -241,8 +242,10 @@ where
     where
         A: Aggregate + CommandHandler<Command>,
         C: EventCodec<A>,
+        Command: Sync,
     {
-        for attempt in 0..=self.maximum_conflict_retries {
+        let mut remaining_conflict_retries = self.maximum_conflict_retries;
+        loop {
             let (aggregate, history) = self.load_and_replay::<A>(metadata.stream_id()).await?;
 
             let prior_operation: Vec<_> = history
@@ -298,12 +301,13 @@ where
                 }
                 Err(error)
                     if error.kind() == EventStoreErrorKind::Conflict
-                        && attempt < self.maximum_conflict_retries => {}
+                        && remaining_conflict_retries > 0 =>
+                {
+                    remaining_conflict_retries = remaining_conflict_retries.saturating_sub(1);
+                }
                 Err(error) => return Err(error.into()),
             }
         }
-
-        unreachable!("the bounded retry loop always returns on its final attempt")
     }
 }
 
@@ -438,4 +442,20 @@ fn corrupt(message: &'static str) -> EventStoreError {
 
 fn invalid_request(message: impl Into<String>) -> EventStoreError {
     EventStoreError::new(EventStoreErrorKind::InvalidRequest, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONST_EXECUTOR: Executor<(), ()> =
+        Executor::with_codec((), ()).with_max_conflict_retries(4);
+    const DEFAULT_CONST_EXECUTOR: Executor<()> = Executor::new(());
+
+    #[test]
+    fn executor_configuration_is_const_constructible() {
+        assert_eq!(*CONST_EXECUTOR.store(), ());
+        assert_eq!(*CONST_EXECUTOR.codec(), ());
+        assert_eq!(*DEFAULT_CONST_EXECUTOR.store(), ());
+    }
 }

@@ -75,7 +75,7 @@ impl AllocationBounds for Product {
     }
 
     fn available_nonnegative(candidate: &ProductRoot) -> Option<InvariantViolation> {
-        (candidate.stock - candidate.reserved < 0)
+        (candidate.stock < candidate.reserved)
             .then(|| InvariantViolation::new("available", "must be nonnegative"))
     }
 }
@@ -106,7 +106,7 @@ struct Line {
 }
 
 impl LineBounds for Line {
-    fn positive_quantity(candidate: &Line) -> Option<InvariantViolation> {
+    fn positive_quantity(candidate: &Self) -> Option<InvariantViolation> {
         (candidate.quantity <= 0).then(|| InvariantViolation::new("quantity", "must be positive"))
     }
 }
@@ -128,7 +128,7 @@ trait SkuBounds {
 struct Sku(String);
 
 impl SkuBounds for Sku {
-    fn not_blank(candidate: &Sku) -> Option<InvariantViolation> {
+    fn not_blank(candidate: &Self) -> Option<InvariantViolation> {
         candidate
             .0
             .trim()
@@ -162,13 +162,13 @@ mod change_inventory_action {
             Ok(())
         }
 
-        fn translate_violations(violations: Vec<InvariantViolation>) -> ChangeInventoryError {
+        const fn translate_violations(violations: Vec<InvariantViolation>) -> ChangeInventoryError {
             ChangeInventoryError::InvalidCandidate(violations)
         }
     }
 }
 
-fn product(stock: i32, reserved: i32) -> ProductRoot {
+const fn product(stock: i32, reserved: i32) -> ProductRoot {
     ProductRoot {
         id: ProductId(1),
         stock,

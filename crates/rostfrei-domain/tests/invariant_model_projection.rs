@@ -2,10 +2,10 @@
 
 use domain::__private::DomainModelBuilder;
 use domain::{
-    Aggregate, BoundedContext, BoundedContextId, DomainIdentity, Entity, InvariantDescriptor,
-    InvariantId, InvariantOwnerId, InvariantOwnerType, InvariantViolation, ValueObject,
-    ValueObjectDescriptor, ValueObjectId, ValueObjectOwnerId, ValueObjectShapeDescriptor,
-    ValueObjectType, domain_invariants, domain_model,
+    Aggregate, BoundedContext, BoundedContextId, DomainIdentity, DomainModelError, Entity,
+    InvariantDescriptor, InvariantId, InvariantOwnerId, InvariantOwnerType, InvariantViolation,
+    ValueObject, ValueObjectDescriptor, ValueObjectId, ValueObjectOwnerId,
+    ValueObjectShapeDescriptor, ValueObjectType, domain_invariants, domain_model,
 };
 use serde_json::{Value, json};
 
@@ -88,7 +88,7 @@ struct ProjectionEntity {
 }
 
 impl SharedEntityInvariants for ProjectionEntity {
-    fn shared(_candidate: &ProjectionEntity) -> Option<InvariantViolation> {
+    fn shared(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
@@ -109,7 +109,7 @@ trait SharedValueObjectInvariants {
 struct ProjectionValue(u64);
 
 impl SharedValueObjectInvariants for ProjectionValue {
-    fn shared(_candidate: &ProjectionValue) -> Option<InvariantViolation> {
+    fn shared(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
@@ -130,7 +130,7 @@ trait OmittedValueObjectInvariants {
 struct OmittedValue(u64);
 
 impl OmittedValueObjectInvariants for OmittedValue {
-    fn omitted(_candidate: &OmittedValue) -> Option<InvariantViolation> {
+    fn omitted(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
@@ -152,12 +152,12 @@ trait UnattachedValueObjectInvariants {
 struct UnattachedValue(u64);
 
 impl UnattachedValueObjectInvariants for UnattachedValue {
-    fn unattached(_candidate: &UnattachedValue) -> Option<InvariantViolation> {
+    fn unattached(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
 
-fn projected_model() -> Value {
+fn projected_model() -> Result<Value, DomainModelError> {
     domain_model! {
         contexts: [ProjectionContext],
         aggregates: [ProjectionAggregate],
@@ -193,13 +193,13 @@ trait SecondDuplicateInvariants {
 struct DuplicateValue(u64);
 
 impl FirstDuplicateInvariants for DuplicateValue {
-    fn first(_candidate: &DuplicateValue) -> Option<InvariantViolation> {
+    fn first(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
 
 impl SecondDuplicateInvariants for DuplicateValue {
-    fn second(_candidate: &DuplicateValue) -> Option<InvariantViolation> {
+    fn second(_candidate: &Self) -> Option<InvariantViolation> {
         None
     }
 }
@@ -237,7 +237,7 @@ impl ValueObjectType for MismatchedValue {
 #[test]
 fn automatically_projects_flattened_invariants_in_owner_attachment_and_method_order() {
     assert_eq!(
-        projected_model()["invariants"],
+        projected_model().expect("invariant model projection should succeed")["invariants"],
         json!([
             {
                 "id": {
@@ -319,7 +319,7 @@ fn automatically_projects_flattened_invariants_in_owner_attachment_and_method_or
 
 #[test]
 fn does_not_project_omitted_or_unattached_owners() {
-    let model = projected_model();
+    let model = projected_model().expect("invariant model projection should succeed");
     let local_ids = model["invariants"]
         .as_array()
         .unwrap()
@@ -333,7 +333,7 @@ fn does_not_project_omitted_or_unattached_owners() {
 
 #[test]
 fn accepts_the_same_local_id_on_different_owners() {
-    let model = projected_model();
+    let model = projected_model().expect("invariant model projection should succeed");
     let owner_kinds = model["invariants"]
         .as_array()
         .unwrap()
@@ -346,9 +346,8 @@ fn accepts_the_same_local_id_on_different_owners() {
 }
 
 #[test]
-#[should_panic(expected = "duplicate InvariantId")]
 fn rejects_duplicate_ids_across_attached_traits() {
-    let _ = domain_model! {
+    let error = domain_model! {
         contexts: [],
         aggregates: [],
         entities: [],
@@ -358,12 +357,39 @@ fn rejects_duplicate_ids_across_attached_traits() {
         commands: [],
         errors: [],
         query_groups: [],
-    };
+    }
+    .expect_err("duplicate invariant ids should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateInvariantId {
+            id: Box::new(InvariantId {
+                owner: InvariantOwnerId::ValueObject(DuplicateValue::DESCRIPTOR.id),
+                local: "duplicate",
+            }),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "duplicate InvariantId: InvariantId { owner: ValueObject(ValueObjectId { owner: BoundedContext(BoundedContextId(\"invariant-projection\")), local: \"duplicate-value\" }), local: \"duplicate\" }"
+    );
 }
 
 #[test]
-#[should_panic(expected = "invariant descriptor owner mismatch")]
 fn rejects_a_trusted_manual_descriptor_with_a_different_owner() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_value_object_type::<MismatchedValue>();
+    let error = builder
+        .add_value_object_type::<MismatchedValue>()
+        .expect_err("a mismatched invariant owner should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::InvariantDescriptorOwnerMismatch {
+            id: Box::new(MISMATCHED_INVARIANTS[0].id),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "invariant descriptor owner mismatch: InvariantId { owner: ValueObject(ValueObjectId { owner: BoundedContext(BoundedContextId(\"invariant-projection\")), local: \"foreign-value\" }), local: \"mismatched\" }"
+    );
 }

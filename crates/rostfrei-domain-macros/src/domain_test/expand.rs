@@ -37,7 +37,7 @@ pub fn expand(
         function_name.unraw(),
         span = function_name.span()
     );
-    let subject = subject.assemble(&domain_path, kind);
+    let subject = subject.assemble(&domain_path);
     let file = quote_spanned!(function_name.span()=> file!());
     let line = quote_spanned!(function_name.span()=> line!());
     let column = quote_spanned!(function_name.span()=> column!());
@@ -53,7 +53,7 @@ pub fn expand(
         #(#companion_attributes)*
         #[test]
         #[ignore = "domain test metadata companion"]
-        fn #companion_name() {
+        fn #companion_name() -> ::std::io::Result<()> {
             let descriptor = #domain_path::DomainTestDescriptor {
                 package: env!("CARGO_PKG_NAME"),
                 target: env!("CARGO_CRATE_NAME"),
@@ -64,7 +64,6 @@ pub fn expand(
                 subject: #subject_name,
             };
             #domain_path::__private::emit_domain_test_descriptor(descriptor)
-                .expect("failed to emit domain test metadata");
         }
     })
 }

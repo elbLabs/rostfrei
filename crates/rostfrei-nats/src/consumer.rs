@@ -1,4 +1,4 @@
-use std::{fmt::Write as _, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_nats::{
     HeaderMap,
@@ -23,6 +23,7 @@ use tokio::time::{Instant, sleep, timeout};
 
 use crate::{
     error::NatsError,
+    hex::encode_lower_hex,
     messaging_config::{MessagingTopology, StreamName},
     provisioning::durable_consumer_config,
     publish::{
@@ -368,7 +369,10 @@ where
 
     let handling = timeout(config.processing_timeout(), handler.handle(delivery));
     tokio::pin!(handling);
-    let progress_interval = config.ack_wait() / 2;
+    let progress_interval = config
+        .ack_wait()
+        .checked_div(2)
+        .ok_or(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
     let progress = sleep(progress_interval);
     tokio::pin!(progress);
 
@@ -381,7 +385,10 @@ where
             }
             () = &mut progress => {
                 send_progress(message).await?;
-                progress.as_mut().reset(Instant::now() + progress_interval);
+                let next_progress = Instant::now()
+                    .checked_add(progress_interval)
+                    .ok_or(ConsumeError::new(ConsumeErrorKind::Unavailable))?;
+                progress.as_mut().reset(next_progress);
             }
         }
     }
@@ -506,11 +513,15 @@ fn caller_metadata(headers: &HeaderMap) -> Result<CallerMetadata, NatsError> {
         if is_control_header(&name) {
             continue;
         }
-        if values.len() != 1 {
+        let mut values = values.iter();
+        let Some(value) = values.next() else {
+            return Err(NatsError::InvalidMessage);
+        };
+        if values.next().is_some() {
             return Err(NatsError::InvalidMessage);
         }
         metadata
-            .insert(name, values[0].as_str())
+            .insert(name, value.as_str())
             .map_err(|_| NatsError::InvalidMessage)?;
     }
     Ok(metadata)
@@ -694,20 +705,11 @@ fn quarantine_message_id(record: &QuarantineRecord) -> String {
     hash.update(record.source_consumer.as_bytes());
     hash.update([0]);
     hash.update(record.source_sequence.to_be_bytes());
-    let mut id = String::with_capacity(75);
-    id.push_str("quarantine-");
-    for byte in hash.finalize() {
-        write!(&mut id, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    id
+    format!("quarantine-{}", encode_lower_hex(hash.finalize()))
 }
 
 fn sha256_hex(payload: &[u8]) -> String {
-    let mut output = String::with_capacity(64);
-    for byte in Sha256::digest(payload) {
-        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    output
+    encode_lower_hex(Sha256::digest(payload))
 }
 
 async fn apply_ack(message: &jetstream::Message, kind: AckKind) -> Result<(), ConsumeError> {

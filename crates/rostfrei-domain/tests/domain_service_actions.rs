@@ -5,8 +5,8 @@ use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
     Aggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandOwnerId,
     DomainCommandType, DomainError, DomainErrorOwnerId, DomainErrorType, DomainEvent,
-    DomainEventType, DomainIdentity, DomainService, DomainServiceType, Entity, ScalarType,
-    ValueObject, ValueObjectType, domain_actions, domain_model,
+    DomainEventType, DomainIdentity, DomainModelError, DomainService, DomainServiceType, Entity,
+    ScalarType, ValueObject, ValueObjectType, domain_actions, domain_model,
 };
 
 #[derive(BoundedContext)]
@@ -330,18 +330,13 @@ fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() 
         contracts[0][1].error,
         Some(CoordinationFailed::DESCRIPTOR.id)
     );
-    let Some(ActionOutputDescriptor::Optional(events)) = contracts[0][2].output else {
-        panic!("planned-events should have an optional output")
-    };
-    let ActionOutputDescriptor::List(events) = *events else {
-        panic!("planned-events should contain a list output")
-    };
-    let ActionOutputDescriptor::Optional(event) = *events else {
-        panic!("planned-events list elements should be optional")
-    };
     assert_eq!(
-        *event,
-        ActionOutputDescriptor::DomainEvent(WorkStarted::DESCRIPTOR.id)
+        contracts[0][2].output,
+        Some(ActionOutputDescriptor::Optional(
+            &ActionOutputDescriptor::List(&ActionOutputDescriptor::Optional(
+                &ActionOutputDescriptor::DomainEvent(WorkStarted::DESCRIPTOR.id),
+            )),
+        ))
     );
     assert_eq!(
         contracts[1][0].output,
@@ -370,7 +365,8 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
         errors: [CoordinationFailed],
         action_extensions: [WorkExtensionActions],
         query_groups: [],
-    };
+    }
+    .expect("domain-service action model should be valid");
 
     let actions = model["actions"].as_array().unwrap();
     assert_eq!(
@@ -413,9 +409,8 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_across_attached_domain_service_contracts() {
-    let _ = domain_model! {
+    let error = domain_model! {
         contexts: [],
         aggregates: [],
         entities: [],
@@ -425,13 +420,23 @@ fn rejects_duplicate_action_id_across_attached_domain_service_contracts() {
         commands: [],
         errors: [],
         query_groups: [],
+    }
+    .expect_err("duplicate attached domain-service actions should be rejected");
+    let id = ActionId {
+        owner: ActionOwnerId::DomainService(DuplicateService::DESCRIPTOR.id),
+        local: "duplicate",
     };
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId { id: Box::new(id) }
+    );
+    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_between_attached_and_extension_domain_service_groups() {
-    let _ = domain_model! {
+    let error = domain_model! {
         contexts: [],
         aggregates: [],
         entities: [],
@@ -442,5 +447,16 @@ fn rejects_duplicate_action_id_between_attached_and_extension_domain_service_gro
         errors: [],
         action_extensions: [DuplicateCoordinatorExtensionActions],
         query_groups: [],
+    }
+    .expect_err("an extension duplicating an attached domain-service action should be rejected");
+    let id = ActionId {
+        owner: ActionOwnerId::DomainService(Coordinator::DESCRIPTOR.id),
+        local: "available",
     };
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId { id: Box::new(id) }
+    );
+    assert_eq!(error.to_string(), format!("duplicate ActionId: {id:?}"));
 }

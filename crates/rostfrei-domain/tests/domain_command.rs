@@ -4,8 +4,8 @@ use std::convert::Infallible;
 
 use domain::{
     Aggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandOwnerId,
-    DomainCommandType, DomainIdentity, DomainIdentityType, DomainService, Entity, FieldKind,
-    FieldWrapper, JsonCommandPayload, JsonErrorPayload, ValueObject, ValueObjectType,
+    DomainCommandType, DomainIdentity, DomainIdentityType, DomainModelError, DomainService, Entity,
+    FieldKind, FieldWrapper, JsonCommandPayload, JsonErrorPayload, ValueObject, ValueObjectType,
     domain_actions, domain_model,
 };
 use serde_json::{Value, json};
@@ -170,7 +170,8 @@ fn inventories_aggregate_and_domain_service_commands() {
         commands: [ChangeStatus, SyncCatalog],
         errors: [],
         query_groups: [],
-    };
+    }
+    .expect("command domain model should be valid");
 
     assert_eq!(model["domainCommands"].as_array().unwrap().len(), 2);
     assert_eq!(
@@ -229,9 +230,8 @@ fn generated_json_supports_commands_without_a_rejection() {
 }
 
 #[test]
-#[should_panic(expected = "duplicate DomainCommandId")]
 fn rejects_duplicate_command_ids_deterministically() {
-    let _ = domain_model! {
+    let error = domain_model! {
         contexts: [],
         aggregates: [],
         entities: [],
@@ -241,5 +241,16 @@ fn rejects_duplicate_command_ids_deterministically() {
         commands: [ChangeStatus, ChangeStatus],
         errors: [],
         query_groups: [],
-    };
+    }
+    .expect_err("duplicate command IDs should be rejected");
+    let id = ChangeStatus::DESCRIPTOR.id;
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateDomainCommandId { id: Box::new(id) }
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("duplicate DomainCommandId: {id:?}")
+    );
 }

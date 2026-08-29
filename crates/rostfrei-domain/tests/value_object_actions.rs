@@ -3,8 +3,9 @@
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
-    Aggregate, AggregateType, BoundedContext, DomainError, DomainErrorType, DomainIdentity, Entity,
-    ScalarType, ValueObject, ValueObjectType, domain_actions, domain_model,
+    Aggregate, AggregateType, BoundedContext, DomainError, DomainErrorType, DomainIdentity,
+    DomainModelError, Entity, ScalarType, ValueObject, ValueObjectType, domain_actions,
+    domain_model,
 };
 
 #[derive(BoundedContext)]
@@ -71,11 +72,11 @@ trait MoneyConstruction {
     fn clear(self) -> Self;
 }
 
-mod contracts {
+pub mod contracts {
     use domain::domain_actions;
 
     #[domain_actions(value_object)]
-    pub(crate) trait MoneyArithmetic {
+    pub(super) trait MoneyArithmetic {
         #[action(id = "increase", label = "Increase money")]
         fn increase(self, input: u64) -> super::MoneyAlias;
 
@@ -123,7 +124,7 @@ impl MoneyConstruction for Money {
 
 impl contracts::MoneyArithmetic for Money {
     fn increase(self, input: u64) -> MoneyAlias {
-        Self(self.0 + input)
+        Self(self.0.saturating_add(input))
     }
 
     fn checked_increase(self, input: u64) -> Result<Self, MoneyOverflow> {
@@ -240,7 +241,7 @@ impl SecondDuplicateActions for DuplicateValue {
     }
 }
 
-fn ledger_root() -> LedgerRoot {
+const fn ledger_root() -> LedgerRoot {
     LedgerRoot {
         id: LedgerId(7),
         active: false,
@@ -347,7 +348,8 @@ fn model_orders_attached_then_extension_actions_and_omits_unlisted_contracts() {
         errors: [MoneyOverflow],
         action_extensions: [LedgerExtensionActions],
         query_groups: [],
-    };
+    }
+    .expect("value object action model projection should succeed");
 
     let actions = model["actions"].as_array().unwrap();
     assert_eq!(
@@ -393,9 +395,8 @@ fn model_orders_attached_then_extension_actions_and_omits_unlisted_contracts() {
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_across_attached_value_object_contracts() {
-    let _ = domain_model! {
+    let error = domain_model! {
         contexts: [],
         aggregates: [],
         entities: [],
@@ -405,13 +406,27 @@ fn rejects_duplicate_action_id_across_attached_value_object_contracts() {
         commands: [],
         errors: [],
         query_groups: [],
-    };
+    }
+    .expect_err("duplicate attached action ids should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId {
+            id: Box::new(ActionId {
+                owner: ActionOwnerId::ValueObject(DuplicateValue::DESCRIPTOR.id),
+                local: "duplicate",
+            }),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "duplicate ActionId: ActionId { owner: ValueObject(ValueObjectId { owner: Aggregate(AggregateId { context: BoundedContextId(\"billing\"), local: \"ledger\" }), local: \"duplicate-value\" }), local: \"duplicate\" }"
+    );
 }
 
 #[test]
-#[should_panic(expected = "duplicate ActionId")]
 fn rejects_duplicate_action_id_between_attached_and_extension_value_object_groups() {
-    let _ = domain_model! {
+    let error = domain_model! {
         contexts: [],
         aggregates: [],
         entities: [],
@@ -422,5 +437,20 @@ fn rejects_duplicate_action_id_between_attached_and_extension_value_object_group
         errors: [],
         action_extensions: [DuplicateMoneyExtensionActions],
         query_groups: [],
-    };
+    }
+    .expect_err("an attached and extension action id collision should be rejected");
+
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateActionId {
+            id: Box::new(ActionId {
+                owner: ActionOwnerId::ValueObject(Money::DESCRIPTOR.id),
+                local: "from-minor",
+            }),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "duplicate ActionId: ActionId { owner: ValueObject(ValueObjectId { owner: Aggregate(AggregateId { context: BoundedContextId(\"billing\"), local: \"ledger\" }), local: \"money\" }), local: \"from-minor\" }"
+    );
 }

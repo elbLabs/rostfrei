@@ -58,7 +58,7 @@ pub(super) struct FieldReferenceCollection {
 }
 
 impl FieldReferenceCollection {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             records: Vec::new(),
         }
