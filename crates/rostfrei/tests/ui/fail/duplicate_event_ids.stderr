@@ -7,12 +7,13 @@ error[E0080]: evaluation panicked: duplicate domain event ID in aggregate
 note: inside `rostfrei::__private::rostfrei_domain_runtime::__private::assert_unique_event_ids`
   --> $RUST/core/src/panic.rs
    |
-   = note: the failure occurred here
+   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
    |
   ::: $WORKSPACE/crates/rostfrei-domain-runtime/src/lib.rs
    |
-   | /                 assert!(
-   | |                     !strings_equal(ids[left], ids[right]),
-   | |                     "duplicate domain event ID in aggregate"
-   | |                 );
-   | |_________________- in this macro invocation
+   | /             assert!(
+   | |                 !strings_equal(left, candidate),
+   | |                 "duplicate domain event ID in aggregate"
+   | |             );
+   | |_____________- in this macro invocation
