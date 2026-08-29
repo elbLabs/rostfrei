@@ -73,8 +73,11 @@ fn parse_input(signature: &Signature) -> syn::Result<Type> {
         ));
     }
 
-    let FnArg::Typed(input) = signature.inputs.first().unwrap() else {
-        unreachable!()
+    let Some(FnArg::Typed(input)) = signature.inputs.first() else {
+        return Err(syn::Error::new_spanned(
+            &signature.inputs,
+            "domain decision contract methods require exactly one owned input parameter",
+        ));
     };
     validate_input_pattern(&input.pat)?;
     validate_owned_type(&input.ty)?;

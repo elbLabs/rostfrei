@@ -66,9 +66,13 @@ impl SubjectFilter {
         }
 
         let tokens = value.split('.').collect::<Vec<_>>();
+        let final_index = tokens
+            .len()
+            .checked_sub(1)
+            .ok_or(NatsError::Configuration)?;
         if tokens.iter().any(|token| token.is_empty())
             || tokens.iter().enumerate().any(|(index, token)| {
-                (*token == ">" && index + 1 != tokens.len())
+                (*token == ">" && index != final_index)
                     || (token.contains('>') && *token != ">")
                     || (token.contains('*') && *token != "*")
             })
@@ -230,7 +234,7 @@ impl MessagingTopology {
     }
 }
 
-pub(crate) fn application_stream_token(application: &ApplicationName) -> String {
+fn application_stream_token(application: &ApplicationName) -> String {
     application
         .as_str()
         .bytes()
@@ -270,7 +274,7 @@ impl ServerVersion {
         self.patch
     }
 
-    fn validate(self) -> Result<(), NatsError> {
+    const fn validate(self) -> Result<(), NatsError> {
         if self.major < 1 || self.minor < 0 || self.patch < 0 {
             return Err(NatsError::Configuration);
         }
@@ -364,7 +368,7 @@ impl NatsConnectionConfig {
         &self.client_name
     }
 
-    pub fn server_count(&self) -> usize {
+    pub const fn server_count(&self) -> usize {
         self.server_urls.len()
     }
 
@@ -406,6 +410,15 @@ impl fmt::Debug for NatsConnectionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const VALID_SERVER_VERSION: Result<(), NatsError> = ServerVersion::new(2, 10, 0).validate();
+    const INVALID_SERVER_VERSION: Result<(), NatsError> = ServerVersion::new(0, 10, 0).validate();
+
+    #[test]
+    fn server_versions_are_const_validated() {
+        assert!(VALID_SERVER_VERSION.is_ok());
+        assert!(INVALID_SERVER_VERSION.is_err());
+    }
 
     #[test]
     fn custom_topology_rejects_aliased_stream_roles() {

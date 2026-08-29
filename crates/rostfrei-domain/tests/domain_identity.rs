@@ -22,7 +22,7 @@ struct MailboxRoot {
 #[domain(id = "mailbox", label = "Mailbox", context = Mail, root = MailboxRoot)]
 struct Mailbox;
 
-fn assert_domain_identity<T: DomainIdentityType>() {}
+const fn assert_domain_identity<T: DomainIdentityType>() {}
 
 #[test]
 fn derives_domain_identity_type() {

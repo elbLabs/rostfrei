@@ -230,6 +230,24 @@ struct ImmediateAcceptedReader {
     command_address: CommandAddress,
 }
 
+fn accepted_response(
+    command_address: &CommandAddress,
+    expected_operation_id: &OperationId,
+    expected_command_message_id: &MessageId,
+) -> Result<CommandResponse, CommandResponseReadError> {
+    let invalid_response =
+        || CommandResponseReadError::new(CommandResponseReadErrorKind::InvalidResponse);
+    CommandResponse::accepted(
+        MessageId::new(format!("response-{}", expected_command_message_id.as_str()))
+            .map_err(|_| invalid_response())?,
+        expected_command_message_id.clone(),
+        command_address.clone(),
+        expected_operation_id.clone(),
+        CorrelationId::new(expected_operation_id.as_str()).map_err(|_| invalid_response())?,
+    )
+    .map_err(|_| invalid_response())
+}
+
 #[async_trait]
 impl CommandResponseReader for ImmediateAcceptedReader {
     async fn read_command_response(
@@ -239,14 +257,11 @@ impl CommandResponseReader for ImmediateAcceptedReader {
         expected_command_message_id: &MessageId,
         _read_timeout: Duration,
     ) -> Result<CommandResponse, CommandResponseReadError> {
-        CommandResponse::accepted(
-            MessageId::new(format!("response-{}", expected_command_message_id.as_str())).unwrap(),
-            expected_command_message_id.clone(),
-            self.command_address.clone(),
-            expected_operation_id.clone(),
-            CorrelationId::new(expected_operation_id.as_str()).unwrap(),
+        accepted_response(
+            &self.command_address,
+            expected_operation_id,
+            expected_command_message_id,
         )
-        .map_err(|_| CommandResponseReadError::new(CommandResponseReadErrorKind::InvalidResponse))
     }
 }
 
@@ -269,14 +284,11 @@ impl CommandResponseReader for TimeoutOnceAcceptedReader {
                 CommandResponseReadErrorKind::Timeout,
             ));
         }
-        CommandResponse::accepted(
-            MessageId::new(format!("response-{}", expected_command_message_id.as_str())).unwrap(),
-            expected_command_message_id.clone(),
-            self.command_address.clone(),
-            expected_operation_id.clone(),
-            CorrelationId::new(expected_operation_id.as_str()).unwrap(),
+        accepted_response(
+            &self.command_address,
+            expected_operation_id,
+            expected_command_message_id,
         )
-        .map_err(|_| CommandResponseReadError::new(CommandResponseReadErrorKind::InvalidResponse))
     }
 }
 
@@ -367,7 +379,7 @@ impl CommandResponsePublisher for BlockingResponsePublisher {
         self.release
             .acquire()
             .await
-            .expect("test response publication gate remains open")
+            .map_err(|_| PublishError::new(PublishErrorKind::Unavailable))?
             .forget();
         Ok(PublishReceipt::new(false))
     }
@@ -471,11 +483,13 @@ async fn broker_deduplication_identity_includes_operation_and_content() -> TestR
         adapter.dispatch(invocation, Arc::clone(&observer)).await?;
     }
 
-    let messages = messages.lock().await;
-    let ids = messages
-        .iter()
-        .map(|message| message.message_id().clone())
-        .collect::<Vec<_>>();
+    let ids = {
+        let messages = messages.lock().await;
+        messages
+            .iter()
+            .map(|message| message.message_id().clone())
+            .collect::<Vec<_>>()
+    };
     assert_eq!(ids.len(), 4);
     assert_eq!(ids[0], ids[1]);
     assert_ne!(ids[0], ids[2]);
@@ -664,7 +678,7 @@ async fn dispatch_waits_for_durable_accepted_and_rejected_responses() -> TestRes
     let response_attempts = broker.response_messages.lock().await;
     assert_eq!(response_attempts.len(), 1);
     drop(response_attempts);
-    let history = store.load(&demo_stream()).await?;
+    let history = store.load(&demo_stream()?).await?;
     assert_eq!(history.len(), 2);
     assert_eq!(
         history[1]
@@ -704,7 +718,7 @@ async fn dispatch_waits_for_durable_accepted_and_rejected_responses() -> TestRes
     assert_eq!(rejection.classification, "conflict");
     assert_eq!(rejection.code, "BICYCLE_UNAVAILABLE");
     assert_eq!(rejection.details.as_ref().unwrap()["bicycle_id"], "bike-42");
-    assert_eq!(store.load(&demo_stream()).await?.len(), 2);
+    assert_eq!(store.load(&demo_stream()?).await?.len(), 2);
     assert_eq!(broker.responses.lock().await.len(), 2);
     Ok(())
 }

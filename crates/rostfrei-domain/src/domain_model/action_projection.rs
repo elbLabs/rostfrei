@@ -6,6 +6,7 @@ use crate::{
 
 use super::{
     action_reference_validation::{self, ActionReferenceInventory},
+    error::DomainModelError,
     field_projection,
     id_projection::{
         action as action_id, domain_error as domain_error_id, domain_event as domain_event_id,
@@ -20,7 +21,7 @@ pub(super) struct ActionProjection {
 }
 
 impl ActionProjection {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             registered_owners: Vec::new(),
             actions: Vec::new(),
@@ -38,18 +39,20 @@ impl ActionProjection {
         &mut self,
         expected_owner: ActionOwnerId,
         descriptors: &'static [ActionDescriptor],
-    ) {
-        self.validate_group(expected_owner, descriptors);
+    ) -> Result<(), DomainModelError> {
+        self.validate_group(expected_owner, descriptors)?;
         Self::append(&mut self.actions, descriptors);
+        Ok(())
     }
 
     pub(super) fn add_extension(
         &mut self,
         expected_owner: ActionOwnerId,
         descriptors: &'static [ActionDescriptor],
-    ) {
-        self.validate_extension(expected_owner, descriptors);
+    ) -> Result<(), DomainModelError> {
+        self.validate_extension(expected_owner, descriptors)?;
         Self::append(&mut self.extensions, descriptors);
+        Ok(())
     }
 
     pub(super) fn attached_ids(&self) -> impl Iterator<Item = ActionId> + '_ {
@@ -60,14 +63,17 @@ impl ActionProjection {
         self.extensions.iter().map(|(descriptor, _)| descriptor.id)
     }
 
-    pub(super) fn validate_references(&self, inventory: &ActionReferenceInventory) {
+    pub(super) fn validate_references(
+        &self,
+        inventory: &ActionReferenceInventory,
+    ) -> Result<(), DomainModelError> {
         action_reference_validation::validate(
             self.actions
                 .iter()
                 .chain(&self.extensions)
                 .map(|(descriptor, _)| descriptor),
             inventory,
-        );
+        )
     }
 
     pub(super) fn into_values(self) -> Vec<Value> {
@@ -82,37 +88,51 @@ impl ActionProjection {
         &self,
         expected_owner: ActionOwnerId,
         descriptors: &'static [ActionDescriptor],
-    ) {
+    ) -> Result<(), DomainModelError> {
         if !self.registered_owners.contains(&expected_owner) {
-            panic!("unregistered action extension owner: {expected_owner:?}");
+            return Err(DomainModelError::UnregisteredActionExtensionOwner {
+                owner: Box::new(expected_owner),
+            });
         }
         if descriptors.is_empty() {
-            panic!("action extension must not be empty");
+            return Err(DomainModelError::EmptyActionExtension);
         }
-        self.validate_group(expected_owner, descriptors);
+        self.validate_group(expected_owner, descriptors)
     }
 
     fn validate_group(
         &self,
         expected_owner: ActionOwnerId,
         descriptors: &'static [ActionDescriptor],
-    ) {
+    ) -> Result<(), DomainModelError> {
         for (index, descriptor) in descriptors.iter().enumerate() {
-            Self::validate_owner(expected_owner, descriptor);
-            self.validate_id(descriptor.id, &descriptors[..index]);
+            Self::validate_owner(expected_owner, descriptor)?;
+            self.validate_id(descriptor.id, descriptors.iter().take(index))?;
         }
+        Ok(())
     }
 
-    fn validate_owner(expected_owner: ActionOwnerId, descriptor: &ActionDescriptor) {
+    fn validate_owner(
+        expected_owner: ActionOwnerId,
+        descriptor: &ActionDescriptor,
+    ) -> Result<(), DomainModelError> {
         if descriptor.id.owner != expected_owner {
-            panic!("action descriptor owner mismatch: {:?}", descriptor.id);
+            return Err(DomainModelError::ActionDescriptorOwnerMismatch {
+                id: Box::new(descriptor.id),
+            });
         }
+        Ok(())
     }
 
-    fn validate_id(&self, id: ActionId, preceding: &[ActionDescriptor]) {
-        if self.has_id(id) || preceding.iter().any(|descriptor| descriptor.id == id) {
-            panic!("duplicate ActionId: {id:?}");
+    fn validate_id<'a>(
+        &self,
+        id: ActionId,
+        preceding: impl Iterator<Item = &'a ActionDescriptor>,
+    ) -> Result<(), DomainModelError> {
+        if self.has_id(id) || preceding.into_iter().any(|descriptor| descriptor.id == id) {
+            return Err(DomainModelError::DuplicateActionId { id: Box::new(id) });
         }
+        Ok(())
     }
 
     fn has_id(&self, id: ActionId) -> bool {
@@ -137,6 +157,7 @@ fn action(descriptor: &ActionDescriptor) -> Value {
         "label": descriptor.label,
         "input": descriptor.input.map(action_input),
         "output": descriptor.output.map(action_output),
+        "raises": descriptor.raises.iter().copied().map(domain_event_id).collect::<Vec<_>>(),
         "error": descriptor.error.map(domain_error_id),
     })
 }

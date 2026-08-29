@@ -208,7 +208,7 @@ impl From<&MessageId> for CausationId {
 pub struct SchemaVersion(u32);
 
 impl SchemaVersion {
-    pub fn new(value: u32) -> Result<Self, ContractError> {
+    pub const fn new(value: u32) -> Result<Self, ContractError> {
         if value == 0 {
             return Err(ContractError::new(
                 ContractErrorKind::OutOfRange,
@@ -237,7 +237,7 @@ impl<'de> Deserialize<'de> for SchemaVersion {
 pub struct MessageTimestamp(u64);
 
 impl MessageTimestamp {
-    pub fn from_unix_milliseconds(value: u64) -> Result<Self, ContractError> {
+    pub const fn from_unix_milliseconds(value: u64) -> Result<Self, ContractError> {
         if value > MAX_UNIX_TIMESTAMP_MILLISECONDS {
             return Err(ContractError::new(
                 ContractErrorKind::OutOfRange,
@@ -265,6 +265,13 @@ impl<'de> Deserialize<'de> for MessageTimestamp {
 mod tests {
     use super::*;
 
+    const VALID_SCHEMA_VERSION: Result<SchemaVersion, ContractError> = SchemaVersion::new(1);
+    const INVALID_SCHEMA_VERSION: Result<SchemaVersion, ContractError> = SchemaVersion::new(0);
+    const VALID_TIMESTAMP: Result<MessageTimestamp, ContractError> =
+        MessageTimestamp::from_unix_milliseconds(1_700_000_000_000);
+    const INVALID_TIMESTAMP: Result<MessageTimestamp, ContractError> =
+        MessageTimestamp::from_unix_milliseconds(253_402_300_800_000);
+
     #[test]
     fn identifiers_are_distinct_bounded_visible_ascii_values() {
         assert_eq!(MessageId::new("message-1").unwrap().as_str(), "message-1");
@@ -285,10 +292,12 @@ mod tests {
 
     #[test]
     fn schema_versions_and_timestamps_reject_out_of_range_values() {
-        assert!(SchemaVersion::new(0).is_err());
-        assert_eq!(SchemaVersion::new(1).unwrap().get(), 1);
-        assert!(
-            MessageTimestamp::from_unix_milliseconds(MAX_UNIX_TIMESTAMP_MILLISECONDS + 1).is_err()
+        assert!(INVALID_SCHEMA_VERSION.is_err());
+        assert_eq!(VALID_SCHEMA_VERSION.unwrap().get(), 1);
+        assert!(INVALID_TIMESTAMP.is_err());
+        assert_eq!(
+            VALID_TIMESTAMP.unwrap().unix_milliseconds(),
+            1_700_000_000_000
         );
     }
 

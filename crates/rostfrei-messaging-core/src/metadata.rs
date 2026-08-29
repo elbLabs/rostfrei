@@ -53,18 +53,33 @@ impl CallerMetadata {
         let value = validate_value(value.into())?;
         let existing = self.entries.get(&name);
 
-        if existing.is_none() && self.entries.len() == MAX_METADATA_ENTRIES {
-            return Err(ContractError::bounded(
-                ContractErrorKind::TooManyEntries,
-                "caller metadata",
-                self.entries.len() + 1,
-                MAX_METADATA_ENTRIES,
-            ));
+        if existing.is_none() {
+            let projected_entries = self
+                .entries
+                .len()
+                .checked_add(1)
+                .ok_or_else(too_many_metadata_entries)?;
+            if projected_entries > MAX_METADATA_ENTRIES {
+                return Err(ContractError::bounded(
+                    ContractErrorKind::TooManyEntries,
+                    "caller metadata",
+                    projected_entries,
+                    MAX_METADATA_ENTRIES,
+                ));
+            }
         }
 
-        let current_bytes = self.total_bytes();
-        let replaced_bytes = existing.map_or(0, |old| name.len() + old.len());
-        let projected_bytes = current_bytes - replaced_bytes + name.len() + value.len();
+        let current_bytes = self.checked_total_bytes()?;
+        let replaced_bytes = existing.map_or(Ok(0), |old| {
+            name.len()
+                .checked_add(old.len())
+                .ok_or_else(caller_metadata_too_long)
+        })?;
+        let projected_bytes = current_bytes
+            .checked_sub(replaced_bytes)
+            .and_then(|bytes| bytes.checked_add(name.len()))
+            .and_then(|bytes| bytes.checked_add(value.len()))
+            .ok_or_else(caller_metadata_too_long)?;
         if projected_bytes > MAX_METADATA_BYTES {
             return Err(ContractError::bounded(
                 ContractErrorKind::TooLong,
@@ -104,9 +119,28 @@ impl CallerMetadata {
     pub fn total_bytes(&self) -> usize {
         self.entries
             .iter()
-            .map(|(name, value)| name.len() + value.len())
+            .flat_map(|(name, value)| [name.len(), value.len()])
             .sum()
     }
+
+    fn checked_total_bytes(&self) -> Result<usize, ContractError> {
+        self.entries
+            .iter()
+            .try_fold(0_usize, |total, (name, value)| {
+                total
+                    .checked_add(name.len())
+                    .and_then(|bytes| bytes.checked_add(value.len()))
+            })
+            .ok_or_else(caller_metadata_too_long)
+    }
+}
+
+const fn too_many_metadata_entries() -> ContractError {
+    ContractError::new(ContractErrorKind::TooManyEntries, "caller metadata")
+}
+
+const fn caller_metadata_too_long() -> ContractError {
+    ContractError::new(ContractErrorKind::TooLong, "caller metadata")
 }
 
 impl Serialize for CallerMetadata {
@@ -362,6 +396,51 @@ mod tests {
             );
         }
         assert!(metadata.insert("x-bad", "line\nbreak").is_err());
+    }
+
+    #[test]
+    fn caller_metadata_entry_projection_is_bounded_and_atomic() {
+        let mut metadata = CallerMetadata::new();
+        for index in 0..MAX_METADATA_ENTRIES {
+            metadata.insert(format!("x{index}"), "").unwrap();
+        }
+        let before = metadata.clone();
+
+        let error = metadata.insert("overflow", "").unwrap_err();
+
+        assert_eq!(error.kind(), ContractErrorKind::TooManyEntries);
+        assert_eq!(error.actual(), MAX_METADATA_ENTRIES.checked_add(1));
+        assert_eq!(error.maximum(), Some(MAX_METADATA_ENTRIES));
+        assert_eq!(metadata, before);
+    }
+
+    #[test]
+    fn caller_metadata_byte_projection_preserves_replacement_accounting_and_atomicity() {
+        let mut metadata = CallerMetadata::new();
+        for name in ["a", "b", "c", "d", "e", "f", "g", "h"] {
+            metadata.insert(name, "x".repeat(1023)).unwrap();
+        }
+        assert_eq!(metadata.total_bytes(), MAX_METADATA_BYTES);
+        let before = metadata.clone();
+
+        let error = metadata.insert("a", "x".repeat(1024)).unwrap_err();
+
+        assert_eq!(error.kind(), ContractErrorKind::TooLong);
+        assert_eq!(error.actual(), MAX_METADATA_BYTES.checked_add(1));
+        assert_eq!(error.maximum(), Some(MAX_METADATA_BYTES));
+        assert_eq!(metadata, before);
+
+        assert_eq!(
+            metadata
+                .insert("a", "x".repeat(1022))
+                .unwrap()
+                .unwrap()
+                .len(),
+            1023
+        );
+        assert_eq!(metadata.total_bytes(), 8191);
+        assert_eq!(metadata.insert("i", "").unwrap(), None);
+        assert_eq!(metadata.total_bytes(), MAX_METADATA_BYTES);
     }
 
     #[test]

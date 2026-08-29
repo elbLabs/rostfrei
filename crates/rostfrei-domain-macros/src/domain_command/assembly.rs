@@ -66,51 +66,34 @@ fn assemble_json_decoder(
         }
     });
     let construct = match fields {
-        Fields::Named(fields) => {
-            let field_names: Vec<_> = fields
-                .named
-                .iter()
-                .map(|field| {
-                    field
-                        .ident
-                        .as_ref()
-                        .expect("named field")
-                        .to_string()
-                        .trim_start_matches("r#")
-                        .to_owned()
-                })
-                .collect();
-            let fields = fields
-                .named
-                .iter()
-                .zip(parsed_fields)
-                .map(|(field, parsed_field)| {
-                    let ident = field.ident.as_ref().expect("named field");
-                    let wire_name = ident.to_string().trim_start_matches("r#").to_owned();
-                    let value = if matches!(parsed_field.wrappers.first(), Some(Wrapper::Optional))
-                    {
-                        quote! {
-                            object
-                                .get(#wire_name)
-                                .cloned()
-                                .unwrap_or(#domain_path::__private::serde_json::Value::Null)
-                        }
-                    } else {
-                        quote! {
-                            object.get(#wire_name).cloned().ok_or_else(|| ::std::format!(
-                                "missing command field `{}`",
-                                #wire_name,
-                            ))?
-                        }
-                    };
+        Fields::Named(_) => {
+            let field_names = parsed_fields.iter().map(|field| &field.name);
+            let fields = parsed_fields.iter().map(|parsed_field| {
+                let member = &parsed_field.member;
+                let wire_name = &parsed_field.name;
+                let value = if matches!(parsed_field.wrappers.first(), Some(Wrapper::Optional)) {
                     quote! {
-                        #ident: #domain_path::__private::serde_json::from_value(#value)
-                        .map_err(|error| ::std::format!(
-                            "invalid command field `{}`: {error}",
+                        object
+                            .get(#wire_name)
+                            .cloned()
+                            .unwrap_or(#domain_path::__private::serde_json::Value::Null)
+                    }
+                } else {
+                    quote! {
+                        object.get(#wire_name).cloned().ok_or_else(|| ::std::format!(
+                            "missing command field `{}`",
                             #wire_name,
                         ))?
                     }
-                });
+                };
+                quote! {
+                    #member: #domain_path::__private::serde_json::from_value(#value)
+                    .map_err(|error| ::std::format!(
+                        "invalid command field `{}`: {error}",
+                        #wire_name,
+                    ))?
+                }
+            });
             quote! {
                 let object = payload.as_object().ok_or_else(||
                     "command payload must be a JSON object".to_owned()

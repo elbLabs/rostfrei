@@ -51,15 +51,38 @@ struct MoneyDeposited {
     amount: i64,
 }
 
+mod aggregate_actions {
+    use super::{AccountAggregate, AggregateInstance, MoneyDeposited};
+
+    #[rostfrei::domain_actions(aggregate(instance = AccountAggregateActions))]
+    pub trait AccountAggregateActionContract {
+        #[action(
+            id = "deposit",
+            label = "Deposit",
+            raises = [MoneyDeposited]
+        )]
+        fn deposit(&mut self, input: i64);
+    }
+
+    impl AccountAggregateActions for AggregateInstance<AccountAggregate> {
+        fn deposit(&mut self, input: i64) {
+            self.raise(MoneyDeposited { amount: input });
+        }
+    }
+}
+
 #[derive(rostfrei::Aggregate)]
 #[rostfrei(
     id = "account",
     label = "Account",
     context = Banking,
     root = Account,
+    actions = [aggregate_actions::AccountAggregateActionContract],
     events = [MoneyDeposited]
 )]
 struct AccountAggregate;
+
+use aggregate_actions::AccountAggregateActions as _;
 
 impl Initialize<AccountAggregate> for Account {
     fn initialize(stream_id: &rostfrei::StreamId) -> Self {
@@ -85,13 +108,18 @@ impl CommandHandler<Deposit> for AccountAggregate {
         command: &Deposit,
         aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        aggregate.raise(MoneyDeposited { amount: command.0 });
+        aggregate.deposit(command.0);
         Ok(())
     }
 }
 
 #[rostfrei::domain_action_test(<Account as AccountActions>::RESET)]
 fn facade_domain_test_support_items_are_available() {}
+
+#[rostfrei::domain_action_test(
+    <AccountAggregate as aggregate_actions::AccountAggregateActionContract>::DEPOSIT
+)]
+fn facade_executable_aggregate_action_is_the_test_subject() {}
 
 fn main() {
     let _executor = rostfrei::Executor::new(rostfrei::InMemoryEventStore::new());

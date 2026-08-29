@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -92,7 +92,7 @@ impl TracePayloadPolicy for ExposeTracePayloadsForLocalDevelopment {
     }
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum SubmissionError {
     #[error(
         "unknown command `{command}` version {schema_version} for aggregate `{aggregate_type}`"
@@ -156,13 +156,13 @@ impl ControlPlaneBuilder {
     }
 
     #[must_use]
-    pub fn with_maximum_operations(mut self, maximum_operations: usize) -> Self {
+    pub const fn with_maximum_operations(mut self, maximum_operations: usize) -> Self {
         self.maximum_operations = maximum_operations;
         self
     }
 
     #[must_use]
-    pub fn with_maximum_concurrent_simulations(
+    pub const fn with_maximum_concurrent_simulations(
         mut self,
         maximum_concurrent_simulations: usize,
     ) -> Self {
@@ -335,23 +335,32 @@ impl OperationTable {
         self.records.values().any(|record| record.is_terminal())
     }
 
-    fn evict_terminal(&mut self) -> bool {
-        for _ in 0..self.insertion_order.len() {
-            let operation_id = self
-                .insertion_order
-                .pop_front()
-                .expect("the bounded scan starts with a non-empty queue");
-            if self
-                .records
-                .get(&operation_id)
+    fn evict_terminal(&mut self) {
+        self.rebuild_insertion_order();
+        let terminal = self.insertion_order.iter().find_map(|operation_id| {
+            self.records
+                .get(operation_id)
                 .is_some_and(|record| record.is_terminal())
-            {
-                self.records.remove(&operation_id);
-                return true;
-            }
-            self.insertion_order.push_back(operation_id);
+                .then(|| operation_id.clone())
+        });
+        if let Some(operation_id) = terminal {
+            self.records.remove(&operation_id);
+            self.insertion_order
+                .retain(|queued_id| queued_id != &operation_id);
         }
-        false
+    }
+
+    fn rebuild_insertion_order(&mut self) {
+        let mut queued = HashSet::with_capacity(self.records.len());
+        let records = &self.records;
+        self.insertion_order.retain(|operation_id| {
+            records.contains_key(operation_id) && queued.insert(operation_id.clone())
+        });
+        for operation_id in self.records.keys() {
+            if queued.insert(operation_id.clone()) {
+                self.insertion_order.push_back(operation_id.clone());
+            }
+        }
     }
 }
 
@@ -383,8 +392,7 @@ impl ControlPlane {
             Some(value) => validate_http_operation_id(value)?,
             None => self.generated_operation_id()?,
         };
-        let request_bytes = serde_json::to_vec(&request.payload)
-            .expect("serde_json::Value always serializes successfully");
+        let request_bytes = compact_json_bytes(&request.payload);
         if request_bytes.len() > MAX_COMMAND_PAYLOAD_LEN {
             return Err(SubmissionError::PayloadTooLarge {
                 maximum: MAX_COMMAND_PAYLOAD_LEN,
@@ -425,7 +433,7 @@ impl ControlPlane {
                 .try_acquire_owned()
                 .map_err(|_| SubmissionError::ConcurrencyExhausted)?;
             if operations.records.len() >= self.inner.maximum_operations {
-                assert!(operations.evict_terminal());
+                operations.evict_terminal();
             }
             operations.insertion_order.push_back(operation_key.clone());
             operations
@@ -532,7 +540,7 @@ impl ControlPlane {
                 .try_acquire_owned()
                 .map_err(|_| SubmissionError::DispatchConcurrencyExhausted)?;
             if operations.records.len() >= self.inner.maximum_operations {
-                assert!(operations.evict_terminal());
+                operations.evict_terminal();
             }
             operations.insertion_order.push_back(operation_key.clone());
             operations
@@ -630,11 +638,23 @@ impl ControlPlane {
                 return;
             }
         };
+        let execution_id = match simulation_execution_id(fingerprint) {
+            Ok(execution_id) => execution_id,
+            Err(message) => {
+                record
+                    .fail(
+                        "invalid-runtime",
+                        self.inner.trace_payload_policy.failure_message(message),
+                    )
+                    .await;
+                return;
+            }
+        };
         match simulator
             .simulate(
                 Arc::clone(&self.inner.history),
                 stream,
-                simulation_execution_id(fingerprint),
+                execution_id,
                 fingerprint,
                 payload,
             )
@@ -761,9 +781,9 @@ fn validate_http_operation_id(value: &str) -> Result<OperationId, SubmissionErro
     Ok(operation_id)
 }
 
-fn simulation_execution_id(fingerprint: ContentFingerprint) -> OperationId {
+fn simulation_execution_id(fingerprint: ContentFingerprint) -> Result<OperationId, String> {
     OperationId::new(format!("simulation:{}", fingerprint.to_hex()))
-        .expect("a fingerprint-based simulation operation ID is valid")
+        .map_err(|error| error.to_string())
 }
 
 async fn complete_accepted(
@@ -909,6 +929,10 @@ fn runtime_failure(error: RuntimeSimulationError) -> (&'static str, String) {
     }
 }
 
+fn compact_json_bytes(payload: &Value) -> Vec<u8> {
+    payload.to_string().into_bytes()
+}
+
 fn request_fingerprint(
     aggregate_type: &str,
     aggregate_id: &str,
@@ -926,11 +950,23 @@ fn request_fingerprint(
         schema_version.as_slice(),
         payload,
     ] {
-        let length = u64::try_from(value.len()).expect("request parts fit in u64");
-        framed.extend_from_slice(&length.to_be_bytes());
+        framed.extend_from_slice(&bounded_length_bytes(value.len()));
         framed.extend_from_slice(value);
     }
     ContentFingerprint::digest(framed)
+}
+
+fn bounded_length_bytes(length: usize) -> [u8; 8] {
+    // Fingerprint parts are bounded by registry identities or MAX_COMMAND_PAYLOAD_LEN.
+    let mut encoded = [0_u8; 8];
+    for (target, source) in encoded
+        .iter_mut()
+        .rev()
+        .zip(length.to_be_bytes().iter().rev())
+    {
+        *target = *source;
+    }
+    encoded
 }
 
 #[cfg(test)]
@@ -939,17 +975,44 @@ mod tests {
 
     #[test]
     fn request_fingerprints_use_deterministic_fixed_width_framing() {
+        let request_bytes = compact_json_bytes(&serde_json::json!({
+            "bicycle_id": "bike-42",
+        }));
+        assert_eq!(request_bytes, br#"{"bicycle_id":"bike-42"}"#);
         let fingerprint = request_fingerprint(
             "bike-rental/rental-fleet",
             "city-fleet",
             "rent-bicycle",
             1,
-            br#"{"bicycle_id":"bike-42"}"#,
+            &request_bytes,
         );
 
         assert_eq!(
             fingerprint.to_hex(),
             "6e05cbaf829bc0bfa276ca081d504f8c1c234577c46d1b3a49ab8d8a38b2d4c9"
         );
+    }
+
+    #[tokio::test]
+    async fn terminal_eviction_repairs_a_record_missing_from_the_queue() {
+        let record = OperationRecord::new(NewOperation {
+            operation_id: "terminal-operation".to_owned(),
+            fingerprint: "fingerprint".to_owned(),
+            command: "test-command",
+            schema_version: 1,
+            aggregate_type: "test-context/test-aggregate",
+            aggregate_id: "aggregate-1",
+            mode: "simulate",
+        });
+        record.fail("test-failure", "test failure".to_owned()).await;
+        let mut table = OperationTable::default();
+        table
+            .records
+            .insert("terminal-operation".to_owned(), record);
+
+        assert!(table.has_terminal());
+        table.evict_terminal();
+        assert!(!table.records.contains_key("terminal-operation"));
+        assert!(table.insertion_order.is_empty());
     }
 }

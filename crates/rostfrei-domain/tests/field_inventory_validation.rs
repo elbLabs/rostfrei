@@ -1,16 +1,15 @@
-use std::any::Any;
 use std::fmt::Debug;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use domain::__private::DomainModelBuilder;
 use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, AggregateDescriptor, AggregateId, BoundedContext,
     BoundedContextId, DomainCommandDescriptor, DomainCommandId, DomainCommandOwnerId,
     DomainErrorDescriptor, DomainErrorId, DomainErrorOwnerId, DomainEventDescriptor, DomainEventId,
-    DomainIdentityDescriptor, DomainIdentityId, EntityDescriptor, EntityId, FieldDescriptor,
-    FieldKind, FieldValue, FieldWrapper, IdentityDescriptor, ScalarType, SemanticScalarDescriptor,
-    ValueObjectDescriptor, ValueObjectId, ValueObjectOwnerId, ValueObjectShapeDescriptor,
-    ValueObjectType, ValueObjectVariantDescriptor, ValueObjectVariantShapeDescriptor,
+    DomainIdentityDescriptor, DomainIdentityId, DomainModelError, DomainModelReference,
+    EntityDescriptor, EntityId, FieldDescriptor, FieldKind, FieldValue, FieldWrapper,
+    IdentityDescriptor, ScalarType, SemanticScalarDescriptor, ValueObjectDescriptor, ValueObjectId,
+    ValueObjectOwnerId, ValueObjectShapeDescriptor, ValueObjectType, ValueObjectVariantDescriptor,
+    ValueObjectVariantShapeDescriptor,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("field-inventory");
@@ -80,6 +79,7 @@ const DUPLICATE_VALUE_ACTIONS: &[ActionDescriptor] = &[
         label: "First duplicate",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     },
     ActionDescriptor {
@@ -90,6 +90,7 @@ const DUPLICATE_VALUE_ACTIONS: &[ActionDescriptor] = &[
         label: "Second duplicate",
         input: None,
         output: None,
+        raises: &[],
         error: None,
     },
 ];
@@ -365,21 +366,6 @@ const ERROR_REFERENCE: DomainErrorDescriptor = DomainErrorDescriptor {
     }],
 };
 
-fn panic_message(operation: impl FnOnce()) -> String {
-    let payload = catch_unwind(AssertUnwindSafe(operation)).expect_err("operation should panic");
-    panic_payload(payload)
-}
-
-fn panic_payload(payload: Box<dyn Any + Send>) -> String {
-    match payload.downcast::<String>() {
-        Ok(message) => *message,
-        Err(payload) => payload.downcast::<&'static str>().map_or_else(
-            |_| panic!("panic payload should be a String or &'static str"),
-            |message| (*message).to_owned(),
-        ),
-    }
-}
-
 fn violation(missing_id: impl Debug, location: &str, inventory_key: &str) -> String {
     format!(
         "Field reference inventory violation: field references missing {missing_id:?} at descriptor location `{location}`; add it to domain_model! inventory key `{inventory_key}`"
@@ -396,10 +382,10 @@ fn accepts_forward_references_registered_cycles_wrappers_and_non_reference_scala
     builder.add_value_object(SOURCE_VALUE);
     builder.add_value_object(CYCLE_VALUE);
     builder.add_entity(REGISTERED_ENTITY);
-    builder.add_domain_identity(REGISTERED_IDENTITY);
+    builder.add_domain_identity(REGISTERED_IDENTITY).unwrap();
     builder.add_aggregate(REGISTERED_AGGREGATE);
 
-    let model = builder.finish();
+    let model = builder.finish().unwrap();
 
     assert_eq!(model["valueObjects"][0]["id"]["local"], "source-value");
     assert_eq!(model["valueObjects"][1]["id"]["local"], "cycle-value");
@@ -408,15 +394,21 @@ fn accepts_forward_references_registered_cycles_wrappers_and_non_reference_scala
 #[test]
 fn rejected_duplicate_command_does_not_leave_field_reference_records() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_domain_command(ACCEPTED_COMMAND);
+    builder.add_domain_command(ACCEPTED_COMMAND).unwrap();
 
-    let message = panic_message(|| builder.add_domain_command(COMMAND_REFERENCE));
+    let error = builder.add_domain_command(COMMAND_REFERENCE).unwrap_err();
     assert_eq!(
-        message,
+        error.to_string(),
         format!("duplicate DomainCommandId: {COMMAND_ID:?}")
     );
+    assert_eq!(
+        error,
+        DomainModelError::DuplicateDomainCommandId {
+            id: Box::new(COMMAND_ID),
+        }
+    );
 
-    let model = builder.finish();
+    let model = builder.finish().unwrap();
     assert_eq!(model["domainCommands"].as_array().unwrap().len(), 1);
     assert_eq!(
         model["domainCommands"][0]["fields"]
@@ -431,20 +423,37 @@ fn rejected_duplicate_command_does_not_leave_field_reference_records() {
 fn persisted_value_object_keeps_field_references_after_later_contract_rejection() {
     let mut builder = DomainModelBuilder::new();
 
-    let registration_message =
-        panic_message(|| builder.add_value_object_type::<ContractRejectedValue>());
-    assert!(registration_message.starts_with("duplicate ActionId:"));
+    let registration_error = builder
+        .add_value_object_type::<ContractRejectedValue>()
+        .unwrap_err();
+    assert!(
+        registration_error
+            .to_string()
+            .starts_with("duplicate ActionId:")
+    );
+    assert_eq!(
+        registration_error,
+        DomainModelError::DuplicateActionId {
+            id: Box::new(DUPLICATE_VALUE_ACTIONS.first().unwrap().id),
+        }
+    );
 
-    let finish_message = panic_message(|| {
-        builder.finish();
-    });
+    let finish_error = builder.finish().unwrap_err();
     let location = format!(
         "value object {CONTRACT_REJECTED_VALUE_ID:?} field {:?}",
         "aggregate"
     );
     assert_eq!(
-        finish_message,
+        finish_error.to_string(),
         violation(MISSING_AGGREGATE_ID, &location, "aggregates")
+    );
+    assert_eq!(
+        finish_error,
+        DomainModelError::FieldReferenceInventoryViolation {
+            reference: DomainModelReference::Aggregate(Box::new(MISSING_AGGREGATE_ID)),
+            location,
+            inventory_key: "aggregates",
+        }
     );
 }
 
@@ -454,143 +463,194 @@ fn reports_each_missing_reference_kind_from_struct_value_objects() {
         (
             STRUCT_IDENTITY_REFERENCE,
             format!("{MISSING_IDENTITY_ID:?}"),
+            DomainModelReference::DomainIdentity(Box::new(MISSING_IDENTITY_ID)),
             "identities",
         ),
         (
             STRUCT_ENTITY_REFERENCE,
             format!("{MISSING_ENTITY_ID:?}"),
+            DomainModelReference::Entity(Box::new(MISSING_ENTITY_ID)),
             "entities",
         ),
         (
             STRUCT_VALUE_REFERENCE,
             format!("{MISSING_VALUE_ID:?}"),
+            DomainModelReference::ValueObject(Box::new(MISSING_VALUE_ID)),
             "value_objects",
         ),
         (
             STRUCT_AGGREGATE_REFERENCE,
             format!("{MISSING_AGGREGATE_ID:?}"),
+            DomainModelReference::Aggregate(Box::new(MISSING_AGGREGATE_ID)),
             "aggregates",
         ),
     ];
 
-    for (descriptor, missing_id, inventory_key) in cases {
-        let message = panic_message(|| {
-            let mut builder = DomainModelBuilder::new();
-            builder.add_value_object(descriptor);
-            builder.finish();
-        });
-        let location = value_object_location(descriptor, descriptor.shape_fields()[0].name);
+    for (descriptor, missing_id, reference, inventory_key) in cases {
+        let mut builder = DomainModelBuilder::new();
+        builder.add_value_object(descriptor);
+        let error = builder.finish().unwrap_err();
+        let field = descriptor.shape_fields().unwrap().first().unwrap();
+        let location = value_object_location(descriptor, field.name);
+
         assert_eq!(
-            message,
+            error.to_string(),
             format!(
                 "Field reference inventory violation: field references missing {missing_id} at descriptor location `{location}`; add it to domain_model! inventory key `{inventory_key}`"
             )
+        );
+        assert_eq!(
+            error,
+            DomainModelError::FieldReferenceInventoryViolation {
+                reference,
+                location,
+                inventory_key,
+            }
         );
     }
 }
 
 #[test]
 fn reports_a_missing_reference_from_a_tagged_tuple_variant() {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_value_object(TAGGED_TUPLE_REFERENCE);
-        builder.finish();
-    });
+    let mut builder = DomainModelBuilder::new();
+    builder.add_value_object(TAGGED_TUPLE_REFERENCE);
+    let error = builder.finish().unwrap_err();
     let location = format!(
         "value object {SOURCE_VALUE_ID:?} variant {:?} field {:?}",
         "Tuple", "0"
     );
 
     assert_eq!(
-        message,
+        error.to_string(),
         violation(MISSING_VALUE_ID, &location, "value_objects")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::FieldReferenceInventoryViolation {
+            reference: DomainModelReference::ValueObject(Box::new(MISSING_VALUE_ID)),
+            location,
+            inventory_key: "value_objects",
+        }
     );
 }
 
 #[test]
 fn reports_a_missing_reference_from_a_tagged_struct_variant() {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_value_object(TAGGED_STRUCT_REFERENCE);
-        builder.finish();
-    });
+    let mut builder = DomainModelBuilder::new();
+    builder.add_value_object(TAGGED_STRUCT_REFERENCE);
+    let error = builder.finish().unwrap_err();
     let location = format!(
         "value object {SOURCE_VALUE_ID:?} variant {:?} field {:?}",
         "Struct", "identity"
     );
 
     assert_eq!(
-        message,
+        error.to_string(),
         violation(MISSING_IDENTITY_ID, &location, "identities")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::FieldReferenceInventoryViolation {
+            reference: DomainModelReference::DomainIdentity(Box::new(MISSING_IDENTITY_ID)),
+            location,
+            inventory_key: "identities",
+        }
     );
 }
 
 #[test]
 fn reports_a_missing_reference_from_an_entity_field() {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_entity(ENTITY_REFERENCE);
-        builder.finish();
-    });
+    let mut builder = DomainModelBuilder::new();
+    builder.add_entity(ENTITY_REFERENCE);
+    let error = builder.finish().unwrap_err();
     let location = format!("entity {ENTITY_SOURCE_ID:?} field {:?}", "related");
 
-    assert_eq!(message, violation(MISSING_ENTITY_ID, &location, "entities"));
+    assert_eq!(
+        error.to_string(),
+        violation(MISSING_ENTITY_ID, &location, "entities")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::FieldReferenceInventoryViolation {
+            reference: DomainModelReference::Entity(Box::new(MISSING_ENTITY_ID)),
+            location,
+            inventory_key: "entities",
+        }
+    );
 }
 
 #[test]
 fn reports_a_missing_reference_from_a_command_field() {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_domain_command(COMMAND_REFERENCE);
-        builder.finish();
-    });
+    let mut builder = DomainModelBuilder::new();
+    builder.add_domain_command(COMMAND_REFERENCE).unwrap();
+    let error = builder.finish().unwrap_err();
     let location = format!("domain command {COMMAND_ID:?} field {:?}", "aggregate");
 
     assert_eq!(
-        message,
+        error.to_string(),
         violation(MISSING_AGGREGATE_ID, &location, "aggregates")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::FieldReferenceInventoryViolation {
+            reference: DomainModelReference::Aggregate(Box::new(MISSING_AGGREGATE_ID)),
+            location,
+            inventory_key: "aggregates",
+        }
     );
 }
 
 #[test]
 fn reports_a_missing_reference_from_an_event_field() {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_domain_event(EVENT_REFERENCE);
-        builder.finish();
-    });
+    let mut builder = DomainModelBuilder::new();
+    builder.add_domain_event(EVENT_REFERENCE).unwrap();
+    let error = builder.finish().unwrap_err();
     let location = format!("domain event {EVENT_ID:?} field {:?}", "value");
 
     assert_eq!(
-        message,
+        error.to_string(),
         violation(MISSING_VALUE_ID, &location, "value_objects")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::FieldReferenceInventoryViolation {
+            reference: DomainModelReference::ValueObject(Box::new(MISSING_VALUE_ID)),
+            location,
+            inventory_key: "value_objects",
+        }
     );
 }
 
 #[test]
 fn reports_a_missing_reference_from_an_error_field() {
-    let message = panic_message(|| {
-        let mut builder = DomainModelBuilder::new();
-        builder.add_domain_error(ERROR_REFERENCE);
-        builder.finish();
-    });
+    let mut builder = DomainModelBuilder::new();
+    builder.add_domain_error(ERROR_REFERENCE);
+    let error = builder.finish().unwrap_err();
     let location = format!("domain error {ERROR_ID:?} field {:?}", "identity");
 
     assert_eq!(
-        message,
+        error.to_string(),
         violation(MISSING_IDENTITY_ID, &location, "identities")
+    );
+    assert_eq!(
+        error,
+        DomainModelError::FieldReferenceInventoryViolation {
+            reference: DomainModelReference::DomainIdentity(Box::new(MISSING_IDENTITY_ID)),
+            location,
+            inventory_key: "identities",
+        }
     );
 }
 
 trait StructShapeFields {
-    fn shape_fields(self) -> &'static [FieldDescriptor];
+    fn shape_fields(self) -> Option<&'static [FieldDescriptor]>;
 }
 
 impl StructShapeFields for ValueObjectDescriptor {
-    fn shape_fields(self) -> &'static [FieldDescriptor] {
+    fn shape_fields(self) -> Option<&'static [FieldDescriptor]> {
         match self.shape {
-            ValueObjectShapeDescriptor::Struct { fields } => fields,
-            _ => panic!("descriptor should have a struct shape"),
+            ValueObjectShapeDescriptor::Struct { fields } => Some(fields),
+            _ => None,
         }
     }
 }

@@ -5,8 +5,15 @@ use syn::{ItemTrait, Path, TraitItem, Type, TypeParamBound, WherePredicate};
 
 use super::action::Action;
 use super::action_reference;
+use super::signature::ParsedSignature;
 
-type OwnerPredicateAssembler = fn(&Path, &mut ItemTrait, &Action) -> syn::Result<()>;
+type OwnerPredicateAssembler =
+    fn(&Path, &mut ItemTrait, &Action, &ParsedSignature) -> syn::Result<()>;
+
+struct AssembledAction<'a> {
+    action: &'a Action,
+    signature: &'a ParsedSignature,
+}
 
 pub enum OutputPolicy {
     Declared(Path),
@@ -25,10 +32,11 @@ pub fn assemble(
     actions: &[Action],
     configuration: Configuration,
 ) -> syn::Result<TokenStream> {
+    let assembled_actions = validate_actions(actions)?;
     add_supertraits(&mut item, configuration.owner_supertrait);
-    for action in actions {
+    for action in &assembled_actions {
         if let Some(assemble_owner_predicate) = configuration.owner_predicate {
-            assemble_owner_predicate(domain_path, &mut item, action)?;
+            assemble_owner_predicate(domain_path, &mut item, action.action, action.signature)?;
         }
         add_action_predicates(domain_path, &mut item, action, &configuration.output_policy)?;
     }
@@ -36,11 +44,26 @@ pub fn assemble(
     add_action_descriptors(
         domain_path,
         &mut item,
-        actions,
+        &assembled_actions,
         &configuration.output_policy,
     )?;
     add_domain_actions_attribute_requirement(domain_path, &mut item)?;
     Ok(quote!(#item))
+}
+
+fn validate_actions(actions: &[Action]) -> syn::Result<Vec<AssembledAction<'_>>> {
+    actions
+        .iter()
+        .map(|action| {
+            let Some(signature) = action.signature.as_ref() else {
+                return Err(syn::Error::new_spanned(
+                    &action.syntax,
+                    "domain action signature must be validated before assembly",
+                ));
+            };
+            Ok(AssembledAction { action, signature })
+        })
+        .collect()
 }
 
 fn add_supertraits(item: &mut ItemTrait, owner_supertrait: TypeParamBound) {
@@ -51,10 +74,10 @@ fn add_supertraits(item: &mut ItemTrait, owner_supertrait: TypeParamBound) {
 fn add_action_predicates(
     domain_path: &Path,
     item: &mut ItemTrait,
-    action: &Action,
+    action: &AssembledAction<'_>,
     output_policy: &OutputPolicy,
 ) -> syn::Result<()> {
-    let signature = action.signature.as_ref().unwrap();
+    let signature = action.signature;
     if let Some(input) = &signature.input {
         push_predicate(item, input, &quote!(#domain_path::ActionInputType<Self>))?;
     }
@@ -95,7 +118,7 @@ fn push_predicate(item: &mut ItemTrait, ty: &Type, bound: &TokenStream) -> syn::
 fn add_action_descriptors(
     domain_path: &Path,
     item: &mut ItemTrait,
-    actions: &[Action],
+    actions: &[AssembledAction<'_>],
     output_policy: &OutputPolicy,
 ) -> syn::Result<()> {
     let descriptors = actions
@@ -129,12 +152,12 @@ fn add_domain_actions_attribute_requirement(
 
 fn assemble_descriptor(
     domain_path: &Path,
-    action: &Action,
+    action: &AssembledAction<'_>,
     output_policy: &OutputPolicy,
 ) -> TokenStream {
-    let id = &action.id;
-    let label = &action.label;
-    let signature = action.signature.as_ref().unwrap();
+    let id = &action.action.id;
+    let label = &action.action.label;
+    let signature = action.signature;
     let input = signature.input.as_ref().map_or_else(
         || quote!(None),
         |input| quote!(Some(<#input as #domain_path::ActionInputType<Self>>::DESCRIPTOR)),
@@ -148,6 +171,11 @@ fn assemble_descriptor(
         || quote!(None),
         |error| quote!(Some(<#error as #domain_path::DomainErrorType>::DESCRIPTOR.id)),
     );
+    let raises = action
+        .action
+        .raises
+        .iter()
+        .map(|event| quote!(<#event as #domain_path::DomainEventType>::DESCRIPTOR.id));
     quote! {
         #domain_path::ActionDescriptor {
             id: #domain_path::ActionId {
@@ -159,6 +187,7 @@ fn assemble_descriptor(
             output: <#output as #domain_path::ActionOutputType<
                 #output_owner<Self>
             >>::DESCRIPTOR,
+            raises: &[#(#raises),*],
             error: #error,
         }
     }

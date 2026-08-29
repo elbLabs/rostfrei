@@ -7,6 +7,7 @@ mod domain_event_consumer;
 mod error;
 mod event_store;
 mod event_store_config;
+mod hex;
 mod messaging_config;
 mod provisioning;
 mod publish;

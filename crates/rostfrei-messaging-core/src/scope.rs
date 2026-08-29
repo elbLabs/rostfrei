@@ -52,7 +52,7 @@ pub struct BoundedContext {
 }
 
 impl BoundedContext {
-    pub fn new(application: ApplicationName, name: BoundedContextName) -> Self {
+    pub const fn new(application: ApplicationName, name: BoundedContextName) -> Self {
         Self { application, name }
     }
 
@@ -113,10 +113,7 @@ impl BoundedContext {
     }
 }
 
-pub(crate) fn validate_scope_segment(
-    value: &str,
-    field: &'static str,
-) -> Result<(), ContractError> {
+pub fn validate_scope_segment(value: &str, field: &'static str) -> Result<(), ContractError> {
     validate_scope_name(value.to_owned(), field).map(|_| ())
 }
 

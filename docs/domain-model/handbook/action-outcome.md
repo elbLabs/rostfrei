@@ -23,11 +23,12 @@ return type is written. A fallible Action uses direct canonical
 `Result<Output, Error>` syntax. Value Object constructors and transformations
 return the Value Object itself on success.
 
-An executable [Aggregate](../reference/domain/aggregate.md) Action returns one
-direct [Domain Event](../reference/domain/domain-event.md) owned by that exact
-Aggregate. Its generated aggregate-instance adapter records the event. Broader
-metadata-only Aggregate contracts can describe zero or more owned events. Entity
-and Value Object Actions do not return Domain Events.
+An executable [Aggregate](../reference/domain/aggregate.md) Action returns `()`
+on success and explicitly raises zero or more
+[Domain Events](../reference/domain/domain-event.md) owned by that exact
+Aggregate. Its `raises` metadata declares the event types it may record. Broader
+metadata-only Aggregate contracts retain descriptive outputs. Entity and Value
+Object Actions do not return Domain Events.
 
 An allowed [Domain Service](../reference/domain/domain-service.md) Action also
 returns the Domain Events produced by coordinated Aggregate Actions when the
@@ -42,9 +43,10 @@ A denied Action returns a [Domain Error](../reference/domain/domain-error.md)
 owned by that Action's owner. The compiler validates this for recognized
 canonical `Result` signatures.
 
-It returns no allowed output or Domain Events.
-
-No state change occurs.
+It returns no allowed output or Domain Events. A fallible executable Aggregate
+Action must complete denial checks before its first raise. The executor discards
+the complete Aggregate instance when the command handler propagates a denial,
+but a caught Action error has no independent rollback boundary.
 
 ## Technical Failure
 

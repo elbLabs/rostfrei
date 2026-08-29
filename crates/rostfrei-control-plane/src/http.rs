@@ -1,4 +1,4 @@
-use std::{convert::Infallible, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
@@ -222,13 +222,13 @@ async fn operation_events(
     }
     let stream = stream::unfold(subscription, |mut subscription| async move {
         let event = subscription.next().await?;
-        let data =
-            serde_json::to_string(&event).expect("operation events always serialize successfully");
-        let frame = Event::default()
-            .id(event.id.to_string())
-            .event(event.kind.event_name())
-            .data(data);
-        Some((Ok::<_, Infallible>(frame), subscription))
+        let frame = serde_json::to_string(&event).map(|data| {
+            Event::default()
+                .id(event.id.to_string())
+                .event(event.kind.event_name())
+                .data(data)
+        });
+        Some((frame, subscription))
     });
     let mut response = Sse::new(stream)
         .keep_alive(
@@ -366,10 +366,20 @@ fn bad_request_with_code(code: &'static str, message: &str) -> Response {
 
 fn accepted_operation(operation: crate::OperationSnapshot) -> Response {
     let location = format!("/v1/operations/{}", operation.operation_id);
+    let location = match HeaderValue::from_str(&location) {
+        Ok(location) => Some(location),
+        Err(error) => {
+            tracing::error!(
+                operation_id = %operation.operation_id,
+                %error,
+                "accepted operation location could not be encoded as an HTTP header"
+            );
+            None
+        }
+    };
     let mut response = (StatusCode::ACCEPTED, Json(operation)).into_response();
-    response.headers_mut().insert(
-        header::LOCATION,
-        HeaderValue::from_str(&location).expect("validated operation ID creates a header"),
-    );
+    if let Some(location) = location {
+        response.headers_mut().insert(header::LOCATION, location);
+    }
     response
 }

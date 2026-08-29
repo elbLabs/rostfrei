@@ -1,4 +1,4 @@
-use std::fmt::{self, Write};
+use std::fmt;
 use std::str::FromStr;
 
 use rostfrei_messaging_core::{CausationId, CorrelationId};
@@ -101,18 +101,18 @@ pub struct StreamId {
 }
 
 impl StreamId {
-    pub fn new(aggregate_type: AggregateType, aggregate_id: AggregateId) -> Self {
+    pub const fn new(aggregate_type: AggregateType, aggregate_id: AggregateId) -> Self {
         Self {
             aggregate_type,
             aggregate_id,
         }
     }
 
-    pub fn aggregate_type(&self) -> &AggregateType {
+    pub const fn aggregate_type(&self) -> &AggregateType {
         &self.aggregate_type
     }
 
-    pub fn aggregate_id(&self) -> &AggregateId {
+    pub const fn aggregate_id(&self) -> &AggregateId {
         &self.aggregate_id
     }
 }
@@ -140,11 +140,15 @@ impl ContentFingerprint {
             return Err(IdentityError::InvalidFingerprint);
         }
 
+        let (pairs, remainder) = value.as_bytes().as_chunks::<2>();
+        if !remainder.is_empty() {
+            return Err(IdentityError::InvalidFingerprint);
+        }
         let mut bytes = [0_u8; 32];
-        for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
-            let high = decode_hex(pair[0]).ok_or(IdentityError::InvalidFingerprint)?;
-            let low = decode_hex(pair[1]).ok_or(IdentityError::InvalidFingerprint)?;
-            bytes[index] = (high << 4) | low;
+        for (byte, [high, low]) in bytes.iter_mut().zip(pairs) {
+            let high = decode_hex(*high).ok_or(IdentityError::InvalidFingerprint)?;
+            let low = decode_hex(*low).ok_or(IdentityError::InvalidFingerprint)?;
+            *byte = (high << 4) | low;
         }
         Ok(Self(bytes))
     }
@@ -154,11 +158,7 @@ impl ContentFingerprint {
     }
 
     pub fn to_hex(self) -> String {
-        let mut encoded = String::with_capacity(64);
-        for byte in self.0 {
-            write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
-        }
-        encoded
+        encode_lower_hex(self.0)
     }
 }
 
@@ -181,10 +181,17 @@ impl FromStr for ContentFingerprint {
 
 const fn decode_hex(value: u8) -> Option<u8> {
     match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
+        b'0'..=b'9' => value.checked_sub(b'0'),
+        b'a'..=b'f' => checked_hex_offset(value, b'a'),
+        b'A'..=b'F' => checked_hex_offset(value, b'A'),
         _ => None,
+    }
+}
+
+const fn checked_hex_offset(value: u8, base: u8) -> Option<u8> {
+    match value.checked_sub(base) {
+        Some(offset) => offset.checked_add(10),
+        None => None,
     }
 }
 
@@ -227,11 +234,11 @@ impl ExecutionMetadata {
         self
     }
 
-    pub fn stream_id(&self) -> &StreamId {
+    pub const fn stream_id(&self) -> &StreamId {
         &self.stream_id
     }
 
-    pub fn operation_id(&self) -> &OperationId {
+    pub const fn operation_id(&self) -> &OperationId {
         &self.operation_id
     }
 
@@ -239,7 +246,7 @@ impl ExecutionMetadata {
         self.operation_fingerprint
     }
 
-    pub fn commit_id(&self) -> &CommitId {
+    pub const fn commit_id(&self) -> &CommitId {
         &self.commit_id
     }
 
@@ -256,26 +263,127 @@ impl ExecutionMetadata {
     }
 }
 
-pub(crate) fn derive_commit_id(stream_id: &StreamId, operation_id: &OperationId) -> CommitId {
+pub fn derive_commit_id(stream_id: &StreamId, operation_id: &OperationId) -> CommitId {
     let mut hasher = Sha256::new();
     hash_part(&mut hasher, b"rostfrei:commit:v1");
     hash_part(&mut hasher, stream_id.aggregate_type().as_str().as_bytes());
     hash_part(&mut hasher, stream_id.aggregate_id().as_str().as_bytes());
     hash_part(&mut hasher, operation_id.as_str().as_bytes());
-    CommitId::new(format!("commit:{:x}", hasher.finalize()))
-        .expect("derived commit identities are always valid")
+    CommitId(format!("commit:{:x}", hasher.finalize()))
 }
 
-pub(crate) fn derive_event_id(commit_id: &CommitId, ordinal: u32) -> EventId {
+pub fn derive_event_id(commit_id: &CommitId, ordinal: u32) -> EventId {
     let mut hasher = Sha256::new();
     hash_part(&mut hasher, b"rostfrei:event:v1");
     hash_part(&mut hasher, commit_id.as_str().as_bytes());
     hash_part(&mut hasher, &ordinal.to_be_bytes());
-    EventId::new(format!("event:{:x}", hasher.finalize()))
-        .expect("derived event identities are always valid")
+    EventId(format!("event:{:x}", hasher.finalize()))
 }
 
 fn hash_part(hasher: &mut Sha256, part: &[u8]) {
-    hasher.update((part.len() as u64).to_be_bytes());
+    #[cfg(target_pointer_width = "16")]
+    let length = u64::from(u16::from_be_bytes(part.len().to_be_bytes()));
+    #[cfg(target_pointer_width = "32")]
+    let length = u64::from(u32::from_be_bytes(part.len().to_be_bytes()));
+    #[cfg(target_pointer_width = "64")]
+    let length = u64::from_be_bytes(part.len().to_be_bytes());
+
+    hasher.update(length.to_be_bytes());
     hasher.update(part);
+}
+
+fn encode_lower_hex(bytes: impl IntoIterator<Item = u8>) -> String {
+    let bytes = bytes.into_iter();
+    let capacity = bytes.size_hint().0.saturating_mul(2);
+    let mut encoded = String::with_capacity(capacity);
+    for byte in bytes {
+        encoded.push(lower_hex_digit(byte >> 4));
+        encoded.push(lower_hex_digit(byte & 0x0f));
+    }
+    encoded
+}
+
+fn lower_hex_digit(nibble: u8) -> char {
+    let byte = if nibble < 10 {
+        b'0'.saturating_add(nibble)
+    } else {
+        b'a'.saturating_add(nibble.saturating_sub(10))
+    };
+    char::from(byte)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fingerprint_hex_decoding_preserves_all_nibble_values() {
+        for (digit, expected_byte) in [
+            ('0', 0x00),
+            ('1', 0x11),
+            ('2', 0x22),
+            ('3', 0x33),
+            ('4', 0x44),
+            ('5', 0x55),
+            ('6', 0x66),
+            ('7', 0x77),
+            ('8', 0x88),
+            ('9', 0x99),
+            ('a', 0xaa),
+            ('b', 0xbb),
+            ('c', 0xcc),
+            ('d', 0xdd),
+            ('e', 0xee),
+            ('f', 0xff),
+            ('A', 0xaa),
+            ('B', 0xbb),
+            ('C', 0xcc),
+            ('D', 0xdd),
+            ('E', 0xee),
+            ('F', 0xff),
+        ] {
+            let encoded = digit.to_string().repeat(64);
+            assert_eq!(
+                ContentFingerprint::from_hex(&encoded).unwrap().as_bytes(),
+                &[expected_byte; 32]
+            );
+        }
+    }
+
+    #[test]
+    fn fingerprint_hex_decoding_rejects_bytes_adjacent_to_accepted_ranges() {
+        for invalid in ['/', ':', '@', 'G', '`', 'g'] {
+            let encoded = format!("{invalid}{}", "0".repeat(63));
+            assert_eq!(
+                ContentFingerprint::from_hex(&encoded),
+                Err(IdentityError::InvalidFingerprint)
+            );
+        }
+
+        let encoded = format!("é{}", "0".repeat(62));
+        assert_eq!(encoded.len(), 64);
+        assert_eq!(
+            ContentFingerprint::from_hex(&encoded),
+            Err(IdentityError::InvalidFingerprint)
+        );
+    }
+
+    #[test]
+    fn derived_identities_preserve_canonical_hash_bytes() {
+        let stream_id = StreamId::new(
+            AggregateType("catalog".to_owned()),
+            AggregateId("7".to_owned()),
+        );
+        let operation_id = OperationId("op-1".to_owned());
+
+        let commit_id = derive_commit_id(&stream_id, &operation_id);
+        assert_eq!(
+            commit_id.as_str(),
+            "commit:bf262f5f3be9e3a262fba391b4e115be62d51bd3071487fdac0d31458163614c"
+        );
+        assert_eq!(
+            derive_event_id(&commit_id, 42).as_str(),
+            "event:cc12539e54324f7b7d2e6bf5144bc34c74fb585dc0609bc2096ecdca248aa77d"
+        );
+    }
 }

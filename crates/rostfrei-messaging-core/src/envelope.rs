@@ -267,7 +267,7 @@ where
     }
 }
 
-pub(crate) fn validate_serialized_size<T>(value: &T) -> Result<(), MessageBuildError>
+pub fn validate_serialized_size<T>(value: &T) -> Result<(), MessageBuildError>
 where
     T: Serialize + ?Sized,
 {

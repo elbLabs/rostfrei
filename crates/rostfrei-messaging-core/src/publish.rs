@@ -123,7 +123,7 @@ where
     }
 }
 
-fn validate_payload_size(actual: usize, maximum: usize) -> Result<(), MessageBuildError> {
+const fn validate_payload_size(actual: usize, maximum: usize) -> Result<(), MessageBuildError> {
     if maximum == 0 || maximum > MAX_MESSAGE_PAYLOAD_BYTES {
         return Err(MessageBuildError::invalid_maximum(maximum));
     }

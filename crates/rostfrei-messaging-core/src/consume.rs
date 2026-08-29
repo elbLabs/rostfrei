@@ -254,7 +254,7 @@ pub struct DeliveryInfo {
 }
 
 impl DeliveryInfo {
-    pub fn new(
+    pub const fn new(
         attempt: u32,
         pending: u64,
         source_sequence: u64,
@@ -516,11 +516,17 @@ fn parse_delivery_name(value: String, field: &'static str) -> Result<String, Con
             field,
         ));
     }
-    let segments = value.split("--").collect::<Vec<_>>();
-    if segments.len() != 4 {
+    let mut segments = value.split("--");
+    let (Some(application), Some(context), Some(purpose), Some(version), None) = (
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+    ) else {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
-    }
-    let Some(version) = segments[3].strip_prefix('v') else {
+    };
+    let Some(version) = version.strip_prefix('v') else {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
     };
     let major_version = version
@@ -529,7 +535,7 @@ fn parse_delivery_name(value: String, field: &'static str) -> Result<String, Con
     if version != major_version.to_string() {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
     }
-    build_delivery_name(segments[0], segments[1], segments[2], major_version, field)?;
+    build_delivery_name(application, context, purpose, major_version, field)?;
     Ok(value)
 }
 
@@ -541,6 +547,9 @@ fn delivery_name_segment(value: &str, index: usize) -> &str {
 mod tests {
     use super::*;
     use crate::{CommandAddress, MessageBuildErrorKind};
+
+    const DELIVERY_INFO_RESULT: Result<DeliveryInfo, ContractError> =
+        DeliveryInfo::new(2, 10, 42, 7);
 
     #[test]
     fn consumer_and_durable_names_are_stable_and_parseable() {
@@ -690,7 +699,7 @@ mod tests {
 
     #[test]
     fn deliveries_expose_identity_metadata_and_delivery_progress() {
-        let info = DeliveryInfo::new(2, 10, 42, 7).unwrap();
+        let info = DELIVERY_INFO_RESULT.unwrap();
         let trace_context =
             TraceContext::new("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").unwrap();
         let delivery = MessageDelivery::new_with_trace_context(

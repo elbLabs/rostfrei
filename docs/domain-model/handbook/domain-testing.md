@@ -11,7 +11,7 @@ Domain Tests are ordinary Rust tests explicitly linked to one modeled Action, De
 
 ```rust
 #[domain_action_test(
-    <RentalFleetAggregate as RentalFleetActions>::RENT_BICYCLE
+    <RentalFleetAggregate as RentalFleetActionContract>::RENT_BICYCLE
 )]
 fn available_bicycle_can_be_rented() {
     verify_bicycle_rental();

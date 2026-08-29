@@ -22,7 +22,7 @@ impl Aggregate for Account {
 
     fn apply(state: &mut Self::State, event: &Self::Event) {
         let AccountEvent::Deposited(amount) = event;
-        state.balance += amount;
+        state.balance = state.balance.saturating_add(*amount);
     }
 }
 
@@ -39,6 +39,14 @@ impl CommandHandler<Deposit> for Account {
         command: &Deposit,
         aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
+        if aggregate
+            .state()
+            .balance
+            .checked_add(command.amount)
+            .is_none()
+        {
+            return Err(());
+        }
         aggregate.raise(AccountEvent::Deposited(command.amount));
         Ok(())
     }
@@ -48,15 +56,7 @@ impl CommandHandler<Deposit> for Account {
 #[rostfrei(name = "accounts", commands(Deposit))]
 struct Accounts;
 
-#[test]
-fn derived_domain_types_register_and_query_without_state_trait_requirements() {
-    let mut registry = DomainRegistry::new();
-    registry.register_module::<Accounts>().unwrap();
-
-    let command = registry
-        .command("account", "account.deposit", 1)
-        .expect("derived command should be registered");
-
+fn assert_registered_command(command: &zs_registry::CommandDescriptor) {
     assert_eq!(command.command_name, "account.deposit");
     assert_eq!(command.schema_version, 1);
     assert_eq!(command.aggregate_type, "account");
@@ -64,4 +64,18 @@ fn derived_domain_types_register_and_query_without_state_trait_requirements() {
         <Deposit as CommandDefinition>::descriptor().command_name,
         "account.deposit"
     );
+}
+
+#[test]
+fn derived_domain_types_register_and_query_without_state_trait_requirements()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut registry = DomainRegistry::new();
+    registry.register_module::<Accounts>()?;
+
+    let command = registry
+        .command("account", "account.deposit", 1)
+        .ok_or_else(|| std::io::Error::other("derived command should be registered"))?;
+
+    assert_registered_command(command);
+    Ok(())
 }
