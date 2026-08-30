@@ -14,6 +14,7 @@ pub enum ContractErrorKind {
     Reserved,
     TooManyEntries,
     OutOfRange,
+    IdentityConflict,
 }
 
 impl fmt::Display for ContractErrorKind {
@@ -28,6 +29,7 @@ impl fmt::Display for ContractErrorKind {
             Self::Reserved => "is reserved for the transport adapter",
             Self::TooManyEntries => "contains too many entries",
             Self::OutOfRange => "is outside the supported range",
+            Self::IdentityConflict => "conflicts with an existing identity",
         };
         formatter.write_str(description)
     }

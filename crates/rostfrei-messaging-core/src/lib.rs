@@ -3,6 +3,7 @@ mod command_response;
 mod consume;
 mod envelope;
 mod error;
+mod message_series;
 mod metadata;
 mod publish;
 mod query;
@@ -36,6 +37,10 @@ pub use error::{
     ContractError, ContractErrorKind, MessageBuildError, MessageBuildErrorKind, PublishError,
     PublishErrorKind, QueryRequestError, QueryRequestErrorKind, QueryServerError,
     QueryServerErrorKind,
+};
+pub use message_series::{
+    MAX_MESSAGE_SERIES_NODES, MessageSeries, MessageSeriesInsertOutcome, MessageSeriesNode,
+    MessageSeriesTopologyIssue,
 };
 pub use metadata::{
     CallerMetadata, MAX_METADATA_BYTES, MAX_METADATA_ENTRIES, MAX_METADATA_NAME_BYTES,
