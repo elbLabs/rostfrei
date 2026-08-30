@@ -1,5 +1,5 @@
 use rostfrei::{
-    Aggregate, AggregateInstance, BoundedContext, DecisionOutcome, DomainCommand, DomainError,
+    Aggregate, AggregateInstance, BoundedContext, Command, DecisionOutcome, DomainError,
     DomainEvent, DomainIdentity, Entity, StreamAggregateId, ValueObject, domain_actions,
     domain_decisions, domain_queries,
 };
@@ -198,7 +198,7 @@ pub(crate) enum RentalEligibilityOutcome {
     MaintenanceRequired,
 }
 
-#[derive(DomainCommand, Clone, Debug, Eq, PartialEq)]
+#[derive(Command, Clone, Debug, Eq, PartialEq)]
 #[domain(
     id = "rent-bicycle",
     label = "Rent bicycle",

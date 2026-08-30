@@ -31,7 +31,7 @@ reflection are not authoritative registration mechanisms.
 ## Implementation staging
 
 The first implemented vertical slice deliberately stops before automatic linked
-registration. Domain commands derive their runtime definitions, and registering
+registration. Commands derive their runtime definitions, and registering
 an executable control-plane binding inserts its descriptor directly into the
 registry. Generated domain modules remain available for applications that need
 an explicit grouping, but are not required for command execution. Registration

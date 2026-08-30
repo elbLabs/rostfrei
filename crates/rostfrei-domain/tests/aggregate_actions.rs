@@ -3,9 +3,9 @@
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
-    Aggregate, AggregateType, BoundedContext, DomainCommand, DomainError, DomainErrorType,
-    DomainEvent, DomainEventType, DomainIdentity, DomainModelError, Entity, ValueObject,
-    ValueObjectType, domain_actions, domain_model,
+    Aggregate, AggregateType, BoundedContext, Command, DomainError, DomainErrorType, DomainEvent,
+    DomainEventType, DomainIdentity, DomainModelError, Entity, ValueObject, ValueObjectType,
+    domain_actions, domain_model,
 };
 
 #[derive(BoundedContext)]
@@ -55,7 +55,7 @@ impl AccountRootActions for AccountRoot {
 )]
 pub struct Account;
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(id = "rename-account", label = "Rename account", owner = Account)]
 pub struct RenameAccount;
 

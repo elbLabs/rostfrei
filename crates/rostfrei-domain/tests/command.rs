@@ -3,10 +3,10 @@
 use std::convert::Infallible;
 
 use domain::{
-    Aggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandOwnerId,
-    DomainCommandType, DomainIdentity, DomainIdentityType, DomainModelError, DomainService, Entity,
-    FieldKind, FieldWrapper, JsonCommandPayload, JsonErrorPayload, ValueObject, ValueObjectType,
-    domain_actions, domain_model,
+    Aggregate, AggregateType, BoundedContext, Command, CommandOwnerId, CommandType, DomainIdentity,
+    DomainIdentityType, DomainModelError, DomainService, Entity, FieldKind, FieldWrapper,
+    JsonCommandPayload, JsonErrorPayload, ValueObject, ValueObjectType, domain_actions,
+    domain_model,
 };
 use serde_json::{Value, json};
 
@@ -39,7 +39,7 @@ pub struct CatalogAggregate;
 #[domain(id = "status", label = "Status", owner = Catalog)]
 pub struct Status(String);
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(id = "change-status", label = "Change status", owner = CatalogAggregate)]
 pub struct ChangeStatus {
     #[domain(identity)]
@@ -59,7 +59,7 @@ pub struct ChangeStatus {
 )]
 pub struct CatalogSync;
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(
     id = "sync-catalog",
     label = "Sync catalog",
@@ -68,7 +68,7 @@ pub struct CatalogSync;
 )]
 pub struct SyncCatalog;
 
-#[derive(DomainCommand, Debug, Eq, PartialEq)]
+#[derive(Command, Debug, Eq, PartialEq)]
 #[domain(
     id = "json-change",
     label = "JSON change",
@@ -80,7 +80,7 @@ struct JsonChange {
     optional: Option<u32>,
 }
 
-#[derive(DomainCommand, Debug, Eq, PartialEq)]
+#[derive(Command, Debug, Eq, PartialEq)]
 #[domain(
     id = "json-tuple",
     label = "JSON tuple",
@@ -89,7 +89,7 @@ struct JsonChange {
 )]
 struct JsonTuple(String, u32);
 
-#[derive(DomainCommand, Debug, Eq, PartialEq)]
+#[derive(Command, Debug, Eq, PartialEq)]
 #[domain(
     id = "json-unit",
     label = "JSON unit",
@@ -139,7 +139,7 @@ fn describes_structural_command_fields() {
     assert_eq!(SyncCatalog::SCHEMA_VERSION, 2);
     assert_eq!(
         descriptor.id.owner,
-        DomainCommandOwnerId::Aggregate(CatalogAggregate::DESCRIPTOR.id)
+        CommandOwnerId::Aggregate(CatalogAggregate::DESCRIPTOR.id)
     );
     assert_eq!(
         fields.iter().map(|field| field.name).collect::<Vec<_>>(),
@@ -173,16 +173,10 @@ fn inventories_aggregate_and_domain_service_commands() {
     }
     .expect("command domain model should be valid");
 
-    assert_eq!(model["domainCommands"].as_array().unwrap().len(), 2);
-    assert_eq!(
-        model["domainCommands"][0]["id"]["owner"]["kind"],
-        "aggregate"
-    );
-    assert_eq!(
-        model["domainCommands"][1]["id"]["owner"]["kind"],
-        "domainService"
-    );
-    assert_eq!(model["domainCommands"][1]["id"]["local"], "sync-catalog");
+    assert_eq!(model["commands"].as_array().unwrap().len(), 2);
+    assert_eq!(model["commands"][0]["id"]["owner"]["kind"], "aggregate");
+    assert_eq!(model["commands"][1]["id"]["owner"]["kind"], "domainService");
+    assert_eq!(model["commands"][1]["id"]["local"], "sync-catalog");
     assert_eq!(
         model["actions"][0]["input"]["id"],
         model["valueObjects"][0]["id"]
@@ -247,10 +241,7 @@ fn rejects_duplicate_command_ids_deterministically() {
 
     assert_eq!(
         error,
-        DomainModelError::DuplicateDomainCommandId { id: Box::new(id) }
+        DomainModelError::DuplicateCommandId { id: Box::new(id) }
     );
-    assert_eq!(
-        error.to_string(),
-        format!("duplicate DomainCommandId: {id:?}")
-    );
+    assert_eq!(error.to_string(), format!("duplicate CommandId: {id:?}"));
 }

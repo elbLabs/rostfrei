@@ -3,9 +3,9 @@ use syn::{DeriveInput, Error, parse_macro_input};
 
 mod aggregate;
 mod bounded_context;
+mod command;
 mod decision_outcome;
 mod domain_actions;
-mod domain_command;
 mod domain_decisions;
 mod domain_error;
 mod domain_event;
@@ -127,9 +127,9 @@ pub fn derive_domain_event(input: TokenStream) -> TokenStream {
         .into()
 }
 
-#[proc_macro_derive(DomainCommand, attributes(domain, rostfrei))]
-pub fn derive_domain_command(input: TokenStream) -> TokenStream {
-    domain_command::expand(&parse_macro_input!(input as DeriveInput))
+#[proc_macro_derive(Command, attributes(domain, rostfrei))]
+pub fn derive_command(input: TokenStream) -> TokenStream {
+    command::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

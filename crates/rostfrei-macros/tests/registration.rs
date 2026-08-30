@@ -1,4 +1,4 @@
-use rostfrei_macros::{Command, Module};
+use rostfrei_macros::{CommandDefinition, Module};
 use zs_core::{Aggregate, AggregateInstance, CommandHandler, StreamId};
 use zs_registry::{CommandDefinition, DomainRegistry};
 
@@ -26,7 +26,7 @@ impl Aggregate for Account {
     }
 }
 
-#[derive(Command)]
+#[derive(CommandDefinition)]
 #[rostfrei(name = "account.deposit", version = 1, aggregate = Account)]
 struct Deposit {
     amount: i64,

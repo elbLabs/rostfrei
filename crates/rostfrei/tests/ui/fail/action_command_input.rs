@@ -20,7 +20,7 @@ struct Account {
 #[rostfrei(id = "account-opened", label = "Account opened")]
 struct AccountOpened;
 
-#[derive(rostfrei::DomainCommand)]
+#[derive(rostfrei::Command)]
 #[rostfrei(id = "open-account", label = "Open account", owner = AccountAggregate)]
 struct OpenAccount;
 

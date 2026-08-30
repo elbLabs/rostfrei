@@ -1,5 +1,5 @@
 use domain::{
-    Aggregate, BoundedContext, DomainCommand, DomainIdentity, Entity, domain_actions,
+    Aggregate, BoundedContext, Command, DomainIdentity, Entity, domain_actions,
 };
 
 #[derive(BoundedContext)]
@@ -32,7 +32,7 @@ struct OtherRoot {
 #[domain(id = "other", label = "Other", context = Context, root = OtherRoot)]
 struct Other;
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(id = "change", label = "Change", owner = Other)]
 pub struct Change;
 

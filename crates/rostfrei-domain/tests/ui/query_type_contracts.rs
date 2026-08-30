@@ -1,4 +1,4 @@
-use domain::{Aggregate, BoundedContext, DomainCommand, DomainError, DomainEvent, DomainIdentity, Entity, domain_queries};
+use domain::{Aggregate, BoundedContext, Command, DomainError, DomainEvent, DomainIdentity, Entity, domain_queries};
 
 #[derive(BoundedContext)]
 #[domain(id = "catalog", label = "Catalog")]
@@ -28,7 +28,7 @@ struct SecondRoot { #[domain(identity)] id: SecondId }
 #[domain(id = "second", label = "Second", context = Catalog, root = SecondRoot)]
 struct Second;
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(id = "command", label = "Command", owner = First)]
 struct Command;
 

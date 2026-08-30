@@ -16,7 +16,7 @@ pub fn validate(attributes: &Attributes, fields: &[Field]) -> Result<()> {
         if matches!(field.role, Role::Entity) {
             return Err(syn::Error::new_spanned(
                 &field.base,
-                "DomainCommand cannot contain Entity fields",
+                "Command cannot contain Entity fields",
             ));
         }
     }

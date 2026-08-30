@@ -26,8 +26,8 @@ pub use rostfrei_messaging_core::{
     IntegrationEventEnvelope,
 };
 pub use rostfrei_registry::{
-    CommandDefinition, CommandDescriptor, DomainModule, DomainRegistry, ModuleDescriptor,
-    RegistrationError,
+    CommandDefinition, CommandDescriptor as CommandRegistrationDescriptor, DomainModule,
+    DomainRegistry, ModuleDescriptor, RegistrationError,
 };
 
 #[doc(hidden)]

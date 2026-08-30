@@ -3,10 +3,10 @@
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
-    Aggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandOwnerId,
-    DomainCommandType, DomainError, DomainErrorOwnerId, DomainErrorType, DomainEvent,
-    DomainEventType, DomainIdentity, DomainModelError, DomainService, DomainServiceType, Entity,
-    ScalarType, ValueObject, ValueObjectType, domain_actions, domain_model,
+    Aggregate, AggregateType, BoundedContext, Command, CommandOwnerId, CommandType, DomainError,
+    DomainErrorOwnerId, DomainErrorType, DomainEvent, DomainEventType, DomainIdentity,
+    DomainModelError, DomainService, DomainServiceType, Entity, ScalarType, ValueObject,
+    ValueObjectType, domain_actions, domain_model,
 };
 
 #[derive(BoundedContext)]
@@ -91,7 +91,7 @@ impl ReceiptActions for Receipt {
     }
 }
 
-#[derive(DomainCommand, Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Command, Clone, Copy, Debug, Eq, PartialEq)]
 #[domain(id = "coordinate-work", label = "Coordinate work", owner = Coordinator)]
 pub struct CoordinateWork;
 
@@ -304,7 +304,7 @@ fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() 
     assert_eq!(contracts[0][0].input, None);
     assert_eq!(
         CoordinateWork::DESCRIPTOR.id.owner,
-        DomainCommandOwnerId::DomainService(Coordinator::DESCRIPTOR.id)
+        CommandOwnerId::DomainService(Coordinator::DESCRIPTOR.id)
     );
     assert_eq!(
         CoordinationFailed::DESCRIPTOR.id.owner,
