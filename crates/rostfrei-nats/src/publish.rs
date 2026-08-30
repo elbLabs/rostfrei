@@ -24,6 +24,7 @@ use crate::{
 
 pub const CONTENT_TYPE_HEADER: &str = "Content-Type";
 pub const JSON_CONTENT_TYPE: &str = "application/json";
+pub const CORRELATION_ID_HEADER: &str = "rostfrei-Control-Correlation-Id";
 pub const TRACE_PARENT_HEADER: &str = "traceparent";
 pub const TRACE_STATE_HEADER: &str = "tracestate";
 pub const DEFAULT_PUBLISH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -108,7 +109,14 @@ impl NatsPublisher {
             return Err(NatsError::InvalidMessage);
         }
         let response = decode_outbound_command_response(&message)?;
-        let headers = safe_headers(message.metadata(), message.trace_context());
+        if message
+            .correlation_id()
+            .is_some_and(|correlation_id| correlation_id != response.correlation_id())
+        {
+            return Err(NatsError::InvalidMessage);
+        }
+        let mut headers = safe_headers(message.metadata(), message.trace_context());
+        headers.insert(CORRELATION_ID_HEADER, response.correlation_id().as_str());
         publish_immutable_command_response(
             &self.context,
             &message,
@@ -132,7 +140,10 @@ impl NatsPublisher {
         if message.address().application() != self.topology.application().as_str() {
             return Err(NatsError::InvalidMessage);
         }
-        let headers = safe_headers(message.metadata(), message.trace_context());
+        let mut headers = safe_headers(message.metadata(), message.trace_context());
+        if let Some(correlation_id) = message.correlation_id() {
+            headers.insert(CORRELATION_ID_HEADER, correlation_id.as_str());
+        }
         publish_confirmed(
             &self.context,
             message.address().as_str(),
@@ -346,6 +357,8 @@ async fn verify_existing_command_response(
             || stored.payload.as_ref() != payload
             || one_optional_header(&stored.headers, CONTENT_TYPE_HEADER)? != Some(JSON_CONTENT_TYPE)
             || one_optional_header(&stored.headers, "Nats-Msg-Id")? != Some(message_id)
+            || one_optional_header(&stored.headers, CORRELATION_ID_HEADER)?
+                != Some(response.correlation_id().as_str())
         {
             return Err(NatsError::IdentityConflict);
         }

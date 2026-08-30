@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use async_nats::{Client, ConnectOptions, Event, jetstream};
+use async_nats::{
+    Client, ConnectOptions, Event,
+    jetstream::{self, ErrorCode, context::DeleteStreamErrorKind},
+};
 use rostfrei_messaging_core::ApplicationName;
 use tokio::{sync::watch, time::timeout};
 
@@ -109,6 +112,27 @@ impl NatsConnection {
         config: &ApplicationMessagingConfig,
     ) -> Result<(), NatsError> {
         verify_application_messaging(&self.jetstream, config).await
+    }
+
+    /// Deletes a stream and treats an already-absent stream as a converged state.
+    pub async fn delete_stream_if_exists(&self, stream: &str) -> Result<bool, NatsError> {
+        match self.jetstream.delete_stream(stream).await {
+            Ok(status) => status
+                .success
+                .then_some(true)
+                .ok_or(NatsError::Provisioning),
+            Err(error) => {
+                if matches!(
+                    error.kind(),
+                    DeleteStreamErrorKind::JetStream(error)
+                        if error.error_code() == ErrorCode::STREAM_NOT_FOUND
+                ) {
+                    Ok(false)
+                } else {
+                    Err(NatsError::Provisioning)
+                }
+            }
+        }
     }
 
     pub async fn flush(&self) -> Result<(), NatsError> {

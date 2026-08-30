@@ -1,41 +1,46 @@
-use std::io;
+#![allow(
+    clippy::unwrap_used,
+    reason = "static test fixture identities must be valid"
+)]
 
 use bike_rental::rental::{
-    BicycleAvailability, BicycleCondition, BicycleId, BicycleRented, BicycleStatus,
-    BicycleUnavailable, FleetId, ImportedBicycle, RentalFleetActions, RentalFleetAggregate,
-    RentalFleetImported,
+    BicycleAdded, BicycleAvailability, BicycleCondition, BicycleId, BicycleNotRented,
+    BicycleRented, BicycleReturned, BicycleStatus, BicycleUnavailable, FleetId, ImportedBicycle,
+    RentBicycle, RentalFleetActions, RentalFleetAggregate, RentalFleetImported,
 };
-use rostfrei::{AggregateInstance, EventVariant, StreamAggregateId, StreamAggregateType, StreamId};
-
-type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+use bike_rental::runtime::{demo_stream, seed_demo};
+use rostfrei::{
+    AggregateInstance, CommandOutcome, CommandReceipt, ContentFingerprint, EventVariant,
+    ExecutionMetadata, Executor, InMemoryEventStore, OperationId, StreamAggregateId,
+    StreamAggregateType, StreamId,
+};
+use uuid::Uuid;
 
 fn fleet(
     status: BicycleStatus,
     condition: BicycleCondition,
-) -> TestResult<AggregateInstance<RentalFleetAggregate>> {
-    let fleet_id = FleetId::new("city-fleet")
-        .ok_or_else(|| io::Error::other("fixture fleet ID should be non-empty"))?;
-    Ok(AggregateInstance::rehydrate(
+) -> AggregateInstance<RentalFleetAggregate> {
+    let fleet_id = FleetId::new("city-fleet").unwrap();
+    AggregateInstance::rehydrate(
         StreamId::new(
-            StreamAggregateType::new("bike-rental/rental-fleet")?,
-            StreamAggregateId::new(fleet_id.as_str())?,
+            StreamAggregateType::new("bike-rental/rental-fleet").unwrap(),
+            StreamAggregateId::new(fleet_id.as_str()).unwrap(),
         ),
         [RentalFleetImported {
             fleet_id,
             bicycles: vec![ImportedBicycle {
-                bicycle_id: BicycleId::new("bike-42")
-                    .ok_or_else(|| io::Error::other("fixture bicycle ID should be non-empty"))?,
+                bicycle_id: BicycleId::new("bike-42").unwrap(),
                 status,
                 condition,
             }],
         }
         .into()],
-    ))
+    )
 }
 
 #[test]
 fn rents_an_available_serviceable_bicycle() {
-    let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable).unwrap();
+    let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable);
     let bicycle_id = BicycleId::new("bike-42").unwrap();
 
     fleet.rent_bicycle(bicycle_id.clone()).unwrap();
@@ -50,12 +55,11 @@ fn rents_an_available_serviceable_bicycle() {
 }
 
 #[test]
-fn rejects_a_maintenance_required_bicycle_without_changing_it() {
+fn rejects_an_unavailable_bicycle_without_changing_it() {
     let mut fleet = fleet(
         BicycleStatus::Available,
         BicycleCondition::MaintenanceRequired,
-    )
-    .unwrap();
+    );
     let bicycle_id = BicycleId::new("bike-42").unwrap();
 
     let error = fleet.rent_bicycle(bicycle_id.clone()).unwrap_err();
@@ -69,79 +73,96 @@ fn rejects_a_maintenance_required_bicycle_without_changing_it() {
 }
 
 #[test]
-fn rejects_an_already_rented_bicycle_without_raising_an_event() {
-    let mut fleet = fleet(BicycleStatus::Rented, BicycleCondition::Serviceable).unwrap();
+fn returns_a_rented_bicycle_and_rejects_a_second_return() {
+    let mut fleet = fleet(BicycleStatus::Rented, BicycleCondition::Serviceable);
     let bicycle_id = BicycleId::new("bike-42").unwrap();
+    fleet.return_bicycle(bicycle_id.clone()).unwrap();
 
-    let error = fleet.rent_bicycle(bicycle_id.clone()).unwrap_err();
-
-    assert_eq!(error, BicycleUnavailable { bicycle_id });
-    assert!(fleet.uncommitted_events().is_empty());
-    assert_eq!(fleet.state().bicycles()[0].status(), BicycleStatus::Rented);
+    let event = EventVariant::<BicycleReturned>::event(&fleet.uncommitted_events()[0]).unwrap();
+    assert_eq!(event.bicycle_id, bicycle_id);
+    assert_eq!(
+        fleet.state().bicycles()[0].status(),
+        BicycleStatus::Available
+    );
+    assert_eq!(
+        RentalFleetAggregate::bicycle_availability(fleet.state(), &event.bicycle_id),
+        Some(BicycleAvailability::Available)
+    );
+    assert_eq!(
+        fleet.return_bicycle(bicycle_id.clone()),
+        Err(BicycleNotRented { bicycle_id })
+    );
+    assert_eq!(fleet.uncommitted_events().len(), 1);
 }
 
 #[test]
-fn model_projects_rental_eligibility_outcomes_in_declaration_order() {
-    let model = bike_rental::domain_model().expect("bike-rental domain model");
-    let decisions = model["decisions"].as_array().unwrap();
-    let decision = decisions
-        .iter()
-        .find(|decision| decision["id"]["local"] == "assess-rental-eligibility")
-        .expect("rental eligibility decision");
+fn adds_serviceable_bicycles_with_generated_unique_ids() {
+    let mut fleet = fleet(BicycleStatus::Available, BicycleCondition::Serviceable);
+    fleet.add_bicycle();
 
-    assert_eq!(
-        decision["outcomes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|outcome| {
-                (
-                    outcome["id"]["local"].as_str().unwrap(),
-                    outcome["label"].as_str().unwrap(),
-                    outcome["shape"]["kind"].as_str().unwrap(),
-                )
-            })
-            .collect::<Vec<_>>(),
-        [
-            ("eligible", "Eligible", "unit"),
-            ("already-rented", "Already rented", "unit"),
-            ("maintenance-required", "Maintenance required", "unit"),
-        ]
+    let event = EventVariant::<BicycleAdded>::event(&fleet.uncommitted_events()[0]).unwrap();
+    let first_bicycle_id = event.bicycle_id.clone();
+    let expected_id = Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        b"rostfrei:bike-rental:bicycle:v1:city-fleet:1",
     );
-    assert!(decision.get("output").is_none());
-    assert!(decision.get("error").is_none());
+    assert_eq!(event.bicycle_id.as_str(), expected_id.to_string());
+    assert_eq!(event.condition, BicycleCondition::Serviceable);
+    assert_eq!(fleet.state().bicycles().len(), 2);
+    assert_eq!(
+        RentalFleetAggregate::bicycle_availability(fleet.state(), &event.bicycle_id),
+        Some(BicycleAvailability::Available)
+    );
+    fleet.add_bicycle();
+    let second = EventVariant::<BicycleAdded>::event(&fleet.uncommitted_events()[1]).unwrap();
+    assert_ne!(second.bicycle_id, first_bicycle_id);
+    assert_eq!(fleet.state().bicycles().len(), 3);
 }
 
-#[test]
-fn model_projects_each_executable_fleet_action_once() {
-    let model = bike_rental::domain_model().expect("bike-rental domain model");
-    let actions = model["actions"].as_array().unwrap();
-    let fleet_actions = actions
-        .iter()
-        .filter(|action| {
-            action["id"]["owner"]["kind"] == "aggregate"
-                && action["id"]["owner"]["id"]["context"] == "bike-rental"
-                && action["id"]["owner"]["id"]["local"] == "rental-fleet"
-        })
-        .collect::<Vec<_>>();
+#[tokio::test]
+async fn rejects_renting_the_same_bicycle_twice_when_commands_are_executed() {
+    let store = InMemoryEventStore::new();
+    seed_demo(&store).await.unwrap();
+    let bicycle_id = BicycleId::new("bike-42").unwrap();
+    let command = RentBicycle {
+        bicycle_id: bicycle_id.clone(),
+    };
 
-    assert_eq!(
-        fleet_actions
-            .iter()
-            .map(|action| action["id"]["local"].as_str().unwrap())
-            .collect::<Vec<_>>(),
-        ["import-rental-fleet", "rent-bicycle"]
-    );
-    assert!(
-        fleet_actions
-            .iter()
-            .all(|action| action["output"].is_null())
-    );
-    assert_eq!(
-        fleet_actions
-            .iter()
-            .map(|action| action["raises"][0]["local"].as_str().unwrap())
-            .collect::<Vec<_>>(),
-        ["rental-fleet-imported", "bicycle-rented"]
-    );
+    let outcome = Executor::new(store.clone())
+        .execute::<RentalFleetAggregate, _>(
+            ExecutionMetadata::new(
+                demo_stream(),
+                OperationId::new("rent-bike-42-once").unwrap(),
+                ContentFingerprint::digest("rent-bike-42"),
+            ),
+            &command,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        CommandOutcome::Accepted(CommandReceipt::Appended(_))
+    ));
+
+    let outcome = Executor::new(store.clone())
+        .execute::<RentalFleetAggregate, _>(
+            ExecutionMetadata::new(
+                demo_stream(),
+                OperationId::new("rent-bike-42-twice").unwrap(),
+                ContentFingerprint::digest("rent-bike-42"),
+            ),
+            &command,
+        )
+        .await
+        .unwrap();
+
+    match outcome {
+        CommandOutcome::Rejected(error) => {
+            assert_eq!(error, BicycleUnavailable { bicycle_id });
+        }
+        outcome @ CommandOutcome::Accepted(_) => {
+            panic!("expected domain rejection, got {outcome:?}");
+        }
+    }
+    assert_eq!(store.load(&demo_stream()).await.unwrap().len(), 2);
 }

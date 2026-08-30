@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use crate::{
-    CallerMetadata, CommandAddress, CommandResponseAddress, IntegrationEventAddress,
+    CallerMetadata, CommandAddress, CommandResponseAddress, CorrelationId, IntegrationEventAddress,
     MessageBuildError, MessageId, PublishError, PublishableAddress, TraceContext,
 };
 
@@ -17,6 +17,7 @@ where
     message_id: MessageId,
     payload: Vec<u8>,
     metadata: CallerMetadata,
+    correlation_id: Option<CorrelationId>,
     trace_context: Option<TraceContext>,
 }
 
@@ -49,6 +50,7 @@ where
             message_id,
             payload,
             metadata: CallerMetadata::new(),
+            correlation_id: None,
             trace_context: None,
         })
     }
@@ -93,6 +95,12 @@ where
     }
 
     #[must_use]
+    pub fn with_correlation_id(mut self, correlation_id: CorrelationId) -> Self {
+        self.correlation_id = Some(correlation_id);
+        self
+    }
+
+    #[must_use]
     pub fn with_trace_context(mut self, trace_context: TraceContext) -> Self {
         self.trace_context = Some(trace_context);
         self
@@ -112,6 +120,10 @@ where
 
     pub const fn metadata(&self) -> &CallerMetadata {
         &self.metadata
+    }
+
+    pub const fn correlation_id(&self) -> Option<&CorrelationId> {
+        self.correlation_id.as_ref()
     }
 
     pub const fn trace_context(&self) -> Option<&TraceContext> {

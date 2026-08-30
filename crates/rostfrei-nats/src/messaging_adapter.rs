@@ -33,6 +33,7 @@ pub struct NatsMessagingAdapter {
     response_publisher: Arc<dyn CommandResponsePublisher>,
     integration_publisher: Arc<dyn IntegrationEventPublisher>,
     response_reader: Arc<dyn CommandResponseReader>,
+    response_timeout: Option<Duration>,
 }
 
 impl NatsMessagingAdapter {
@@ -47,6 +48,7 @@ impl NatsMessagingAdapter {
             response_publisher,
             integration_publisher,
             response_reader,
+            response_timeout: None,
         }
     }
 
@@ -62,7 +64,14 @@ impl NatsMessagingAdapter {
             response_publisher,
             integration_publisher,
             response_reader,
+            response_timeout: None,
         }
+    }
+
+    #[must_use]
+    pub const fn with_response_timeout(mut self, response_timeout: Duration) -> Self {
+        self.response_timeout = Some(response_timeout);
+        self
     }
 
     pub fn command_handler(&self, processor: Arc<CommandProcessor>) -> NatsCommandHandler {
@@ -137,6 +146,23 @@ impl NatsMessagingAdapter {
             }
         }
     }
+
+    async fn read_response_with_timeout(
+        &self,
+        command: &EncodedCommand,
+    ) -> Result<CommandResponse, CommandBusError> {
+        let Some(timeout) = self.response_timeout else {
+            return self.read_response(command).await;
+        };
+        tokio::time::timeout(timeout, self.read_response(command))
+            .await
+            .map_err(|_| {
+                CommandBusError::new(
+                    CommandBusErrorKind::Timeout,
+                    "timed out waiting for the durable command response",
+                )
+            })?
+    }
 }
 
 #[async_trait]
@@ -153,7 +179,7 @@ impl CommandMessageAdapter for NatsMessagingAdapter {
                 publication.duplicate(),
             ))
             .await;
-        let response = self.read_response(&command).await?;
+        let response = self.read_response_with_timeout(&command).await?;
         command.validate_response(&response).map_err(|error| {
             CommandBusError::new(CommandBusErrorKind::InvalidResponse, error.to_string())
         })?;
@@ -221,7 +247,7 @@ impl NatsCommandHandler {
             .map_err(|_| ReconciliationError::Invalid)?;
         match self
             .response_reader
-            .read_command_response(
+            .find_command_response(
                 &address,
                 command.operation_id(),
                 command.message_id(),
@@ -229,14 +255,20 @@ impl NatsCommandHandler {
             )
             .await
         {
-            Ok(response) => {
+            Ok(Some(response)) => {
                 command
                     .validate_response(&response)
                     .map_err(|_| ReconciliationError::Invalid)?;
                 Ok(Some(response))
             }
-            Err(error) if error.kind() == CommandResponseReadErrorKind::Timeout => Ok(None),
-            Err(error) if error.kind() == CommandResponseReadErrorKind::Unavailable => {
+            Ok(None) => Ok(None),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    CommandResponseReadErrorKind::Timeout
+                        | CommandResponseReadErrorKind::Unavailable
+                ) =>
+            {
                 Err(ReconciliationError::Unavailable)
             }
             Err(_) => Err(ReconciliationError::Invalid),
@@ -280,6 +312,7 @@ impl NatsCommandHandler {
 #[async_trait]
 impl MessageHandler<CommandAddress> for NatsCommandHandler {
     async fn handle(&self, delivery: MessageDelivery<CommandAddress>) -> DeliveryDisposition {
+        let transport_correlation_id = delivery.correlation_id().cloned();
         let Ok(command) = EncodedCommand::from_delivery(
             delivery.address().clone(),
             delivery.message_id().clone(),
@@ -287,6 +320,12 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
         ) else {
             return quarantine("invalid command envelope");
         };
+        if transport_correlation_id
+            .as_ref()
+            .is_some_and(|correlation_id| correlation_id != command.correlation_id())
+        {
+            return quarantine("invalid command correlation identity");
+        }
         let _execution = self.execution_gates.acquire(command.message_id()).await;
         match self.reconcile_response(&command).await {
             Ok(Some(_)) => return DeliveryDisposition::Acknowledge,
@@ -341,6 +380,7 @@ enum ReconciliationError {
 fn command_publish_error(error: PublishError) -> CommandBusError {
     let kind = match error.kind() {
         PublishErrorKind::Timeout => CommandBusErrorKind::Timeout,
+        PublishErrorKind::Rejected => CommandBusErrorKind::Rejected,
         PublishErrorKind::Unavailable => CommandBusErrorKind::Unavailable,
         PublishErrorKind::InvalidConfiguration => CommandBusErrorKind::InvalidConfiguration,
         _ => CommandBusErrorKind::InvalidMessage,
@@ -485,7 +525,63 @@ mod tests {
         }
     }
 
+    struct LookupTimeoutReader;
+
+    #[async_trait]
+    impl CommandResponseReader for LookupTimeoutReader {
+        async fn find_command_response(
+            &self,
+            _address: &CommandResponseAddress,
+            _operation_id: &rostfrei_messaging_core::OperationId,
+            _command_message_id: &MessageId,
+            _read_timeout: Duration,
+        ) -> Result<Option<CommandResponse>, CommandResponseReadError> {
+            Err(CommandResponseReadError::new(
+                CommandResponseReadErrorKind::Timeout,
+            ))
+        }
+
+        async fn read_command_response(
+            &self,
+            _address: &CommandResponseAddress,
+            _operation_id: &rostfrei_messaging_core::OperationId,
+            _command_message_id: &MessageId,
+            _read_timeout: Duration,
+        ) -> Result<CommandResponse, CommandResponseReadError> {
+            Err(CommandResponseReadError::new(
+                CommandResponseReadErrorKind::Timeout,
+            ))
+        }
+    }
+
     struct NoopCommandPublisher;
+
+    struct DelayedCommandPublisher {
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl CommandPublisher for DelayedCommandPublisher {
+        async fn publish_command(
+            &self,
+            _message: OutboundMessage<CommandAddress>,
+        ) -> Result<PublishReceipt, PublishError> {
+            tokio::time::sleep(self.delay).await;
+            Ok(PublishReceipt::new(false))
+        }
+    }
+
+    struct RejectedCommandPublisher;
+
+    #[async_trait]
+    impl CommandPublisher for RejectedCommandPublisher {
+        async fn publish_command(
+            &self,
+            _message: OutboundMessage<CommandAddress>,
+        ) -> Result<PublishReceipt, PublishError> {
+            Err(PublishError::new(PublishErrorKind::Rejected))
+        }
+    }
 
     struct NoopCommandObserver;
 
@@ -722,6 +818,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn response_timeout_starts_after_command_publication() -> TestResult {
+        let reader = Arc::new(AcceptedAfterTimeoutReader {
+            command_address: context()?.command_address("credit-account")?,
+            attempts: AtomicUsize::new(0),
+        });
+        let adapter = Arc::new(
+            NatsMessagingAdapter::with_components(
+                Arc::new(DelayedCommandPublisher {
+                    delay: Duration::from_millis(30),
+                }),
+                Arc::new(NoopResponsePublisher),
+                Arc::new(NoopIntegrationPublisher),
+                reader,
+            )
+            .with_response_timeout(Duration::from_millis(10)),
+        );
+        let command = encoded_command(Arc::clone(&adapter))?;
+
+        let receipt = adapter
+            .dispatch(command, Arc::new(NoopCommandObserver))
+            .await?;
+
+        assert!(matches!(
+            receipt.response().outcome(),
+            rostfrei::CommandResponseOutcome::Accepted
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn broker_publication_rejection_remains_distinct() -> TestResult {
+        let adapter = Arc::new(NatsMessagingAdapter::with_components(
+            Arc::new(RejectedCommandPublisher),
+            Arc::new(NoopResponsePublisher),
+            Arc::new(NoopIntegrationPublisher),
+            Arc::new(InvalidResponseReader),
+        ));
+        let command = encoded_command(Arc::clone(&adapter))?;
+
+        let error = adapter
+            .dispatch(command, Arc::new(NoopCommandObserver))
+            .await
+            .expect_err("rejected publication should fail dispatch");
+
+        assert_eq!(error.kind(), CommandBusErrorKind::Rejected);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn invalid_durable_response_is_not_returned_to_the_caller() -> TestResult {
         let adapter = Arc::new(NatsMessagingAdapter::with_components(
             Arc::new(NoopCommandPublisher),
@@ -753,6 +898,7 @@ mod tests {
             context()?.integration_event_address("account-credited")?,
             MessageId::new("account-credited-message")?,
             br#"{"payload":{"amount":7}}"#.to_vec(),
+            None,
         )?;
 
         let receipt = IntegrationMessageAdapter::publish(&adapter, message).await?;
@@ -794,6 +940,68 @@ mod tests {
         assert!(!handling.is_finished());
         response_publisher.release.add_permits(1);
         assert_eq!(handling.await?, DeliveryDisposition::Acknowledge);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn command_handler_rejects_mismatched_correlation_header() -> TestResult {
+        let handler = NatsCommandHandler::new(
+            empty_processor(),
+            Arc::new(NoopResponsePublisher),
+            Arc::new(TimeoutReader),
+        );
+        let adapter = Arc::new(NatsMessagingAdapter::with_components(
+            Arc::new(NoopCommandPublisher),
+            Arc::new(NoopResponsePublisher),
+            Arc::new(NoopIntegrationPublisher),
+            Arc::new(InvalidResponseReader),
+        ));
+        let command = encoded_command(adapter)?;
+        let delivery = MessageDelivery::new_with_transport_context(
+            command.address().clone(),
+            command.message_id().clone(),
+            command.payload().to_vec(),
+            CallerMetadata::new(),
+            Some(CorrelationId::new("different-correlation")?),
+            None,
+            DeliveryInfo::new(1, 0, 1, 1)?,
+        )?;
+
+        assert!(matches!(
+            handler.handle(delivery).await,
+            DeliveryDisposition::Quarantine(_)
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn uncertain_response_lookup_retries_without_processing_the_command() -> TestResult {
+        let handler = NatsCommandHandler::new(
+            empty_processor(),
+            Arc::new(NoopResponsePublisher),
+            Arc::new(LookupTimeoutReader),
+        );
+        let adapter = Arc::new(NatsMessagingAdapter::with_components(
+            Arc::new(NoopCommandPublisher),
+            Arc::new(NoopResponsePublisher),
+            Arc::new(NoopIntegrationPublisher),
+            Arc::new(InvalidResponseReader),
+        ));
+        let command = encoded_command(adapter)?;
+        let delivery = MessageDelivery::new_with_transport_context(
+            command.address().clone(),
+            command.message_id().clone(),
+            command.payload().to_vec(),
+            CallerMetadata::new(),
+            Some(command.correlation_id().clone()),
+            None,
+            DeliveryInfo::new(1, 0, 1, 1)?,
+        )?;
+
+        assert!(matches!(
+            handler.handle(delivery).await,
+            DeliveryDisposition::RetryAfter(_)
+        ));
         Ok(())
     }
 

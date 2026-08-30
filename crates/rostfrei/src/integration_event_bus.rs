@@ -71,9 +71,13 @@ impl EncodedIntegrationMessage {
         address: IntegrationEventAddress,
         message_id: MessageId,
         payload: Vec<u8>,
+        correlation_id: Option<CorrelationId>,
     ) -> Result<Self, IntegrationEventBusError> {
-        let message = OutboundMessage::new(address, message_id, payload)
+        let mut message = OutboundMessage::new(address, message_id, payload)
             .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))?;
+        if let Some(correlation_id) = correlation_id {
+            message = message.with_correlation_id(correlation_id);
+        }
         Ok(Self::new(message))
     }
 
@@ -99,7 +103,21 @@ impl EncodedIntegrationMessage {
     {
         let envelope: IntegrationEventEnvelope<E> = serde_json::from_slice(self.payload())
             .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))?;
+        let source_event_id = envelope
+            .causation_id()
+            .ok_or_else(|| invalid_integration_message("integration event causation is missing"))
+            .and_then(|causation_id| {
+                EventId::new(causation_id.as_str()).map_err(|error| {
+                    invalid_integration_message(format!(
+                        "integration event causation is invalid: {error}"
+                    ))
+                })
+            })?;
+        let expected_message_id =
+            integration_message_id(self.address(), envelope.schema_version(), &source_event_id)?;
         if envelope.message_id() != self.message_id()
+            || self.message_id() != &expected_message_id
+            || self.message.correlation_id() != Some(envelope.correlation_id())
             || self.address().name() != E::EVENT_NAME
             || envelope.schema_version().get() != E::SCHEMA_VERSION
         {
@@ -110,6 +128,10 @@ impl EncodedIntegrationMessage {
         }
         Ok(envelope)
     }
+}
+
+fn invalid_integration_message(message: impl Into<String>) -> IntegrationEventBusError {
+    IntegrationEventBusError::new(IntegrationEventBusErrorKind::InvalidMessage, message)
 }
 
 #[async_trait]
@@ -179,7 +201,7 @@ impl IntegrationEventBus {
             EnvelopeContext::new(
                 message_id.clone(),
                 schema_version,
-                correlation_id,
+                correlation_id.clone(),
                 Some(causation_id),
             ),
             occurred_at,
@@ -189,7 +211,8 @@ impl IntegrationEventBus {
         let payload = canonical_serialize(&envelope)
             .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))?;
         let message = OutboundMessage::new(address, message_id, payload)
-            .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))?;
+            .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))?
+            .with_correlation_id(correlation_id);
         Ok(EncodedIntegrationMessage::new(message))
     }
 }
