@@ -194,6 +194,15 @@ impl NatsEventStore {
         batch: &EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
         let history = self.load_history(stream_id).await?;
+        if self
+            .load_transaction_receipt_inner(stream_id, batch.operation_id())
+            .await?
+            .is_some()
+        {
+            return Err(identity_conflict(
+                "operation identity was already used by an event transaction",
+            ));
+        }
         Self::resolve_existing(&history, batch)?.map_or_else(
             || Err(conflict("aggregate changed during append")),
             |events| Ok(AppendOutcome::ExactReplay(events)),
@@ -417,6 +426,7 @@ impl EventStore for NatsEventStore {
         expected_version: ExpectedVersion,
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
+        let history = self.load_history(stream_id).await?;
         if self
             .load_transaction_receipt_inner(stream_id, batch.operation_id())
             .await?
@@ -426,7 +436,6 @@ impl EventStore for NatsEventStore {
                 "operation identity was already used by an event transaction",
             ));
         }
-        let history = self.load_history(stream_id).await?;
         if let Some(events) = Self::resolve_existing(&history, &batch)? {
             return Ok(AppendOutcome::ExactReplay(events));
         }
