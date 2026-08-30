@@ -1,21 +1,21 @@
-use std::{convert::Infallible, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use axum::{
-    extract::{rejection::JsonRejection, DefaultBodyLimit, Path, Request, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
-    middleware::{self, Next},
-    response::{sse::Event, sse::KeepAlive, IntoResponse, Response, Sse},
-    routing::{get, post},
     Json, Router,
+    extract::{DefaultBodyLimit, Path, Request, State, rejection::JsonRejection},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    middleware::{self, Next},
+    response::{IntoResponse, Response, Sse, sse::Event, sse::KeepAlive},
+    routing::{get, post},
 };
 use futures_util::stream;
 use serde::Serialize;
 use thiserror::Error;
 
 use crate::{
-    CommandInputError, CorrelationError, DiscoveryError, OperationMode, OperationSnapshot,
-    SimulationRequest, SubmissionError, TestRepositoryError, TestRunError, TestScenarioResetError,
-    Tracer, MAX_COMMAND_PAYLOAD_LEN,
+    CommandInputError, CorrelationError, DiscoveryError, MAX_COMMAND_PAYLOAD_LEN, OperationMode,
+    OperationSnapshot, SimulationRequest, SubmissionError, TestRepositoryError, TestRunError,
+    TestScenarioResetError, Tracer,
 };
 
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
@@ -130,7 +130,19 @@ async fn add_private_no_store(response: Response) -> Response {
 }
 
 async fn get_catalog(State(state): State<HttpState>) -> Response {
-    no_store(Json(state.tracer.catalog().clone()).into_response())
+    let mut catalog = state.tracer.catalog().clone();
+    if state.config.dispatch_token.is_none() {
+        for version in catalog
+            .contexts
+            .iter_mut()
+            .flat_map(|context| &mut context.aggregates)
+            .flat_map(|aggregate| &mut aggregate.commands)
+            .flat_map(|command| &mut command.versions)
+        {
+            version.dispatch_href_template = None;
+        }
+    }
+    no_store(Json(catalog).into_response())
 }
 
 async fn get_tests(State(state): State<HttpState>) -> Response {
@@ -304,12 +316,12 @@ async fn submit_command(
     match result {
         Ok(operation) => {
             let location = format!("/operations/{}", operation.operation_id);
-            let mut response = (StatusCode::ACCEPTED, Json(operation)).into_response();
-            response.headers_mut().insert(
-                header::LOCATION,
-                HeaderValue::from_str(&location).expect("validated operation ID creates a header"),
-            );
-            response
+            (
+                StatusCode::ACCEPTED,
+                [(header::LOCATION, location)],
+                Json(operation),
+            )
+                .into_response()
         }
         Err(error) => error_response(&error),
     }
@@ -365,13 +377,13 @@ async fn operation_events(
     }
     let stream = stream::unfold(subscription, |mut subscription| async move {
         let event = subscription.next().await?;
-        let data =
-            serde_json::to_string(&event).expect("operation events always serialize successfully");
-        let frame = Event::default()
-            .id(event.id.to_string())
-            .event(event.kind.event_name())
-            .data(data);
-        Some((Ok::<_, Infallible>(frame), subscription))
+        let frame = serde_json::to_string(&event).map(|data| {
+            Event::default()
+                .id(event.id.to_string())
+                .event(event.kind.event_name())
+                .data(data)
+        });
+        Some((frame, subscription))
     });
     let mut response = Sse::new(stream)
         .keep_alive(
@@ -420,13 +432,13 @@ async fn correlation_events(
     };
     let stream = stream::unfold(subscription, |mut subscription| async move {
         let event = subscription.next().await?;
-        let data = serde_json::to_string(&event)
-            .expect("correlation events always serialize successfully");
-        let frame = Event::default()
-            .id(event.id.to_string())
-            .event(event.kind.event_name())
-            .data(data);
-        Some((Ok::<_, Infallible>(frame), subscription))
+        let frame = serde_json::to_string(&event).map(|data| {
+            Event::default()
+                .id(event.id.to_string())
+                .event(event.kind.event_name())
+                .data(data)
+        });
+        Some((frame, subscription))
     });
     let mut response = Sse::new(stream)
         .keep_alive(

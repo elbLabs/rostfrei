@@ -1,3 +1,12 @@
+#![allow(
+    clippy::indexing_slicing,
+    clippy::needless_pass_by_value,
+    clippy::panic,
+    clippy::too_many_lines,
+    clippy::unwrap_used,
+    reason = "HTTP integration fixtures use fixed valid inputs and end-to-end assertions"
+)]
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -14,10 +23,11 @@ use bike_rental::{
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
-    Aggregate, AppendOutcome, CommandDefinition, ContentFingerprint, DomainErrorType, EventBatch,
-    EventHistory, EventStore, EventStoreError, ExecutionError, ExecutionMetadata, Executor,
-    ExpectedVersion, InMemoryEventStore, JsonCommandPayload, JsonErrorPayload, StreamAggregateId,
-    StreamAggregateType, StreamId,
+    Aggregate, AppendOutcome, CommandDefinition, CommandExecutionError, ContentFingerprint,
+    DomainErrorType, EventBatch, EventHistory, EventStore, EventStoreError, EventTransaction,
+    ExecutionMetadata, Executor, ExpectedVersion, InMemoryEventStore, JsonCommandPayload,
+    JsonErrorPayload, OperationId, StreamAggregateId, StreamAggregateType, StreamId,
+    TransactionAppendOutcome, TransactionReceipt,
 };
 use rostfrei_core::{StreamDirectory, StreamSummary};
 use rostfrei_messaging_core::CorrelationId;
@@ -81,6 +91,24 @@ impl EventStore for ResettableStore {
             .await
             .append(stream_id, expected_version, batch)
             .await
+    }
+
+    async fn load_transaction_receipt(
+        &self,
+        primary_stream_id: &StreamId,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        self.snapshot()
+            .await
+            .load_transaction_receipt(primary_stream_id, operation_id)
+            .await
+    }
+
+    async fn append_transaction(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        self.snapshot().await.append_transaction(transaction).await
     }
 }
 
@@ -164,8 +192,8 @@ where
                     .execute::<RentalFleetAggregate, _>(metadata, &command)
                     .await
                 {
-                    Ok(_) => CommandOutcome::Accepted,
-                    Err(ExecutionError::Rejected(rejection)) => {
+                    Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
+                    Ok(rostfrei::CommandOutcome::Rejected(rejection)) => {
                         CommandOutcome::Rejected(local_rejection(&rejection)?)
                     }
                     Err(error) => return Err(local_execution_error(error)),
@@ -180,8 +208,8 @@ where
                     .execute::<RentalFleetAggregate, _>(metadata, &command)
                     .await
                 {
-                    Ok(_) => CommandOutcome::Accepted,
-                    Err(ExecutionError::Rejected(rejection)) => {
+                    Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
+                    Ok(rostfrei::CommandOutcome::Rejected(rejection)) => {
                         CommandOutcome::Rejected(local_rejection(&rejection)?)
                     }
                     Err(error) => return Err(local_execution_error(error)),
@@ -195,8 +223,8 @@ where
                     .execute::<RentalFleetAggregate, _>(metadata, &command)
                     .await
                 {
-                    Ok(_) => CommandOutcome::Accepted,
-                    Err(ExecutionError::Rejected(rejection)) => match rejection {},
+                    Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
+                    Ok(rostfrei::CommandOutcome::Rejected(rejection)) => match rejection {},
                     Err(error) => return Err(local_execution_error(error)),
                 }
             }
@@ -240,7 +268,7 @@ where
     ))
 }
 
-fn local_execution_error<Error>(error: ExecutionError<Error>) -> CommandTransportError {
+fn local_execution_error(error: CommandExecutionError) -> CommandTransportError {
     local_transport_error(CommandTransportErrorKind::Unavailable, error.to_string())
 }
 
@@ -270,7 +298,7 @@ async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
     );
     let mut builder = tracer_builder(history)
         .unwrap()
-        .with_domain_model(domain_model())
+        .with_domain_model(domain_model().unwrap())
         .with_test_event_store(Arc::new(test_store.clone()))
         .with_test_transport(test_transport)
         .with_dispatch_transport(production_transport)

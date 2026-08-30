@@ -12,13 +12,13 @@ where
     ) -> Vec<CommandInputField>;
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandInputDocument {
     pub fields: Vec<CommandInputField>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandInputField {
     pub name: String,
@@ -40,7 +40,7 @@ impl CommandInputField {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandInputOption {
     pub value: Value,

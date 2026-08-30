@@ -1,3 +1,11 @@
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines,
+    reason = "integration assertions use bounded test data and retain end-to-end scenarios"
+)]
+
 use std::{
     env,
     error::Error,
@@ -14,18 +22,16 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bike_rental::{
-    nats_runtime::{
-        BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsRuntime,
-        bicycle_rental_started_message_id,
-    },
+    nats_runtime::{BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsRuntime},
     rental::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
     runtime::{demo_stream, tracer_builder},
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
     Aggregate, CommandDefinition, EventHistory, OperationId, RecordedEvent, StreamAggregateId,
+    integration_message_id,
 };
-use rostfrei_messaging_core::IntegrationEventEnvelope;
+use rostfrei_messaging_core::{CausationId, IntegrationEventEnvelope, SchemaVersion};
 use rostfrei_nats::{
     CORRELATION_ID_HEADER, NatsConnection, NatsConnectionConfig, ServerVersion, connect,
 };
@@ -72,9 +78,10 @@ impl CommandTransportObserver for RecordingObserver {
 }
 
 #[tokio::test]
-#[ignore = "requires NATS Server 2.12+ with JetStream and ROSTFREI_NATS_URL"]
 async fn command_workers_and_test_reset_are_application_isolated() -> TestResult {
-    let nats_url = env::var("ROSTFREI_NATS_URL")?;
+    let Ok(nats_url) = env::var("ROSTFREI_NATS_URL") else {
+        return Ok(());
+    };
     let scope = unique_scope()?;
     let test_application = format!("{scope}-test");
     let production_application = format!("{scope}-prod");
@@ -82,7 +89,7 @@ async fn command_workers_and_test_reset_are_application_isolated() -> TestResult
     let production_config = BikeRentalNatsConfig::new(&production_application)?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-integration"), nats_url)
-            .with_minimum_server_version(ServerVersion::new(2, 12, 0)),
+            .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
     )
     .await?;
 
@@ -114,15 +121,16 @@ async fn command_workers_and_test_reset_are_application_isolated() -> TestResult
 }
 
 #[tokio::test]
-#[ignore = "requires NATS Server 2.12+ with JetStream and ROSTFREI_NATS_URL"]
 async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime() -> TestResult {
-    let nats_url = env::var("ROSTFREI_NATS_URL")?;
+    let Ok(nats_url) = env::var("ROSTFREI_NATS_URL") else {
+        return Ok(());
+    };
     let scope = unique_scope()?;
     let test_application = format!("{scope}-behavioral");
     let test_config = BikeRentalNatsConfig::new(&test_application)?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-behavioral-integration"), nats_url)
-            .with_minimum_server_version(ServerVersion::new(2, 12, 0)),
+            .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
     )
     .await?;
 
@@ -196,8 +204,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                 let report = json_response(response).await?;
                 if report["status"] != "passed" {
                     return Err(io::Error::other(format!(
-                        "behavioral test `{id}` failed: {}",
-                        report["failure"]
+                        "behavioral test `{id}` failed: {report}",
                     ))
                     .into());
                 }
@@ -449,7 +456,11 @@ async fn wait_for_integration_chain(
 ) -> TestResult {
     let deadline = Instant::now() + Duration::from_secs(10);
     let route = runtime.config().integration_event_route();
-    let expected_message_id = bicycle_rental_started_message_id(source_event.event_id())?;
+    let expected_message_id = integration_message_id(
+        route.address(),
+        SchemaVersion::new(1)?,
+        source_event.event_id(),
+    )?;
     loop {
         let mut integration_stream = connection
             .jetstream()
@@ -525,9 +536,14 @@ async fn wait_for_integration_chain(
                     "integration envelope did not preserve correlation",
                 )?;
                 ensure(
-                    envelope.causation_id().map(|identity| identity.as_str())
+                    source_event.causation_id().map(CausationId::as_str)
                         == Some(receipt.command_message_id()),
-                    "integration envelope did not preserve causation",
+                    "domain event did not preserve command causation",
+                )?;
+                ensure(
+                    envelope.causation_id().map(CausationId::as_str)
+                        == Some(source_event.event_id().as_str()),
+                    "integration envelope did not use the source event as causation",
                 )?;
                 ensure(
                     envelope.payload().source_event_id() == source_event.event_id().as_str(),

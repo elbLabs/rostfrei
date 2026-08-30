@@ -7,9 +7,10 @@ use tokio::sync::Mutex;
 use crate::identity::{derive_commit_id, derive_event_id};
 use crate::store::validate_transaction_item_limit;
 use crate::{
-    AppendOutcome, CommitId, EventBatch, EventHistory, EventId, EventStore, EventStoreError,
-    EventStoreErrorKind, EventTransaction, ExpectedVersion, OperationId, RecordedEvent, StreamId,
-    StreamVersion, TransactionAppendOutcome, TransactionReceipt, TransactionStreamReceipt,
+    AggregateType, AppendOutcome, CommitId, EventBatch, EventHistory, EventId, EventStore,
+    EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion, OperationId,
+    RecordedEvent, StreamDirectory, StreamId, StreamSummary, StreamVersion,
+    TransactionAppendOutcome, TransactionReceipt, TransactionStreamReceipt,
 };
 
 #[derive(Clone)]
@@ -78,6 +79,34 @@ impl EventHistory for InMemoryEventStore {
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         let state = self.state.lock().await;
         Ok(state.streams.get(stream_id).cloned().unwrap_or_default())
+    }
+}
+
+#[async_trait]
+impl StreamDirectory for InMemoryEventStore {
+    async fn list_streams(
+        &self,
+        aggregate_type: &AggregateType,
+    ) -> Result<Vec<StreamSummary>, EventStoreError> {
+        let mut streams = {
+            let state = self.state.lock().await;
+            state
+                .streams
+                .iter()
+                .filter(|(stream_id, _)| stream_id.aggregate_type() == aggregate_type)
+                .filter_map(|(stream_id, events)| {
+                    events
+                        .last()
+                        .map(|event| StreamSummary::new(stream_id.clone(), event.stream_version()))
+                })
+                .collect::<Vec<_>>()
+        };
+        streams.sort_by(|left, right| {
+            left.stream_id()
+                .aggregate_id()
+                .cmp(right.stream_id().aggregate_id())
+        });
+        Ok(streams)
     }
 }
 

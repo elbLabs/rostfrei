@@ -49,6 +49,49 @@ impl NatsCommandResponseReader {
 
 #[async_trait]
 impl CommandResponseReader for NatsCommandResponseReader {
+    async fn find_command_response(
+        &self,
+        address: &CommandResponseAddress,
+        expected_operation_id: &OperationId,
+        expected_command_message_id: &MessageId,
+        read_timeout: Duration,
+    ) -> Result<Option<CommandResponse>, CommandResponseReadError> {
+        validate_read_configuration(address, self.topology.application().as_str(), read_timeout)?;
+
+        timeout(read_timeout, async {
+            let stream = self
+                .context
+                .get_stream(self.topology.command_response_stream().as_str())
+                .await
+                .map_err(|_| read_error(CommandResponseReadErrorKind::Unavailable))?;
+            match stream
+                .get_last_raw_message_by_subject(address.as_str())
+                .await
+            {
+                Ok(stored) => decode_stored_command_response(
+                    stored.subject.as_str(),
+                    &stored.headers,
+                    &stored.payload,
+                    address,
+                    expected_operation_id,
+                    expected_command_message_id,
+                )
+                .map(Some),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        jetstream::stream::LastRawMessageErrorKind::NoMessageFound
+                    ) =>
+                {
+                    Ok(None)
+                }
+                Err(_) => Err(read_error(CommandResponseReadErrorKind::Unavailable)),
+            }
+        })
+        .await
+        .map_err(|_| read_error(CommandResponseReadErrorKind::Timeout))?
+    }
+
     async fn read_command_response(
         &self,
         address: &CommandResponseAddress,

@@ -5,8 +5,8 @@ use rostfrei_messaging_core::{CausationId, CorrelationId};
 use thiserror::Error;
 
 use crate::{
-    ContentFingerprint, EventBatch, ExpectedVersion, OperationId, RecordedEvent, StreamId,
-    StreamVersion,
+    AggregateType, ContentFingerprint, EventBatch, ExpectedVersion, OperationId, RecordedEvent,
+    StreamId, StreamVersion,
 };
 
 /// Maximum number of durable items in one atomic event transaction.
@@ -399,6 +399,37 @@ pub trait EventStore: EventHistory {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamSummary {
+    stream_id: StreamId,
+    stream_version: StreamVersion,
+}
+
+impl StreamSummary {
+    pub const fn new(stream_id: StreamId, stream_version: StreamVersion) -> Self {
+        Self {
+            stream_id,
+            stream_version,
+        }
+    }
+
+    pub const fn stream_id(&self) -> &StreamId {
+        &self.stream_id
+    }
+
+    pub const fn stream_version(&self) -> StreamVersion {
+        self.stream_version
+    }
+}
+
+#[async_trait]
+pub trait StreamDirectory: Send + Sync {
+    async fn list_streams(
+        &self,
+        aggregate_type: &AggregateType,
+    ) -> Result<Vec<StreamSummary>, EventStoreError>;
+}
+
 #[async_trait]
 impl<History: EventHistory + ?Sized> EventHistory for Arc<History> {
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
@@ -434,5 +465,15 @@ impl<Store: EventStore + ?Sized> EventStore for Arc<Store> {
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
         self.as_ref().append_transaction(transaction).await
+    }
+}
+
+#[async_trait]
+impl<Directory: StreamDirectory + ?Sized> StreamDirectory for Arc<Directory> {
+    async fn list_streams(
+        &self,
+        aggregate_type: &AggregateType,
+    ) -> Result<Vec<StreamSummary>, EventStoreError> {
+        self.as_ref().list_streams(aggregate_type).await
     }
 }

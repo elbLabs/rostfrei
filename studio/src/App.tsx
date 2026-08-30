@@ -256,7 +256,13 @@ function App() {
         commandMessageId: result.commandMessageId,
         duplicate: result.duplicate,
       }
-    : undefined;
+    : operation?.failure?.commandMessageId
+      ? {
+          type: "command.published",
+          commandMessageId: operation.failure.commandMessageId,
+          duplicate: operation.failure.duplicate ?? false,
+        }
+      : undefined;
   const responseEvidence: ResponseEvidence | undefined = result?.responseMessageId
     ? { type: "command.responded", responseMessageId: result.responseMessageId }
     : undefined;

@@ -3,8 +3,8 @@
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -23,22 +23,22 @@ use rostfrei_core::{
 };
 use rostfrei_registry::{CommandDefinition, DomainModule, DomainRegistry, ModuleDescriptor};
 use rostfrei_tracer::{
-    command_execution_fingerprint, CommandInvocation, CommandPublication, CommandReceipt,
-    CommandRejection, CommandTransport, CommandTransportError, CommandTransportErrorKind,
-    CommandTransportObserver, CorrelationError, CorrelationEventKind, DiscoveryError,
-    ExposeTracePayloadsForLocalDevelopment, IntegrationEventObservation, OperationMode,
-    RuntimeRegistrationError, SimulationRequest, SubmissionError, SubscriptionError,
-    TestDefinition, TestDefinitionCollection, TestDefinitionRevision, TestReportStatus,
-    TestRepository, TestRepositoryError, TestScenarioReset, TestScenarioResetError,
-    TracePayloadPolicy, Tracer, TracerBuilder,
+    CommandInvocation, CommandPublication, CommandReceipt, CommandRejection, CommandTransport,
+    CommandTransportError, CommandTransportErrorKind, CommandTransportObserver, CorrelationError,
+    CorrelationEventKind, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
+    IntegrationEventObservation, OperationMode, RuntimeRegistrationError, SimulationRequest,
+    SubmissionError, SubscriptionError, TestDefinition, TestDefinitionCollection,
+    TestDefinitionRevision, TestReportStatus, TestRepository, TestRepositoryError,
+    TestScenarioReset, TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
+    command_execution_fingerprint,
 };
 #[cfg(feature = "http")]
 use rostfrei_tracer::{
-    http::{self, HttpConfig},
     MAX_COMMAND_PAYLOAD_LEN,
+    http::{self, HttpConfig},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::{Mutex, Notify};
 #[cfg(feature = "http")]
 use tower::ServiceExt as _;
@@ -126,7 +126,7 @@ impl Event for TestEvent {
     }
 }
 
-#[derive(domain::Command)]
+#[derive(domain::DomainCommand)]
 #[domain(
     id = "test-command",
     label = "Test command",
@@ -160,6 +160,10 @@ struct TestRejection;
 impl CommandHandler<TestCommand> for TestAggregate {
     type Rejection = TestRejection;
 
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "the panic path is the behavior exercised by operation panic tests"
+    )]
     fn handle(
         command: &TestCommand,
         aggregate: &mut AggregateInstance<Self>,
@@ -213,7 +217,7 @@ impl Aggregate for OtherTestAggregate {
     fn apply(_state: &mut Self::State, _event: &Self::Event) {}
 }
 
-#[derive(domain::Command)]
+#[derive(domain::DomainCommand)]
 #[domain(
     id = "test-command",
     label = "Test command",
@@ -274,12 +278,14 @@ impl DomainModule for OtherTestDomainModule {
     }
 }
 
+#[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
 fn builder(history: Arc<dyn EventHistory>) -> TracerBuilder {
     let mut registry = DomainRegistry::new();
     registry.register_module::<TestDomainModule>().unwrap();
     TracerBuilder::new(history, registry)
 }
 
+#[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
 fn tracer(maximum_operations: usize) -> Tracer {
     let mut builder =
         builder(Arc::new(InMemoryEventStore::new())).with_maximum_operations(maximum_operations);
@@ -287,6 +293,7 @@ fn tracer(maximum_operations: usize) -> Tracer {
     builder.build().unwrap()
 }
 
+#[allow(clippy::unwrap_used, reason = "test submissions must succeed")]
 async fn submit(tracer: &Tracer, operation_id: &str, payload: Value) {
     tracer
         .submit_simulation(
@@ -307,6 +314,7 @@ async fn terminal_operation(tracer: &Tracer, operation_id: &str) -> Value {
     terminal_operation_with_trace(tracer, operation_id).await.0
 }
 
+#[allow(clippy::unwrap_used, reason = "test trace collection must succeed")]
 async fn terminal_operation_with_trace(tracer: &Tracer, operation_id: &str) -> (Value, String) {
     let mut subscription = tracer.subscribe(operation_id, 0).await.unwrap();
     let mut trace = String::new();
@@ -325,6 +333,7 @@ fn authorize(request: axum::http::request::Builder) -> axum::http::request::Buil
 }
 
 #[cfg(feature = "http")]
+#[allow(clippy::unwrap_used, reason = "test response decoding must succeed")]
 async fn json_body(response: axum::response::Response) -> Value {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
@@ -418,6 +427,37 @@ async fn http_requires_a_bearer_capability_and_reports_invalid_input() {
     assert_eq!(json_body(oversized).await["code"], "payload-too-large");
 }
 
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn http_catalog_omits_dispatch_without_a_dispatch_capability() {
+    let tracer = transported_tracer(
+        None,
+        Some(Arc::new(FakeTransport::accepted("catalog-dispatch", false))),
+        false,
+    );
+    assert!(
+        tracer.catalog().contexts[0].aggregates[0].commands[0].versions[0]
+            .dispatch_href_template
+            .is_some()
+    );
+    let app = http::router(tracer, HttpConfig::new(API_TOKEN).unwrap());
+
+    let response = app
+        .oneshot(
+            authorize(Request::builder())
+                .uri("/catalog")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let catalog = json_body(response).await;
+    assert!(catalog["contexts"][0]["aggregates"][0]["commands"][0]["versions"][0]
+        ["dispatchHrefTemplate"]
+        .is_null());
+}
+
 #[tokio::test]
 async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
     let tracer = tracer(1);
@@ -425,9 +465,11 @@ async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
     submit(&tracer, "redacted-accepted", json!({ "reject": false })).await;
     let (accepted, accepted_trace) =
         terminal_operation_with_trace(&tracer, "redacted-accepted").await;
-    assert!(accepted["result"]["predictedEvents"][0]
-        .get("payload")
-        .is_none());
+    assert!(
+        accepted["result"]["predictedEvents"][0]
+            .get("payload")
+            .is_none()
+    );
     assert!(!accepted_trace.contains("accepted outcome details"));
 
     submit(&tracer, "redacted-rejected", json!({ "reject": true })).await;
@@ -490,9 +532,11 @@ async fn exposed_operation_payloads_are_bounded_across_retained_operations() {
     .await;
     let (operation, trace) =
         terminal_operation_with_trace(&tracer, "bounded-operation-payload").await;
-    assert!(operation["result"]["predictedEvents"][0]
-        .get("payload")
-        .is_none());
+    assert!(
+        operation["result"]["predictedEvents"][0]
+            .get("payload")
+            .is_none()
+    );
     assert!(!trace.contains(&"x".repeat(128 * 1024)));
 }
 
@@ -638,6 +682,7 @@ impl EventHistory for BlockingHistory {
     }
 }
 
+#[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
 fn blocking_tracer(
     maximum_operations: usize,
     maximum_concurrent_simulations: usize,
@@ -703,6 +748,53 @@ async fn concurrent_admission_is_bounded_before_operation_capacity() {
 
     release.notify_one();
     let _ = terminal_operation(&tracer, "running-operation").await;
+}
+
+#[tokio::test]
+#[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
+async fn simulation_admission_does_not_exhaust_dispatch_capacity() {
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let history: Arc<dyn EventHistory> = Arc::new(BlockingHistory {
+        entered: Arc::clone(&entered),
+        release: Arc::clone(&release),
+    });
+    let mut builder = builder(history)
+        .with_dispatch_transport(Arc::new(FakeTransport::accepted(
+            "dispatch-reserved",
+            false,
+        )))
+        .with_maximum_operations(4)
+        .with_maximum_concurrent_simulations(1);
+    builder.register_json::<TestCommand>().unwrap();
+    let tracer = builder.build().unwrap();
+
+    tracer
+        .submit_simulation(
+            AGGREGATE_TYPE,
+            "aggregate-1",
+            COMMAND_NAME,
+            simulation_request(false),
+            Some("blocking-simulation"),
+        )
+        .await
+        .unwrap();
+    entered.notified().await;
+
+    let dispatch = tracer
+        .submit_dispatch(
+            AGGREGATE_TYPE,
+            "aggregate-2",
+            COMMAND_NAME,
+            simulation_request(false),
+            Some("dispatch-with-reserved-capacity"),
+        )
+        .await
+        .unwrap();
+    terminal_operation(&tracer, &dispatch.operation_id).await;
+
+    release.notify_one();
+    let _ = terminal_operation(&tracer, "blocking-simulation").await;
 }
 
 #[tokio::test]
@@ -929,6 +1021,10 @@ struct PanickingTransport;
 
 #[async_trait]
 impl CommandTransport for PanickingTransport {
+    #[allow(
+        clippy::panic,
+        reason = "the transport intentionally panics for this test"
+    )]
     async fn invoke(
         &self,
         _invocation: CommandInvocation,
@@ -941,6 +1037,20 @@ impl CommandTransport for PanickingTransport {
     }
 }
 
+struct HangingTransport;
+
+#[async_trait]
+impl CommandTransport for HangingTransport {
+    async fn invoke(
+        &self,
+        _invocation: CommandInvocation,
+        _observer: Arc<dyn CommandTransportObserver>,
+    ) -> Result<CommandReceipt, CommandTransportError> {
+        std::future::pending().await
+    }
+}
+
+#[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
 fn transported_tracer(
     test_transport: Option<Arc<dyn CommandTransport>>,
     dispatch_transport: Option<Arc<dyn CommandTransport>>,
@@ -1112,14 +1222,16 @@ async fn correlation_observers_reject_events_from_another_environment() {
         .unwrap();
     terminal_operation(&tracer, &queued.operation_id).await;
 
-    assert!(tracer
-        .correlation_observer(OperationMode::Test)
-        .observe_integration_event(
-            &queued.correlation_id,
-            IntegrationEventObservation::new("test-event", 1),
-        )
-        .await
-        .is_ok());
+    assert!(
+        tracer
+            .correlation_observer(OperationMode::Test)
+            .observe_integration_event(
+                &queued.correlation_id,
+                IntegrationEventObservation::new("test-event", 1),
+            )
+            .await
+            .is_ok()
+    );
     assert!(matches!(
         tracer
             .correlation_observer(OperationMode::Dispatch)
@@ -1473,16 +1585,18 @@ async fn transported_commands_require_an_idempotency_key() {
         assert_eq!(result, Err(SubmissionError::IdempotencyKeyRequired));
     }
 
-    assert!(tracer
-        .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
-            COMMAND_NAME,
-            simulation_request(false),
-            None,
-        )
-        .await
-        .is_ok());
+    assert!(
+        tracer
+            .submit_simulation(
+                AGGREGATE_TYPE,
+                "aggregate-1",
+                COMMAND_NAME,
+                simulation_request(false),
+                None,
+            )
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]
@@ -1704,6 +1818,7 @@ impl TestScenarioReset for BlockingReset {
     }
 }
 
+#[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
 fn resettable_tracer(reset: Arc<dyn TestScenarioReset>) -> Tracer {
     let store = Arc::new(InMemoryEventStore::new());
     let history: Arc<dyn EventHistory> = store.clone();
@@ -1852,6 +1967,10 @@ struct StaticTestRepository {
 }
 
 impl StaticTestRepository {
+    #[allow(
+        clippy::unwrap_used,
+        reason = "the inline test definition must be valid"
+    )]
     fn one(yaml: &str) -> Self {
         let definition = TestDefinition::from_yaml(yaml).unwrap();
         let revision = TestDefinitionRevision {
@@ -1921,6 +2040,7 @@ then:
     )
 }
 
+#[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
 fn behavioral_tracer(
     transport: Arc<dyn CommandTransport>,
     repository: Arc<dyn TestRepository>,
@@ -1975,6 +2095,35 @@ async fn behavioral_test_accepts_an_expected_business_rejection() {
         report.outcome,
         Some(rostfrei_tracer::CorrelationCommandOutcome::Rejected)
     );
+}
+
+#[tokio::test]
+#[allow(
+    clippy::unwrap_used,
+    reason = "the test fixture and bounded waits must succeed"
+)]
+async fn behavioral_timeout_cancels_the_command_before_reset() {
+    let yaml = behavioral_test_yaml("accepted", false, "").replace("within: 2s", "within: 20ms");
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(&yaml));
+    let tracer = behavioral_tracer(Arc::new(HangingTransport), repository);
+
+    let report = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        tracer.run_test("behavioral-test"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(report.status, TestReportStatus::Failed);
+    assert_eq!(report.failure.unwrap().code, "deadline-exceeded");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        tracer.reset_test_scenario(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
 }
 
 #[derive(Clone)]

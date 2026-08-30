@@ -51,6 +51,9 @@ authorization. The aggregate identity in the API is qualified by its bounded
 context, and `#[domain(json)]` supplies the generated command and rejection JSON
 while aggregate event JSON comes from the compiled aggregate codec.
 
+[`studio`](studio) is the standalone local UI for catalog discovery, Simulate,
+isolated Test, production Dispatch, operation status, and correlation streams.
+
 A Tracer instance receives an explicit test `EventHistory` for discovery,
 dynamic inputs, and read-only Simulate. Test and Dispatch instead use separately
 configured implementations of the same protocol-neutral command transport. The

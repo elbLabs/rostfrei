@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 
 const CATALOG_VERSION: u32 = 3;
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TracerCatalog {
     pub catalog_version: u32,
@@ -17,20 +17,20 @@ pub struct TracerCatalog {
     pub test_repository: Option<CatalogTestRepository>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogTestScenario {
     pub reset_href: String,
     pub fixtures: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogTestRepository {
     pub definitions_href: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogContext {
     pub id: String,
@@ -38,7 +38,7 @@ pub struct CatalogContext {
     pub aggregates: Vec<CatalogAggregate>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogAggregate {
     pub id: String,
@@ -48,7 +48,7 @@ pub struct CatalogAggregate {
     pub commands: Vec<CatalogCommand>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogCommand {
     pub id: String,
@@ -56,7 +56,7 @@ pub struct CatalogCommand {
     pub versions: Vec<CatalogCommandVersion>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogCommandVersion {
     pub schema_version: u32,
@@ -103,7 +103,7 @@ struct CommandBuilder {
 }
 
 #[allow(clippy::fn_params_excessive_bools, clippy::too_many_lines)]
-pub(crate) fn build_catalog(
+pub fn build_catalog(
     registry: &DomainRegistry,
     domain_model: Option<&Value>,
     test_enabled: bool,
@@ -121,7 +121,7 @@ pub(crate) fn build_catalog(
             model_context_label(domain_model, &context_id).unwrap_or_else(|| context_id.clone());
         let aggregate_label = model_aggregate_label(domain_model, &context_id, &aggregate_id)
             .unwrap_or_else(|| aggregate_id.clone());
-        let command_label = descriptor.modeled_command().map_or_else(
+        let command_label = descriptor.domain_command().map_or_else(
             || descriptor.command_name.to_owned(),
             |command| command.label.to_owned(),
         );
@@ -130,7 +130,7 @@ pub(crate) fn build_catalog(
             &context_id,
             &aggregate_id,
             descriptor
-                .modeled_command()
+                .domain_command()
                 .map_or(descriptor.command_name, |command| command.id.local),
         );
         let payload_template = payload_template(&fields, domain_model);
@@ -233,10 +233,10 @@ pub(crate) fn build_catalog(
 }
 
 fn http_coordinates(descriptor: &CommandDescriptor) -> Option<(String, String)> {
-    if let Some(command) = descriptor.modeled_command() {
-        if let domain::CommandOwnerId::Aggregate(aggregate) = command.id.owner {
-            return Some((aggregate.context.0.to_owned(), aggregate.local.to_owned()));
-        }
+    if let Some(command) = descriptor.domain_command()
+        && let domain::DomainCommandOwnerId::Aggregate(aggregate) = command.id.owner
+    {
+        return Some((aggregate.context.0.to_owned(), aggregate.local.to_owned()));
     }
     let (context, aggregate) = descriptor.aggregate_type.split_once('/')?;
     if context.is_empty() || aggregate.is_empty() || aggregate.contains('/') {
@@ -277,7 +277,7 @@ fn model_command_fields(
     command: &str,
 ) -> Vec<Value> {
     model
-        .and_then(|model| model.get("commands"))
+        .and_then(|model| model.get("domainCommands"))
         .and_then(Value::as_array)
         .and_then(|commands| {
             commands.iter().find(|item| {

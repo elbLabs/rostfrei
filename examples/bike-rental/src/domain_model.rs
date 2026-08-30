@@ -3,8 +3,7 @@ use rostfrei::domain_model;
 use crate::rental::{
     AddBicycle, Bicycle, BicycleAvailability, BicycleAvailabilityQueries, BicycleCondition,
     BicycleId, BicycleNotRented, BicycleStatus, BicycleUnavailable, BikeRental, FleetId,
-    ImportedBicycle, RentBicycle, RentalDenialReason, RentalFleet, RentalFleetAggregate,
-    ReturnBicycle,
+    ImportedBicycle, RentBicycle, RentalFleet, RentalFleetAggregate, ReturnBicycle,
 };
 
 pub fn domain_model() -> Result<serde_json::Value, rostfrei::DomainModelError> {
@@ -18,7 +17,6 @@ pub fn domain_model() -> Result<serde_json::Value, rostfrei::DomainModelError> {
             BicycleCondition,
             BicycleAvailability,
             ImportedBicycle,
-            ImportRentalFleetInput,
         ],
         services: [],
         commands: [RentBicycle, ReturnBicycle, AddBicycle],

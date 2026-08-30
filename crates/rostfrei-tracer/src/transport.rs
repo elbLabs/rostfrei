@@ -298,8 +298,7 @@ pub(crate) fn canonical_json_payload(value: &Value) -> Vec<u8> {
 fn write_canonical_json(value: &Value, serialized: &mut Vec<u8>) {
     match value {
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
-            serde_json::to_writer(serialized, value)
-                .expect("serializing JSON into a byte vector cannot fail");
+            serialized.extend_from_slice(value.to_string().as_bytes());
         }
         Value::Array(values) => {
             serialized.push(b'[');
@@ -319,8 +318,7 @@ fn write_canonical_json(value: &Value, serialized: &mut Vec<u8>) {
                 if index != 0 {
                     serialized.push(b',');
                 }
-                serde_json::to_writer(&mut *serialized, name)
-                    .expect("serializing a JSON field name into a byte vector cannot fail");
+                serialized.extend_from_slice(Value::String(name.clone()).to_string().as_bytes());
                 serialized.push(b':');
                 write_canonical_json(value, serialized);
             }
@@ -332,11 +330,26 @@ fn write_canonical_json(value: &Value, serialized: &mut Vec<u8>) {
 fn framed_fingerprint(values: &[&[u8]]) -> ContentFingerprint {
     let mut framed = Vec::new();
     for value in values {
-        let length = u64::try_from(value.len()).expect("command invocation parts fit in u64");
+        let length = usize_to_u64(value.len());
         framed.extend_from_slice(&length.to_be_bytes());
         framed.extend_from_slice(value);
     }
     ContentFingerprint::digest(framed)
+}
+
+const fn usize_to_u64(value: usize) -> u64 {
+    #[cfg(target_pointer_width = "16")]
+    {
+        u64::from(u16::from_ne_bytes(value.to_ne_bytes()))
+    }
+    #[cfg(target_pointer_width = "32")]
+    {
+        u64::from(u32::from_ne_bytes(value.to_ne_bytes()))
+    }
+    #[cfg(target_pointer_width = "64")]
+    {
+        u64::from_ne_bytes(value.to_ne_bytes())
+    }
 }
 
 #[cfg(test)]

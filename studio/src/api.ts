@@ -293,7 +293,10 @@ function parseCorrelationEvent(frame: SseFrame, correlationId: string): Correlat
   if (value.type === "command-result") {
     if (
       typeof value.operationId !== "string" ||
-      (value.outcome !== "accepted" && value.outcome !== "rejected" && value.outcome !== "failed")
+      (value.outcome !== "accepted" &&
+        value.outcome !== "rejected" &&
+        value.outcome !== "failed" &&
+        value.outcome !== "indeterminate")
     ) {
       throw new SseProtocolError("The correlation stream returned an invalid command result");
     }
