@@ -11,7 +11,9 @@ use rostfrei_core::{
     DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandlerError,
     DomainEventHandlerErrorKind, EventStore, EventStoreErrorKind, MAX_EVENTS_PER_BATCH,
 };
-use rostfrei_messaging_core::{ConsumerName, DurableName, MAX_PROCESSING_TIMEOUT, RetryDelay};
+use rostfrei_messaging_core::{
+    ConsumerName, DurableName, MAX_PROCESSING_TIMEOUT, MessageTimestamp, RetryDelay,
+};
 use thiserror::Error;
 use tokio::{sync::watch, time::timeout};
 
@@ -354,13 +356,16 @@ impl NatsDomainEventConsumer {
             .headers
             .as_ref()
             .ok_or_else(|| invalid_committed_event("stored domain event has no headers"))?;
-        let decoded = decode_consumed_event(
+        let mut decoded = decode_consumed_event(
             self.event_store.config(),
             message.subject.as_str(),
             headers,
             &message.payload,
         )
         .map_err(|error| invalid_committed_event(error.to_string()))?;
+        decoded.recorded = decoded
+            .recorded
+            .with_committed_at(published_timestamp(info.published.unix_timestamp_nanos())?);
         Ok(LiveDomainEvent {
             event: BufferedDomainEvent {
                 stream_sequence,
@@ -392,13 +397,16 @@ impl NatsDomainEventConsumer {
                 .get_raw_message(sequence)
                 .await
                 .map_err(|error| acknowledged_prefix_lookup_error(&error))?;
-            let decoded = decode_consumed_event(
+            let mut decoded = decode_consumed_event(
                 self.event_store.config(),
                 raw.subject.as_str(),
                 &raw.headers,
                 &raw.payload,
             )
             .map_err(|error| invalid_committed_event(error.to_string()))?;
+            decoded.recorded = decoded
+                .recorded
+                .with_committed_at(published_timestamp(raw.time.unix_timestamp_nanos())?);
             let event = BufferedDomainEvent {
                 stream_sequence: raw.sequence,
                 decoded,
@@ -455,7 +463,9 @@ impl NatsDomainEventConsumer {
             || receipt_events
                 .iter()
                 .zip(commit)
-                .any(|(receipt_event, buffered)| receipt_event != &buffered.decoded.recorded)
+                .any(|(receipt_event, buffered)| {
+                    !same_durable_event(receipt_event, &buffered.decoded.recorded)
+                })
         {
             return Err(invalid_committed_event(
                 "committed transactional events do not match their durable receipt",
@@ -475,6 +485,34 @@ impl NatsDomainEventConsumer {
         }
         Ok(())
     }
+}
+
+fn same_durable_event(
+    left: &rostfrei_core::RecordedEvent,
+    right: &rostfrei_core::RecordedEvent,
+) -> bool {
+    left.stream_id() == right.stream_id()
+        && left.stream_version() == right.stream_version()
+        && left.event_id() == right.event_id()
+        && left.commit_id() == right.commit_id()
+        && left.operation_id() == right.operation_id()
+        && left.operation_fingerprint() == right.operation_fingerprint()
+        && left.commit_event_ordinal() == right.commit_event_ordinal()
+        && left.commit_event_count() == right.commit_event_count()
+        && left.correlation_id() == right.correlation_id()
+        && left.causation_id() == right.causation_id()
+        && left.event_type() == right.event_type()
+        && left.schema_version() == right.schema_version()
+        && left.payload() == right.payload()
+}
+
+fn published_timestamp(nanoseconds: i128) -> Result<MessageTimestamp, DomainEventConsumerError> {
+    let milliseconds = nanoseconds.div_euclid(1_000_000);
+    let milliseconds = u64::try_from(milliseconds).map_err(|_| {
+        invalid_committed_event("domain event publication timestamp is outside the supported range")
+    })?;
+    MessageTimestamp::from_unix_milliseconds(milliseconds)
+        .map_err(|error| invalid_committed_event(error.to_string()))
 }
 
 struct BufferedDomainEvent {

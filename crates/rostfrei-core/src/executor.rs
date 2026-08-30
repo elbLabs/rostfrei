@@ -157,6 +157,19 @@ impl<S, C> Executor<S, C>
 where
     S: EventHistory,
 {
+    pub async fn rehydrate<A>(
+        &self,
+        stream_id: &StreamId,
+    ) -> Result<AggregateInstance<A>, SimulationError>
+    where
+        A: Aggregate,
+        C: EventCodec<A>,
+    {
+        self.load_and_replay::<A>(stream_id)
+            .await
+            .map(|(aggregate, _)| aggregate)
+    }
+
     pub async fn simulate<A, Command>(
         &self,
         metadata: ExecutionMetadata,

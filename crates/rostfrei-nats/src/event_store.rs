@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     ops::{Deref, Range},
     sync::Arc,
 };
@@ -22,8 +22,9 @@ use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint, EventBatch,
     EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind, EventTransaction,
     ExecutionMetadata, ExpectedVersion, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent,
-    StreamId, StreamVersion, TransactionAppendOutcome, TransactionParticipant, TransactionReceipt,
-    TransactionStreamReceipt, validate_transaction_item_limit,
+    StreamDirectory, StreamId, StreamSummary, StreamVersion, TransactionAppendOutcome,
+    TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
+    validate_transaction_item_limit,
 };
 use rostfrei_messaging_core::{CausationId, CorrelationId};
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,7 @@ const ATOMIC_BATCH_API_LEVEL: &str = "2";
 const MINIMUM_ATOMIC_BATCH_SERVER_VERSION: (i64, i64, i64) = (2, 12, 1);
 const NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT: &str =
     "Nats-Expected-Last-Subject-Sequence-Subject";
+const CORRELATION_ID_HEADER: &str = "rostfrei-Control-Correlation-Id";
 
 #[derive(Clone)]
 pub struct NatsEventStore {
@@ -797,6 +799,79 @@ impl EventHistory for NatsEventStore {
 }
 
 #[async_trait]
+impl StreamDirectory for NatsEventStore {
+    async fn list_streams(
+        &self,
+        aggregate_type: &AggregateType,
+    ) -> Result<Vec<StreamSummary>, EventStoreError> {
+        let stream = self
+            .context
+            .get_stream(self.config.stream_name())
+            .await
+            .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
+        let state = &stream.cached_info().state;
+        if state.messages == 0 {
+            return Ok(Vec::new());
+        }
+        if state.first_sequence == 0 || state.last_sequence < state.first_sequence {
+            return Err(corrupt("event-store stream has invalid sequence bounds"));
+        }
+
+        let subject_filter = self.config.aggregate_subject_filter();
+        let last_sequence = state.last_sequence;
+        let mut next_sequence = state.first_sequence;
+        let mut histories = BTreeMap::<StreamId, HistorySummaryBuilder>::new();
+        loop {
+            let message = match stream
+                .get_first_raw_message_by_subject(&subject_filter, next_sequence)
+                .await
+            {
+                Ok(message) => message,
+                Err(error) if error.kind() == LastRawMessageErrorKind::NoMessageFound => {
+                    return Err(corrupt(
+                        "event-store directory ended before its last message",
+                    ));
+                }
+                Err(error) => {
+                    return Err(unavailable(format!(
+                        "failed to read event-store directory: {error}"
+                    )));
+                }
+            };
+            if message.sequence < next_sequence || message.sequence > last_sequence {
+                return Err(corrupt(
+                    "event-store directory returned an invalid stream sequence",
+                ));
+            }
+
+            let decoded = decode_consumed_event(
+                &self.config,
+                message.subject.as_str(),
+                &message.headers,
+                message.payload.as_ref(),
+            )?;
+            if decoded.recorded.stream_id().aggregate_type() == aggregate_type {
+                let stream_id = decoded.recorded.stream_id().clone();
+                let history = histories.entry(stream_id).or_default();
+                history.push(&decoded)?;
+            }
+
+            if message.sequence == last_sequence {
+                break;
+            }
+            next_sequence = message
+                .sequence
+                .checked_add(1)
+                .ok_or_else(|| corrupt("JetStream sequence space overflowed"))?;
+        }
+        histories
+            .into_iter()
+            .map(|(stream_id, history)| Ok(StreamSummary::new(stream_id, history.finish()?)))
+            .collect()
+    }
+}
+
+#[async_trait]
 impl EventStore for NatsEventStore {
     async fn append(
         &self,
@@ -862,6 +937,7 @@ impl EventStore for NatsEventStore {
             &subject,
             history.last_subject_stream_sequence,
             &batch_id,
+            batch.correlation_id().map(CorrelationId::as_str),
             payloads,
         )
         .await
@@ -1063,21 +1139,28 @@ impl EventStore for NatsEventStore {
         let transaction_item_count = messages.len();
 
         let batch_id = new_transaction_batch_id(&self.context.client(), transaction.operation_id());
-        let ack =
-            match publish_atomic_messages(&self.context, &self.config, &batch_id, messages).await {
-                Ok(ack) => ack,
-                Err(AtomicBatchPublishError::Expectation) => {
-                    return self.resolve_transaction_race(&transaction).await;
+        let ack = match publish_atomic_messages(
+            &self.context,
+            &self.config,
+            &batch_id,
+            transaction.correlation_id().map(CorrelationId::as_str),
+            messages,
+        )
+        .await
+        {
+            Ok(ack) => ack,
+            Err(AtomicBatchPublishError::Expectation) => {
+                return self.resolve_transaction_race(&transaction).await;
+            }
+            Err(AtomicBatchPublishError::Store(error)) => {
+                if error.kind() == EventStoreErrorKind::Unavailable {
+                    return self
+                        .reconcile_unavailable_transaction_publish(&transaction, error)
+                        .await;
                 }
-                Err(AtomicBatchPublishError::Store(error)) => {
-                    if error.kind() == EventStoreErrorKind::Unavailable {
-                        return self
-                            .reconcile_unavailable_transaction_publish(&transaction, error)
-                            .await;
-                    }
-                    return Err(error);
-                }
-            };
+                return Err(error);
+            }
+        };
         if ack.stream != self.config.stream_name()
             || ack.sequence == 0
             || ack.batch.as_deref() != Some(batch_id.as_str())
@@ -1224,6 +1307,24 @@ struct PendingCommit {
     events: Vec<RecordedEvent>,
     global_stream_sequences: Vec<u64>,
     transaction: Option<StoredTransactionProvenance>,
+}
+
+#[derive(Default)]
+struct HistorySummaryBuilder {
+    current_version: StreamVersion,
+    operation_ids: HashSet<OperationId>,
+    pending: Option<PendingCommitSummary>,
+}
+
+struct PendingCommitSummary {
+    batch_id: String,
+    commit_id: CommitId,
+    operation_id: OperationId,
+    operation_fingerprint: ContentFingerprint,
+    event_count: usize,
+    next_ordinal: usize,
+    correlation_id: Option<CorrelationId>,
+    causation_id: Option<CausationId>,
 }
 
 pub struct DecodedEvent {
@@ -1780,6 +1881,94 @@ impl HistoryBuilder {
     }
 }
 
+impl HistorySummaryBuilder {
+    fn push(&mut self, decoded: &DecodedEvent) -> Result<(), EventStoreError> {
+        let expected_version = self
+            .current_version
+            .next()
+            .ok_or_else(|| corrupt("aggregate version space overflowed"))?;
+        if decoded.recorded.stream_version() != expected_version {
+            return Err(corrupt(
+                "aggregate events are missing, duplicated, or noncontiguous",
+            ));
+        }
+
+        if decoded.event_ordinal == 0 {
+            if self.pending.is_some() {
+                return Err(corrupt("aggregate history contains an incomplete commit"));
+            }
+            if !self.operation_ids.insert(decoded.operation_id.clone()) {
+                return Err(corrupt(
+                    "aggregate history contains a duplicate operation identity",
+                ));
+            }
+            self.pending = Some(PendingCommitSummary::new(decoded));
+        } else {
+            self.pending
+                .as_mut()
+                .ok_or_else(|| corrupt("aggregate history starts inside a commit"))?
+                .push(decoded)?;
+        }
+
+        self.current_version = expected_version;
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(PendingCommitSummary::is_complete)
+        {
+            self.pending = None;
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<StreamVersion, EventStoreError> {
+        if self.pending.is_some() || self.current_version == StreamVersion::ZERO {
+            return Err(corrupt("aggregate history ended inside a commit"));
+        }
+        Ok(self.current_version)
+    }
+}
+
+impl PendingCommitSummary {
+    fn new(decoded: &DecodedEvent) -> Self {
+        Self {
+            batch_id: decoded.batch_id.clone(),
+            commit_id: decoded.commit_id.clone(),
+            operation_id: decoded.operation_id.clone(),
+            operation_fingerprint: decoded.operation_fingerprint,
+            event_count: decoded.event_count,
+            next_ordinal: 1,
+            correlation_id: decoded.recorded.correlation_id().cloned(),
+            causation_id: decoded.recorded.causation_id().cloned(),
+        }
+    }
+
+    fn push(&mut self, decoded: &DecodedEvent) -> Result<(), EventStoreError> {
+        if decoded.event_ordinal != self.next_ordinal {
+            return Err(corrupt("stored commit metadata is inconsistent"));
+        }
+        if decoded.event_count != self.event_count
+            || decoded.batch_id != self.batch_id
+            || decoded.commit_id != self.commit_id
+            || decoded.operation_id != self.operation_id
+            || decoded.operation_fingerprint != self.operation_fingerprint
+            || decoded.recorded.correlation_id() != self.correlation_id.as_ref()
+            || decoded.recorded.causation_id() != self.causation_id.as_ref()
+        {
+            return Err(corrupt("stored commit metadata is inconsistent"));
+        }
+        self.next_ordinal = self
+            .next_ordinal
+            .checked_add(1)
+            .ok_or_else(|| corrupt("stored commit ordinal overflowed"))?;
+        Ok(())
+    }
+
+    const fn is_complete(&self) -> bool {
+        self.next_ordinal == self.event_count
+    }
+}
+
 impl PendingCommit {
     fn new(
         decoded: DecodedEvent,
@@ -1925,6 +2114,7 @@ async fn publish_atomic_batch(
     subject: &str,
     expected_last_subject_sequence: u64,
     batch_id: &str,
+    correlation_id: Option<&str>,
     payloads: Vec<Vec<u8>>,
 ) -> Result<AtomicPublishAck, AtomicBatchPublishError> {
     let messages = payloads
@@ -1937,13 +2127,14 @@ async fn publish_atomic_batch(
             expectation_subject: None,
         })
         .collect();
-    publish_atomic_messages(context, config, batch_id, messages).await
+    publish_atomic_messages(context, config, batch_id, correlation_id, messages).await
 }
 
 async fn publish_atomic_messages(
     context: &jetstream::Context,
     config: &NatsEventStoreConfig,
     batch_id: &str,
+    correlation_id: Option<&str>,
     messages: Vec<AtomicPublishMessage>,
 ) -> Result<AtomicPublishAck, AtomicBatchPublishError> {
     let message_count = messages.len();
@@ -1959,6 +2150,9 @@ async fn publish_atomic_messages(
         headers.insert(NATS_REQUIRED_API_LEVEL, ATOMIC_BATCH_API_LEVEL);
         headers.insert(NATS_BATCH_ID, batch_id);
         headers.insert(NATS_BATCH_SEQUENCE, one_based_sequence.to_string());
+        if let Some(correlation_id) = correlation_id {
+            headers.insert(CORRELATION_ID_HEADER, correlation_id);
+        }
         if index == 0 {
             headers.insert(NATS_EXPECTED_STREAM, config.stream_name());
         }

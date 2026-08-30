@@ -6,14 +6,11 @@ edition = "2024"
 rust-version.workspace = true
 license.workspace = true
 
-[lints]
-workspace = true
-
 [dependencies]
 async-trait.workspace = true
 axum.workspace = true
 rostfrei = { path = "../../crates/rostfrei" }
-rostfrei-control-plane = { path = "../../crates/rostfrei-control-plane", features = ["http"] }
+rostfrei-tracer = { path = "../../crates/rostfrei-tracer", features = ["http"] }
 rostfrei-messaging-core = { path = "../../crates/rostfrei-messaging-core" }
 rostfrei-nats = { path = "../../crates/rostfrei-nats" }
 serde.workspace = true
@@ -21,7 +18,12 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 http-body-util = "0.1"
+rostfrei-core = { path = "../../crates/rostfrei-core" }
 tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true

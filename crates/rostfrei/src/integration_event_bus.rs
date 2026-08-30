@@ -179,7 +179,7 @@ impl IntegrationEventBus {
             EnvelopeContext::new(
                 message_id.clone(),
                 schema_version,
-                correlation_id,
+                correlation_id.clone(),
                 Some(causation_id),
             ),
             occurred_at,
@@ -189,7 +189,8 @@ impl IntegrationEventBus {
         let payload = canonical_serialize(&envelope)
             .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))?;
         let message = OutboundMessage::new(address, message_id, payload)
-            .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))?;
+            .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))?
+            .with_correlation_id(correlation_id);
         Ok(EncodedIntegrationMessage::new(message))
     }
 }

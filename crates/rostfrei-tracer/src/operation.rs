@@ -1,0 +1,554 @@
+use std::sync::{
+    Arc, Mutex as StdMutex, PoisonError,
+    atomic::{AtomicBool, Ordering},
+};
+
+use serde::Serialize;
+use serde_json::Value;
+use thiserror::Error;
+use tokio::sync::{Mutex, watch};
+use tokio::task::AbortHandle;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OperationStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Indeterminate,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OperationMode {
+    Simulate,
+    Test,
+    Dispatch,
+}
+
+impl OperationMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Simulate => "simulate",
+            Self::Test => "test",
+            Self::Dispatch => "dispatch",
+        }
+    }
+}
+
+impl OperationStatus {
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Indeterminate)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CompletedDecision {
+    Accepted,
+    Rejected,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PredictedDomainEvent {
+    pub ordinal: u32,
+    pub predicted_stream_version: u64,
+    pub event_type: String,
+    pub schema_version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<Value>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "decision",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum OperationResult {
+    Accepted {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base_stream_version: Option<u64>,
+        predicted_events: Vec<PredictedDomainEvent>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        appended: Option<bool>,
+        published: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        command_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        response_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duplicate: Option<bool>,
+    },
+    Rejected {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base_stream_version: Option<u64>,
+        rejection: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        appended: Option<bool>,
+        published: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        command_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        response_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duplicate: Option<bool>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationSnapshot {
+    pub operation_id: String,
+    pub correlation_id: String,
+    pub mode: OperationMode,
+    pub status: OperationStatus,
+    pub command: String,
+    pub schema_version: u32,
+    pub aggregate_type: String,
+    pub aggregate_id: String,
+    pub latest_event_id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<OperationResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<OperationFailure>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationFailure {
+    pub code: &'static str,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duplicate: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationEvent {
+    pub id: u64,
+    pub operation_id: String,
+    #[serde(flatten)]
+    pub kind: OperationEventKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum OperationEventKind {
+    Queued,
+    Started,
+    HistoryReplayed {
+        base_stream_version: u64,
+    },
+    CommandAccepted,
+    PredictedDomainEvent {
+        event: PredictedDomainEvent,
+    },
+    CommandRejected {
+        rejection: Value,
+    },
+    CommandPublished {
+        command_message_id: String,
+        duplicate: bool,
+    },
+    CommandResponded {
+        response_message_id: String,
+    },
+    Completed {
+        decision: CompletedDecision,
+    },
+    Failed {
+        code: &'static str,
+        message: String,
+    },
+    Indeterminate {
+        code: &'static str,
+        message: String,
+        command_message_id: String,
+        duplicate: bool,
+    },
+}
+
+impl OperationEventKind {
+    pub const fn event_name(&self) -> &'static str {
+        match self {
+            Self::Queued => "operation.queued",
+            Self::Started => "operation.started",
+            Self::HistoryReplayed { .. } => "history.replayed",
+            Self::CommandAccepted => "command.accepted",
+            Self::PredictedDomainEvent { .. } => "domain-event.predicted",
+            Self::CommandRejected { .. } => "command.rejected",
+            Self::CommandPublished { .. } => "command.published",
+            Self::CommandResponded { .. } => "command.responded",
+            Self::Completed { .. } => "operation.completed",
+            Self::Failed { .. } => "operation.failed",
+            Self::Indeterminate { .. } => "operation.indeterminate",
+        }
+    }
+}
+
+pub struct NewOperation<'a> {
+    pub operation_id: String,
+    pub correlation_id: String,
+    pub fingerprint: String,
+    pub mode: OperationMode,
+    pub command: &'a str,
+    pub schema_version: u32,
+    pub aggregate_type: &'a str,
+    pub aggregate_id: &'a str,
+}
+
+struct OperationState {
+    fingerprint: String,
+    snapshot: OperationSnapshot,
+    evaluation_result: Option<Value>,
+    events: Vec<OperationEvent>,
+    publication: Option<(String, bool)>,
+}
+
+pub struct OperationRecord {
+    mode: OperationMode,
+    state: Mutex<OperationState>,
+    changed: watch::Sender<u64>,
+    terminal: AtomicBool,
+    correlation_recorded: AtomicBool,
+    abort_requested: AtomicBool,
+    execution: StdMutex<Option<AbortHandle>>,
+}
+
+impl OperationRecord {
+    pub fn new(operation: NewOperation<'_>) -> Arc<Self> {
+        let event = OperationEvent {
+            id: 1,
+            operation_id: operation.operation_id.clone(),
+            kind: OperationEventKind::Queued,
+        };
+        let (changed, _) = watch::channel(1);
+        Arc::new(Self {
+            mode: operation.mode,
+            state: Mutex::new(OperationState {
+                fingerprint: operation.fingerprint,
+                snapshot: OperationSnapshot {
+                    operation_id: operation.operation_id,
+                    correlation_id: operation.correlation_id,
+                    mode: operation.mode,
+                    status: OperationStatus::Queued,
+                    command: operation.command.to_owned(),
+                    schema_version: operation.schema_version,
+                    aggregate_type: operation.aggregate_type.to_owned(),
+                    aggregate_id: operation.aggregate_id.to_owned(),
+                    latest_event_id: 1,
+                    result: None,
+                    failure: None,
+                },
+                evaluation_result: None,
+                events: vec![event],
+                publication: None,
+            }),
+            changed,
+            terminal: AtomicBool::new(false),
+            correlation_recorded: AtomicBool::new(false),
+            abort_requested: AtomicBool::new(false),
+            execution: StdMutex::new(None),
+        })
+    }
+
+    pub fn set_execution(&self, execution: AbortHandle) {
+        let mut registered = self
+            .execution
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if self.is_terminal() {
+            return;
+        }
+        if self.abort_requested.load(Ordering::Acquire) {
+            execution.abort();
+        } else {
+            *registered = Some(execution);
+        }
+    }
+
+    pub async fn abort_and_wait(&self) {
+        self.abort_execution();
+        if self.is_terminal() {
+            return;
+        }
+        let mut changed = self.changed.subscribe();
+        while !self.is_terminal() && changed.changed().await.is_ok() {}
+    }
+
+    pub fn abort_execution(&self) {
+        self.abort_requested.store(true, Ordering::Release);
+        let execution = self
+            .execution
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(execution) = execution {
+            execution.abort();
+        }
+    }
+
+    pub async fn fingerprint(&self) -> String {
+        self.state.lock().await.fingerprint.clone()
+    }
+
+    pub const fn mode(&self) -> OperationMode {
+        self.mode
+    }
+
+    pub async fn snapshot(&self) -> OperationSnapshot {
+        self.state.lock().await.snapshot.clone()
+    }
+
+    pub(crate) async fn evaluation_result(&self) -> Option<Value> {
+        self.state.lock().await.evaluation_result.clone()
+    }
+
+    pub async fn start(&self) {
+        self.append(OperationEventKind::Started, |snapshot| {
+            snapshot.status = OperationStatus::Running;
+        })
+        .await;
+    }
+
+    pub async fn complete(&self, result: OperationResult, events: Vec<OperationEventKind>) {
+        self.complete_inner(result, None, events).await;
+    }
+
+    pub(crate) async fn complete_with_evaluation_result(
+        &self,
+        result: OperationResult,
+        evaluation_result: Option<Value>,
+        events: Vec<OperationEventKind>,
+    ) {
+        self.complete_inner(result, evaluation_result, events).await;
+    }
+
+    async fn complete_inner(
+        &self,
+        result: OperationResult,
+        evaluation_result: Option<Value>,
+        events: Vec<OperationEventKind>,
+    ) {
+        let decision = match result {
+            OperationResult::Accepted { .. } => CompletedDecision::Accepted,
+            OperationResult::Rejected { .. } => CompletedDecision::Rejected,
+        };
+        let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() {
+            return;
+        }
+        for kind in events {
+            push_event(&mut state, kind);
+        }
+        push_event(&mut state, OperationEventKind::Completed { decision });
+        state.snapshot.status = OperationStatus::Completed;
+        state.snapshot.result = Some(result);
+        state.evaluation_result = evaluation_result;
+        self.terminal.store(true, Ordering::Release);
+        self.clear_execution();
+        let latest = state.snapshot.latest_event_id;
+        drop(state);
+        self.changed.send_replace(latest);
+    }
+
+    pub async fn fail(&self, code: &'static str, message: String) {
+        let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() {
+            return;
+        }
+        push_event(
+            &mut state,
+            OperationEventKind::Failed {
+                code,
+                message: message.clone(),
+            },
+        );
+        state.snapshot.status = OperationStatus::Failed;
+        state.snapshot.failure = Some(OperationFailure {
+            code,
+            message,
+            command_message_id: None,
+            duplicate: None,
+        });
+        self.terminal.store(true, Ordering::Release);
+        self.clear_execution();
+        let latest = state.snapshot.latest_event_id;
+        drop(state);
+        self.changed.send_replace(latest);
+    }
+
+    pub async fn indeterminate(
+        &self,
+        code: &'static str,
+        message: String,
+        command_message_id: String,
+        duplicate: bool,
+    ) {
+        let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() {
+            return;
+        }
+        push_event(
+            &mut state,
+            OperationEventKind::Indeterminate {
+                code,
+                message: message.clone(),
+                command_message_id: command_message_id.clone(),
+                duplicate,
+            },
+        );
+        state.snapshot.status = OperationStatus::Indeterminate;
+        state.snapshot.failure = Some(OperationFailure {
+            code,
+            message,
+            command_message_id: Some(command_message_id),
+            duplicate: Some(duplicate),
+        });
+        self.terminal.store(true, Ordering::Release);
+        self.clear_execution();
+        let latest = state.snapshot.latest_event_id;
+        drop(state);
+        self.changed.send_replace(latest);
+    }
+
+    pub async fn command_published(&self, command_message_id: String, duplicate: bool) {
+        let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() || state.publication.is_some() {
+            return;
+        }
+        push_event(
+            &mut state,
+            OperationEventKind::CommandPublished {
+                command_message_id: command_message_id.clone(),
+                duplicate,
+            },
+        );
+        state.publication = Some((command_message_id, duplicate));
+        let latest = state.snapshot.latest_event_id;
+        drop(state);
+        self.changed.send_replace(latest);
+    }
+
+    pub async fn fail_after_possible_publication(&self, code: &'static str, message: String) {
+        let publication = self.state.lock().await.publication.clone();
+        if let Some((command_message_id, duplicate)) = publication {
+            self.indeterminate(code, message, command_message_id, duplicate)
+                .await;
+        } else {
+            self.fail(code, message).await;
+        }
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        self.terminal.load(Ordering::Acquire)
+    }
+
+    pub fn mark_correlation_recorded(&self) {
+        self.correlation_recorded.store(true, Ordering::Release);
+    }
+
+    pub fn is_evictable(&self) -> bool {
+        self.is_terminal() && self.correlation_recorded.load(Ordering::Acquire)
+    }
+
+    fn clear_execution(&self) {
+        self.execution
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+    }
+
+    async fn append(&self, kind: OperationEventKind, update: impl FnOnce(&mut OperationSnapshot)) {
+        let mut state = self.state.lock().await;
+        if state.snapshot.status.is_terminal() {
+            return;
+        }
+        push_event(&mut state, kind);
+        update(&mut state.snapshot);
+        let latest = state.snapshot.latest_event_id;
+        drop(state);
+        self.changed.send_replace(latest);
+    }
+
+    async fn subscription(
+        self: &Arc<Self>,
+        after: u64,
+    ) -> Result<OperationSubscription, SubscriptionError> {
+        let state = self.state.lock().await;
+        if after > state.snapshot.latest_event_id {
+            return Err(SubscriptionError::FutureCursor {
+                latest: state.snapshot.latest_event_id,
+            });
+        }
+        drop(state);
+        Ok(OperationSubscription {
+            record: Arc::clone(self),
+            receiver: self.changed.subscribe(),
+            cursor: after,
+        })
+    }
+}
+
+fn push_event(state: &mut OperationState, kind: OperationEventKind) {
+    let id = state.snapshot.latest_event_id.saturating_add(1);
+    state.events.push(OperationEvent {
+        id,
+        operation_id: state.snapshot.operation_id.clone(),
+        kind,
+    });
+    state.snapshot.latest_event_id = id;
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum SubscriptionError {
+    #[error("operation event cursor is ahead of the latest event {latest}")]
+    FutureCursor { latest: u64 },
+}
+
+pub struct OperationSubscription {
+    record: Arc<OperationRecord>,
+    receiver: watch::Receiver<u64>,
+    cursor: u64,
+}
+
+impl OperationSubscription {
+    pub async fn is_complete(&self) -> bool {
+        let state = self.record.state.lock().await;
+        state.snapshot.status.is_terminal() && self.cursor == state.snapshot.latest_event_id
+    }
+
+    pub async fn next(&mut self) -> Option<OperationEvent> {
+        loop {
+            {
+                let state = self.record.state.lock().await;
+                if let Some(event) = state.events.iter().find(|event| event.id > self.cursor) {
+                    self.cursor = event.id;
+                    return Some(event.clone());
+                }
+                if state.snapshot.status.is_terminal() {
+                    return None;
+                }
+            }
+            if self.receiver.changed().await.is_err() {
+                return None;
+            }
+        }
+    }
+}
+
+pub async fn subscribe(
+    record: &Arc<OperationRecord>,
+    after: u64,
+) -> Result<OperationSubscription, SubscriptionError> {
+    record.subscription(after).await
+}

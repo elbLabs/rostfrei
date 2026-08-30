@@ -524,16 +524,16 @@ async fn publish_disposition_commands(
         if prefix == "quarantine" {
             metadata.insert("x-quarantine-test", "preserved")?;
         }
-        publisher
-            .publish_command(
-                OutboundMessage::new(
-                    address.clone(),
-                    id,
-                    format!(r#"{{"kind":"{prefix}"}}"#).into_bytes(),
-                )?
-                .with_metadata(metadata),
-            )
-            .await?;
+        let mut message = OutboundMessage::new(
+            address.clone(),
+            id,
+            format!(r#"{{"kind":"{prefix}"}}"#).into_bytes(),
+        )?
+        .with_metadata(metadata);
+        if prefix == "quarantine" {
+            message = message.with_correlation_id(CorrelationId::new("quarantine-correlation")?);
+        }
+        publisher.publish_command(message).await?;
     }
     Ok(quarantine_id)
 }
@@ -610,6 +610,10 @@ async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() 
         serde_json::from_slice(&stored.payload).expect("quarantine record");
     assert_eq!(record.message_id(), quarantine_id.as_str());
     assert_eq!(record.address(), address.as_str());
+    assert_eq!(
+        record.correlation_id().map(CorrelationId::as_str),
+        Some("quarantine-correlation")
+    );
     assert_eq!(
         record.metadata().get("x-quarantine-test"),
         Some("preserved")

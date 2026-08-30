@@ -210,6 +210,10 @@ fn encoding_is_canonical_and_identity_is_stable() -> TestResult {
             .with_created_at(timestamp),
     )?;
     assert_eq!(first, second);
+    assert_eq!(
+        first.message().correlation_id(),
+        Some(first.correlation_id())
+    );
 
     let left = command_execution_fingerprint(
         "ledger/account",

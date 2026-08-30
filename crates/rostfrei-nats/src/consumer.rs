@@ -13,9 +13,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures_util::TryStreamExt;
 use rostfrei_messaging_core::{
     CallerMetadata, CommandAddress, CommandResponseAddress, ConsumeError, ConsumeErrorKind,
-    ConsumerConfig, DeliveryDisposition, DeliveryInfo, IntegrationEventAddress, MessageAddress,
-    MessageConsumer, MessageConsumerFactory, MessageDelivery, MessageHandler, MessageId,
-    PublishableAddress, TraceContext,
+    ConsumerConfig, CorrelationId, DeliveryDisposition, DeliveryInfo, IntegrationEventAddress,
+    MessageAddress, MessageConsumer, MessageConsumerFactory, MessageDelivery, MessageHandler,
+    MessageId, PublishableAddress, TraceContext,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,8 +27,8 @@ use crate::{
     messaging_config::{MessagingTopology, StreamName},
     provisioning::durable_consumer_config,
     publish::{
-        CONTENT_TYPE_HEADER, DEFAULT_PUBLISH_TIMEOUT, JSON_CONTENT_TYPE, TRACE_PARENT_HEADER,
-        TRACE_STATE_HEADER, publish_confirmed, safe_headers,
+        CONTENT_TYPE_HEADER, CORRELATION_ID_HEADER, DEFAULT_PUBLISH_TIMEOUT, JSON_CONTENT_TYPE,
+        TRACE_PARENT_HEADER, TRACE_STATE_HEADER, publish_confirmed, safe_headers,
     },
 };
 
@@ -50,6 +50,8 @@ pub struct QuarantineRecord {
     #[serde(default)]
     payload_truncated: bool,
     metadata: CallerMetadata,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    correlation_id: Option<CorrelationId>,
     trace_context: Option<TraceContext>,
     reason: String,
     attempt: u32,
@@ -87,6 +89,10 @@ impl QuarantineRecord {
 
     pub const fn metadata(&self) -> &CallerMetadata {
         &self.metadata
+    }
+
+    pub const fn correlation_id(&self) -> Option<&CorrelationId> {
+        self.correlation_id.as_ref()
     }
 
     pub fn reason(&self) -> &str {
@@ -131,6 +137,29 @@ impl NatsConsumerFactory {
         }
         self.quarantine_publish_timeout = quarantine_publish_timeout;
         Ok(self)
+    }
+
+    pub async fn verify_consumer<A>(&self, config: &ConsumerConfig<A>) -> Result<(), ConsumeError>
+    where
+        A: PublishableAddress,
+    {
+        if config.address().application() != self.topology.application().as_str() {
+            return Err(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration));
+        }
+        let source_stream = self
+            .topology
+            .stream_for(config.address().kind())
+            .ok_or_else(|| ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
+        let stream = self
+            .context
+            .get_stream(source_stream.as_str())
+            .await
+            .map_err(|_| ConsumeError::new(ConsumeErrorKind::Unavailable))?;
+        let consumer: consumer::PullConsumer = stream
+            .get_consumer(config.durable_name().as_str())
+            .await
+            .map_err(|_| ConsumeError::new(ConsumeErrorKind::Unavailable))?;
+        verify_consumer(&consumer, config)
     }
 
     fn create_consumer<A>(
@@ -496,16 +525,21 @@ where
         .ok_or(NatsError::InvalidMessage)
         .and_then(|value| MessageId::new(value).map_err(|_| NatsError::InvalidMessage))?;
     let metadata = caller_metadata(headers)?;
+    let correlation_id = single_header(headers, CORRELATION_ID_HEADER)?
+        .map(CorrelationId::new)
+        .transpose()
+        .map_err(|_| NatsError::InvalidMessage)?;
     let trace_context = trace_context(headers)?;
     let address = A::parse_nats(message.subject.to_string())?;
     if &address != expected_address {
         return Err(NatsError::InvalidMessage);
     }
-    MessageDelivery::new_with_trace_context(
+    MessageDelivery::new_with_transport_context(
         address,
         message_id,
         message.payload.to_vec(),
         metadata,
+        correlation_id,
         trace_context,
         info,
     )
@@ -584,6 +618,7 @@ where
         payload_sha256: Some(sha256_hex(payload)),
         payload_truncated: false,
         metadata: delivery.metadata().clone(),
+        correlation_id: delivery.correlation_id().cloned(),
         trace_context: delivery.trace_context().cloned(),
         reason: reason.to_owned(),
         attempt: delivery.attempt(),
@@ -613,6 +648,9 @@ fn raw_quarantine_record(
     let metadata = headers
         .and_then(|headers| caller_metadata(headers).ok())
         .unwrap_or_default();
+    let correlation_id = headers
+        .and_then(|headers| single_header(headers, CORRELATION_ID_HEADER).ok().flatten())
+        .and_then(|value| CorrelationId::new(value).ok());
     let trace_context = headers.and_then(|headers| trace_context(headers).ok().flatten());
     let payload = message.payload.as_ref();
     QuarantineRecord {
@@ -623,6 +661,7 @@ fn raw_quarantine_record(
         payload_sha256: Some(sha256_hex(payload)),
         payload_truncated: false,
         metadata,
+        correlation_id,
         trace_context,
         reason: reason.to_owned(),
         attempt: info.attempt(),
@@ -747,6 +786,7 @@ mod tests {
             payload_sha256: Some(sha256_hex(payload)),
             payload_truncated: false,
             metadata: CallerMetadata::new(),
+            correlation_id: None,
             trace_context: None,
             reason: "invalid source message".to_owned(),
             attempt: 1,
@@ -832,5 +872,6 @@ mod tests {
         assert_eq!(record.payload_size(), None);
         assert_eq!(record.payload_sha256(), None);
         assert!(!record.payload_truncated());
+        assert_eq!(record.correlation_id(), None);
     }
 }

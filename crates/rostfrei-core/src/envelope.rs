@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use rostfrei_messaging_core::{CausationId, CorrelationId};
+use rostfrei_messaging_core::{CausationId, CorrelationId, MessageTimestamp};
 use thiserror::Error;
 
 use crate::{CommitId, ContentFingerprint, EventId, OperationId, StreamId};
@@ -215,6 +215,7 @@ pub struct RecordedEvent {
     commit_event_count: u32,
     correlation_id: Option<CorrelationId>,
     causation_id: Option<CausationId>,
+    committed_at: Option<MessageTimestamp>,
     event_type: String,
     schema_version: u32,
     payload: Vec<u8>,
@@ -293,6 +294,7 @@ impl RecordedEvent {
             commit_event_count,
             correlation_id: None,
             causation_id: None,
+            committed_at: None,
             event_type,
             schema_version,
             payload,
@@ -308,6 +310,12 @@ impl RecordedEvent {
     #[must_use]
     pub fn with_causation_id(mut self, causation_id: CausationId) -> Self {
         self.causation_id = Some(causation_id);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_committed_at(mut self, committed_at: MessageTimestamp) -> Self {
+        self.committed_at = Some(committed_at);
         self
     }
 
@@ -351,6 +359,10 @@ impl RecordedEvent {
         self.causation_id.as_ref()
     }
 
+    pub const fn committed_at(&self) -> Option<MessageTimestamp> {
+        self.committed_at
+    }
+
     pub fn event_type(&self) -> &str {
         &self.event_type
     }
@@ -382,6 +394,7 @@ impl RecordedEvent {
             commit_event_count,
             correlation_id: batch.correlation_id.clone(),
             causation_id: batch.causation_id.clone(),
+            committed_at: None,
             event_type: event.event_type,
             schema_version: event.schema_version,
             payload: event.payload,

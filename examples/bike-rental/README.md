@@ -4,17 +4,11 @@ This public example models a bicycle rental fleet. It demonstrates rostfrei's
 compiled domain metadata without depending on a production application:
 
 - `RentalFleetAggregate` owns the fleet and its bicycles;
-- `RentBicycle` is a public aggregate command;
-- `RentalEligibilityDecisions` groups `AssessRentalEligibility`, which returns
-  first-class eligible, already-rented, or maintenance-required outcomes;
-- `BicycleRented` and `BicycleUnavailable` describe action outcomes; and
+- `RentBicycle`, `ReturnBicycle`, and `AddBicycle` are public aggregate commands;
+- `AssessRentalEligibility` is a Rust decision;
+- bicycle added, rented, and returned events describe successful transitions;
+- unavailable, not-rented, and duplicate-bicycle errors describe rejections; and
 - `BicycleAvailabilityQueries` exposes a read-only availability query.
-
-The public command maps its payload to the `BicycleId` domain identity. The
-modeled Action exhaustively translates the eligibility outcome, explicitly
-raising `BicycleRented` on success while preserving `BicycleUnavailable` as its
-external error. The Decision takes the compact status and condition values;
-neither the Action nor the Decision receives the command message.
 
 Print the compiled domain model:
 
@@ -28,154 +22,176 @@ Run the example tests:
 cargo test --locked -p bike-rental
 ```
 
-## NATS command lab
+## NATS-backed Tracer
 
-The runnable example uses the shared `CommandBus`, `IntegrationEventBus`, NATS
-adapters, durable command and domain-event consumers, immutable command
-responses, and `NatsEventStore` path intended for deployed systems. After
-`BicycleRented` commits, the domain-event consumer maps it to the public
-`BicycleRentalStarted` integration event; a separate durable consumer handles
-that event. NATS Server 2.12 or newer is required for atomic event batches.
-Start a disposable local server:
+The runnable example exercises the shared, transport-neutral `CommandBus` and
+`IntegrationEventBus` through NATS adapters, durable command and domain-event
+consumers, immutable command responses, and `NatsEventStore`. It does not define
+bike-rental-specific buses or command wire contracts. After `BicycleRented`
+commits, the domain-event consumer maps it to the public
+`BicycleRentalStarted` integration event through `IntegrationEventBus`; a
+separate durable consumer handles that event. NATS is the isolated adapter choice
+for this example, not a requirement of Tracer. NATS Server 2.12 or newer is
+required for atomic event batches.
+
+Start the supplied disposable NATS configuration, then start the local Tracer
+server:
 
 ```sh
 docker compose -f examples/bike-rental/compose.yaml up -d
-```
 
-The Compose volume preserves local streams across server restarts. Use
-`docker compose -f examples/bike-rental/compose.yaml down -v` for a full reset.
-Compose publishes the unauthenticated development broker on loopback only.
-
-Provision the application-scoped messaging streams, command durable, and event
-store, then seed `city-fleet`:
-
-```sh
-cargo run --locked -p bike-rental --bin bike-rental-provision
-```
-
-Provisioning is idempotent and separate from runtime startup. The command uses
-`nats://127.0.0.1:4222` and application `bike-rental-demo` by default. Override
-them with `ROSTFREI_NATS_URL` and `ROSTFREI_APPLICATION` in local or production
-environments.
-
-Run the API and command worker:
-
-```sh
-ROSTFREI_API_TOKEN=local-development-token \
-ROSTFREI_DISPATCH_TOKEN=local-development-token \
+ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
+  ROSTFREI_API_TOKEN=local-development-token \
+  ROSTFREI_DISPATCH_TOKEN=local-dispatch-token \
   cargo run --locked -p bike-rental
 ```
 
-It binds to `127.0.0.1:3000` by default. Set `ROSTFREI_API_ADDR` to use another
-address. `ROSTFREI_API_TOKEN` protects simulation and operation traces;
-`ROSTFREI_DISPATCH_TOKEN` is the separate live-command capability. They may be
-equal for local development but should be distinct in deployed environments.
-Operation resources and traces require `ROSTFREI_API_TOKEN`, including for an
-operation created with `ROSTFREI_DISPATCH_TOKEN`.
-Runtime startup verifies the operator-provisioned NATS topology and exits if a
-durable command, domain-event, or integration-event consumer stops.
+It binds to `127.0.0.1:1309` by default. Set `ROSTFREI_API_ADDR` to use another
+local address. `ROSTFREI_API_TOKEN` authorizes discovery, Simulate, isolated
+Test, reset, and their operation and correlation resources.
+`ROSTFREI_DISPATCH_TOKEN` separately authorizes production Dispatch and its
+resources; startup rejects equal tokens. Set `ROSTFREI_APPLICATION` to change
+the base application name when running multiple instances against one NATS
+account.
 
-The fleet contains serviceable `bike-42` and maintenance-required `bike-99`.
-This local server explicitly exposes trace payloads for demonstration; the
-control-plane library redacts them by default.
+Tracer's API is unversioned: its hypermedia routes begin with `/catalog`,
+`/tests`, `/contexts`, `/operations`, and `/correlations`, not `/v1`. Clients
+should follow links advertised by the catalog and operation resources rather
+than construct application-specific routes.
 
-Open <http://127.0.0.1:3000> to select and submit the demo command, edit its
-payload, and watch the operation events stream into the page. Enter the
-`local-development-token` used in the command above when the page asks for the
-bearer token.
+The example uses two independent NATS application namespaces:
 
-Dispatch a real command through NATS:
+- `bike-rental-test` is recreated and deterministically seeded on startup and by
+  `POST /test-scenario/reset`;
+- `bike-rental-prod` persists across restarts and is never affected by test
+  reset.
+
+Each namespace has the same four messaging streams, authoritative domain-event
+stream, three command durables, post-commit domain-event durable, and
+integration-event durable. Test reset stops its workers, recreates that complete
+topology, reseeds it, and restarts the workers without touching production.
+A failed reset leaves Test, Simulate, instances, and dynamic inputs unavailable
+until a later reset succeeds rather than exposing partially rebuilt state.
+
+Both initially contain `city-fleet`, serviceable `bike-42`, and
+maintenance-required `bike-99`. The local example explicitly provisions these
+streams. Public operation and correlation resources keep payloads redacted;
+behavioral assertions use a separate private evaluation view. Production
+deployments should provision infrastructure separately and use distinct NATS
+credentials or accounts for test and production.
+
+The API advertises all command fields, runtime choices, instances, mode actions,
+and reset links through `GET /catalog` and its linked resources. The standalone
+[Rostfrei Studio](../../studio) UI consumes these links without embedding
+bike-rental values and supports Simulate, Test, Dispatch, reset, operation
+status, and correlation streams.
+
+Behavioral tests are YAML files in `tests/tracer`. They name the deterministic
+`demo-fleet` fixture, run setup and subject commands through the isolated test
+NATS pipeline, and assert the command outcome plus correlated domain or
+integration events. The filesystem remains the source of truth:
+
+```sh
+curl --header 'authorization: Bearer local-development-token' \
+  http://127.0.0.1:1309/tests
+
+curl --request POST \
+  --header 'authorization: Bearer local-development-token' \
+  http://127.0.0.1:1309/tests/rent-available-bicycle/runs
+```
+
+Run the production-isolation check and all three behavioral definitions against
+a real NATS server:
+
+```sh
+ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
+  cargo test --locked -p bike-rental \
+  --test nats_runtime_integration
+```
+
+Submit a simulation:
 
 ```sh
 curl --request POST \
-  http://127.0.0.1:3000/v1/contexts/bike-rental/aggregates/rental-fleet/city-fleet/commands/rent-bicycle/dispatch \
+  http://127.0.0.1:1309/contexts/bike-rental/aggregates/rental-fleet/city-fleet/commands/rent-bicycle/simulate \
   --header 'content-type: application/json' \
   --header 'authorization: Bearer local-development-token' \
   --header 'idempotency-key: rental-operation-1' \
   --data '{"schemaVersion":1,"payload":{"bicycle_id":"bike-42"}}'
 ```
 
-Stream the command-completion trace:
+Stream its correlated business flow:
 
 ```sh
 curl --no-buffer \
   --header 'authorization: Bearer local-development-token' \
-  http://127.0.0.1:3000/v1/operations/rental-operation-1/events
+  http://127.0.0.1:1309/correlations/rental-operation-1/events
 ```
 
 Retrieve the current or final operation resource:
 
 ```sh
 curl --header 'authorization: Bearer local-development-token' \
-  http://127.0.0.1:3000/v1/operations/rental-operation-1
+  http://127.0.0.1:1309/operations/rental-operation-1
 ```
 
-The dispatch trace reports `command.published` immediately after the command
-JetStream PubAck but remains running. The durable worker consumes the envelope,
-recomputes its operation fingerprint, executes `RentBicycle`, derives the exact
-response address, and publishes an immutable accepted or rejected response. It
-ACKs the command only after the response PubAck. Before execution, the worker
-checks that exact response address; a matching retained response is ACKed without
-running the aggregate again. Store unavailability retries without execution,
-while an invalid or conflicting response is quarantined. The response uses its
-own v1 schema and carries the originating command address.
+The three Tracer actions have distinct semantics:
 
-The adapter reads responses in bounded slices and keeps listening
-through slice timeouts or transient reader unavailability until a response
-arrives or the operation task is cancelled. It then reports
-`command.responded`, the business outcome, and terminal completion. Accepted
-execution appends events to the `city-fleet` stream, but the dispatch result
-omits `appended` because the response contains no authoritative append evidence;
-simulation continues to report `appended: false`. Reusing an `Idempotency-Key`
-returns the retained operation for the exact same request and returns
-`409 Conflict` for different content.
-The NATS adapter makes bounded retries for command publication timeouts and
-broker unavailability with the same content-scoped message identity. The worker
-also retries transient response publication without acknowledging the command.
+- `simulate` replays the current test NATS history but never appends;
+- `test` submits through `CommandBus` with the isolated test NATS adapter and
+  appends only to test history;
+- `dispatch` uses the same bus API with a separately authorized production NATS
+  adapter and namespace.
 
-The broker deduplication identity includes both the operation identity and the
-request fingerprint, so a duplicate PubAck represents an exact wire retry, not
-different content submitted under a reused operation identity.
+For Test and Dispatch, the NATS adapter reads responses in bounded slices and
+keeps listening through slice timeouts or transient reader unavailability until
+a response arrives or the operation task is cancelled. It then reports
+`command.responded`, the business outcome, and terminal completion. A transported
+result does not claim authoritative append evidence, while Simulate explicitly
+reports `appended: false`. The adapter makes bounded retries for command
+publication timeouts and broker unavailability with the same content-scoped
+message identity. The worker also retries transient response publication without
+acknowledging the command.
 
-Dispatching `bike-42` again with another idempotency key publishes another real
-command. The worker replays `BicycleRented`, rejects the second rental as
-`BicycleUnavailable`, durably publishes that rejection before acknowledging the
-command, and appends no event. Both command responses remain observable in the
-application's command-response stream.
+Both transported modes wait for command PubAck and a durable accepted or
+rejected response. Accepted rentals then flow through a durable post-commit
+domain-event handler, publish the correlated `bicycle-rental-started`
+integration event, and consume it through the normal integration-event durable.
+An `Idempotency-Key` is required for Test and Dispatch. If an error occurs after
+PubAck but before a valid durable response is observed, the operation is
+`indeterminate` and preserves its command message identity instead of claiming
+that the business command failed.
 
-This flow does not promise exactly-once terminal decisions. Event-appending
-acceptance can recover by exact event-store replay, but rejected and
-accepted-no-event decisions have a crash window between deciding and persisting
-their response because there is no transactional operation receipt or outbox.
-A redelivery can evaluate those decisions again. Response immutability and the
-pre-execution reconciliation guard last only while the response is retained
-under the configured response-stream age and capacity limits.
+Running Test for `bike-42` twice accepts and appends the first command, then
+replays that new state and rejects the second with `BICYCLE_UNAVAILABLE`.
+Simulate subsequently observes the same rejection without changing history.
+Reset returns the test stream to the deterministic seed and does not touch
+production.
 
-Submit a non-mutating simulation by changing the route suffix to `/simulate`.
-Simulation reports replay, acceptance or rejection, predicted events, and
-completion. It never appends or publishes. After the real dispatch above, a
-simulation for `bike-42` is rejected because it reads the same NATS-backed
-aggregate stream. Reconnect to either operation trace with `Last-Event-ID`; a
-cursor at the terminal event returns `204 No Content`.
+`ReturnBicycle` advertises currently rented bicycles as runtime input choices and
+makes the selected bicycle available again. `AddBicycle` has no user-supplied
+payload. The aggregate assigns the next unused deterministic UUID and adds the
+bicycle as available and serviceable. All three commands use their generated
+JSON payload contracts; Tracer has no command-specific wire codecs.
 
-The route uses context-qualified aggregate identity
+Correlation feeds report the command, observed domain events, observed integration
+events, and the command result. They remain open for downstream integration events;
+reconnect with `Last-Event-ID` to replay retained events after a previous SSE frame.
+Operation traces remain available at `/operations/{operationId}/events` for
+Tracer lifecycle details.
+Reusing an `Idempotency-Key` returns the retained operation only for the exact
+same request and returns `409 Conflict` for different content.
+Each Test reset rotates the Test scenario generation, so a key reused afterward
+cannot receive delayed correlation events from the previous scenario.
+
+The route uses the context-qualified aggregate identity
 `bike-rental/rental-fleet`. `RentBicycle`, its rejection, and aggregate events
 use generated JSON contracts rather than handwritten bike-rental codecs.
 
-Operation resources and traces are count-bounded and in-memory, simulation and
-dispatch admission are bounded independently, and operation retention is
-pressure-based rather than durable or time-based. Production deployments must
-add durable audit and operation-outcome storage appropriate to their security
-model. Durable enforcement of idempotency-key conflicts across replicas or
-beyond in-memory retention belongs in that operation store.
-
-## Real NATS test
-
-Fast tests use fakes and `InMemoryEventStore`. The real-server test uses the same
-NATS adapter and worker as runtime, creates a globally unique application scope,
-and deletes all five JetStream streams after the run:
-
-```sh
-ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
-  cargo test --locked -p bike-rental --test nats_dispatch_integration
-```
+Operation resources, traces, and correlation feeds remain count- and
+byte-bounded in memory even though domain events are durable in NATS. Operation
+and correlation payload retention each have a 64 MiB aggregate budget; payloads
+that cannot fit a record's share are omitted rather than retained without bound.
+Concurrent admission is bounded, and operation retention is pressure-based
+rather than durable or time-based. This server is therefore a local development
+example, not a production audit system.

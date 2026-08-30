@@ -577,7 +577,8 @@ impl CommandBus {
             )));
         }
         let message = OutboundMessage::new(address, message_id, payload)
-            .map_err(|error| CommandBusError::encoding(error.to_string()))?;
+            .map_err(|error| CommandBusError::encoding(error.to_string()))?
+            .with_correlation_id(correlation_id.clone());
         Ok(EncodedCommand::new(
             message,
             operation_id,

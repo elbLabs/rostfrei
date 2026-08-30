@@ -34,8 +34,6 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | **Commit** | The atomic, non-empty ordered set of domain events produced by one accepted operation. | Message batch, transaction record |
 | **Event transaction** | One atomic operation containing ordered commit or read-only participants from multiple aggregate streams in the same event store; its primary participant contributes a commit. | Distributed transaction, message batch |
 | **Operation** | One identified request to execute a command against an aggregate stream, including the stable identity used for exact retry. | Delivery attempt, consumer attempt |
-| **Command outcome** | The completed business result of command execution: accepted with a command receipt, or rejected with a modeled reason. | Execution status, handler result |
-| **Command receipt** | The result detail for an accepted command: newly appended events, an exact replay, or no events. A no-events receipt is not durable in this release. | Publish receipt, broker acknowledgement |
 | **Replay** | Reconstruction of aggregate state by applying its domain events in stream-version order. | Load row, restore snapshot |
 | **EventStore** | The port that loads aggregate streams and atomically appends a commit or supported event transaction at expected versions. | Repository, KV store, message publisher |
 
@@ -46,6 +44,25 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | **Integration event** | A bounded, independently versioned public contract normally derived from committed private domain events. | Domain event, raw event, notification |
 | **Projection** | A read-oriented model derived from committed domain events without becoming aggregate truth. | Aggregate, source of truth |
 | **Domain-event handler** | A post-commit application handler for one or more private domain events. It may perform side effects but never participates in aggregate decisions or changes the originating commit. | Projection handler, reaction, event projector |
+
+## Tracer testing
+
+| Term | Definition | Aliases to avoid |
+| --- | --- | --- |
+| **Tracer** | The interface for discovering domain contracts, executing commands, observing correlated behavior, and managing behavioral tests. | Admin panel, event viewer |
+| **Domain catalog** | A versioned description of the commands, domain events, errors, and schemas exposed by a target application. | Registry, domain model |
+| **Test definition** | A portable specification of setup, commands, and expectations independent of any particular runner or UI. | Test case, script |
+| **Test repository** | The filesystem-backed, normally source-controlled collection of test definitions available to Tracer. | Test database, run history |
+| **Test revision** | A source-controlled version of a test definition identified by its repository revision. | Database revision, draft event |
+| **Test run** | One execution of a test revision against one target environment. | Test, operation |
+| **Expectation** | A condition that correlated evidence must satisfy before a deadline. | Assertion, predicted event |
+| **Test report** | The result returned by a test run, optionally exported as a CI artifact rather than retained by Tracer. | Operation result, trace history |
+| **Correlation** | The identity shared by commands and events belonging to one business flow. | Test ID, operation ID |
+| **Causation** | The direct parent relationship explaining which message caused another message. | Correlation, ordering |
+| **Correlation trace** | The ordered commands, domain events, integration events, and outcomes observed for one correlation. | Event log, aggregate stream |
+| **Test environment** | An isolated target system in which test runs may append state without affecting production. | Test mode, simulation |
+| **Simulation** | A local command decision evaluated without appending its resulting domain events. | Test run, dry-run dispatch |
+| **Production dispatch** | An explicitly authorized command execution against the production target system. | Test, simulation |
 
 ## Relationships
 
@@ -61,6 +78,12 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 - A **query** reads state and never appends a **commit**.
 - An **integration event** is a public contract separate from the private **domain events** from which it may be derived.
 - A **projection** may consume committed **domain events**, but it does not replace the **aggregate stream** as authoritative history.
+- A **test repository** contains zero or more **test definitions**, whose **test revisions** are supplied by source control.
+- One **test run** executes exactly one **test revision** against one **test environment**.
+- One **test run** produces exactly one terminal **test report**.
+- A **test report** evaluates its **expectations** against a **correlation trace**.
+- A **correlation** groups a business flow, while **causation** identifies direct parent-child relationships within that flow.
+- The **domain catalog** describes possible contracts; a **correlation trace** records behavior that actually occurred.
 
 ## Example dialogue
 
@@ -80,6 +103,13 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 > **Domain expert:** "Not as a public contract. Application code derives a
 > separately versioned **integration event** after the private domain event has
 > committed."
+>
+> **Developer:** "Can I keep that complete behavior as a regression test?"
+>
+> **Domain expert:** "Yes. Save a **test definition** from the **correlation
+> trace**, publish an immutable **test revision**, and execute a **test run** in
+> the **test environment**. Its **test report** records which **expectations**
+> the observed flow satisfied."
 
 ## Flagged ambiguities
 
@@ -97,10 +127,17 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
   retry.
 - **Rejection** is not an infrastructure failure. A rejection is an expected
   business outcome; storage, codec, and broker failures remain errors.
-- **Command receipt** and **publish receipt** are not synonyms. A command receipt
-  describes accepted aggregate execution; a publish receipt describes broker
-  acknowledgement of an application message.
 - **Aggregate state** is reconstructed state, not a NATS KV value or the
   authoritative persistence record.
 - **Application name** is not a JetStream stream name. rostfrei derives stream
   names and subject filters from it.
+- **Test** is ambiguous. Use **test definition** for the specification, **test
+  revision** for a saved version, **test run** for one execution, and **test
+  environment** for the isolated target system.
+- **Operation** and **test run** are not synonyms. An operation executes one
+  command; a test run may coordinate multiple operations and expectations.
+- **Correlation** and **causation** are not synonyms. Correlation groups the
+  entire business flow; causation identifies the direct parent of one message.
+- **Domain catalog** and **domain model** are not synonyms. The tested
+  application owns its domain model and exposes the relevant contracts through
+  a domain catalog.
