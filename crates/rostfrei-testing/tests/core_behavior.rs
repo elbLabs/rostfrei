@@ -16,6 +16,7 @@ use rostfrei_core::{
     EventStoreErrorKind, EventTransaction, ExecutionMetadata, Executor, ExpectedVersion,
     InMemoryEventStore, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent,
     SimulationDecision, StreamId, StreamVersion, TransactionParticipant,
+    validate_transaction_item_limit,
 };
 use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_messaging_core::{CausationId, CorrelationId};
@@ -621,6 +622,20 @@ async fn default_single_stream_transaction_validates_metadata_and_replay_version
     )
     .expect("valid batch");
     let store = AppendOnlyStore(InMemoryEventStore::new());
+    let read_only_error = store
+        .append_transaction(EventTransaction::new(
+            OperationId::new("default-read-only-primary").expect("valid operation identity"),
+            ContentFingerprint::digest("default-read-only-primary"),
+            vec![TransactionParticipant::new(
+                stream.clone(),
+                ExpectedVersion::NoStream,
+                None,
+            )],
+        ))
+        .await
+        .expect_err("the default adapter must reject a read-only primary");
+    assert_eq!(read_only_error.kind(), EventStoreErrorKind::InvalidRequest);
+
     let transaction = EventTransaction::new(
         transaction_metadata.operation_id().clone(),
         transaction_metadata.operation_fingerprint(),
@@ -675,23 +690,24 @@ async fn default_single_stream_transaction_enforces_item_limit_without_reducing_
         .expect("valid accepted transaction limit stream fixture");
     let accepted_operation = "default-transaction-limit-accepted";
     let accepted_event_count = MAX_TRANSACTION_ITEMS.saturating_sub(1);
-    let accepted = store
-        .append_transaction(EventTransaction::new(
-            OperationId::new(accepted_operation).expect("valid operation identity"),
-            ContentFingerprint::digest(accepted_operation),
-            vec![TransactionParticipant::new(
-                accepted_stream.clone(),
-                ExpectedVersion::NoStream,
-                Some(
-                    batch_with_event_count(
-                        &accepted_stream,
-                        accepted_operation,
-                        accepted_event_count,
-                    )
+    let accepted_transaction = EventTransaction::new(
+        OperationId::new(accepted_operation).expect("valid operation identity"),
+        ContentFingerprint::digest(accepted_operation),
+        vec![TransactionParticipant::new(
+            accepted_stream.clone(),
+            ExpectedVersion::NoStream,
+            Some(
+                batch_with_event_count(&accepted_stream, accepted_operation, accepted_event_count)
                     .expect("valid accepted transaction limit batch fixture"),
-                ),
-            )],
-        ))
+            ),
+        )],
+    );
+    assert_eq!(
+        validate_transaction_item_limit(&accepted_transaction),
+        Ok(accepted_event_count)
+    );
+    let accepted = store
+        .append_transaction(accepted_transaction)
         .await
         .expect("999 events and one receipt should fit the transaction item limit");
     assert_eq!(accepted.receipt().events().len(), accepted_event_count);

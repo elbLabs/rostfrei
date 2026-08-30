@@ -224,11 +224,12 @@ impl EventStore for InMemoryEventStore {
         &self,
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
-        let mut state = self.state.lock().await;
+        let total_events = validate_transaction_item_limit(&transaction)?;
         let primary_stream_id = transaction
             .primary_stream_id()
             .ok_or_else(|| invalid("an event transaction must contain at least one participant"))?
             .clone();
+        let mut state = self.state.lock().await;
         let transaction_key = (primary_stream_id, transaction.operation_id().clone());
         if let Some(previous) = state.transactions.get(&transaction_key) {
             if transaction_content_matches(&previous.transaction, &transaction) {
@@ -240,7 +241,6 @@ impl EventStore for InMemoryEventStore {
                 "transaction identity was reused with different content",
             ));
         }
-        let total_events = validate_transaction_item_limit(&transaction)?;
         validate_transaction(&state, &transaction)?;
 
         let new_count = state
@@ -348,15 +348,6 @@ fn validate_transaction(
     if transaction.participants().is_empty() {
         return Err(invalid(
             "an event transaction must contain at least one participant",
-        ));
-    }
-    if transaction
-        .participants()
-        .iter()
-        .all(|participant| participant.batch().is_none())
-    {
-        return Err(invalid(
-            "an event transaction must contain at least one event",
         ));
     }
     let primary_stream_id = transaction

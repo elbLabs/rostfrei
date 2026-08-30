@@ -18,8 +18,8 @@ use event_store_config::{
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventStore,
     EventStoreError, EventStoreErrorKind, EventTransaction, ExecutionMetadata, ExpectedVersion,
-    NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion, TransactionAppendOutcome,
-    TransactionParticipant,
+    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
+    TransactionAppendOutcome, TransactionParticipant,
 };
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
 use rostfrei_testing::event_store_contract;
@@ -960,6 +960,47 @@ async fn transaction_contract_and_wire_policy(
     check(
         store.load(&untouched).await?.is_empty(),
         "a rejected transaction appended an event prefix",
+    )?;
+
+    let oversized_primary = stream("transaction-oversized-before-io")?;
+    let oversized_operation = "transaction-oversized-before-io";
+    context
+        .send_publish(
+            config.transaction_subject(&oversized_primary, oversized_operation),
+            PublishMessage::build()
+                .payload(br#"{"corrupt":"receipt"}"#.to_vec().into())
+                .expected_stream(config.stream_name()),
+        )
+        .await?
+        .await?;
+    let oversized = store
+        .append_transaction(EventTransaction::new(
+            OperationId::new(oversized_operation)?,
+            ContentFingerprint::digest(oversized_operation),
+            vec![TransactionParticipant::new(
+                oversized_primary.clone(),
+                ExpectedVersion::NoStream,
+                Some(repeated_batch(
+                    &oversized_primary,
+                    oversized_operation,
+                    oversized_operation,
+                    u32::try_from(MAX_TRANSACTION_ITEMS)?,
+                )?),
+            )],
+        ))
+        .await;
+    check(
+        matches!(
+            oversized,
+            Err(ref error)
+                if error.kind() == EventStoreErrorKind::InvalidRequest
+                    && error.message().contains("item limit")
+        ),
+        "an oversized transaction was not rejected before receipt I/O",
+    )?;
+    check(
+        store.load(&oversized_primary).await?.is_empty(),
+        "an early oversized rejection appended domain events",
     )
 }
 

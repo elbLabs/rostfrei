@@ -30,7 +30,7 @@ pub use memory::InMemoryEventStore;
 pub use store::{AppendOutcome, EventHistory, EventStore, EventStoreError, EventStoreErrorKind};
 pub use store::{
     EventTransaction, MAX_TRANSACTION_ITEMS, TransactionAppendOutcome, TransactionParticipant,
-    TransactionReceipt, TransactionStreamReceipt,
+    TransactionReceipt, TransactionStreamReceipt, validate_transaction_item_limit,
 };
 
 #[doc(hidden)]

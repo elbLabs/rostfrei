@@ -32,7 +32,7 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | **Aggregate stream** | The permanent, ordered history of one aggregate identity. | Topic, queue, KV record, JetStream stream |
 | **Stream version** | The one-based position of a domain event in an aggregate stream, with version zero representing no stream. | Revision, broker sequence |
 | **Commit** | The atomic, non-empty ordered set of domain events produced by one accepted operation. | Message batch, transaction record |
-| **Event transaction** | One atomic operation containing ordered commit or read-only participants from multiple aggregate streams in the same event store. | Distributed transaction, message batch |
+| **Event transaction** | One atomic operation containing ordered commit or read-only participants from multiple aggregate streams in the same event store; its primary participant contributes a commit. | Distributed transaction, message batch |
 | **Operation** | One identified request to execute a command against an aggregate stream, including the stable identity used for exact retry. | Delivery attempt, consumer attempt |
 | **Command outcome** | The completed business result of command execution: accepted with a command receipt, or rejected with a modeled reason. | Execution status, handler result |
 | **Command receipt** | The result detail for an accepted command: newly appended events, an exact replay, or no events. A no-events receipt is not durable in this release. | Publish receipt, broker acknowledgement |

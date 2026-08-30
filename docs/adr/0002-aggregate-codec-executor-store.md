@@ -42,9 +42,9 @@ that produced no events. Only codec and EventStore failures are returned as
 The `EventStore` port loads aggregate streams and atomically appends either one
 commit or an event transaction. An event transaction has an ordered set of
 unique aggregate-stream participants. A participant may contribute a commit or
-act as a read-only expected-version guard, but every transaction contains at
-least one commit. All participant commits share the transaction operation,
-fingerprint, correlation, and causation metadata.
+act as a read-only expected-version guard, but the first, primary participant
+always contributes a commit. All participant commits share the transaction
+operation, fingerprint, correlation, and causation metadata.
 
 The first participant is the primary stream. Its stream identity and the
 operation identity address the durable transaction receipt used for exact

@@ -17,9 +17,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint, EventBatch,
     EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind, EventTransaction,
-    ExecutionMetadata, ExpectedVersion, MAX_EVENTS_PER_BATCH, MAX_TRANSACTION_ITEMS, NewEvent,
-    OperationId, RecordedEvent, StreamId, StreamVersion, TransactionAppendOutcome,
-    TransactionReceipt, TransactionStreamReceipt,
+    ExecutionMetadata, ExpectedVersion, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent,
+    StreamId, StreamVersion, TransactionAppendOutcome, TransactionReceipt,
+    TransactionStreamReceipt, validate_transaction_item_limit,
 };
 use rostfrei_messaging_core::{CausationId, CorrelationId};
 use serde::{Deserialize, Serialize};
@@ -520,6 +520,8 @@ impl EventStore for NatsEventStore {
         &self,
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        validate_transaction_shape(&transaction)?;
+        let domain_event_count = validate_transaction_item_limit(&transaction)?;
         let primary_stream_id = transaction
             .primary_stream_id()
             .ok_or_else(|| invalid("an event transaction must contain at least one participant"))?
@@ -535,7 +537,7 @@ impl EventStore for NatsEventStore {
                 "transaction identity was reused with different content",
             ));
         }
-        validate_transaction_shape(&transaction)?;
+        validate_transaction_participant_requests(&transaction)?;
 
         let mut staged = Vec::with_capacity(transaction.participants().len());
         for participant in transaction.participants() {
@@ -580,28 +582,10 @@ impl EventStore for NatsEventStore {
             });
         }
 
-        let domain_event_count = staged.iter().try_fold(0_usize, |total, participant| {
-            total.checked_add(participant.recorded.len())
-        });
-        let domain_event_count =
-            domain_event_count.ok_or_else(|| invalid("transaction event count overflowed"))?;
-        let read_guard_count = staged
-            .iter()
-            .filter(|participant| participant.batch.is_none())
-            .count();
-        let transaction_item_count = domain_event_count
-            .checked_add(read_guard_count)
-            .and_then(|count| count.checked_add(1))
-            .ok_or_else(|| invalid("transaction item count overflowed"))?;
-        if transaction_item_count > MAX_TRANSACTION_ITEMS {
-            return Err(invalid(format!(
-                "transaction exceeds the {MAX_TRANSACTION_ITEMS}-item limit"
-            )));
-        }
         let transaction_event_count = u32::try_from(domain_event_count)
             .map_err(|_| invalid("transaction event count cannot be represented"))?;
 
-        let mut messages = Vec::with_capacity(transaction_item_count);
+        let mut messages = Vec::with_capacity(domain_event_count);
         let mut transaction_offset = 0_u32;
         for participant in &staged {
             let Some(batch) = &participant.batch else {
@@ -690,6 +674,7 @@ impl EventStore for NatsEventStore {
             expected_last_subject_sequence: Some(0),
             expectation_subject: None,
         });
+        let transaction_item_count = messages.len();
 
         let batch_id = new_transaction_batch_id(&self.context.client(), transaction.operation_id());
         let ack =
@@ -1805,11 +1790,11 @@ fn validate_transaction_shape(transaction: &EventTransaction) -> Result<(), Even
     }
     if transaction
         .participants()
-        .iter()
-        .all(|participant| participant.batch().is_none())
+        .first()
+        .is_some_and(|participant| participant.batch().is_none())
     {
         return Err(invalid(
-            "an event transaction must contain at least one event",
+            "an event transaction's primary participant must contain an event batch",
         ));
     }
     let mut streams = HashSet::with_capacity(transaction.participants().len());
@@ -1819,6 +1804,14 @@ fn validate_transaction_shape(transaction: &EventTransaction) -> Result<(), Even
                 "an event transaction must not contain duplicate streams",
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_transaction_participant_requests(
+    transaction: &EventTransaction,
+) -> Result<(), EventStoreError> {
+    for participant in transaction.participants() {
         if matches!(
             participant.expected_version(),
             ExpectedVersion::Exact(StreamVersion::ZERO)
@@ -1928,9 +1921,14 @@ fn decode_transaction_receipt(
         ));
     }
     required_single_header(headers, "Nats-Batch-Id")?;
-    required_single_header(headers, "Nats-Batch-Sequence")?
-        .parse::<u32>()
+    let batch_sequence = required_single_header(headers, "Nats-Batch-Sequence")?
+        .parse::<usize>()
         .map_err(|_| corrupt("stored transaction receipt has an invalid batch sequence"))?;
+    if batch_sequence == 0 {
+        return Err(corrupt(
+            "stored transaction receipt has an invalid batch sequence",
+        ));
+    }
     let wire: StoredTransactionReceiptWire = serde_json::from_slice(payload).map_err(|error| {
         corrupt(format!(
             "stored transaction receipt is invalid JSON: {error}"
@@ -1959,6 +1957,23 @@ fn decode_transaction_receipt(
     {
         return Err(corrupt(
             "stored transaction receipt belongs to another event store or has no participants",
+        ));
+    }
+    let expected_final_sequence =
+        wire.receipt
+            .participants
+            .iter()
+            .try_fold(1_usize, |item_count, participant| {
+                let event_count = usize::try_from(participant.event_count).map_err(|_| {
+                    corrupt("stored transaction receipt batch sequence calculation overflowed")
+                })?;
+                item_count.checked_add(event_count.max(1)).ok_or_else(|| {
+                    corrupt("stored transaction receipt batch sequence calculation overflowed")
+                })
+            })?;
+    if batch_sequence != expected_final_sequence {
+        return Err(corrupt(
+            "stored transaction receipt batch sequence does not match its participants",
         ));
     }
     Ok(wire.receipt)
@@ -2111,6 +2126,48 @@ mod tests {
         headers.insert(NATS_EXPECTED_STREAM, stream_name);
         headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
         headers.insert(NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL);
+        headers
+    }
+
+    fn transaction_receipt_fixture() -> TransactionReceiptContentWire {
+        TransactionReceiptContentWire {
+            event_store_stream: "EVENTS".to_owned(),
+            application: "acme".to_owned(),
+            bounded_context: "orders".to_owned(),
+            operation_id: "receipt-operation".to_owned(),
+            operation_fingerprint: ContentFingerprint::digest("receipt-content").to_hex(),
+            correlation_id: None,
+            causation_id: None,
+            participants: vec![
+                TransactionParticipantWire {
+                    stream: StreamIdentityWire {
+                        aggregate_type: "Test".to_owned(),
+                        aggregate_id: "one".to_owned(),
+                    },
+                    base_stream_version: 0,
+                    commit_id: Some("receipt-commit".to_owned()),
+                    event_count: 2,
+                },
+                TransactionParticipantWire {
+                    stream: StreamIdentityWire {
+                        aggregate_type: "Test".to_owned(),
+                        aggregate_id: "observed".to_owned(),
+                    },
+                    base_stream_version: 1,
+                    commit_id: None,
+                    event_count: 0,
+                },
+            ],
+        }
+    }
+
+    fn transaction_receipt_headers(batch_sequence: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("Content-Type", "application/json");
+        headers.insert(NATS_BATCH_ID, "receipt-batch");
+        headers.insert(NATS_BATCH_SEQUENCE, batch_sequence);
+        headers.insert(NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL);
+        headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
         headers
     }
 
@@ -2327,6 +2384,68 @@ mod tests {
         assert_eq!(decoded.transaction_event_ordinal, 0);
         assert_eq!(decoded.transaction_event_count, 1);
         assert_eq!(&decoded.recorded, recorded.last());
+    }
+
+    #[test]
+    fn transaction_receipt_batch_sequence_matches_all_transaction_items() {
+        let config = config();
+        let payload = encode_transaction_receipt(&transaction_receipt_fixture()).unwrap();
+
+        decode_transaction_receipt(&config, &transaction_receipt_headers("4"), &payload)
+            .expect("two events, one read guard, and one receipt use four batch items");
+
+        for sequence in ["0", "3", "5", "184467440737095516160"] {
+            let error = decode_transaction_receipt(
+                &config,
+                &transaction_receipt_headers(sequence),
+                &payload,
+            )
+            .err()
+            .expect("an invalid final receipt sequence must be rejected");
+            assert_eq!(error.kind(), EventStoreErrorKind::CorruptHistory);
+        }
+    }
+
+    #[test]
+    fn transaction_shape_rejects_a_read_only_primary() {
+        let primary = stream_id();
+        let secondary = StreamId::new(
+            AggregateType::new("Test").unwrap(),
+            AggregateId::new("secondary").unwrap(),
+        );
+        let operation_id = OperationId::new("read-only-primary").unwrap();
+        let fingerprint = ContentFingerprint::digest("read-only-primary");
+        let metadata = ExecutionMetadata::new(secondary.clone(), operation_id.clone(), fingerprint);
+        let batch = EventBatch::new(
+            metadata.commit_id().clone(),
+            operation_id.clone(),
+            fingerprint,
+            vec![NewEvent::new(metadata.event_id(0), "opened", 1, Vec::new()).unwrap()],
+        )
+        .unwrap();
+        let transaction = EventTransaction::new(
+            operation_id,
+            fingerprint,
+            vec![
+                rostfrei_core::TransactionParticipant::new(
+                    primary,
+                    ExpectedVersion::NoStream,
+                    None,
+                ),
+                rostfrei_core::TransactionParticipant::new(
+                    secondary,
+                    ExpectedVersion::NoStream,
+                    Some(batch),
+                ),
+            ],
+        );
+
+        assert_eq!(
+            validate_transaction_shape(&transaction)
+                .expect_err("a read-only primary must be rejected")
+                .kind(),
+            EventStoreErrorKind::InvalidRequest
+        );
     }
 
     #[test]
