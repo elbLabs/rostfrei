@@ -33,6 +33,8 @@ Cargo package:
 - `rostfrei-nats`: command and integration-event bus adapters, NATS messaging,
   and authoritative JetStream event storage.
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
+- `studio`: a local-first MessageSeries contract explorer for expected and
+  observed causal graphs.
 
 Messaging is application-scoped. An application name such as `fast-inbox`
 derives its command, command-response, integration-event, and quarantine streams
@@ -64,6 +66,12 @@ reset keeps Test and its state-dependent discovery unavailable until a reset
 succeeds. Operation status and traces are retained only in bounded memory,
 payloads are redacted by default, and local deployments must opt in explicitly
 to expose them.
+
+The first Studio slice visualizes the Tracer `MessageSeries` contracts without
+inventing live causality that the current HTTP feed does not expose. It loads
+definition or observation JSON locally, preserves source order, renders explicit
+parent links, reports contract and partial-observation issues, and provides a
+node inspector. See [`studio/README.md`](studio/README.md).
 
 rostfrei does not implicitly provision infrastructure. Operators use explicit
 provisioning APIs with bounded, application-scoped defaults; the local
