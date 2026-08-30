@@ -10,6 +10,8 @@ mod consumer;
 mod error;
 #[path = "../src/hex.rs"]
 mod hex;
+#[path = "../src/messaging_adapter.rs"]
+mod messaging_adapter;
 #[path = "../src/messaging_config.rs"]
 mod messaging_config;
 #[path = "../src/provisioning.rs"]
@@ -44,6 +46,7 @@ use rostfrei_messaging_core::{
 };
 use serde_json::{Value, json};
 
+use command_response::NatsCommandResponseReader;
 use connection::{NatsConnection, connect};
 use consumer::{NatsConsumerFactory, QuarantineRecord};
 use messaging_config::{MessagingTopology, NatsConnectionConfig, QueueGroup, StreamName};

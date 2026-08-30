@@ -17,6 +17,7 @@ futures-util = { workspace = true, optional = true }
 rostfrei-core = { path = "../rostfrei-core" }
 rostfrei-domain = { path = "../rostfrei-domain" }
 rostfrei-registry = { path = "../rostfrei-registry" }
+rostfrei = { path = "../rostfrei" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

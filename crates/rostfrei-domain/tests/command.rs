@@ -192,6 +192,18 @@ fn inventories_aggregate_and_domain_service_commands() {
 
 #[test]
 fn generated_json_commands_enforce_their_exact_struct_shape() {
+    let named = JsonChange {
+        value: "ready".to_owned(),
+        optional: Some(2),
+    };
+    assert_eq!(
+        named.encode_json().unwrap(),
+        json!({ "value": "ready", "optional": 2 })
+    );
+    assert_eq!(
+        JsonChange::decode_json(&named.encode_json().unwrap()).unwrap(),
+        named
+    );
     assert_eq!(
         JsonChange::decode_json(&json!({ "value": "ready" })).unwrap(),
         JsonChange {
@@ -210,8 +222,13 @@ fn generated_json_commands_enforce_their_exact_struct_shape() {
         JsonTuple::decode_json(&json!(["ready", 2])).unwrap(),
         JsonTuple("ready".to_owned(), 2)
     );
+    assert_eq!(
+        JsonTuple("ready".to_owned(), 2).encode_json().unwrap(),
+        json!(["ready", 2])
+    );
     assert!(JsonTuple::decode_json(&json!(["ready", 2, 3])).is_err());
     assert_eq!(JsonUnit::decode_json(&Value::Null).unwrap(), JsonUnit);
+    assert_eq!(JsonUnit.encode_json().unwrap(), Value::Null);
     assert_eq!(JsonUnit::decode_json(&json!({})).unwrap(), JsonUnit);
     assert!(JsonUnit::decode_json(&json!({ "unexpected": true })).is_err());
 }

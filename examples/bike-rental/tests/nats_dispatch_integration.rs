@@ -7,24 +7,60 @@ use std::{
 };
 
 use bike_rental::{
-    nats_runtime::{BikeRentalNatsConfig, NatsCommandDispatchAdapter, RentBicycleMessageHandler},
-    rental::RentBicycle,
+    nats_runtime::{BicycleRentalStarted, BicycleRentedIntegrationMapper, BikeRentalNatsConfig},
+    rental::{BicycleRented, RentBicycle, RentalFleetAggregate},
     runtime::{control_plane_builder, demo_stream, seed_demo},
 };
-use rostfrei::EventHistory;
-use rostfrei_control_plane::{ControlPlane, DispatchRequest, OperationResult, SimulationRequest};
-use rostfrei_messaging_core::{
-    CommandPublisher, CommandResponse, CommandResponseOutcome, CommandResponsePublisher,
-    CommandResponseReader, MessageConsumerFactory as _, MessageHandler,
+use rostfrei::{
+    CommandBus, CommandMessageAdapter, CommandProcessor, DomainEventDefinitionType,
+    DomainEventDispatcher, EncodedIntegrationMessage, EventHistory, EventStore,
+    IntegrationEventBus, IntegrationMessageAdapter, JsonDomainRejectionMapper,
 };
-use rostfrei_nats::{NatsConnection, NatsConnectionConfig, ServerVersion, connect};
+use rostfrei_control_plane::{
+    CommandBusDispatchAdapter, ControlPlane, DispatchRequest, OperationResult, SimulationRequest,
+};
+use rostfrei_messaging_core::{
+    CommandRejectionClassification, CommandResponse, CommandResponseOutcome, DeliveryDisposition,
+    IntegrationEventAddress, IntegrationEventEnvelope, MessageConsumerFactory as _,
+    MessageDelivery, MessageHandler,
+};
+use rostfrei_nats::{
+    NatsConnection, NatsConnectionConfig, NatsDomainEventConsumer, ServerVersion, connect,
+};
 use serde_json::json;
 use tokio::{
+    sync::mpsc,
     task::JoinHandle,
     time::{Instant, sleep},
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
+
+struct IntegrationRecorder {
+    sender: mpsc::Sender<IntegrationEventEnvelope<BicycleRentalStarted>>,
+}
+
+#[async_trait::async_trait]
+impl MessageHandler<IntegrationEventAddress> for IntegrationRecorder {
+    async fn handle(
+        &self,
+        delivery: MessageDelivery<IntegrationEventAddress>,
+    ) -> DeliveryDisposition {
+        let envelope = EncodedIntegrationMessage::from_delivery(
+            delivery.address().clone(),
+            delivery.message_id().clone(),
+            delivery.payload().to_vec(),
+        )
+        .and_then(|message| message.decode::<BicycleRentalStarted>());
+        let Ok(envelope) = envelope else {
+            return DeliveryDisposition::Terminate;
+        };
+        if self.sender.send(envelope).await.is_err() {
+            return DeliveryDisposition::Terminate;
+        }
+        DeliveryDisposition::Acknowledge
+    }
+}
 
 #[tokio::test]
 async fn real_nats_dispatch_updates_the_stream_and_cleans_its_scope() -> TestResult {
@@ -47,33 +83,60 @@ async fn real_nats_dispatch_updates_the_stream_and_cleans_its_scope() -> TestRes
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_dispatch_test(
     connection: &NatsConnection,
     config: &BikeRentalNatsConfig,
 ) -> TestResult {
     let store = config.connect_store(connection).await?;
     seed_demo(&store).await?;
-    let publisher = Arc::new(connection.publisher(config.messaging().topology().clone()));
-    let response_publisher: Arc<dyn CommandResponsePublisher> = publisher.clone();
-    let response_reader: Arc<dyn CommandResponseReader> =
-        Arc::new(connection.command_response_reader(config.messaging().topology().clone()));
+    let messaging = Arc::new(connection.messaging_adapter(config.messaging().topology().clone()));
+    let event_store: Arc<dyn EventStore> = Arc::new(store.clone());
+    let mut processor = CommandProcessor::new(event_store);
+    processor.register::<RentBicycle, _>(JsonDomainRejectionMapper::new(
+        CommandRejectionClassification::Conflict,
+    ))?;
     let consumer = connection
         .consumer_factory(config.messaging().topology().clone())
         .create(config.command_consumer().clone())?;
-    let handler: Arc<dyn MessageHandler<_>> = Arc::new(RentBicycleMessageHandler::new(
-        store.clone(),
-        response_publisher,
-        Arc::clone(&response_reader),
-    ));
-    let consumer_task = tokio::spawn(async move { consumer.run(handler).await });
+    let handler: Arc<dyn MessageHandler<_>> =
+        Arc::new(messaging.command_handler(Arc::new(processor)));
+    let command_consumer_task = tokio::spawn(async move { consumer.run(handler).await });
+
+    let integration_adapter: Arc<dyn IntegrationMessageAdapter> = messaging.clone();
+    let integration_bus = IntegrationEventBus::new(config.context().clone(), integration_adapter);
+    let mut dispatcher = DomainEventDispatcher::new();
+    dispatcher.register::<RentalFleetAggregate, BicycleRented, _>(
+        BicycleRented::DEFINITION.id,
+        Arc::new(BicycleRentedIntegrationMapper::new(integration_bus)),
+    )?;
+    let domain_consumer = NatsDomainEventConsumer::connect(
+        connection.jetstream().clone(),
+        config.event_store().clone(),
+        config.domain_event_consumer().clone(),
+        Arc::new(dispatcher),
+    )
+    .await?;
+    let (domain_shutdown, domain_shutdown_receiver) = tokio::sync::watch::channel(false);
+    let domain_consumer_task = tokio::spawn(async move {
+        domain_consumer
+            .run_until_shutdown(domain_shutdown_receiver)
+            .await
+    });
+    let integration_consumer = connection
+        .consumer_factory(config.messaging().topology().clone())
+        .create(config.integration_event_consumer().clone())?;
+    let (integration_sender, mut integration_receiver) = mpsc::channel(1);
+    let integration_handler: Arc<dyn MessageHandler<_>> = Arc::new(IntegrationRecorder {
+        sender: integration_sender,
+    });
+    let integration_consumer_task =
+        tokio::spawn(async move { integration_consumer.run(integration_handler).await });
 
     let test = async {
-        let command_publisher: Arc<dyn CommandPublisher> = publisher.clone();
-        let adapter = Arc::new(NatsCommandDispatchAdapter::new(
-            command_publisher,
-            response_reader,
-            config.command_address().clone(),
-        ));
+        let command_adapter: Arc<dyn CommandMessageAdapter> = messaging;
+        let command_bus = CommandBus::new(config.context().clone(), command_adapter);
+        let adapter = Arc::new(CommandBusDispatchAdapter::new(command_bus));
         let history: Arc<dyn EventHistory> = Arc::new(store.clone());
         let mut builder = control_plane_builder(history);
         builder.register_json::<RentBicycle>()?;
@@ -92,6 +155,15 @@ async fn run_dispatch_test(
             "first dispatch did not complete as accepted",
         )?;
         wait_for_history_len(&store, 2).await?;
+        let integration =
+            tokio::time::timeout(Duration::from_secs(10), integration_receiver.recv())
+                .await?
+                .ok_or_else(|| io::Error::other("integration-event consumer stopped"))?;
+        ensure(
+            integration.payload().fleet_id().as_str() == "city-fleet"
+                && integration.payload().bicycle_id().as_str() == "bike-42",
+            "integration event did not preserve rental identity",
+        )?;
         let second = dispatch(&control_plane, "real-rental-second").await?;
         ensure(
             matches!(
@@ -129,7 +201,10 @@ async fn run_dispatch_test(
         )
     }
     .await;
-    stop_consumer(consumer_task).await;
+    let _ = domain_shutdown.send(true);
+    stop_task(command_consumer_task).await;
+    stop_task(domain_consumer_task).await;
+    stop_task(integration_consumer_task).await;
     test
 }
 
@@ -234,7 +309,7 @@ async fn wait_for_command_stream_empty(
     }
 }
 
-async fn stop_consumer(task: JoinHandle<Result<(), rostfrei_messaging_core::ConsumeError>>) {
+async fn stop_task<T>(task: JoinHandle<T>) {
     task.abort();
     let _ = task.await;
 }
