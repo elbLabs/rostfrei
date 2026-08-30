@@ -14,8 +14,8 @@ use rostfrei_core::{
     DomainEventHandlerErrorKind, DomainEventRegistrationError, EnvelopeError, EventBatch,
     EventCodec, EventCodecError, EventCodecErrorKind, EventHistory, EventStore, EventStoreError,
     EventStoreErrorKind, EventTransaction, ExecutionMetadata, Executor, ExpectedVersion,
-    InMemoryEventStore, NewEvent, OperationId, RecordedEvent, SimulationDecision, StreamId,
-    StreamVersion, TransactionParticipant,
+    InMemoryEventStore, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent,
+    SimulationDecision, StreamId, StreamVersion, TransactionParticipant,
 };
 use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_messaging_core::{CausationId, CorrelationId};
@@ -127,6 +127,9 @@ enum AccountCommand {
     CreditThenObserve {
         amount: i64,
     },
+    CreditMany {
+        event_count: usize,
+    },
     RecordThenReject,
     NoOp,
 }
@@ -163,6 +166,11 @@ impl CommandHandler<AccountCommand> for Account {
                 aggregate.raise(AccountEvent::BalanceObserved {
                     balance: balance_after_credit,
                 });
+            }
+            AccountCommand::CreditMany { event_count } => {
+                for _ in 0..*event_count {
+                    aggregate.raise(AccountEvent::Credited { amount: 1 });
+                }
             }
             AccountCommand::RecordThenReject => {
                 aggregate.raise(AccountEvent::Credited { amount: 100 });
@@ -925,6 +933,44 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
             .await
             .expect("load should succeed"),
         before_rejection
+    );
+}
+
+#[tokio::test]
+async fn executor_rejects_commands_that_exceed_the_atomic_commit_limit() {
+    let stream = stream("oversized-command").expect("valid oversized command stream fixture");
+    let executor = Executor::with_codec(InMemoryEventStore::new(), AccountCodec);
+    let event_count = MAX_EVENTS_PER_BATCH.saturating_add(1);
+
+    let error = executor
+        .execute::<Account, _>(
+            metadata(
+                &stream,
+                "oversized-command-operation",
+                "oversized-command-content",
+            )
+            .expect("valid oversized command metadata fixture"),
+            &AccountCommand::CreditMany { event_count },
+        )
+        .await
+        .expect_err("a command exceeding the atomic commit limit must fail");
+    let CommandExecutionError::Store(error) = error else {
+        panic!("an oversized command must fail as an event-store request");
+    };
+    assert_eq!(error.kind(), EventStoreErrorKind::InvalidRequest);
+    assert_eq!(
+        error.message(),
+        format!(
+            "event batch contains {event_count} domain events, exceeding the {MAX_EVENTS_PER_BATCH}-event atomic commit limit; split the work across commands"
+        )
+    );
+    assert!(
+        executor
+            .store()
+            .load(&stream)
+            .await
+            .expect("oversized command stream should load")
+            .is_empty()
     );
 }
 
