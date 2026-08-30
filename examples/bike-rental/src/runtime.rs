@@ -1,8 +1,8 @@
 use std::{convert::Infallible, sync::Arc};
 
 use rostfrei::{
-    Aggregate, AggregateInstance, Apply, CommandExecutionError, CommandHandler, ContentFingerprint,
-    DomainCommandType, DomainRegistry, EventHistory, EventStore, ExecutionMetadata, Executor,
+    Aggregate, AggregateInstance, Apply, CommandExecutionError, CommandHandler, CommandType,
+    ContentFingerprint, DomainRegistry, EventHistory, EventStore, ExecutionMetadata, Executor,
     Initialize, OperationId, RegistrationError, StreamAggregateId, StreamAggregateType, StreamId,
     domain_module,
 };
@@ -63,62 +63,9 @@ impl CommandInputOptions<ReturnBicycle> for ReturnBicycleInputOptions {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct RentBicycleInputOptions;
-
-impl CommandInputOptions<RentBicycle> for RentBicycleInputOptions {
-    fn fields(&self, state: &RentalFleet) -> Vec<CommandInputField> {
-        let bicycles = state
-            .bicycles()
-            .iter()
-            .filter(|bicycle| {
-                bicycle.status() == BicycleStatus::Available
-                    && bicycle.condition() == BicycleCondition::Serviceable
-            })
-            .map(|bicycle| {
-                CommandInputOption::new(
-                    bicycle.bicycle_id().as_str(),
-                    bicycle.bicycle_id().as_str(),
-                )
-                .with_description("Available and serviceable")
-            })
-            .collect();
-        vec![CommandInputField::select("bicycle_id", "Bicycle", bicycles)]
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ReturnBicycleInputOptions;
-
-impl CommandInputOptions<ReturnBicycle> for ReturnBicycleInputOptions {
-    fn fields(&self, state: &RentalFleet) -> Vec<CommandInputField> {
-        let bicycles = state
-            .bicycles()
-            .iter()
-            .filter(|bicycle| bicycle.status() == BicycleStatus::Rented)
-            .map(|bicycle| {
-                CommandInputOption::new(
-                    bicycle.bicycle_id().as_str(),
-                    bicycle.bicycle_id().as_str(),
-                )
-                .with_description("Currently rented")
-            })
-            .collect();
-        vec![CommandInputField::select("bicycle_id", "Bicycle", bicycles)]
-    }
-}
-
 impl Initialize<RentalFleetAggregate> for RentalFleet {
-    #[allow(
-        clippy::expect_used,
-        reason = "StreamId has already validated the non-empty aggregate identity"
-    )]
     fn initialize(stream_id: &StreamId) -> Self {
-        Self::new(
-            FleetId::new(stream_id.aggregate_id().as_str())
-                .expect("a valid stream aggregate ID is a valid fleet ID"),
-            Vec::new(),
-        )
+        Self::new(FleetId::from(stream_id.aggregate_id()), Vec::new())
     }
 }
 
@@ -160,7 +107,7 @@ impl Apply<BicycleAdded> for RentalFleet {
 }
 
 impl CommandHandler<RentBicycle> for RentalFleetAggregate {
-    type Rejection = <RentBicycle as DomainCommandType>::Rejection;
+    type Rejection = <RentBicycle as CommandType>::Rejection;
 
     fn handle(
         command: &RentBicycle,
@@ -171,7 +118,7 @@ impl CommandHandler<RentBicycle> for RentalFleetAggregate {
 }
 
 impl CommandHandler<ReturnBicycle> for RentalFleetAggregate {
-    type Rejection = <ReturnBicycle as DomainCommandType>::Rejection;
+    type Rejection = <ReturnBicycle as CommandType>::Rejection;
 
     fn handle(
         command: &ReturnBicycle,
@@ -182,7 +129,7 @@ impl CommandHandler<ReturnBicycle> for RentalFleetAggregate {
 }
 
 impl CommandHandler<AddBicycle> for RentalFleetAggregate {
-    type Rejection = <AddBicycle as DomainCommandType>::Rejection;
+    type Rejection = <AddBicycle as CommandType>::Rejection;
 
     fn handle(
         _command: &AddBicycle,

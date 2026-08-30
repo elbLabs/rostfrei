@@ -126,7 +126,7 @@ impl Event for TestEvent {
     }
 }
 
-#[derive(domain::DomainCommand)]
+#[derive(domain::Command)]
 #[domain(
     id = "test-command",
     label = "Test command",
@@ -217,7 +217,7 @@ impl Aggregate for OtherTestAggregate {
     fn apply(_state: &mut Self::State, _event: &Self::Event) {}
 }
 
-#[derive(domain::DomainCommand)]
+#[derive(domain::Command)]
 #[domain(
     id = "test-command",
     label = "Test command",
