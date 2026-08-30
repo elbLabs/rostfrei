@@ -4,8 +4,8 @@ use domain::{
     Aggregate as DomainAggregate, AggregateType, BoundedContext, DomainCommand, DomainCommandType,
     DomainEvent, DomainIdentity, Entity, JsonCommandPayload,
 };
-use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance};
-use rostfrei_domain_runtime::{Apply, Initialize, domain_command_handler, domain_module};
+use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance, CommandHandler};
+use rostfrei_domain_runtime::{Apply, Initialize, domain_module};
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::{Deserialize, Serialize};
 
@@ -93,7 +93,16 @@ impl CatalogRuntimeActions for AggregateInstance<CatalogAggregate> {
     }
 }
 
-domain_command_handler!(OpenCatalog => open_catalog);
+impl CommandHandler<OpenCatalog> for CatalogAggregate {
+    type Rejection = std::convert::Infallible;
+
+    fn handle(
+        command: &OpenCatalog,
+        aggregate: &mut AggregateInstance<Self>,
+    ) -> Result<(), Self::Rejection> {
+        aggregate.open_catalog(command)
+    }
+}
 
 domain_module! {
     struct CatalogModule {

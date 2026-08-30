@@ -21,7 +21,7 @@ pub trait AggregateRuntime:
 pub mod __private {
     pub use domain::{DomainCommandOwnerType, DomainCommandType};
     pub use rostfrei_core as core;
-    pub use rostfrei_core::{Aggregate, AggregateInstance, CommandHandler};
+    pub use rostfrei_core::{Aggregate, AggregateInstance};
     pub use rostfrei_registry::{
         CommandDefinition, CommandDescriptor, DomainModule, ModuleDescriptor,
     };
@@ -109,25 +109,6 @@ macro_rules! domain_module {
                         $(<$command as $crate::__private::CommandDefinition>::descriptor()),*
                     ],
                 }
-            }
-        }
-    };
-}
-
-/// Connects a domain command to an aggregate-instance action method.
-#[macro_export]
-macro_rules! domain_command_handler {
-    ($command:ty => $method:ident) => {
-        impl $crate::__private::CommandHandler<$command>
-            for <$command as $crate::__private::DomainCommandType>::Owner
-        {
-            type Rejection = <$command as $crate::__private::DomainCommandType>::Rejection;
-
-            fn handle(
-                command: &$command,
-                aggregate: &mut $crate::__private::AggregateInstance<Self>,
-            ) -> ::core::result::Result<(), Self::Rejection> {
-                aggregate.$method(command)
             }
         }
     };
