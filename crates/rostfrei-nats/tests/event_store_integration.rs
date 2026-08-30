@@ -21,8 +21,8 @@ use event_store_config::{
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventStore,
     EventStoreError, EventStoreErrorKind, EventTransaction, ExecutionMetadata, ExpectedVersion,
-    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
-    TransactionAppendOutcome, TransactionParticipant,
+    MAX_EVENTS_PER_BATCH, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent, StreamId,
+    StreamVersion, TransactionAppendOutcome, TransactionParticipant,
 };
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
 use rostfrei_testing::event_store_contract;
@@ -375,20 +375,20 @@ async fn real_nats_event_store_contract_and_operator_policy() {
                 &boundary_stream,
                 "maximum-batch-operation",
                 "maximum-batch-content",
-                1_000,
+                u32::try_from(MAX_EVENTS_PER_BATCH).expect("maximum event count should fit u32"),
             )
             .expect("maximum atomic batch fixture"),
         )
         .await
-        .expect("the ADR-50 maximum event count should append atomically");
-    assert_eq!(boundary_outcome.events().len(), 1_000);
+        .expect("the framework maximum event count should append atomically");
+    assert_eq!(boundary_outcome.events().len(), MAX_EVENTS_PER_BATCH);
     assert_eq!(
         store
             .load(&boundary_stream)
             .await
             .expect("maximum atomic batch should load")
             .len(),
-        1_000
+        MAX_EVENTS_PER_BATCH
     );
 
     let incompatible_stream = stream("incompatible-wire").expect("incompatible stream id");
@@ -1123,6 +1123,7 @@ async fn transaction_contract_and_wire_policy(
             Err(ref error)
                 if error.kind() == EventStoreErrorKind::InvalidRequest
                     && error.message().contains("item limit")
+                    && error.message().contains("split the work across commands")
         ),
         "an oversized transaction was not rejected before receipt I/O",
     )?;
