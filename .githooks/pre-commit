@@ -6,11 +6,3 @@ cd "$repository_root"
 
 printf '%s\n' 'Running workspace Clippy checks...'
 cargo clippy --workspace --all-targets --all-features
-
-printf '%s\n' 'Running Studio lint and type checks...'
-(
-  cd "$repository_root/studio"
-  bun install --frozen-lockfile
-  bun run lint
-  bun run typecheck
-)

@@ -51,9 +51,6 @@ authorization. The aggregate identity in the API is qualified by its bounded
 context, and `#[domain(json)]` supplies the generated command and rejection JSON
 while aggregate event JSON comes from the compiled aggregate codec.
 
-[`studio`](studio) is the standalone local UI for catalog discovery, Simulate,
-isolated Test, production Dispatch, operation status, and correlation streams.
-
 A Tracer instance receives an explicit test `EventHistory` for discovery,
 dynamic inputs, and read-only Simulate. Test and Dispatch instead use separately
 configured implementations of the same protocol-neutral command transport. The
@@ -96,15 +93,10 @@ Enable the tracked Git hooks once per checkout:
 git config core.hooksPath .githooks
 ```
 
-The pre-commit hook runs Clippy for every workspace package, target, and feature,
-then installs the locked Studio dependencies and runs its lint and type checks:
+The pre-commit hook runs Clippy for every workspace package, target, and feature:
 
 ```sh
 cargo clippy --workspace --all-targets --all-features
-cd studio
-bun install --frozen-lockfile
-bun run lint
-bun run typecheck
 ```
 
 A commit is rejected when Clippy reports an error.
