@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc, Mutex as StdMutex, PoisonError,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -233,6 +233,12 @@ pub struct CorrelationSubscription {
     cursor: u64,
 }
 
+impl Drop for CorrelationSubscription {
+    fn drop(&mut self) {
+        self.record.subscribers.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 impl CorrelationSubscription {
     pub async fn next(&mut self) -> Option<CorrelationEvent> {
         loop {
@@ -395,6 +401,13 @@ impl CorrelationHub {
         let record = self.record(correlation_id)?;
         let mode = record.mode;
         let state = record.state.lock().await;
+        let lifecycle = record
+            .lifecycle
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if record.closed.load(Ordering::Acquire) {
+            return Err(CorrelationError::NotFound);
+        }
         let latest = state.next_id.saturating_sub(1);
         let oldest = state.events.front().map_or(state.next_id, |event| event.id);
         if after > latest {
@@ -403,6 +416,8 @@ impl CorrelationHub {
         if after.saturating_add(1) < oldest {
             return Err(CorrelationError::ExpiredCursor { oldest });
         }
+        record.subscribers.fetch_add(1, Ordering::AcqRel);
+        drop(lifecycle);
         drop(state);
         Ok((
             mode,
@@ -431,17 +446,37 @@ impl CorrelationHub {
         }
     }
 
-    pub fn remove(&self, correlation_id: &str) {
-        let record = {
-            let mut table = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-            table
-                .insertion_order
-                .retain(|retained| retained != correlation_id);
-            table.records.remove(correlation_id)
+    pub fn has_active_subscribers(&self, correlation_id: &str) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .records
+            .get(correlation_id)
+            .is_some_and(|record| record.subscribers.load(Ordering::Acquire) > 0)
+    }
+
+    pub fn remove_if_inactive(&self, correlation_id: &str) -> bool {
+        let mut table = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(record) = table.records.get(correlation_id).cloned() else {
+            return true;
         };
-        if let Some(record) = record {
-            record.close();
+        let lifecycle = record
+            .lifecycle
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if record.subscribers.load(Ordering::Acquire) > 0 {
+            return false;
         }
+        table
+            .insertion_order
+            .retain(|retained| retained != correlation_id);
+        table.records.remove(correlation_id);
+        drop(table);
+        record.closed.store(true, Ordering::Release);
+        let latest = *record.changed.borrow();
+        record.changed.send_replace(latest);
+        drop(lifecycle);
+        true
     }
 
     fn record(&self, correlation_id: &str) -> Result<Arc<CorrelationRecord>, CorrelationError> {
@@ -482,6 +517,7 @@ struct CorrelationRecord {
     lifecycle: StdMutex<()>,
     changed: watch::Sender<u64>,
     closed: AtomicBool,
+    subscribers: AtomicUsize,
 }
 
 impl CorrelationRecord {
@@ -515,6 +551,7 @@ impl CorrelationRecord {
             lifecycle: StdMutex::new(()),
             changed,
             closed: AtomicBool::new(false),
+            subscribers: AtomicUsize::new(0),
         }))
     }
 

@@ -156,6 +156,7 @@ impl NatsCorrelationSubscription {
                     };
                     if family_matches(&self.application, message.subject.as_str(), CorrelatedMessageFamily::DomainEvent)
                         && let Some(message) = correlated_message(&message.message, CorrelatedMessageFamily::DomainEvent)
+                        && self.domain_events.delivery_is_current(&self.context).await
                     {
                         handler.handle(message).await;
                     }
@@ -169,6 +170,7 @@ impl NatsCorrelationSubscription {
                     };
                     if family_matches(&self.application, message.subject.as_str(), CorrelatedMessageFamily::IntegrationEvent)
                         && let Some(message) = correlated_message(&message.message, CorrelatedMessageFamily::IntegrationEvent)
+                        && self.integration_events.delivery_is_current(&self.context).await
                     {
                         handler.handle(message).await;
                     }
@@ -218,7 +220,7 @@ impl ObservedStream {
     async fn refresh_if_recreated(
         &mut self,
         context: &jetstream::Context,
-    ) -> Result<(), NatsError> {
+    ) -> Result<bool, NatsError> {
         let stream = context
             .get_stream(self.name.clone())
             .await
@@ -226,8 +228,18 @@ impl ObservedStream {
         if stream.cached_info().created.to_string() != self.generation {
             // Every message in a replacement stream is newer than the original subscription.
             *self = Self::subscribe(context, self.name.clone(), DeliverPolicy::All).await?;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
+    }
+
+    async fn delivery_is_current(&mut self, context: &jetstream::Context) -> bool {
+        loop {
+            match self.refresh_if_recreated(context).await {
+                Ok(recreated) => return !recreated,
+                Err(_) => tokio::time::sleep(STREAM_GENERATION_POLL_INTERVAL).await,
+            }
+        }
     }
 }
 

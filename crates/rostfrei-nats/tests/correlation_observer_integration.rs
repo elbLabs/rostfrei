@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     error::Error,
     io, process,
     sync::Arc,
@@ -26,6 +27,7 @@ type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(5);
 const ABSENCE_TIMEOUT: Duration = Duration::from_millis(500);
+const REPLACEMENT_MESSAGE_COUNT: usize = 8;
 
 struct ChannelHandler {
     sender: mpsc::UnboundedSender<CorrelatedMessage>,
@@ -202,20 +204,43 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
 
     context.delete_stream(&domain_stream).await?;
     context.create_stream(domain_config).await?;
-    publish_correlated(
-        &context,
-        &domain_subject,
-        "replacement-domain",
-        "replacement-correlation",
-        b"replacement",
-    )
-    .await?;
-    let replacement = receive_observation(&mut observations).await?;
+    for index in 0..REPLACEMENT_MESSAGE_COUNT {
+        publish_correlated(
+            &context,
+            &domain_subject,
+            &format!("replacement-domain-{index}"),
+            &format!("replacement-correlation-{index}"),
+            b"replacement",
+        )
+        .await?;
+    }
+
+    let mut replacement_ids = BTreeSet::new();
+    for _ in 0..REPLACEMENT_MESSAGE_COUNT {
+        let replacement = receive_observation(&mut observations).await?;
+        ensure(
+            replacement.family() == CorrelatedMessageFamily::DomainEvent
+                && replacement.payload() == b"replacement",
+            "observer emitted an unexpected replacement-stream observation",
+        )?;
+        let message_id = replacement
+            .message_id()
+            .ok_or_else(|| io::Error::other("replacement observation omitted its message ID"))?;
+        ensure(
+            replacement_ids.insert(message_id.as_str().to_owned()),
+            "observer emitted a duplicate replacement-stream observation",
+        )?;
+    }
     ensure(
-        replacement.family() == CorrelatedMessageFamily::DomainEvent
-            && replacement.correlation_id().as_str() == "replacement-correlation"
-            && replacement.payload() == b"replacement",
-        "observer did not replay the new stream generation",
+        (0..REPLACEMENT_MESSAGE_COUNT)
+            .all(|index| replacement_ids.contains(&format!("replacement-domain-{index}"))),
+        "observer missed a replacement-stream observation",
+    )?;
+    ensure(
+        tokio::time::timeout(ABSENCE_TIMEOUT, observations.recv())
+            .await
+            .is_err(),
+        "observer replayed a replacement-stream observation",
     )?;
 
     current_worker_message.ack().await?;

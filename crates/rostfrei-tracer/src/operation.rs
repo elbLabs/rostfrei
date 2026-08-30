@@ -218,6 +218,7 @@ pub struct OperationRecord {
     state: Mutex<OperationState>,
     changed: watch::Sender<u64>,
     terminal: AtomicBool,
+    correlation_recorded: AtomicBool,
     execution: StdMutex<Option<AbortHandle>>,
 }
 
@@ -251,6 +252,7 @@ impl OperationRecord {
             }),
             changed,
             terminal: AtomicBool::new(false),
+            correlation_recorded: AtomicBool::new(false),
             execution: StdMutex::new(None),
         })
     }
@@ -414,6 +416,14 @@ impl OperationRecord {
         self.terminal.load(Ordering::Acquire)
     }
 
+    pub fn mark_correlation_recorded(&self) {
+        self.correlation_recorded.store(true, Ordering::Release);
+    }
+
+    pub fn is_evictable(&self) -> bool {
+        self.is_terminal() && self.correlation_recorded.load(Ordering::Acquire)
+    }
+
     fn clear_execution(&self) {
         self.execution
             .lock()
@@ -504,4 +514,30 @@ pub async fn subscribe(
     after: u64,
 ) -> Result<OperationSubscription, SubscriptionError> {
     record.subscription(after).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn terminal_record_is_not_evictable_before_its_correlation_result() {
+        let record = OperationRecord::new(NewOperation {
+            operation_id: "operation-1".to_owned(),
+            correlation_id: "correlation-1".to_owned(),
+            fingerprint: "fingerprint".to_owned(),
+            mode: OperationMode::Test,
+            command: "test-command",
+            schema_version: 1,
+            aggregate_type: "test-context/test-aggregate",
+            aggregate_id: "aggregate-1",
+        });
+
+        record.fail("test-failure", "failed".to_owned()).await;
+        assert!(record.is_terminal());
+        assert!(!record.is_evictable());
+
+        record.mark_correlation_recorded();
+        assert!(record.is_evictable());
+    }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   Activity,
@@ -107,15 +107,7 @@ type SubmittedRequest = {
 
 function JsonView({ value }: { value: unknown }) {
   const json = JSON.stringify(value, null, 2) ?? "null";
-  const highlighted = json
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/("(?:\\.|[^"\\])*")(?=\s*:)/g, '<span class="json-key">$1</span>')
-    .replace(/:\s*("(?:\\.|[^"\\])*")/g, ': <span class="json-string">$1</span>')
-    .replace(/\b(true|false|null)\b/g, '<span class="json-literal">$1</span>')
-    .replace(/\b(-?\d+(?:\.\d+)?)\b/g, '<span class="json-number">$1</span>');
-  return <code dangerouslySetInnerHTML={{ __html: highlighted }} />;
+  return <code>{json}</code>;
 }
 
 function payloadRecord(template: unknown): Record<string, unknown> {
@@ -208,9 +200,12 @@ function App() {
   const streamAbortRef = useRef<AbortController | null>(null);
   const discoveryAbortRef = useRef<AbortController | null>(null);
   const inputsAbortRef = useRef<AbortController | null>(null);
+  const loadInitialConnection = useEffectEvent(() => {
+    void loadConnection("", "", true);
+  });
 
   useEffect(() => {
-    void loadConnection("", "", true);
+    loadInitialConnection();
     return () => {
       discoveryAbortRef.current?.abort();
       inputsAbortRef.current?.abort();
@@ -290,6 +285,7 @@ function App() {
     ? selectedCorrelationEvent
     : undefined;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scenarioRevision deliberately refreshes dynamic inputs after a test reset.
   useEffect(() => {
     inputsAbortRef.current?.abort();
     setCommandInputs(null);
@@ -697,7 +693,7 @@ function App() {
             <div className="brand-mark" aria-hidden="true"><span>R</span></div>
             <div><div className="brand-name">rostfrei</div><div className="brand-product">Studio</div></div>
           </div>
-          <div className="environment-pill" aria-label="Tracer connection state">
+          <div className="environment-pill" role="status" aria-label="Tracer connection state">
             <span className={`live-orb ${connected ? "is-live" : ""}`} />
             <span>{connectionLabel}</span>
             {selectedContext && <><span className="environment-divider" /><strong>{selectedContext.label}</strong></>}
