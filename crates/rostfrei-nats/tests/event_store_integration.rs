@@ -10,10 +10,10 @@ mod stream_policy;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use async_nats::jetstream::message::PublishMessage;
+use async_nats::{Request, jetstream::message::PublishMessage};
 use event_store::{NatsEventStore, provision_event_store};
 use event_store_config::{
-    DEFAULT_EVENT_STORE_MAX_EVENT_BYTES, LEGACY_EVENT_STORE_MAX_EVENT_BYTES, NatsEventStoreConfig,
+    DEFAULT_EVENT_STORE_MAX_EVENT_BYTES, MAX_SUPPORTED_EVENT_BYTES, NatsEventStoreConfig,
 };
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventStore,
@@ -23,6 +23,7 @@ use rostfrei_core::{
 };
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
 use rostfrei_testing::event_store_contract;
+use sha2::{Digest, Sha256};
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -68,6 +69,9 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     legacy_history_remains_readable_after_lower_limit_provisioning(&context)
         .await
         .expect("legacy history migration coverage");
+    transaction_history_remains_readable_after_lower_limit_provisioning(&context)
+        .await
+        .expect("transaction history migration coverage");
     legacy_event_store_policy_is_upgraded(&context)
         .await
         .expect("legacy stream policy migration coverage");
@@ -96,15 +100,30 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         .expect("provisioned stream should connect");
     assert_eq!(store.config(), &config);
 
-    event_store_contract::try_run(|| store.clone())
-        .await
-        .expect("event-store contract");
+    let (event_store_contract_result, transaction_contract_result) = tokio::join!(
+        event_store_contract::try_run(|| store.clone()),
+        event_store_contract::try_run_atomic_multi_stream_transactions(|| store.clone()),
+    );
+    event_store_contract_result.expect("event-store contract");
+    transaction_contract_result.expect("atomic multi-stream transaction contract");
     transaction_contract_and_wire_policy(&store, &context, &config)
         .await
         .expect("transaction contract and wire policy");
     concurrent_transaction_identity_race(&store)
         .await
         .expect("transaction identity race");
+    unavailable_reconciliation_policy(&store, &url, &config)
+        .await
+        .expect("unavailable transaction reconciliation policy");
+    forged_receipt_cannot_bind_a_direct_commit(&store, &context, &config)
+        .await
+        .expect("forged transaction receipt provenance");
+    reused_batch_id_and_filler_guard_are_rejected(&store, &context, &config)
+        .await
+        .expect("reused batch identity and filler guard corruption");
+    schema_four_event_with_filler_is_not_loadable(&store, &context, &config)
+        .await
+        .expect("schema-4 history receipt validation");
 
     let concurrent_stream = stream("concurrent-atomic-batches").expect("concurrent stream id");
     let concurrent_results: [_; 2] = tokio::join!(
@@ -467,7 +486,7 @@ async fn legacy_history_remains_readable_after_lower_limit_provisioning(
     let historical = NatsEventStoreConfig::new(&bounded_context, &stream_name)?
         .with_storage_limits(64 * 1024 * 1024, HISTORICAL_WRITE_LIMIT)?;
     let mut legacy_policy = historical.stream_config();
-    legacy_policy.max_message_size = i32::try_from(LEGACY_EVENT_STORE_MAX_EVENT_BYTES)?;
+    legacy_policy.max_message_size = i32::try_from(MAX_SUPPORTED_EVENT_BYTES)?;
     context.create_stream(legacy_policy).await?;
 
     let historical_store = NatsEventStore::connect(context.clone(), historical).await?;
@@ -498,8 +517,8 @@ async fn legacy_history_remains_readable_after_lower_limit_provisioning(
         "historical event did not exceed the current write limit",
     )?;
     check(
-        raw.payload.len() <= LEGACY_EVENT_STORE_MAX_EVENT_BYTES,
-        "historical event exceeded the legacy read limit",
+        raw.payload.len() <= MAX_SUPPORTED_EVENT_BYTES,
+        "historical event exceeded the supported read limit",
     )?;
 
     let mut legacy_policy = legacy_stream.cached_info().config.clone();
@@ -510,7 +529,7 @@ async fn legacy_history_remains_readable_after_lower_limit_provisioning(
     legacy_stream = context.get_stream(current.stream_name()).await?;
     check(
         legacy_stream.cached_info().config.max_message_size
-            == i32::try_from(LEGACY_EVENT_STORE_MAX_EVENT_BYTES)?,
+            == i32::try_from(MAX_SUPPORTED_EVENT_BYTES)?,
         "legacy stream message capacity was not preserved",
     )?;
     check(
@@ -545,14 +564,107 @@ async fn legacy_history_remains_readable_after_lower_limit_provisioning(
     )
 }
 
+async fn transaction_history_remains_readable_after_lower_limit_provisioning(
+    context: &async_nats::jetstream::Context,
+) -> TestResult<()> {
+    const HISTORICAL_WRITE_LIMIT: usize = 64 * 1024;
+    const CURRENT_WRITE_LIMIT: usize = 4 * 1024;
+    const READ_ONLY_PARTICIPANTS: usize = 128;
+
+    if context.client().max_payload() < HISTORICAL_WRITE_LIMIT + 4 * 1024 {
+        eprintln!("NATS max_payload is too small for transaction migration coverage");
+        return Ok(());
+    }
+    let (bounded_context, stream_name) = unique_names("transaction-limit-migration")?;
+    let historical = NatsEventStoreConfig::new(&bounded_context, &stream_name)?
+        .with_storage_limits(64 * 1024 * 1024, HISTORICAL_WRITE_LIMIT)?;
+    let current = NatsEventStoreConfig::new(&bounded_context, &stream_name)?
+        .with_storage_limits(64 * 1024 * 1024, CURRENT_WRITE_LIMIT)?;
+    provision_event_store(context, &historical).await?;
+    let historical_store = NatsEventStore::connect(context.clone(), historical).await?;
+    let primary = stream("transaction-limit-migration-primary")?;
+    let operation = "transaction-limit-migration-operation";
+    let operation_id = OperationId::new(operation)?;
+    let fingerprint = ContentFingerprint::digest(operation);
+    let mut participants = Vec::with_capacity(READ_ONLY_PARTICIPANTS + 1);
+    participants.push(TransactionParticipant::new(
+        primary.clone(),
+        ExpectedVersion::NoStream,
+        Some(owned_payload_batch(
+            &primary,
+            operation,
+            operation,
+            vec![9; 8 * 1024],
+        )?),
+    ));
+    for ordinal in 0..READ_ONLY_PARTICIPANTS {
+        participants.push(TransactionParticipant::new(
+            stream(&format!("transaction-limit-observed-{ordinal}"))?,
+            ExpectedVersion::NoStream,
+            None,
+        ));
+    }
+    historical_store
+        .append_transaction(EventTransaction::new(
+            operation_id.clone(),
+            fingerprint,
+            participants,
+        ))
+        .await?;
+
+    let mut stream_info = context.get_stream(current.stream_name()).await?;
+    let event = stream_info
+        .get_last_raw_message_by_subject(&current.aggregate_subject(
+            primary.aggregate_type().as_str(),
+            primary.aggregate_id().as_str(),
+        ))
+        .await?;
+    let receipt = stream_info
+        .get_last_raw_message_by_subject(&current.transaction_subject(&primary, operation))
+        .await?;
+    check(
+        event.payload.len() > current.max_event_bytes(),
+        "historical schema-4 event did not exceed the current write limit",
+    )?;
+    check(
+        receipt.payload.len() > current.max_event_bytes(),
+        "historical receipt did not exceed the current write limit",
+    )?;
+    check(
+        event.payload.len() <= MAX_SUPPORTED_EVENT_BYTES
+            && receipt.payload.len() <= MAX_SUPPORTED_EVENT_BYTES,
+        "historical transaction data exceeded the supported read limit",
+    )?;
+
+    provision_event_store(context, &current).await?;
+    stream_info = context.get_stream(current.stream_name()).await?;
+    check(
+        stream_info.cached_info().config.max_message_size
+            == i32::try_from(HISTORICAL_WRITE_LIMIT + 4 * 1024)?,
+        "historical transaction message capacity was not preserved",
+    )?;
+    let current_store = NatsEventStore::connect(context.clone(), current).await?;
+    let loaded = current_store
+        .load_transaction_receipt(&primary, &operation_id)
+        .await?
+        .ok_or_else(|| "historical transaction receipt was not found".to_owned())?;
+    check(
+        loaded.streams().len() == READ_ONLY_PARTICIPANTS + 1,
+        "historical transaction receipt has the wrong participant count",
+    )?;
+    check(
+        loaded.events().len() == 1 && current_store.load(&primary).await?.len() == 1,
+        "historical schema-4 event was not materialized",
+    )
+}
+
 async fn max_payload_is_validated_before_provisioning(
     context: &async_nats::jetstream::Context,
 ) -> TestResult<()> {
-    const MAX_CONFIGURED_EVENT_BYTES: usize = 64 * 1024 * 1024;
     const ATOMIC_HEADER_ALLOWANCE: usize = 4 * 1024;
 
     let negotiated = context.client().max_payload();
-    let max_event_bytes = negotiated.min(MAX_CONFIGURED_EVENT_BYTES);
+    let max_event_bytes = negotiated.min(MAX_SUPPORTED_EVENT_BYTES);
     let max_wire_message_bytes = checked_add_usize(
         max_event_bytes,
         ATOMIC_HEADER_ALLOWANCE,
@@ -563,7 +675,7 @@ async fn max_payload_is_validated_before_provisioning(
     }
     let (bounded_context, stream_name) = unique_names("max-payload-validation")?;
     let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
-        .with_storage_limits(i64::try_from(max_event_bytes)?, max_event_bytes)?;
+        .with_storage_limits(i64::try_from(max_wire_message_bytes)?, max_event_bytes)?;
 
     let result = provision_event_store(context, &config).await;
     check(
@@ -1082,6 +1194,664 @@ async fn concurrent_transaction_identity_race(store: &NatsEventStore) -> TestRes
     )
 }
 
+#[allow(clippy::too_many_lines)]
+async fn unavailable_reconciliation_policy(
+    store: &NatsEventStore,
+    url: &str,
+    config: &NatsEventStoreConfig,
+) -> TestResult<()> {
+    let read_only_operation = "unavailable-reconcile-read-only";
+    let read_only_primary = stream("unavailable-reconcile-read-only-primary")?;
+    let observed = stream("unavailable-reconcile-observed")?;
+    store
+        .append(
+            &observed,
+            ExpectedVersion::NoStream,
+            batch(
+                &observed,
+                read_only_operation,
+                read_only_operation,
+                &[b"existing observation"],
+            )?,
+        )
+        .await?;
+    let read_only_transaction = EventTransaction::new(
+        OperationId::new(read_only_operation)?,
+        ContentFingerprint::digest(read_only_operation),
+        vec![
+            TransactionParticipant::new(
+                read_only_primary.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch(
+                    &read_only_primary,
+                    read_only_operation,
+                    read_only_operation,
+                    &[b"write"],
+                )?),
+            ),
+            TransactionParticipant::new(
+                observed,
+                ExpectedVersion::Exact(StreamVersion::new(1)),
+                None,
+            ),
+        ],
+    );
+    let unknown_publish = EventStoreError::new(
+        EventStoreErrorKind::Unavailable,
+        "atomic publish outcome is unknown",
+    );
+    let read_only_result = store
+        .reconcile_unavailable_transaction_publish(&read_only_transaction, unknown_publish.clone())
+        .await;
+    check(
+        matches!(&read_only_result, Err(error) if error == &unknown_publish),
+        "a read-only participant identity replaced the original unavailable error",
+    )?;
+
+    let writer_operation = "unavailable-reconcile-exact-writer";
+    let writer_primary = stream("unavailable-reconcile-writer-primary")?;
+    let existing_writer = stream("unavailable-reconcile-existing-writer")?;
+    let existing_batch = batch(
+        &existing_writer,
+        writer_operation,
+        writer_operation,
+        &[b"existing write"],
+    )?;
+    store
+        .append(
+            &existing_writer,
+            ExpectedVersion::NoStream,
+            existing_batch.clone(),
+        )
+        .await?;
+    let writer_transaction = EventTransaction::new(
+        OperationId::new(writer_operation)?,
+        ContentFingerprint::digest(writer_operation),
+        vec![
+            TransactionParticipant::new(
+                writer_primary.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch(
+                    &writer_primary,
+                    writer_operation,
+                    writer_operation,
+                    &[b"new write"],
+                )?),
+            ),
+            TransactionParticipant::new(
+                existing_writer,
+                ExpectedVersion::NoStream,
+                Some(existing_batch),
+            ),
+        ],
+    );
+    let writer_result = store
+        .reconcile_unavailable_transaction_publish(&writer_transaction, unknown_publish.clone())
+        .await;
+    check(
+        matches!(
+            writer_result,
+            Err(ref error) if error.kind() == EventStoreErrorKind::IdentityConflict
+        ),
+        "an exact writing participant identity was not detected during reconciliation",
+    )?;
+
+    let transient_context = connect_context(url).await?;
+    let transient_client = transient_context.client();
+    let transient_store = NatsEventStore::connect(transient_context, config.clone()).await?;
+    transient_client.drain().await?;
+    tokio::task::yield_now().await;
+    let transient_operation = "unavailable-reconcile-transient-receipt";
+    let transient_primary = stream("unavailable-reconcile-transient-primary")?;
+    let transient_transaction = EventTransaction::new(
+        OperationId::new(transient_operation)?,
+        ContentFingerprint::digest(transient_operation),
+        vec![TransactionParticipant::new(
+            transient_primary.clone(),
+            ExpectedVersion::NoStream,
+            Some(batch(
+                &transient_primary,
+                transient_operation,
+                transient_operation,
+                &[b"unknown"],
+            )?),
+        )],
+    );
+    let transient_result = transient_store
+        .reconcile_unavailable_transaction_publish(&transient_transaction, unknown_publish.clone())
+        .await;
+    check(
+        matches!(&transient_result, Err(error) if error == &unknown_publish),
+        "a transient receipt lookup did not preserve the original unavailable error",
+    )
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedReceiptContent<'a> {
+    event_store_stream: &'a str,
+    application: &'a str,
+    bounded_context: &'a str,
+    operation_id: &'a str,
+    operation_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    correlation_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    causation_id: Option<&'a str>,
+    participants: Vec<ForgedReceiptParticipant<'a>>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedReceiptParticipant<'a> {
+    stream: ForgedStreamIdentity<'a>,
+    base_stream_version: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit_id: Option<&'a str>,
+    event_count: u32,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedStreamIdentity<'a> {
+    aggregate_type: &'a str,
+    aggregate_id: &'a str,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedReceiptChecksumInput<'a> {
+    schema_version: u16,
+    receipt: &'a ForgedReceiptContent<'a>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedReceiptWire<'a> {
+    schema_version: u16,
+    checksum: String,
+    receipt: &'a ForgedReceiptContent<'a>,
+}
+
+async fn forged_receipt_cannot_bind_a_direct_commit(
+    store: &NatsEventStore,
+    context: &async_nats::jetstream::Context,
+    config: &NatsEventStoreConfig,
+) -> TestResult<()> {
+    let primary = stream("forged-receipt-direct-commit")?;
+    let operation = "forged-receipt-direct-operation";
+    let direct_batch = batch(&primary, operation, operation, &[b"direct"])?;
+    store
+        .append(&primary, ExpectedVersion::NoStream, direct_batch.clone())
+        .await?;
+
+    let receipt = ForgedReceiptContent {
+        event_store_stream: config.stream_name(),
+        application: config.application().as_str(),
+        bounded_context: config.bounded_context().as_str(),
+        operation_id: direct_batch.operation_id().as_str(),
+        operation_fingerprint: direct_batch.operation_fingerprint().to_hex(),
+        correlation_id: None,
+        causation_id: None,
+        participants: vec![ForgedReceiptParticipant {
+            stream: ForgedStreamIdentity {
+                aggregate_type: primary.aggregate_type().as_str(),
+                aggregate_id: primary.aggregate_id().as_str(),
+            },
+            base_stream_version: 0,
+            commit_id: Some(direct_batch.commit_id().as_str()),
+            event_count: 1,
+        }],
+    };
+    let checksum_input = serde_json::to_vec(&ForgedReceiptChecksumInput {
+        schema_version: 1,
+        receipt: &receipt,
+    })?;
+    let payload = serde_json::to_vec(&ForgedReceiptWire {
+        schema_version: 1,
+        checksum: hex::encode_lower_hex(Sha256::digest(checksum_input)),
+        receipt: &receipt,
+    })?;
+    let batch_id = "forged-receipt-atomic-batch";
+
+    let mut guard_headers = async_nats::HeaderMap::new();
+    guard_headers.insert("Content-Type", "application/json");
+    guard_headers.insert("Nats-Required-Api-Level", "2");
+    guard_headers.insert("Nats-Batch-Id", batch_id);
+    guard_headers.insert("Nats-Batch-Sequence", "1");
+    guard_headers.insert("Nats-Expected-Stream", config.stream_name());
+    let guard_response = context
+        .client()
+        .send_request(
+            config.transaction_guard_subject(&primary, operation, 0),
+            Request::new()
+                .headers(guard_headers)
+                .payload(br"{}".to_vec().into())
+                .timeout(Some(config.puback_timeout())),
+        )
+        .await?;
+    check(
+        guard_response.payload.is_empty(),
+        "NATS unexpectedly acknowledged a forged batch before its receipt",
+    )?;
+
+    let mut receipt_headers = async_nats::HeaderMap::new();
+    receipt_headers.insert("Content-Type", "application/json");
+    receipt_headers.insert("Nats-Required-Api-Level", "2");
+    receipt_headers.insert("Nats-Batch-Id", batch_id);
+    receipt_headers.insert("Nats-Batch-Sequence", "2");
+    receipt_headers.insert("Nats-Batch-Commit", "1");
+    receipt_headers.insert("Nats-Expected-Last-Subject-Sequence", "0");
+    let receipt_response = context
+        .client()
+        .send_request(
+            config.transaction_subject(&primary, operation),
+            Request::new()
+                .headers(receipt_headers)
+                .payload(payload.into())
+                .timeout(Some(config.puback_timeout())),
+        )
+        .await?;
+    check(
+        !receipt_response.payload.is_empty(),
+        "NATS omitted the forged receipt batch PubAck",
+    )?;
+
+    let loaded = store
+        .load_transaction_receipt(&primary, direct_batch.operation_id())
+        .await;
+    check(
+        matches!(loaded, Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory),
+        "a forged receipt bound a separately appended direct commit",
+    )?;
+    let replay = store
+        .append(&primary, ExpectedVersion::NoStream, direct_batch)
+        .await;
+    check(
+        matches!(replay, Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory),
+        "a malformed receipt did not make direct append history corrupt",
+    )
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedStoredEventContent<'a> {
+    event_store_stream: &'a str,
+    application: &'a str,
+    bounded_context: &'a str,
+    stream: ForgedStreamIdentity<'a>,
+    stream_version: u64,
+    commit_id: &'a str,
+    operation_id: &'a str,
+    operation_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    correlation_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    causation_id: Option<&'a str>,
+    commit_event_ordinal: u32,
+    commit_event_count: u32,
+    transaction_event_ordinal: u32,
+    transaction_event_count: u32,
+    event_id: &'a str,
+    event_type: &'a str,
+    event_schema_version: u32,
+    payload_base64: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedEventChecksumInput<'a> {
+    schema_version: u16,
+    event: &'a ForgedStoredEventContent<'a>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgedStoredEventWire<'a> {
+    schema_version: u16,
+    checksum: String,
+    event: &'a ForgedStoredEventContent<'a>,
+}
+
+struct RawAtomicMessage {
+    subject: String,
+    payload: Vec<u8>,
+    expected_last_subject_sequence: Option<u64>,
+    expectation_subject: Option<String>,
+}
+
+fn forged_transaction_event_payload<'a>(
+    config: &'a NatsEventStoreConfig,
+    stream_id: &'a StreamId,
+    batch: &'a EventBatch,
+) -> TestResult<Vec<u8>> {
+    let event = batch
+        .events()
+        .first()
+        .ok_or_else(|| "forged transaction batch has no event".to_owned())?;
+    let content = ForgedStoredEventContent {
+        event_store_stream: config.stream_name(),
+        application: config.application().as_str(),
+        bounded_context: config.bounded_context().as_str(),
+        stream: ForgedStreamIdentity {
+            aggregate_type: stream_id.aggregate_type().as_str(),
+            aggregate_id: stream_id.aggregate_id().as_str(),
+        },
+        stream_version: 1,
+        commit_id: batch.commit_id().as_str(),
+        operation_id: batch.operation_id().as_str(),
+        operation_fingerprint: batch.operation_fingerprint().to_hex(),
+        correlation_id: batch
+            .correlation_id()
+            .map(rostfrei_messaging_core::CorrelationId::as_str),
+        causation_id: batch
+            .causation_id()
+            .map(rostfrei_messaging_core::CausationId::as_str),
+        commit_event_ordinal: 0,
+        commit_event_count: 1,
+        transaction_event_ordinal: 0,
+        transaction_event_count: 1,
+        event_id: event.event_id().as_str(),
+        event_type: event.event_type(),
+        event_schema_version: event.schema_version(),
+        payload_base64: base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            event.payload(),
+        ),
+    };
+    let checksum = hex::encode_lower_hex(Sha256::digest(serde_json::to_vec(
+        &ForgedEventChecksumInput {
+            schema_version: 4,
+            event: &content,
+        },
+    )?));
+    Ok(serde_json::to_vec(&ForgedStoredEventWire {
+        schema_version: 4,
+        checksum,
+        event: &content,
+    })?)
+}
+
+fn forged_receipt_payload(receipt: &ForgedReceiptContent<'_>) -> TestResult<Vec<u8>> {
+    let checksum = hex::encode_lower_hex(Sha256::digest(serde_json::to_vec(
+        &ForgedReceiptChecksumInput {
+            schema_version: 1,
+            receipt,
+        },
+    )?));
+    Ok(serde_json::to_vec(&ForgedReceiptWire {
+        schema_version: 1,
+        checksum,
+        receipt,
+    })?)
+}
+
+async fn publish_raw_atomic_batch(
+    context: &async_nats::jetstream::Context,
+    config: &NatsEventStoreConfig,
+    batch_id: &str,
+    messages: Vec<RawAtomicMessage>,
+) -> TestResult<()> {
+    let message_count = messages.len();
+    for (index, message) in messages.into_iter().enumerate() {
+        let sequence = checked_add_usize(index, 1, "raw atomic batch sequence")?;
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Content-Type", "application/json");
+        headers.insert("Nats-Required-Api-Level", "2");
+        headers.insert("Nats-Batch-Id", batch_id);
+        headers.insert("Nats-Batch-Sequence", sequence.to_string());
+        if index == 0 {
+            headers.insert("Nats-Expected-Stream", config.stream_name());
+        }
+        if let Some(expected) = message.expected_last_subject_sequence {
+            headers.insert("Nats-Expected-Last-Subject-Sequence", expected.to_string());
+        }
+        if let Some(subject) = message.expectation_subject {
+            headers.insert("Nats-Expected-Last-Subject-Sequence-Subject", subject);
+        }
+        if sequence == message_count {
+            headers.insert("Nats-Batch-Commit", "1");
+        }
+        let response = context
+            .client()
+            .send_request(
+                message.subject,
+                Request::new()
+                    .headers(headers)
+                    .payload(message.payload.into())
+                    .timeout(Some(config.puback_timeout())),
+            )
+            .await?;
+        check(
+            response.payload.is_empty() == (sequence != message_count),
+            "raw atomic batch returned an unexpected acknowledgement",
+        )?;
+        if sequence == message_count {
+            let acknowledgement: serde_json::Value = serde_json::from_slice(&response.payload)?;
+            check(
+                acknowledgement.get("error").is_none()
+                    && acknowledgement
+                        .get("stream")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(config.stream_name()),
+                "raw atomic batch was not committed",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+async fn schema_four_event_with_filler_is_not_loadable(
+    store: &NatsEventStore,
+    context: &async_nats::jetstream::Context,
+    config: &NatsEventStoreConfig,
+) -> TestResult<()> {
+    let aggregate = stream("schema-four-event-with-filler")?;
+    let operation = "schema-four-event-with-filler-operation";
+    let event_batch = batch(&aggregate, operation, operation, &[b"must-not-load"])?;
+    publish_raw_atomic_batch(
+        context,
+        config,
+        "schema-four-event-with-filler-batch",
+        vec![
+            RawAtomicMessage {
+                subject: config.aggregate_subject(
+                    aggregate.aggregate_type().as_str(),
+                    aggregate.aggregate_id().as_str(),
+                ),
+                payload: forged_transaction_event_payload(config, &aggregate, &event_batch)?,
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: None,
+            },
+            RawAtomicMessage {
+                subject: config.transaction_guard_subject(&aggregate, "unrelated-filler", 0),
+                payload: br#"{"unrelated":true}"#.to_vec(),
+                expected_last_subject_sequence: None,
+                expectation_subject: None,
+            },
+        ],
+    )
+    .await?;
+
+    let loaded = store.load(&aggregate).await;
+    check(
+        matches!(loaded, Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory),
+        "schema-4 history was exposed without a valid transaction receipt",
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+async fn reused_batch_id_and_filler_guard_are_rejected(
+    store: &NatsEventStore,
+    context: &async_nats::jetstream::Context,
+    config: &NatsEventStoreConfig,
+) -> TestResult<()> {
+    let reused_primary = stream("reused-batch-id-primary")?;
+    let reused_operation = "reused-batch-id-operation";
+    let reused_batch = batch(
+        &reused_primary,
+        reused_operation,
+        reused_operation,
+        &[b"event"],
+    )?;
+    let reused_batch_id = "reused-atomic-batch-id";
+    let reused_event_subject = config.aggregate_subject(
+        reused_primary.aggregate_type().as_str(),
+        reused_primary.aggregate_id().as_str(),
+    );
+    publish_raw_atomic_batch(
+        context,
+        config,
+        reused_batch_id,
+        vec![
+            RawAtomicMessage {
+                subject: reused_event_subject,
+                payload: forged_transaction_event_payload(config, &reused_primary, &reused_batch)?,
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: None,
+            },
+            RawAtomicMessage {
+                subject: config.transaction_guard_subject(&reused_primary, reused_operation, 99),
+                payload: br"{}".to_vec(),
+                expected_last_subject_sequence: None,
+                expectation_subject: None,
+            },
+        ],
+    )
+    .await?;
+    let reused_receipt = ForgedReceiptContent {
+        event_store_stream: config.stream_name(),
+        application: config.application().as_str(),
+        bounded_context: config.bounded_context().as_str(),
+        operation_id: reused_operation,
+        operation_fingerprint: reused_batch.operation_fingerprint().to_hex(),
+        correlation_id: None,
+        causation_id: None,
+        participants: vec![ForgedReceiptParticipant {
+            stream: ForgedStreamIdentity {
+                aggregate_type: reused_primary.aggregate_type().as_str(),
+                aggregate_id: reused_primary.aggregate_id().as_str(),
+            },
+            base_stream_version: 0,
+            commit_id: Some(reused_batch.commit_id().as_str()),
+            event_count: 1,
+        }],
+    };
+    publish_raw_atomic_batch(
+        context,
+        config,
+        reused_batch_id,
+        vec![
+            RawAtomicMessage {
+                subject: config.transaction_guard_subject(&reused_primary, reused_operation, 98),
+                payload: br"{}".to_vec(),
+                expected_last_subject_sequence: None,
+                expectation_subject: None,
+            },
+            RawAtomicMessage {
+                subject: config.transaction_subject(&reused_primary, reused_operation),
+                payload: forged_receipt_payload(&reused_receipt)?,
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: None,
+            },
+        ],
+    )
+    .await?;
+    let reused_result = store
+        .load_transaction_receipt(&reused_primary, reused_batch.operation_id())
+        .await;
+    check(
+        matches!(
+            reused_result,
+            Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory
+        ),
+        "a receipt accepted events from an earlier batch with a reused batch identity",
+    )?;
+
+    let guard_primary = stream("filler-guard-primary")?;
+    let guarded = stream("filler-guard-observed")?;
+    let guard_operation = "filler-guard-operation";
+    let guard_batch = batch(
+        &guard_primary,
+        guard_operation,
+        guard_operation,
+        &[b"event"],
+    )?;
+    let guard_batch_id = "filler-guard-atomic-batch";
+    let guarded_subject = config.aggregate_subject(
+        guarded.aggregate_type().as_str(),
+        guarded.aggregate_id().as_str(),
+    );
+    let guard_receipt = ForgedReceiptContent {
+        event_store_stream: config.stream_name(),
+        application: config.application().as_str(),
+        bounded_context: config.bounded_context().as_str(),
+        operation_id: guard_operation,
+        operation_fingerprint: guard_batch.operation_fingerprint().to_hex(),
+        correlation_id: None,
+        causation_id: None,
+        participants: vec![
+            ForgedReceiptParticipant {
+                stream: ForgedStreamIdentity {
+                    aggregate_type: guard_primary.aggregate_type().as_str(),
+                    aggregate_id: guard_primary.aggregate_id().as_str(),
+                },
+                base_stream_version: 0,
+                commit_id: Some(guard_batch.commit_id().as_str()),
+                event_count: 1,
+            },
+            ForgedReceiptParticipant {
+                stream: ForgedStreamIdentity {
+                    aggregate_type: guarded.aggregate_type().as_str(),
+                    aggregate_id: guarded.aggregate_id().as_str(),
+                },
+                base_stream_version: 0,
+                commit_id: None,
+                event_count: 0,
+            },
+        ],
+    };
+    publish_raw_atomic_batch(
+        context,
+        config,
+        guard_batch_id,
+        vec![
+            RawAtomicMessage {
+                subject: config.aggregate_subject(
+                    guard_primary.aggregate_type().as_str(),
+                    guard_primary.aggregate_id().as_str(),
+                ),
+                payload: forged_transaction_event_payload(config, &guard_primary, &guard_batch)?,
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: None,
+            },
+            RawAtomicMessage {
+                subject: config.transaction_guard_subject(&guard_primary, guard_operation, 0),
+                payload: br"{}".to_vec(),
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: Some(guarded_subject),
+            },
+            RawAtomicMessage {
+                subject: config.transaction_subject(&guard_primary, guard_operation),
+                payload: forged_receipt_payload(&guard_receipt)?,
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: None,
+            },
+        ],
+    )
+    .await?;
+    let guard_result = store
+        .load_transaction_receipt(&guard_primary, guard_batch.operation_id())
+        .await;
+    check(
+        matches!(
+            guard_result,
+            Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory
+        ),
+        "a filler message was accepted as a transaction read guard",
+    )
+}
+
 struct CapacityObservations {
     append_result: Result<AppendOutcome, EventStoreError>,
     history_before: Vec<RecordedEvent>,
@@ -1093,7 +1863,7 @@ async fn capacity_observations(
 ) -> TestResult<CapacityObservations> {
     let (bounded_context, stream_name) = unique_names("capacity")?;
     let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
-        .with_storage_limits(4096, 2048)?;
+        .with_storage_limits(6 * 1024, 2048)?;
     provision_event_store(context, &config).await?;
     let store = NatsEventStore::connect(context.clone(), config).await?;
     let capacity_stream = stream("capacity")?;

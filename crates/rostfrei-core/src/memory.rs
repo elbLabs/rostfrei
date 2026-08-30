@@ -16,6 +16,13 @@ use crate::{
 struct StoredAppend {
     batch: EventBatch,
     events: Vec<RecordedEvent>,
+    provenance: AppendProvenance,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum AppendProvenance {
+    Direct,
+    Transaction,
 }
 
 #[derive(Clone)]
@@ -85,19 +92,15 @@ impl EventStore for InMemoryEventStore {
     ) -> Result<AppendOutcome, EventStoreError> {
         let mut state = self.state.lock().await;
 
-        if state
-            .transactions
-            .contains_key(&(stream_id.clone(), batch.operation_id().clone()))
-        {
-            return Err(identity_conflict(
-                "operation identity was already used by an event transaction",
-            ));
-        }
-
         let operation_key = (stream_id.clone(), batch.operation_id().clone());
         if let Some(previous) = state.operations.get(&operation_key) {
-            if previous.batch == batch {
+            if previous.provenance == AppendProvenance::Direct && previous.batch == batch {
                 return Ok(AppendOutcome::ExactReplay(previous.events.clone()));
+            }
+            if previous.provenance == AppendProvenance::Transaction {
+                return Err(identity_conflict(
+                    "operation identity was already used by an event transaction",
+                ));
             }
             return Err(identity_conflict(
                 "operation identity was reused with different content",
@@ -187,6 +190,7 @@ impl EventStore for InMemoryEventStore {
         let stored = StoredAppend {
             batch: batch.clone(),
             events: recorded.clone(),
+            provenance: AppendProvenance::Direct,
         };
         state
             .commits
@@ -309,6 +313,7 @@ impl EventStore for InMemoryEventStore {
                 StoredAppend {
                     batch: batch.clone(),
                     events: events.clone(),
+                    provenance: AppendProvenance::Transaction,
                 },
             );
             state.streams.entry(stream_id).or_default().extend(events);
@@ -350,18 +355,6 @@ fn validate_transaction(
             "an event transaction must contain at least one participant",
         ));
     }
-    let primary_stream_id = transaction
-        .primary_stream_id()
-        .ok_or_else(|| invalid("an event transaction must contain at least one participant"))?;
-    if state.operations.contains_key(&(
-        primary_stream_id.clone(),
-        transaction.operation_id().clone(),
-    )) {
-        return Err(identity_conflict(
-            "operation identity was already used outside an event transaction",
-        ));
-    }
-
     let mut streams = HashSet::with_capacity(transaction.participants().len());
     for participant in transaction.participants() {
         if !streams.insert(participant.stream_id()) {
@@ -369,10 +362,6 @@ fn validate_transaction(
                 "an event transaction must not contain duplicate streams",
             ));
         }
-        validate_expected_version(
-            participant.expected_version(),
-            current_version(state, participant.stream_id()),
-        )?;
         let Some(batch) = participant.batch() else {
             continue;
         };
@@ -386,21 +375,19 @@ fn validate_transaction(
             ));
         }
         validate_derived_identities(participant.stream_id(), batch)?;
-        if state.transactions.contains_key(&(
-            participant.stream_id().clone(),
-            transaction.operation_id().clone(),
-        )) {
-            return Err(identity_conflict(
-                "operation identity was already used by another event transaction",
-            ));
-        }
-        if state.operations.contains_key(&(
+        if let Some(previous) = state.operations.get(&(
             participant.stream_id().clone(),
             batch.operation_id().clone(),
         )) {
-            return Err(identity_conflict(
-                "operation identity was already used outside this transaction",
-            ));
+            let message = match previous.provenance {
+                AppendProvenance::Direct => {
+                    "operation identity was already used outside an event transaction"
+                }
+                AppendProvenance::Transaction => {
+                    "operation identity was already used by another event transaction"
+                }
+            };
+            return Err(identity_conflict(message));
         }
         if state
             .commits
@@ -419,6 +406,12 @@ fn validate_transaction(
                 "event identity was reused with different content",
             ));
         }
+    }
+    for participant in transaction.participants() {
+        validate_expected_version(
+            participant.expected_version(),
+            current_version(state, participant.stream_id()),
+        )?;
     }
     Ok(())
 }

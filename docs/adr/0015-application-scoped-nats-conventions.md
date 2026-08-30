@@ -48,6 +48,7 @@ authoritative domain-event stream:
 
 <APPLICATION>__<BOUNDED_CONTEXT>_DOMAIN_EVENTS
   <application>.domain.<bounded-context>.aggregate.*
+  <application>.domain.<bounded-context>.transaction.>
 ```
 
 Uppercase stream tokens replace kebab-case hyphens with underscores. Subject
@@ -67,9 +68,9 @@ Infrastructure provisioning remains an explicit operator action. Runtime
 service startup connects and verifies rather than silently creating or changing
 streams.
 
-Stored domain-event wire schema 3 records the application and bounded context
-and verifies both during replay and durable dispatch. The decoder retains schema
-1 and schema 2 support for already persisted domain events, deriving their scope
+Stored domain-event wire schemas 3 and 4 record the application and bounded
+context and verify both during replay and durable dispatch. The decoder retains
+schemas 1 through 3 for already persisted domain events, deriving their scope
 from the configured event store. Application and bounded-context scope remain
 NATS storage-envelope metadata rather than fields on the transport-independent
 `RecordedEvent`; a NATS event store and its durable consumers are already bound
@@ -86,9 +87,10 @@ classification, environment variables, and operator composition.
 Two applications can safely share one NATS account because their first subject
 tokens and JetStream filters are disjoint. NATS permissions can grant or deny an
 entire application through `<application>.>`. A bounded context is explicit in
-every business address and authoritative domain-event subject. Restricting an
-authoritative stream to aggregate subjects also keeps its global stream sequence
-contiguous for domain-event consumers using the same filter.
+every business address and authoritative domain-event subject. An authoritative
+stream also stores internal transaction guards and receipts, so
+aggregate-filtered domain-event consumers observe gaps in its global stream
+sequence and reconstruct their filtered progress across them.
 
 Existing domain-event streams configured with the broader
 `<application>.domain.<bounded-context>.>` filter fail runtime verification until

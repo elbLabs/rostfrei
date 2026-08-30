@@ -98,19 +98,38 @@ where
     try_stream_isolation(&make_store()).await?;
     try_identities_are_stream_scoped(&make_store()).await?;
     try_conflict_leaves_history_unchanged(&make_store()).await?;
+    try_exact_retry(&make_store()).await?;
+    try_identity_conflicts(&make_store()).await?;
+    try_concurrent_append_has_one_winner(&make_store()).await
+}
+
+pub async fn run_atomic_multi_stream_transactions<Factory, Store>(make_store: Factory)
+where
+    Factory: Fn() -> Store,
+    Store: EventStore,
+{
+    assert_contract_success(try_run_atomic_multi_stream_transactions(make_store).await);
+}
+
+pub async fn try_run_atomic_multi_stream_transactions<Factory, Store>(
+    make_store: Factory,
+) -> ContractResult
+where
+    Factory: Fn() -> Store,
+    Store: EventStore,
+{
     try_multi_stream_transaction_is_atomic_and_ordered(&make_store()).await?;
     try_transaction_rejects_a_read_only_primary(&make_store()).await?;
     try_transaction_accepts_a_read_only_participant(&make_store()).await?;
     try_transaction_identities_are_primary_stream_scoped(&make_store()).await?;
     try_transaction_rejects_primary_identity_reused_from_a_participant(&make_store()).await?;
+    try_direct_append_rejects_a_transaction_secondary_write(&make_store()).await?;
+    try_transaction_rejects_a_direct_secondary_write(&make_store()).await?;
     try_multi_stream_conflict_leaves_all_histories_unchanged(&make_store()).await?;
     try_multi_stream_exact_retry_survives_later_commits(&make_store()).await?;
     try_transaction_item_limit_preserves_direct_append_limit(&make_store()).await?;
     try_read_guards_reduce_the_transaction_event_allowance(&make_store()).await?;
-    try_concurrent_transactions_have_one_winner(&make_store()).await?;
-    try_exact_retry(&make_store()).await?;
-    try_identity_conflicts(&make_store()).await?;
-    try_concurrent_append_has_one_winner(&make_store()).await
+    try_concurrent_transactions_have_one_winner(&make_store()).await
 }
 
 pub async fn transaction_identities_are_primary_stream_scoped<Store: EventStore>(store: &Store) {
@@ -277,26 +296,17 @@ pub async fn try_transaction_rejects_a_read_only_primary<Store: EventStore>(
     store: &Store,
 ) -> ContractResult {
     let primary = stream("transaction-read-only-primary")?;
-    let changed = stream("transaction-read-only-primary-changed")?;
     let operation = "transaction-read-only-primary";
     let result = store
         .append_transaction(EventTransaction::new(
             OperationId::new(operation)
                 .map_err(|error| fixture_error("read-only primary operation ID", error))?,
             ContentFingerprint::digest(operation),
-            vec![
-                TransactionParticipant::new(primary.clone(), ExpectedVersion::NoStream, None),
-                TransactionParticipant::new(
-                    changed.clone(),
-                    ExpectedVersion::NoStream,
-                    Some(batch(
-                        &changed,
-                        operation,
-                        operation,
-                        &[b"must-not-append"],
-                    )?),
-                ),
-            ],
+            vec![TransactionParticipant::new(
+                primary.clone(),
+                ExpectedVersion::NoStream,
+                None,
+            )],
         ))
         .await;
     let Err(error) = result else {
@@ -305,13 +315,11 @@ pub async fn try_transaction_rejects_a_read_only_primary<Store: EventStore>(
         });
     };
     assert_eq!(error.kind(), EventStoreErrorKind::InvalidRequest);
-    for participant in [&primary, &changed] {
-        let history = store
-            .load(participant)
-            .await
-            .map_err(|source| store_error("read-only primary participant load", source))?;
-        assert!(history.is_empty());
-    }
+    let history = store
+        .load(&primary)
+        .await
+        .map_err(|source| store_error("read-only primary participant load", source))?;
+    assert!(history.is_empty());
     Ok(())
 }
 
@@ -525,6 +533,141 @@ pub async fn try_transaction_rejects_primary_identity_reused_from_a_participant<
         .await
         .map_err(|source| store_error("reused participant untouched-stream load", source))?;
     assert!(untouched_history.is_empty());
+    Ok(())
+}
+
+pub async fn direct_append_rejects_a_transaction_secondary_write<Store: EventStore>(store: &Store) {
+    assert_contract_success(try_direct_append_rejects_a_transaction_secondary_write(store).await);
+}
+
+pub async fn try_direct_append_rejects_a_transaction_secondary_write<Store: EventStore>(
+    store: &Store,
+) -> ContractResult {
+    let primary = stream("transaction-provenance-direct-after-primary")?;
+    let secondary = stream("transaction-provenance-direct-after-secondary")?;
+    let operation = "transaction-provenance-direct-after";
+    let secondary_batch = batch(
+        &secondary,
+        operation,
+        operation,
+        &[b"secondary-transaction-write"],
+    )?;
+    store
+        .append_transaction(EventTransaction::new(
+            OperationId::new(operation)
+                .map_err(|error| fixture_error("direct-after-transaction operation ID", error))?,
+            ContentFingerprint::digest(operation),
+            vec![
+                TransactionParticipant::new(
+                    primary.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(
+                        &primary,
+                        operation,
+                        operation,
+                        &[b"primary-transaction-write"],
+                    )?),
+                ),
+                TransactionParticipant::new(
+                    secondary.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(secondary_batch.clone()),
+                ),
+            ],
+        ))
+        .await
+        .map_err(|source| store_error("transaction before direct secondary append", source))?;
+    let before = store
+        .load(&secondary)
+        .await
+        .map_err(|source| store_error("pre-conflict transaction secondary load", source))?;
+
+    let result = store
+        .append(&secondary, ExpectedVersion::NoStream, secondary_batch)
+        .await;
+    let Err(error) = result else {
+        return Err(ContractTestError::UnexpectedSuccess {
+            context: "direct append of a transaction secondary write",
+        });
+    };
+    assert_eq!(error.kind(), EventStoreErrorKind::IdentityConflict);
+    let after = store
+        .load(&secondary)
+        .await
+        .map_err(|source| store_error("post-conflict transaction secondary load", source))?;
+    assert_eq!(after, before);
+    Ok(())
+}
+
+pub async fn transaction_rejects_a_direct_secondary_write<Store: EventStore>(store: &Store) {
+    assert_contract_success(try_transaction_rejects_a_direct_secondary_write(store).await);
+}
+
+pub async fn try_transaction_rejects_a_direct_secondary_write<Store: EventStore>(
+    store: &Store,
+) -> ContractResult {
+    let primary = stream("transaction-provenance-transaction-after-primary")?;
+    let secondary = stream("transaction-provenance-transaction-after-secondary")?;
+    let operation = "transaction-provenance-transaction-after";
+    let secondary_batch = batch(
+        &secondary,
+        operation,
+        operation,
+        &[b"secondary-direct-write"],
+    )?;
+    store
+        .append(
+            &secondary,
+            ExpectedVersion::NoStream,
+            secondary_batch.clone(),
+        )
+        .await
+        .map_err(|source| store_error("direct append before secondary transaction", source))?;
+    let secondary_before = store
+        .load(&secondary)
+        .await
+        .map_err(|source| store_error("pre-conflict direct secondary load", source))?;
+
+    let result = store
+        .append_transaction(EventTransaction::new(
+            OperationId::new(operation)
+                .map_err(|error| fixture_error("transaction-after-direct operation ID", error))?,
+            ContentFingerprint::digest(operation),
+            vec![
+                TransactionParticipant::new(
+                    primary.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(
+                        &primary,
+                        operation,
+                        operation,
+                        &[b"must-not-append"],
+                    )?),
+                ),
+                TransactionParticipant::new(
+                    secondary.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(secondary_batch),
+                ),
+            ],
+        ))
+        .await;
+    let Err(error) = result else {
+        return Err(ContractTestError::UnexpectedSuccess {
+            context: "transaction reusing a direct secondary write",
+        });
+    };
+    assert_eq!(error.kind(), EventStoreErrorKind::IdentityConflict);
+    let primary_history = store
+        .load(&primary)
+        .await
+        .map_err(|source| store_error("post-conflict transaction primary load", source))?;
+    assert!(primary_history.is_empty());
+    let secondary_after = store
+        .load(&secondary)
+        .await
+        .map_err(|source| store_error("post-conflict direct secondary load", source))?;
+    assert_eq!(secondary_after, secondary_before);
     Ok(())
 }
 

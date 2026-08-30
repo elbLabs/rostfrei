@@ -4,11 +4,12 @@ use async_nats::jetstream::{
     self,
     consumer::{self, AckPolicy, DeliverPolicy},
     message::AckKind,
+    stream::{RawMessageError, RawMessageErrorKind},
 };
 use futures_util::TryStreamExt;
 use rostfrei_core::{
     DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, EventStoreErrorKind, MAX_EVENTS_PER_BATCH,
+    DomainEventHandlerErrorKind, EventStore, EventStoreErrorKind, MAX_EVENTS_PER_BATCH,
 };
 use rostfrei_messaging_core::{ConsumerName, DurableName, MAX_PROCESSING_TIMEOUT, RetryDelay};
 use thiserror::Error;
@@ -122,7 +123,7 @@ impl NatsDomainEventConsumerConfig {
 
 pub struct NatsDomainEventConsumer {
     context: jetstream::Context,
-    event_store: NatsEventStoreConfig,
+    event_store: NatsEventStore,
     config: NatsDomainEventConsumerConfig,
     dispatcher: Arc<DomainEventDispatcher>,
 }
@@ -134,7 +135,7 @@ impl NatsDomainEventConsumer {
         config: NatsDomainEventConsumerConfig,
         dispatcher: Arc<DomainEventDispatcher>,
     ) -> Result<Self, DomainEventConsumerError> {
-        NatsEventStore::connect(context.clone(), event_store.clone())
+        let event_store = NatsEventStore::connect(context.clone(), event_store)
             .await
             .map_err(|error| {
                 let kind = match error.kind() {
@@ -147,14 +148,14 @@ impl NatsDomainEventConsumer {
                 DomainEventConsumerError::new(kind, error.to_string())
             })?;
         let stream = context
-            .get_stream(event_store.stream_name())
+            .get_stream(event_store.config().stream_name())
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
         let consumer: consumer::PullConsumer = stream
             .get_consumer(config.durable_name().as_str())
             .await
             .map_err(|error| unavailable(format!("failed to get durable consumer: {error}")))?;
-        verify_consumer(&consumer, &event_store, &config)?;
+        verify_consumer(&consumer, event_store.config(), &config)?;
         Ok(Self {
             context,
             event_store,
@@ -173,14 +174,14 @@ impl NatsDomainEventConsumer {
         }
         let stream = self
             .context
-            .get_stream(self.event_store.stream_name())
+            .get_stream(self.event_store.config().stream_name())
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
         let consumer: consumer::PullConsumer = stream
             .get_consumer(self.config.durable_name().as_str())
             .await
             .map_err(|error| unavailable(format!("failed to get durable consumer: {error}")))?;
-        verify_consumer(&consumer, &self.event_store, &self.config)?;
+        verify_consumer(&consumer, self.event_store.config(), &self.config)?;
         loop {
             let mut first_delivery = consumer
                 .batch()
@@ -219,15 +220,11 @@ impl NatsDomainEventConsumer {
                 .ok_or_else(|| invalid_committed_event("durable sequence space overflowed"))?;
             let expected_sequence = stream
                 .get_first_raw_message_by_subject(
-                    &self.event_store.aggregate_subject_filter(),
+                    &self.event_store.config().aggregate_subject_filter(),
                     search_start,
                 )
                 .await
-                .map_err(|error| {
-                    unavailable(format!(
-                        "failed to locate the durable's earliest unresolved event: {error}"
-                    ))
-                })?
+                .map_err(|error| earliest_unresolved_lookup_error(&error))?
                 .sequence;
             if first.event.stream_sequence != expected_sequence {
                 tracing::warn!(
@@ -289,6 +286,7 @@ impl NatsDomainEventConsumer {
                 }
             }
             validate_complete_transaction(&commit)?;
+            self.validate_transaction_receipt(&commit).await?;
 
             match timeout(
                 self.config.processing_timeout(),
@@ -342,7 +340,7 @@ impl NatsDomainEventConsumer {
         let info = message
             .info()
             .map_err(|error| unavailable(format!("delivery metadata is unavailable: {error}")))?;
-        if info.stream != self.event_store.stream_name()
+        if info.stream != self.event_store.config().stream_name()
             || info.consumer != self.config.durable_name().as_str()
             || info.stream_sequence == 0
             || info.consumer_sequence == 0
@@ -357,7 +355,7 @@ impl NatsDomainEventConsumer {
             .as_ref()
             .ok_or_else(|| invalid_committed_event("stored domain event has no headers"))?;
         let decoded = decode_consumed_event(
-            &self.event_store,
+            self.event_store.config(),
             message.subject.as_str(),
             headers,
             &message.payload,
@@ -390,13 +388,12 @@ impl NatsDomainEventConsumer {
             .ok_or_else(|| invalid_committed_event("commit start sequence underflowed"))?;
         let mut prefix = Vec::with_capacity(first.decoded.transaction_event_ordinal);
         for sequence in start_sequence..first.stream_sequence {
-            let raw = stream.get_raw_message(sequence).await.map_err(|error| {
-                unavailable(format!(
-                    "failed to reconstruct acknowledged commit prefix: {error}"
-                ))
-            })?;
+            let raw = stream
+                .get_raw_message(sequence)
+                .await
+                .map_err(|error| acknowledged_prefix_lookup_error(&error))?;
             let decoded = decode_consumed_event(
-                &self.event_store,
+                self.event_store.config(),
                 raw.subject.as_str(),
                 &raw.headers,
                 &raw.payload,
@@ -414,6 +411,57 @@ impl NatsDomainEventConsumer {
             prefix.push(event);
         }
         Ok(prefix)
+    }
+
+    async fn validate_transaction_receipt(
+        &self,
+        commit: &[BufferedDomainEvent],
+    ) -> Result<(), DomainEventConsumerError> {
+        let first = commit
+            .first()
+            .ok_or_else(|| invalid_committed_event("committed transaction is empty"))?;
+        if commit
+            .iter()
+            .any(|event| event.decoded.is_transactional != first.decoded.is_transactional)
+        {
+            return Err(invalid_committed_event(
+                "committed event batch mixes transactional and direct event schemas",
+            ));
+        }
+        if !first.decoded.is_transactional {
+            return Ok(());
+        }
+
+        let receipt = self
+            .event_store
+            .load_transaction_receipt(
+                first.decoded.recorded.stream_id(),
+                &first.decoded.operation_id,
+            )
+            .await
+            .map_err(|error| match error.kind() {
+                EventStoreErrorKind::Unavailable => unavailable(format!(
+                    "failed to load committed transaction receipt: {error}"
+                )),
+                _ => invalid_committed_event(format!(
+                    "committed transaction receipt is invalid: {error}"
+                )),
+            })?
+            .ok_or_else(|| {
+                invalid_committed_event("committed transactional events have no durable receipt")
+            })?;
+        let receipt_events = receipt.events();
+        if receipt_events.len() != commit.len()
+            || receipt_events
+                .iter()
+                .zip(commit)
+                .any(|(receipt_event, buffered)| receipt_event != &buffered.decoded.recorded)
+        {
+            return Err(invalid_committed_event(
+                "committed transactional events do not match their durable receipt",
+            ));
+        }
+        Ok(())
     }
 
     async fn handle_commit(
@@ -711,6 +759,36 @@ fn unavailable(message: impl Into<String>) -> DomainEventConsumerError {
     DomainEventConsumerError::new(DomainEventConsumerErrorKind::Unavailable, message)
 }
 
+fn acknowledged_prefix_lookup_error(error: &RawMessageError) -> DomainEventConsumerError {
+    raw_message_lookup_error(
+        error,
+        "acknowledged commit prefix",
+        "reconstruct acknowledged commit prefix",
+    )
+}
+
+fn earliest_unresolved_lookup_error(error: &RawMessageError) -> DomainEventConsumerError {
+    raw_message_lookup_error(
+        error,
+        "the durable's earliest unresolved event",
+        "locate the durable's earliest unresolved event",
+    )
+}
+
+fn raw_message_lookup_error(
+    error: &RawMessageError,
+    missing_history: &str,
+    lookup: &str,
+) -> DomainEventConsumerError {
+    if error.kind() == RawMessageErrorKind::NoMessageFound {
+        invalid_committed_event(format!(
+            "{missing_history} is missing from authoritative event history: {error}"
+        ))
+    } else {
+        unavailable(format!("failed to {lookup}: {error}"))
+    }
+}
+
 fn invalid_committed_event(message: impl Into<String>) -> DomainEventConsumerError {
     DomainEventConsumerError::new(DomainEventConsumerErrorKind::InvalidCommittedEvent, message)
 }
@@ -747,6 +825,42 @@ mod tests {
             .filter_subject;
 
         assert!(stream_subjects.contains(&consumer_subject));
+    }
+
+    #[test]
+    fn acknowledged_prefix_lookup_distinguishes_missing_history_from_unavailability() {
+        let missing = acknowledged_prefix_lookup_error(&RawMessageError::new(
+            RawMessageErrorKind::NoMessageFound,
+        ));
+        let unavailable =
+            acknowledged_prefix_lookup_error(&RawMessageError::new(RawMessageErrorKind::Other));
+
+        assert_eq!(
+            missing.kind(),
+            DomainEventConsumerErrorKind::InvalidCommittedEvent
+        );
+        assert_eq!(
+            unavailable.kind(),
+            DomainEventConsumerErrorKind::Unavailable
+        );
+    }
+
+    #[test]
+    fn earliest_unresolved_lookup_distinguishes_missing_history_from_unavailability() {
+        let missing = earliest_unresolved_lookup_error(&RawMessageError::new(
+            RawMessageErrorKind::NoMessageFound,
+        ));
+        let unavailable =
+            earliest_unresolved_lookup_error(&RawMessageError::new(RawMessageErrorKind::Other));
+
+        assert_eq!(
+            missing.kind(),
+            DomainEventConsumerErrorKind::InvalidCommittedEvent
+        );
+        assert_eq!(
+            unavailable.kind(),
+            DomainEventConsumerErrorKind::Unavailable
+        );
     }
 
     #[test]
@@ -884,6 +998,7 @@ mod tests {
                 event_count,
                 transaction_event_ordinal,
                 transaction_event_count,
+                is_transactional: false,
                 recorded,
             },
         }

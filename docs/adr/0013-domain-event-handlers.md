@@ -15,19 +15,22 @@ never changes or appends to the originating aggregate stream.
 Applications register a private event type and handler. The derived JSON event
 codec is selected automatically; registration accepts an explicit codec only as
 an override. Unregistered aggregate/event pairs are intentionally irrelevant and
-are acknowledged without invoking a side effect. Registered events are decoded
-through the aggregate's codec; unsupported schemas, malformed payloads,
-permanently unsupported events, and operator-blocking failures stop the durable
-consumer without skipping the event. Retryable failures are negatively
-acknowledged for redelivery.
+are treated as successfully handled without invoking a side effect. Registered
+events are decoded through the aggregate's codec; unsupported schemas, malformed
+payloads, permanently unsupported events, and operator-blocking failures stop
+the durable consumer without skipping the event. Retryable failures cause the
+complete atomic transaction group to be negatively acknowledged for redelivery.
 
 The NATS adapter consumes the authoritative EventStore JetStream stream through
 caller-named durable pull consumers. It verifies the existing stream and durable
 configuration without provisioning at service startup. It validates and buffers
-one complete ADR-50 commit before dispatch, invokes handlers in commit order,
-and advances that durable only after every handler invocation succeeds. Limits
-retention keeps aggregate replay, other durables, future rebuilds, and permanent
-history independent from consumer acknowledgements.
+one complete ADR-50 atomic transaction group before dispatch, reconstructing
+filtered progress across internal transaction guards and receipts when needed.
+It invokes handlers in transaction order, ACKs the group as a unit only after
+every invocation succeeds, and retries the group as a unit after a retryable
+failure or timeout. Limits retention keeps aggregate replay, other durables,
+future rebuilds, and permanent history independent from consumer
+acknowledgements.
 
 Independent side effects use independent durable consumers. Publishing an
 integration event and updating a read model are application-specific

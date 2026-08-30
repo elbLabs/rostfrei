@@ -50,11 +50,12 @@ use, including the required `allow_atomic_publish` setting.
 Event-store configuration defaults to 10 GiB of stream capacity, a 512 KiB
 encoded-event write limit, one replica, and a five-second PubAck timeout. The
 stream reserves a bounded 4 KiB allowance above the event limit for ADR-50
-headers. Provisioning and connection reject a server whose negotiated
-`max_payload` is smaller than that wire-message limit. Schemas 1 through 3 retain
-the previous 2 MiB read limit, and provisioning preserves a larger existing
-stream message limit, so lowering the default does not make existing history
-unreadable.
+headers. Stream capacity must fit that complete wire allowance, and provisioning
+and connection reject a server whose negotiated `max_payload` is smaller than
+it. All persisted event schemas and transaction receipts remain readable up to
+the previously supported 64 MiB configured ceiling. Provisioning preserves a
+larger existing stream message limit, so lowering the write default does not
+make existing history unreadable.
 
 Stream creation and updates are operator-owned through an explicit provisioning
 API. Service startup only connects and verifies. The normal stream name and
