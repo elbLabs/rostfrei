@@ -63,7 +63,7 @@ compiled model, while the Aggregate's `events = [...]` remains the executable
 event inventory. Commands remain an application boundary and map their payloads
 into one or more Action inputs rather than being passed to Actions directly.
 
-`DomainCommand` derives the runtime command definition from its owner, local ID,
+`Command` derives the runtime command definition from its owner, local ID,
 and schema version. Registering a command runtime binding inserts that descriptor
 into the registry when it is not already present. `domain_module!` remains an
 optional grouping mechanism, not a prerequisite for command registration and

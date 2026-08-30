@@ -187,7 +187,7 @@ fn compiles_explicit_domain_model_to_json() {
                 },
                 "scalar": "u64",
             }],
-            "domainCommands": [],
+            "commands": [],
             "domainEvents": [{
                 "id": {
                     "aggregate": {

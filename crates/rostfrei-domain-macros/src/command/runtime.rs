@@ -11,9 +11,9 @@ pub fn assemble(runtime_path: &Path, name: &Ident, attributes: &Attributes) -> T
             type Aggregate = #owner;
 
             const COMMAND_NAME: &'static str =
-                <Self as #runtime_path::__private::DomainCommandType>::LOCAL_ID;
+                <Self as #runtime_path::__private::CommandType>::LOCAL_ID;
             const SCHEMA_VERSION: u32 =
-                <Self as #runtime_path::__private::DomainCommandType>::SCHEMA_VERSION;
+                <Self as #runtime_path::__private::CommandType>::SCHEMA_VERSION;
 
             fn descriptor() -> #runtime_path::__private::CommandDescriptor {
                 #runtime_path::__private::CommandDescriptor {
@@ -26,8 +26,8 @@ pub fn assemble(runtime_path: &Path, name: &Ident, attributes: &Attributes) -> T
                     rust_command_type: #runtime_path::__private::type_name::<Self>(),
                     rust_aggregate_type:
                         #runtime_path::__private::type_name::<Self::Aggregate>(),
-                    domain_command: ::core::option::Option::Some(
-                        <Self as #runtime_path::__private::DomainCommandType>::DESCRIPTOR,
+                    modeled_command: ::core::option::Option::Some(
+                        <Self as #runtime_path::__private::CommandType>::DESCRIPTOR,
                     ),
                 }
             }

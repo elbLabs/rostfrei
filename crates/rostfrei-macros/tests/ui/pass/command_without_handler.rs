@@ -1,4 +1,4 @@
-use rostfrei_macros::Command;
+use rostfrei_macros::CommandDefinition;
 use zs_core::{Aggregate, StreamId};
 
 struct Account;
@@ -16,7 +16,7 @@ impl Aggregate for Account {
     fn apply(_state: &mut Self::State, (): &Self::Event) {}
 }
 
-#[derive(Command)]
+#[derive(CommandDefinition)]
 #[rostfrei(name = "account.open", version = 1, aggregate = Account)]
 struct OpenAccount;
 

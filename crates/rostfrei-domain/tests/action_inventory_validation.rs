@@ -6,11 +6,11 @@ use domain::__private::DomainModelBuilder;
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
-    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainCommand, DomainCommandType,
-    DomainError, DomainErrorId, DomainErrorOwnerId, DomainErrorType, DomainEvent, DomainEventId,
-    DomainIdentity, DomainIdentityId, DomainModelError, DomainModelReference, DomainService,
-    DomainServiceId, Entity, EntityId, ValueObject, ValueObjectId, ValueObjectOwnerId,
-    ValueObjectType, domain_actions,
+    Aggregate, AggregateId, BoundedContext, BoundedContextId, Command, CommandType, DomainError,
+    DomainErrorId, DomainErrorOwnerId, DomainErrorType, DomainEvent, DomainEventId, DomainIdentity,
+    DomainIdentityId, DomainModelError, DomainModelReference, DomainService, DomainServiceId,
+    Entity, EntityId, ValueObject, ValueObjectId, ValueObjectOwnerId, ValueObjectType,
+    domain_actions,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("action-inventory");
@@ -156,7 +156,7 @@ impl EntityActions for InventoryEntity {
     }
 }
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(
     id = "aggregate-command",
     label = "Aggregate command",
@@ -225,7 +225,7 @@ impl ServiceActions for InventoryService {
     }
 }
 
-#[derive(DomainCommand)]
+#[derive(Command)]
 #[domain(
     id = "service-command",
     label = "Service command",
@@ -496,12 +496,8 @@ fn accepts_references_added_after_all_owner_actions_are_registered() {
     builder.add_entity_type::<InventoryEntity>().unwrap();
     builder.add_value_object_type::<InventoryValue>().unwrap();
 
-    builder
-        .add_domain_command(AggregateCommand::DESCRIPTOR)
-        .unwrap();
-    builder
-        .add_domain_command(ServiceCommand::DESCRIPTOR)
-        .unwrap();
+    builder.add_command(AggregateCommand::DESCRIPTOR).unwrap();
+    builder.add_command(ServiceCommand::DESCRIPTOR).unwrap();
     builder.add_domain_error(AggregateError::DESCRIPTOR);
     builder.add_domain_error(ServiceError::DESCRIPTOR);
     builder.add_domain_error(EntityError::DESCRIPTOR);

@@ -1,8 +1,8 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    ActionId, ActionOwnerId, AggregateId, DecisionId, DecisionOutcomeId, DecisionOwnerId,
-    DomainCommandId, DomainErrorId, DomainEventId, DomainIdentityId, EntityId, EntityLifecycleId,
+    ActionId, ActionOwnerId, AggregateId, CommandId, DecisionId, DecisionOutcomeId,
+    DecisionOwnerId, DomainErrorId, DomainEventId, DomainIdentityId, EntityId, EntityLifecycleId,
     EntityLifecycleStateId, InvariantId, InvariantOwnerId, QueryId, ScalarType, ValueObjectId,
 };
 
@@ -136,8 +136,8 @@ pub enum DomainModelError {
     DuplicateDomainEventId {
         id: Box<DomainEventId>,
     },
-    DuplicateDomainCommandId {
-        id: Box<DomainCommandId>,
+    DuplicateCommandId {
+        id: Box<CommandId>,
     },
     DuplicateQueryId {
         id: Box<QueryId>,
@@ -239,9 +239,7 @@ impl fmt::Display for DomainModelError {
                 fmt_duplicate(formatter, "DomainIdentityId", id)
             }
             Self::DuplicateDomainEventId { id } => fmt_duplicate(formatter, "DomainEventId", id),
-            Self::DuplicateDomainCommandId { id } => {
-                fmt_duplicate(formatter, "DomainCommandId", id)
-            }
+            Self::DuplicateCommandId { id } => fmt_duplicate(formatter, "CommandId", id),
             Self::DuplicateQueryId { id } => write!(formatter, "duplicate QueryId: {id:?}"),
         }
     }

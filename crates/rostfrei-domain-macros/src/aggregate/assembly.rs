@@ -13,7 +13,7 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     let aggregate_decision_owner = assemble_aggregate_decision_owner(domain_path, name);
     let value_object_owner = assemble_value_object_owner(domain_path, name);
     let domain_error_owner = assemble_domain_error_owner(domain_path, name);
-    let domain_command_owner = assemble_domain_command_owner(domain_path, name);
+    let command_owner = assemble_command_owner(domain_path, name);
     let invariant_owner = assemble_invariant_owner(domain_path, name, attributes);
     let aggregate_invariant_owner = assemble_aggregate_invariant_owner(domain_path, name);
     quote! {
@@ -25,7 +25,7 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
         #aggregate_decision_owner
         #value_object_owner
         #domain_error_owner
-        #domain_command_owner
+        #command_owner
         #invariant_owner
         #aggregate_invariant_owner
     }
@@ -91,14 +91,14 @@ fn assemble_aggregate_invariant_owner(domain_path: &Path, name: &Ident) -> Token
     }
 }
 
-fn assemble_domain_command_owner(domain_path: &Path, name: &Ident) -> TokenStream {
+fn assemble_command_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
-        impl #domain_path::DomainCommandOwnerType for #name {
-            const DOMAIN_COMMAND_OWNER_ID: #domain_path::DomainCommandOwnerId =
-                #domain_path::DomainCommandOwnerId::Aggregate(
+        impl #domain_path::CommandOwnerType for #name {
+            const COMMAND_OWNER_ID: #domain_path::CommandOwnerId =
+                #domain_path::CommandOwnerId::Aggregate(
                     <Self as #domain_path::AggregateType>::DESCRIPTOR.id,
                 );
-            const DOMAIN_COMMAND_NAMESPACE: &'static str =
+            const COMMAND_NAMESPACE: &'static str =
                 <Self as #domain_path::AggregateType>::DESCRIPTOR.id.context.0;
         }
     }

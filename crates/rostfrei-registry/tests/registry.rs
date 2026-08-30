@@ -15,7 +15,7 @@ fn command(
         aggregate_type: aggregate_type.to_owned(),
         rust_command_type: "test::Command",
         rust_aggregate_type: "test::Aggregate",
-        domain_command: None,
+        modeled_command: None,
     }
 }
 
