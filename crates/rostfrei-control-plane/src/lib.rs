@@ -1,3 +1,4 @@
+mod command_bus;
 mod dispatch;
 mod operation;
 mod runtime;
@@ -6,6 +7,7 @@ mod service;
 #[cfg(feature = "http")]
 pub mod http;
 
+pub use command_bus::CommandBusDispatchAdapter;
 pub use dispatch::{
     DispatchAdapter, DispatchError, DispatchErrorKind, DispatchInvocation, DispatchObserver,
     DispatchOutcome, DispatchPublication, DispatchReceipt, DispatchRejection, dispatch_fingerprint,

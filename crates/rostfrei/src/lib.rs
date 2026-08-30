@@ -1,12 +1,29 @@
 extern crate self as rostfrei;
 
+mod command_bus;
+mod in_memory_messaging;
 mod integration_event;
+mod integration_event_bus;
 
+pub use command_bus::{
+    CommandBindingRegistrationError, CommandBus, CommandBusError, CommandBusErrorKind,
+    CommandBusObserver, CommandBusReceipt, CommandMessageAdapter, CommandProcessor,
+    CommandProcessorError, CommandProcessorErrorKind, CommandPublication, CommandRejectionMapper,
+    CommandRequest, DynamicCommandRequest, EncodedCommand, InfallibleCommandRejectionMapper,
+    InvalidCommandResponse, JsonDomainRejectionMapper, RoutedAggregateCommand,
+    RoutedAggregateCommandError, command_execution_fingerprint, command_message_id,
+    command_response_message_id,
+};
 pub use domain::*;
+pub use in_memory_messaging::InMemoryMessagingAdapter;
 pub use integration_event::{
     CommandContext, CompletedIntegrationCommand, IntegrationEventHandler, IntegrationEventOutcome,
-    IntegrationEventProcessingError, IntegrationEventProcessor, InvalidCommandResponse,
-    RoutedAggregateCommand, RoutedAggregateCommandError,
+    IntegrationEventProcessingError, IntegrationEventProcessor,
+};
+pub use integration_event_bus::{
+    CommittedEventContext, EncodedIntegrationMessage, IntegrationEvent, IntegrationEventBus,
+    IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationEventPublication,
+    IntegrationMessageAdapter, integration_message_id,
 };
 pub use rostfrei_core::{
     Aggregate, AggregateId as StreamAggregateId, AggregateInstance,
@@ -21,9 +38,9 @@ pub use rostfrei_core::{
 };
 pub use rostfrei_domain_runtime::{AggregateRuntime, Apply, Initialize, domain_module};
 pub use rostfrei_messaging_core::{
-    CommandAddress, CommandPublisher, CommandRejection, CommandRejectionClassification,
-    CommandResponse, CommandResponseOutcome, CommandResponseReader, DurableName,
-    IntegrationEventEnvelope,
+    CausationId, CommandAddress, CommandPublisher, CommandRejection,
+    CommandRejectionClassification, CommandResponse, CommandResponseOutcome, CommandResponseReader,
+    CorrelationId, DurableName, IntegrationEventEnvelope, MessageId, MessageTimestamp,
 };
 pub use rostfrei_registry::{
     CommandDefinition, CommandDescriptor as CommandRegistrationDescriptor, DomainModule,
