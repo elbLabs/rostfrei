@@ -1,22 +1,68 @@
 use std::{convert::Infallible, sync::Arc};
 
 use rostfrei::{
-    Aggregate, AggregateInstance, Apply, CommandExecutionError, CommandHandler, CommandOutcome,
-    ContentFingerprint, EventHistory, EventStore, ExecutionMetadata, Executor, Initialize,
-    OperationId, StreamAggregateId, StreamAggregateType, StreamId,
+    Aggregate, AggregateInstance, Apply, CommandHandler, ContentFingerprint, DomainRegistry,
+    EventHistory, EventStore, ExecutionError, ExecutionMetadata, Executor, Initialize, OperationId,
+    RegistrationError, StreamAggregateId, StreamAggregateType, StreamId, command_handler,
+    domain_module,
 };
-use rostfrei_control_plane::ControlPlaneBuilder;
+use rostfrei_tracer::{CommandInputField, CommandInputOption, CommandInputOptions, TracerBuilder};
 use thiserror::Error;
 
 use crate::rental::{
-    Bicycle, BicycleCondition, BicycleId, BicycleRented, BicycleStatus, FleetId,
-    ImportRentalFleetInput, ImportedBicycle, RentBicycle, RentalFleet, RentalFleetActions,
-    RentalFleetAggregate, RentalFleetImported,
+    AddBicycle, Bicycle, BicycleAdded, BicycleCondition, BicycleId, BicycleRented, BicycleReturned,
+    BicycleStatus, FleetId, ImportedBicycle, RentBicycle, RentalFleet, RentalFleetActions,
+    RentalFleetAggregate, RentalFleetImported, ReturnBicycle,
 };
 
 pub const DEMO_FLEET_ID: &str = "city-fleet";
 const DEMO_SEED_OPERATION_ID: &str = "seed-city-fleet";
 const DEMO_BICYCLE_IDS: [&str; 2] = ["bike-42", "bike-99"];
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RentBicycleInputOptions;
+
+impl CommandInputOptions<RentBicycle> for RentBicycleInputOptions {
+    fn fields(&self, state: &RentalFleet) -> Vec<CommandInputField> {
+        let bicycles = state
+            .bicycles()
+            .iter()
+            .filter(|bicycle| {
+                bicycle.status() == BicycleStatus::Available
+                    && bicycle.condition() == BicycleCondition::Serviceable
+            })
+            .map(|bicycle| {
+                CommandInputOption::new(
+                    bicycle.bicycle_id().as_str(),
+                    bicycle.bicycle_id().as_str(),
+                )
+                .with_description("Available and serviceable")
+            })
+            .collect();
+        vec![CommandInputField::select("bicycle_id", "Bicycle", bicycles)]
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ReturnBicycleInputOptions;
+
+impl CommandInputOptions<ReturnBicycle> for ReturnBicycleInputOptions {
+    fn fields(&self, state: &RentalFleet) -> Vec<CommandInputField> {
+        let bicycles = state
+            .bicycles()
+            .iter()
+            .filter(|bicycle| bicycle.status() == BicycleStatus::Rented)
+            .map(|bicycle| {
+                CommandInputOption::new(
+                    bicycle.bicycle_id().as_str(),
+                    bicycle.bicycle_id().as_str(),
+                )
+                .with_description("Currently rented")
+            })
+            .collect();
+        vec![CommandInputField::select("bicycle_id", "Bicycle", bicycles)]
+    }
+}
 
 impl Initialize<RentalFleetAggregate> for RentalFleet {
     fn initialize(stream_id: &StreamId) -> Self {
@@ -49,19 +95,32 @@ impl Apply<BicycleRented> for RentalFleet {
     }
 }
 
-impl CommandHandler<RentBicycle> for RentalFleetAggregate {
-    type Rejection = <RentBicycle as rostfrei::CommandType>::Rejection;
-
-    fn handle(
-        command: &RentBicycle,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.rent_bicycle(command.bicycle_id.clone())
+impl Apply<BicycleReturned> for RentalFleet {
+    fn apply(&mut self, event: &BicycleReturned) {
+        self.apply_return(&event.bicycle_id);
     }
 }
 
-pub fn control_plane_builder(history: Arc<dyn EventHistory>) -> ControlPlaneBuilder {
-    ControlPlaneBuilder::new(history)
+impl Apply<BicycleAdded> for RentalFleet {
+    fn apply(&mut self, event: &BicycleAdded) {
+        self.apply_addition(event);
+    }
+}
+
+command_handler!(RentBicycle => rent_bicycle);
+command_handler!(ReturnBicycle => return_bicycle);
+command_handler!(AddBicycle => add_bicycle);
+
+domain_module! {
+    pub struct BikeRentalRuntimeModule {
+        commands: [RentBicycle, ReturnBicycle, AddBicycle],
+    }
+}
+
+pub fn tracer_builder(history: Arc<dyn EventHistory>) -> Result<TracerBuilder, RegistrationError> {
+    let mut registry = DomainRegistry::new();
+    registry.register_module::<BikeRentalRuntimeModule>()?;
+    Ok(TracerBuilder::new(history, registry))
 }
 
 pub fn demo_stream() -> Result<StreamId, DemoFixtureError> {

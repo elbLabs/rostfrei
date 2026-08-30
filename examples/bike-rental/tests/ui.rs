@@ -27,10 +27,9 @@ async fn example_serves_distinct_dispatch_and_simulation_modes() {
     .unwrap();
     assert!(body.contains("Bike rental command lab"));
     assert!(body.contains("rent-bicycle"));
-    assert!(body.contains("value=\"dispatch\""));
-    assert!(body.contains("value=\"simulate\""));
-    assert!(body.contains("waits for the durable accepted or rejected response"));
-    assert!(body.contains("/v1/operations/"));
+    assert!(body.contains("return-bicycle"));
+    assert!(body.contains("add-bicycle"));
+    assert!(body.contains("/operations/"));
     assert!(body.contains("last-event-id"));
     assert!(body.contains("operation.failed"));
     assert!(!body.contains("value=\"local-development-token\""));

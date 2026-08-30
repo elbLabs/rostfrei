@@ -57,8 +57,8 @@ const INDEX_HTML: &str = r#"<!doctype html>
   <main>
     <header>
       <h1>Bike rental command lab</h1>
-      <p>Publish a real command through NATS or preview it without changing the stream.</p>
-      <p class="notice" id="mode-notice">Dispatch reports PubAck immediately, then waits for the durable accepted or rejected response.</p>
+      <p>Submit a command to the local tracer and watch its trace arrive.</p>
+      <p class="notice">Simulation only: commands and predicted events are not appended or published.</p>
     </header>
     <div class="layout">
       <section class="panel" aria-labelledby="command-heading">
@@ -79,9 +79,11 @@ const INDEX_HTML: &str = r#"<!doctype html>
           <label>Command
             <select id="command" name="command">
               <option value="rent-bicycle">Rent bicycle</option>
+              <option value="return-bicycle">Return bicycle</option>
+              <option value="add-bicycle">Add bicycle</option>
             </select>
           </label>
-          <label>Bicycle ID
+          <label id="bicycle-field">Bicycle ID
             <input id="bicycle-id" name="bicycleId" value="bike-42" list="demo-bicycles" required>
             <datalist id="demo-bicycles">
               <option value="bike-42">Available and serviceable</option>
@@ -107,8 +109,18 @@ const INDEX_HTML: &str = r#"<!doctype html>
     const submit = document.querySelector('#submit');
     const status = document.querySelector('#status');
     const events = document.querySelector('#events');
-    const mode = document.querySelector('#mode');
-    const modeNotice = document.querySelector('#mode-notice');
+    const commandSelect = document.querySelector('#command');
+    const bicycleField = document.querySelector('#bicycle-field');
+    const bicycleInput = document.querySelector('#bicycle-id');
+
+    function syncCommandInputs() {
+      const serverAssigned = commandSelect.value === 'add-bicycle';
+      bicycleField.hidden = serverAssigned;
+      bicycleInput.disabled = serverAssigned;
+    }
+
+    commandSelect.addEventListener('change', syncCommandInputs);
+    syncCommandInputs();
 
     function setStatus(message, state) {
       status.textContent = message;
@@ -176,7 +188,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
         try {
           const headers = { accept: 'text/event-stream', authorization: `Bearer ${token}` };
           if (cursor) headers['last-event-id'] = String(cursor);
-          const response = await fetch(`/v1/operations/${encodeURIComponent(operationId)}/events`, { headers });
+          const response = await fetch(`/operations/${encodeURIComponent(operationId)}/events`, { headers });
           if (!response.ok) throw new Error(await errorMessage(response));
           if (!response.body) break;
 
@@ -227,13 +239,13 @@ const INDEX_HTML: &str = r#"<!doctype html>
         const token = document.querySelector('#token').value;
         const selectedMode = mode.value;
         const aggregateId = document.querySelector('#aggregate-id').value;
-        const command = document.querySelector('#command').value;
-        const bicycleId = document.querySelector('#bicycle-id').value;
+        const command = commandSelect.value;
+        const bicycleId = bicycleInput.value;
         const randomId = typeof crypto.randomUUID === 'function'
           ? crypto.randomUUID()
           : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
         const operationId = `ui-${randomId}`;
-        const endpoint = `/v1/contexts/bike-rental/aggregates/rental-fleet/${encodeURIComponent(aggregateId)}/commands/${encodeURIComponent(command)}/${selectedMode}`;
+        const endpoint = `/contexts/bike-rental/aggregates/rental-fleet/${encodeURIComponent(aggregateId)}/commands/${encodeURIComponent(command)}/simulate`;
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -241,7 +253,10 @@ const INDEX_HTML: &str = r#"<!doctype html>
             'content-type': 'application/json',
             'idempotency-key': operationId,
           },
-          body: JSON.stringify({ schemaVersion: 1, payload: { bicycle_id: bicycleId } }),
+          body: JSON.stringify({
+            schemaVersion: 1,
+            payload: command === 'add-bicycle' ? {} : { bicycle_id: bicycleId },
+          }),
         });
         if (!response.ok) throw new Error(await errorMessage(response));
         setStatus('Tracking', 'running');

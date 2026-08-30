@@ -7,9 +7,10 @@ use serde_json::Value;
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
-pub struct DispatchInvocation {
+pub struct CommandInvocation {
     operation_id: OperationId,
-    operation_fingerprint: ContentFingerprint,
+    correlation_id: String,
+    execution_fingerprint: ContentFingerprint,
     aggregate_type: String,
     aggregate_id: AggregateId,
     command: String,
@@ -17,11 +18,12 @@ pub struct DispatchInvocation {
     payload: Value,
 }
 
-impl DispatchInvocation {
+impl CommandInvocation {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         operation_id: OperationId,
-        operation_fingerprint: ContentFingerprint,
+        correlation_id: impl Into<String>,
+        execution_fingerprint: ContentFingerprint,
         aggregate_type: impl Into<String>,
         aggregate_id: AggregateId,
         command: impl Into<String>,
@@ -30,7 +32,8 @@ impl DispatchInvocation {
     ) -> Self {
         Self {
             operation_id,
-            operation_fingerprint,
+            correlation_id: correlation_id.into(),
+            execution_fingerprint,
             aggregate_type: aggregate_type.into(),
             aggregate_id,
             command: command.into(),
@@ -43,8 +46,12 @@ impl DispatchInvocation {
         &self.operation_id
     }
 
-    pub const fn operation_fingerprint(&self) -> ContentFingerprint {
-        self.operation_fingerprint
+    pub fn correlation_id(&self) -> &str {
+        &self.correlation_id
+    }
+
+    pub const fn execution_fingerprint(&self) -> ContentFingerprint {
+        self.execution_fingerprint
     }
 
     pub fn aggregate_type(&self) -> &str {
@@ -69,12 +76,12 @@ impl DispatchInvocation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DispatchPublication {
+pub struct CommandPublication {
     command_message_id: String,
     duplicate: bool,
 }
 
-impl DispatchPublication {
+impl CommandPublication {
     pub fn new(command_message_id: impl Into<String>, duplicate: bool) -> Self {
         Self {
             command_message_id: command_message_id.into(),
@@ -92,18 +99,17 @@ impl DispatchPublication {
 }
 
 #[async_trait]
-pub trait DispatchObserver: Send + Sync {
+pub trait CommandTransportObserver: Send + Sync {
     /// Records that command publication received its broker acknowledgement.
     ///
-    /// Adapters must await this callback before returning from `dispatch`. The control plane
-    /// retains a matching guard, but an adapter that detaches the callback can otherwise race a
-    /// terminal result and lose publication evidence from the operation trace.
-    async fn command_published(&self, publication: DispatchPublication);
+    /// Transports must await this callback before returning a receipt. This preserves
+    /// publication evidence before the operation records its durable response.
+    async fn command_published(&self, publication: CommandPublication);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DispatchRejection {
+pub struct CommandRejection {
     pub classification: String,
     pub code: String,
     pub message: String,
@@ -111,7 +117,7 @@ pub struct DispatchRejection {
     pub details: Option<Value>,
 }
 
-impl DispatchRejection {
+impl CommandRejection {
     pub fn new(
         classification: impl Into<String>,
         code: impl Into<String>,
@@ -143,20 +149,20 @@ impl DispatchRejection {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DispatchOutcome {
+pub enum CommandOutcome {
     Accepted,
-    Rejected(DispatchRejection),
+    Rejected(CommandRejection),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DispatchReceipt {
+pub struct CommandReceipt {
     command_message_id: String,
     response_message_id: String,
     duplicate: bool,
-    outcome: DispatchOutcome,
+    outcome: CommandOutcome,
 }
 
-impl DispatchReceipt {
+impl CommandReceipt {
     pub fn accepted(
         command_message_id: impl Into<String>,
         response_message_id: impl Into<String>,
@@ -166,7 +172,7 @@ impl DispatchReceipt {
             command_message_id: command_message_id.into(),
             response_message_id: response_message_id.into(),
             duplicate,
-            outcome: DispatchOutcome::Accepted,
+            outcome: CommandOutcome::Accepted,
         }
     }
 
@@ -174,13 +180,13 @@ impl DispatchReceipt {
         command_message_id: impl Into<String>,
         response_message_id: impl Into<String>,
         duplicate: bool,
-        rejection: DispatchRejection,
+        rejection: CommandRejection,
     ) -> Self {
         Self {
             command_message_id: command_message_id.into(),
             response_message_id: response_message_id.into(),
             duplicate,
-            outcome: DispatchOutcome::Rejected(rejection),
+            outcome: CommandOutcome::Rejected(rejection),
         }
     }
 
@@ -196,11 +202,11 @@ impl DispatchReceipt {
         self.duplicate
     }
 
-    pub const fn outcome(&self) -> &DispatchOutcome {
+    pub const fn outcome(&self) -> &CommandOutcome {
         &self.outcome
     }
 
-    pub fn into_parts(self) -> (String, String, bool, DispatchOutcome) {
+    pub fn into_parts(self) -> (String, String, bool, CommandOutcome) {
         (
             self.command_message_id,
             self.response_message_id,
@@ -212,37 +218,37 @@ impl DispatchReceipt {
 
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
-pub enum DispatchErrorKind {
-    #[error("dispatch request is invalid")]
+pub enum CommandTransportErrorKind {
+    #[error("command transport request is invalid")]
     InvalidRequest,
-    #[error("dispatch was rejected")]
+    #[error("command transport rejected the request")]
     Rejected,
-    #[error("dispatch confirmation timed out")]
+    #[error("command response timed out")]
     Timeout,
-    #[error("dispatcher is unavailable")]
+    #[error("command transport is unavailable")]
     Unavailable,
-    #[error("dispatcher configuration is invalid")]
+    #[error("command transport configuration is invalid")]
     InvalidConfiguration,
-    #[error("dispatch response is invalid")]
+    #[error("command transport response is invalid")]
     InvalidResponse,
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error("{message}")]
-pub struct DispatchError {
-    kind: DispatchErrorKind,
+pub struct CommandTransportError {
+    kind: CommandTransportErrorKind,
     message: String,
 }
 
-impl DispatchError {
-    pub fn new(kind: DispatchErrorKind, message: impl Into<String>) -> Self {
+impl CommandTransportError {
+    pub fn new(kind: CommandTransportErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
         }
     }
 
-    pub const fn kind(&self) -> DispatchErrorKind {
+    pub const fn kind(&self) -> CommandTransportErrorKind {
         self.kind
     }
 
@@ -252,53 +258,81 @@ impl DispatchError {
 }
 
 #[async_trait]
-pub trait DispatchAdapter: Send + Sync {
+pub trait CommandTransport: Send + Sync {
     fn maximum_payload_len(&self) -> usize {
         usize::MAX
     }
 
-    async fn dispatch(
+    async fn invoke(
         &self,
-        invocation: DispatchInvocation,
-        observer: Arc<dyn DispatchObserver>,
-    ) -> Result<DispatchReceipt, DispatchError>;
+        invocation: CommandInvocation,
+        observer: Arc<dyn CommandTransportObserver>,
+    ) -> Result<CommandReceipt, CommandTransportError>;
 }
 
-pub fn dispatch_fingerprint(
+pub fn command_execution_fingerprint(
     aggregate_type: &str,
     aggregate_id: &str,
     command: &str,
     schema_version: u32,
     payload: &Value,
 ) -> ContentFingerprint {
-    let payload = payload.to_string();
-    fingerprint(
-        aggregate_type,
-        aggregate_id,
-        command,
-        schema_version,
-        payload.as_bytes(),
-    )
-}
-
-fn fingerprint(
-    aggregate_type: &str,
-    aggregate_id: &str,
-    command: &str,
-    schema_version: u32,
-    payload: &[u8],
-) -> ContentFingerprint {
-    let mut framed = Vec::new();
+    let payload = canonical_json_payload(payload);
     let schema_version = schema_version.to_be_bytes();
-    for value in [
-        b"rostfrei:dispatch-request:v1".as_slice(),
+    framed_fingerprint(&[
+        b"rostfrei:command-execution:v1".as_slice(),
         aggregate_type.as_bytes(),
         aggregate_id.as_bytes(),
         command.as_bytes(),
         schema_version.as_slice(),
-        payload,
-    ] {
-        let length = u64::try_from(value.len()).unwrap_or(u64::MAX);
+        &payload,
+    ])
+}
+
+pub(crate) fn canonical_json_payload(value: &Value) -> Vec<u8> {
+    let mut serialized = Vec::new();
+    write_canonical_json(value, &mut serialized);
+    serialized
+}
+
+fn write_canonical_json(value: &Value, serialized: &mut Vec<u8>) {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+            serde_json::to_writer(serialized, value)
+                .expect("serializing JSON into a byte vector cannot fail");
+        }
+        Value::Array(values) => {
+            serialized.push(b'[');
+            for (index, value) in values.iter().enumerate() {
+                if index != 0 {
+                    serialized.push(b',');
+                }
+                write_canonical_json(value, serialized);
+            }
+            serialized.push(b']');
+        }
+        Value::Object(values) => {
+            serialized.push(b'{');
+            let mut fields = values.iter().collect::<Vec<_>>();
+            fields.sort_unstable_by_key(|(name, _)| *name);
+            for (index, (name, value)) in fields.into_iter().enumerate() {
+                if index != 0 {
+                    serialized.push(b',');
+                }
+                serde_json::to_writer(&mut *serialized, name)
+                    .expect("serializing a JSON field name into a byte vector cannot fail");
+                serialized.push(b':');
+                write_canonical_json(value, serialized);
+            }
+            serialized.push(b'}');
+        }
+    }
+}
+
+fn framed_fingerprint(values: &[&[u8]]) -> ContentFingerprint {
+    let mut framed = Vec::new();
+    for value in values {
+        let length = u64::try_from(value.len()).expect("command invocation parts fit in u64");
         framed.extend_from_slice(&length.to_be_bytes());
         framed.extend_from_slice(value);
     }
@@ -310,25 +344,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dispatch_fingerprint_is_stable_and_mode_scoped() {
-        let fingerprint = dispatch_fingerprint(
-            "bike-rental/rental-fleet",
-            "city-fleet",
-            "rent-bicycle",
-            1,
-            &serde_json::json!({ "bicycle_id": "bike-42" }),
-        );
+    fn execution_fingerprint_canonicalizes_object_keys() {
+        let left: Value = serde_json::from_str(r#"{"outer":{"b":2,"a":1},"z":false}"#).unwrap();
+        let right: Value = serde_json::from_str(r#"{"z":false,"outer":{"a":1,"b":2}}"#).unwrap();
 
         assert_eq!(
-            fingerprint,
-            dispatch_fingerprint(
-                "bike-rental/rental-fleet",
-                "city-fleet",
-                "rent-bicycle",
-                1,
-                &serde_json::json!({ "bicycle_id": "bike-42" }),
-            )
+            command_execution_fingerprint("context/aggregate", "one", "command", 1, &left),
+            command_execution_fingerprint("context/aggregate", "one", "command", 1, &right)
         );
-        assert_ne!(fingerprint, ContentFingerprint::digest("simulation"));
+        assert_ne!(
+            command_execution_fingerprint("context/aggregate", "one", "command", 1, &left),
+            command_execution_fingerprint("context/aggregate", "two", "command", 1, &left)
+        );
     }
 }
