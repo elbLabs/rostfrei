@@ -32,11 +32,12 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | **Aggregate stream** | The permanent, ordered history of one aggregate identity. | Topic, queue, KV record, JetStream stream |
 | **Stream version** | The one-based position of a domain event in an aggregate stream, with version zero representing no stream. | Revision, broker sequence |
 | **Commit** | The atomic, non-empty ordered set of domain events produced by one accepted operation. | Message batch, transaction record |
+| **Event transaction** | One atomic operation containing ordered commit or read-only participants from multiple aggregate streams in the same event store; its primary participant contributes a commit. | Distributed transaction, message batch |
 | **Operation** | One identified request to execute a command against an aggregate stream, including the stable identity used for exact retry. | Delivery attempt, consumer attempt |
 | **Command outcome** | The completed business result of command execution: accepted with a command receipt, or rejected with a modeled reason. | Execution status, handler result |
 | **Command receipt** | The result detail for an accepted command: newly appended events, an exact replay, or no events. A no-events receipt is not durable in this release. | Publish receipt, broker acknowledgement |
 | **Replay** | Reconstruction of aggregate state by applying its domain events in stream-version order. | Load row, restore snapshot |
-| **EventStore** | The port that loads an aggregate stream and atomically appends a commit at an expected version. | Repository, KV store, message publisher |
+| **EventStore** | The port that loads aggregate streams and atomically appends a commit or supported event transaction at expected versions. | Repository, KV store, message publisher |
 
 ## Public communication
 
@@ -55,6 +56,7 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 - A **rejection** produces no **commit**.
 - An accepted **operation** that produces domain events creates exactly one **commit**.
 - A **commit** contains one or more ordered **domain events**.
+- An **event transaction** contains one or more **commits** and may guard other participating **aggregate streams** without appending to them.
 - **Replay** reconstructs **aggregate state** at a selected **stream version**.
 - A **query** reads state and never appends a **commit**.
 - An **integration event** is a public contract separate from the private **domain events** from which it may be derived.

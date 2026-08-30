@@ -32,9 +32,10 @@ pub use rostfrei_core::{
     DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
     DomainEventHandlerErrorKind, DomainEventRegistrationError, EventBatch, EventCodec,
     EventCodecError, EventCodecErrorKind, EventHistory, EventId, EventStore, EventStoreError,
-    EventStoreErrorKind, EventVariant, ExecutionMetadata, Executor, ExpectedVersion,
-    InMemoryEventStore, NewEvent, OperationId, RecordedEvent, SimulationDecision, SimulationError,
-    SimulationOutcome, StreamId, StreamVersion,
+    EventStoreErrorKind, EventTransaction, EventVariant, ExecutionMetadata, Executor,
+    ExpectedVersion, InMemoryEventStore, MAX_TRANSACTION_ITEMS, NewEvent, OperationId,
+    RecordedEvent, SimulationDecision, SimulationError, SimulationOutcome, StreamId, StreamVersion,
+    TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
 };
 pub use rostfrei_domain_runtime::{AggregateRuntime, Apply, Initialize, domain_module};
 pub use rostfrei_messaging_core::{
