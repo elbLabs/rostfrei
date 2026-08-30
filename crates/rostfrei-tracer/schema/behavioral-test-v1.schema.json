@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rostfrei.dev/schemas/tracer/behavioral-test-v1.schema.json",
+  "title": "Rostfrei Tracer Behavioral Test",
+  "description": "A version 1 behavioral test executed by Rostfrei Tracer.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "id",
+    "name",
+    "given",
+    "when",
+    "then"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "description": "The behavioral-test document schema version.",
+      "const": 1
+    },
+    "id": {
+      "description": "A repository-unique test identifier.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"
+    },
+    "name": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "given": {
+      "$ref": "#/$defs/given"
+    },
+    "when": {
+      "$ref": "#/$defs/when"
+    },
+    "then": {
+      "$ref": "#/$defs/then"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "schemaVersion": {
+      "description": "A positive command or event schema version.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "jsonValue": {
+      "description": "Any JSON-compatible value. Object expectations use recursive subset matching; arrays match by exact length and order."
+    },
+    "aggregate": {
+      "type": "object",
+      "required": [
+        "type",
+        "id"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "command": {
+      "type": "object",
+      "required": [
+        "name",
+        "schemaVersion",
+        "aggregate",
+        "payload"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
+        "aggregate": {
+          "$ref": "#/$defs/aggregate"
+        },
+        "payload": {
+          "$ref": "#/$defs/jsonValue"
+        }
+      },
+      "additionalProperties": false
+    },
+    "given": {
+      "type": "object",
+      "required": [
+        "fixture"
+      ],
+      "properties": {
+        "fixture": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "commands": {
+          "description": "Ordered setup commands. Each setup command must be accepted before the subject command runs.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/command"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "when": {
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/command"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rejection": {
+      "type": "object",
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "payload": {
+          "$ref": "#/$defs/jsonValue"
+        }
+      },
+      "additionalProperties": false
+    },
+    "outcome": {
+      "oneOf": [
+        {
+          "const": "accepted"
+        },
+        {
+          "type": "object",
+          "required": [
+            "rejected"
+          ],
+          "properties": {
+            "rejected": {
+              "$ref": "#/$defs/rejection"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "timeout": {
+      "description": "A duration from 1 millisecond through 60 seconds, expressed as an integer followed by ms or s.",
+      "type": "string",
+      "pattern": "^0*(?:(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|60000)ms|(?:[1-9]|[1-5][0-9]|60)s)$"
+    },
+    "domainEventExpectation": {
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "schemaVersion"
+      ],
+      "properties": {
+        "kind": {
+          "const": "domain-event"
+        },
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
+        "payload": {
+          "$ref": "#/$defs/jsonValue"
+        }
+      },
+      "additionalProperties": false
+    },
+    "integrationEventExpectation": {
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "schemaVersion"
+      ],
+      "properties": {
+        "kind": {
+          "const": "integration-event"
+        },
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
+        "payload": {
+          "$ref": "#/$defs/jsonValue"
+        }
+      },
+      "additionalProperties": false
+    },
+    "traceExpectation": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/domainEventExpectation"
+        },
+        {
+          "$ref": "#/$defs/integrationEventExpectation"
+        }
+      ]
+    },
+    "trace": {
+      "type": "object",
+      "properties": {
+        "contains": {
+          "description": "Unordered event expectations. Each expectation consumes one distinct matching event; additional events are allowed.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/traceExpectation"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "then": {
+      "type": "object",
+      "required": [
+        "outcome",
+        "within"
+      ],
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/outcome"
+        },
+        "within": {
+          "$ref": "#/$defs/timeout"
+        },
+        "trace": {
+          "$ref": "#/$defs/trace"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
