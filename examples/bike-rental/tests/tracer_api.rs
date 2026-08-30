@@ -24,10 +24,9 @@ use bike_rental::{
 use http_body_util::BodyExt as _;
 use rostfrei::{
     Aggregate, AppendOutcome, CommandDefinition, CommandExecutionError, ContentFingerprint,
-    DomainErrorType, EventBatch, EventHistory, EventStore, EventStoreError, EventTransaction,
-    ExecutionMetadata, Executor, ExpectedVersion, InMemoryEventStore, JsonCommandPayload,
-    JsonErrorPayload, OperationId, StreamAggregateId, StreamAggregateType, StreamId,
-    TransactionAppendOutcome, TransactionReceipt,
+    DomainErrorType, EventBatch, EventHistory, EventStore, EventStoreError, ExecutionMetadata,
+    Executor, ExpectedVersion, InMemoryEventStore, JsonCommandPayload, JsonErrorPayload,
+    StreamAggregateId, StreamAggregateType, StreamId,
 };
 use rostfrei_core::{StreamDirectory, StreamSummary};
 use rostfrei_messaging_core::CorrelationId;
@@ -91,24 +90,6 @@ impl EventStore for ResettableStore {
             .await
             .append(stream_id, expected_version, batch)
             .await
-    }
-
-    async fn load_transaction_receipt(
-        &self,
-        primary_stream_id: &StreamId,
-        operation_id: &OperationId,
-    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-        self.snapshot()
-            .await
-            .load_transaction_receipt(primary_stream_id, operation_id)
-            .await
-    }
-
-    async fn append_transaction(
-        &self,
-        transaction: EventTransaction,
-    ) -> Result<TransactionAppendOutcome, EventStoreError> {
-        self.snapshot().await.append_transaction(transaction).await
     }
 }
 

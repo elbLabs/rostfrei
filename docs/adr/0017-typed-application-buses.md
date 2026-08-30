@@ -32,10 +32,10 @@ response reconciliation, response-before-ACK ordering, consumer dispositions,
 and broker-specific failure translation. It receives already encoded messages
 and does not contain application command matching or domain rejection mapping.
 
-`rostfrei-tracer` adapts authorized external JSON Test and Dispatch requests to
-the dynamic entry point on `CommandBus`. Tracer observes publication and
-terminal responses, but it is not a privileged executor and does not define a
-separate command wire contract.
+`rostfrei-control-plane` adapts an authorized external JSON dispatch request to
+the dynamic entry point on `CommandBus`. The control plane observes publication
+and terminal responses, but it is not a privileged executor and does not define
+a separate command wire contract.
 
 Integration events are produced only from committed domain events. A
 `DomainEventHandler` maps a concrete committed event to a public integration

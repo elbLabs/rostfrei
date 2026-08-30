@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = BikeRentalNatsConfig::new(&production_application)?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{application}-provision"), nats_url)
-            .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
+            .with_minimum_server_version(ServerVersion::new(2, 12, 0)),
     )
     .await?;
 

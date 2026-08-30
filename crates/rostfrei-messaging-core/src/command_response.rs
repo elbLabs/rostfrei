@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     ApplicationErrorCode, CommandAddress, CommandResponseAddress, CommandResponseReadError,
-    CommandResponseReadErrorKind, ContractError, ContractErrorKind, CorrelationId,
-    MessageBuildError, MessageId, OperationId, SchemaVersion, envelope::validate_serialized_size,
+    ContractError, ContractErrorKind, CorrelationId, MessageBuildError, MessageId, OperationId,
+    SchemaVersion, envelope::validate_serialized_size,
 };
 
 pub const MAX_COMMAND_REJECTION_MESSAGE_BYTES: usize = 1024;
@@ -278,27 +278,39 @@ pub fn derive_command_response_address(
 /// transport's documented response-retention window remains open.
 pub trait CommandResponseReader: Send + Sync {
     /// Looks up one exact retained response without waiting for its publication.
+    ///
+    /// Implementations must provide this separately from the waiting read.
+    ///
+    /// ```compile_fail
+    /// use async_trait::async_trait;
+    /// use rostfrei_messaging_core::{
+    ///     CommandResponse, CommandResponseAddress, CommandResponseReadError,
+    ///     CommandResponseReadErrorKind, CommandResponseReader, MessageId, OperationId,
+    /// };
+    /// use std::time::Duration;
+    ///
+    /// struct WaitingOnlyReader;
+    ///
+    /// #[async_trait]
+    /// impl CommandResponseReader for WaitingOnlyReader {
+    ///     async fn read_command_response(
+    ///         &self,
+    ///         _address: &CommandResponseAddress,
+    ///         _expected_operation_id: &OperationId,
+    ///         _expected_command_message_id: &MessageId,
+    ///         _timeout: Duration,
+    ///     ) -> Result<CommandResponse, CommandResponseReadError> {
+    ///         Err(CommandResponseReadError::new(CommandResponseReadErrorKind::Timeout))
+    ///     }
+    /// }
+    /// ```
     async fn find_command_response(
         &self,
         address: &CommandResponseAddress,
         expected_operation_id: &OperationId,
         expected_command_message_id: &MessageId,
         timeout: Duration,
-    ) -> Result<Option<CommandResponse>, CommandResponseReadError> {
-        match self
-            .read_command_response(
-                address,
-                expected_operation_id,
-                expected_command_message_id,
-                timeout,
-            )
-            .await
-        {
-            Ok(response) => Ok(Some(response)),
-            Err(error) if error.kind() == CommandResponseReadErrorKind::Timeout => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
+    ) -> Result<Option<CommandResponse>, CommandResponseReadError>;
 
     async fn read_command_response(
         &self,

@@ -1,35 +1,34 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rostfrei::{
-    CommandBindingRegistrationError, CommandBus, CommandDefinition, CommandMessageAdapter,
-    CommandProcessor, CommittedDomainEvent, CommittedEventContext, DomainEventDefinitionType,
-    DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
+    Aggregate, CommandBindingRegistrationError, CommandBus, CommandDefinition,
+    CommandMessageAdapter, CommandProcessor, CommittedDomainEvent, CommittedEventContext,
+    DomainEventDefinitionType, DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
     DomainEventHandlerErrorKind, DomainEventRegistrationError, EncodedIntegrationMessage,
-    EventStore, EventStoreError, InfallibleCommandRejectionMapper, IntegrationEvent,
+    EventCodec, EventId, EventStore, InfallibleCommandRejectionMapper, IntegrationEvent,
     IntegrationEventBus, IntegrationEventBusError, IntegrationEventBusErrorKind,
-    IntegrationMessageAdapter, JsonDomainRejectionMapper,
+    IntegrationMessageAdapter, JsonDomainRejectionMapper, JsonEventCodec, integration_message_id,
 };
 use rostfrei_messaging_core::{
     ApplicationName, BoundedContext, CommandAddress, CommandRejectionClassification, ConsumeError,
     ConsumerConfig, ContractError, DeliveryDisposition, IntegrationEventAddress, MessageDelivery,
-    MessageHandler, QuarantineReason, RetryDelay,
+    MessageHandler, MessageId, QuarantineReason, RetryDelay, SchemaVersion,
 };
 use rostfrei_nats::{
     ApplicationMessagingConfig, CorrelatedMessage, CorrelatedMessageFamily,
     CorrelatedMessageHandler, DomainEventConsumerError, NatsConnection, NatsCorrelationObserver,
     NatsDomainEventConsumer, NatsDomainEventConsumerConfig, NatsError, NatsEventStore,
-    NatsEventStoreConfig, NatsMessagingAdapter, provision_application_messaging,
-    provision_domain_event_consumer, provision_durable_consumer, provision_event_store,
+    NatsEventStoreConfig, NatsMessagingAdapter, decode_consumed_event,
+    provision_application_messaging, provision_domain_event_consumer, provision_durable_consumer,
+    provision_event_store,
 };
 use rostfrei_tracer::{
-    CommandBusTransport, CommandInvocation, CommandTransport, CommandTransportError,
-    CommandTransportObserver, CorrelationError, CorrelationObserver, DomainEventObservation,
-    IntegrationEventObservation, TestScenarioReset, TestScenarioResetError,
+    CommandBusTransportAdapter, CommandInvocation, CommandReceipt, CommandTransport,
+    CommandTransportError, CommandTransportObserver, CorrelationError, CorrelationObserver,
+    DomainEventObservation, IntegrationEventObservation, TestScenarioReset, TestScenarioResetError,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use thiserror::Error;
 use tokio::{
     sync::{Mutex, RwLock, watch},
@@ -44,7 +43,10 @@ use crate::{
     runtime::{SeedError, seed_demo},
 };
 
+pub const DEFAULT_APPLICATION_NAME: &str = "bike-rental-demo";
 pub const BOUNDED_CONTEXT_NAME: &str = "bike-rental";
+pub const TEST_APPLICATION_NAME: &str = "bike-rental-test";
+pub const PRODUCTION_APPLICATION_NAME: &str = "bike-rental-prod";
 pub const BICYCLE_RENTAL_STARTED_EVENT_NAME: &str = "bicycle-rental-started";
 const BICYCLE_RENTAL_STARTED_SCHEMA_VERSION: u32 = 1;
 const DOMAIN_EVENT_PUBLISHER_PURPOSE: &str = "bicycle-rental-started-publisher";
@@ -55,13 +57,12 @@ const CONSUMER_PROCESSING_TIMEOUT: Duration = Duration::from_secs(30);
 const CONSUMER_CONCURRENCY: usize = 4;
 const COMMAND_CONSUMER_CONCURRENCY: usize = 1;
 const MAXIMUM_DELIVERY_ATTEMPTS: u32 = 5;
-const COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 const MESSAGING_STREAM_MAX_BYTES: i64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum BikeRentalNatsError {
     #[error(transparent)]
-    CommandBinding(#[from] CommandBindingRegistrationError),
+    CommandBindingRegistration(#[from] CommandBindingRegistrationError),
     #[error(transparent)]
     Consume(#[from] ConsumeError),
     #[error(transparent)]
@@ -71,11 +72,13 @@ pub enum BikeRentalNatsError {
     #[error(transparent)]
     DomainEventRegistration(#[from] DomainEventRegistrationError),
     #[error(transparent)]
-    EventStore(#[from] EventStoreError),
+    EventStore(#[from] rostfrei::EventStoreError),
     #[error(transparent)]
     Nats(#[from] NatsError),
     #[error(transparent)]
     Seed(#[from] SeedError),
+    #[error("bike-rental NATS runtime failed: {0}")]
+    Runtime(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -198,6 +201,15 @@ impl BikeRentalNatsConfig {
         &self.event_store
     }
 
+    pub const fn command_address(&self) -> &CommandAddress {
+        self.command_route(BikeRentalCommand::RentBicycle).address()
+    }
+
+    pub const fn command_consumer(&self) -> &ConsumerConfig<CommandAddress> {
+        self.command_route(BikeRentalCommand::RentBicycle)
+            .consumer()
+    }
+
     pub const fn domain_event_consumer(&self) -> &NatsDomainEventConsumerConfig {
         &self.domain_event_consumer
     }
@@ -217,6 +229,14 @@ impl BikeRentalNatsConfig {
 
     pub const fn integration_event_route(&self) -> &BikeRentalIntegrationEventRoute {
         &self.integration_event_route
+    }
+
+    pub const fn integration_event_address(&self) -> &IntegrationEventAddress {
+        self.integration_event_route.address()
+    }
+
+    pub const fn integration_event_consumer(&self) -> &ConsumerConfig<IntegrationEventAddress> {
+        self.integration_event_route.consumer()
     }
 
     pub async fn provision(&self, connection: &NatsConnection) -> Result<(), BikeRentalNatsError> {
@@ -337,24 +357,52 @@ impl DomainEventHandler<BicycleRented> for BicycleRentedIntegrationMapper {
         &self,
         event: &CommittedDomainEvent<'_, BicycleRented>,
     ) -> Result<(), DomainEventHandlerError> {
-        let committed = CommittedEventContext::new(event.recorded())
-            .map_err(|error| classify_integration_event_error(&error))?;
-        self.bus
-            .publish(
-                committed,
-                BicycleRentalStarted {
-                    source_event_id: event.recorded().event_id().as_str().to_owned(),
-                    fleet_id: event.event().fleet_id.clone(),
-                    bicycle_id: event.event().bicycle_id.clone(),
-                },
+        let occurred_at = event.recorded().committed_at().ok_or_else(|| {
+            DomainEventHandlerError::new(
+                DomainEventHandlerErrorKind::InvalidCommittedEvent,
+                "BicycleRented has no stable commit timestamp",
             )
+        })?;
+        let committed = CommittedEventContext::new(event.recorded())
+            .map_err(|error| classify_integration_event_error(&error))?
+            .with_occurred_at(occurred_at);
+        let integration_event = BicycleRentalStarted {
+            source_event_id: event.recorded().event_id().as_str().to_owned(),
+            fleet_id: event.event().fleet_id.clone(),
+            bicycle_id: event.event().bicycle_id.clone(),
+        };
+        self.bus
+            .publish(committed, integration_event)
             .await
-            .map(|_| ())
-            .map_err(|error| classify_integration_event_error(&error))
+            .map_err(|error| classify_integration_event_error(&error))?;
+        Ok(())
     }
 }
 
-pub struct BicycleRentalStartedHandler;
+pub fn bicycle_rental_started_message_id(
+    address: &IntegrationEventAddress,
+    event_id: &EventId,
+) -> Result<MessageId, IntegrationEventBusError> {
+    let schema_version =
+        SchemaVersion::new(BICYCLE_RENTAL_STARTED_SCHEMA_VERSION).map_err(|error| {
+            IntegrationEventBusError::new(
+                IntegrationEventBusErrorKind::InvalidMessage,
+                error.to_string(),
+            )
+        })?;
+    integration_message_id(address, schema_version, event_id)
+}
+
+#[derive(Clone)]
+pub struct BicycleRentalStartedHandler {
+    address: IntegrationEventAddress,
+}
+
+impl BicycleRentalStartedHandler {
+    pub const fn new(address: IntegrationEventAddress) -> Self {
+        Self { address }
+    }
+}
 
 #[async_trait]
 impl MessageHandler<IntegrationEventAddress> for BicycleRentalStartedHandler {
@@ -366,15 +414,16 @@ impl MessageHandler<IntegrationEventAddress> for BicycleRentalStartedHandler {
             delivery.address().clone(),
             delivery.message_id().clone(),
             delivery.payload().to_vec(),
-            delivery.correlation_id().cloned(),
         )
         .and_then(|message| message.decode::<BicycleRentalStarted>());
         let Ok(envelope) = envelope else {
-            return QuarantineReason::new("invalid bicycle-rental-started envelope").map_or(
-                DeliveryDisposition::Terminate,
-                DeliveryDisposition::Quarantine,
-            );
+            return quarantine("invalid bicycle-rental-started envelope");
         };
+        if delivery.address() != &self.address
+            || delivery.correlation_id() != Some(envelope.correlation_id())
+        {
+            return quarantine("invalid bicycle-rental-started envelope");
+        }
         tracing::info!(
             message_id = %envelope.message_id(),
             correlation_id = %envelope.correlation_id(),
@@ -385,6 +434,13 @@ impl MessageHandler<IntegrationEventAddress> for BicycleRentalStartedHandler {
         );
         DeliveryDisposition::Acknowledge
     }
+}
+
+fn quarantine(reason: &'static str) -> DeliveryDisposition {
+    QuarantineReason::new(reason).map_or(
+        DeliveryDisposition::Terminate,
+        DeliveryDisposition::Quarantine,
+    )
 }
 
 fn classify_integration_event_error(error: &IntegrationEventBusError) -> DomainEventHandlerError {
@@ -406,7 +462,7 @@ struct ScopedCommandTransport {
 }
 
 impl ScopedCommandTransport {
-    const fn new(inner: Arc<dyn CommandTransport>, scope_gate: Arc<RwLock<()>>) -> Self {
+    fn new(inner: Arc<dyn CommandTransport>, scope_gate: Arc<RwLock<()>>) -> Self {
         Self { inner, scope_gate }
     }
 }
@@ -421,7 +477,7 @@ impl CommandTransport for ScopedCommandTransport {
         &self,
         invocation: CommandInvocation,
         observer: Arc<dyn CommandTransportObserver>,
-    ) -> Result<rostfrei_tracer::CommandReceipt, CommandTransportError> {
+    ) -> Result<CommandReceipt, CommandTransportError> {
         let _scope = Arc::clone(&self.scope_gate).read_owned().await;
         self.inner.invoke(invocation, observer).await
     }
@@ -432,13 +488,15 @@ pub struct BikeRentalNatsRuntime {
     config: BikeRentalNatsConfig,
     store: NatsEventStore,
     messaging: Arc<NatsMessagingAdapter>,
-    transport: Arc<ScopedCommandTransport>,
+    transport: Arc<dyn CommandTransport>,
     scope_gate: Arc<RwLock<()>>,
     workers: Mutex<Vec<JoinHandle<()>>>,
 }
 
 struct TracerCorrelationHandler {
     observer: CorrelationObserver,
+    event_store: NatsEventStoreConfig,
+    integration_event_address: IntegrationEventAddress,
 }
 
 #[async_trait]
@@ -446,10 +504,15 @@ impl CorrelatedMessageHandler for TracerCorrelationHandler {
     async fn handle(&self, message: CorrelatedMessage) {
         let result = match message.family() {
             CorrelatedMessageFamily::DomainEvent => {
-                observe_domain_message(&self.observer, &message).await
+                observe_domain_message(&self.observer, &self.event_store, &message).await
             }
             CorrelatedMessageFamily::IntegrationEvent => {
-                observe_integration_message(&self.observer, &message).await
+                observe_integration_message(
+                    &self.observer,
+                    &self.integration_event_address,
+                    &message,
+                )
+                .await
             }
         };
         if let Err(error) = result
@@ -468,18 +531,14 @@ impl BikeRentalNatsRuntime {
         let config = BikeRentalNatsConfig::new(application)?;
         config.provision(&connection).await?;
         let store = config.connect_store(&connection).await?;
-        let messaging = Arc::new(
-            connection
-                .messaging_adapter(config.messaging.topology().clone())
-                .with_response_timeout(COMMAND_RESPONSE_TIMEOUT),
-        );
+        let messaging = Arc::new(connection.messaging_adapter(config.messaging.topology().clone()));
         let command_adapter: Arc<dyn CommandMessageAdapter> = messaging.clone();
-        let command_bus = CommandBus::new(config.context.clone(), command_adapter);
-        let bus_transport: Arc<dyn CommandTransport> =
-            Arc::new(CommandBusTransport::new(command_bus));
+        let command_bus = CommandBus::new(config.context().clone(), command_adapter);
+        let command_transport: Arc<dyn CommandTransport> =
+            Arc::new(CommandBusTransportAdapter::new(command_bus));
         let scope_gate = Arc::new(RwLock::new(()));
-        let transport = Arc::new(ScopedCommandTransport::new(
-            bus_transport,
+        let transport: Arc<dyn CommandTransport> = Arc::new(ScopedCommandTransport::new(
+            command_transport,
             Arc::clone(&scope_gate),
         ));
         Ok(Self {
@@ -502,7 +561,7 @@ impl BikeRentalNatsRuntime {
     }
 
     pub fn transport(&self) -> Arc<dyn CommandTransport> {
-        self.transport.clone()
+        Arc::clone(&self.transport)
     }
 
     pub async fn seed_demo(&self) -> Result<(), BikeRentalNatsError> {
@@ -529,19 +588,6 @@ impl BikeRentalNatsRuntime {
         }
     }
 
-    fn command_processor(&self) -> Result<Arc<CommandProcessor>, BikeRentalNatsError> {
-        let event_store: Arc<dyn EventStore> = Arc::new(self.store.clone());
-        let mut processor = CommandProcessor::new(event_store);
-        processor.register::<RentBicycle, _>(JsonDomainRejectionMapper::new(
-            CommandRejectionClassification::Conflict,
-        ))?;
-        processor.register::<ReturnBicycle, _>(JsonDomainRejectionMapper::new(
-            CommandRejectionClassification::Conflict,
-        ))?;
-        processor.register::<AddBicycle, _>(InfallibleCommandRejectionMapper)?;
-        Ok(Arc::new(processor))
-    }
-
     #[allow(
         clippy::too_many_lines,
         reason = "worker preparation is kept together so startup remains atomic"
@@ -561,19 +607,29 @@ impl BikeRentalNatsRuntime {
             }
         }
 
+        let event_store: Arc<dyn EventStore> = Arc::new(self.store.clone());
+        let mut processor = CommandProcessor::new(event_store);
+        processor.register::<RentBicycle, _>(JsonDomainRejectionMapper::new(
+            CommandRejectionClassification::Conflict,
+        ))?;
+        processor.register::<ReturnBicycle, _>(JsonDomainRejectionMapper::new(
+            CommandRejectionClassification::Conflict,
+        ))?;
+        processor.register::<AddBicycle, _>(InfallibleCommandRejectionMapper)?;
+        let command_handler: Arc<dyn MessageHandler<CommandAddress>> =
+            Arc::new(self.messaging.command_handler(Arc::new(processor)));
+
         let factory = self
             .connection
             .consumer_factory(self.config.messaging.topology().clone());
-        let command_handler: Arc<dyn MessageHandler<CommandAddress>> =
-            Arc::new(self.messaging.command_handler(self.command_processor()?));
-        let mut command_consumers = Vec::with_capacity(self.config.command_routes.len());
+        let mut prepared = Vec::with_capacity(self.config.command_routes.len());
         for route in &self.config.command_routes {
             factory.verify_consumer(&route.consumer).await?;
             let consumer = rostfrei_messaging_core::MessageConsumerFactory::create(
                 &factory,
                 route.consumer.clone(),
             )?;
-            command_consumers.push((route.command, consumer));
+            prepared.push((route.command, consumer, Arc::clone(&command_handler)));
         }
 
         let integration_route = self.config.integration_event_route();
@@ -582,8 +638,9 @@ impl BikeRentalNatsRuntime {
             &factory,
             integration_route.consumer.clone(),
         )?;
-        let integration_handler: Arc<dyn MessageHandler<IntegrationEventAddress>> =
-            Arc::new(BicycleRentalStartedHandler);
+        let integration_handler: Arc<dyn MessageHandler<IntegrationEventAddress>> = Arc::new(
+            BicycleRentalStartedHandler::new(integration_route.address.clone()),
+        );
 
         let integration_adapter: Arc<dyn IntegrationMessageAdapter> = self.messaging.clone();
         let integration_bus =
@@ -630,8 +687,7 @@ impl BikeRentalNatsRuntime {
                 );
             }
         }));
-        for (command, consumer) in command_consumers {
-            let handler = Arc::clone(&command_handler);
+        for (command, consumer, handler) in prepared {
             workers.push(tokio::spawn(async move {
                 if let Err(error) = consumer.run(handler).await {
                     tracing::error!(
@@ -650,24 +706,26 @@ impl BikeRentalNatsRuntime {
         &self,
         observer: CorrelationObserver,
     ) -> Result<JoinHandle<()>, BikeRentalNatsError> {
+        let domain_event_stream = self.config.event_store().stream_name();
+        let integration_event_stream = self
+            .config
+            .messaging()
+            .topology()
+            .integration_event_stream()
+            .as_str();
         let nats_observer = NatsCorrelationObserver::new(
             self.connection.client().clone(),
             self.config.application().clone(),
         )
-        .with_streams(
-            self.config.event_store().stream_name(),
-            self.config
-                .messaging()
-                .topology()
-                .integration_event_stream()
-                .as_str(),
-        );
+        .with_streams(domain_event_stream, integration_event_stream);
         let subscription = nats_observer.subscribe().await?;
+        let handler = Arc::new(TracerCorrelationHandler {
+            observer,
+            event_store: self.config.event_store().clone(),
+            integration_event_address: self.config.integration_event_address().clone(),
+        });
         Ok(tokio::spawn(async move {
-            if let Err(error) = subscription
-                .run(Arc::new(TracerCorrelationHandler { observer }))
-                .await
-            {
+            if let Err(error) = subscription.run(handler).await {
                 tracing::error!(%error, "bike-rental correlation observer stopped");
             }
         }))
@@ -701,7 +759,10 @@ impl BikeRentalNatsRuntime {
             self.config.event_store.stream_name(),
         ];
         for stream in streams {
-            self.connection.delete_stream_if_exists(stream).await?;
+            self.connection
+                .delete_stream_if_exists(stream)
+                .await
+                .map_err(|error| BikeRentalNatsError::Runtime(error.to_string()))?;
         }
         Ok(())
     }
@@ -718,32 +779,33 @@ impl BikeRentalNatsRuntime {
 
 async fn observe_domain_message(
     observer: &CorrelationObserver,
+    event_store: &NatsEventStoreConfig,
     message: &CorrelatedMessage,
 ) -> Result<(), CorrelationError> {
-    let Ok(wire) = serde_json::from_slice::<Value>(message.payload()) else {
+    let Ok(decoded) = decode_consumed_event(
+        event_store,
+        message.subject(),
+        message.headers(),
+        message.payload(),
+    ) else {
         return Ok(());
     };
-    let Some(event) = wire.get("event") else {
-        return Ok(());
-    };
-    let Some(event_type) = event.get("eventType").and_then(Value::as_str) else {
-        return Ok(());
-    };
-    let Some(schema_version) = event
-        .get("eventSchemaVersion")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-    else {
-        return Ok(());
-    };
-    let mut observation = DomainEventObservation::new(event_type, schema_version);
-    if let Some(stream_version) = event.get("streamVersion").and_then(Value::as_u64) {
-        observation = observation.with_stream_version(stream_version);
-    }
-    if let Some(encoded) = event.get("payloadBase64").and_then(Value::as_str)
-        && let Ok(payload) = STANDARD.decode(encoded)
-        && let Ok(payload) = serde_json::from_slice(&payload)
+    let recorded = decoded.recorded;
+    if recorded.stream_id().aggregate_type().as_str()
+        != RentalFleetAggregate::aggregate_type().as_ref()
+        || <JsonEventCodec as EventCodec<RentalFleetAggregate>>::decode(&JsonEventCodec, &recorded)
+            .is_err()
+        || recorded
+            .correlation_id()
+            .map(rostfrei::CorrelationId::as_str)
+            != Some(message.correlation_id().as_str())
     {
+        return Ok(());
+    }
+    let mut observation =
+        DomainEventObservation::new(recorded.event_type(), recorded.schema_version())
+            .with_stream_version(recorded.stream_version().value());
+    if let Ok(payload) = serde_json::from_slice(recorded.payload()) {
         observation = observation.with_payload(payload);
     }
     observer
@@ -753,30 +815,34 @@ async fn observe_domain_message(
 
 async fn observe_integration_message(
     observer: &CorrelationObserver,
+    address: &IntegrationEventAddress,
     message: &CorrelatedMessage,
 ) -> Result<(), CorrelationError> {
-    let Ok(envelope) = serde_json::from_slice::<Value>(message.payload()) else {
+    if message.subject() != address.as_str() {
         return Ok(());
-    };
-    let event_type = message
-        .subject()
-        .rsplit('.')
-        .next()
-        .unwrap_or("integration-event");
-    let Some(schema_version) = envelope
-        .get("schema_version")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-    else {
-        return Ok(());
-    };
-    let mut observation = IntegrationEventObservation::new(event_type, schema_version)
-        .with_subject(message.subject());
-    if let Some(message_id) = message.message_id() {
-        observation = observation.with_message_id(message_id.as_str());
     }
-    if let Some(payload) = envelope.get("payload") {
-        observation = observation.with_payload(payload.clone());
+    let Some(message_id) = message.message_id() else {
+        return Ok(());
+    };
+    let Ok(envelope) = EncodedIntegrationMessage::from_delivery(
+        address.clone(),
+        message_id.clone(),
+        message.payload().to_vec(),
+    )
+    .and_then(|message| message.decode::<BicycleRentalStarted>()) else {
+        return Ok(());
+    };
+    if envelope.correlation_id() != message.correlation_id() {
+        return Ok(());
+    }
+    let mut observation = IntegrationEventObservation::new(
+        BICYCLE_RENTAL_STARTED_EVENT_NAME,
+        envelope.schema_version().get(),
+    )
+    .with_subject(message.subject())
+    .with_message_id(message_id.as_str());
+    if let Ok(payload) = serde_json::to_value(envelope.payload()) {
+        observation = observation.with_payload(payload);
     }
     observer
         .observe_integration_event(message.correlation_id().as_str(), observation)

@@ -820,7 +820,7 @@ impl StreamDirectory for NatsEventStore {
         let subject_filter = self.config.aggregate_subject_filter();
         let last_sequence = state.last_sequence;
         let mut next_sequence = state.first_sequence;
-        let mut histories = BTreeMap::<StreamId, (HistoryBuilder, u64)>::new();
+        let mut histories = BTreeMap::<StreamId, HistorySummaryBuilder>::new();
         loop {
             let message = match stream
                 .get_first_raw_message_by_subject(&subject_filter, next_sequence)
@@ -852,14 +852,8 @@ impl StreamDirectory for NatsEventStore {
             )?;
             if decoded.recorded.stream_id().aggregate_type() == aggregate_type {
                 let stream_id = decoded.recorded.stream_id().clone();
-                let (history, last_sequence) = histories.entry(stream_id).or_default();
-                let is_transactional = decoded.is_transactional;
-                history.push(DecodedStoredEvent {
-                    decoded,
-                    global_stream_sequence: message.sequence,
-                    is_transactional,
-                })?;
-                *last_sequence = message.sequence;
+                let history = histories.entry(stream_id).or_default();
+                history.push(&decoded)?;
             }
 
             if message.sequence == last_sequence {
@@ -872,15 +866,7 @@ impl StreamDirectory for NatsEventStore {
         }
         histories
             .into_iter()
-            .map(|(stream_id, (history, last_sequence))| {
-                let history = history.finish(last_sequence)?;
-                let stream_version = history
-                    .events
-                    .last()
-                    .map(RecordedEvent::stream_version)
-                    .ok_or_else(|| corrupt("aggregate history contains no committed events"))?;
-                Ok(StreamSummary::new(stream_id, stream_version))
-            })
+            .map(|(stream_id, history)| Ok(StreamSummary::new(stream_id, history.finish()?)))
             .collect()
     }
 }
@@ -1321,6 +1307,24 @@ struct PendingCommit {
     events: Vec<RecordedEvent>,
     global_stream_sequences: Vec<u64>,
     transaction: Option<StoredTransactionProvenance>,
+}
+
+#[derive(Default)]
+struct HistorySummaryBuilder {
+    current_version: StreamVersion,
+    operation_ids: HashSet<OperationId>,
+    pending: Option<PendingCommitSummary>,
+}
+
+struct PendingCommitSummary {
+    batch_id: String,
+    commit_id: CommitId,
+    operation_id: OperationId,
+    operation_fingerprint: ContentFingerprint,
+    event_count: usize,
+    next_ordinal: usize,
+    correlation_id: Option<CorrelationId>,
+    causation_id: Option<CausationId>,
 }
 
 pub struct DecodedEvent {
@@ -1874,6 +1878,94 @@ impl HistoryBuilder {
         }
         self.history.last_subject_stream_sequence = last_sequence;
         Ok(self.history)
+    }
+}
+
+impl HistorySummaryBuilder {
+    fn push(&mut self, decoded: &DecodedEvent) -> Result<(), EventStoreError> {
+        let expected_version = self
+            .current_version
+            .next()
+            .ok_or_else(|| corrupt("aggregate version space overflowed"))?;
+        if decoded.recorded.stream_version() != expected_version {
+            return Err(corrupt(
+                "aggregate events are missing, duplicated, or noncontiguous",
+            ));
+        }
+
+        if decoded.event_ordinal == 0 {
+            if self.pending.is_some() {
+                return Err(corrupt("aggregate history contains an incomplete commit"));
+            }
+            if !self.operation_ids.insert(decoded.operation_id.clone()) {
+                return Err(corrupt(
+                    "aggregate history contains a duplicate operation identity",
+                ));
+            }
+            self.pending = Some(PendingCommitSummary::new(decoded));
+        } else {
+            self.pending
+                .as_mut()
+                .ok_or_else(|| corrupt("aggregate history starts inside a commit"))?
+                .push(decoded)?;
+        }
+
+        self.current_version = expected_version;
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(PendingCommitSummary::is_complete)
+        {
+            self.pending = None;
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<StreamVersion, EventStoreError> {
+        if self.pending.is_some() || self.current_version == StreamVersion::ZERO {
+            return Err(corrupt("aggregate history ended inside a commit"));
+        }
+        Ok(self.current_version)
+    }
+}
+
+impl PendingCommitSummary {
+    fn new(decoded: &DecodedEvent) -> Self {
+        Self {
+            batch_id: decoded.batch_id.clone(),
+            commit_id: decoded.commit_id.clone(),
+            operation_id: decoded.operation_id.clone(),
+            operation_fingerprint: decoded.operation_fingerprint,
+            event_count: decoded.event_count,
+            next_ordinal: 1,
+            correlation_id: decoded.recorded.correlation_id().cloned(),
+            causation_id: decoded.recorded.causation_id().cloned(),
+        }
+    }
+
+    fn push(&mut self, decoded: &DecodedEvent) -> Result<(), EventStoreError> {
+        if decoded.event_ordinal != self.next_ordinal {
+            return Err(corrupt("stored commit metadata is inconsistent"));
+        }
+        if decoded.event_count != self.event_count
+            || decoded.batch_id != self.batch_id
+            || decoded.commit_id != self.commit_id
+            || decoded.operation_id != self.operation_id
+            || decoded.operation_fingerprint != self.operation_fingerprint
+            || decoded.recorded.correlation_id() != self.correlation_id.as_ref()
+            || decoded.recorded.causation_id() != self.causation_id.as_ref()
+        {
+            return Err(corrupt("stored commit metadata is inconsistent"));
+        }
+        self.next_ordinal = self
+            .next_ordinal
+            .checked_add(1)
+            .ok_or_else(|| corrupt("stored commit ordinal overflowed"))?;
+        Ok(())
+    }
+
+    const fn is_complete(&self) -> bool {
+        self.next_ordinal == self.event_count
     }
 }
 

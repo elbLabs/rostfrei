@@ -23,7 +23,7 @@ pub use catalog::{
     CatalogCommandVersion, CatalogContext, CatalogTestRepository, CatalogTestScenario,
     TracerCatalog,
 };
-pub use command_bus::CommandBusTransport;
+pub use command_bus::CommandBusTransportAdapter;
 pub use correlation::{
     CorrelationCommandOutcome, CorrelationError, CorrelationEvent, CorrelationEventKind,
     CorrelationObserver, CorrelationSubscription, DomainEventObservation,

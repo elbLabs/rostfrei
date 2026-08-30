@@ -10,11 +10,11 @@ and NATS JetStream adapters at the application edge.
 The workspace contains eleven framework crates plus the bike-rental example
 Cargo package:
 
-- `rostfrei`: application facade for the compiled domain model, typed command
-  and integration-event buses, event-sourcing runtime, registry, and public
-  macros.
-- `rostfrei-tracer`: explicitly registered read-only simulation,
-  isolated test execution, separately authorized production dispatch, bounded
+- `rostfrei`: application facade for the compiled domain model, transport-neutral
+  typed `CommandBus` and `IntegrationEventBus`, event-sourcing runtime, registry,
+  and public macros.
+- `rostfrei-tracer`: explicitly registered read-only Simulate, isolated stateful
+  behavioral Test and reset, separately authorized production Dispatch, bounded
   in-memory operation traces, and an optional authenticated HTTP/SSE adapter.
 - `rostfrei-core`: aggregate execution, event-store contracts, and the
   in-memory reference store.
@@ -34,30 +34,41 @@ Cargo package:
   and authoritative JetStream event storage.
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
 
-Messaging is application-scoped. An application name such as `fast-inbox`
-derives its command, command-response, integration-event, and quarantine streams
-and prefixes all rostfrei business subjects. Bounded contexts derive typed
-addresses and authoritative domain-event streams. See
+`CommandBus` and `IntegrationEventBus` are transport-neutral application-facing
+interfaces. In-memory and NATS adapters enter the same typed validation,
+encoding, execution, and response paths; external tooling uses the bounded
+dynamic command entry point rather than an application-specific bus or wire
+contract.
+
+With the NATS adapters, messaging is application-scoped. An application name
+such as `fast-inbox` derives its command, command-response, integration-event,
+and quarantine streams and prefixes all rostfrei business subjects. Bounded
+contexts derive typed addresses and authoritative domain-event streams. See
 [`docs/adr`](docs/adr) for the messaging conventions and provisioning decisions.
 
 [`examples/bike-rental`](examples/bike-rental) is a self-contained public
 example with rental, return, and fleet-addition commands plus their decisions,
-queries, events, and domain errors. Its runnable NATS-backed local Tracer routes
-Test and Dispatch through the shared `CommandBus`, executes against
-`NatsEventStore`, maps committed domain events to public integration events,
-and publishes them through `IntegrationEventBus`. Simulate remains read-only,
-Test uses resettable isolated state, and Dispatch requires separate production
-authorization. The aggregate identity in the API is qualified by its bounded
-context, and `#[domain(json)]` supplies the generated command and rejection JSON
-while aggregate event JSON comes from the compiled aggregate codec.
+queries, events, and domain errors. It also contains a runnable NATS-backed
+local Tracer server with read-only Simulate, resettable stateful behavioral Test,
+and separately authorized production Dispatch modes. Its Test and production
+NATS topologies are isolated. The aggregate identity in the API is qualified by
+its bounded context, and `#[domain(json)]` supplies the example's generated
+command and rejection JSON while aggregate event JSON comes from the compiled
+aggregate codec.
+
+[`studio`](studio) is the standalone local UI for catalog discovery, Simulate,
+isolated Test, production Dispatch, operation status, and correlation streams.
+It consumes Tracer's unversioned hypermedia API and does not embed
+application-specific commands, fields, instances, or routes.
 
 A Tracer instance receives an explicit test `EventHistory` for discovery,
-dynamic inputs, and read-only Simulate. Test and Dispatch instead use separately
-configured implementations of the same protocol-neutral command transport. The
-bike-rental example instantiates one NATS runtime definition for each environment:
-both publish a durable command, execute through a command worker and `Executor`,
+dynamic inputs, and read-only Simulate. Test and Dispatch are separate
+capabilities with separately configured command transports that preserve the
+same `CommandBus` contracts; Tracer itself is not tied to NATS. The bike-rental
+example instantiates one NATS runtime definition for each environment. Both
+publish a durable command, execute through a command worker and `Executor`,
 append to the environment's `NatsEventStore`, publish a durable accepted or
-rejected response, and run the same post-commit domain and integration-event
+rejected response, and run the same post-commit domain and `IntegrationEventBus`
 handlers. Transported submissions require an idempotency key. Test reset rotates
 the scenario generation and recreates only the isolated Test topology; a failed
 reset keeps Test and its state-dependent discovery unavailable until a reset

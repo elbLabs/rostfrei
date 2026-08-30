@@ -50,6 +50,8 @@ pub struct QuarantineRecord {
     #[serde(default)]
     payload_truncated: bool,
     metadata: CallerMetadata,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    correlation_id: Option<CorrelationId>,
     trace_context: Option<TraceContext>,
     reason: String,
     attempt: u32,
@@ -87,6 +89,10 @@ impl QuarantineRecord {
 
     pub const fn metadata(&self) -> &CallerMetadata {
         &self.metadata
+    }
+
+    pub const fn correlation_id(&self) -> Option<&CorrelationId> {
+        self.correlation_id.as_ref()
     }
 
     pub fn reason(&self) -> &str {
@@ -612,6 +618,7 @@ where
         payload_sha256: Some(sha256_hex(payload)),
         payload_truncated: false,
         metadata: delivery.metadata().clone(),
+        correlation_id: delivery.correlation_id().cloned(),
         trace_context: delivery.trace_context().cloned(),
         reason: reason.to_owned(),
         attempt: delivery.attempt(),
@@ -641,6 +648,9 @@ fn raw_quarantine_record(
     let metadata = headers
         .and_then(|headers| caller_metadata(headers).ok())
         .unwrap_or_default();
+    let correlation_id = headers
+        .and_then(|headers| single_header(headers, CORRELATION_ID_HEADER).ok().flatten())
+        .and_then(|value| CorrelationId::new(value).ok());
     let trace_context = headers.and_then(|headers| trace_context(headers).ok().flatten());
     let payload = message.payload.as_ref();
     QuarantineRecord {
@@ -651,6 +661,7 @@ fn raw_quarantine_record(
         payload_sha256: Some(sha256_hex(payload)),
         payload_truncated: false,
         metadata,
+        correlation_id,
         trace_context,
         reason: reason.to_owned(),
         attempt: info.attempt(),
@@ -775,6 +786,7 @@ mod tests {
             payload_sha256: Some(sha256_hex(payload)),
             payload_truncated: false,
             metadata: CallerMetadata::new(),
+            correlation_id: None,
             trace_context: None,
             reason: "invalid source message".to_owned(),
             attempt: 1,
@@ -860,5 +872,6 @@ mod tests {
         assert_eq!(record.payload_size(), None);
         assert_eq!(record.payload_sha256(), None);
         assert!(!record.payload_truncated());
+        assert_eq!(record.correlation_id(), None);
     }
 }

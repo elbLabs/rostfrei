@@ -2,27 +2,29 @@ use std::{env, path::PathBuf, sync::Arc};
 
 use bike_rental::{
     domain_model,
-    nats_runtime::BikeRentalNatsRuntime,
+    nats_runtime::{BikeRentalNatsRuntime, DEFAULT_APPLICATION_NAME},
     rental::{AddBicycle, RentBicycle, ReturnBicycle},
     runtime::{RentBicycleInputOptions, ReturnBicycleInputOptions, tracer_builder},
 };
 use rostfrei::EventHistory;
 use rostfrei_nats::{NatsConnectionConfig, ServerVersion, connect};
 use rostfrei_tracer::{
-    ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, OperationMode,
-    TestRepository, TestScenarioReset,
+    FilesystemTestRepository, OperationMode, TestRepository, TestScenarioReset,
     http::{self, HttpConfig},
 };
 
+const DEFAULT_NATS_URL: &str = "nats://127.0.0.1:4222";
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let nats_url = env::var("ROSTFREI_NATS_URL")?;
-    let application = env::var("ROSTFREI_APPLICATION").unwrap_or_else(|_| "bike-rental".to_owned());
+    let application =
+        env::var("ROSTFREI_APPLICATION").unwrap_or_else(|_| DEFAULT_APPLICATION_NAME.to_owned());
+    let nats_url = env::var("ROSTFREI_NATS_URL").unwrap_or_else(|_| DEFAULT_NATS_URL.to_owned());
     let test_application = format!("{application}-test");
     let production_application = format!("{application}-prod");
     let connection = connect(
-        &NatsConnectionConfig::new("bike-rental-api", nats_url)
-            .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
+        &NatsConnectionConfig::new(format!("{application}-api"), nats_url)
+            .with_minimum_server_version(ServerVersion::new(2, 12, 0)),
     )
     .await?;
 
@@ -48,8 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_test_transport(test_runtime.transport())
         .with_dispatch_transport(production_runtime.transport())
         .with_test_fixture("demo-fleet", test_reset)
-        .with_test_repository(test_repository)
-        .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
+        .with_test_repository(test_repository);
     builder.register_json::<RentBicycle>()?;
     builder.register_json::<ReturnBicycle>()?;
     builder.register_json::<AddBicycle>()?;
@@ -62,6 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut production_correlation_observer = production_runtime
         .start_correlation_observer(tracer.correlation_observer(OperationMode::Dispatch))
         .await?;
+
     let api_token = env::var("ROSTFREI_API_TOKEN")?;
     let dispatch_token = env::var("ROSTFREI_DISPATCH_TOKEN")?;
     let http_config = HttpConfig::new(api_token)?.with_dispatch_token(dispatch_token)?;

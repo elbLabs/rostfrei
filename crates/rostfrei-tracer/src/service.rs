@@ -51,7 +51,7 @@ const DEFAULT_MAXIMUM_OPERATION_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 const MAXIMUM_TOTAL_OPERATION_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SimulationRequest {
     pub schema_version: u32,
     pub payload: Value,
@@ -548,6 +548,19 @@ impl CommandTransportObserver for OperationTransportObserver {
     }
 }
 
+struct AbortOperationOnDrop(Arc<OperationRecord>);
+
+impl Drop for AbortOperationOnDrop {
+    fn drop(&mut self) {
+        self.0.abort_execution();
+    }
+}
+
+struct SubmittedOperation {
+    snapshot: OperationSnapshot,
+    record: Arc<OperationRecord>,
+}
+
 #[derive(Default)]
 struct OperationTable {
     records: HashMap<String, Arc<OperationRecord>>,
@@ -555,20 +568,17 @@ struct OperationTable {
 }
 
 impl OperationTable {
-    fn has_evictable(&self, correlations: &CorrelationHub) -> bool {
-        self.records.iter().any(|(operation_id, record)| {
-            record.is_evictable() && !correlations.has_active_subscribers(operation_id)
-        })
+    fn has_terminal(&self) -> bool {
+        self.records.values().any(|record| record.is_evictable())
     }
 
-    fn evict_terminal(&mut self, correlations: &CorrelationHub) -> Option<String> {
+    fn evict_terminal(&mut self) -> Option<String> {
         for _ in 0..self.insertion_order.len() {
             let operation_id = self.insertion_order.pop_front()?;
             if self
                 .records
                 .get(&operation_id)
                 .is_some_and(|record| record.is_evictable())
-                && correlations.remove_if_inactive(&operation_id)
             {
                 self.records.remove(&operation_id);
                 return Some(operation_id);
@@ -694,7 +704,7 @@ impl Tracer {
         timeout: Duration,
         idempotency_key: &str,
     ) -> Result<TestCommandEvaluation, TestRunError> {
-        let queued = self
+        let submitted = self
             .submit_test_unlocked(
                 &command.aggregate.aggregate_type,
                 &command.aggregate.id,
@@ -706,8 +716,12 @@ impl Tracer {
                 Some(idempotency_key),
             )
             .await?;
+        let _abort_on_drop = AbortOperationOnDrop(Arc::clone(&submitted.record));
+        let queued = submitted.snapshot;
         let mut subscription = self
-            .subscribe_correlation(&queued.correlation_id, 0)
+            .inner
+            .correlations
+            .subscribe_evaluation(&queued.correlation_id, 0)
             .await?;
         let mut expectations = expected_trace
             .iter()
@@ -935,6 +949,7 @@ impl Tracer {
             idempotency_key,
         )
         .await
+        .map(|submitted| submitted.snapshot)
     }
 
     pub async fn submit_test(
@@ -954,6 +969,7 @@ impl Tracer {
             idempotency_key,
         )
         .await
+        .map(|submitted| submitted.snapshot)
     }
 
     async fn submit_test_unlocked(
@@ -963,7 +979,7 @@ impl Tracer {
         command: &str,
         request: SimulationRequest,
         idempotency_key: Option<&str>,
-    ) -> Result<OperationSnapshot, SubmissionError> {
+    ) -> Result<SubmittedOperation, SubmissionError> {
         self.submit_operation(
             OperationMode::Test,
             aggregate_type,
@@ -992,6 +1008,7 @@ impl Tracer {
             idempotency_key,
         )
         .await
+        .map(|submitted| submitted.snapshot)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1007,7 +1024,7 @@ impl Tracer {
         command: &str,
         request: SimulationRequest,
         idempotency_key: Option<&str>,
-    ) -> Result<OperationSnapshot, SubmissionError> {
+    ) -> Result<SubmittedOperation, SubmissionError> {
         let transport = match mode {
             OperationMode::Simulate => None,
             OperationMode::Test => {
@@ -1128,17 +1145,20 @@ impl Tracer {
 
         let permit = {
             let mut operations = self.inner.operations.lock().await;
-            if let Some(existing) = operations.records.get(&operation_key) {
+            if let Some(existing) = operations.records.get(&operation_key).cloned() {
                 if existing.fingerprint().await != operation_fingerprint.to_hex() {
                     drop(operations);
                     return Err(SubmissionError::IdentityConflict);
                 }
                 let snapshot = existing.snapshot().await;
                 drop(operations);
-                return Ok(snapshot);
+                return Ok(SubmittedOperation {
+                    snapshot,
+                    record: existing,
+                });
             }
             if operations.records.len() >= self.inner.maximum_operations
-                && !operations.has_evictable(&self.inner.correlations)
+                && !operations.has_terminal()
             {
                 drop(operations);
                 return Err(SubmissionError::CapacityExhausted);
@@ -1151,13 +1171,17 @@ impl Tracer {
             let permit = Arc::clone(permits)
                 .try_acquire_owned()
                 .map_err(|_| SubmissionError::ConcurrencyExhausted)?;
-            if operations.records.len() >= self.inner.maximum_operations
-                && operations
-                    .evict_terminal(&self.inner.correlations)
-                    .is_none()
-            {
-                drop(operations);
-                return Err(SubmissionError::CapacityExhausted);
+            let evicted = if operations.records.len() >= self.inner.maximum_operations {
+                let Some(evicted) = operations.evict_terminal() else {
+                    drop(operations);
+                    return Err(SubmissionError::CapacityExhausted);
+                };
+                Some(evicted)
+            } else {
+                None
+            };
+            if let Some(evicted) = evicted {
+                self.inner.correlations.remove(&evicted);
             }
             operations.insertion_order.push_back(operation_key.clone());
             operations
@@ -1188,11 +1212,12 @@ impl Tracer {
         };
 
         let tracer = self.clone();
-        let panic_tracer = self.clone();
-        let panic_record = Arc::clone(&record);
+        let task_failure_tracer = self.clone();
+        let submitted_record = Arc::clone(&record);
+        let task_failure_record = Arc::clone(&record);
         let result_record = Arc::clone(&record);
         let result_correlation_id = correlation_id.clone();
-        let panic_correlation_id = correlation_id;
+        let task_failure_correlation_id = correlation_id;
         let execution_operation_id = operation_id;
         let aggregate_type = aggregate_type.to_owned();
         let command = command.to_owned();
@@ -1215,25 +1240,29 @@ impl Tracer {
                     request.payload,
                 )
                 .await;
-            tracer
+            if tracer
                 .record_correlation_result(&result_correlation_id, &result_record)
-                .await;
-        });
-        panic_record.set_execution(execution.abort_handle());
-        tokio::spawn(async move {
-            if execution.await.is_err() {
-                panic_record
-                    .fail_after_possible_publication(
-                        "operation-panicked",
-                        "the command operation task panicked".to_owned(),
-                    )
-                    .await;
-                panic_tracer
-                    .record_correlation_result(&panic_correlation_id, &panic_record)
-                    .await;
+                .await
+            {
+                result_record.mark_correlation_recorded();
             }
         });
-        Ok(queued)
+        task_failure_record.set_execution(execution.abort_handle());
+        tokio::spawn(async move {
+            if let Err(error) = execution.await {
+                record_operation_task_failure(&task_failure_record, &error).await;
+                if task_failure_tracer
+                    .record_correlation_result(&task_failure_correlation_id, &task_failure_record)
+                    .await
+                {
+                    task_failure_record.mark_correlation_recorded();
+                }
+            }
+        });
+        Ok(SubmittedOperation {
+            snapshot: queued,
+            record: submitted_record,
+        })
     }
 
     pub async fn operation(
@@ -1504,9 +1533,14 @@ impl Tracer {
         }
     }
 
-    async fn record_correlation_result(&self, correlation_id: &str, record: &OperationRecord) {
+    async fn record_correlation_result(
+        &self,
+        correlation_id: &str,
+        record: &OperationRecord,
+    ) -> bool {
         let snapshot = record.snapshot().await;
-        let (outcome, result) = if let Some(result) = snapshot.result {
+        let evaluation_result = record.evaluation_result().await;
+        let (outcome, public_result) = if let Some(result) = snapshot.result {
             let outcome = match result {
                 OperationResult::Accepted { .. } => CorrelationCommandOutcome::Accepted,
                 OperationResult::Rejected { .. } => CorrelationCommandOutcome::Rejected,
@@ -1527,12 +1561,18 @@ impl Tracer {
                     .and_then(|failure| serde_json::to_value(failure).ok()),
             )
         };
-        let _ = self
-            .inner
+        let evaluation_result = evaluation_result.or_else(|| public_result.clone());
+        self.inner
             .correlations
-            .command_result(correlation_id, snapshot.operation_id, outcome, result)
-            .await;
-        record.mark_correlation_recorded();
+            .command_result(
+                correlation_id,
+                snapshot.operation_id,
+                outcome,
+                public_result,
+                evaluation_result,
+            )
+            .await
+            .is_ok()
     }
 
     fn generated_operation_id(&self, mode: OperationMode) -> Result<OperationId, SubmissionError> {
@@ -1549,6 +1589,20 @@ impl Tracer {
         OperationId::new(format!("{prefix}-{nanos:x}-{sequence:x}"))
             .map_err(|error| SubmissionError::InvalidOperationId(error.to_string()))
     }
+}
+
+async fn record_operation_task_failure(record: &OperationRecord, error: &tokio::task::JoinError) {
+    let (code, message) = if error.is_cancelled() {
+        (
+            "operation-cancelled",
+            "the command operation task was cancelled",
+        )
+    } else {
+        ("operation-panicked", "the command operation task panicked")
+    };
+    record
+        .fail_after_possible_publication(code, message.to_owned())
+        .await;
 }
 
 fn validate_http_operation_id(value: &str) -> Result<&str, SubmissionError> {
@@ -1673,22 +1727,40 @@ async fn complete_transport(
                 .await;
         }
         CommandOutcome::Rejected(rejection) => {
-            let rejection = bounded_rejection(
-                trace_payload_policy.rejection(rejection.into_value()),
+            let evaluation_rejection =
+                bounded_rejection(rejection.into_value(), maximum_payload_bytes);
+            let evaluation_result = serde_json::to_value(OperationResult::Rejected {
+                base_stream_version: None,
+                rejection: evaluation_rejection.clone(),
+                appended: None,
+                published: true,
+                command_message_id: Some(command_message_id.clone()),
+                response_message_id: Some(response_message_id.clone()),
+                duplicate: Some(duplicate),
+            })
+            .ok();
+            let public_rejection = bounded_rejection(
+                trace_payload_policy.rejection(evaluation_rejection),
                 maximum_payload_bytes,
             );
             record
-                .complete(
+                .complete_with_evaluation_result(
                     OperationResult::Rejected {
                         base_stream_version: None,
-                        rejection: rejection.clone(),
+                        rejection: public_rejection.clone(),
                         appended: None,
                         published: true,
                         command_message_id: Some(command_message_id),
                         response_message_id: Some(response_message_id),
                         duplicate: Some(duplicate),
                     },
-                    vec![responded, OperationEventKind::CommandRejected { rejection }],
+                    evaluation_result,
+                    vec![
+                        responded,
+                        OperationEventKind::CommandRejected {
+                            rejection: public_rejection,
+                        },
+                    ],
                 )
                 .await;
         }
@@ -1820,6 +1892,19 @@ fn framed_fingerprint(values: &[&[u8]]) -> ContentFingerprint {
 mod tests {
     use super::*;
 
+    fn operation_record(operation_id: &str) -> Arc<OperationRecord> {
+        OperationRecord::new(NewOperation {
+            operation_id: operation_id.to_owned(),
+            correlation_id: operation_id.to_owned(),
+            fingerprint: "fingerprint".to_owned(),
+            mode: OperationMode::Simulate,
+            command: "test-command",
+            schema_version: 1,
+            aggregate_type: "test-aggregate",
+            aggregate_id: "test-id",
+        })
+    }
+
     #[test]
     fn request_fingerprints_use_deterministic_fixed_width_framing() {
         let fingerprint = request_fingerprint(
@@ -1834,6 +1919,61 @@ mod tests {
         assert_eq!(
             fingerprint.to_hex(),
             "9300fe8edfdb87c65efd101d49fb3eefeedde2020109cea3b2628464f1af35af"
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_operations_become_evictable_after_their_correlation_result() {
+        let record = operation_record("eviction-order");
+        record.fail("test-failure", "failed".to_owned()).await;
+        let mut table = OperationTable::default();
+        table
+            .records
+            .insert("eviction-order".to_owned(), Arc::clone(&record));
+        table.insertion_order.push_back("eviction-order".to_owned());
+
+        assert!(!table.has_terminal());
+        assert_eq!(table.evict_terminal(), None);
+
+        record.mark_correlation_recorded();
+        assert!(table.has_terminal());
+        assert_eq!(table.evict_terminal().as_deref(), Some("eviction-order"));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::panic)]
+    async fn operation_task_join_errors_distinguish_cancellation_from_panic() {
+        let cancelled_task = tokio::spawn(std::future::pending::<()>());
+        cancelled_task.abort();
+        let cancelled_record = operation_record("cancelled-operation");
+        match cancelled_task.await {
+            Err(error) => record_operation_task_failure(&cancelled_record, &error).await,
+            Ok(()) => panic!("aborted task completed normally"),
+        }
+        assert_eq!(
+            cancelled_record
+                .snapshot()
+                .await
+                .failure
+                .map(|failure| failure.code),
+            Some("operation-cancelled")
+        );
+
+        let panicked_task = tokio::spawn(async {
+            std::panic::resume_unwind(Box::new("expected test panic"));
+        });
+        let panicked_record = operation_record("panicked-operation");
+        match panicked_task.await {
+            Err(error) => record_operation_task_failure(&panicked_record, &error).await,
+            Ok(()) => panic!("panicked task completed normally"),
+        }
+        assert_eq!(
+            panicked_record
+                .snapshot()
+                .await
+                .failure
+                .map(|failure| failure.code),
+            Some("operation-panicked")
         );
     }
 }

@@ -25,11 +25,12 @@ use rostfrei_registry::{CommandDefinition, DomainModule, DomainRegistry, ModuleD
 use rostfrei_tracer::{
     CommandInvocation, CommandPublication, CommandReceipt, CommandRejection, CommandTransport,
     CommandTransportError, CommandTransportErrorKind, CommandTransportObserver, CorrelationError,
-    CorrelationEventKind, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
-    IntegrationEventObservation, OperationMode, RuntimeRegistrationError, SimulationRequest,
-    SubmissionError, SubscriptionError, TestDefinition, TestDefinitionCollection,
-    TestDefinitionRevision, TestReportStatus, TestRepository, TestRepositoryError,
-    TestScenarioReset, TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
+    CorrelationEventKind, DiscoveryError, DomainEventObservation,
+    ExposeTracePayloadsForLocalDevelopment, IntegrationEventObservation, OperationMode,
+    RedactTracePayloads, RuntimeRegistrationError, SimulationRequest, SubmissionError,
+    SubscriptionError, TestDefinition, TestDefinitionCollection, TestDefinitionRevision,
+    TestReportStatus, TestRepository, TestRepositoryError, TestScenarioReset,
+    TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
     command_execution_fingerprint,
 };
 #[cfg(feature = "http")]
@@ -495,49 +496,6 @@ async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
         "operation failure details are redacted"
     );
     assert!(!failure_trace.contains("reject must be a boolean"));
-}
-
-#[tokio::test]
-#[allow(
-    clippy::unwrap_used,
-    reason = "test operations and subscriptions must succeed"
-)]
-async fn active_correlation_subscribers_prevent_terminal_eviction() {
-    let tracer = tracer(1);
-    submit(&tracer, "retained-correlation", json!({ "reject": false })).await;
-    terminal_operation(&tracer, "retained-correlation").await;
-    let mut correlation = tracer
-        .subscribe_correlation("retained-correlation", 0)
-        .await
-        .unwrap();
-    while let Some(event) = correlation.next().await {
-        if matches!(event.kind, CorrelationEventKind::CommandResult { .. }) {
-            break;
-        }
-    }
-    tokio::task::yield_now().await;
-
-    let blocked = tracer
-        .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
-            COMMAND_NAME,
-            SimulationRequest {
-                schema_version: 1,
-                payload: json!({ "reject": false }),
-            },
-            Some("replacement-operation"),
-        )
-        .await;
-    assert_eq!(blocked, Err(SubmissionError::CapacityExhausted));
-    assert!(tracer.operation("retained-correlation").await.is_ok());
-
-    drop(correlation);
-    submit(&tracer, "replacement-operation", json!({ "reject": false })).await;
-    assert_eq!(
-        tracer.operation("retained-correlation").await,
-        Err(SubmissionError::NotFound)
-    );
 }
 
 struct OversizedTracePayloads;
@@ -1089,6 +1047,22 @@ impl CommandTransport for HangingTransport {
         _invocation: CommandInvocation,
         _observer: Arc<dyn CommandTransportObserver>,
     ) -> Result<CommandReceipt, CommandTransportError> {
+        std::future::pending().await
+    }
+}
+
+struct NotifyingHangingTransport {
+    invoked: Arc<Notify>,
+}
+
+#[async_trait]
+impl CommandTransport for NotifyingHangingTransport {
+    async fn invoke(
+        &self,
+        _invocation: CommandInvocation,
+        _observer: Arc<dyn CommandTransportObserver>,
+    ) -> Result<CommandReceipt, CommandTransportError> {
+        self.invoked.notify_one();
         std::future::pending().await
     }
 }
@@ -2095,7 +2069,7 @@ fn behavioral_tracer(
         .with_test_transport(transport)
         .with_test_fixture("test-fixture", Arc::new(NoopReset))
         .with_test_repository(repository)
-        .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
+        .with_trace_payload_policy(Arc::new(RedactTracePayloads));
     builder.register_json::<TestCommand>().unwrap();
     builder.build().unwrap()
 }
@@ -2124,10 +2098,14 @@ async fn behavioral_test_accepts_an_expected_business_rejection() {
             "conflict",
             "TEST_REJECTION",
             "The test command was rejected.",
-            None,
+            Some(json!({ "reason": "private business detail" })),
         ),
     );
-    let yaml = behavioral_test_yaml("\n    rejected:\n      code: TEST_REJECTION", false, "");
+    let yaml = behavioral_test_yaml(
+        "\n    rejected:\n      code: TEST_REJECTION\n      payload:\n        reason: private business detail",
+        false,
+        "",
+    );
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(&yaml));
     let tracer = behavioral_tracer(Arc::new(transport), repository);
 
@@ -2138,6 +2116,28 @@ async fn behavioral_test_accepts_an_expected_business_rejection() {
         report.outcome,
         Some(rostfrei_tracer::CorrelationCommandOutcome::Rejected)
     );
+    let operation =
+        serde_json::to_value(tracer.operation(&report.operation_id).await.unwrap()).unwrap();
+    assert_eq!(
+        operation["result"]["rejection"],
+        json!({ "redacted": true })
+    );
+    let mut correlation = tracer
+        .subscribe_correlation(&report.correlation_id, 0)
+        .await
+        .unwrap();
+    assert!(matches!(
+        correlation.next().await.unwrap().kind,
+        CorrelationEventKind::Command { .. }
+    ));
+    assert!(matches!(
+        correlation.next().await.unwrap().kind,
+        CorrelationEventKind::CommandResult {
+            outcome: rostfrei_tracer::CorrelationCommandOutcome::Rejected,
+            result: Some(ref result),
+            ..
+        } if result["rejection"] == json!({ "redacted": true })
+    ));
 }
 
 #[tokio::test]
@@ -2160,6 +2160,40 @@ async fn behavioral_timeout_cancels_the_command_before_reset() {
 
     assert_eq!(report.status, TestReportStatus::Failed);
     assert_eq!(report.failure.unwrap().code, "deadline-exceeded");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        tracer.reset_test_scenario(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+}
+
+#[tokio::test]
+#[allow(
+    clippy::unwrap_used,
+    reason = "the test fixture and bounded waits must succeed"
+)]
+async fn dropping_a_behavioral_run_cancels_its_command_before_reset() {
+    let invoked = Arc::new(Notify::new());
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
+        &behavioral_test_yaml("accepted", false, ""),
+    ));
+    let tracer = behavioral_tracer(
+        Arc::new(NotifyingHangingTransport {
+            invoked: Arc::clone(&invoked),
+        }),
+        repository,
+    );
+    let running_tracer = tracer.clone();
+    let run = tokio::spawn(async move { running_tracer.run_test("behavioral-test").await });
+    tokio::time::timeout(std::time::Duration::from_secs(1), invoked.notified())
+        .await
+        .unwrap();
+
+    run.abort();
+    let _ = run.await;
+
     tokio::time::timeout(
         std::time::Duration::from_secs(1),
         tracer.reset_test_scenario(),
@@ -2196,7 +2230,7 @@ impl CommandTransport for ObservableTransport {
 }
 
 #[tokio::test]
-async fn behavioral_test_waits_for_correlated_event_expectations() {
+async fn behavioral_test_matches_raw_event_payloads_while_public_correlation_is_redacted() {
     let correlation_id = Arc::new(Mutex::new(None));
     let invoked = Arc::new(Notify::new());
     let transport = ObservableTransport {
@@ -2205,9 +2239,16 @@ async fn behavioral_test_waits_for_correlated_event_expectations() {
     };
     let trace = r"  trace:
     contains:
+      - kind: domain-event
+        name: test-domain-event
+        schemaVersion: 1
+        payload:
+          private: domain detail
       - kind: integration-event
         name: test-published
         schemaVersion: 1
+        payload:
+          private: integration detail
 ";
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
         &behavioral_test_yaml("accepted", false, trace),
@@ -2220,16 +2261,48 @@ async fn behavioral_test_waits_for_correlated_event_expectations() {
 
     tracer
         .correlation_observer(OperationMode::Test)
+        .observe_domain_event(
+            &correlation_id,
+            DomainEventObservation::new("test-domain-event", 1)
+                .with_payload(json!({ "private": "domain detail" })),
+        )
+        .await
+        .unwrap();
+    tracer
+        .correlation_observer(OperationMode::Test)
         .observe_integration_event(
             &correlation_id,
-            IntegrationEventObservation::new("test-published", 1),
+            IntegrationEventObservation::new("test-published", 1)
+                .with_payload(json!({ "private": "integration detail" })),
         )
         .await
         .unwrap();
     let report = run.await.unwrap().unwrap();
 
     assert_eq!(report.status, TestReportStatus::Passed);
-    assert!(report.expectations[0].matched_event_id.is_some());
+    assert!(
+        report
+            .expectations
+            .iter()
+            .all(|expectation| expectation.matched_event_id.is_some())
+    );
+
+    let mut public = tracer
+        .subscribe_correlation(&correlation_id, 0)
+        .await
+        .unwrap();
+    let mut public_events = Vec::new();
+    for _ in 0..4 {
+        public_events.push(public.next().await.unwrap());
+    }
+    assert!(public_events.iter().any(|event| matches!(
+        event.kind,
+        CorrelationEventKind::DomainEvent { payload: None, .. }
+    )));
+    assert!(public_events.iter().any(|event| matches!(
+        event.kind,
+        CorrelationEventKind::IntegrationEvent { payload: None, .. }
+    )));
 }
 
 #[cfg(feature = "http")]

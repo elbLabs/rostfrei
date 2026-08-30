@@ -14,17 +14,19 @@ use rostfrei::{
 use rostfrei_messaging_core::{
     CommandAddress, CommandPublisher, CommandResponse, CommandResponsePublisher,
     CommandResponseReadErrorKind, CommandResponseReader, DeliveryDisposition,
-    IntegrationEventPublisher, MessageDelivery, MessageHandler, OutboundMessage, PublishError,
-    PublishErrorKind, PublishReceipt, QuarantineReason, RetryDelay,
+    IntegrationEventPublisher, MAX_COMMAND_RESPONSE_TIMEOUT, MessageDelivery, MessageHandler,
+    OutboundMessage, PublishError, PublishErrorKind, PublishReceipt, QuarantineReason, RetryDelay,
 };
 use tokio::sync::{Mutex, OwnedMutexGuard};
+use tokio::time::Instant;
 
-use crate::{NatsCommandResponseReader, NatsPublisher};
+use crate::{NatsCommandResponseReader, NatsPublisher, error::NatsError};
 
 const MAXIMUM_PUBLISH_ATTEMPTS: usize = 3;
 const PUBLISH_RETRY_DELAY: Duration = Duration::from_millis(100);
 const RESPONSE_READ_SLICE: Duration = Duration::from_secs(1);
 const RESPONSE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(100);
+pub const DEFAULT_COMMAND_RESPONSE_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const DELIVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
@@ -33,7 +35,7 @@ pub struct NatsMessagingAdapter {
     response_publisher: Arc<dyn CommandResponsePublisher>,
     integration_publisher: Arc<dyn IntegrationEventPublisher>,
     response_reader: Arc<dyn CommandResponseReader>,
-    response_timeout: Option<Duration>,
+    response_wait_timeout: Duration,
 }
 
 impl NatsMessagingAdapter {
@@ -48,8 +50,16 @@ impl NatsMessagingAdapter {
             response_publisher,
             integration_publisher,
             response_reader,
-            response_timeout: None,
+            response_wait_timeout: DEFAULT_COMMAND_RESPONSE_WAIT_TIMEOUT,
         }
+    }
+
+    pub fn with_response_wait_timeout(mut self, timeout: Duration) -> Result<Self, NatsError> {
+        if timeout.is_zero() || timeout > MAX_COMMAND_RESPONSE_TIMEOUT {
+            return Err(NatsError::Configuration);
+        }
+        self.response_wait_timeout = timeout;
+        Ok(self)
     }
 
     #[cfg(test)]
@@ -64,14 +74,8 @@ impl NatsMessagingAdapter {
             response_publisher,
             integration_publisher,
             response_reader,
-            response_timeout: None,
+            response_wait_timeout: DEFAULT_COMMAND_RESPONSE_WAIT_TIMEOUT,
         }
-    }
-
-    #[must_use]
-    pub const fn with_response_timeout(mut self, response_timeout: Duration) -> Self {
-        self.response_timeout = Some(response_timeout);
-        self
     }
 
     pub fn command_handler(&self, processor: Arc<CommandProcessor>) -> NatsCommandHandler {
@@ -116,21 +120,43 @@ impl NatsMessagingAdapter {
         let address = command.response_address().map_err(|error| {
             CommandBusError::new(CommandBusErrorKind::InvalidConfiguration, error.to_string())
         })?;
+        let deadline = Instant::now()
+            .checked_add(self.response_wait_timeout)
+            .ok_or_else(|| {
+                CommandBusError::new(
+                    CommandBusErrorKind::InvalidConfiguration,
+                    "command response wait deadline overflowed",
+                )
+            })?;
         loop {
+            let read_timeout = deadline
+                .saturating_duration_since(Instant::now())
+                .min(RESPONSE_READ_SLICE);
+            if read_timeout.is_zero() {
+                return Err(command_response_timeout());
+            }
             match self
                 .response_reader
                 .read_command_response(
                     &address,
                     command.operation_id(),
                     command.message_id(),
-                    RESPONSE_READ_SLICE,
+                    read_timeout,
                 )
                 .await
             {
                 Ok(response) => return Ok(response),
-                Err(error) if error.kind() == CommandResponseReadErrorKind::Timeout => {}
+                Err(error) if error.kind() == CommandResponseReadErrorKind::Timeout => {
+                    tokio::task::yield_now().await;
+                }
                 Err(error) if error.kind() == CommandResponseReadErrorKind::Unavailable => {
-                    tokio::time::sleep(PUBLISH_RETRY_DELAY).await;
+                    let retry_delay = deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(PUBLISH_RETRY_DELAY);
+                    if retry_delay.is_zero() {
+                        return Err(command_response_timeout());
+                    }
+                    tokio::time::sleep(retry_delay).await;
                 }
                 Err(error) => {
                     return Err(CommandBusError::new(
@@ -145,23 +171,6 @@ impl NatsMessagingAdapter {
                 }
             }
         }
-    }
-
-    async fn read_response_with_timeout(
-        &self,
-        command: &EncodedCommand,
-    ) -> Result<CommandResponse, CommandBusError> {
-        let Some(timeout) = self.response_timeout else {
-            return self.read_response(command).await;
-        };
-        tokio::time::timeout(timeout, self.read_response(command))
-            .await
-            .map_err(|_| {
-                CommandBusError::new(
-                    CommandBusErrorKind::Timeout,
-                    "timed out waiting for the durable command response",
-                )
-            })?
     }
 }
 
@@ -179,7 +188,7 @@ impl CommandMessageAdapter for NatsMessagingAdapter {
                 publication.duplicate(),
             ))
             .await;
-        let response = self.read_response_with_timeout(&command).await?;
+        let response = self.read_response(&command).await?;
         command.validate_response(&response).map_err(|error| {
             CommandBusError::new(CommandBusErrorKind::InvalidResponse, error.to_string())
         })?;
@@ -380,12 +389,18 @@ enum ReconciliationError {
 fn command_publish_error(error: PublishError) -> CommandBusError {
     let kind = match error.kind() {
         PublishErrorKind::Timeout => CommandBusErrorKind::Timeout,
-        PublishErrorKind::Rejected => CommandBusErrorKind::Rejected,
         PublishErrorKind::Unavailable => CommandBusErrorKind::Unavailable,
         PublishErrorKind::InvalidConfiguration => CommandBusErrorKind::InvalidConfiguration,
         _ => CommandBusErrorKind::InvalidMessage,
     };
     CommandBusError::new(kind, error.to_string())
+}
+
+fn command_response_timeout() -> CommandBusError {
+    CommandBusError::new(
+        CommandBusErrorKind::Timeout,
+        "timed out waiting for the durable command response",
+    )
 }
 
 fn integration_publish_error(error: PublishError) -> IntegrationEventBusError {
@@ -469,6 +484,16 @@ mod tests {
 
     #[async_trait]
     impl CommandResponseReader for AcceptedAfterTimeoutReader {
+        async fn find_command_response(
+            &self,
+            _address: &CommandResponseAddress,
+            _operation_id: &rostfrei_messaging_core::OperationId,
+            _command_message_id: &MessageId,
+            _read_timeout: Duration,
+        ) -> Result<Option<CommandResponse>, CommandResponseReadError> {
+            Ok(None)
+        }
+
         async fn read_command_response(
             &self,
             _address: &CommandResponseAddress,
@@ -497,6 +522,16 @@ mod tests {
 
     #[async_trait]
     impl CommandResponseReader for InvalidResponseReader {
+        async fn find_command_response(
+            &self,
+            _address: &CommandResponseAddress,
+            _operation_id: &rostfrei_messaging_core::OperationId,
+            _command_message_id: &MessageId,
+            _read_timeout: Duration,
+        ) -> Result<Option<CommandResponse>, CommandResponseReadError> {
+            Err(invalid_response())
+        }
+
         async fn read_command_response(
             &self,
             _address: &CommandResponseAddress,
@@ -512,6 +547,16 @@ mod tests {
 
     #[async_trait]
     impl CommandResponseReader for TimeoutReader {
+        async fn find_command_response(
+            &self,
+            _address: &CommandResponseAddress,
+            _operation_id: &rostfrei_messaging_core::OperationId,
+            _command_message_id: &MessageId,
+            _read_timeout: Duration,
+        ) -> Result<Option<CommandResponse>, CommandResponseReadError> {
+            Ok(None)
+        }
+
         async fn read_command_response(
             &self,
             _address: &CommandResponseAddress,
@@ -555,33 +600,6 @@ mod tests {
     }
 
     struct NoopCommandPublisher;
-
-    struct DelayedCommandPublisher {
-        delay: Duration,
-    }
-
-    #[async_trait]
-    impl CommandPublisher for DelayedCommandPublisher {
-        async fn publish_command(
-            &self,
-            _message: OutboundMessage<CommandAddress>,
-        ) -> Result<PublishReceipt, PublishError> {
-            tokio::time::sleep(self.delay).await;
-            Ok(PublishReceipt::new(false))
-        }
-    }
-
-    struct RejectedCommandPublisher;
-
-    #[async_trait]
-    impl CommandPublisher for RejectedCommandPublisher {
-        async fn publish_command(
-            &self,
-            _message: OutboundMessage<CommandAddress>,
-        ) -> Result<PublishReceipt, PublishError> {
-            Err(PublishError::new(PublishErrorKind::Rejected))
-        }
-    }
 
     struct NoopCommandObserver;
 
@@ -653,6 +671,18 @@ mod tests {
         release: Semaphore,
     }
 
+    struct FailingResponsePublisher;
+
+    #[async_trait]
+    impl CommandResponsePublisher for FailingResponsePublisher {
+        async fn publish_command_response(
+            &self,
+            _message: OutboundMessage<CommandResponseAddress>,
+        ) -> Result<PublishReceipt, PublishError> {
+            Err(PublishError::new(PublishErrorKind::Unavailable))
+        }
+    }
+
     #[derive(Default)]
     struct LoopbackBroker {
         handler: OnceCell<Arc<NatsCommandHandler>>,
@@ -669,11 +699,13 @@ mod tests {
                 .handler
                 .get()
                 .ok_or_else(|| PublishError::new(PublishErrorKind::Unavailable))?;
-            let delivery = MessageDelivery::new(
+            let delivery = MessageDelivery::new_with_transport_context(
                 message.address().clone(),
                 message.message_id().clone(),
                 message.payload().to_vec(),
                 CallerMetadata::new(),
+                message.correlation_id().cloned(),
+                None,
                 DeliveryInfo::new(1, 0, 1, 1)
                     .map_err(|_| PublishError::new(PublishErrorKind::Rejected))?,
             )
@@ -701,6 +733,16 @@ mod tests {
 
     #[async_trait]
     impl CommandResponseReader for LoopbackBroker {
+        async fn find_command_response(
+            &self,
+            _address: &CommandResponseAddress,
+            _operation_id: &rostfrei_messaging_core::OperationId,
+            _command_message_id: &MessageId,
+            _read_timeout: Duration,
+        ) -> Result<Option<CommandResponse>, CommandResponseReadError> {
+            Ok(self.response.lock().await.clone())
+        }
+
         async fn read_command_response(
             &self,
             _address: &CommandResponseAddress,
@@ -818,55 +860,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn response_timeout_starts_after_command_publication() -> TestResult {
-        let reader = Arc::new(AcceptedAfterTimeoutReader {
-            command_address: context()?.command_address("credit-account")?,
-            attempts: AtomicUsize::new(0),
-        });
-        let adapter = Arc::new(
-            NatsMessagingAdapter::with_components(
-                Arc::new(DelayedCommandPublisher {
-                    delay: Duration::from_millis(30),
-                }),
-                Arc::new(NoopResponsePublisher),
-                Arc::new(NoopIntegrationPublisher),
-                reader,
-            )
-            .with_response_timeout(Duration::from_millis(10)),
-        );
-        let command = encoded_command(Arc::clone(&adapter))?;
-
-        let receipt = adapter
-            .dispatch(command, Arc::new(NoopCommandObserver))
-            .await?;
-
-        assert!(matches!(
-            receipt.response().outcome(),
-            rostfrei::CommandResponseOutcome::Accepted
-        ));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn broker_publication_rejection_remains_distinct() -> TestResult {
-        let adapter = Arc::new(NatsMessagingAdapter::with_components(
-            Arc::new(RejectedCommandPublisher),
-            Arc::new(NoopResponsePublisher),
-            Arc::new(NoopIntegrationPublisher),
-            Arc::new(InvalidResponseReader),
-        ));
-        let command = encoded_command(Arc::clone(&adapter))?;
-
-        let error = adapter
-            .dispatch(command, Arc::new(NoopCommandObserver))
-            .await
-            .expect_err("rejected publication should fail dispatch");
-
-        assert_eq!(error.kind(), CommandBusErrorKind::Rejected);
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn invalid_durable_response_is_not_returned_to_the_caller() -> TestResult {
         let adapter = Arc::new(NatsMessagingAdapter::with_components(
             Arc::new(NoopCommandPublisher),
@@ -886,6 +879,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn command_dispatch_times_out_when_no_durable_response_arrives() -> TestResult {
+        let adapter = Arc::new(
+            NatsMessagingAdapter::with_components(
+                Arc::new(NoopCommandPublisher),
+                Arc::new(NoopResponsePublisher),
+                Arc::new(NoopIntegrationPublisher),
+                Arc::new(TimeoutReader),
+            )
+            .with_response_wait_timeout(Duration::from_millis(10))?,
+        );
+        let command = encoded_command(Arc::clone(&adapter))?;
+
+        let error = adapter
+            .dispatch(command, Arc::new(NoopCommandObserver))
+            .await
+            .expect_err("a missing durable response should time out");
+
+        assert_eq!(error.kind(), CommandBusErrorKind::Timeout);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn integration_publish_retries_the_exact_message() -> TestResult {
         let publisher = Arc::new(FlakyIntegrationPublisher::default());
         let adapter = NatsMessagingAdapter::with_components(
@@ -898,7 +913,6 @@ mod tests {
             context()?.integration_event_address("account-credited")?,
             MessageId::new("account-credited-message")?,
             br#"{"payload":{"amount":7}}"#.to_vec(),
-            None,
         )?;
 
         let receipt = IntegrationMessageAdapter::publish(&adapter, message).await?;
@@ -927,11 +941,13 @@ mod tests {
             Arc::new(InvalidResponseReader),
         ));
         let command = encoded_command(adapter)?;
-        let delivery = MessageDelivery::new(
+        let delivery = MessageDelivery::new_with_transport_context(
             command.address().clone(),
             command.message_id().clone(),
             command.payload().to_vec(),
             CallerMetadata::new(),
+            Some(command.correlation_id().clone()),
+            None,
             DeliveryInfo::new(1, 0, 1, 1)?,
         )?;
         let handling = tokio::spawn(async move { handler.handle(delivery).await });
@@ -940,6 +956,69 @@ mod tests {
         assert!(!handling.is_finished());
         response_publisher.release.add_permits(1);
         assert_eq!(handling.await?, DeliveryDisposition::Acknowledge);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejected_command_retries_when_its_response_cannot_be_published() -> TestResult {
+        let processor = empty_processor();
+        let handler = NatsCommandHandler::new(
+            processor,
+            Arc::new(FailingResponsePublisher),
+            Arc::new(TimeoutReader),
+        );
+        let adapter = Arc::new(NatsMessagingAdapter::with_components(
+            Arc::new(NoopCommandPublisher),
+            Arc::new(NoopResponsePublisher),
+            Arc::new(NoopIntegrationPublisher),
+            Arc::new(InvalidResponseReader),
+        ));
+        let command = encoded_command(adapter)?;
+        let delivery = MessageDelivery::new_with_transport_context(
+            command.address().clone(),
+            command.message_id().clone(),
+            command.payload().to_vec(),
+            CallerMetadata::new(),
+            Some(command.correlation_id().clone()),
+            None,
+            DeliveryInfo::new(1, 0, 1, 1)?,
+        )?;
+
+        assert!(matches!(
+            handler.handle(delivery).await,
+            DeliveryDisposition::RetryAfter(_)
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn command_handler_accepts_legacy_delivery_without_correlation_header() -> TestResult {
+        let handler = NatsCommandHandler::new(
+            empty_processor(),
+            Arc::new(NoopResponsePublisher),
+            Arc::new(TimeoutReader),
+        );
+        let adapter = Arc::new(NatsMessagingAdapter::with_components(
+            Arc::new(NoopCommandPublisher),
+            Arc::new(NoopResponsePublisher),
+            Arc::new(NoopIntegrationPublisher),
+            Arc::new(InvalidResponseReader),
+        ));
+        let command = encoded_command(adapter)?;
+        let delivery = MessageDelivery::new_with_transport_context(
+            command.address().clone(),
+            command.message_id().clone(),
+            command.payload().to_vec(),
+            CallerMetadata::new(),
+            None,
+            None,
+            DeliveryInfo::new(1, 0, 1, 1)?,
+        )?;
+
+        assert_eq!(
+            handler.handle(delivery).await,
+            DeliveryDisposition::Acknowledge
+        );
         Ok(())
     }
 

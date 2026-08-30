@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeSet,
     error::Error,
     io, process,
     sync::Arc,
@@ -27,7 +26,6 @@ type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(5);
 const ABSENCE_TIMEOUT: Duration = Duration::from_millis(500);
-const REPLACEMENT_MESSAGE_COUNT: usize = 8;
 
 struct ChannelHandler {
     sender: mpsc::UnboundedSender<CorrelatedMessage>,
@@ -48,17 +46,29 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
     let suffix = unique_suffix()?;
     let application = ApplicationName::new(format!("correlation-{suffix}"))?;
     let domain_stream = format!("CORRELATION_{suffix}_DOMAIN").to_ascii_uppercase();
+    let other_domain_stream = format!("CORRELATION_{suffix}_OTHER_DOMAIN").to_ascii_uppercase();
+    let late_domain_stream = format!("CORRELATION_{suffix}_LATE_DOMAIN").to_ascii_uppercase();
     let integration_stream = format!("CORRELATION_{suffix}_INTEGRATION").to_ascii_uppercase();
     let domain_subject = format!("{}.domain.test.aggregate.one", application.as_str());
+    let other_domain_subject = format!("{}.domain.other.aggregate.two", application.as_str());
+    let late_domain_subject = format!("{}.domain.late.aggregate.three", application.as_str());
     let integration_subject = format!("{}.integration.test-event", application.as_str());
     let client = async_nats::connect(nats_url).await?;
     let context = jetstream::new(client.clone());
-    let domain_config = stream_config(&domain_stream, format!("{}.domain.>", application.as_str()));
+    let domain_config = stream_config(
+        &domain_stream,
+        format!("{}.domain.test.>", application.as_str()),
+    );
+    let other_domain_config = stream_config(
+        &other_domain_stream,
+        format!("{}.domain.other.>", application.as_str()),
+    );
     let integration_config = stream_config(
         &integration_stream,
         format!("{}.integration.>", application.as_str()),
     );
-    context.create_stream(domain_config.clone()).await?;
+    let domain = context.create_stream(domain_config.clone()).await?;
+    context.create_stream(other_domain_config).await?;
     let integration = context.create_stream(integration_config.clone()).await?;
 
     publish_correlated(
@@ -92,7 +102,6 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
     let mut worker_info = worker.clone();
 
     let subscription = NatsCorrelationObserver::new(client.clone(), application.clone())
-        .with_streams(domain_stream.clone(), integration_stream.clone())
         .subscribe()
         .await?;
     let (sender, mut observations) = mpsc::unbounded_channel();
@@ -104,6 +113,11 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
             .is_err(),
         "observer replayed messages stored before subscription",
     )?;
+    let mut observer_consumers = domain.consumer_names();
+    let observer_consumer = tokio::time::timeout(OBSERVATION_TIMEOUT, observer_consumers.next())
+        .await?
+        .ok_or_else(|| io::Error::other("observer consumer was not created"))??;
+    domain.delete_consumer(&observer_consumer).await?;
 
     publish_correlated(
         &context,
@@ -121,10 +135,19 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
         b"integration",
     )
     .await?;
+    publish_correlated(
+        &context,
+        &other_domain_subject,
+        "accepted-other-domain",
+        "accepted-other-domain-correlation",
+        b"other domain",
+    )
+    .await?;
 
     let first = receive_observation(&mut observations).await?;
     let second = receive_observation(&mut observations).await?;
-    let observed = [first, second];
+    let third = receive_observation(&mut observations).await?;
+    let observed = [first, second, third];
     ensure(
         observed.iter().any(|message| {
             message.family() == CorrelatedMessageFamily::DomainEvent
@@ -132,9 +155,17 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
                 && message
                     .message_id()
                     .is_some_and(|id| id.as_str() == "accepted-domain")
-                && message.payload() == b"domain"
+                && has_test_payload(message, "domain")
         }),
         "observer missed the committed domain event",
+    )?;
+    ensure(
+        observed.iter().any(|message| {
+            message.family() == CorrelatedMessageFamily::DomainEvent
+                && message.correlation_id().as_str() == "accepted-other-domain-correlation"
+                && has_test_payload(message, "other domain")
+        }),
+        "observer missed a domain event from another bounded-context stream",
     )?;
     ensure(
         observed.iter().any(|message| {
@@ -143,9 +174,31 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
                 && message
                     .message_id()
                     .is_some_and(|id| id.as_str() == "accepted-integration")
-                && message.payload() == b"integration"
+                && has_test_payload(message, "integration")
         }),
         "observer missed the committed integration event",
+    )?;
+
+    context
+        .create_stream(stream_config(
+            &late_domain_stream,
+            format!("{}.domain.late.>", application.as_str()),
+        ))
+        .await?;
+    publish_correlated(
+        &context,
+        &late_domain_subject,
+        "late-domain",
+        "late-domain-correlation",
+        b"late domain",
+    )
+    .await?;
+    let late = receive_observation(&mut observations).await?;
+    ensure(
+        late.family() == CorrelatedMessageFamily::DomainEvent
+            && late.correlation_id().as_str() == "late-domain-correlation"
+            && has_test_payload(&late, "late domain"),
+        "observer did not discover a stream created after startup",
     )?;
 
     let duplicate = publish_correlated(
@@ -191,62 +244,47 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
     let mut worker_messages = worker.messages().await?;
     let old_worker_message = receive_worker_message(&mut worker_messages).await?;
     ensure(
-        old_worker_message.payload.as_ref() == b"old integration",
+        has_raw_test_payload(&old_worker_message.payload, "old integration"),
         "worker did not retain its pre-observer message",
     )?;
     old_worker_message.ack().await?;
     let current_worker_message = receive_worker_message(&mut worker_messages).await?;
     ensure(
-        current_worker_message.payload.as_ref() == b"integration",
+        has_raw_test_payload(&current_worker_message.payload, "integration"),
         "worker did not independently receive the observed integration event",
     )?;
     wait_for_ack_pending(&mut worker_info, 1).await?;
 
     context.delete_stream(&domain_stream).await?;
     context.create_stream(domain_config).await?;
-    for index in 0..REPLACEMENT_MESSAGE_COUNT {
-        publish_correlated(
-            &context,
-            &domain_subject,
-            &format!("replacement-domain-{index}"),
-            &format!("replacement-correlation-{index}"),
-            b"replacement",
-        )
-        .await?;
-    }
-
-    let mut replacement_ids = BTreeSet::new();
-    for _ in 0..REPLACEMENT_MESSAGE_COUNT {
-        let replacement = receive_observation(&mut observations).await?;
-        ensure(
-            replacement.family() == CorrelatedMessageFamily::DomainEvent
-                && replacement.payload() == b"replacement",
-            "observer emitted an unexpected replacement-stream observation",
-        )?;
-        let message_id = replacement
-            .message_id()
-            .ok_or_else(|| io::Error::other("replacement observation omitted its message ID"))?;
-        ensure(
-            replacement_ids.insert(message_id.as_str().to_owned()),
-            "observer emitted a duplicate replacement-stream observation",
-        )?;
-    }
+    publish_correlated(
+        &context,
+        &domain_subject,
+        "replacement-domain",
+        "replacement-correlation",
+        b"replacement",
+    )
+    .await?;
+    let replacement = receive_observation(&mut observations).await?;
     ensure(
-        (0..REPLACEMENT_MESSAGE_COUNT)
-            .all(|index| replacement_ids.contains(&format!("replacement-domain-{index}"))),
-        "observer missed a replacement-stream observation",
+        replacement.family() == CorrelatedMessageFamily::DomainEvent
+            && replacement.correlation_id().as_str() == "replacement-correlation"
+            && has_test_payload(&replacement, "replacement"),
+        "observer did not replay the new stream generation",
     )?;
     ensure(
         tokio::time::timeout(ABSENCE_TIMEOUT, observations.recv())
             .await
             .is_err(),
-        "observer replayed a replacement-stream observation",
+        "observer duplicated a message from the replacement stream",
     )?;
 
     current_worker_message.ack().await?;
     observer_task.abort();
     let _ = observer_task.await;
     context.delete_stream(&domain_stream).await?;
+    context.delete_stream(&other_domain_stream).await?;
+    context.delete_stream(&late_domain_stream).await?;
     context.delete_stream(&integration_stream).await?;
     client.drain().await?;
     Ok(())
@@ -271,11 +309,27 @@ async fn publish_correlated(
     correlation_id: &str,
     payload: &[u8],
 ) -> TestResult<bool> {
+    let test_payload = String::from_utf8(payload.to_vec())?;
+    let payload = if subject.contains(".domain.") {
+        serde_json::json!({
+            "event": {
+                "eventId": message_id,
+                "correlationId": correlation_id
+            },
+            "testPayload": test_payload
+        })
+    } else {
+        serde_json::json!({
+            "message_id": message_id,
+            "correlation_id": correlation_id,
+            "testPayload": test_payload
+        })
+    };
     let acknowledgement = context
         .publish_with_headers(
             subject.to_owned(),
             correlated_headers(message_id, correlation_id),
-            payload.to_vec().into(),
+            serde_json::to_vec(&payload)?.into(),
         )
         .await?
         .await?;
@@ -286,7 +340,24 @@ fn correlated_headers(message_id: &str, correlation_id: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert("Nats-Msg-Id", message_id);
     headers.insert(CORRELATION_ID_HEADER, correlation_id);
+    headers.insert("Content-Type", "application/json");
     headers
+}
+
+fn has_test_payload(message: &CorrelatedMessage, expected: &str) -> bool {
+    has_raw_test_payload(message.payload(), expected)
+}
+
+fn has_raw_test_payload(payload: &[u8], expected: &str) -> bool {
+    serde_json::from_slice::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|payload| {
+            payload
+                .get("testPayload")
+                .and_then(serde_json::Value::as_str)
+                .map(|value| value == expected)
+        })
+        .unwrap_or(false)
 }
 
 async fn receive_observation(

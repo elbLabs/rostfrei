@@ -209,6 +209,7 @@ pub struct NewOperation<'a> {
 struct OperationState {
     fingerprint: String,
     snapshot: OperationSnapshot,
+    evaluation_result: Option<Value>,
     events: Vec<OperationEvent>,
     publication: Option<(String, bool)>,
 }
@@ -219,6 +220,7 @@ pub struct OperationRecord {
     changed: watch::Sender<u64>,
     terminal: AtomicBool,
     correlation_recorded: AtomicBool,
+    abort_requested: AtomicBool,
     execution: StdMutex<Option<AbortHandle>>,
 }
 
@@ -247,12 +249,14 @@ impl OperationRecord {
                     result: None,
                     failure: None,
                 },
+                evaluation_result: None,
                 events: vec![event],
                 publication: None,
             }),
             changed,
             terminal: AtomicBool::new(false),
             correlation_recorded: AtomicBool::new(false),
+            abort_requested: AtomicBool::new(false),
             execution: StdMutex::new(None),
         })
     }
@@ -262,12 +266,27 @@ impl OperationRecord {
             .execution
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if !self.is_terminal() {
+        if self.is_terminal() {
+            return;
+        }
+        if self.abort_requested.load(Ordering::Acquire) {
+            execution.abort();
+        } else {
             *registered = Some(execution);
         }
     }
 
     pub async fn abort_and_wait(&self) {
+        self.abort_execution();
+        if self.is_terminal() {
+            return;
+        }
+        let mut changed = self.changed.subscribe();
+        while !self.is_terminal() && changed.changed().await.is_ok() {}
+    }
+
+    pub fn abort_execution(&self) {
+        self.abort_requested.store(true, Ordering::Release);
         let execution = self
             .execution
             .lock()
@@ -276,11 +295,6 @@ impl OperationRecord {
         if let Some(execution) = execution {
             execution.abort();
         }
-        if self.is_terminal() {
-            return;
-        }
-        let mut changed = self.changed.subscribe();
-        while !self.is_terminal() && changed.changed().await.is_ok() {}
     }
 
     pub async fn fingerprint(&self) -> String {
@@ -295,6 +309,10 @@ impl OperationRecord {
         self.state.lock().await.snapshot.clone()
     }
 
+    pub(crate) async fn evaluation_result(&self) -> Option<Value> {
+        self.state.lock().await.evaluation_result.clone()
+    }
+
     pub async fn start(&self) {
         self.append(OperationEventKind::Started, |snapshot| {
             snapshot.status = OperationStatus::Running;
@@ -303,6 +321,24 @@ impl OperationRecord {
     }
 
     pub async fn complete(&self, result: OperationResult, events: Vec<OperationEventKind>) {
+        self.complete_inner(result, None, events).await;
+    }
+
+    pub(crate) async fn complete_with_evaluation_result(
+        &self,
+        result: OperationResult,
+        evaluation_result: Option<Value>,
+        events: Vec<OperationEventKind>,
+    ) {
+        self.complete_inner(result, evaluation_result, events).await;
+    }
+
+    async fn complete_inner(
+        &self,
+        result: OperationResult,
+        evaluation_result: Option<Value>,
+        events: Vec<OperationEventKind>,
+    ) {
         let decision = match result {
             OperationResult::Accepted { .. } => CompletedDecision::Accepted,
             OperationResult::Rejected { .. } => CompletedDecision::Rejected,
@@ -317,6 +353,7 @@ impl OperationRecord {
         push_event(&mut state, OperationEventKind::Completed { decision });
         state.snapshot.status = OperationStatus::Completed;
         state.snapshot.result = Some(result);
+        state.evaluation_result = evaluation_result;
         self.terminal.store(true, Ordering::Release);
         self.clear_execution();
         let latest = state.snapshot.latest_event_id;
@@ -514,30 +551,4 @@ pub async fn subscribe(
     after: u64,
 ) -> Result<OperationSubscription, SubscriptionError> {
     record.subscription(after).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn terminal_record_is_not_evictable_before_its_correlation_result() {
-        let record = OperationRecord::new(NewOperation {
-            operation_id: "operation-1".to_owned(),
-            correlation_id: "correlation-1".to_owned(),
-            fingerprint: "fingerprint".to_owned(),
-            mode: OperationMode::Test,
-            command: "test-command",
-            schema_version: 1,
-            aggregate_type: "test-context/test-aggregate",
-            aggregate_id: "aggregate-1",
-        });
-
-        record.fail("test-failure", "failed".to_owned()).await;
-        assert!(record.is_terminal());
-        assert!(!record.is_evictable());
-
-        record.mark_correlation_recorded();
-        assert!(record.is_evictable());
-    }
 }

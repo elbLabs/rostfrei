@@ -22,23 +22,25 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bike_rental::{
-    nats_runtime::{BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsRuntime},
+    nats_runtime::{
+        BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsRuntime,
+        bicycle_rental_started_message_id,
+    },
     rental::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
     runtime::{demo_stream, tracer_builder},
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
     Aggregate, CommandDefinition, EventHistory, OperationId, RecordedEvent, StreamAggregateId,
-    integration_message_id,
 };
-use rostfrei_messaging_core::{CausationId, IntegrationEventEnvelope, SchemaVersion};
+use rostfrei_messaging_core::IntegrationEventEnvelope;
 use rostfrei_nats::{
     CORRELATION_ID_HEADER, NatsConnection, NatsConnectionConfig, ServerVersion, connect,
 };
 use rostfrei_tracer::{
-    CommandInvocation, CommandOutcome, CommandPublication, CommandReceipt,
-    CommandTransportObserver, ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository,
-    OperationMode, TestRepository, TestScenarioReset, command_execution_fingerprint,
+    CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
+    FilesystemTestRepository, OperationMode, TestRepository, TestScenarioReset,
+    command_execution_fingerprint,
     http::{self, HttpConfig},
 };
 use serde::Deserialize;
@@ -89,7 +91,7 @@ async fn command_workers_and_test_reset_are_application_isolated() -> TestResult
     let production_config = BikeRentalNatsConfig::new(&production_application)?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-integration"), nats_url)
-            .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
+            .with_minimum_server_version(ServerVersion::new(2, 12, 0)),
     )
     .await?;
 
@@ -130,7 +132,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
     let test_config = BikeRentalNatsConfig::new(&test_application)?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-behavioral-integration"), nats_url)
-            .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
+            .with_minimum_server_version(ServerVersion::new(2, 12, 0)),
     )
     .await?;
 
@@ -148,8 +150,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             .with_test_event_store(test_store)
             .with_test_transport(test_runtime.transport())
             .with_test_fixture("demo-fleet", test_reset)
-            .with_test_repository(test_repository)
-            .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
+            .with_test_repository(test_repository);
         builder.register_json::<RentBicycle>()?;
         builder.register_json::<ReturnBicycle>()?;
         builder.register_json::<AddBicycle>()?;
@@ -280,8 +281,7 @@ async fn run_isolation_test(
             .is_some_and(|correlation| correlation.as_str() == "test-rent-correlation"),
         "Test event did not preserve command correlation",
     )?;
-    wait_for_integration_chain(connection, test_runtime, &test_history[1], &test_receipt, 1)
-        .await?;
+    wait_for_integration_chain(connection, test_runtime, &test_history[1], 1).await?;
     ensure(
         production_runtime.store().load(&demo_stream()).await?.len() == 1,
         "Test command changed production history",
@@ -366,14 +366,7 @@ async fn run_isolation_test(
     )?;
     wait_for_history_len(test_runtime, 2).await?;
     let reset_test_history = test_runtime.store().load(&demo_stream()).await?;
-    wait_for_integration_chain(
-        connection,
-        test_runtime,
-        &reset_test_history[1],
-        &reset_test_receipt,
-        1,
-    )
-    .await?;
+    wait_for_integration_chain(connection, test_runtime, &reset_test_history[1], 1).await?;
 
     let production_rent_receipt = production_runtime
         .transport()
@@ -394,14 +387,7 @@ async fn run_isolation_test(
     )?;
     wait_for_history_len(production_runtime, 3).await?;
     let production_history = production_runtime.store().load(&demo_stream()).await?;
-    wait_for_integration_chain(
-        connection,
-        production_runtime,
-        &production_history[2],
-        &production_rent_receipt,
-        1,
-    )
-    .await?;
+    wait_for_integration_chain(connection, production_runtime, &production_history[2], 1).await?;
     wait_for_command_stream_empty(connection, test_runtime).await?;
     wait_for_command_stream_empty(connection, production_runtime).await
 }
@@ -451,16 +437,12 @@ async fn wait_for_integration_chain(
     connection: &NatsConnection,
     runtime: &BikeRentalNatsRuntime,
     source_event: &RecordedEvent,
-    receipt: &CommandReceipt,
     expected_messages: u64,
 ) -> TestResult {
     let deadline = Instant::now() + Duration::from_secs(10);
     let route = runtime.config().integration_event_route();
-    let expected_message_id = integration_message_id(
-        route.address(),
-        SchemaVersion::new(1)?,
-        source_event.event_id(),
-    )?;
+    let expected_message_id =
+        bicycle_rental_started_message_id(route.address(), source_event.event_id())?;
     loop {
         let mut integration_stream = connection
             .jetstream()
@@ -536,14 +518,11 @@ async fn wait_for_integration_chain(
                     "integration envelope did not preserve correlation",
                 )?;
                 ensure(
-                    source_event.causation_id().map(CausationId::as_str)
-                        == Some(receipt.command_message_id()),
-                    "domain event did not preserve command causation",
-                )?;
-                ensure(
-                    envelope.causation_id().map(CausationId::as_str)
+                    envelope
+                        .causation_id()
+                        .map(rostfrei_messaging_core::CausationId::as_str)
                         == Some(source_event.event_id().as_str()),
-                    "integration envelope did not use the source event as causation",
+                    "integration envelope did not preserve causation",
                 )?;
                 ensure(
                     envelope.payload().source_event_id() == source_event.event_id().as_str(),

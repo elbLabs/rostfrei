@@ -597,8 +597,6 @@ pub enum CommandBusErrorKind {
     InvalidMessage,
     #[error("command dispatch timed out")]
     Timeout,
-    #[error("command publication was rejected")]
-    Rejected,
     #[error("command messaging is unavailable")]
     Unavailable,
     #[error("command messaging configuration is invalid")]

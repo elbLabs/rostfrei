@@ -24,13 +24,18 @@ cargo test --locked -p bike-rental
 
 ## NATS-backed Tracer
 
-The runnable example uses the shared `CommandBus`, `IntegrationEventBus`, NATS
-adapters, durable command and domain-event consumers, immutable command
-responses, and `NatsEventStore` path intended for deployed systems. After
-`BicycleRented` commits, the domain-event consumer maps it to the public
-`BicycleRentalStarted` integration event; a separate durable consumer handles
-that event. NATS Server 2.12.1 or newer is required for atomic event batches.
-Start the supplied disposable NATS server and local Tracer:
+The runnable example exercises the shared, transport-neutral `CommandBus` and
+`IntegrationEventBus` through NATS adapters, durable command and domain-event
+consumers, immutable command responses, and `NatsEventStore`. It does not define
+bike-rental-specific buses or command wire contracts. After `BicycleRented`
+commits, the domain-event consumer maps it to the public
+`BicycleRentalStarted` integration event through `IntegrationEventBus`; a
+separate durable consumer handles that event. NATS is the isolated adapter choice
+for this example, not a requirement of Tracer. NATS Server 2.12 or newer is
+required for atomic event batches.
+
+Start the supplied disposable NATS configuration, then start the local Tracer
+server:
 
 ```sh
 docker compose -f examples/bike-rental/compose.yaml up -d
@@ -42,13 +47,17 @@ ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
 ```
 
 It binds to `127.0.0.1:1309` by default. Set `ROSTFREI_API_ADDR` to use another
-local address. The control capability protects discovery, simulation, isolated
-test execution, reset, and their traces. The separate dispatch capability is
-required for production execution and its traces; startup rejects equal tokens.
-Set `ROSTFREI_APPLICATION` to change the shared prefix when running multiple
-instances against one NATS account.
-Runtime startup verifies the operator-provisioned NATS topology and exits if a
-durable command, domain-event, or integration-event consumer stops.
+local address. `ROSTFREI_API_TOKEN` authorizes discovery, Simulate, isolated
+Test, reset, and their operation and correlation resources.
+`ROSTFREI_DISPATCH_TOKEN` separately authorizes production Dispatch and its
+resources; startup rejects equal tokens. Set `ROSTFREI_APPLICATION` to change
+the base application name when running multiple instances against one NATS
+account.
+
+Tracer's API is unversioned: its hypermedia routes begin with `/catalog`,
+`/tests`, `/contexts`, `/operations`, and `/correlations`, not `/v1`. Clients
+should follow links advertised by the catalog and operation resources rather
+than construct application-specific routes.
 
 The example uses two independent NATS application namespaces:
 
@@ -66,13 +75,16 @@ until a later reset succeeds rather than exposing partially rebuilt state.
 
 Both initially contain `city-fleet`, serviceable `bike-42`, and
 maintenance-required `bike-99`. The local example explicitly provisions these
-streams and exposes trace payloads for demonstration. Production deployments
-should provision infrastructure separately and use distinct NATS credentials or
-accounts for test and production.
+streams. Public operation and correlation resources keep payloads redacted;
+behavioral assertions use a separate private evaluation view. Production
+deployments should provision infrastructure separately and use distinct NATS
+credentials or accounts for test and production.
 
 The API advertises all command fields, runtime choices, instances, mode actions,
-and reset links through `GET /catalog` and its linked resources. Clients can
-follow these links without embedding bike-rental values.
+and reset links through `GET /catalog` and its linked resources. The standalone
+[Rostfrei Studio](../../studio) UI consumes these links without embedding
+bike-rental values and supports Simulate, Test, Dispatch, reset, operation
+status, and correlation streams.
 
 Behavioral tests are YAML files in `tests/tracer`. They name the deterministic
 `demo-fleet` fixture, run setup and subject commands through the isolated test
@@ -126,9 +138,20 @@ curl --header 'authorization: Bearer local-development-token' \
 The three Tracer actions have distinct semantics:
 
 - `simulate` replays the current test NATS history but never appends;
-- `test` publishes through the normal command pipeline and appends only to the
-  isolated test NATS history;
-- `dispatch` uses the identical pipeline against the production namespace.
+- `test` submits through `CommandBus` with the isolated test NATS adapter and
+  appends only to test history;
+- `dispatch` uses the same bus API with a separately authorized production NATS
+  adapter and namespace.
+
+For Test and Dispatch, the NATS adapter reads responses in bounded slices and
+keeps listening through slice timeouts or transient reader unavailability until
+a response arrives or the operation task is cancelled. It then reports
+`command.responded`, the business outcome, and terminal completion. A transported
+result does not claim authoritative append evidence, while Simulate explicitly
+reports `appended: false`. The adapter makes bounded retries for command
+publication timeouts and broker unavailability with the same content-scoped
+message identity. The worker also retries transient response publication without
+acknowledging the command.
 
 Both transported modes wait for command PubAck and a durable accepted or
 rejected response. Accepted rentals then flow through a durable post-commit

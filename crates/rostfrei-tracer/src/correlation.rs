@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc, Mutex as StdMutex, PoisonError,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -186,18 +186,25 @@ impl CorrelationObserver {
         correlation_id: &str,
         observation: DomainEventObservation,
     ) -> Result<(), CorrelationError> {
-        let payload = observation
-            .payload
+        let evaluation_payload = observation.payload;
+        let payload = evaluation_payload
+            .clone()
             .and_then(|payload| self.trace_payload_policy.observed_event_payload(payload));
         self.hub
             .observe_for_mode(
                 correlation_id,
                 self.mode,
                 CorrelationEventKind::DomainEvent {
-                    event_type: observation.event_type,
+                    event_type: observation.event_type.clone(),
                     schema_version: observation.schema_version,
                     stream_version: observation.stream_version,
                     payload,
+                },
+                CorrelationEventKind::DomainEvent {
+                    event_type: observation.event_type,
+                    schema_version: observation.schema_version,
+                    stream_version: observation.stream_version,
+                    payload: evaluation_payload,
                 },
             )
             .await
@@ -208,19 +215,27 @@ impl CorrelationObserver {
         correlation_id: &str,
         observation: IntegrationEventObservation,
     ) -> Result<(), CorrelationError> {
-        let payload = observation
-            .payload
+        let evaluation_payload = observation.payload;
+        let payload = evaluation_payload
+            .clone()
             .and_then(|payload| self.trace_payload_policy.observed_event_payload(payload));
         self.hub
             .observe_for_mode(
                 correlation_id,
                 self.mode,
                 CorrelationEventKind::IntegrationEvent {
+                    event_type: observation.event_type.clone(),
+                    schema_version: observation.schema_version,
+                    message_id: observation.message_id.clone(),
+                    subject: observation.subject.clone(),
+                    payload,
+                },
+                CorrelationEventKind::IntegrationEvent {
                     event_type: observation.event_type,
                     schema_version: observation.schema_version,
                     message_id: observation.message_id,
                     subject: observation.subject,
-                    payload,
+                    payload: evaluation_payload,
                 },
             )
             .await
@@ -231,12 +246,7 @@ pub struct CorrelationSubscription {
     record: Arc<CorrelationRecord>,
     receiver: watch::Receiver<u64>,
     cursor: u64,
-}
-
-impl Drop for CorrelationSubscription {
-    fn drop(&mut self) {
-        self.record.subscribers.fetch_sub(1, Ordering::AcqRel);
-    }
+    view: CorrelationView,
 }
 
 impl CorrelationSubscription {
@@ -244,7 +254,7 @@ impl CorrelationSubscription {
         loop {
             let (event, is_closed, is_lagged) = {
                 let state = self.record.state.lock().await;
-                state.event_after_or_closed(self.cursor, &self.record.closed)
+                state.event_after_or_closed(self.cursor, self.view, &self.record.closed)
             };
             if is_lagged {
                 return None;
@@ -340,34 +350,42 @@ impl CorrelationHub {
         correlation_id: &str,
         operation_id: String,
         outcome: CorrelationCommandOutcome,
-        result: Option<Value>,
+        public_result: Option<Value>,
+        evaluation_result: Option<Value>,
     ) -> Result<(), CorrelationError> {
-        self.observe(
+        self.observe_views(
             correlation_id,
+            CorrelationEventKind::CommandResult {
+                operation_id: operation_id.clone(),
+                outcome,
+                result: public_result,
+            },
             CorrelationEventKind::CommandResult {
                 operation_id,
                 outcome,
-                result,
+                result: evaluation_result,
             },
         )
         .await
     }
 
-    pub async fn observe(
+    async fn observe_views(
         &self,
         correlation_id: &str,
-        kind: CorrelationEventKind,
+        public_kind: CorrelationEventKind,
+        evaluation_kind: CorrelationEventKind,
     ) -> Result<(), CorrelationError> {
         validate_correlation_id(correlation_id)?;
         let record = self.record(correlation_id)?;
-        record.append(kind).await
+        record.append(public_kind, evaluation_kind).await
     }
 
     async fn observe_for_mode(
         &self,
         correlation_id: &str,
         mode: OperationMode,
-        kind: CorrelationEventKind,
+        public_kind: CorrelationEventKind,
+        evaluation_kind: CorrelationEventKind,
     ) -> Result<(), CorrelationError> {
         validate_correlation_id(correlation_id)?;
         let record = self.record(correlation_id)?;
@@ -376,7 +394,7 @@ impl CorrelationHub {
                 "correlation does not belong to the observer environment".to_owned(),
             ));
         }
-        record.append(kind).await
+        record.append(public_kind, evaluation_kind).await
     }
 
     pub fn mode(&self, correlation_id: &str) -> Result<OperationMode, CorrelationError> {
@@ -388,7 +406,17 @@ impl CorrelationHub {
         correlation_id: &str,
         after: u64,
     ) -> Result<CorrelationSubscription, CorrelationError> {
-        self.subscribe_with_mode(correlation_id, after)
+        self.subscribe_with_mode_and_view(correlation_id, after, CorrelationView::Public)
+            .await
+            .map(|(_, subscription)| subscription)
+    }
+
+    pub(crate) async fn subscribe_evaluation(
+        &self,
+        correlation_id: &str,
+        after: u64,
+    ) -> Result<CorrelationSubscription, CorrelationError> {
+        self.subscribe_with_mode_and_view(correlation_id, after, CorrelationView::Evaluation)
             .await
             .map(|(_, subscription)| subscription)
     }
@@ -398,26 +426,30 @@ impl CorrelationHub {
         correlation_id: &str,
         after: u64,
     ) -> Result<(OperationMode, CorrelationSubscription), CorrelationError> {
+        self.subscribe_with_mode_and_view(correlation_id, after, CorrelationView::Public)
+            .await
+    }
+
+    async fn subscribe_with_mode_and_view(
+        &self,
+        correlation_id: &str,
+        after: u64,
+        view: CorrelationView,
+    ) -> Result<(OperationMode, CorrelationSubscription), CorrelationError> {
         let record = self.record(correlation_id)?;
         let mode = record.mode;
         let state = record.state.lock().await;
-        let lifecycle = record
-            .lifecycle
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if record.closed.load(Ordering::Acquire) {
-            return Err(CorrelationError::NotFound);
-        }
         let latest = state.next_id.saturating_sub(1);
-        let oldest = state.events.front().map_or(state.next_id, |event| event.id);
+        let oldest = state
+            .events
+            .front()
+            .map_or(state.next_id, RetainedCorrelationEvent::id);
         if after > latest {
             return Err(CorrelationError::FutureCursor { latest });
         }
         if after.saturating_add(1) < oldest {
             return Err(CorrelationError::ExpiredCursor { oldest });
         }
-        record.subscribers.fetch_add(1, Ordering::AcqRel);
-        drop(lifecycle);
         drop(state);
         Ok((
             mode,
@@ -425,6 +457,7 @@ impl CorrelationHub {
                 receiver: record.changed.subscribe(),
                 record,
                 cursor: after,
+                view,
             },
         ))
     }
@@ -446,37 +479,17 @@ impl CorrelationHub {
         }
     }
 
-    pub fn has_active_subscribers(&self, correlation_id: &str) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .records
-            .get(correlation_id)
-            .is_some_and(|record| record.subscribers.load(Ordering::Acquire) > 0)
-    }
-
-    pub fn remove_if_inactive(&self, correlation_id: &str) -> bool {
-        let mut table = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(record) = table.records.get(correlation_id).cloned() else {
-            return true;
+    pub fn remove(&self, correlation_id: &str) {
+        let record = {
+            let mut table = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            table
+                .insertion_order
+                .retain(|retained| retained != correlation_id);
+            table.records.remove(correlation_id)
         };
-        let lifecycle = record
-            .lifecycle
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if record.subscribers.load(Ordering::Acquire) > 0 {
-            return false;
+        if let Some(record) = record {
+            record.close();
         }
-        table
-            .insertion_order
-            .retain(|retained| retained != correlation_id);
-        table.records.remove(correlation_id);
-        drop(table);
-        record.closed.store(true, Ordering::Release);
-        let latest = *record.changed.borrow();
-        record.changed.send_replace(latest);
-        drop(lifecycle);
-        true
     }
 
     fn record(&self, correlation_id: &str) -> Result<Arc<CorrelationRecord>, CorrelationError> {
@@ -517,7 +530,6 @@ struct CorrelationRecord {
     lifecycle: StdMutex<()>,
     changed: watch::Sender<u64>,
     closed: AtomicBool,
-    subscribers: AtomicUsize,
 }
 
 impl CorrelationRecord {
@@ -528,7 +540,12 @@ impl CorrelationRecord {
         maximum_bytes: usize,
         initial: CorrelationEventKind,
     ) -> Result<Arc<Self>, CorrelationError> {
-        let event = bounded_event(
+        let event = bounded_retained_event(
+            CorrelationEvent {
+                id: 1,
+                correlation_id: correlation_id.clone(),
+                kind: initial.clone(),
+            },
             CorrelationEvent {
                 id: 1,
                 correlation_id: correlation_id.clone(),
@@ -536,7 +553,7 @@ impl CorrelationRecord {
             },
             maximum_bytes,
         )?;
-        let retained_bytes = serialized_event_len(&event);
+        let retained_bytes = retained_event_len(&event);
         let (changed, _) = watch::channel(1);
         Ok(Arc::new(Self {
             correlation_id,
@@ -551,11 +568,14 @@ impl CorrelationRecord {
             lifecycle: StdMutex::new(()),
             changed,
             closed: AtomicBool::new(false),
-            subscribers: AtomicUsize::new(0),
         }))
     }
 
-    async fn append(&self, kind: CorrelationEventKind) -> Result<(), CorrelationError> {
+    async fn append(
+        &self,
+        public_kind: CorrelationEventKind,
+        evaluation_kind: CorrelationEventKind,
+    ) -> Result<(), CorrelationError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(CorrelationError::NotFound);
         }
@@ -569,17 +589,22 @@ impl CorrelationRecord {
         }
         let id = state.next_id;
         state.next_id = state.next_id.saturating_add(1);
-        let event = bounded_event(
+        let event = bounded_retained_event(
             CorrelationEvent {
                 id,
                 correlation_id: self.correlation_id.clone(),
-                kind,
+                kind: public_kind,
+            },
+            CorrelationEvent {
+                id,
+                correlation_id: self.correlation_id.clone(),
+                kind: evaluation_kind,
             },
             self.maximum_bytes,
         )?;
         state.retained_bytes = state
             .retained_bytes
-            .saturating_add(serialized_event_len(&event));
+            .saturating_add(retained_event_len(&event));
         state.events.push_back(event);
         while state.events.len() > self.maximum_events || state.retained_bytes > self.maximum_bytes
         {
@@ -588,7 +613,7 @@ impl CorrelationRecord {
             };
             state.retained_bytes = state
                 .retained_bytes
-                .saturating_sub(serialized_event_len(&removed));
+                .saturating_sub(retained_event_len(&removed));
         }
         drop(state);
         self.changed.send_replace(id);
@@ -608,21 +633,50 @@ impl CorrelationRecord {
 
 struct CorrelationState {
     next_id: u64,
-    events: VecDeque<CorrelationEvent>,
+    events: VecDeque<RetainedCorrelationEvent>,
     retained_bytes: usize,
+}
+
+#[derive(Clone, Copy)]
+enum CorrelationView {
+    Public,
+    Evaluation,
+}
+
+struct RetainedCorrelationEvent {
+    public: CorrelationEvent,
+    evaluation: CorrelationEvent,
+}
+
+impl RetainedCorrelationEvent {
+    const fn id(&self) -> u64 {
+        self.public.id
+    }
+
+    fn event(&self, view: CorrelationView) -> CorrelationEvent {
+        match view {
+            CorrelationView::Public => self.public.clone(),
+            CorrelationView::Evaluation => self.evaluation.clone(),
+        }
+    }
 }
 
 impl CorrelationState {
     fn event_after_or_closed(
         &self,
         cursor: u64,
+        view: CorrelationView,
         closed: &AtomicBool,
     ) -> (Option<CorrelationEvent>, bool, bool) {
         let is_lagged = self
             .events
             .front()
-            .is_some_and(|event| cursor.saturating_add(1) < event.id);
-        let event = self.events.iter().find(|event| event.id > cursor).cloned();
+            .is_some_and(|event| cursor.saturating_add(1) < event.id());
+        let event = self
+            .events
+            .iter()
+            .find(|event| event.id() > cursor)
+            .map(|event| event.event(view));
         let is_closed = event.is_none() && closed.load(Ordering::Acquire);
         (event, is_closed, is_lagged)
     }
@@ -630,6 +684,23 @@ impl CorrelationState {
 
 fn serialized_event_len(event: &CorrelationEvent) -> usize {
     serde_json::to_vec(event).map_or(usize::MAX, |serialized| serialized.len())
+}
+
+fn retained_event_len(event: &RetainedCorrelationEvent) -> usize {
+    serialized_event_len(&event.public).saturating_add(serialized_event_len(&event.evaluation))
+}
+
+fn bounded_retained_event(
+    public: CorrelationEvent,
+    evaluation: CorrelationEvent,
+    maximum_bytes: usize,
+) -> Result<RetainedCorrelationEvent, CorrelationError> {
+    let public = bounded_event(public, maximum_bytes)?;
+    let evaluation = bounded_event(
+        evaluation,
+        maximum_bytes.saturating_sub(serialized_event_len(&public)),
+    )?;
+    Ok(RetainedCorrelationEvent { public, evaluation })
 }
 
 fn correlation_byte_budget(maximum_correlations: usize) -> usize {
@@ -700,6 +771,7 @@ mod tests {
                 "correlation-1",
                 operation_id.to_owned(),
                 CorrelationCommandOutcome::Accepted,
+                None,
                 None,
             )
             .await?;
