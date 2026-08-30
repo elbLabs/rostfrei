@@ -47,6 +47,15 @@ const NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT: &str =
 pub struct NatsEventStore {
     context: jetstream::Context,
     config: NatsEventStoreConfig,
+    #[cfg(test)]
+    transaction_receipt_miss_hook: Option<TransactionReceiptMissHook>,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct TransactionReceiptMissHook {
+    reached: Arc<tokio::sync::Barrier>,
+    release: Arc<tokio::sync::Barrier>,
 }
 
 impl NatsEventStore {
@@ -61,11 +70,35 @@ impl NatsEventStore {
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
         verify_stream_config(&config.stream_config(), &stream.cached_info().config)?;
-        Ok(Self { context, config })
+        Ok(Self {
+            context,
+            config,
+            #[cfg(test)]
+            transaction_receipt_miss_hook: None,
+        })
     }
 
     pub const fn config(&self) -> &NatsEventStoreConfig {
         &self.config
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn with_transaction_receipt_miss_barriers(
+        mut self,
+        reached: Arc<tokio::sync::Barrier>,
+        release: Arc<tokio::sync::Barrier>,
+    ) -> Self {
+        self.transaction_receipt_miss_hook = Some(TransactionReceiptMissHook { reached, release });
+        self
+    }
+
+    #[cfg(test)]
+    async fn wait_after_transaction_receipt_miss(&self) {
+        if let Some(hook) = &self.transaction_receipt_miss_hook {
+            let _ = hook.reached.wait().await;
+            let _ = hook.release.wait().await;
+        }
     }
 
     pub async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
@@ -341,7 +374,11 @@ impl NatsEventStore {
         {
             return Ok(true);
         }
-        Self::resolve_existing(history, batch).map(|existing| existing.is_some())
+        match Self::resolve_existing(history, batch) {
+            Ok(existing) => Ok(existing.is_some()),
+            Err(error) if error.kind() == EventStoreErrorKind::IdentityConflict => Ok(true),
+            Err(error) => Err(error),
+        }
     }
 
     async fn resolve_expectation_race(
@@ -683,9 +720,13 @@ impl NatsEventStore {
                 primary_stream_id,
                 transaction.operation_id(),
             )? {
-                return Err(identity_conflict(
-                    "operation identity was already used without its transaction receipt",
-                ));
+                let receipt = self
+                    .load_transaction_receipt_inner(primary_stream_id, transaction.operation_id())
+                    .await?;
+                return resolve_transaction_identity_after_participant_conflict(
+                    transaction,
+                    receipt,
+                );
             }
         }
         Err(conflict("an aggregate changed during transaction append"))
@@ -730,9 +771,18 @@ impl NatsEventStore {
                 primary_stream_id,
                 transaction.operation_id(),
             )? {
-                return Err(identity_conflict(
-                    "operation identity was already used without its transaction receipt",
-                ));
+                let receipt = preserve_original_unavailable(
+                    self.load_transaction_receipt_inner(
+                        primary_stream_id,
+                        transaction.operation_id(),
+                    )
+                    .await,
+                    &original,
+                )?;
+                return resolve_transaction_identity_after_participant_conflict(
+                    transaction,
+                    receipt,
+                );
             }
         }
         Err(original)
@@ -874,6 +924,8 @@ impl EventStore for NatsEventStore {
                 "transaction identity was reused with different content",
             ));
         }
+        #[cfg(test)]
+        self.wait_after_transaction_receipt_miss().await;
         validate_transaction_participant_requests(&transaction)?;
 
         let mut staged = Vec::with_capacity(transaction.participants().len());
@@ -885,9 +937,13 @@ impl EventStore for NatsEventStore {
                 &primary_stream_id,
                 transaction.operation_id(),
             )? {
-                return Err(identity_conflict(
-                    "operation identity was already used without its transaction receipt",
-                ));
+                let receipt = self
+                    .load_transaction_receipt_inner(&primary_stream_id, transaction.operation_id())
+                    .await?;
+                return resolve_transaction_identity_after_participant_conflict(
+                    &transaction,
+                    receipt,
+                );
             }
             let base_version = history
                 .events
@@ -2779,6 +2835,23 @@ fn transaction_matches_receipt(
             })
 }
 
+fn resolve_transaction_identity_after_participant_conflict(
+    transaction: &EventTransaction,
+    receipt: Option<TransactionReceipt>,
+) -> Result<TransactionAppendOutcome, EventStoreError> {
+    match receipt {
+        Some(receipt) if transaction_matches_receipt(transaction, &receipt) => {
+            Ok(TransactionAppendOutcome::ExactReplay(receipt))
+        }
+        Some(_) => Err(identity_conflict(
+            "transaction identity was reused with different content",
+        )),
+        None => Err(identity_conflict(
+            "operation identity was already used without its transaction receipt",
+        )),
+    }
+}
+
 fn batch_matches_recorded(batch: &EventBatch, recorded: &[RecordedEvent]) -> bool {
     batch.events().len() == recorded.len()
         && batch
@@ -3318,6 +3391,21 @@ mod tests {
             }],
             last_subject_stream_sequence: 1,
         };
+        let transactional_history = History {
+            events: history.events.clone(),
+            global_stream_sequences: vec![1],
+            commits: vec![StoredCommit {
+                batch: batch.clone(),
+                events: history.events.clone(),
+                global_stream_sequences: vec![1],
+                transaction: Some(StoredTransactionProvenance {
+                    batch_id: "transaction-race-batch".to_owned(),
+                    event_ordinals: 0..1,
+                    transaction_event_count: 1,
+                }),
+            }],
+            last_subject_stream_sequence: 1,
+        };
         let writer =
             TransactionParticipant::new(secondary.clone(), ExpectedVersion::NoStream, Some(batch));
         let observer = TransactionParticipant::new(secondary, ExpectedVersion::NoStream, None);
@@ -3327,6 +3415,15 @@ mod tests {
         assert!(
             NatsEventStore::transaction_participant_has_conflicting_identity(
                 &history,
+                &writer,
+                &primary,
+                &operation_id,
+            )
+            .unwrap()
+        );
+        assert!(
+            NatsEventStore::transaction_participant_has_conflicting_identity(
+                &transactional_history,
                 &writer,
                 &primary,
                 &operation_id,

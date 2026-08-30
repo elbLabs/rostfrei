@@ -7,7 +7,10 @@ mod hex;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_nats::{Request, jetstream::message::PublishMessage};
@@ -24,6 +27,7 @@ use rostfrei_core::{
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
 use rostfrei_testing::event_store_contract;
 use sha2::{Digest, Sha256};
+use tokio::sync::Barrier;
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -109,6 +113,9 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     transaction_contract_and_wire_policy(&store, &context, &config)
         .await
         .expect("transaction contract and wire policy");
+    concurrent_identical_transaction_reloads_receipt(&store)
+        .await
+        .expect("concurrent identical transaction receipt reload");
     concurrent_transaction_identity_race(&store)
         .await
         .expect("transaction identity race");
@@ -1191,6 +1198,59 @@ async fn concurrent_transaction_identity_race(store: &NatsEventStore) -> TestRes
     check(
         store.load(&shared).await?.len() == 1,
         "the identity race did not append exactly one shared event",
+    )
+}
+
+async fn concurrent_identical_transaction_reloads_receipt(
+    store: &NatsEventStore,
+) -> TestResult<()> {
+    let primary = stream("transaction-identical-race-primary")?;
+    let secondary = stream("transaction-identical-race-secondary")?;
+    let operation = "transaction-identical-race";
+    let transaction = EventTransaction::new(
+        OperationId::new(operation)?,
+        ContentFingerprint::digest(operation),
+        vec![
+            TransactionParticipant::new(
+                primary.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch(&primary, operation, operation, &[b"primary"])?),
+            ),
+            TransactionParticipant::new(
+                secondary.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch(&secondary, operation, operation, &[b"secondary"])?),
+            ),
+        ],
+    );
+    let receipt_missed = Arc::new(Barrier::new(2));
+    let release_retry = Arc::new(Barrier::new(2));
+    let delayed_store = store.clone().with_transaction_receipt_miss_barriers(
+        Arc::clone(&receipt_missed),
+        Arc::clone(&release_retry),
+    );
+
+    let (delayed, winner) = tokio::join!(
+        delayed_store.append_transaction(transaction.clone()),
+        async {
+            let _ = receipt_missed.wait().await;
+            let result = store.append_transaction(transaction).await;
+            let _ = release_retry.wait().await;
+            result
+        },
+    );
+
+    check(
+        matches!(winner, Ok(TransactionAppendOutcome::Appended(_))),
+        "the synchronized transaction did not commit while its retry was paused",
+    )?;
+    check(
+        matches!(delayed, Ok(TransactionAppendOutcome::ExactReplay(_))),
+        "the delayed identical transaction did not reload its committed receipt",
+    )?;
+    check(
+        store.load(&primary).await?.len() == 1 && store.load(&secondary).await?.len() == 1,
+        "the concurrent identical transaction wrote more than one batch",
     )
 }
 
