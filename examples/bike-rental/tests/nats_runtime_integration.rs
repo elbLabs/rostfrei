@@ -22,9 +22,10 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bike_rental::{
-    nats_runtime::{BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsRuntime},
-    rental::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
-    runtime::{demo_stream, tracer_builder},
+    BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsRuntime,
+    demo::demo_stream,
+    rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
+    tracer,
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
@@ -144,7 +145,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
         let test_repository: Arc<dyn TestRepository> = Arc::new(FilesystemTestRepository::load(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer"),
         )?);
-        let mut builder = tracer_builder(history)?
+        let mut builder = tracer::builder(history)?
             .with_test_event_store(test_store)
             .with_test_transport(test_runtime.transport())
             .with_test_fixture("demo-fleet", test_reset)

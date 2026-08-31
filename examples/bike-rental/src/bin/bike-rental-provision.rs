@@ -1,6 +1,6 @@
 use std::env;
 
-use bike_rental::{nats_runtime::BikeRentalNatsConfig, runtime::seed_demo};
+use bike_rental::{BikeRentalNatsConfig, demo::seed_demo};
 use rostfrei_nats::{NatsConnectionConfig, ServerVersion, connect};
 
 const DEFAULT_NATS_URL: &str = "nats://127.0.0.1:4222";

@@ -15,11 +15,10 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bike_rental::{
+    demo::{demo_stream, seed_demo},
     domain_model,
-    rental::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
-    runtime::{
-        RentBicycleInputOptions, ReturnBicycleInputOptions, demo_stream, seed_demo, tracer_builder,
-    },
+    rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
+    tracer::{self, RentBicycleInputOptions, ReturnBicycleInputOptions},
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
@@ -296,7 +295,7 @@ async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
         )
         .unwrap(),
     );
-    let mut builder = tracer_builder(history)
+    let mut builder = tracer::builder(history)
         .unwrap()
         .with_domain_model(domain_model().unwrap())
         .with_test_event_store(Arc::new(test_store.clone()))

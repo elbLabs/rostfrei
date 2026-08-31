@@ -2,13 +2,13 @@
 
 use std::{error::Error, sync::Arc};
 
-use bike_rental::{
-    nats_runtime::{
-        BicycleRentalStarted, BicycleRentalStartedHandler, BicycleRentedIntegrationMapper,
-        BikeRentalCommand, BikeRentalNatsConfig,
-    },
-    rental::{BicycleId, BicycleRented, RentBicycle, RentalFleetAggregate},
-    runtime::{demo_stream, seed_demo},
+use super::{
+    BicycleRentalStarted, BicycleRentalStartedHandler, BicycleRentedIntegrationMapper,
+    BikeRentalCommand, BikeRentalNatsConfig,
+};
+use crate::{
+    demo::{demo_stream, seed_demo},
+    rental_fleet::{BicycleId, BicycleRented, RentBicycle, RentalFleetAggregate},
 };
 use rostfrei::{
     CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest, DomainEventDefinitionType,
