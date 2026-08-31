@@ -22,7 +22,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bike_rental::{
-    BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
+    BicycleRentalStarted, BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
     BikeRentalNatsRuntime,
     demo::demo_stream,
     rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
@@ -80,18 +80,15 @@ impl CommandTransportObserver for RecordingObserver {
 }
 
 #[tokio::test]
-async fn command_workers_and_test_reset_are_application_isolated() -> TestResult {
+async fn command_workers_and_test_reset_are_subject_scope_isolated() -> TestResult {
     let Ok(nats_url) = env::var("ROSTFREI_NATS_URL") else {
         return Ok(());
     };
     let scope = unique_scope()?;
-    let test_application = format!("{scope}-test");
-    let production_application = format!("{scope}-prod");
     let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
-    let test_config =
-        BikeRentalNatsConfig::new_with_resource_limits(&test_application, resource_limits)?;
+    let test_config = BikeRentalNatsConfig::new_test_with_resource_limits(&scope, resource_limits)?;
     let production_config =
-        BikeRentalNatsConfig::new_with_resource_limits(&production_application, resource_limits)?;
+        BikeRentalNatsConfig::new_with_resource_limits(&scope, resource_limits)?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-integration"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -100,9 +97,9 @@ async fn command_workers_and_test_reset_are_application_isolated() -> TestResult
 
     let result = async {
         let test_runtime = Arc::new(
-            BikeRentalNatsRuntime::provision_with_resource_limits(
+            BikeRentalNatsRuntime::provision_test_with_resource_limits(
                 connection.clone(),
-                &test_application,
+                &scope,
                 resource_limits,
             )
             .await?,
@@ -110,7 +107,7 @@ async fn command_workers_and_test_reset_are_application_isolated() -> TestResult
         let production_runtime = Arc::new(
             BikeRentalNatsRuntime::provision_with_resource_limits(
                 connection.clone(),
-                &production_application,
+                &scope,
                 resource_limits,
             )
             .await?,
@@ -141,10 +138,8 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
         return Ok(());
     };
     let scope = unique_scope()?;
-    let test_application = format!("{scope}-behavioral");
     let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
-    let test_config =
-        BikeRentalNatsConfig::new_with_resource_limits(&test_application, resource_limits)?;
+    let test_config = BikeRentalNatsConfig::new_test_with_resource_limits(&scope, resource_limits)?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-behavioral-integration"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -153,9 +148,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
 
     let result: TestResult = async {
         let test_runtime = Arc::new(
-            BikeRentalNatsRuntime::provision_with_resource_limits(
+            BikeRentalNatsRuntime::provision_test_with_resource_limits(
                 connection.clone(),
-                &test_application,
+                &scope,
                 resource_limits,
             )
             .await?,
@@ -268,6 +263,32 @@ async fn run_isolation_test(
     test_runtime: &BikeRentalNatsRuntime,
     production_runtime: &BikeRentalNatsRuntime,
 ) -> TestResult {
+    ensure(
+        test_runtime.config().application() == production_runtime.config().application(),
+        "Test and Dispatch did not preserve one canonical application identity",
+    )?;
+    ensure(
+        test_runtime
+            .config()
+            .command_route(BikeRentalCommand::RentBicycle)
+            .address()
+            .as_str()
+            .contains(".test.command."),
+        "Test command did not use the derived test subject scope",
+    )?;
+    ensure(
+        !production_runtime
+            .config()
+            .command_route(BikeRentalCommand::RentBicycle)
+            .address()
+            .as_str()
+            .contains(".test."),
+        "Dispatch command unexpectedly used the test subject scope",
+    )?;
+    ensure(
+        production_runtime.reset().await.is_err(),
+        "normal Dispatch resources accepted a destructive test reset",
+    )?;
     let test_observer = Arc::new(RecordingObserver::default());
     let test_receipt = test_runtime
         .transport()

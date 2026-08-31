@@ -47,9 +47,10 @@ ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
 It binds to `127.0.0.1:1309` by default. Set `ROSTFREI_API_ADDR` to use another
 local address. The control capability protects discovery, simulation, isolated
 test execution, reset, and their traces. The separate dispatch capability is
-required for production execution and its traces; startup rejects equal tokens.
-Set `ROSTFREI_APPLICATION` to change the shared prefix when running multiple
-instances against one NATS account.
+required for dispatch execution and its traces; startup rejects equal tokens.
+The canonical application identity defaults to `bike-rental`. Set
+`ROSTFREI_APPLICATION` to override that one base token when isolating multiple
+instances; Rostfrei never appends a deployment label to it.
 
 The example accepts byte-count resource limits through the environment:
 
@@ -60,7 +61,7 @@ The example accepts byte-count resource limits through the environment:
 - `ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES` limits an event payload before
   atomic-transaction headers and defaults to 512 KiB.
 
-The local command above explicitly limits each Test and production event store
+The local command above explicitly limits each Test and normal event store
 to 256 MiB so NATS does not need to reserve more than 20 GiB of JetStream
 capacity. Provisioning rejects non-positive or malformed values and detects
 limits that disagree with already-provisioned streams.
@@ -68,17 +69,18 @@ limits that disagree with already-provisioned streams.
 Runtime startup verifies the operator-provisioned NATS topology and exits if a
 durable command, domain-event, or integration-event consumer stops.
 
-The example uses two independent NATS application namespaces:
+The example uses one canonical application with two disjoint traffic scopes:
 
-- `bike-rental-test` is recreated and deterministically seeded on startup and by
-  `POST /test-scenario/reset`;
-- `bike-rental-prod` persists across restarts and is never affected by test
-  reset.
+- `bike-rental.test.>` is recreated and deterministically seeded on startup and
+  by `POST /test-scenario/reset`;
+- normal `bike-rental` subjects such as `bike-rental.command.>` persist across
+  restarts and are never affected by test reset.
 
-Each namespace has the same four messaging streams, authoritative domain-event
-stream, three command durables, post-commit domain-event durable, and
-integration-event durable. Test reset stops its workers, recreates that complete
-topology, reseeds it, and restarts the workers without touching production.
+Each scope has separate command, command-response, integration-event,
+quarantine, and authoritative domain-event streams, plus separate durables.
+Test resources use the `BIKE_RENTAL__TEST` stream prefix. Test reset stops its
+workers, recreates that complete topology, reseeds it, and restarts the workers
+without touching normal Dispatch resources.
 A failed reset leaves Test, Simulate, instances, and dynamic inputs unavailable
 until a later reset succeeds rather than exposing partially rebuilt state.
 
@@ -86,7 +88,7 @@ Both initially contain `city-fleet`, serviceable `bike-42`, and
 maintenance-required `bike-99`. The local example explicitly provisions these
 streams and exposes trace payloads for demonstration. Production deployments
 should provision infrastructure separately and use distinct NATS credentials or
-accounts for test and production.
+accounts for Test and Dispatch.
 
 The API advertises all command fields, runtime choices, instances, mode actions,
 and reset links through `GET /catalog` and its linked resources. Clients can
@@ -106,7 +108,7 @@ curl --request POST \
   http://127.0.0.1:1309/tests/rent-available-bicycle/runs
 ```
 
-Run the production-isolation check and all three behavioral definitions against
+Run the dispatch-isolation check and all three behavioral definitions against
 a real NATS server:
 
 ```sh
@@ -149,7 +151,8 @@ The three Tracer actions have distinct semantics:
 - `simulate` replays the current test NATS history but never appends;
 - `test` publishes through the normal command pipeline and appends only to the
   isolated test NATS history;
-- `dispatch` uses the identical pipeline against the production namespace.
+- `dispatch` uses the identical pipeline against the canonical unsuffixed
+  application namespace.
 
 Both transported modes wait for command PubAck and a durable accepted or
 rejected response. Accepted rentals then flow through a durable post-commit
@@ -164,7 +167,7 @@ Running Test for `bike-42` twice accepts and appends the first command, then
 replays that new state and rejects the second with `BICYCLE_UNAVAILABLE`.
 Simulate subsequently observes the same rejection without changing history.
 Reset returns the test stream to the deterministic seed and does not touch
-production.
+Dispatch state.
 
 `ReturnBicycle` advertises currently rented bicycles as runtime input choices and
 makes the selected bicycle available again. `AddBicycle` has no user-supplied

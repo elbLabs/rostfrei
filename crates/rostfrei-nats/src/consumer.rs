@@ -137,7 +137,9 @@ impl NatsConsumerFactory {
     where
         A: PublishableAddress,
     {
-        if config.address().application() != self.topology.application().as_str() {
+        if config.address().application() != self.topology.application().as_str()
+            || config.address().traffic_scope() != self.topology.traffic_scope()
+        {
             return Err(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration));
         }
         let source_stream = self
@@ -163,7 +165,9 @@ impl NatsConsumerFactory {
     where
         A: ConsumableAddress,
     {
-        if config.address().application() != self.topology.application().as_str() {
+        if config.address().application() != self.topology.application().as_str()
+            || config.address().traffic_scope() != self.topology.traffic_scope()
+        {
             return Err(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration));
         }
         i64::try_from(config.concurrency())
@@ -734,11 +738,17 @@ fn encode_quarantine_record(record: &QuarantineRecord) -> Result<Vec<u8>, NatsEr
 fn quarantine_subject(address: &str) -> Result<String, NatsError> {
     let address =
         MessageAddress::parse(address.to_owned()).map_err(|_| NatsError::InvalidMessage)?;
-    let (_, routed) = address
-        .as_str()
-        .split_once('.')
-        .ok_or(NatsError::InvalidMessage)?;
-    Ok(format!("{}.quarantine.{routed}", address.application()))
+    let scope = address
+        .traffic_scope()
+        .subject_segment()
+        .map_or_else(String::new, |scope| format!(".{scope}"));
+    Ok(format!(
+        "{}{scope}.quarantine.{}.{}.{}",
+        address.application(),
+        address.kind().segment(),
+        address.context(),
+        address.name()
+    ))
 }
 
 fn quarantine_message_id(record: &QuarantineRecord) -> String {
@@ -793,6 +803,10 @@ mod tests {
             "fast-inbox.quarantine.command.commercial-access.evaluate"
         );
         assert!(quarantine_subject("invalid").is_err());
+        assert_eq!(
+            quarantine_subject("fast-inbox.test.command.commercial-access.evaluate").unwrap(),
+            "fast-inbox.test.quarantine.command.commercial-access.evaluate"
+        );
     }
 
     #[test]

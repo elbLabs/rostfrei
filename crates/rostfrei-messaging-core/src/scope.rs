@@ -9,6 +9,22 @@ use crate::{
 
 pub const MAX_SCOPE_NAME_BYTES: usize = 64;
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum TrafficScope {
+    #[default]
+    Normal,
+    Test,
+}
+
+impl TrafficScope {
+    pub const fn subject_segment(self) -> Option<&'static str> {
+        match self {
+            Self::Normal => None,
+            Self::Test => Some("test"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ApplicationName(String);
 
@@ -25,8 +41,24 @@ impl ApplicationName {
         &self,
         name: impl Into<String>,
     ) -> Result<BoundedContext, ContractError> {
+        self.bounded_context_in_scope(TrafficScope::Normal, name)
+    }
+
+    pub fn test_bounded_context(
+        &self,
+        name: impl Into<String>,
+    ) -> Result<BoundedContext, ContractError> {
+        self.bounded_context_in_scope(TrafficScope::Test, name)
+    }
+
+    pub fn bounded_context_in_scope(
+        &self,
+        traffic_scope: TrafficScope,
+        name: impl Into<String>,
+    ) -> Result<BoundedContext, ContractError> {
         Ok(BoundedContext {
             application: self.clone(),
+            traffic_scope,
             name: BoundedContextName::new(name)?,
         })
     }
@@ -48,12 +80,25 @@ impl BoundedContextName {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct BoundedContext {
     application: ApplicationName,
+    traffic_scope: TrafficScope,
     name: BoundedContextName,
 }
 
 impl BoundedContext {
     pub const fn new(application: ApplicationName, name: BoundedContextName) -> Self {
-        Self { application, name }
+        Self::new_in_scope(application, TrafficScope::Normal, name)
+    }
+
+    pub const fn new_in_scope(
+        application: ApplicationName,
+        traffic_scope: TrafficScope,
+        name: BoundedContextName,
+    ) -> Self {
+        Self {
+            application,
+            traffic_scope,
+            name,
+        }
     }
 
     pub const fn application(&self) -> &ApplicationName {
@@ -64,26 +109,50 @@ impl BoundedContext {
         &self.name
     }
 
+    pub const fn traffic_scope(&self) -> TrafficScope {
+        self.traffic_scope
+    }
+
     pub fn command_address(&self, name: &str) -> Result<CommandAddress, ContractError> {
-        CommandAddress::new(self.application.as_str(), self.name.as_str(), name)
+        CommandAddress::new_in_scope(
+            self.application.as_str(),
+            self.traffic_scope,
+            self.name.as_str(),
+            name,
+        )
     }
 
     pub fn integration_event_address(
         &self,
         name: &str,
     ) -> Result<IntegrationEventAddress, ContractError> {
-        IntegrationEventAddress::new(self.application.as_str(), self.name.as_str(), name)
+        IntegrationEventAddress::new_in_scope(
+            self.application.as_str(),
+            self.traffic_scope,
+            self.name.as_str(),
+            name,
+        )
     }
 
     pub fn command_response_address(
         &self,
         name: &str,
     ) -> Result<CommandResponseAddress, ContractError> {
-        CommandResponseAddress::new(self.application.as_str(), self.name.as_str(), name)
+        CommandResponseAddress::new_in_scope(
+            self.application.as_str(),
+            self.traffic_scope,
+            self.name.as_str(),
+            name,
+        )
     }
 
     pub fn query_address(&self, name: &str) -> Result<QueryAddress, ContractError> {
-        QueryAddress::new(self.application.as_str(), self.name.as_str(), name)
+        QueryAddress::new_in_scope(
+            self.application.as_str(),
+            self.traffic_scope,
+            self.name.as_str(),
+            name,
+        )
     }
 
     pub fn consumer_name(
@@ -91,8 +160,9 @@ impl BoundedContext {
         purpose: &str,
         major_version: u32,
     ) -> Result<ConsumerName, ContractError> {
-        ConsumerName::new(
+        ConsumerName::new_in_scope(
             self.application.as_str(),
+            self.traffic_scope,
             self.name.as_str(),
             purpose,
             major_version,
@@ -104,8 +174,9 @@ impl BoundedContext {
         purpose: &str,
         major_version: u32,
     ) -> Result<DurableName, ContractError> {
-        DurableName::new(
+        DurableName::new_in_scope(
             self.application.as_str(),
+            self.traffic_scope,
             self.name.as_str(),
             purpose,
             major_version,
@@ -242,5 +313,23 @@ mod tests {
             assert!(ApplicationName::new(invalid).is_err(), "{invalid}");
             assert!(BoundedContextName::new(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn test_context_derives_the_opinionated_test_namespace() {
+        let application = ApplicationName::new("fast-inbox").unwrap();
+        let context = application
+            .test_bounded_context("commercial-access")
+            .unwrap();
+
+        assert_eq!(context.traffic_scope(), TrafficScope::Test);
+        assert_eq!(
+            context.command_address("evaluate").unwrap().as_str(),
+            "fast-inbox.test.command.commercial-access.evaluate"
+        );
+        assert_eq!(
+            context.consumer_name("evaluate", 1).unwrap().as_str(),
+            "fast-inbox--test--commercial-access--evaluate--v1"
+        );
     }
 }

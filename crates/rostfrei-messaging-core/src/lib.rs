@@ -55,7 +55,9 @@ pub use query::{
     MAX_QUERY_TIMEOUT, QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryOptions,
     QueryOutcome, QueryRequest, QueryRequester, QueryResponse, QueryResult, QueryServer,
 };
-pub use scope::{ApplicationName, BoundedContext, BoundedContextName, MAX_SCOPE_NAME_BYTES};
+pub use scope::{
+    ApplicationName, BoundedContext, BoundedContextName, MAX_SCOPE_NAME_BYTES, TrafficScope,
+};
 pub use value::{
     CausationId, CorrelationId, MAX_IDENTIFIER_BYTES, MAX_UNIX_TIMESTAMP_MILLISECONDS, MessageId,
     MessageTimestamp, OperationId, SchemaVersion,

@@ -2,7 +2,7 @@ use std::{mem::size_of, time::Duration};
 
 use async_nats::jetstream::stream::{Config, DiscardPolicy, RetentionPolicy, StorageType};
 use rostfrei_core::{EventStoreError, EventStoreErrorKind, StreamId};
-use rostfrei_messaging_core::{ApplicationName, BoundedContext, BoundedContextName};
+use rostfrei_messaging_core::{ApplicationName, BoundedContext, BoundedContextName, TrafficScope};
 use sha2::{Digest, Sha256};
 
 use crate::hex::encode_lower_hex;
@@ -59,6 +59,7 @@ impl EventByteLimit {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NatsEventStoreConfig {
     application: ApplicationName,
+    traffic_scope: TrafficScope,
     bounded_context: BoundedContextName,
     stream_name: String,
     subject_prefix: String,
@@ -80,11 +81,12 @@ impl NatsEventStoreConfig {
     ) -> Result<Self, EventStoreError> {
         let subject_prefix = format!(
             "{}.domain.{}",
-            context.application().as_str(),
+            scoped_subject_prefix(context.application().as_str(), context.traffic_scope()),
             context.name().as_str()
         );
         let config = Self {
             application: context.application().clone(),
+            traffic_scope: context.traffic_scope(),
             bounded_context: context.name().clone(),
             stream_name: stream_name.into(),
             subject_prefix,
@@ -103,6 +105,10 @@ impl NatsEventStoreConfig {
 
     pub const fn bounded_context(&self) -> &BoundedContextName {
         &self.bounded_context
+    }
+
+    pub const fn traffic_scope(&self) -> TrafficScope {
+        self.traffic_scope
     }
 
     pub fn with_storage_limits(
@@ -249,7 +255,7 @@ impl NatsEventStoreConfig {
 fn domain_event_stream_name(context: &BoundedContext) -> String {
     format!(
         "{}__{}_DOMAIN_EVENTS",
-        stream_token(context.application().as_str()),
+        scoped_stream_prefix(context.application().as_str(), context.traffic_scope()),
         stream_token(context.name().as_str())
     )
 }
@@ -263,6 +269,21 @@ fn stream_token(value: &str) -> String {
         })
         .map(char::from)
         .collect()
+}
+
+fn scoped_subject_prefix(application: &str, traffic_scope: TrafficScope) -> String {
+    traffic_scope.subject_segment().map_or_else(
+        || application.to_owned(),
+        |scope| format!("{application}.{scope}"),
+    )
+}
+
+fn scoped_stream_prefix(application: &str, traffic_scope: TrafficScope) -> String {
+    let application = stream_token(application);
+    match traffic_scope {
+        TrafficScope::Normal => application,
+        TrafficScope::Test => format!("{application}__TEST"),
+    }
 }
 
 fn valid_stream_name(value: &str) -> bool {
@@ -325,6 +346,29 @@ mod tests {
                 "fast-inbox.domain.commercial-access.aggregate.*",
                 "fast-inbox.domain.commercial-access.transaction.>",
             ]
+        );
+    }
+
+    #[test]
+    fn test_bounded_context_derives_disjoint_event_store_resources() {
+        let context = ApplicationName::new("fast-inbox")
+            .unwrap()
+            .test_bounded_context("commercial-access")
+            .unwrap();
+        let config = NatsEventStoreConfig::for_bounded_context(&context).unwrap();
+
+        assert_eq!(config.traffic_scope(), TrafficScope::Test);
+        assert_eq!(
+            config.stream_name(),
+            "FAST_INBOX__TEST__COMMERCIAL_ACCESS_DOMAIN_EVENTS"
+        );
+        assert_eq!(
+            config.subject_prefix(),
+            "fast-inbox.test.domain.commercial-access"
+        );
+        assert_eq!(
+            config.aggregate_subject_filter(),
+            "fast-inbox.test.domain.commercial-access.aggregate.*"
         );
     }
 

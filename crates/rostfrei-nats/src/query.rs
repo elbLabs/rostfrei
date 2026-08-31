@@ -13,7 +13,7 @@ use rostfrei_messaging_core::{
     MAX_ENVELOPE_BYTES, MAX_PROCESSING_TIMEOUT, MessageId, MessageTimestamp, QueryAddress,
     QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryOptions, QueryRequest,
     QueryRequestError, QueryRequestErrorKind, QueryRequester, QueryResponse, QueryResult,
-    QueryServer, QueryServerError, QueryServerErrorKind, SchemaVersion, TraceContext,
+    QueryServer, QueryServerError, QueryServerErrorKind, SchemaVersion, TraceContext, TrafficScope,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::time::timeout;
@@ -33,13 +33,23 @@ pub const DEFAULT_QUERY_SERVER_CONCURRENCY: usize = 64;
 pub struct NatsQueryRequester {
     client: Client,
     application: ApplicationName,
+    traffic_scope: TrafficScope,
 }
 
 impl NatsQueryRequester {
     pub const fn new(client: Client, application: ApplicationName) -> Self {
+        Self::new_in_scope(client, application, TrafficScope::Normal)
+    }
+
+    pub const fn new_in_scope(
+        client: Client,
+        application: ApplicationName,
+        traffic_scope: TrafficScope,
+    ) -> Self {
         Self {
             client,
             application,
+            traffic_scope,
         }
     }
 }
@@ -56,7 +66,9 @@ where
         request: QueryRequest<Request>,
         options: QueryOptions,
     ) -> QueryResult<Response> {
-        if address.application() != self.application.as_str() {
+        if address.application() != self.application.as_str()
+            || address.traffic_scope() != self.traffic_scope
+        {
             return Err(QueryRequestError::new(QueryRequestErrorKind::Rejected));
         }
         let request_id = request.message_id().clone();
@@ -184,6 +196,7 @@ impl NatsQueryServerConfig {
 pub struct NatsQueryServer {
     client: Client,
     application: ApplicationName,
+    traffic_scope: TrafficScope,
     config: NatsQueryServerConfig,
 }
 
@@ -193,10 +206,20 @@ impl NatsQueryServer {
         application: ApplicationName,
         config: NatsQueryServerConfig,
     ) -> Result<Self, NatsError> {
+        Self::new_in_scope(client, application, TrafficScope::Normal, config)
+    }
+
+    pub fn new_in_scope(
+        client: Client,
+        application: ApplicationName,
+        traffic_scope: TrafficScope,
+        config: NatsQueryServerConfig,
+    ) -> Result<Self, NatsError> {
         config.validate()?;
         Ok(Self {
             client,
             application,
+            traffic_scope,
             config,
         })
     }
@@ -213,7 +236,9 @@ where
         address: QueryAddress,
         handler: Arc<dyn QueryHandler<Request, Response>>,
     ) -> Result<(), QueryServerError> {
-        if address.application() != self.application.as_str() {
+        if address.application() != self.application.as_str()
+            || address.traffic_scope() != self.traffic_scope
+        {
             return Err(QueryServerError::new(
                 QueryServerErrorKind::InvalidConfiguration,
             ));

@@ -23,6 +23,7 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | --- | --- | --- |
 | **Application** | The top-level runtime and messaging namespace supplied once by an adopter. Its validated name is the first token in every rostfrei business, domain-event, and quarantine subject. | Owner, product prefix |
 | **Bounded context** | A named domain language and ownership boundary inside one application. It scopes business addresses and authoritative domain-event storage. | Module, namespace, service |
+| **Traffic scope** | The routing and storage scope within one canonical application. Normal traffic is unsuffixed; isolated test traffic inserts the reserved `test` token and uses separate JetStream resources. | Environment name, second application |
 | **Application messaging** | The derived command, integration-event, query, and quarantine conventions for one application. | Custom topology, message bus setup |
 
 ## History and execution
@@ -69,6 +70,7 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 - One **aggregate identity** identifies exactly one **aggregate stream**.
 - One **application** contains one or more **bounded contexts**.
 - Every business message address identifies one **application** and one **bounded context**.
+- Normal and test **traffic scopes** preserve the same **application** identity while using disjoint subjects and JetStream resources.
 - A **command** asks one **aggregate** to make a **decision**.
 - A **rejection** produces no **commit**.
 - An accepted **operation** that produces domain events creates exactly one **commit**.
@@ -131,6 +133,8 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
   authoritative persistence record.
 - **Application name** is not a JetStream stream name. rostfrei derives stream
   names and subject filters from it.
+- **Traffic scope** is not an application suffix. Use the canonical application
+  name for normal traffic and the derived `test` token for isolated test traffic.
 - **Test** is ambiguous. Use **test definition** for the specification, **test
   revision** for a saved version, **test run** for one execution, and **test
   environment** for the isolated target system.

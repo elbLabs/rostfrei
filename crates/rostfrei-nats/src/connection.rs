@@ -4,7 +4,7 @@ use async_nats::{
     Client, ConnectOptions, Event,
     jetstream::{self, ErrorCode, context::DeleteStreamErrorKind},
 };
-use rostfrei_messaging_core::ApplicationName;
+use rostfrei_messaging_core::{ApplicationName, TrafficScope};
 use tokio::{sync::watch, time::timeout};
 
 use crate::{
@@ -70,12 +70,34 @@ impl NatsConnection {
         NatsQueryRequester::new(self.client.clone(), application.clone())
     }
 
+    pub fn query_requester_in_scope(
+        &self,
+        application: &ApplicationName,
+        traffic_scope: TrafficScope,
+    ) -> NatsQueryRequester {
+        NatsQueryRequester::new_in_scope(self.client.clone(), application.clone(), traffic_scope)
+    }
+
     pub fn query_server(
         &self,
         application: &ApplicationName,
         config: NatsQueryServerConfig,
     ) -> Result<NatsQueryServer, NatsError> {
         NatsQueryServer::new(self.client.clone(), application.clone(), config)
+    }
+
+    pub fn query_server_in_scope(
+        &self,
+        application: &ApplicationName,
+        traffic_scope: TrafficScope,
+        config: NatsQueryServerConfig,
+    ) -> Result<NatsQueryServer, NatsError> {
+        NatsQueryServer::new_in_scope(
+            self.client.clone(),
+            application.clone(),
+            traffic_scope,
+            config,
+        )
     }
 
     pub fn health(&self) -> ConnectionHealth {

@@ -6,11 +6,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use crate::{
     AddressKind, CallerMetadata, ConsumeError, ContractError, ContractErrorKind, CorrelationId,
     MAX_MESSAGE_PAYLOAD_BYTES, MessageBuildError, MessageId, PublishableAddress, TraceContext,
-    scope::validate_scope_segment,
+    scope::{TrafficScope, validate_scope_segment},
 };
 
-pub const CONSUMER_NAME_CONVENTION: &str = "<application>--<context>--<purpose>--v<major>";
-pub const DURABLE_NAME_CONVENTION: &str = "<application>--<context>--<purpose>--v<major>";
+pub const CONSUMER_NAME_CONVENTION: &str = "<application>[--test]--<context>--<purpose>--v<major>";
+pub const DURABLE_NAME_CONVENTION: &str = "<application>[--test]--<context>--<purpose>--v<major>";
 pub const MAX_CONSUMER_NAME_BYTES: usize = 256;
 pub const MAX_CONCURRENCY: usize = 1024;
 pub const MAX_DELIVERY_ATTEMPTS: u32 = 1000;
@@ -28,8 +28,25 @@ impl ConsumerName {
         purpose: &str,
         major_version: u32,
     ) -> Result<Self, ContractError> {
+        Self::new_in_scope(
+            application,
+            TrafficScope::Normal,
+            context,
+            purpose,
+            major_version,
+        )
+    }
+
+    pub fn new_in_scope(
+        application: &str,
+        traffic_scope: TrafficScope,
+        context: &str,
+        purpose: &str,
+        major_version: u32,
+    ) -> Result<Self, ContractError> {
         build_delivery_name(
             application,
+            traffic_scope,
             context,
             purpose,
             major_version,
@@ -50,8 +67,12 @@ impl ConsumerName {
         delivery_name_segment(&self.0, 0)
     }
 
+    pub fn traffic_scope(&self) -> TrafficScope {
+        delivery_name_traffic_scope(&self.0)
+    }
+
     pub fn context(&self) -> &str {
-        delivery_name_segment(&self.0, 1)
+        scoped_delivery_name_segment(&self.0, 1)
     }
 }
 
@@ -89,7 +110,31 @@ impl DurableName {
         purpose: &str,
         major_version: u32,
     ) -> Result<Self, ContractError> {
-        build_delivery_name(application, context, purpose, major_version, "durable name").map(Self)
+        Self::new_in_scope(
+            application,
+            TrafficScope::Normal,
+            context,
+            purpose,
+            major_version,
+        )
+    }
+
+    pub fn new_in_scope(
+        application: &str,
+        traffic_scope: TrafficScope,
+        context: &str,
+        purpose: &str,
+        major_version: u32,
+    ) -> Result<Self, ContractError> {
+        build_delivery_name(
+            application,
+            traffic_scope,
+            context,
+            purpose,
+            major_version,
+            "durable name",
+        )
+        .map(Self)
     }
 
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
@@ -104,8 +149,12 @@ impl DurableName {
         delivery_name_segment(&self.0, 0)
     }
 
+    pub fn traffic_scope(&self) -> TrafficScope {
+        delivery_name_traffic_scope(&self.0)
+    }
+
     pub fn context(&self) -> &str {
-        delivery_name_segment(&self.0, 1)
+        scoped_delivery_name_segment(&self.0, 1)
     }
 }
 
@@ -162,6 +211,8 @@ where
     ) -> Result<Self, ContractError> {
         if name.application() != address.application()
             || durable_name.application() != address.application()
+            || name.traffic_scope() != address.traffic_scope()
+            || durable_name.traffic_scope() != address.traffic_scope()
         {
             return Err(ContractError::new(
                 ContractErrorKind::InvalidFormat,
@@ -504,6 +555,7 @@ where
 
 fn build_delivery_name(
     application: &str,
+    traffic_scope: TrafficScope,
     context: &str,
     purpose: &str,
     major_version: u32,
@@ -512,7 +564,10 @@ fn build_delivery_name(
     validate_scope_segment(application, field)?;
     validate_scope_segment(context, field)?;
     validate_scope_segment(purpose, field)?;
-    let value = format!("{application}--{context}--{purpose}--v{major_version}");
+    let value = traffic_scope.subject_segment().map_or_else(
+        || format!("{application}--{context}--{purpose}--v{major_version}"),
+        |scope| format!("{application}--{scope}--{context}--{purpose}--v{major_version}"),
+    );
     if value.len() > MAX_CONSUMER_NAME_BYTES {
         return Err(ContractError::bounded(
             ContractErrorKind::TooLong,
@@ -542,16 +597,29 @@ fn parse_delivery_name(value: String, field: &'static str) -> Result<String, Con
             field,
         ));
     }
+    let segment_count = value.split("--").count();
     let mut segments = value.split("--");
-    let (Some(application), Some(context), Some(purpose), Some(version), None) = (
-        segments.next(),
-        segments.next(),
-        segments.next(),
-        segments.next(),
-        segments.next(),
-    ) else {
+    let Some(application) = segments.next() else {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
     };
+    let Some(second) = segments.next() else {
+        return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
+    };
+    let (traffic_scope, context) = match segment_count {
+        4 => (TrafficScope::Normal, Some(second)),
+        5 if second == "test" => (TrafficScope::Test, segments.next()),
+        _ => {
+            return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
+        }
+    };
+    let purpose = segments.next();
+    let version = segments.next();
+    if segments.next().is_some() || context.is_none() || purpose.is_none() || version.is_none() {
+        return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
+    }
+    let context = context.unwrap_or_default();
+    let purpose = purpose.unwrap_or_default();
+    let version = version.unwrap_or_default();
     let Some(version) = version.strip_prefix('v') else {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
     };
@@ -561,12 +629,36 @@ fn parse_delivery_name(value: String, field: &'static str) -> Result<String, Con
     if version != major_version.to_string() {
         return Err(ContractError::new(ContractErrorKind::InvalidFormat, field));
     }
-    build_delivery_name(application, context, purpose, major_version, field)?;
+    build_delivery_name(
+        application,
+        traffic_scope,
+        context,
+        purpose,
+        major_version,
+        field,
+    )?;
     Ok(value)
 }
 
 fn delivery_name_segment(value: &str, index: usize) -> &str {
     value.split("--").nth(index).unwrap_or_default()
+}
+
+fn delivery_name_traffic_scope(value: &str) -> TrafficScope {
+    if value.split("--").count() == 5 && delivery_name_segment(value, 1) == "test" {
+        TrafficScope::Test
+    } else {
+        TrafficScope::Normal
+    }
+}
+
+fn scoped_delivery_name_segment(value: &str, normal_index: usize) -> &str {
+    let index = if delivery_name_traffic_scope(value) == TrafficScope::Test && normal_index > 0 {
+        normal_index.saturating_add(1)
+    } else {
+        normal_index
+    };
+    delivery_name_segment(value, index)
 }
 
 #[cfg(test)]
@@ -589,6 +681,23 @@ mod tests {
         assert_eq!(durable.context(), "orders");
         assert!(ConsumerName::parse("acme--orders--fulfillment--v01").is_err());
         assert!(DurableName::new("Acme", "orders", "fulfillment", 1).is_err());
+        let test_context = ConsumerName::parse("acme--test--fulfillment--v1").unwrap();
+        assert_eq!(test_context.traffic_scope(), TrafficScope::Normal);
+        assert_eq!(test_context.context(), "test");
+    }
+
+    #[test]
+    fn test_consumer_and_durable_names_carry_their_scope() {
+        let consumer =
+            ConsumerName::new_in_scope("acme", TrafficScope::Test, "orders", "fulfillment", 1)
+                .unwrap();
+        let durable = DurableName::parse("acme--test--orders--fulfillment--v1").unwrap();
+
+        assert_eq!(consumer.as_str(), durable.as_str());
+        assert_eq!(consumer.traffic_scope(), TrafficScope::Test);
+        assert_eq!(consumer.context(), "orders");
+        assert_eq!(durable.traffic_scope(), TrafficScope::Test);
+        assert!(ConsumerName::parse("acme--dev--orders--fulfillment--v1").is_err());
     }
 
     #[test]
@@ -658,6 +767,27 @@ mod tests {
 
         let error = ConsumerConfig::new(
             ConsumerName::new("other", "orders", "fulfillment", 1).unwrap(),
+            DurableName::new("acme", "orders", "fulfillment", 1).unwrap(),
+            address,
+            Duration::from_secs(45),
+            Duration::from_secs(30),
+            1,
+            5,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ContractErrorKind::InvalidFormat);
+        assert_eq!(error.field(), "consumer application scope");
+    }
+
+    #[test]
+    fn consumer_config_rejects_cross_traffic_scope_names() {
+        let address =
+            CommandAddress::new_in_scope("acme", TrafficScope::Test, "orders", "place-order")
+                .unwrap();
+
+        let error = ConsumerConfig::new(
+            ConsumerName::new("acme", "orders", "fulfillment", 1).unwrap(),
             DurableName::new("acme", "orders", "fulfillment", 1).unwrap(),
             address,
             Duration::from_secs(45),
