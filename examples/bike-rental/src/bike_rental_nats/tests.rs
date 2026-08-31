@@ -4,7 +4,7 @@ use std::{error::Error, sync::Arc};
 
 use super::{
     BicycleRentalStarted, BicycleRentalStartedHandler, BicycleRentedIntegrationMapper,
-    BikeRentalCommand, BikeRentalNatsConfig,
+    BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
 };
 use crate::{
     demo::{demo_stream, seed_demo},
@@ -93,6 +93,23 @@ fn nats_configuration_uses_stable_application_scoped_resources() -> TestResult {
             .durable_name()
             .as_str(),
         "bike-rental-demo--bike-rental--bicycle-rental-started-consumer--v1"
+    );
+    Ok(())
+}
+
+#[test]
+fn nats_configuration_applies_resource_limits() -> TestResult {
+    let limits = BikeRentalNatsResourceLimits::new(32 * 1024 * 1024, 128 * 1024 * 1024, 256 * 1024);
+    let config = BikeRentalNatsConfig::new_with_resource_limits("bike-rental-limits", limits)?;
+
+    assert_eq!(config.resource_limits(), limits);
+    assert_eq!(
+        config.event_store().max_stream_bytes(),
+        limits.event_store_max_stream_bytes()
+    );
+    assert_eq!(
+        config.event_store().max_event_bytes(),
+        limits.event_store_max_event_bytes()
     );
     Ok(())
 }

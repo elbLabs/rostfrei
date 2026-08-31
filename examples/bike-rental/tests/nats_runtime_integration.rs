@@ -22,7 +22,8 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bike_rental::{
-    BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsRuntime,
+    BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
+    BikeRentalNatsRuntime,
     demo::demo_stream,
     rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
     tracer,
@@ -86,8 +87,11 @@ async fn command_workers_and_test_reset_are_application_isolated() -> TestResult
     let scope = unique_scope()?;
     let test_application = format!("{scope}-test");
     let production_application = format!("{scope}-prod");
-    let test_config = BikeRentalNatsConfig::new(&test_application)?;
-    let production_config = BikeRentalNatsConfig::new(&production_application)?;
+    let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
+    let test_config =
+        BikeRentalNatsConfig::new_with_resource_limits(&test_application, resource_limits)?;
+    let production_config =
+        BikeRentalNatsConfig::new_with_resource_limits(&production_application, resource_limits)?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-integration"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -96,10 +100,20 @@ async fn command_workers_and_test_reset_are_application_isolated() -> TestResult
 
     let result = async {
         let test_runtime = Arc::new(
-            BikeRentalNatsRuntime::provision(connection.clone(), &test_application).await?,
+            BikeRentalNatsRuntime::provision_with_resource_limits(
+                connection.clone(),
+                &test_application,
+                resource_limits,
+            )
+            .await?,
         );
         let production_runtime = Arc::new(
-            BikeRentalNatsRuntime::provision(connection.clone(), &production_application).await?,
+            BikeRentalNatsRuntime::provision_with_resource_limits(
+                connection.clone(),
+                &production_application,
+                resource_limits,
+            )
+            .await?,
         );
         test_runtime.seed_demo().await?;
         production_runtime.seed_demo().await?;
@@ -128,7 +142,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
     };
     let scope = unique_scope()?;
     let test_application = format!("{scope}-behavioral");
-    let test_config = BikeRentalNatsConfig::new(&test_application)?;
+    let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
+    let test_config =
+        BikeRentalNatsConfig::new_with_resource_limits(&test_application, resource_limits)?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-behavioral-integration"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -137,7 +153,12 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
 
     let result: TestResult = async {
         let test_runtime = Arc::new(
-            BikeRentalNatsRuntime::provision(connection.clone(), &test_application).await?,
+            BikeRentalNatsRuntime::provision_with_resource_limits(
+                connection.clone(),
+                &test_application,
+                resource_limits,
+            )
+            .await?,
         );
         let test_store = Arc::new(test_runtime.store().clone());
         let history: Arc<dyn EventHistory> = test_store.clone();

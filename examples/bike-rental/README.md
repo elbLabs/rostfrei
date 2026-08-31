@@ -36,6 +36,9 @@ Start the supplied disposable NATS server and local Tracer:
 docker compose -f examples/bike-rental/compose.yaml up -d
 
 ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
+  ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES=67108864 \
+  ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES=268435456 \
+  ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES=524288 \
   ROSTFREI_API_TOKEN=local-development-token \
   ROSTFREI_DISPATCH_TOKEN=local-dispatch-token \
   cargo run --locked -p bike-rental
@@ -47,6 +50,21 @@ test execution, reset, and their traces. The separate dispatch capability is
 required for production execution and its traces; startup rejects equal tokens.
 Set `ROSTFREI_APPLICATION` to change the shared prefix when running multiple
 instances against one NATS account.
+
+The example accepts byte-count resource limits through the environment:
+
+- `ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES` limits each messaging stream and
+  defaults to 64 MiB;
+- `ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES` limits each authoritative
+  domain-event stream and defaults to 10 GiB; and
+- `ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES` limits an event payload before
+  atomic-transaction headers and defaults to 512 KiB.
+
+The local command above explicitly limits each Test and production event store
+to 256 MiB so NATS does not need to reserve more than 20 GiB of JetStream
+capacity. Provisioning rejects non-positive or malformed values and detects
+limits that disagree with already-provisioned streams.
+
 Runtime startup verifies the operator-provisioned NATS topology and exits if a
 durable command, domain-event, or integration-event consumer stops.
 
@@ -93,6 +111,9 @@ a real NATS server:
 
 ```sh
 ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
+  ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES=67108864 \
+  ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES=268435456 \
+  ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES=524288 \
   cargo test --locked -p bike-rental \
   --test nats_runtime_integration
 ```
