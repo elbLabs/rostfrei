@@ -5,7 +5,7 @@ use domain::{Aggregate, BoundedContext};
 struct Inbox(String);
 
 #[derive(Aggregate)]
-#[domain(id = "mailbox", label = "Mailbox", context = Inbox, root = MailboxRoot)]
+#[domain(id = "mailbox", label = "Mailbox")]
 struct Mailbox { name: String }
 
 fn main() {}

@@ -55,8 +55,14 @@ struct ProductRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "product", label = "Product", context = Catalog, root = ProductRoot)]
+#[domain(id = "product", label = "Product")]
 struct Product;
+
+impl domain::AggregateDefinition for Product {
+    type Context = Catalog;
+    type Root = ProductRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(ValueObject)]
 #[domain(id = "scalars", label = "Scalars", owner = Catalog)]

@@ -26,8 +26,14 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "first", label = "First", context = Context, root = Root)]
+#[domain(id = "first", label = "First")]
 struct First;
+
+impl domain::AggregateDefinition for First {
+    type Context = Context;
+    type Root = Root;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(Entity)]
 #[domain(id = "other-root", label = "Other root", owner = Second)]
@@ -37,8 +43,14 @@ struct OtherRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "second", label = "Second", context = Context, root = OtherRoot)]
+#[domain(id = "second", label = "Second")]
 struct Second;
+
+impl domain::AggregateDefinition for Second {
+    type Context = Context;
+    type Root = OtherRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(Entity)]
 #[domain(id = "wrong", label = "Wrong", owner = First)]

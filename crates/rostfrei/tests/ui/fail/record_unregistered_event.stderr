@@ -1,19 +1,19 @@
-error[E0277]: the trait bound `__AggregateEvent: From<Unregistered>` is not satisfied
-  --> tests/ui/fail/record_unregistered_event.rs:51:25
+error[E0277]: the trait bound `Events: From<Unregistered>` is not satisfied
+  --> tests/ui/fail/record_unregistered_event.rs:56:25
    |
-51 |         aggregate.raise(Unregistered);
+56 |         aggregate.raise(Unregistered);
    |                   ----- ^^^^^^^^^^^^ unsatisfied trait bound
    |                   |
    |                   required by a bound introduced by this call
    |
-help: the trait `From<Unregistered>` is not implemented for `__AggregateEvent`
+help: the trait `From<Unregistered>` is not implemented for `Events`
       but trait `From<Registered>` is implemented for it
   --> tests/ui/fail/record_unregistered_event.rs:27:10
    |
-27 | #[derive(rostfrei::Aggregate)]
-   |          ^^^^^^^^^^^^^^^^^^^
+27 | #[derive(rostfrei::AggregateEvents)]
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `Registered`, found `Unregistered`
-   = note: required for `Unregistered` to implement `Into<__AggregateEvent>`
+   = note: required for `Unregistered` to implement `Into<Events>`
 note: required by a bound in `AggregateInstance::<A>::raise`
   --> $WORKSPACE/crates/rostfrei-core/src/aggregate.rs
    |
@@ -22,4 +22,4 @@ note: required by a bound in `AggregateInstance::<A>::raise`
    |     where
    |         E: Into<A::Event>,
    |            ^^^^^^^^^^^^^^ required by this bound in `AggregateInstance::<A>::raise`
-   = note: this error originates in the derive macro `rostfrei::Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the derive macro `rostfrei::AggregateEvents` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,61 +1,45 @@
-error[E0271]: type mismatch resolving `<Service as DomainServiceType>::Context == Orders`
-  --> tests/ui/domain_service_action/nested_cross_context_event.rs:42:6
+error[E0277]: the trait bound `Placed: ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>` is not satisfied
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:53:6
    |
-42 | impl Actions for Service {
-   |      ^^^^^^^ type mismatch resolving `<Service as DomainServiceType>::Context == Orders`
+53 | impl Actions for Service {
+   |      ^^^^^^^ unsatisfied trait bound
    |
-note: expected this to be `Orders`
-  --> tests/ui/domain_service_action/nested_cross_context_event.rs:39:55
+help: the trait `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>` is not implemented for `Placed`
+      but trait `ActionOutputType<domain::__private::AggregateActionOutput<_>>` is implemented for it
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:34:10
    |
-39 | #[domain(id = "service", label = "Service", context = Services, actions = [Actions])]
-   |                                                       ^^^^^^^^
-note: required for `Placed` to implement `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
-  --> tests/ui/domain_service_action/nested_cross_context_event.rs:25:87
-   |
-24 | #[derive(Aggregate)]
-   |          --------- type parameter would need to implement `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
-25 | #[domain(id = "order", label = "Order", context = Orders, root = OrderRoot, events = [Placed])]
-   |                                                                                       ^^^^^^
-   = help: consider manually implementing `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>` to avoid undesired bounds
-   = note: associated types for the current `impl` cannot be restricted in `where` clauses
-   = note: 1 redundant requirement hidden
+34 | #[derive(domain::AggregateEvents)]
+   |          ^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `domain::__private::AggregateActionOutput<_>`, found `domain::__private::DomainServiceActionOutput<Service>`
    = note: required for `Option<Placed>` to implement `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
 note: required by a bound in `Actions`
-  --> tests/ui/domain_service_action/nested_cross_context_event.rs:32:1
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:43:1
    |
-32 | #[domain_actions(domain_service)]
+43 | #[domain_actions(domain_service)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
-33 | pub trait Actions {
+44 | pub trait Actions {
    |           ------- required by a bound in this trait
-   = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the derive macro `domain::AggregateEvents` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0271]: type mismatch resolving `<Service as DomainServiceType>::Context == Orders`
-  --> tests/ui/domain_service_action/nested_cross_context_event.rs:38:10
+error[E0277]: the trait bound `Placed: ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>` is not satisfied
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:49:10
    |
-38 | #[derive(DomainService)]
-   |          ^^^^^^^^^^^^^ type mismatch resolving `<Service as DomainServiceType>::Context == Orders`
+49 | #[derive(DomainService)]
+   |          ^^^^^^^^^^^^^ unsatisfied trait bound
    |
-note: expected this to be `Orders`
-  --> tests/ui/domain_service_action/nested_cross_context_event.rs:39:55
+help: the trait `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>` is not implemented for `Placed`
+      but trait `ActionOutputType<domain::__private::AggregateActionOutput<_>>` is implemented for it
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:34:10
    |
-39 | #[domain(id = "service", label = "Service", context = Services, actions = [Actions])]
-   |                                                       ^^^^^^^^
-note: required for `Placed` to implement `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
-  --> tests/ui/domain_service_action/nested_cross_context_event.rs:25:87
-   |
-24 | #[derive(Aggregate)]
-   |          --------- type parameter would need to implement `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
-25 | #[domain(id = "order", label = "Order", context = Orders, root = OrderRoot, events = [Placed])]
-   |                                                                                       ^^^^^^
-   = help: consider manually implementing `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>` to avoid undesired bounds
-   = note: associated types for the current `impl` cannot be restricted in `where` clauses
-   = note: 1 redundant requirement hidden
+34 | #[derive(domain::AggregateEvents)]
+   |          ^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `domain::__private::AggregateActionOutput<_>`, found `domain::__private::DomainServiceActionOutput<Service>`
    = note: required for `Option<Placed>` to implement `ActionOutputType<domain::__private::DomainServiceActionOutput<Service>>`
 note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
-  --> tests/ui/domain_service_action/nested_cross_context_event.rs:32:1
+  --> tests/ui/domain_service_action/nested_cross_context_event.rs:43:1
    |
-32 | #[domain_actions(domain_service)]
+43 | #[domain_actions(domain_service)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
-33 | pub trait Actions {
+44 | pub trait Actions {
    |           ------- required by a bound in this associated constant
    = note: this error originates in the derive macro `DomainService` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

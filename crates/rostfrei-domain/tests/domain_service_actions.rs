@@ -4,9 +4,9 @@ use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
     Aggregate, AggregateType, BoundedContext, Command, CommandOwnerId, CommandType, DomainError,
-    DomainErrorOwnerId, DomainErrorType, DomainEvent, DomainEventType, DomainIdentity,
-    DomainModelError, DomainService, DomainServiceType, Entity, ScalarType, ValueObject,
-    ValueObjectType, domain_actions, domain_model,
+    DomainErrorOwnerId, DomainErrorType, DomainEvent, DomainIdentity, DomainModelError,
+    DomainService, DomainServiceType, Entity, ScalarType, ValueObject, ValueObjectType,
+    domain_actions, domain_model,
 };
 
 #[derive(BoundedContext)]
@@ -49,15 +49,19 @@ pub trait WorkActions {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "work",
-    label = "Work",
-    context = Operations,
-    root = WorkRoot,
-    actions = [WorkActions],
-    events = [WorkStarted]
-)]
+#[domain(id = "work", label = "Work")]
 pub struct Work;
+
+impl domain::AggregateDefinition for Work {
+    type Context = Operations;
+    type Root = WorkRoot;
+    type Event = WorkEvents;
+}
+
+#[derive(domain::AggregateEvents)]
+pub enum WorkEvents {
+    Event0(WorkStarted),
+}
 
 impl WorkActions for Work {
     fn start_work(root: &mut WorkRoot) -> WorkStarted {
@@ -124,10 +128,10 @@ mod contracts {
         #[action(id = "coordinate", label = "Coordinate work")]
         fn coordinate(
             input: super::CoordinateWorkInput,
-        ) -> Result<super::WorkStarted, super::CoordinationFailed>;
+        ) -> Result<super::Receipt, super::CoordinationFailed>;
 
-        #[action(id = "planned-events", label = "Planned events")]
-        fn planned_events() -> Option<Vec<Option<super::WorkStarted>>>;
+        #[action(id = "planned-receipts", label = "Planned receipts")]
+        fn planned_receipts() -> Option<Vec<Option<super::Receipt>>>;
     }
 }
 
@@ -157,12 +161,12 @@ impl contracts::Coordination for Coordinator {
         true
     }
 
-    fn coordinate(_input: CoordinateWorkInput) -> Result<WorkStarted, CoordinationFailed> {
-        Ok(WorkStarted)
+    fn coordinate(_input: CoordinateWorkInput) -> Result<Receipt, CoordinationFailed> {
+        Ok(Receipt(42))
     }
 
-    fn planned_events() -> Option<Vec<Option<WorkStarted>>> {
-        Some(vec![Some(WorkStarted)])
+    fn planned_receipts() -> Option<Vec<Option<Receipt>>> {
+        Some(vec![Some(Receipt(42))])
     }
 }
 
@@ -261,11 +265,11 @@ fn public_domain_service_contracts_are_invocable_with_zero_and_one_input() {
     assert!(<Coordinator as contracts::Coordination>::available());
     assert_eq!(
         <Coordinator as contracts::Coordination>::coordinate(CoordinateWorkInput),
-        Ok(WorkStarted)
+        Ok(Receipt(42))
     );
     assert_eq!(
-        <Coordinator as contracts::Coordination>::planned_events(),
-        Some(vec![Some(WorkStarted)])
+        <Coordinator as contracts::Coordination>::planned_receipts(),
+        Some(vec![Some(Receipt(42))])
     );
     assert_eq!(
         <Coordinator as CoordinationReporting>::receipt(),
@@ -292,7 +296,7 @@ fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() 
             .iter()
             .map(|action| action.id.local)
             .collect::<Vec<_>>(),
-        ["available", "coordinate", "planned-events"]
+        ["available", "coordinate", "planned-receipts"]
     );
     assert_eq!(
         contracts[1]
@@ -322,9 +326,7 @@ fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() 
     );
     assert_eq!(
         contracts[0][1].output,
-        Some(ActionOutputDescriptor::DomainEvent(
-            WorkStarted::DESCRIPTOR.id
-        ))
+        Some(ActionOutputDescriptor::ValueObject(Receipt::DESCRIPTOR.id))
     );
     assert_eq!(
         contracts[0][1].error,
@@ -334,7 +336,7 @@ fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() 
         contracts[0][2].output,
         Some(ActionOutputDescriptor::Optional(
             &ActionOutputDescriptor::List(&ActionOutputDescriptor::Optional(
-                &ActionOutputDescriptor::DomainEvent(WorkStarted::DESCRIPTOR.id),
+                &ActionOutputDescriptor::ValueObject(Receipt::DESCRIPTOR.id),
             )),
         ))
     );
@@ -375,12 +377,11 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
             .map(|action| action["id"]["local"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "start-work",
             "inspect-work",
             "new-receipt",
             "available",
             "coordinate",
-            "planned-events",
+            "planned-receipts",
             "receipt",
             "work-extension",
         ]
@@ -391,7 +392,6 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
             .map(|action| action["id"]["owner"]["kind"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "aggregate",
             "entity",
             "valueObject",
             "domainService",

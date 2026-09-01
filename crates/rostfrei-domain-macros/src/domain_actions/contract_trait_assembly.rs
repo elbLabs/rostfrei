@@ -175,7 +175,7 @@ fn assemble_descriptor(
         .action
         .raises
         .iter()
-        .map(|event| quote!(<#event as #domain_path::DomainEventType>::DESCRIPTOR.id));
+        .map(|event| quote!(<#event as #domain_path::DomainEventType<Self>>::DESCRIPTOR.id));
     quote! {
         #domain_path::ActionDescriptor {
             id: #domain_path::ActionId {

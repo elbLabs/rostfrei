@@ -197,14 +197,17 @@ impl BoundedContextType for ValidationContext {
 struct ValidationAggregate;
 
 impl AggregateType for ValidationAggregate {
-    type Context = ValidationContext;
-    type Root = ValidationEntity<0>;
-
     const DESCRIPTOR: AggregateDescriptor = AggregateDescriptor {
         id: AGGREGATE_ID,
         label: "Aggregate",
         root: ENTITY_ID,
     };
+}
+
+impl domain::AggregateDefinition for ValidationAggregate {
+    type Context = ValidationContext;
+    type Root = ValidationEntity<0>;
+    type Event = domain::NoDomainEvents;
 }
 
 struct ValidationEntity<const CASE: u8>;

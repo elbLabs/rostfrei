@@ -49,7 +49,7 @@ pub fn assemble(
         .filter(|event| event_keys.insert(event.to_token_stream().to_string()))
         .map(|event| {
             quote! {
-                #event: #domain_path::DomainEventType<Owner = __RostfreiAggregate>
+                #event: #domain_path::DomainEventType<__RostfreiAggregate>
                     + ::core::convert::Into<
                         <__RostfreiAggregate as #runtime_path::__private::Aggregate>::Event
                     >,

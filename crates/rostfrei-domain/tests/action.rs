@@ -23,17 +23,14 @@ struct MailboxRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "mailbox",
-    label = "Mailbox",
-    context = Inbox,
-    root = MailboxRoot,
-    actions = [
-        contracts::MailboxManagementActions,
-        contracts::MailboxArchivalActions
-    ]
-)]
+#[domain(id = "mailbox", label = "Mailbox")]
 struct Mailbox;
+
+impl domain::AggregateDefinition for Mailbox {
+    type Context = Inbox;
+    type Root = MailboxRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(DomainError)]
 #[domain(id = "mailbox-denied", label = "Mailbox denied", owner = Mailbox, code = "MAILBOX_DENIED", message = "Mailbox denied.")]
@@ -217,7 +214,10 @@ fn supports_owner_specific_action_signatures() {
 
 #[test]
 fn preserves_descriptor_shape_and_source_order() {
-    let mailbox_contracts = <Mailbox as AggregateType>::ACTION_CONTRACTS;
+    let mailbox_contracts = [
+        <Mailbox as contracts::MailboxManagementActions>::__DOMAIN_ACTIONS,
+        <Mailbox as contracts::MailboxArchivalActions>::__DOMAIN_ACTIONS,
+    ];
     let transfer_contracts = <MailTransfer as DomainServiceType>::ACTION_CONTRACTS;
     let message_contracts = <Message as EntityType>::ACTION_CONTRACTS;
     let counter_contracts = <Counter as ValueObjectType>::ACTION_CONTRACTS;

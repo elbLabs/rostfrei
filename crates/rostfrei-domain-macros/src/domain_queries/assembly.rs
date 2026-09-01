@@ -79,8 +79,8 @@ fn assertions(domain_path: &Path, owner: &TypePath, query: &AssemblyQuery<'_>) -
     let span = query.query.syntax.ident.span();
     quote_spanned! {span=>
         const _: () = {
-            fn assert_owner<T: #domain_path::AggregateType>() {}
-            fn assert_root(value: &<#owner as #domain_path::AggregateType>::Root) -> &<#owner as #domain_path::AggregateType>::Root { value }
+            fn assert_owner<T: #domain_path::AggregateDefinition>() {}
+            fn assert_root(value: &<#owner as #domain_path::AggregateDefinition>::Root) -> &<#owner as #domain_path::AggregateDefinition>::Root { value }
             let _ = assert_owner::<#owner>;
             let _: fn(&#root) -> &#root = assert_root;
         };

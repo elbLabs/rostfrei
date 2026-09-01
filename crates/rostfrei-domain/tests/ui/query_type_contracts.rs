@@ -13,8 +13,19 @@ struct FirstId(u64);
 struct FirstRoot { #[domain(identity)] id: FirstId }
 
 #[derive(Aggregate)]
-#[domain(id = "first", label = "First", context = Catalog, root = FirstRoot, events = [Event])]
+#[domain(id = "first", label = "First")]
 struct First;
+
+impl domain::AggregateDefinition for First {
+    type Context = Catalog;
+    type Root = FirstRoot;
+    type Event = FirstEvents;
+}
+
+#[derive(domain::AggregateEvents)]
+enum FirstEvents {
+    Event0(Event),
+}
 
 #[derive(DomainIdentity)]
 #[domain(owner = SecondRoot)]
@@ -25,8 +36,14 @@ struct SecondId(u64);
 struct SecondRoot { #[domain(identity)] id: SecondId }
 
 #[derive(Aggregate)]
-#[domain(id = "second", label = "Second", context = Catalog, root = SecondRoot)]
+#[domain(id = "second", label = "Second")]
 struct Second;
+
+impl domain::AggregateDefinition for Second {
+    type Context = Catalog;
+    type Root = SecondRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(Command)]
 #[domain(id = "command", label = "Command", owner = First)]

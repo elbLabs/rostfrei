@@ -2,7 +2,7 @@
 
 use domain::DecisionOutcome;
 use domain::{
-    Aggregate, AggregateId, AggregateType, BoundedContext, BoundedContextId,
+    Aggregate, AggregateId, AggregateType, BoundedContext, BoundedContextId, DecisionGroupType,
     DecisionInputDescriptor, DecisionOutcomeShapeDescriptor, DecisionOutcomeType,
     DecisionOutcomeValueDescriptor, DecisionOwnerId, DecisionOwnerType, DomainIdentity, Entity,
     EntityId, EntityType, ScalarType, ValueObject, ValueObjectType, domain_decisions,
@@ -26,14 +26,14 @@ struct Lending;
 struct ApplicationId(u64);
 
 #[derive(Aggregate)]
-#[domain(
-    id = "loan-application",
-    label = "Loan application",
-    context = Lending,
-    root = ApplicationRoot,
-    decisions = [AffordabilityDecisions, routing::RoutingDecisions]
-)]
+#[domain(id = "loan-application", label = "Loan application")]
 struct LoanApplication;
+
+impl domain::AggregateDefinition for LoanApplication {
+    type Context = Lending;
+    type Root = ApplicationRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(Entity)]
 #[domain(
@@ -231,7 +231,10 @@ fn decision_owner_ids_match_aggregate_and_entity_descriptors() {
 
 #[test]
 fn generated_descriptors_preserve_group_method_and_outcome_order() {
-    let aggregate = <LoanApplication as AggregateType>::DECISION_GROUPS;
+    let aggregate = [
+        <AffordabilityDecisions as DecisionGroupType>::DECISIONS,
+        <routing::RoutingDecisions as DecisionGroupType>::DECISIONS,
+    ];
     let entity = <ApplicationRoot as EntityType>::DECISION_GROUPS;
 
     assert_eq!(aggregate.len(), 2);
@@ -289,7 +292,7 @@ fn generated_descriptors_preserve_group_method_and_outcome_order() {
 
 #[test]
 fn owned_and_borrowed_inputs_have_equivalent_descriptor_metadata() {
-    let routing = <LoanApplication as AggregateType>::DECISION_GROUPS[1];
+    let routing = <routing::RoutingDecisions as DecisionGroupType>::DECISIONS;
     assert_eq!(routing[0].parameters.len(), 1);
     assert_eq!(routing[0].parameters, routing[1].parameters);
     assert_eq!(routing[0].parameters[0].name, "type");

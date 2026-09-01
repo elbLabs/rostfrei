@@ -39,13 +39,14 @@ struct RecordRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "records",
-    label = "Records",
-    context = TaggedValues,
-    root = RecordRoot
-)]
+#[domain(id = "records", label = "Records")]
 struct Records;
+
+impl domain::AggregateDefinition for Records {
+    type Context = TaggedValues;
+    type Root = RecordRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(ValueObject)]
 #[domain(id = "nested-value", label = "Nested value", owner = TaggedValues)]

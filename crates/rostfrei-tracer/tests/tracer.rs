@@ -17,9 +17,8 @@ use axum::{
 #[cfg(feature = "http")]
 use http_body_util::BodyExt as _;
 use rostfrei_core::{
-    Aggregate, AggregateInstance, CommandHandler, Event, EventCodecError, EventCodecErrorKind,
-    EventHistory, EventStoreError, EventStoreErrorKind, InMemoryEventStore, RecordedEvent,
-    StreamId,
+    AggregateInstance, CommandHandler, EventHistory, EventStoreError, EventStoreErrorKind,
+    InMemoryEventStore, RecordedEvent, StreamId,
 };
 use rostfrei_registry::{CommandDefinition, DomainModule, DomainRegistry, ModuleDescriptor};
 use rostfrei_tracer::{
@@ -68,62 +67,36 @@ struct TestRoot {
 }
 
 #[derive(domain::Aggregate)]
-#[domain(
-    id = "test-aggregate",
-    label = "Test aggregate",
-    context = TestContext,
-    root = TestRoot
-)]
+#[domain(id = "test-aggregate", label = "Test aggregate")]
 struct TestAggregate;
 
-impl Aggregate for TestAggregate {
-    type State = ();
-    type Event = TestEvent;
-
-    const AGGREGATE_TYPE: &'static str = AGGREGATE_TYPE;
-
-    fn initial(_stream_id: &StreamId) -> Self::State {}
-
-    fn apply(_state: &mut Self::State, _event: &Self::Event) {}
+impl domain::AggregateDefinition for TestAggregate {
+    type Context = TestContext;
+    type Root = TestRoot;
+    type Event = TestEvents;
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, domain::DomainEvent, Serialize)]
+#[domain(id = "test-event", label = "Test event")]
 struct TestEvent {
     sensitive: String,
 }
 
-impl Event for TestEvent {
-    fn event_type(&self) -> &'static str {
-        "test-event"
-    }
+#[derive(domain::AggregateEvents)]
+enum TestEvents {
+    TestEvent(TestEvent),
+}
 
-    fn schema_version(&self) -> u32 {
-        1
-    }
-
-    fn encode_json(&self) -> Result<Vec<u8>, EventCodecError> {
-        serde_json::to_vec(self).map_err(|error| {
-            EventCodecError::new(EventCodecErrorKind::EncodingFailed, error.to_string())
-        })
-    }
-
-    fn decode_json(event: &RecordedEvent) -> Result<Self, EventCodecError> {
-        if event.event_type() != "test-event" {
-            return Err(EventCodecError::new(
-                EventCodecErrorKind::UnknownEventType,
-                "unknown test event",
-            ));
+impl rostfrei::Initialize<TestAggregate> for TestRoot {
+    fn initialize(stream_id: &StreamId) -> Self {
+        Self {
+            id: TestRootId(stream_id.aggregate_id().as_str().to_owned()),
         }
-        if event.schema_version() != 1 {
-            return Err(EventCodecError::new(
-                EventCodecErrorKind::UnsupportedSchemaVersion,
-                "test events support schema version 1",
-            ));
-        }
-        serde_json::from_slice(event.payload()).map_err(|error| {
-            EventCodecError::new(EventCodecErrorKind::MalformedPayload, error.to_string())
-        })
     }
+}
+
+impl rostfrei::Apply<TestEvent> for TestRoot {
+    fn apply(&mut self, _event: &TestEvent) {}
 }
 
 #[derive(domain::Command)]
@@ -198,23 +171,25 @@ struct OtherTestRoot {
 }
 
 #[derive(domain::Aggregate)]
-#[domain(
-    id = "other-aggregate",
-    label = "Other aggregate",
-    context = TestContext,
-    root = OtherTestRoot
-)]
+#[domain(id = "other-aggregate", label = "Other aggregate")]
 struct OtherTestAggregate;
 
-impl Aggregate for OtherTestAggregate {
-    type State = ();
-    type Event = TestEvent;
+impl domain::AggregateDefinition for OtherTestAggregate {
+    type Context = TestContext;
+    type Root = OtherTestRoot;
+    type Event = TestEvents;
+}
 
-    const AGGREGATE_TYPE: &'static str = OTHER_AGGREGATE_TYPE;
+impl rostfrei::Initialize<OtherTestAggregate> for OtherTestRoot {
+    fn initialize(stream_id: &StreamId) -> Self {
+        Self {
+            id: OtherTestRootId(stream_id.aggregate_id().as_str().to_owned()),
+        }
+    }
+}
 
-    fn initial(_stream_id: &StreamId) -> Self::State {}
-
-    fn apply(_state: &mut Self::State, _event: &Self::Event) {}
+impl rostfrei::Apply<TestEvent> for OtherTestRoot {
+    fn apply(&mut self, _event: &TestEvent) {}
 }
 
 #[derive(domain::Command)]

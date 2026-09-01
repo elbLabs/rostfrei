@@ -4,8 +4,7 @@ use domain::__private::DomainModelBuilder;
 use domain::DecisionOutcome;
 use domain::{
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DecisionId, DecisionOwnerId,
-    DomainIdentity, DomainModelError, Entity, ValueObject, ValueObjectId, ValueObjectOwnerId,
-    ValueObjectType, domain_decisions,
+    DomainIdentity, Entity, ValueObject, ValueObjectId, ValueObjectOwnerId, domain_decisions,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("decision-inventory");
@@ -41,14 +40,14 @@ struct InventoryContext;
 struct InventoryIdentity(u64);
 
 #[derive(Aggregate)]
-#[domain(
-    id = "inventory-aggregate",
-    label = "Inventory aggregate",
-    context = InventoryContext,
-    root = InventoryRoot,
-    decisions = [InventoryDecisions]
-)]
+#[domain(id = "inventory-aggregate", label = "Inventory aggregate")]
 struct InventoryAggregate;
+
+impl domain::AggregateDefinition for InventoryAggregate {
+    type Context = InventoryContext;
+    type Root = InventoryRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(Entity)]
 #[domain(id = "inventory-root", label = "Inventory root", owner = InventoryAggregate)]
@@ -101,92 +100,10 @@ fn violation(missing_id: ValueObjectId, location: &str) -> String {
     )
 }
 
-fn owner_builder() -> Result<DomainModelBuilder, DomainModelError> {
+#[test]
+fn aggregate_decisions_are_not_implicitly_registered() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_aggregate_type::<InventoryAggregate>()?;
-    Ok(builder)
-}
-
-#[test]
-fn accepts_references_registered_after_the_owner() {
-    let mut builder = owner_builder().unwrap();
-    builder.add_value_object(InventoryInput::DESCRIPTOR);
-    builder.add_value_object(InventoryAccepted::DESCRIPTOR);
-    builder.add_value_object(InventoryRejected::DESCRIPTOR);
-
+    builder.add_aggregate_type::<InventoryAggregate>().unwrap();
     let model = builder.finish().unwrap();
-
-    assert_eq!(model["decisions"].as_array().unwrap().len(), 1);
-}
-
-#[test]
-fn reports_a_missing_input_value_object() {
-    let mut builder = owner_builder().unwrap();
-    builder.add_value_object(InventoryAccepted::DESCRIPTOR);
-    builder.add_value_object(InventoryRejected::DESCRIPTOR);
-
-    let error = builder.finish().unwrap_err();
-
-    assert_eq!(
-        error.to_string(),
-        violation(INPUT_ID, "parameters[0].input")
-    );
-    assert_eq!(
-        error,
-        DomainModelError::DecisionReferenceInventoryViolation {
-            decision_id: Box::new(DECISION_ID),
-            value_object_id: Box::new(INPUT_ID),
-            location: "parameters[0].input".to_owned(),
-        }
-    );
-}
-
-#[test]
-fn reports_a_missing_tuple_outcome_value_object() {
-    let mut builder = owner_builder().unwrap();
-    builder.add_value_object(InventoryInput::DESCRIPTOR);
-    builder.add_value_object(InventoryRejected::DESCRIPTOR);
-
-    let error = builder.finish().unwrap_err();
-    let location = "outcomes[0].shape.fields[0]";
-
-    assert_eq!(error.to_string(), violation(ACCEPTED_ID, location));
-    assert_eq!(
-        error,
-        DomainModelError::DecisionReferenceInventoryViolation {
-            decision_id: Box::new(DECISION_ID),
-            value_object_id: Box::new(ACCEPTED_ID),
-            location: location.to_owned(),
-        }
-    );
-}
-
-#[test]
-fn reports_a_missing_struct_outcome_value_object() {
-    let mut builder = owner_builder().unwrap();
-    builder.add_value_object(InventoryInput::DESCRIPTOR);
-    builder.add_value_object(InventoryAccepted::DESCRIPTOR);
-
-    let error = builder.finish().unwrap_err();
-    let location = "outcomes[1].shape.fields[0].value";
-
-    assert_eq!(error.to_string(), violation(REJECTED_ID, location));
-    assert_eq!(
-        error,
-        DomainModelError::DecisionReferenceInventoryViolation {
-            decision_id: Box::new(DECISION_ID),
-            value_object_id: Box::new(REJECTED_ID),
-            location: location.to_owned(),
-        }
-    );
-}
-
-#[test]
-fn validates_parameters_then_outcomes_in_source_and_field_order() {
-    let error = owner_builder().unwrap().finish().unwrap_err();
-
-    assert_eq!(
-        error.to_string(),
-        violation(INPUT_ID, "parameters[0].input")
-    );
+    assert!(model["decisions"].as_array().unwrap().is_empty());
 }

@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
 use domain::DecisionOutcome;
-use domain::{Aggregate, AggregateType, BoundedContext, DomainIdentity, Entity, domain_decisions};
+use domain::{
+    Aggregate, BoundedContext, DecisionGroupType, DomainIdentity, Entity, domain_decisions,
+};
 
 struct FirstDecisions;
 struct SecondDecisions;
@@ -22,14 +24,14 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "owner",
-    label = "Owner",
-    context = Context,
-    root = Root,
-    decisions = [FirstDecisions, SecondDecisions]
-)]
+#[domain(id = "owner", label = "Owner")]
 struct Owner;
+
+impl domain::AggregateDefinition for Owner {
+    type Context = Context;
+    type Root = Root;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(DecisionOutcome)]
 enum Outcome {
@@ -54,6 +56,7 @@ impl Owner {
 }
 
 fn main() {
-    assert_eq!(Owner::DECISION_GROUPS.len(), 2);
+    assert_eq!(FirstDecisions::DECISIONS.len(), 1);
+    assert_eq!(SecondDecisions::DECISIONS.len(), 1);
     let _ = (Owner::first(), Owner::second());
 }

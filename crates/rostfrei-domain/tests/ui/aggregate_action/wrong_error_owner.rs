@@ -29,8 +29,14 @@ struct OtherRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "other", label = "Other", context = Context, root = OtherRoot)]
+#[domain(id = "other", label = "Other")]
 struct Other;
+
+impl domain::AggregateDefinition for Other {
+    type Context = Context;
+    type Root = OtherRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(DomainError)]
 #[domain(
@@ -49,14 +55,14 @@ pub trait Actions {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "owner",
-    label = "Owner",
-    context = Context,
-    root = Root,
-    actions = [Actions]
-)]
+#[domain(id = "owner", label = "Owner")]
 struct Owner;
+
+impl domain::AggregateDefinition for Owner {
+    type Context = Context;
+    type Root = Root;
+    type Event = domain::NoDomainEvents;
+}
 
 impl Actions for Owner {
     fn change(root: &mut Root) -> Result<(), Denied> {

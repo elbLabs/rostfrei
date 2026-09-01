@@ -29,14 +29,14 @@ trait Invariants {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "owner",
-    label = "Owner",
-    context = Context,
-    root = Root,
-    invariants = [Invariants]
-)]
+#[domain(id = "owner", label = "Owner")]
 struct Owner;
+
+impl domain::AggregateDefinition for Owner {
+    type Context = Context;
+    type Root = Root;
+    type Event = domain::NoDomainEvents;
+}
 
 impl Invariants for Owner {
     fn valid(candidate: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation> {

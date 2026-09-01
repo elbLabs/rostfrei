@@ -1,5 +1,5 @@
-use domain::AggregateType;
-use rostfrei_core::Aggregate;
+use domain::{AggregateDefinition, AggregateEventSet, AggregateType};
+use rostfrei_core::{Aggregate, Event};
 
 /// Applies one concrete domain event to an aggregate root.
 pub trait Apply<Event> {
@@ -11,9 +11,21 @@ pub trait Initialize<A: AggregateType>: Sized {
     fn initialize(stream_id: &rostfrei_core::StreamId) -> Self;
 }
 
+/// Applies a closed aggregate event set to its aggregate root.
+pub trait AggregateEventRuntime<A>: AggregateEventSet<A> + Event
+where
+    A: AggregateDefinition<Event = Self>,
+{
+    fn apply(root: &mut <A as AggregateDefinition>::Root, event: &Self);
+}
+
 /// Marks a compiled aggregate whose descriptor and executable definition agree.
 pub trait AggregateRuntime:
-    AggregateType + Aggregate<State = <Self as AggregateType>::Root>
+    AggregateDefinition
+    + Aggregate<
+        State = <Self as AggregateDefinition>::Root,
+        Event = <Self as AggregateDefinition>::Event,
+    >
 {
 }
 
@@ -27,7 +39,7 @@ pub mod __private {
     };
     pub use std::any::type_name;
 
-    pub use crate::{AggregateRuntime, Apply, Initialize};
+    pub use crate::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};
 
     pub const fn assert_unique_event_ids(ids: &[&str]) {
         let Some((left, remaining)) = ids.split_first() else {

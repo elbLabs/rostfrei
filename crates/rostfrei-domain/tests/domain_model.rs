@@ -24,15 +24,19 @@ pub struct MailboxRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "mailbox",
-    label = "Mailbox",
-    context = Inbox,
-    root = MailboxRoot,
-    actions = [MailboxClosingActions, MailboxOpeningActions],
-    events = [MailboxOpened]
-)]
+#[domain(id = "mailbox", label = "Mailbox")]
 pub struct Mailbox;
+
+impl domain::AggregateDefinition for Mailbox {
+    type Context = Inbox;
+    type Root = MailboxRoot;
+    type Event = MailboxEvents;
+}
+
+#[derive(domain::AggregateEvents)]
+pub enum MailboxEvents {
+    Event0(MailboxOpened),
+}
 
 #[domain_actions(aggregate)]
 pub trait MailboxOpeningActions {
@@ -68,7 +72,7 @@ struct MailTransfer;
 
 #[derive(DomainEvent)]
 #[domain(id = "mailbox-opened", label = "Mailbox opened")]
-struct MailboxOpened;
+pub struct MailboxOpened;
 
 #[derive(DomainError)]
 #[domain(id = "transfer-denied", label = "Transfer denied", owner = MailTransfer, code = "TRANSFER_DENIED", message = "Mail transfer was denied.")]
@@ -216,39 +220,7 @@ fn compiles_explicit_domain_model_to_json() {
                 "message": "Mail transfer was denied.",
                 "fields": [],
             }],
-            "actions": [{
-                "id": {
-                    "owner": {
-                        "kind": "aggregate",
-                        "id": {
-                            "context": "inbox",
-                            "local": "mailbox",
-                        },
-                    },
-                    "local": "close",
-                },
-                "label": "Close mailbox",
-                "input": null,
-                "output": null,
-                "raises": [],
-                "error": null,
-            }, {
-                "id": {
-                    "owner": {
-                        "kind": "aggregate",
-                        "id": {
-                            "context": "inbox",
-                            "local": "mailbox",
-                        },
-                    },
-                    "local": "open",
-                },
-                "label": "Open mailbox",
-                "input": null,
-                "output": null,
-                "raises": [],
-                "error": null,
-            }],
+            "actions": [],
             "decisions": [],
             "queries": [],
             "invariants": [],

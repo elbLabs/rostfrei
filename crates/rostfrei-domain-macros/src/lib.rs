@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use syn::{DeriveInput, Error, parse_macro_input};
 
 mod aggregate;
+mod aggregate_events;
 mod bounded_context;
 mod command;
 mod decision_outcome;
@@ -102,6 +103,13 @@ pub fn derive_bounded_context(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Aggregate, attributes(domain, rostfrei))]
 pub fn derive_aggregate(input: TokenStream) -> TokenStream {
     aggregate::expand(&parse_macro_input!(input as DeriveInput))
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+#[proc_macro_derive(AggregateEvents)]
+pub fn derive_aggregate_events(input: TokenStream) -> TokenStream {
+    aggregate_events::expand(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

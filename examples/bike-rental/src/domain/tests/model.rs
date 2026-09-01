@@ -6,24 +6,17 @@ fn composed_domain_model_builds() {
 }
 
 #[test]
-fn projects_the_fleet_invariant_and_bicycle_lifecycle() {
+fn omits_unattached_aggregate_contracts_and_projects_the_bicycle_lifecycle() {
     let model = crate::domain::model::domain_model().expect("comparison domain model should build");
-    assert_eq!(
-        model["invariants"],
-        json!([{
-            "id": {
-                "owner": {
-                    "kind": "aggregate",
-                    "id": {
-                        "context": "bike-rental",
-                        "local": "rental-fleet"
-                    }
-                },
-                "local": "unique-bicycle-identities"
-            },
-            "label": "Bicycle identities are unique"
-        }])
+    assert!(
+        model["actions"]
+            .as_array()
+            .expect("actions should be an array")
+            .iter()
+            .all(|action| action["id"]["owner"]["kind"] != "aggregate")
     );
+    assert_eq!(model["decisions"], json!([]));
+    assert_eq!(model["invariants"], json!([]));
 
     let bicycle = model["entities"]
         .as_array()

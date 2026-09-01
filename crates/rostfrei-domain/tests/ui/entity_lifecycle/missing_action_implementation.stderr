@@ -1,19 +1,19 @@
 error[E0277]: the trait bound `Todo: Actions` is not satisfied
-  --> tests/ui/entity_lifecycle/missing_action_implementation.rs:33:55
+  --> tests/ui/entity_lifecycle/missing_action_implementation.rs:39:55
    |
-33 | #[domain(id = "workflow", label = "Workflow", owner = Todo, initial = Draft)]
+39 | #[domain(id = "workflow", label = "Workflow", owner = Todo, initial = Draft)]
    |                                                       ^^^^ unsatisfied trait bound
    |
 help: the trait `Actions` is not implemented for `Todo`
-  --> tests/ui/entity_lifecycle/missing_action_implementation.rs:48:1
+  --> tests/ui/entity_lifecycle/missing_action_implementation.rs:54:1
    |
-48 | struct Todo {
+54 | struct Todo {
    | ^^^^^^^^^^^
 help: this trait has no implementations, consider adding one
-  --> tests/ui/entity_lifecycle/missing_action_implementation.rs:27:1
+  --> tests/ui/entity_lifecycle/missing_action_implementation.rs:33:1
    |
-27 | / trait Actions {
-28 | |     #[action(id = "activate", label = "Activate")]
-29 | |     fn activate(&mut self);
-30 | | }
+33 | / trait Actions {
+34 | |     #[action(id = "activate", label = "Activate")]
+35 | |     fn activate(&mut self);
+36 | | }
    | |_^

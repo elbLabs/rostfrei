@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate, AggregateType, BoundedContext, DomainIdentity, Entity, ValueObject, domain_decisions,
+    Aggregate, BoundedContext, DecisionGroupType, DomainIdentity, Entity, ValueObject,
+    domain_decisions,
 };
 use domain::DecisionOutcome;
 
@@ -23,14 +24,14 @@ struct Root {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "owner",
-    label = "Owner",
-    context = Context,
-    root = Root,
-    decisions = [Decisions]
-)]
+#[domain(id = "owner", label = "Owner")]
 struct Owner;
+
+impl domain::AggregateDefinition for Owner {
+    type Context = Context;
+    type Root = Root;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(ValueObject)]
 #[domain(id = "input", label = "Input", owner = Owner)]
@@ -59,8 +60,8 @@ impl Owner {
 
 fn main() {
     assert_eq!(
-        Owner::DECISION_GROUPS[0][0].parameters,
-        Owner::DECISION_GROUPS[0][1].parameters
+        Decisions::DECISIONS[0].parameters,
+        Decisions::DECISIONS[1].parameters
     );
     let input = Input(1);
     let _ = Owner::owned(Input(1));

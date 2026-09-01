@@ -51,7 +51,13 @@ struct Other {
 struct WrongError;
 
 #[derive(Aggregate)]
-#[domain(id = "owner", label = "Owner", context = Context, root = Item)]
+#[domain(id = "owner", label = "Owner")]
 struct Owner;
+
+impl domain::AggregateDefinition for Owner {
+    type Context = Context;
+    type Root = Item;
+    type Event = domain::NoDomainEvents;
+}
 
 fn main() {}

@@ -19,17 +19,14 @@ mod domain {
     }
 
     #[derive(Aggregate)]
-    #[domain(
-        id = "service-taxonomy",
-        label = "Service taxonomy",
-        context = Catalog,
-        root = TaxonomyRoot,
-        actions = [
-            publication::CategoryPublicationActions,
-            deprecation::CategoryDeprecationActions
-        ]
-    )]
+    #[domain(id = "service-taxonomy", label = "Service taxonomy")]
     pub struct ServiceTaxonomy;
+
+    impl domain::AggregateDefinition for ServiceTaxonomy {
+        type Context = Catalog;
+        type Root = TaxonomyRoot;
+        type Event = domain::NoDomainEvents;
+    }
 
     pub mod publication {
         use domain::domain_actions;
@@ -86,7 +83,7 @@ mod model {
 }
 
 #[test]
-fn registering_owner_projects_complete_contract_and_supports_runtime_calls() {
+fn aggregate_contracts_remain_callable_without_implicit_model_registration() {
     use domain::deprecation::CategoryDeprecationActions;
     use domain::publication::CategoryPublicationActions;
 
@@ -103,8 +100,5 @@ fn registering_owner_projects_complete_contract_and_supports_runtime_calls() {
 
     let model = model::registered_owner().expect("registered owner model should be valid");
     let actions = model["actions"].as_array().unwrap();
-    assert_eq!(actions.len(), 2);
-    assert_eq!(actions[0]["id"]["local"], "publish-category");
-    assert_eq!(actions[1]["id"]["local"], "deprecate-category");
-    assert_eq!(actions[0]["id"]["owner"], actions[1]["id"]["owner"]);
+    assert!(actions.is_empty());
 }

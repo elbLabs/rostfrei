@@ -29,7 +29,10 @@ pub use action::{
     DomainServiceActionOwnerType, EntityActionOwnerType, InternalActionOwnerType,
     PublicActionOwnerType, ValueObjectActionOwnerType,
 };
-pub use aggregate::{AggregateDescriptor, AggregateId, AggregateType};
+pub use aggregate::{
+    AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId, AggregateType,
+    NoDomainEvents,
+};
 pub use bounded_context::{BoundedContextDescriptor, BoundedContextId, BoundedContextType};
 pub use command::{CommandDescriptor, CommandId, CommandOwnerId, CommandOwnerType, CommandType};
 #[doc(hidden)]
@@ -73,10 +76,10 @@ pub use invariant::{
 };
 pub use json_wire::{JsonCommandPayload, JsonErrorPayload};
 pub use rostfrei_domain_macros::{
-    Aggregate, BoundedContext, Command, DecisionOutcome, DomainError, DomainEvent, DomainIdentity,
-    DomainService, Entity, EntityLifecycle, ValueObject, domain_action_test, domain_actions,
-    domain_decision_test, domain_decisions, domain_invariant_test, domain_invariants,
-    domain_lifecycle_test, domain_queries,
+    Aggregate, AggregateEvents, BoundedContext, Command, DecisionOutcome, DomainError, DomainEvent,
+    DomainIdentity, DomainService, Entity, EntityLifecycle, ValueObject, domain_action_test,
+    domain_actions, domain_decision_test, domain_decisions, domain_invariant_test,
+    domain_invariants, domain_lifecycle_test, domain_queries,
 };
 pub use value_object::{
     ValueObjectDescriptor, ValueObjectId, ValueObjectOwnerId, ValueObjectOwnerType,

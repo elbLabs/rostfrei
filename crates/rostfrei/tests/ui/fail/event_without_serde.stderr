@@ -1,8 +1,8 @@
 error[E0277]: the trait bound `Event: serde::Serialize` is not satisfied
   --> tests/ui/fail/event_without_serde.rs:22:10
    |
-22 | #[derive(rostfrei::Aggregate)]
-   |          ^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+22 | #[derive(rostfrei::AggregateEvents)]
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `serde_core::ser::Serialize` is not implemented for `Event`
   --> tests/ui/fail/event_without_serde.rs:20:1
@@ -26,13 +26,13 @@ note: required by a bound in `rostfrei_core::__private::encode_json`
    |
    |     pub fn encode_json<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, EventCodecError> {
    |                           ^^^^^^^^^ required by this bound in `encode_json`
-   = note: this error originates in the derive macro `rostfrei::Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the derive macro `rostfrei::AggregateEvents` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Event: serde::de::DeserializeOwned` is not satisfied
-  --> tests/ui/fail/event_without_serde.rs:28:15
+  --> tests/ui/fail/event_without_serde.rs:24:11
    |
-28 |     events = [Event]
-   |               ^^^^^ unsatisfied trait bound
+24 |     Event(Event),
+   |           ^^^^^ unsatisfied trait bound
    |
 help: the trait `for<'de> serde_core::de::Deserialize<'de>` is not implemented for `Event`
   --> tests/ui/fail/event_without_serde.rs:20:1

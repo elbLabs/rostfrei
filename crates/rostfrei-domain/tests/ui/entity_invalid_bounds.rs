@@ -14,8 +14,14 @@ struct PlainIdRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(id = "plain-id", label = "Plain Id", context = Inbox, root = PlainIdRoot)]
+#[domain(id = "plain-id", label = "Plain Id")]
 struct PlainIdAggregate;
+
+impl domain::AggregateDefinition for PlainIdAggregate {
+    type Context = Inbox;
+    type Root = PlainIdRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 struct MissingAggregate;
 

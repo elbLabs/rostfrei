@@ -113,15 +113,19 @@ pub trait AggregateActions {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "inventory-aggregate",
-    label = "Inventory aggregate",
-    context = InventoryContext,
-    root = InventoryEntity,
-    actions = [AggregateActions],
-    events = [InventoryEvent]
-)]
+#[domain(id = "inventory-aggregate", label = "Inventory aggregate")]
 pub struct InventoryAggregate;
+
+impl domain::AggregateDefinition for InventoryAggregate {
+    type Context = InventoryContext;
+    type Root = InventoryEntity;
+    type Event = InventoryAggregateEvents;
+}
+
+#[derive(domain::AggregateEvents)]
+pub enum InventoryAggregateEvents {
+    Event0(InventoryEvent),
+}
 
 #[domain_actions(entity)]
 trait EntityActions {
@@ -207,7 +211,7 @@ struct EntityError;
 #[domain_actions(domain_service)]
 pub trait ServiceActions {
     #[action(id = "service-action", label = "Service action")]
-    fn execute(input: ServiceActionInput) -> Result<InventoryEvent, ServiceError>;
+    fn execute(input: ServiceActionInput) -> Result<bool, ServiceError>;
 }
 
 #[derive(DomainService)]
@@ -220,8 +224,8 @@ pub trait ServiceActions {
 pub struct InventoryService;
 
 impl ServiceActions for InventoryService {
-    fn execute(_input: ServiceActionInput) -> Result<InventoryEvent, ServiceError> {
-        Ok(InventoryEvent)
+    fn execute(_input: ServiceActionInput) -> Result<bool, ServiceError> {
+        Ok(true)
     }
 }
 
@@ -512,42 +516,20 @@ fn accepts_references_added_after_all_owner_actions_are_registered() {
     let model = builder.finish().unwrap();
 
     let actions = model["actions"].as_array().unwrap();
-    assert_eq!(actions.len(), 4);
-    assert_eq!(actions[0]["input"]["kind"], "domainIdentity");
-    assert_eq!(
-        actions[0]["input"]["id"]["owner"]["local"],
-        "inventory-entity"
-    );
+    assert_eq!(actions.len(), 3);
 }
 
 #[test]
-fn aggregate_reports_missing_domain_identity_input() {
+fn aggregate_without_attachments_registers_no_action_references() {
     let mut builder = DomainModelBuilder::new();
     builder.add_aggregate_type::<InventoryAggregate>().unwrap();
 
-    let error = builder.finish().unwrap_err();
-    let action_id = ActionId {
-        owner: ActionOwnerId::Aggregate(AGGREGATE_ID),
-        local: "aggregate-action",
-    };
-
-    assert_eq!(
-        error.to_string(),
-        violation(action_id, INVENTORY_IDENTITY_ID, "input", "identities",)
-    );
-    assert_eq!(
-        error,
-        DomainModelError::ActionReferenceInventoryViolation {
-            action_id: Box::new(action_id),
-            reference: DomainModelReference::DomainIdentity(Box::new(INVENTORY_IDENTITY_ID)),
-            location: "input".to_owned(),
-            inventory_key: "identities",
-        }
-    );
+    let model = builder.finish().unwrap();
+    assert!(model["actions"].as_array().unwrap().is_empty());
 }
 
 #[test]
-fn domain_service_reports_missing_event_output() {
+fn domain_service_reports_missing_error() {
     let mut builder = DomainModelBuilder::new();
     builder
         .add_domain_service_type::<InventoryService>()
@@ -562,15 +544,15 @@ fn domain_service_reports_missing_event_output() {
 
     assert_eq!(
         error.to_string(),
-        violation(action_id, EVENT_ID, "output", "events")
+        violation(action_id, SERVICE_ERROR_ID, "error", "errors")
     );
     assert_eq!(
         error,
         DomainModelError::ActionReferenceInventoryViolation {
             action_id: Box::new(action_id),
-            reference: DomainModelReference::DomainEvent(Box::new(EVENT_ID)),
-            location: "output".to_owned(),
-            inventory_key: "events",
+            reference: DomainModelReference::DomainError(Box::new(SERVICE_ERROR_ID)),
+            location: "error".to_owned(),
+            inventory_key: "errors",
         }
     );
 }

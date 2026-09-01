@@ -7,7 +7,7 @@ use domain::{
     ValueObject, ValueObjectDescriptor, ValueObjectId, ValueObjectOwnerId,
     ValueObjectShapeDescriptor, ValueObjectType, domain_invariants, domain_model,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 
 #[derive(BoundedContext)]
 #[domain(id = "invariant-projection", label = "Invariant projection")]
@@ -40,14 +40,14 @@ struct ProjectionRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "projection-aggregate",
-    label = "Projection aggregate",
-    context = ProjectionContext,
-    root = ProjectionRoot,
-    invariants = [PrimaryAggregateInvariants, SharedAggregateInvariants]
-)]
+#[domain(id = "projection-aggregate", label = "Projection aggregate")]
 struct ProjectionAggregate;
+
+impl domain::AggregateDefinition for ProjectionAggregate {
+    type Context = ProjectionContext;
+    type Root = ProjectionRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 impl PrimaryAggregateInvariants for ProjectionAggregate {
     fn first(_candidate: &ProjectionRoot) -> Option<InvariantViolation> {
@@ -235,86 +235,15 @@ impl ValueObjectType for MismatchedValue {
 }
 
 #[test]
-fn automatically_projects_flattened_invariants_in_owner_attachment_and_method_order() {
-    assert_eq!(
-        projected_model().expect("invariant model projection should succeed")["invariants"],
-        json!([
-            {
-                "id": {
-                    "owner": {
-                        "kind": "aggregate",
-                        "id": {
-                            "context": "invariant-projection",
-                            "local": "projection-aggregate"
-                        }
-                    },
-                    "local": "first"
-                },
-                "label": "First aggregate invariant"
-            },
-            {
-                "id": {
-                    "owner": {
-                        "kind": "aggregate",
-                        "id": {
-                            "context": "invariant-projection",
-                            "local": "projection-aggregate"
-                        }
-                    },
-                    "local": "second"
-                },
-                "label": "Second aggregate invariant"
-            },
-            {
-                "id": {
-                    "owner": {
-                        "kind": "aggregate",
-                        "id": {
-                            "context": "invariant-projection",
-                            "local": "projection-aggregate"
-                        }
-                    },
-                    "local": "shared"
-                },
-                "label": "Aggregate shared"
-            },
-            {
-                "id": {
-                    "owner": {
-                        "kind": "entity",
-                        "id": {
-                            "aggregate": {
-                                "context": "invariant-projection",
-                                "local": "projection-aggregate"
-                            },
-                            "local": "projection-entity"
-                        }
-                    },
-                    "local": "shared"
-                },
-                "label": "Entity shared"
-            },
-            {
-                "id": {
-                    "owner": {
-                        "kind": "valueObject",
-                        "id": {
-                            "owner": {
-                                "kind": "aggregate",
-                                "id": {
-                                    "context": "invariant-projection",
-                                    "local": "projection-aggregate"
-                                }
-                            },
-                            "local": "projection-value"
-                        }
-                    },
-                    "local": "shared"
-                },
-                "label": "Value object shared"
-            }
-        ])
-    );
+fn projects_only_non_aggregate_invariant_attachments() {
+    let model = projected_model().expect("invariant model projection should succeed");
+    let owner_kinds = model["invariants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|invariant| invariant["id"]["owner"]["kind"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(owner_kinds, ["entity", "valueObject"]);
 }
 
 #[test]
@@ -342,7 +271,7 @@ fn accepts_the_same_local_id_on_different_owners() {
         .map(|invariant| invariant["id"]["owner"]["kind"].as_str().unwrap())
         .collect::<Vec<_>>();
 
-    assert_eq!(owner_kinds, ["aggregate", "entity", "valueObject"]);
+    assert_eq!(owner_kinds, ["entity", "valueObject"]);
 }
 
 #[test]

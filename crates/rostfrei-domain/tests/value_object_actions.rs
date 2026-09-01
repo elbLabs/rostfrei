@@ -48,14 +48,14 @@ pub trait LedgerActions {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "ledger",
-    label = "Ledger",
-    context = Billing,
-    root = LedgerRoot,
-    actions = [LedgerActions]
-)]
+#[domain(id = "ledger", label = "Ledger")]
 pub struct Ledger;
+
+impl domain::AggregateDefinition for Ledger {
+    type Context = Billing;
+    type Root = LedgerRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 impl LedgerActions for Ledger {
     fn ledger_command(root: &mut LedgerRoot) {
@@ -358,7 +358,6 @@ fn model_orders_attached_then_extension_actions_and_omits_unlisted_contracts() {
             .map(|action| action["id"]["local"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "ledger-command",
             "root-state",
             "from-minor",
             "clear",
@@ -373,7 +372,6 @@ fn model_orders_attached_then_extension_actions_and_omits_unlisted_contracts() {
             .map(|action| action["id"]["owner"]["kind"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "aggregate",
             "entity",
             "valueObject",
             "valueObject",

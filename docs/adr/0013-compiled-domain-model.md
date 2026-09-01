@@ -76,6 +76,16 @@ contracts were subsequently refined by
 and `DecisionOutcome` enum contract supersede earlier single-block and
 `Result`-shaped Decision details without superseding the rest of this ADR.
 
+The Aggregate-specific declaration and event-membership contracts were
+subsequently replaced by
+[ADR 0018](0018-aggregate-definition-and-event-set.md). Its explicit
+`AggregateDefinition` implementation and authored `AggregateEvents` enum
+supersede this ADR's `events = [...]` attachment and generated hidden event
+representation. ADR 0018 also supersedes aggregate-level action, decision, and
+invariant attachment and automatic invariant fanout; those relationships are
+intentionally absent until Rostfrei can derive or validate them without manual
+lists.
+
 ## Consequences
 
 rostfrei has one source of truth for domain identity, structure, event

@@ -24,14 +24,16 @@ mod owner {
     }
 
     #[derive(Aggregate)]
-    #[domain(
-        id = "owner",
-        label = "Owner",
-        context = Context,
-        root = Root,
-        decisions = [PublicDecisions]
-    )]
-    pub struct Owner;
+#[domain(id = "owner", label = "Owner")]
+pub struct Owner;
+
+impl domain::AggregateDefinition for Owner {
+    type Context = Context;
+    type Root = Root;
+    type Event = domain::NoDomainEvents;
+}
+
+    impl domain::AttachedDecisionGroup<PublicDecisions> for Owner {}
 
     #[derive(DecisionOutcome, Debug, Eq, PartialEq)]
     pub enum Outcome {

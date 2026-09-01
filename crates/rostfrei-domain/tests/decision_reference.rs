@@ -2,7 +2,7 @@
 
 use domain::DecisionOutcome;
 use domain::{
-    Aggregate, AggregateId, AggregateType, BoundedContext, BoundedContextId, DecisionDescriptor,
+    Aggregate, AggregateId, BoundedContext, BoundedContextId, DecisionDescriptor,
     DecisionGroupType, DecisionId, DecisionOwnerId, DecisionOwnerType, DecisionReference,
     DomainIdentity, Entity, domain_decisions,
 };
@@ -19,14 +19,14 @@ struct ReferenceContext;
 struct ReferenceIdentity(u64);
 
 #[derive(Aggregate)]
-#[domain(
-    id = "reference-aggregate",
-    label = "Reference aggregate",
-    context = ReferenceContext,
-    root = ReferenceRoot,
-    decisions = [ReferenceDecisions]
-)]
+#[domain(id = "reference-aggregate", label = "Reference aggregate")]
 struct ReferenceAggregate;
+
+impl domain::AggregateDefinition for ReferenceAggregate {
+    type Context = ReferenceContext;
+    type Root = ReferenceRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(Entity)]
 #[domain(id = "reference-root", label = "Reference root", owner = ReferenceAggregate)]
@@ -102,10 +102,10 @@ const SECONDARY_REFERENCE: DecisionReference<SecondaryGroup> =
 const fn assert_reference_traits<T: Copy + Clone + Debug + Eq + Hash>() {}
 
 #[test]
-fn generated_reference_matches_its_attached_group_descriptor() {
+fn generated_reference_matches_its_group_descriptor() {
     assert_eq!(
         GENERATED_REFERENCE.id(),
-        <ReferenceAggregate as AggregateType>::DECISION_GROUPS[0][0].id
+        <ReferenceDecisions as DecisionGroupType>::DECISIONS[0].id
     );
     assert_eq!(GENERATED_REFERENCE.local_id(), "dispatch-request");
 }

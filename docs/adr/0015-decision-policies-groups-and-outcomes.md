@@ -45,24 +45,17 @@ The marker is an ordinary Rust type. Its declaration provides normal Rust
 visibility and module placement. `domain_decisions` has no visibility option.
 Decision functions likewise use ordinary Rust function visibility.
 
-An Aggregate or Entity explicitly attaches zero or more groups in order:
+An Entity explicitly attaches zero or more groups in order. Attachment
+establishes ownership and projection, and a group must name the exact Entity it
+is attached to. Projection preserves owner inventory order, group attachment
+order, and Decision source order within each group. Groups are an organizational
+Rust mechanism and are not projected into compiled model JSON.
 
-```rust
-#[derive(Aggregate)]
-#[domain(
-    id = "todo",
-    label = "Todo",
-    context = Planning,
-    root = TodoRoot,
-    decisions = [AssignmentPolicies, SchedulingPolicies],
-)]
-pub struct TodoAggregate;
-```
-
-Attachment establishes ownership and projection. A group must name the exact
-owner it is attached to. Projection preserves owner inventory order, group
-attachment order, and Decision source order within each group. Groups are an
-organizational Rust mechanism and are not projected into compiled model JSON.
+[ADR 0018](0018-aggregate-definition-and-event-set.md) subsequently removed
+Aggregate decision attachment. Aggregate-owned Decision contracts remain
+ordinary typed Rust behavior, but are not projected into the compiled model
+until Rostfrei has a relationship it can derive or validate without a manual
+group list.
 
 Decision parameters may be owned values or top-level immutable references.
 `T` and `&T` produce identical parameter metadata for the modeled scalar or

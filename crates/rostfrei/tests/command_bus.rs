@@ -48,15 +48,21 @@ struct BalanceObserved {
     balance: i64,
 }
 
+#[derive(rostfrei::AggregateEvents)]
+enum AccountEvents {
+    AccountCredited(AccountCredited),
+    BalanceObserved(BalanceObserved),
+}
+
 #[derive(Aggregate)]
-#[domain(
-    id = "account",
-    label = "Account",
-    context = Ledger,
-    root = Account,
-    events = [AccountCredited, BalanceObserved]
-)]
+#[domain(id = "account", label = "Account")]
 struct AccountAggregate;
+
+impl rostfrei::AggregateDefinition for AccountAggregate {
+    type Context = Ledger;
+    type Root = Account;
+    type Event = AccountEvents;
+}
 
 impl Initialize<AccountAggregate> for Account {
     fn initialize(stream_id: &StreamId) -> Self {

@@ -5,10 +5,10 @@ use domain::DecisionOutcome;
 use domain::{
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DecisionDescriptor,
     DecisionGroupType, DecisionId, DecisionImplementationDescriptor, DecisionOutcomeDescriptor,
-    DecisionOutcomeId, DecisionOutcomeShapeDescriptor, DecisionOwnerId, DomainIdentity,
-    DomainModelError, Entity, ValueObject, domain_decisions, domain_model,
+    DecisionOutcomeShapeDescriptor, DecisionOwnerId, DomainIdentity, DomainModelError, Entity,
+    ValueObject, domain_decisions, domain_model,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 
 struct AggregateProjectionDecisions;
 struct EntityProjectionDecisions;
@@ -22,14 +22,14 @@ struct ProjectionContext;
 struct ProjectionIdentity(u64);
 
 #[derive(Aggregate)]
-#[domain(
-    id = "projection-aggregate",
-    label = "Projection aggregate",
-    context = ProjectionContext,
-    root = ProjectionRoot,
-    decisions = [AggregateProjectionDecisions]
-)]
+#[domain(id = "projection-aggregate", label = "Projection aggregate")]
 struct ProjectionAggregate;
+
+impl domain::AggregateDefinition for ProjectionAggregate {
+    type Context = ProjectionContext;
+    type Root = ProjectionRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[derive(Entity)]
 #[domain(
@@ -134,160 +134,19 @@ fn projected_model() -> Result<Value, DomainModelError> {
 }
 
 #[test]
-#[allow(clippy::too_many_lines)]
-fn projects_outcome_shapes_and_named_parameters_as_exact_json() {
-    assert_eq!(
-        projected_model().expect("decision model projection should succeed")["decisions"][0],
-        json!({
-            "id": {
-                "owner": {
-                    "kind": "aggregate",
-                    "id": {
-                        "context": "decision-projection",
-                        "local": "projection-aggregate",
-                    },
-                },
-                "local": "evaluate",
-            },
-            "label": "Evaluate",
-            "parameters": [
-                {
-                    "name": "input",
-                    "input": {
-                        "kind": "valueObject",
-                        "id": {
-                            "owner": {
-                                "kind": "aggregate",
-                                "id": {
-                                    "context": "decision-projection",
-                                    "local": "projection-aggregate",
-                                },
-                            },
-                            "local": "projection-input",
-                        },
-                    },
-                },
-                {
-                    "name": "threshold",
-                    "input": { "kind": "scalar", "scalar": "u64" },
-                },
-            ],
-            "outcomes": [
-                {
-                    "id": {
-                        "decision": {
-                            "owner": {
-                                "kind": "aggregate",
-                                "id": {
-                                    "context": "decision-projection",
-                                    "local": "projection-aggregate",
-                                },
-                            },
-                            "local": "evaluate",
-                        },
-                        "local": "deferred",
-                    },
-                    "label": "Deferred",
-                    "shape": { "kind": "unit" },
-                },
-                {
-                    "id": {
-                        "decision": {
-                            "owner": {
-                                "kind": "aggregate",
-                                "id": {
-                                    "context": "decision-projection",
-                                    "local": "projection-aggregate",
-                                },
-                            },
-                            "local": "evaluate",
-                        },
-                        "local": "accepted",
-                    },
-                    "label": "Accepted",
-                    "shape": {
-                        "kind": "tuple",
-                        "fields": [
-                            {
-                                "kind": "valueObject",
-                                "id": {
-                                    "owner": {
-                                        "kind": "aggregate",
-                                        "id": {
-                                            "context": "decision-projection",
-                                            "local": "projection-aggregate",
-                                        },
-                                    },
-                                    "local": "projection-output",
-                                },
-                            },
-                            { "kind": "scalar", "scalar": "bool" },
-                        ],
-                    },
-                },
-                {
-                    "id": {
-                        "decision": {
-                            "owner": {
-                                "kind": "aggregate",
-                                "id": {
-                                    "context": "decision-projection",
-                                    "local": "projection-aggregate",
-                                },
-                            },
-                            "local": "evaluate",
-                        },
-                        "local": "rejected",
-                    },
-                    "label": "Rejected",
-                    "shape": {
-                        "kind": "struct",
-                        "fields": [
-                            {
-                                "name": "reason",
-                                "value": {
-                                    "kind": "valueObject",
-                                    "id": {
-                                        "owner": {
-                                            "kind": "aggregate",
-                                            "id": {
-                                                "context": "decision-projection",
-                                                "local": "projection-aggregate",
-                                            },
-                                        },
-                                        "local": "projection-reason",
-                                    },
-                                },
-                            },
-                            {
-                                "name": "retryable",
-                                "value": { "kind": "scalar", "scalar": "bool" },
-                            },
-                        ],
-                    },
-                },
-            ],
-            "implementation": { "kind": "rust" },
-        })
-    );
+fn projects_only_attached_entity_decisions() {
+    let model = projected_model().expect("decision model projection should succeed");
+    let decisions = model["decisions"].as_array().unwrap();
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(decisions[0]["id"]["owner"]["kind"], "entity");
+    assert_eq!(decisions[0]["id"]["local"], "shared");
 }
 
 #[test]
-fn outcome_ids_are_decision_scoped_and_owner_order_is_stable() {
+fn entity_outcome_ids_remain_decision_scoped() {
     let model = projected_model().expect("decision model projection should succeed");
-    let decisions = model["decisions"].as_array().unwrap();
-    assert_eq!(decisions.len(), 3);
-    assert_eq!(decisions[0]["id"]["local"], "evaluate");
-    assert_eq!(decisions[1]["id"]["local"], "shared");
-    assert_eq!(decisions[1]["id"]["owner"]["kind"], "aggregate");
-    assert_eq!(decisions[2]["id"]["local"], "shared");
-    assert_eq!(decisions[2]["id"]["owner"]["kind"], "entity");
     assert_eq!(
-        decisions[0]["outcomes"][0]["id"]["decision"]["local"],
-        "evaluate"
-    );
-    assert_eq!(
-        decisions[1]["outcomes"][0]["id"]["decision"]["local"],
+        model["decisions"][0]["outcomes"][0]["id"]["decision"]["local"],
         "shared"
     );
 }
@@ -340,14 +199,14 @@ struct DuplicateRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "owner",
-    label = "Duplicate owner",
-    context = DuplicateContext,
-    root = DuplicateRoot,
-    decisions = [FirstDuplicateGroup, SecondDuplicateGroup]
-)]
+#[domain(id = "owner", label = "Duplicate owner")]
 struct DuplicateOwner;
+
+impl domain::AggregateDefinition for DuplicateOwner {
+    type Context = DuplicateContext;
+    type Root = DuplicateRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 impl DecisionGroupType for FirstDuplicateGroup {
     type Owner = DuplicateOwner;
@@ -362,22 +221,11 @@ impl DecisionGroupType for SecondDuplicateGroup {
 }
 
 #[test]
-fn rejects_duplicate_decision_ids_across_groups() {
+fn unattached_duplicate_aggregate_decision_groups_are_not_registered() {
     let mut builder = DomainModelBuilder::new();
-    let error = builder
-        .add_aggregate_type::<DuplicateOwner>()
-        .expect_err("the second group should conflict with the first group");
-
-    assert_eq!(
-        error,
-        DomainModelError::DuplicateDecisionId {
-            id: Box::new(DUPLICATE_ID),
-        }
-    );
-    assert_eq!(
-        error.to_string(),
-        format!("duplicate DecisionId: {DUPLICATE_ID:?}")
-    );
+    builder.add_aggregate_type::<DuplicateOwner>().unwrap();
+    let model = builder.finish().unwrap();
+    assert!(model["decisions"].as_array().unwrap().is_empty());
 }
 
 const EMPTY_OUTCOME_DECISION_ID: DecisionId = DecisionId {
@@ -409,14 +257,14 @@ struct EmptyOutcomeRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "empty-outcome-owner",
-    label = "Empty outcome owner",
-    context = DuplicateContext,
-    root = EmptyOutcomeRoot,
-    decisions = [EmptyOutcomeGroup]
-)]
+#[domain(id = "empty-outcome-owner", label = "Empty outcome owner")]
 struct EmptyOutcomeOwner;
+
+impl domain::AggregateDefinition for EmptyOutcomeOwner {
+    type Context = DuplicateContext;
+    type Root = EmptyOutcomeRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 impl DecisionGroupType for EmptyOutcomeGroup {
     type Owner = EmptyOutcomeOwner;
@@ -469,14 +317,14 @@ struct DuplicateOutcomeRoot {
 }
 
 #[derive(Aggregate)]
-#[domain(
-    id = "duplicate-outcome-owner",
-    label = "Duplicate outcome owner",
-    context = DuplicateContext,
-    root = DuplicateOutcomeRoot,
-    decisions = [DuplicateOutcomeGroup]
-)]
+#[domain(id = "duplicate-outcome-owner", label = "Duplicate outcome owner")]
 struct DuplicateOutcomeOwner;
+
+impl domain::AggregateDefinition for DuplicateOutcomeOwner {
+    type Context = DuplicateContext;
+    type Root = DuplicateOutcomeRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 impl DecisionGroupType for DuplicateOutcomeGroup {
     type Owner = DuplicateOutcomeOwner;
@@ -485,43 +333,27 @@ impl DecisionGroupType for DuplicateOutcomeGroup {
 }
 
 #[test]
-fn rejects_a_manual_decision_descriptor_without_outcomes() {
+fn unattached_empty_outcome_group_is_not_registered() {
     let mut builder = DomainModelBuilder::new();
-    let error = builder
-        .add_aggregate_type::<EmptyOutcomeOwner>()
-        .expect_err("a manual decision without outcomes should be rejected");
-
-    assert_eq!(
-        error,
-        DomainModelError::DecisionWithoutOutcomes {
-            decision_id: Box::new(EMPTY_OUTCOME_DECISION_ID),
-        }
-    );
-    assert_eq!(
-        error.to_string(),
-        format!("decision must declare at least one active outcome: {EMPTY_OUTCOME_DECISION_ID:?}")
+    builder.add_aggregate_type::<EmptyOutcomeOwner>().unwrap();
+    assert!(
+        builder.finish().unwrap()["decisions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
     );
 }
 
 #[test]
-fn rejects_duplicate_outcome_ids_in_a_manual_decision_group() {
+fn unattached_duplicate_outcome_group_is_not_registered() {
     let mut builder = DomainModelBuilder::new();
-    let error = builder
+    builder
         .add_aggregate_type::<DuplicateOutcomeOwner>()
-        .expect_err("duplicate outcome IDs in a manual group should be rejected");
-    let duplicate_id = DecisionOutcomeId {
-        decision: DUPLICATE_OUTCOME_DECISION_ID,
-        local: "same",
-    };
-
-    assert_eq!(
-        error,
-        DomainModelError::DuplicateDecisionOutcomeId {
-            id: Box::new(duplicate_id),
-        }
-    );
-    assert_eq!(
-        error.to_string(),
-        format!("duplicate DecisionOutcomeId: {duplicate_id:?}")
+        .unwrap();
+    assert!(
+        builder.finish().unwrap()["decisions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
     );
 }
