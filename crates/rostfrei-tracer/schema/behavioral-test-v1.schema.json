@@ -1,252 +1,382 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://rostfrei.dev/schemas/tracer/behavioral-test-v1.schema.json",
-  "title": "Rostfrei Tracer Behavioral Test",
-  "description": "A version 1 behavioral test executed by Rostfrei Tracer.",
-  "type": "object",
-  "required": [
-    "schemaVersion",
-    "id",
-    "name",
-    "given",
-    "when",
-    "then"
-  ],
-  "properties": {
-    "schemaVersion": {
-      "description": "The behavioral-test document schema version.",
-      "const": 1
-    },
-    "id": {
-      "description": "A repository-unique test identifier.",
-      "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"
-    },
-    "name": {
-      "$ref": "#/$defs/nonEmptyString"
-    },
-    "given": {
-      "$ref": "#/$defs/given"
-    },
-    "when": {
-      "$ref": "#/$defs/when"
-    },
-    "then": {
-      "$ref": "#/$defs/then"
-    }
-  },
-  "additionalProperties": false,
   "$defs": {
-    "nonEmptyString": {
-      "type": "string",
-      "pattern": "\\S"
+    "AcceptedOutcomeSchema": {
+      "enum": [
+        "accepted"
+      ],
+      "type": "string"
     },
-    "schemaVersion": {
-      "description": "A positive command or event schema version.",
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 4294967295
-    },
-    "jsonValue": {
-      "description": "Any JSON-compatible value. Object expectations use recursive subset matching; arrays match by exact length and order."
-    },
-    "aggregate": {
-      "type": "object",
+    "AggregateSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "type": {
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
       "required": [
         "type",
         "id"
       ],
+      "type": "object"
+    },
+    "BehavioralExpectedSchema": {
+      "additionalProperties": false,
+      "description": "Exactly one causal graph. Runtime validation additionally enforces root, key, parent, and cycle semantics that JSON Schema cannot express.",
       "properties": {
-        "type": {
-          "$ref": "#/$defs/nonEmptyString"
+        "graphs": {
+          "items": {
+            "$ref": "#/$defs/MessageGraphDefinition"
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array"
         },
-        "id": {
-          "$ref": "#/$defs/nonEmptyString"
+        "settleFor": {
+          "$ref": "#/$defs/BehavioralTimeoutSchema"
+        },
+        "within": {
+          "$ref": "#/$defs/BehavioralTimeoutSchema"
         }
       },
-      "additionalProperties": false
+      "required": [
+        "within",
+        "settleFor",
+        "graphs"
+      ],
+      "type": "object"
     },
-    "command": {
-      "type": "object",
+    "BehavioralTimeoutSchema": {
+      "pattern": "^0*(?:(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|60000)ms|(?:[1-9]|[1-5][0-9]|60)s)$",
+      "type": "string"
+    },
+    "ExpectedMessageNode": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "aggregate": {
+              "$ref": "#/$defs/AggregateSchema"
+            },
+            "key": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "kind": {
+              "const": "command",
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "outcome": {
+              "$ref": "#/$defs/ExpectedOutcomeSchema"
+            },
+            "parentKey": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NonEmptyStringSchema"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "payload": true,
+            "schemaVersion": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "key",
+            "name",
+            "schemaVersion",
+            "aggregate",
+            "outcome"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "kind": {
+              "const": "domain-event",
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "parentKey": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NonEmptyStringSchema"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "payload": true,
+            "schemaVersion": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "key",
+            "name",
+            "schemaVersion"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "kind": {
+              "const": "integration-event",
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "parentKey": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NonEmptyStringSchema"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "payload": true,
+            "schemaVersion": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "key",
+            "name",
+            "schemaVersion"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ExpectedOutcomeSchema": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AcceptedOutcomeSchema"
+        },
+        {
+          "$ref": "#/$defs/RejectedOutcomeSchema"
+        }
+      ]
+    },
+    "ExpectedRejectionSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "payload": true
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "MessageGraphDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "description": "A causal graph with at most 64 parent-child levels and at most 64 direct children per node. Comparison also has a deterministic work limit for ambiguous assignments.",
+          "items": {
+            "$ref": "#/$defs/ExpectedMessageNode"
+          },
+          "maxItems": 4096,
+          "minItems": 1,
+          "type": "array"
+        },
+        "settleFor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeoutSchema"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "within": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeoutSchema"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "nodes"
+      ],
+      "type": "object"
+    },
+    "NonEmptyBehavioralStringSchema": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "NonEmptyStringSchema": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "RejectedOutcomeSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "rejected": {
+          "$ref": "#/$defs/ExpectedRejectionSchema"
+        }
+      },
+      "required": [
+        "rejected"
+      ],
+      "type": "object"
+    },
+    "TestAggregate": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NonEmptyBehavioralStringSchema"
+        },
+        "type": {
+          "$ref": "#/$defs/NonEmptyBehavioralStringSchema"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "type": "object"
+    },
+    "TestCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregate": {
+          "$ref": "#/$defs/TestAggregate"
+        },
+        "name": {
+          "$ref": "#/$defs/NonEmptyBehavioralStringSchema"
+        },
+        "payload": true,
+        "schemaVersion": {
+          "format": "uint32",
+          "maximum": 4294967295,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
       "required": [
         "name",
         "schemaVersion",
         "aggregate",
         "payload"
       ],
+      "type": "object"
+    },
+    "TestDefinitionSchemaVersion": {
+      "format": "uint32",
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "TestIdSchema": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "type": "string"
+    },
+    "TestSetup": {
+      "additionalProperties": false,
       "properties": {
-        "name": {
-          "$ref": "#/$defs/nonEmptyString"
+        "commands": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TestCommand"
+          },
+          "maxItems": 32,
+          "type": "array"
         },
-        "schemaVersion": {
-          "$ref": "#/$defs/schemaVersion"
-        },
-        "aggregate": {
-          "$ref": "#/$defs/aggregate"
-        },
-        "payload": {
-          "$ref": "#/$defs/jsonValue"
+        "fixture": {
+          "$ref": "#/$defs/NonEmptyBehavioralStringSchema"
         }
       },
-      "additionalProperties": false
-    },
-    "given": {
-      "type": "object",
       "required": [
         "fixture"
       ],
-      "properties": {
-        "fixture": {
-          "$ref": "#/$defs/nonEmptyString"
-        },
-        "commands": {
-          "description": "Ordered setup commands. Each setup command must be accepted before the subject command runs.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/command"
-          }
-        }
-      },
-      "additionalProperties": false
+      "type": "object"
     },
-    "when": {
-      "type": "object",
-      "required": [
-        "command"
-      ],
-      "properties": {
-        "command": {
-          "$ref": "#/$defs/command"
-        }
-      },
-      "additionalProperties": false
-    },
-    "rejection": {
-      "type": "object",
-      "required": [
-        "code"
-      ],
-      "properties": {
-        "code": {
-          "$ref": "#/$defs/nonEmptyString"
-        },
-        "payload": {
-          "$ref": "#/$defs/jsonValue"
-        }
-      },
-      "additionalProperties": false
-    },
-    "outcome": {
-      "oneOf": [
-        {
-          "const": "accepted"
-        },
-        {
-          "type": "object",
-          "required": [
-            "rejected"
-          ],
-          "properties": {
-            "rejected": {
-              "$ref": "#/$defs/rejection"
-            }
-          },
-          "additionalProperties": false
-        }
-      ]
-    },
-    "timeout": {
-      "description": "A duration from 1 millisecond through 60 seconds, expressed as an integer followed by ms or s.",
-      "type": "string",
-      "pattern": "^0*(?:(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|60000)ms|(?:[1-9]|[1-5][0-9]|60)s)$"
-    },
-    "domainEventExpectation": {
-      "type": "object",
-      "required": [
-        "kind",
-        "name",
-        "schemaVersion"
-      ],
-      "properties": {
-        "kind": {
-          "const": "domain-event"
-        },
-        "name": {
-          "$ref": "#/$defs/nonEmptyString"
-        },
-        "schemaVersion": {
-          "$ref": "#/$defs/schemaVersion"
-        },
-        "payload": {
-          "$ref": "#/$defs/jsonValue"
-        }
-      },
-      "additionalProperties": false
-    },
-    "integrationEventExpectation": {
-      "type": "object",
-      "required": [
-        "kind",
-        "name",
-        "schemaVersion"
-      ],
-      "properties": {
-        "kind": {
-          "const": "integration-event"
-        },
-        "name": {
-          "$ref": "#/$defs/nonEmptyString"
-        },
-        "schemaVersion": {
-          "$ref": "#/$defs/schemaVersion"
-        },
-        "payload": {
-          "$ref": "#/$defs/jsonValue"
-        }
-      },
-      "additionalProperties": false
-    },
-    "traceExpectation": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/domainEventExpectation"
-        },
-        {
-          "$ref": "#/$defs/integrationEventExpectation"
-        }
-      ]
-    },
-    "trace": {
-      "type": "object",
-      "properties": {
-        "contains": {
-          "description": "Unordered event expectations. Each expectation consumes one distinct matching event; additional events are allowed.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/traceExpectation"
-          }
-        }
-      },
-      "additionalProperties": false
-    },
-    "then": {
-      "type": "object",
-      "required": [
-        "outcome",
-        "within"
-      ],
-      "properties": {
-        "outcome": {
-          "$ref": "#/$defs/outcome"
-        },
-        "within": {
-          "$ref": "#/$defs/timeout"
-        },
-        "trace": {
-          "$ref": "#/$defs/trace"
-        }
-      },
-      "additionalProperties": false
+    "TimeoutSchema": {
+      "pattern": "^0*(?:(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|60000)ms|(?:[1-9]|[1-5][0-9]|60)s)$",
+      "type": "string"
     }
-  }
+  },
+  "$id": "https://rostfrei.dev/schemas/tracer/behavioral-test-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A version 1 typed behavioral test. Runtime validation is authoritative for graph topology, byte-oriented identifier bounds, and the exactly-one-graph behavioral constraint.",
+  "properties": {
+    "expected": {
+      "$ref": "#/$defs/BehavioralExpectedSchema"
+    },
+    "id": {
+      "$ref": "#/$defs/TestIdSchema",
+      "not": {
+        "const": "validate"
+      }
+    },
+    "name": {
+      "$ref": "#/$defs/NonEmptyBehavioralStringSchema"
+    },
+    "schemaVersion": {
+      "$ref": "#/$defs/TestDefinitionSchemaVersion"
+    },
+    "setup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TestSetup"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "id",
+    "name",
+    "expected"
+  ],
+  "title": "Rostfrei Tracer Behavioral Test",
+  "type": "object"
 }

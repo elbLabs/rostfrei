@@ -111,6 +111,7 @@ impl rostfrei::Apply<TestEvent> for TestRoot {
 struct TestCommand {
     reject: bool,
     panic: Option<bool>,
+    padding: Option<String>,
 }
 
 #[derive(domain::DomainError)]
@@ -1067,10 +1068,13 @@ async fn correlation_feed_contains_command_domain_integration_and_result_events(
         .correlation_observer(OperationMode::Simulate)
         .observe_integration_event(
             &queued.correlation_id,
-            IntegrationEventObservation::new("test-event-published", 1)
-                .with_message_id("integration-1")
-                .with_subject("test.integration.test-context.test-event-published")
-                .with_payload(json!({ "public": true })),
+            IntegrationEventObservation::new(
+                "integration-1",
+                "test-event-published",
+                1,
+                "test.integration.test-context.test-event-published",
+            )
+            .with_payload(json!({ "public": true })),
         )
         .await
         .unwrap();
@@ -1110,7 +1114,12 @@ async fn correlation_feed_contains_command_domain_integration_and_result_events(
             .correlation_observer(OperationMode::Simulate)
             .observe_integration_event(
                 "unknown-correlation",
-                IntegrationEventObservation::new("ignored", 1),
+                IntegrationEventObservation::new(
+                    "ignored-1",
+                    "ignored",
+                    1,
+                    "test.integration.ignored",
+                ),
             )
             .await,
         Err(CorrelationError::NotFound)
@@ -1138,8 +1147,13 @@ async fn correlation_observer_exposes_payloads_only_when_configured() {
         .correlation_observer(OperationMode::Simulate)
         .observe_integration_event(
             &queued.correlation_id,
-            IntegrationEventObservation::new("visible-event", 1)
-                .with_payload(json!({ "visible": true })),
+            IntegrationEventObservation::new(
+                "visible-event-1",
+                "visible-event",
+                1,
+                "test.integration.visible-event",
+            )
+            .with_payload(json!({ "visible": true })),
         )
         .await
         .unwrap();
@@ -1147,8 +1161,13 @@ async fn correlation_observer_exposes_payloads_only_when_configured() {
         .correlation_observer(OperationMode::Simulate)
         .observe_integration_event(
             &queued.correlation_id,
-            IntegrationEventObservation::new("oversized-visible-event", 1)
-                .with_payload(json!({ "value": "x".repeat(128 * 1024) })),
+            IntegrationEventObservation::new(
+                "oversized-visible-event-1",
+                "oversized-visible-event",
+                1,
+                "test.integration.oversized-visible-event",
+            )
+            .with_payload(json!({ "value": "x".repeat(128 * 1024) })),
         )
         .await
         .unwrap();
@@ -1198,7 +1217,12 @@ async fn correlation_observers_reject_events_from_another_environment() {
             .correlation_observer(OperationMode::Test)
             .observe_integration_event(
                 &queued.correlation_id,
-                IntegrationEventObservation::new("test-event", 1),
+                IntegrationEventObservation::new(
+                    "test-event-1",
+                    "test-event",
+                    1,
+                    "test.integration.test-event",
+                ),
             )
             .await
             .is_ok()
@@ -1208,7 +1232,12 @@ async fn correlation_observers_reject_events_from_another_environment() {
             .correlation_observer(OperationMode::Dispatch)
             .observe_integration_event(
                 &queued.correlation_id,
-                IntegrationEventObservation::new("production-event", 1),
+                IntegrationEventObservation::new(
+                    "production-event-1",
+                    "production-event",
+                    1,
+                    "production.integration.production-event",
+                ),
             )
             .await,
         Err(CorrelationError::InvalidId(_))
@@ -1635,11 +1664,14 @@ async fn failures_after_puback_are_indeterminate_and_preserve_publication_eviden
         correlation.next().await.unwrap().kind,
         CorrelationEventKind::Command { .. }
     ));
-    let CorrelationEventKind::CommandResult {
-        outcome, result, ..
-    } = correlation.next().await.unwrap().kind
-    else {
-        panic!("expected an indeterminate command result");
+    let (outcome, result) = loop {
+        let event = correlation.next().await.unwrap();
+        if let CorrelationEventKind::CommandResult {
+            outcome, result, ..
+        } = event.kind
+        {
+            break (outcome, result);
+        }
     };
     assert_eq!(
         serde_json::to_value(outcome).unwrap(),
@@ -1950,14 +1982,14 @@ impl StaticTestRepository {
         clippy::unwrap_used,
         reason = "the inline test definition must be valid"
     )]
-    fn one(yaml: &str) -> Self {
-        let definition = TestDefinition::from_yaml(yaml).unwrap();
+    fn one(value: Value) -> Self {
+        let definition = TestDefinition::from_json_value(value).unwrap();
         let revision = TestDefinitionRevision {
             revision: "test-revision".to_owned(),
             definition,
         };
         Self {
-            definitions: BTreeMap::from([(revision.definition.id.clone(), revision)]),
+            definitions: BTreeMap::from([(revision.definition.id().to_owned(), revision)]),
         }
     }
 }
@@ -1981,42 +2013,46 @@ impl TestRepository for StaticTestRepository {
     }
 }
 
-fn behavioral_test_yaml(outcome: &str, setup: bool, trace: &str) -> String {
-    let setup = if setup {
-        r"
-  commands:
-    - name: test-command
-      schemaVersion: 1
-      aggregate:
-        type: test-context/test-aggregate
-        id: aggregate-1
-      payload:
-        reject: false
-"
-    } else {
-        ""
-    };
-    format!(
-        r"schemaVersion: 1
-id: behavioral-test
-name: Behavioral test
-given:
-  fixture: test-fixture
-{setup}when:
-  command:
-    name: test-command
-    schemaVersion: 1
-    aggregate:
-      type: test-context/test-aggregate
-      id: aggregate-1
-    payload:
-      reject: {reject}
-then:
-  outcome: {outcome}
-  within: 2s
-{trace}",
-        reject = outcome != "accepted",
-    )
+fn behavioral_test_definition(outcome: &Value, setup: bool) -> Value {
+    let setup_commands = setup.then(|| {
+        json!({
+            "name": COMMAND_NAME,
+            "schemaVersion": 1,
+            "aggregate": {
+                "type": AGGREGATE_TYPE,
+                "id": "aggregate-1"
+            },
+            "payload": { "reject": false }
+        })
+    });
+    let reject = outcome != &json!("accepted");
+    json!({
+        "schemaVersion": 1,
+        "id": "behavioral-test",
+        "name": "Behavioral test",
+        "setup": {
+            "fixture": "test-fixture",
+            "commands": setup_commands.into_iter().collect::<Vec<_>>()
+        },
+        "expected": {
+            "within": "2s",
+            "settleFor": "1ms",
+            "graphs": [{
+                "nodes": [{
+                    "kind": "command",
+                    "key": "subject",
+                    "name": COMMAND_NAME,
+                    "schemaVersion": 1,
+                    "aggregate": {
+                        "type": AGGREGATE_TYPE,
+                        "id": "aggregate-1"
+                    },
+                    "payload": { "reject": reject },
+                    "outcome": outcome
+                }]
+            }]
+        }
+    })
 }
 
 #[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
@@ -2043,14 +2079,14 @@ async fn behavioral_test_runs_setup_and_subject_through_the_test_transport() {
     let transport = FakeTransport::accepted("behavioral", false);
     let invocations = Arc::clone(&transport.invocations);
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
-        &behavioral_test_yaml("accepted", true, ""),
+        behavioral_test_definition(&json!("accepted"), true),
     ));
     let tracer = behavioral_tracer(Arc::new(transport), repository);
 
     let report = tracer.run_test("behavioral-test").await.unwrap();
 
     assert_eq!(report.status, TestReportStatus::Passed);
-    assert_eq!(report.revision, "test-revision");
+    assert_eq!(report.revision.as_deref(), Some("test-revision"));
     assert_eq!(invocations.lock().await.len(), 2);
 }
 
@@ -2065,16 +2101,17 @@ async fn behavioral_test_accepts_an_expected_business_rejection() {
             None,
         ),
     );
-    let yaml = behavioral_test_yaml("\n    rejected:\n      code: TEST_REJECTION", false, "");
-    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(&yaml));
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
+        behavioral_test_definition(&json!({ "rejected": { "code": "TEST_REJECTION" } }), false),
+    ));
     let tracer = behavioral_tracer(Arc::new(transport), repository);
 
     let report = tracer.run_test("behavioral-test").await.unwrap();
 
     assert_eq!(report.status, TestReportStatus::Passed);
     assert_eq!(
-        report.outcome,
-        Some(rostfrei_tracer::CorrelationCommandOutcome::Rejected)
+        serde_json::to_value(report.command_outcome.unwrap()).unwrap()["outcome"]["status"],
+        "rejected"
     );
 }
 
@@ -2084,8 +2121,9 @@ async fn behavioral_test_accepts_an_expected_business_rejection() {
     reason = "the test fixture and bounded waits must succeed"
 )]
 async fn behavioral_timeout_cancels_the_command_before_reset() {
-    let yaml = behavioral_test_yaml("accepted", false, "").replace("within: 2s", "within: 20ms");
-    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(&yaml));
+    let mut definition = behavioral_test_definition(&json!("accepted"), false);
+    definition["expected"]["within"] = json!("20ms");
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(definition));
     let tracer = behavioral_tracer(Arc::new(HangingTransport), repository);
 
     let report = tokio::time::timeout(
@@ -2097,7 +2135,13 @@ async fn behavioral_timeout_cancels_the_command_before_reset() {
     .unwrap();
 
     assert_eq!(report.status, TestReportStatus::Failed);
-    assert_eq!(report.failure.unwrap().code, "deadline-exceeded");
+    assert!(
+        report
+            .comparison
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "timeout-before-expectations")
+    );
     tokio::time::timeout(
         std::time::Duration::from_secs(1),
         tracer.reset_test_scenario(),
@@ -2141,15 +2185,18 @@ async fn behavioral_test_waits_for_correlated_event_expectations() {
         correlation_id: Arc::clone(&correlation_id),
         invoked: Arc::clone(&invoked),
     };
-    let trace = r"  trace:
-    contains:
-      - kind: integration-event
-        name: test-published
-        schemaVersion: 1
-";
-    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
-        &behavioral_test_yaml("accepted", false, trace),
-    ));
+    let mut definition = behavioral_test_definition(&json!("accepted"), false);
+    definition["expected"]["graphs"][0]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "kind": "integration-event",
+            "key": "test-published",
+            "parentKey": "subject",
+            "name": "test-published",
+            "schemaVersion": 1
+        }));
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(definition));
     let tracer = behavioral_tracer(Arc::new(transport), repository);
     let run_tracer = tracer.clone();
     let run = tokio::spawn(async move { run_tracer.run_test("behavioral-test").await });
@@ -2160,22 +2207,426 @@ async fn behavioral_test_waits_for_correlated_event_expectations() {
         .correlation_observer(OperationMode::Test)
         .observe_integration_event(
             &correlation_id,
-            IntegrationEventObservation::new("test-published", 1),
+            IntegrationEventObservation::new(
+                "test-published-message",
+                "test-published",
+                1,
+                "test.integration.test-published",
+            )
+            .with_causation_id("observed-command"),
         )
         .await
         .unwrap();
     let report = run.await.unwrap().unwrap();
 
     assert_eq!(report.status, TestReportStatus::Passed);
-    assert!(report.expectations[0].matched_event_id.is_some());
+    assert!(report.comparison.matches.iter().any(|matched| {
+        matched.expected_key == "test-published"
+            && matched.observed_message_id == "test-published-message"
+    }));
+    assert_eq!(
+        report.operation_href,
+        format!("/operations/{}", report.operation_id)
+    );
+    assert_eq!(
+        report.correlation_events_href,
+        format!("/correlations/{}/events", report.correlation_id)
+    );
+}
+
+#[tokio::test]
+async fn behavioral_deadline_preserves_the_latest_mismatch_diagnostics() {
+    let correlation_id = Arc::new(Mutex::new(None));
+    let invoked = Arc::new(Notify::new());
+    let transport = ObservableTransport {
+        correlation_id: Arc::clone(&correlation_id),
+        invoked: Arc::clone(&invoked),
+    };
+    let mut definition = behavioral_test_definition(&json!("accepted"), false);
+    definition["expected"]["within"] = json!("100ms");
+    definition["expected"]["graphs"][0]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "kind": "integration-event",
+            "key": "test-published",
+            "parentKey": "subject",
+            "name": "test-published",
+            "schemaVersion": 1,
+            "payload": { "result": "expected" }
+        }));
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(definition));
+    let tracer = behavioral_tracer(Arc::new(transport), repository);
+    let run_tracer = tracer.clone();
+    let run = tokio::spawn(async move { run_tracer.run_test("behavioral-test").await });
+    invoked.notified().await;
+    let correlation_id = correlation_id.lock().await.clone().unwrap();
+
+    tracer
+        .correlation_observer(OperationMode::Test)
+        .observe_integration_event(
+            &correlation_id,
+            IntegrationEventObservation::new(
+                "test-published-message",
+                "test-published",
+                1,
+                "test.integration.test-published",
+            )
+            .with_causation_id("observed-command")
+            .with_payload(json!({ "result": "observed" })),
+        )
+        .await
+        .unwrap();
+    let report = tokio::time::timeout(std::time::Duration::from_secs(1), run)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(report.status, TestReportStatus::Failed);
+    assert!(report.comparison.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "payload-mismatch"
+            && diagnostic.path == "expected:test-published/payload"
+    }));
+    assert!(
+        report
+            .comparison
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "timeout-before-expectations")
+    );
+}
+
+#[tokio::test]
+async fn behavioral_observation_failure_terminates_without_waiting_for_within() {
+    let correlation_id = Arc::new(Mutex::new(None));
+    let invoked = Arc::new(Notify::new());
+    let transport = ObservableTransport {
+        correlation_id: Arc::clone(&correlation_id),
+        invoked: Arc::clone(&invoked),
+    };
+    let mut definition = behavioral_test_definition(&json!("accepted"), false);
+    definition["expected"]["within"] = json!("10s");
+    definition["expected"]["graphs"][0]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "kind": "integration-event",
+            "key": "test-published",
+            "parentKey": "subject",
+            "name": "test-published",
+            "schemaVersion": 1
+        }));
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(definition));
+    let tracer = behavioral_tracer(Arc::new(transport), repository);
+    let run_tracer = tracer.clone();
+    let run = tokio::spawn(async move { run_tracer.run_test("behavioral-test").await });
+    invoked.notified().await;
+    let correlation_id = correlation_id.lock().await.clone().unwrap();
+
+    tracer
+        .correlation_observer(OperationMode::Test)
+        .record_observation_failure(
+            &correlation_id,
+            "malformed-event",
+            "stored event checksum is invalid",
+        )
+        .await
+        .unwrap();
+    let report = tokio::time::timeout(std::time::Duration::from_secs(1), run)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(report.status, TestReportStatus::Failed);
+    assert!(
+        report
+            .comparison
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "observation-failure")
+    );
 }
 
 #[cfg(feature = "http")]
 #[tokio::test]
-async fn behavioral_tests_are_discoverable_and_runnable_over_http() {
+async fn behavioral_invalid_http_documents_return_structured_client_errors() {
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
-        &behavioral_test_yaml("accepted", false, ""),
+        behavioral_test_definition(&json!("accepted"), false),
     ));
+    let tracer = behavioral_tracer(
+        Arc::new(FakeTransport::accepted("behavioral-http", false)),
+        repository,
+    );
+    let app = http::router(tracer, HttpConfig::new(API_TOKEN).unwrap());
+
+    let malformed = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri("/tests/validate")
+                .header("content-type", "application/json")
+                .body(Body::from("{"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(malformed).await["code"], "invalid-json");
+
+    let unsupported = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri("/tests/validate")
+                .header("content-type", "text/plain")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unsupported.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(
+        json_body(unsupported).await["code"],
+        "unsupported-media-type"
+    );
+
+    let mut semantic = behavioral_test_definition(&json!("accepted"), false);
+    semantic["expected"]["graphs"][0]["nodes"][0]["parentKey"] = json!("missing");
+    let invalid = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri("/test-runs")
+                .header("content-type", "application/json")
+                .body(Body::from(semantic.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let invalid = json_body(invalid).await;
+    assert_eq!(invalid["code"], "invalid-test-definition");
+    assert_eq!(invalid["issues"][0]["code"], "unresolved-parent-key");
+    assert!(
+        invalid["issues"][0]["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("/expected/")
+    );
+
+    let mut unknown = behavioral_test_definition(&json!("accepted"), false);
+    unknown["expected"]["graphs"][0]["nodes"][0]["name"] = json!("unknown-command");
+    let runtime_invalid = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri("/tests/validate")
+                .header("content-type", "application/json")
+                .body(Body::from(unknown.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(runtime_invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let runtime_invalid = json_body(runtime_invalid).await;
+    assert_eq!(runtime_invalid["code"], "invalid-test-definition");
+    assert_eq!(runtime_invalid["issues"][0]["code"], "unknown-command");
+
+    let mut invalid_payload = behavioral_test_definition(&json!("accepted"), false);
+    invalid_payload["expected"]["graphs"][0]["nodes"][0]["payload"]["reject"] =
+        json!("not-a-boolean");
+    let runtime_invalid = app
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri("/test-runs")
+                .header("content-type", "application/json")
+                .body(Body::from(invalid_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(runtime_invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        json_body(runtime_invalid).await["issues"][0]["code"],
+        "invalid-command-payload"
+    );
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn behavioral_validation_reports_the_invalid_setup_command_path() {
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
+        behavioral_test_definition(&json!("accepted"), true),
+    ));
+    let tracer = behavioral_tracer(
+        Arc::new(FakeTransport::accepted("behavioral-http", false)),
+        repository,
+    );
+    let app = http::router(tracer, HttpConfig::new(API_TOKEN).unwrap());
+    let mut definition = behavioral_test_definition(&json!("accepted"), true);
+    definition["setup"]["commands"][0]["aggregate"]["id"] = json!(" aggregate-1");
+
+    let response = app
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri("/tests/validate")
+                .header("content-type", "application/json")
+                .body(Body::from(definition.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = json_body(response).await;
+    assert_eq!(body["code"], "invalid-test-definition");
+    assert_eq!(
+        body["issues"][0],
+        json!({
+            "code": "invalid-aggregate-id",
+            "path": "/setup/commands/0/aggregate/id",
+            "message": "test definition `behavioral-test` has an invalid aggregate ID ` aggregate-1` for command `test-command`: aggregate id must not have leading or trailing whitespace"
+        })
+    );
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn behavioral_validation_reports_a_command_payload_over_one_mib() {
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
+        behavioral_test_definition(&json!("accepted"), false),
+    ));
+    let tracer = behavioral_tracer(
+        Arc::new(FakeTransport::accepted("behavioral-http", false)),
+        repository,
+    );
+    let app = http::router(tracer, HttpConfig::new(API_TOKEN).unwrap());
+    let mut definition = behavioral_test_definition(&json!("accepted"), false);
+    let payload = json!({
+        "reject": false,
+        "padding": "x".repeat(MAX_COMMAND_PAYLOAD_LEN),
+    });
+    let actual = serde_json::to_vec(&payload).unwrap().len();
+    definition["expected"]["graphs"][0]["nodes"][0]["payload"] = payload;
+    let document = definition.to_string();
+    assert!(document.len() < MAX_COMMAND_PAYLOAD_LEN + 64 * 1024);
+
+    let response = app
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri("/tests/validate")
+                .header("content-type", "application/json")
+                .body(Body::from(document))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = json_body(response).await;
+    assert_eq!(body["code"], "invalid-test-definition");
+    assert_eq!(body["issues"][0]["code"], "command-payload-too-large");
+    assert_eq!(
+        body["issues"][0]["path"],
+        "/expected/graphs/0/nodes/0/payload"
+    );
+    assert_eq!(
+        body["issues"][0]["message"],
+        format!(
+            "test definition `behavioral-test` payload for command `test-command` is {actual} bytes and exceeds the configured {MAX_COMMAND_PAYLOAD_LEN}-byte limit"
+        )
+    );
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn behavioral_schema_and_validation_are_hypermedia_driven() {
+    let definition = behavioral_test_definition(&json!("accepted"), false);
+    let repository: Arc<dyn TestRepository> =
+        Arc::new(StaticTestRepository::one(definition.clone()));
+    let tracer = behavioral_tracer(
+        Arc::new(FakeTransport::accepted("behavioral-http", false)),
+        repository,
+    );
+    let app = http::router(tracer, HttpConfig::new(API_TOKEN).unwrap());
+
+    let catalog = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri("/catalog")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(catalog.status(), StatusCode::OK);
+    let catalog = json_body(catalog).await;
+    assert_eq!(catalog["catalogVersion"], 4);
+    assert_eq!(
+        catalog["behavioralTest"],
+        json!({
+            "schemaHref": "/schemas/behavioral-test-v1",
+            "validateHref": "/tests/validate",
+            "runHref": "/test-runs",
+            "definitionsHref": "/tests"
+        })
+    );
+
+    let schema = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(catalog["behavioralTest"]["schemaHref"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(schema.status(), StatusCode::OK);
+    assert_eq!(schema.headers()["cache-control"], "private, no-store");
+    assert_eq!(
+        json_body(schema).await,
+        serde_json::to_value(rostfrei_tracer::behavioral_test_schema()).unwrap()
+    );
+
+    let validation = app
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri(catalog["behavioralTest"]["validateHref"].as_str().unwrap())
+                .header("content-type", "application/json")
+                .body(Body::from(definition.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(validation.status(), StatusCode::OK);
+    let validation = json_body(validation).await;
+    assert_eq!(validation["valid"], true);
+    assert_eq!(validation["definition"], definition);
+    assert_eq!(validation["schemaHref"], "/schemas/behavioral-test-v1");
+    assert_eq!(validation["runHref"], "/test-runs");
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the test verifies the complete shared report contract for three run outcomes"
+)]
+async fn inline_and_persisted_behavioral_runs_share_the_report_contract() {
+    let passing = behavioral_test_definition(&json!("accepted"), false);
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(passing.clone()));
     let tracer = behavioral_tracer(
         Arc::new(FakeTransport::accepted("behavioral-http", false)),
         repository,
@@ -2193,20 +2644,103 @@ async fn behavioral_tests_are_discoverable_and_runnable_over_http() {
         .await
         .unwrap();
     assert_eq!(list.status(), StatusCode::OK);
-    assert_eq!(json_body(list).await["items"][0]["id"], "behavioral-test");
+    let list = json_body(list).await;
+    assert_eq!(list["items"][0]["id"], "behavioral-test");
+    assert_eq!(list["items"][0]["runHref"], "/tests/behavioral-test/runs");
+    assert_eq!(list["items"][0]["definitionHref"], "/tests/behavioral-test");
 
-    let run = app
+    let inline = app
+        .clone()
         .oneshot(
             authorize(Request::builder())
                 .method("POST")
-                .uri("/tests/behavioral-test/runs")
+                .uri("/test-runs")
+                .header("content-type", "application/json")
+                .body(Body::from(passing.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(inline.status(), StatusCode::OK);
+    let inline = json_body(inline).await;
+    assert_eq!(inline["status"], "passed");
+    assert!(inline.get("revision").is_none());
+    assert_eq!(inline["comparison"]["status"], "passed");
+    assert!(
+        !inline["observed"]["messages"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        inline["operationHref"],
+        format!("/operations/{}", inline["operationId"].as_str().unwrap())
+    );
+    assert_eq!(
+        inline["operationEventsHref"],
+        format!(
+            "/operations/{}/events",
+            inline["operationId"].as_str().unwrap()
+        )
+    );
+    assert_eq!(
+        inline["correlationEventsHref"],
+        format!(
+            "/correlations/{}/events",
+            inline["correlationId"].as_str().unwrap()
+        )
+    );
+
+    let mut failing =
+        behavioral_test_definition(&json!({ "rejected": { "code": "TEST_REJECTION" } }), false);
+    failing["expected"]["graphs"][0]["nodes"][0]["payload"]["reject"] = json!(false);
+    let failed = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri("/test-runs")
+                .header("content-type", "application/json")
+                .body(Body::from(failing.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(failed.status(), StatusCode::OK);
+    let failed = json_body(failed).await;
+    assert_eq!(failed["status"], "failed");
+    assert!(
+        failed["comparison"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| issue["code"] == "command-outcome-mismatch")
+    );
+
+    let persisted = app
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri(list["items"][0]["runHref"].as_str().unwrap())
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(run.status(), StatusCode::OK);
-    assert_eq!(run.headers()["cache-control"], "private, no-store");
-    assert_eq!(json_body(run).await["status"], "passed");
+    assert_eq!(persisted.status(), StatusCode::OK);
+    assert_eq!(persisted.headers()["cache-control"], "private, no-store");
+    let persisted = json_body(persisted).await;
+    assert_eq!(persisted["status"], "passed");
+    assert_eq!(persisted["revision"], "test-revision");
+    for field in [
+        "expected",
+        "observed",
+        "comparison",
+        "operationHref",
+        "operationEventsHref",
+        "correlationEventsHref",
+    ] {
+        assert!(persisted.get(field).is_some(), "missing {field}");
+    }
 }
 rostfrei::install_macro_support!();

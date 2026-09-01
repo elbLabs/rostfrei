@@ -9,6 +9,7 @@ use std::{
 };
 
 use rostfrei_core::ContentFingerprint;
+use schemars::{JsonSchema, Schema, schema_for};
 use serde::{
     Deserialize, Serialize,
     de::{self, Deserializer},
@@ -17,43 +18,232 @@ use serde::{
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::{CorrelationCommandOutcome, CorrelationEvent, CorrelationEventKind};
+use crate::{
+    CorrelationCommandOutcome, CorrelationEvent, CorrelationEventKind, ExpectedCommandFields,
+    MessageSeriesDefinition, MessageSeriesValidationIssue,
+};
 
 const TEST_DEFINITION_SCHEMA_VERSION: u32 = 1;
+const BEHAVIORAL_TEST_SCHEMA_ID: &str =
+    "https://rostfrei.dev/schemas/tracer/behavioral-test-v1.schema.json";
 const MAX_TEST_TIMEOUT_MILLIS: u64 = 60_000;
 const MAX_TEST_SETUP_COMMANDS: usize = 32;
 const MAX_TEST_DEFINITIONS: usize = 256;
 const MAX_TEST_DEFINITION_BYTES: usize = 1024 * 1024;
 const MAX_TEST_REPOSITORY_BYTES: usize = 8 * 1024 * 1024;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[schemars(
+    title = "Rostfrei Tracer Behavioral Test",
+    description = "A version 1 typed behavioral test. Runtime validation is authoritative for graph topology, byte-oriented identifier bounds, and the exactly-one-graph behavioral constraint.",
+    extend("$id" = BEHAVIORAL_TEST_SCHEMA_ID)
+)]
 pub struct TestDefinition {
+    #[schemars(with = "TestDefinitionSchemaVersion")]
     #[serde(deserialize_with = "deserialize_definition_schema_version")]
-    pub schema_version: u32,
+    schema_version: u32,
+    #[schemars(with = "TestIdSchema", transform = reserve_validate_id)]
     #[serde(deserialize_with = "deserialize_test_id")]
-    pub id: String,
+    id: String,
+    #[schemars(with = "NonEmptyBehavioralStringSchema")]
     #[serde(deserialize_with = "deserialize_nonempty")]
-    pub name: String,
-    pub given: TestGiven,
-    pub when: TestWhen,
-    pub then: TestThen,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(transform = disallow_null)]
+    setup: Option<TestSetup>,
+    #[schemars(with = "BehavioralExpectedSchema")]
+    expected: MessageSeriesDefinition,
 }
 
 impl TestDefinition {
-    pub fn from_yaml(yaml: impl AsRef<[u8]>) -> Result<Self, serde_yaml::Error> {
-        serde_yaml::from_slice(yaml.as_ref())
+    pub fn from_json_slice(json: impl AsRef<[u8]>) -> Result<Self, TestDefinitionError> {
+        let value = serde_json::from_slice(json.as_ref()).map_err(|error| {
+            TestDefinitionError::new(vec![TestDefinitionValidationIssue::new(
+                "malformed-json",
+                "",
+                error.to_string(),
+            )])
+        })?;
+        Self::from_json_value(value)
+    }
+
+    pub fn from_json_value(value: Value) -> Result<Self, TestDefinitionError> {
+        let wire = serde_json::from_value::<TestDefinitionWire>(value).map_err(|error| {
+            TestDefinitionError::new(vec![TestDefinitionValidationIssue::new(
+                "invalid-test-definition-document",
+                "",
+                error.to_string(),
+            )])
+        })?;
+        Self::from_wire(wire)
+    }
+
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn setup(&self) -> Option<&TestSetup> {
+        self.setup.as_ref()
+    }
+
+    pub const fn expected(&self) -> &MessageSeriesDefinition {
+        &self.expected
+    }
+
+    pub fn expected_graph(&self) -> Option<&crate::MessageGraphDefinition> {
+        self.expected.graphs().first()
+    }
+
+    pub fn subject(&self) -> Option<ExpectedCommandFields<'_>> {
+        self.expected_graph()
+            .and_then(crate::MessageGraphDefinition::root_command)
+    }
+
+    fn from_wire(wire: TestDefinitionWire) -> Result<Self, TestDefinitionError> {
+        let expected =
+            MessageSeriesDefinition::from_json_value(wire.expected).map_err(|error| {
+                TestDefinitionError::new(
+                    error
+                        .into_issues()
+                        .into_iter()
+                        .map(|issue| TestDefinitionValidationIssue::from_message_series(&issue))
+                        .collect(),
+                )
+            })?;
+        if expected.graphs().len() != 1 {
+            return Err(TestDefinitionError::new(vec![
+                TestDefinitionValidationIssue::new(
+                    "invalid-expected-graph-count",
+                    "/expected/graphs",
+                    format!(
+                        "behavioral test expected series must contain exactly one graph; found {}",
+                        expected.graphs().len()
+                    ),
+                ),
+            ]));
+        }
+        Ok(Self {
+            schema_version: wire.schema_version,
+            id: wire.id,
+            name: wire.name,
+            setup: wire.setup,
+            expected,
+        })
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+impl<'de> Deserialize<'de> for TestDefinition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_wire(TestDefinitionWire::deserialize(deserializer)?).map_err(de::Error::custom)
+    }
+}
+
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TestGiven {
+struct TestDefinitionWire {
+    #[serde(deserialize_with = "deserialize_definition_schema_version")]
+    schema_version: u32,
+    #[serde(deserialize_with = "deserialize_test_id")]
+    id: String,
+    #[serde(deserialize_with = "deserialize_nonempty")]
+    name: String,
+    #[serde(default, deserialize_with = "deserialize_present_setup")]
+    setup: Option<TestSetup>,
+    expected: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TestSetup {
+    #[schemars(with = "NonEmptyBehavioralStringSchema")]
     #[serde(deserialize_with = "deserialize_nonempty")]
     pub fixture: String,
     #[serde(default, deserialize_with = "deserialize_setup_commands")]
+    #[schemars(length(max = 32))]
     pub commands: Vec<TestCommand>,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestDefinitionValidationIssue {
+    code: &'static str,
+    path: String,
+    message: String,
+}
+
+impl TestDefinitionValidationIssue {
+    fn new(code: &'static str, path: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            path: path.into(),
+            message: message.into(),
+        }
+    }
+
+    fn from_message_series(issue: &MessageSeriesValidationIssue) -> Self {
+        let path = if issue.path().is_empty() {
+            "/expected".to_owned()
+        } else {
+            format!("/expected{}", issue.path())
+        };
+        Self::new(issue.code(), path, issue.message())
+    }
+
+    pub const fn code(&self) -> &'static str {
+        self.code
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TestDefinitionError {
+    issues: Vec<TestDefinitionValidationIssue>,
+}
+
+impl TestDefinitionError {
+    const fn new(issues: Vec<TestDefinitionValidationIssue>) -> Self {
+        Self { issues }
+    }
+
+    pub fn issues(&self) -> &[TestDefinitionValidationIssue] {
+        &self.issues
+    }
+
+    pub fn into_issues(self) -> Vec<TestDefinitionValidationIssue> {
+        self.issues
+    }
+}
+
+impl fmt::Display for TestDefinitionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "behavioral test definition contains {} validation issue(s)",
+            self.issues.len()
+        )
+    }
+}
+
+impl std::error::Error for TestDefinitionError {}
 
 fn deserialize_setup_commands<'de, D>(deserializer: D) -> Result<Vec<TestCommand>, D::Error>
 where
@@ -68,39 +258,35 @@ where
     Ok(commands)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TestWhen {
-    pub command: TestCommand,
+fn deserialize_present_setup<'de, D>(deserializer: D) -> Result<Option<TestSetup>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    TestSetup::deserialize(deserializer).map(Some)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TestCommand {
+    #[schemars(with = "NonEmptyBehavioralStringSchema")]
     #[serde(deserialize_with = "deserialize_nonempty")]
     pub name: String,
+    #[schemars(range(min = 1))]
     #[serde(deserialize_with = "deserialize_positive_schema_version")]
     pub schema_version: u32,
     pub aggregate: TestAggregate,
     pub payload: Value,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TestAggregate {
+    #[schemars(rename = "type", with = "NonEmptyBehavioralStringSchema")]
     #[serde(rename = "type", deserialize_with = "deserialize_nonempty")]
     pub aggregate_type: String,
+    #[schemars(with = "NonEmptyBehavioralStringSchema")]
     #[serde(deserialize_with = "deserialize_nonempty")]
     pub id: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TestThen {
-    pub outcome: TestOutcome,
-    pub within: TestTimeout,
-    #[serde(default)]
-    pub trace: TestTrace,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -300,6 +486,7 @@ pub struct TestDefinitionSummary {
     pub id: String,
     pub name: String,
     pub revision: String,
+    pub definition_href: String,
     pub run_href: String,
 }
 
@@ -316,6 +503,7 @@ impl TestDefinitionRevision {
             id: self.definition.id.clone(),
             name: self.definition.name.clone(),
             revision: self.revision.clone(),
+            definition_href: format!("/tests/{}", self.definition.id),
             run_href: format!("/tests/{}/runs", self.definition.id),
         }
     }
@@ -336,33 +524,23 @@ pub enum TestReportStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TestExpectationResult {
-    pub expectation: TraceExpectation,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub matched_event_id: Option<u64>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TestReportFailure {
-    pub code: &'static str,
-    pub message: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TestReport {
     pub run_id: String,
     pub test_id: String,
-    pub revision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
     pub status: TestReportStatus,
+    pub expected: MessageSeriesDefinition,
+    pub observed: crate::ObservedMessageSeries,
+    pub comparison: crate::MessageSeriesComparison,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_outcome: Option<crate::ObservedCommandOutcome>,
     pub operation_id: String,
     pub correlation_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub outcome: Option<CorrelationCommandOutcome>,
-    pub expectations: Vec<TestExpectationResult>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub failure: Option<TestReportFailure>,
+    pub operation_href: String,
+    pub operation_events_href: String,
+    pub correlation_events_href: String,
+    pub operation: crate::OperationSnapshot,
 }
 
 pub trait TestRepository: Send + Sync {
@@ -380,11 +558,20 @@ impl FilesystemTestRepository {
     pub fn load(root: impl AsRef<Path>) -> Result<Self, TestRepositoryError> {
         let entries = fs::read_dir(root).map_err(|_| TestRepositoryError::RepositoryUnreadable)?;
         let mut candidates = Vec::new();
+        let mut legacy_candidates = Vec::new();
         for entry in entries {
             let entry = entry.map_err(|_| TestRepositoryError::RepositoryUnreadable)?;
-            if is_yaml_file_name(&entry.path()) {
+            if is_json_file_name(&entry.path()) {
                 candidates.push((entry.file_name(), entry.path()));
+            } else if is_legacy_yaml_file_name(&entry.path()) {
+                legacy_candidates.push(entry.file_name());
             }
+        }
+        legacy_candidates.sort();
+        if let Some(file) = legacy_candidates.first() {
+            return Err(TestRepositoryError::LegacyYamlDefinition {
+                file: file.to_string_lossy().into_owned(),
+            });
         }
         candidates.sort_by(|left, right| left.0.cmp(&right.0));
 
@@ -425,12 +612,12 @@ impl FilesystemTestRepository {
                 .filter(|total| *total <= MAX_TEST_REPOSITORY_BYTES)
                 .ok_or(TestRepositoryError::RepositoryTooLarge)?;
 
-            serde_yaml::from_slice::<serde_yaml::Value>(&bytes)
+            let value = serde_json::from_slice::<Value>(&bytes)
                 .map_err(|_| TestRepositoryError::MalformedDefinition { file: file.clone() })?;
-            let definition = TestDefinition::from_yaml(&bytes).map_err(|error| {
+            let definition = TestDefinition::from_json_value(value).map_err(|error| {
                 TestRepositoryError::InvalidDefinition {
                     file: file.clone(),
-                    message: error.to_string(),
+                    issues: error.into_issues(),
                 }
             })?;
             let revision = ContentFingerprint::digest(&bytes).to_string();
@@ -493,10 +680,15 @@ pub enum TestRepositoryError {
     DefinitionTooLarge { file: String },
     #[error("test repository definitions exceed 8 MiB in total")]
     RepositoryTooLarge,
-    #[error("test definition file `{file}` contains malformed YAML")]
+    #[error("test definition file `{file}` contains malformed JSON")]
     MalformedDefinition { file: String },
-    #[error("test definition file `{file}` is invalid: {message}")]
-    InvalidDefinition { file: String, message: String },
+    #[error("legacy YAML test definition `{file}` must be migrated to canonical JSON")]
+    LegacyYamlDefinition { file: String },
+    #[error("test definition file `{file}` is invalid")]
+    InvalidDefinition {
+        file: String,
+        issues: Vec<TestDefinitionValidationIssue>,
+    },
     #[error("duplicate test definition ID `{id}` in `{first}` and `{second}`")]
     DuplicateId {
         id: String,
@@ -591,9 +783,15 @@ pub fn outcome_matches(
     }
 }
 
-fn is_yaml_file_name(path: &Path) -> bool {
+fn is_json_file_name(path: &Path) -> bool {
     path.extension()
-        .is_some_and(|extension| extension == "yaml" || extension == "yml")
+        .is_some_and(|extension| extension == "json")
+}
+
+fn is_legacy_yaml_file_name(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension, "yaml" | "yml"))
 }
 
 fn deserialize_definition_schema_version<'de, D>(deserializer: D) -> Result<u32, D::Error>
@@ -647,348 +845,379 @@ where
             .next()
             .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
         && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
-    if valid {
+    if valid && value != "validate" {
         Ok(value)
     } else {
         Err(de::Error::custom(
-            "test ID must contain at most 128 lowercase ASCII letters, digits, or hyphens and start with a letter or digit",
+            "test ID must contain at most 128 lowercase ASCII letters, digits, or hyphens, start with a letter or digit, and not be the reserved value `validate`",
         ))
     }
 }
 
+pub fn behavioral_test_definition_schema() -> Schema {
+    let mut schema = schema_for!(TestDefinition);
+    crate::message_series::add_unsigned_integer_maxima(&mut schema);
+    schema
+}
+
+fn disallow_null(schema: &mut Schema) {
+    if let Some(options) = schema
+        .as_object_mut()
+        .and_then(|schema| schema.get_mut("anyOf"))
+        .and_then(Value::as_array_mut)
+    {
+        options.retain(|option| option.get("type").and_then(Value::as_str) != Some("null"));
+    }
+}
+
+fn reserve_validate_id(schema: &mut Schema) {
+    schema.insert("not".to_owned(), serde_json::json!({ "const": "validate" }));
+}
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[schemars(transparent)]
+struct TestDefinitionSchemaVersion(#[schemars(range(min = 1, max = 1))] u32);
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[schemars(transparent)]
+struct TestIdSchema(
+    #[schemars(length(min = 1, max = 128), regex(pattern = r"^[a-z0-9][a-z0-9-]*$"))] String,
+);
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[schemars(transparent)]
+struct NonEmptyBehavioralStringSchema(#[schemars(regex(pattern = r"\S"))] String);
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[schemars(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    description = "Exactly one causal graph. Runtime validation additionally enforces root, key, parent, and cycle semantics that JSON Schema cannot express."
+)]
+struct BehavioralExpectedSchema {
+    within: BehavioralTimeoutSchema,
+    settle_for: BehavioralTimeoutSchema,
+    #[schemars(length(min = 1, max = 1))]
+    graphs: Vec<crate::MessageGraphDefinition>,
+}
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[schemars(transparent)]
+struct BehavioralTimeoutSchema(
+    #[schemars(regex(
+        pattern = r"^0*(?:(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|60000)ms|(?:[1-9]|[1-5][0-9]|60)s)$"
+    ))]
+    String,
+);
+
 #[cfg(test)]
 mod tests {
-    use std::{fs, time::Duration};
+    use std::fs;
 
-    use serde_json::json;
+    use serde_json::{Value, json};
     use tempfile::tempdir;
 
     use super::*;
 
-    const MINIMAL_ACCEPTED: &str = r"
-schemaVersion: 1
-id: rent-a-bike
-name: Rent a bike
-given:
-  fixture: available-bike
-when:
-  command:
-    name: start-rental
-    schemaVersion: 1
-    aggregate:
-      type: rental/rental
-      id: rental-1
-    payload:
-      bicycleId: bicycle-1
-then:
-  outcome: accepted
-  within: 2s
-";
+    fn definition(id: &str) -> Value {
+        json!({
+            "schemaVersion": 1,
+            "id": id,
+            "name": "Rent a bike",
+            "setup": {
+                "fixture": "available-bike",
+                "commands": [{
+                    "name": "register-bike",
+                    "schemaVersion": 1,
+                    "aggregate": { "type": "rental/bicycle", "id": "bike-1" },
+                    "payload": {}
+                }]
+            },
+            "expected": {
+                "within": "2s",
+                "settleFor": "250ms",
+                "graphs": [{
+                    "nodes": [{
+                        "kind": "command",
+                        "key": "subject",
+                        "name": "rent-bicycle",
+                        "schemaVersion": 1,
+                        "aggregate": { "type": "rental/rental", "id": "rental-1" },
+                        "payload": { "bicycleId": "bike-1" },
+                        "outcome": "accepted"
+                    }]
+                }]
+            }
+        })
+    }
 
-    fn write_definition(root: &Path, file: &str, content: &str) {
-        fs::write(root.join(file), content).expect("write test definition");
+    fn write_definition(root: &Path, file: &str, value: &Value) -> Vec<u8> {
+        let bytes = serde_json::to_vec_pretty(value).unwrap();
+        fs::write(root.join(file), &bytes).unwrap();
+        bytes
+    }
+
+    fn issue_codes(error: &TestDefinitionError) -> Vec<&'static str> {
+        error
+            .issues()
+            .iter()
+            .map(TestDefinitionValidationIssue::code)
+            .collect()
     }
 
     #[test]
-    fn parses_and_serializes_three_document_styles() {
-        let minimal = TestDefinition::from_yaml(MINIMAL_ACCEPTED).expect("minimal definition");
-        assert!(minimal.given.commands.is_empty());
-        assert!(minimal.then.trace.contains.is_empty());
-        assert!(minimal.then.outcome.is_accepted());
+    fn strict_json_contract_exposes_setup_expected_and_executable_subject() {
+        let value = definition("rent-a-bike");
+        let parsed = TestDefinition::from_json_value(value.clone()).unwrap();
 
-        let traced = TestDefinition::from_yaml(format!(
-            "{MINIMAL_ACCEPTED}\n  trace:\n    contains:\n      - kind: domain-event\n        name: rental-started\n        schemaVersion: 1\n        payload:\n          bicycleId: bicycle-1\n      - kind: integration-event\n        name: bicycle-rented\n        schemaVersion: 2\n"
-        ));
+        assert_eq!(parsed.schema_version(), 1);
+        assert_eq!(parsed.id(), "rent-a-bike");
+        assert_eq!(parsed.setup().unwrap().commands.len(), 1);
+        assert_eq!(parsed.expected().graphs().len(), 1);
+        assert_eq!(parsed.subject().unwrap().key, "subject");
         assert_eq!(
-            traced.expect("traced definition").then.trace.contains.len(),
-            2
+            parsed.subject().unwrap().to_test_command().name,
+            "rent-bicycle"
         );
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), value);
+        assert!(TestDefinition::from_json_value(definition("validate")).is_err());
 
-        let rejected = TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace(
-            "outcome: accepted",
-            "outcome:\n    rejected:\n      code: BIKE_UNAVAILABLE\n      payload:\n        bicycleId: bicycle-1",
-        ))
-        .expect("rejected definition");
+        let without_setup = {
+            let mut value = definition("without-setup");
+            value.as_object_mut().unwrap().remove("setup");
+            value
+        };
+        assert!(
+            TestDefinition::from_json_value(without_setup)
+                .unwrap()
+                .setup()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn behavioral_tests_reject_multiple_graphs_but_generic_series_accept_them() {
+        let mut value = definition("two-graphs");
+        let graph = value["expected"]["graphs"][0].clone();
+        value["expected"]["graphs"]
+            .as_array_mut()
+            .unwrap()
+            .push(graph);
+
+        let generic = MessageSeriesDefinition::from_json_value(value["expected"].clone()).unwrap();
+        assert_eq!(generic.graphs().len(), 2);
+        let error = TestDefinition::from_json_value(value).unwrap_err();
+        assert_eq!(issue_codes(&error), ["invalid-expected-graph-count"]);
+        assert_eq!(error.issues()[0].path(), "/expected/graphs");
+    }
+
+    #[test]
+    fn distinguishes_malformed_json_from_typed_and_semantic_validation() {
+        let malformed = TestDefinition::from_json_slice(b"{").unwrap_err();
+        assert_eq!(issue_codes(&malformed), ["malformed-json"]);
+
+        let mut typed = definition("typed-invalid");
+        typed["unknown"] = Value::Bool(true);
         assert_eq!(
-            rejected.then.outcome.rejection().expect("rejection").code,
-            "BIKE_UNAVAILABLE"
+            issue_codes(&TestDefinition::from_json_value(typed).unwrap_err()),
+            ["invalid-test-definition-document"]
+        );
+        let mut null_setup = definition("null-setup");
+        null_setup["setup"] = Value::Null;
+        assert_eq!(
+            issue_codes(&TestDefinition::from_json_value(null_setup).unwrap_err()),
+            ["invalid-test-definition-document"]
         );
 
-        let serialized = serde_yaml::to_string(&rejected).expect("serialize definition");
-        assert!(serialized.contains("within: 2s"));
-        assert!(serialized.contains("rejected:"));
-    }
-
-    #[test]
-    fn parses_setup_commands_and_canonicalizes_timeout() {
-        let definition = TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace(
-            "  fixture: available-bike",
-            "  fixture: available-bike\n  commands:\n    - name: register-bike\n      schemaVersion: 1\n      aggregate:\n        type: rental/bicycle\n        id: bicycle-1\n      payload: {}",
-        ))
-        .expect("definition with setup command");
-        assert_eq!(definition.given.commands.len(), 1);
-
-        let timeout: TestTimeout = "1000ms".parse().expect("timeout");
-        assert_eq!(timeout.as_duration(), Duration::from_secs(1));
-        assert_eq!(serde_yaml::to_string(&timeout).unwrap(), "1s\n");
-    }
-
-    #[test]
-    fn rejects_more_than_thirty_two_setup_commands() {
-        let command = "    - name: register-bike\n      schemaVersion: 1\n      aggregate:\n        type: rental/bicycle\n        id: bicycle-1\n      payload: {}\n";
-        let commands = (0..=MAX_TEST_SETUP_COMMANDS)
-            .map(|_| command)
-            .collect::<String>();
-        let yaml = MINIMAL_ACCEPTED.replace(
-            "  fixture: available-bike",
-            &format!("  fixture: available-bike\n  commands:\n{commands}"),
-        );
-
-        assert!(TestDefinition::from_yaml(yaml).is_err());
-    }
-
-    #[test]
-    fn rejects_malformed_unknown_and_invalid_documents() {
-        assert!(TestDefinition::from_yaml("schemaVersion: [").is_err());
-        assert!(TestDefinition::from_yaml(format!("{MINIMAL_ACCEPTED}unknown: true")).is_err());
+        let mut semantic = definition("semantic-invalid");
+        semantic["expected"]["graphs"][0]["nodes"][0]["parentKey"] = Value::from("missing");
+        let error = TestDefinition::from_json_value(semantic).unwrap_err();
+        assert!(issue_codes(&error).contains(&"unresolved-parent-key"));
         assert!(
-            TestDefinition::from_yaml(
-                MINIMAL_ACCEPTED.replace("schemaVersion: 1", "schemaVersion: 2")
-            )
-            .is_err()
-        );
-        assert!(
-            TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace("within: 2s", "within: 0ms"))
-                .is_err()
-        );
-        assert!(
-            TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace("within: 2s", "within: 61s"))
-                .is_err()
-        );
-        assert!(
-            TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace("id: rent-a-bike", "id: Bad_ID"))
-                .is_err()
-        );
-        assert!(
-            TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace("name: Rent a bike", "name: ''"))
-                .is_err()
-        );
-        assert!(
-            TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace(
-                "schemaVersion: 1\n    aggregate:",
-                "schemaVersion: 0\n    aggregate:"
-            ))
-            .is_err()
+            error
+                .issues()
+                .iter()
+                .any(|issue| issue.path().starts_with("/expected/graphs/0"))
         );
     }
 
     #[test]
-    fn repository_sorts_definitions_and_hashes_exact_bytes() {
+    fn setup_and_scalar_bounds_are_strict() {
+        let mut too_many = definition("too-many");
+        let command = too_many["setup"]["commands"][0].clone();
+        too_many["setup"]["commands"] = Value::Array(vec![command; MAX_TEST_SETUP_COMMANDS + 1]);
+        assert!(TestDefinition::from_json_value(too_many).is_err());
+
+        for (pointer, invalid) in [
+            ("/schemaVersion", json!(2)),
+            ("/id", json!("Bad_ID")),
+            ("/name", json!("  ")),
+            ("/expected/within", json!("61s")),
+            ("/expected/settleFor", json!("0ms")),
+        ] {
+            let mut value = definition("invalid-bound");
+            *value.pointer_mut(pointer).unwrap() = invalid;
+            assert!(TestDefinition::from_json_value(value).is_err(), "{pointer}");
+        }
+    }
+
+    #[test]
+    fn repository_loads_only_sorted_immediate_json_and_hashes_exact_bytes() {
         let directory = tempdir().unwrap();
-        let second = MINIMAL_ACCEPTED.replace("rent-a-bike", "z-last");
-        let first = MINIMAL_ACCEPTED.replace("rent-a-bike", "a-first");
-        write_definition(directory.path(), "02.yaml", &second);
-        write_definition(directory.path(), "01.yml", &first);
-        write_definition(directory.path(), "ignored.txt", "not YAML");
+        let second = write_definition(directory.path(), "02.json", &definition("z-last"));
+        let first = write_definition(directory.path(), "01.json", &definition("a-first"));
+        fs::write(directory.path().join("ignored.txt"), "not: json").unwrap();
+        fs::create_dir(directory.path().join("nested")).unwrap();
+        write_definition(
+            &directory.path().join("nested"),
+            "nested.json",
+            &definition("nested"),
+        );
 
         let repository = FilesystemTestRepository::load(directory.path()).unwrap();
-        let collection = repository.list();
         assert_eq!(
-            collection
+            repository
+                .list()
                 .items
                 .iter()
                 .map(|item| item.id.as_str())
                 .collect::<Vec<_>>(),
             ["a-first", "z-last"]
         );
-        assert_eq!(collection.items[0].run_href, "/tests/a-first/runs");
         assert_eq!(
             repository.get("a-first").unwrap().revision,
-            ContentFingerprint::digest(first.as_bytes()).to_string()
+            ContentFingerprint::digest(&first).to_string()
         );
-        assert_eq!(
-            repository.get("missing"),
-            Err(TestRepositoryError::NotFound("missing".to_owned()))
+        assert_ne!(
+            ContentFingerprint::digest(first),
+            ContentFingerprint::digest(second)
         );
     }
 
     #[test]
-    fn repository_rejects_duplicate_ids_and_bad_files() {
-        let duplicates = tempdir().unwrap();
-        write_definition(duplicates.path(), "a.yaml", MINIMAL_ACCEPTED);
-        write_definition(duplicates.path(), "b.yml", MINIMAL_ACCEPTED);
-        assert!(matches!(
-            FilesystemTestRepository::load(duplicates.path()),
-            Err(TestRepositoryError::DuplicateId { id, first, second })
-                if id == "rent-a-bike" && first == "a.yaml" && second == "b.yml"
-        ));
+    fn repository_reports_legacy_yaml_that_requires_migration() {
+        let directory = tempdir().unwrap();
+        fs::write(directory.path().join("legacy.yaml"), "given: []").unwrap();
 
+        assert_eq!(
+            FilesystemTestRepository::load(directory.path()).unwrap_err(),
+            TestRepositoryError::LegacyYamlDefinition {
+                file: "legacy.yaml".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn repository_distinguishes_malformed_invalid_and_duplicate_definitions() {
         let malformed = tempdir().unwrap();
-        write_definition(malformed.path(), "broken.yaml", "schemaVersion: [");
+        fs::write(malformed.path().join("broken.json"), "{").unwrap();
         assert_eq!(
             FilesystemTestRepository::load(malformed.path()).unwrap_err(),
             TestRepositoryError::MalformedDefinition {
-                file: "broken.yaml".to_owned()
+                file: "broken.json".to_owned()
             }
         );
 
         let invalid = tempdir().unwrap();
-        write_definition(
-            invalid.path(),
-            "invalid.yml",
-            &MINIMAL_ACCEPTED.replace("within: 2s", "within: later"),
-        );
+        let mut invalid_value = definition("invalid");
+        invalid_value["expected"]["graphs"] = json!([]);
+        write_definition(invalid.path(), "invalid.json", &invalid_value);
         assert!(matches!(
             FilesystemTestRepository::load(invalid.path()),
-            Err(TestRepositoryError::InvalidDefinition { file, .. }) if file == "invalid.yml"
+            Err(TestRepositoryError::InvalidDefinition { file, issues })
+                if file == "invalid.json" && !issues.is_empty()
+        ));
+
+        let duplicate = tempdir().unwrap();
+        write_definition(duplicate.path(), "a.json", &definition("same"));
+        write_definition(duplicate.path(), "b.json", &definition("same"));
+        assert!(matches!(
+            FilesystemTestRepository::load(duplicate.path()),
+            Err(TestRepositoryError::DuplicateId { id, first, second })
+                if id == "same" && first == "a.json" && second == "b.json"
         ));
     }
 
     #[cfg(unix)]
     #[test]
-    fn repository_rejects_yaml_symlinks() {
+    fn repository_rejects_json_symlinks_and_nonregular_candidates() {
         use std::os::unix::fs::symlink;
 
-        let directory = tempdir().unwrap();
-        write_definition(directory.path(), "target.txt", MINIMAL_ACCEPTED);
+        let linked = tempdir().unwrap();
+        write_definition(linked.path(), "target.txt", &definition("linked"));
         symlink(
-            directory.path().join("target.txt"),
-            directory.path().join("linked.yaml"),
+            linked.path().join("target.txt"),
+            linked.path().join("linked.json"),
         )
         .unwrap();
         assert_eq!(
-            FilesystemTestRepository::load(directory.path()).unwrap_err(),
+            FilesystemTestRepository::load(linked.path()).unwrap_err(),
             TestRepositoryError::Symlink {
-                file: "linked.yaml".to_owned()
+                file: "linked.json".to_owned()
+            }
+        );
+
+        let nonregular = tempdir().unwrap();
+        fs::create_dir(nonregular.path().join("directory.json")).unwrap();
+        assert_eq!(
+            FilesystemTestRepository::load(nonregular.path()).unwrap_err(),
+            TestRepositoryError::NotRegularFile {
+                file: "directory.json".to_owned()
             }
         );
     }
 
     #[test]
-    fn repository_enforces_file_and_definition_count_limits() {
-        let oversized = tempdir().unwrap();
-        fs::write(
-            oversized.path().join("large.yaml"),
-            vec![b' '; MAX_TEST_DEFINITION_BYTES + 1],
-        )
-        .unwrap();
-        assert_eq!(
-            FilesystemTestRepository::load(oversized.path()).unwrap_err(),
-            TestRepositoryError::DefinitionTooLarge {
-                file: "large.yaml".to_owned()
-            }
-        );
-
+    fn repository_enforces_definition_count_and_exact_file_size_bounds() {
         let crowded = tempdir().unwrap();
         for index in 0..=MAX_TEST_DEFINITIONS {
             write_definition(
                 crowded.path(),
-                &format!("{index:03}.yaml"),
-                MINIMAL_ACCEPTED,
+                &format!("{index:03}.json"),
+                &definition(&format!("test-{index}")),
             );
         }
         assert_eq!(
             FilesystemTestRepository::load(crowded.path()).unwrap_err(),
             TestRepositoryError::TooManyDefinitions
         );
-    }
 
-    #[test]
-    fn payload_subset_matches_nested_objects_and_exact_arrays() {
-        let actual = json!({
-            "bike": { "id": "bike-1", "state": "available" },
-            "tags": [{ "name": "road", "private": true }],
-            "extra": true
-        });
-        assert!(payload_matches_subset(
-            &json!({ "bike": { "id": "bike-1" } }),
-            &actual
-        ));
-        assert!(payload_matches_subset(
-            &json!({ "tags": [{ "name": "road" }] }),
-            &actual
-        ));
-        assert!(!payload_matches_subset(
-            &json!({ "tags": [{ "name": "road" }, { "name": "city" }] }),
-            &actual
-        ));
-        assert!(!payload_matches_subset(
-            &json!({ "bike": { "state": "rented" } }),
-            &actual
-        ));
-    }
-
-    #[test]
-    fn trace_expectations_match_correlated_domain_and_integration_events() {
-        let domain = CorrelationEvent {
-            id: 1,
-            correlation_id: "correlation-1".to_owned(),
-            kind: CorrelationEventKind::DomainEvent {
-                event_type: "rental-started".to_owned(),
-                schema_version: 1,
-                stream_version: Some(2),
-                payload: Some(json!({ "bike": { "id": "bike-1", "secret": true } })),
-            },
-        };
-        let expected_domain = TraceExpectation::DomainEvent {
-            name: "rental-started".to_owned(),
-            schema_version: 1,
-            payload: Some(json!({ "bike": { "id": "bike-1" } })),
-        };
-        assert!(expected_domain.matches(&domain));
-
-        let integration = CorrelationEvent {
-            id: 2,
-            correlation_id: "correlation-1".to_owned(),
-            kind: CorrelationEventKind::IntegrationEvent {
-                event_type: "bicycle-rented".to_owned(),
-                schema_version: 2,
-                message_id: Some("message-1".to_owned()),
-                subject: None,
-                payload: None,
-            },
-        };
-        let expected_integration = TraceExpectation::IntegrationEvent {
-            name: "bicycle-rented".to_owned(),
-            schema_version: 2,
-            payload: None,
-        };
-        assert!(trace_expectation_matches(
-            &expected_integration,
-            &integration
-        ));
-        assert!(!trace_expectation_matches(&expected_domain, &integration));
-    }
-
-    #[test]
-    fn expected_outcomes_match_correlation_results() {
-        assert!(outcome_matches(
-            &TestOutcome::Accepted,
-            CorrelationCommandOutcome::Accepted,
-            None
-        ));
-        let expected = TestOutcome::Rejected(TestRejection {
-            code: "BIKE_UNAVAILABLE".to_owned(),
-            payload: Some(json!({ "bicycleId": "bike-1" })),
-        });
-        let result = json!({
-            "decision": "rejected",
-            "rejection": {
-                "code": "BIKE_UNAVAILABLE",
-                "message": "The bicycle is unavailable",
-                "details": { "bicycleId": "bike-1" }
+        let oversized = tempdir().unwrap();
+        fs::write(
+            oversized.path().join("large.json"),
+            vec![b' '; MAX_TEST_DEFINITION_BYTES + 1],
+        )
+        .unwrap();
+        assert_eq!(
+            FilesystemTestRepository::load(oversized.path()).unwrap_err(),
+            TestRepositoryError::DefinitionTooLarge {
+                file: "large.json".to_owned()
             }
-        });
-        assert!(expected.matches(CorrelationCommandOutcome::Rejected, Some(&result)));
-        assert!(!expected.matches(CorrelationCommandOutcome::Accepted, Some(&result)));
-        assert!(!expected.matches(
-            CorrelationCommandOutcome::Rejected,
-            Some(&json!({
-                "rejection": {
-                    "code": "OTHER",
-                    "details": { "bicycleId": "bike-1" }
-                }
-            }))
-        ));
+        );
+
+        let exact_total = tempdir().unwrap();
+        for index in 0..8 {
+            let mut bytes = serde_json::to_vec(&definition(&format!("exact-{index}"))).unwrap();
+            bytes.resize(MAX_TEST_DEFINITION_BYTES, b' ');
+            fs::write(exact_total.path().join(format!("{index}.json")), bytes).unwrap();
+        }
+        assert_eq!(
+            FilesystemTestRepository::load(exact_total.path())
+                .unwrap()
+                .list()
+                .items
+                .len(),
+            8
+        );
+        fs::write(exact_total.path().join("8.json"), b" ").unwrap();
+        assert_eq!(
+            FilesystemTestRepository::load(exact_total.path()).unwrap_err(),
+            TestRepositoryError::RepositoryTooLarge
+        );
     }
 }

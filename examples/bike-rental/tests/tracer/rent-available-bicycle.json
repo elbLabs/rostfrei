@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "rent-available-bicycle",
+  "name": "Rent an available bicycle",
+  "setup": {
+    "fixture": "demo-fleet",
+    "commands": []
+  },
+  "expected": {
+    "within": "35s",
+    "settleFor": "1s",
+    "graphs": [
+      {
+        "nodes": [
+          {
+            "kind": "command",
+            "key": "subject",
+            "name": "rent-bicycle",
+            "schemaVersion": 1,
+            "aggregate": {
+              "type": "bike-rental/rental-fleet",
+              "id": "city-fleet"
+            },
+            "payload": {
+              "bicycle_id": "bike-42"
+            },
+            "outcome": "accepted"
+          },
+          {
+            "kind": "domain-event",
+            "key": "bicycle-rented",
+            "parentKey": "subject",
+            "name": "bicycle-rented",
+            "schemaVersion": 1,
+            "payload": {
+              "fleet_id": "city-fleet",
+              "bicycle_id": "bike-42"
+            }
+          },
+          {
+            "kind": "integration-event",
+            "key": "rental-started",
+            "parentKey": "bicycle-rented",
+            "name": "bicycle-rental-started",
+            "schemaVersion": 1,
+            "payload": {
+              "fleet_id": "city-fleet",
+              "bicycle_id": "bike-42"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

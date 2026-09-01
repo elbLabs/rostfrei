@@ -84,6 +84,20 @@ impl NatsEventStore {
         &self.config
     }
 
+    #[allow(
+        dead_code,
+        reason = "integration test targets include this module without its adapter consumer"
+    )]
+    pub fn decode_observed_event(
+        &self,
+        subject: &str,
+        headers: &HeaderMap,
+        payload: &[u8],
+    ) -> Result<RecordedEvent, EventStoreError> {
+        decode_consumed_event(&self.config, subject, headers, payload)
+            .map(|decoded| decoded.recorded)
+    }
+
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn with_transaction_receipt_miss_barriers(

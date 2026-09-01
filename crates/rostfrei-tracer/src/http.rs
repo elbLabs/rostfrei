@@ -10,12 +10,14 @@ use axum::{
 };
 use futures_util::stream;
 use serde::Serialize;
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
     CommandInputError, CorrelationError, DiscoveryError, MAX_COMMAND_PAYLOAD_LEN, OperationMode,
-    OperationSnapshot, SimulationRequest, SubmissionError, TestRepositoryError, TestRunError,
-    TestScenarioResetError, Tracer,
+    OperationSnapshot, SimulationRequest, SubmissionError, TestDefinition, TestDefinitionError,
+    TestDefinitionValidationError, TestRepositoryError, TestRunError, TestScenarioResetError,
+    Tracer, behavioral_test_schema,
 };
 
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
@@ -91,8 +93,11 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
             post(submit_test),
         )
         .route("/tests", get(get_tests))
+        .route("/tests/validate", post(validate_inline_test))
         .route("/tests/{test_id}", get(get_test))
         .route("/tests/{test_id}/runs", post(run_test))
+        .route("/test-runs", post(run_inline_test))
+        .route("/schemas/behavioral-test-v1", get(get_behavioral_test_schema))
         .route("/test-scenario/reset", post(reset_test_scenario))
         .layer(middleware::from_fn_with_state(
             config.clone(),
@@ -150,6 +155,71 @@ async fn get_tests(State(state): State<HttpState>) -> Response {
         Ok(definitions) => private_no_store(Json(definitions).into_response()),
         Err(error) => test_repository_error_response(&error),
     }
+}
+
+async fn get_behavioral_test_schema() -> Response {
+    no_store(Json(behavioral_test_schema()).into_response())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestDefinitionValidationResponse {
+    pub valid: bool,
+    pub definition: TestDefinition,
+    pub schema_href: &'static str,
+    pub run_href: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestDefinitionValidationDiagnostic {
+    pub code: &'static str,
+    pub path: String,
+    pub message: String,
+}
+
+async fn validate_inline_test(
+    State(state): State<HttpState>,
+    request: Result<Json<Value>, JsonRejection>,
+) -> Response {
+    let definition = match parse_test_definition(request) {
+        Ok(definition) => definition,
+        Err(response) => return response,
+    };
+    if let Err(error) = state.tracer.validate_test_definition(&definition) {
+        return runtime_test_definition_error_response(&error);
+    }
+    private_no_store(
+        Json(TestDefinitionValidationResponse {
+            valid: true,
+            definition,
+            schema_href: "/schemas/behavioral-test-v1",
+            run_href: "/test-runs",
+        })
+        .into_response(),
+    )
+}
+
+async fn run_inline_test(
+    State(state): State<HttpState>,
+    request: Result<Json<Value>, JsonRejection>,
+) -> Response {
+    let definition = match parse_test_definition(request) {
+        Ok(definition) => definition,
+        Err(response) => return response,
+    };
+    match state.tracer.run_inline_test(definition).await {
+        Ok(report) => private_no_store(Json(report).into_response()),
+        Err(error) => test_run_error_response(&error),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn parse_test_definition(
+    request: Result<Json<Value>, JsonRejection>,
+) -> Result<TestDefinition, Response> {
+    let Json(value) = request.map_err(|rejection| json_rejection(&rejection))?;
+    TestDefinition::from_json_value(value).map_err(|error| test_definition_error_response(&error))
 }
 
 async fn get_test(State(state): State<HttpState>, Path(test_id): Path<String>) -> Response {
@@ -556,10 +626,10 @@ fn forbidden() -> Response {
 }
 
 fn json_rejection(rejection: &JsonRejection) -> Response {
-    let code = if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
-        "payload-too-large"
-    } else {
-        "invalid-json"
+    let code = match rejection.status() {
+        StatusCode::PAYLOAD_TOO_LARGE => "payload-too-large",
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => "unsupported-media-type",
+        _ => "invalid-json",
     };
     (
         rejection.status(),
@@ -575,6 +645,78 @@ fn json_rejection(rejection: &JsonRejection) -> Response {
 struct ErrorBody<'a> {
     code: &'a str,
     message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TestDefinitionErrorBody {
+    code: &'static str,
+    message: String,
+    issues: Vec<TestDefinitionValidationDiagnostic>,
+}
+
+fn test_definition_error_response(error: &TestDefinitionError) -> Response {
+    let issues = error
+        .issues()
+        .iter()
+        .map(|issue| TestDefinitionValidationDiagnostic {
+            code: issue.code(),
+            path: issue.path().to_owned(),
+            message: issue.message().to_owned(),
+        })
+        .collect();
+    invalid_test_definition_response(error.to_string(), issues)
+}
+
+fn runtime_test_definition_error_response(error: &TestDefinitionValidationError) -> Response {
+    let (code, path) = match error {
+        TestDefinitionValidationError::MissingSubject { .. } => {
+            ("missing-subject", "/expected/graphs/0/nodes")
+        }
+        TestDefinitionValidationError::FixtureUnavailable { .. } => {
+            ("fixture-unavailable", "/setup/fixture")
+        }
+        TestDefinitionValidationError::FixtureMismatch { .. } => {
+            ("fixture-mismatch", "/setup/fixture")
+        }
+        TestDefinitionValidationError::UnknownCommand { path, .. } => {
+            ("unknown-command", path.as_str())
+        }
+        TestDefinitionValidationError::InvalidCommandPayload { path, .. } => {
+            ("invalid-command-payload", path.as_str())
+        }
+        TestDefinitionValidationError::InvalidAggregateId { path, .. } => {
+            ("invalid-aggregate-id", path.as_str())
+        }
+        TestDefinitionValidationError::CommandPayloadTooLarge { path, .. } => {
+            ("command-payload-too-large", path.as_str())
+        }
+    };
+    invalid_test_definition_response(
+        error.to_string(),
+        vec![TestDefinitionValidationDiagnostic {
+            code,
+            path: path.to_owned(),
+            message: error.to_string(),
+        }],
+    )
+}
+
+fn invalid_test_definition_response(
+    message: String,
+    issues: Vec<TestDefinitionValidationDiagnostic>,
+) -> Response {
+    private_no_store(
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(TestDefinitionErrorBody {
+                code: "invalid-test-definition",
+                message,
+                issues,
+            }),
+        )
+            .into_response(),
+    )
 }
 
 fn error_response(error: &SubmissionError) -> Response {
@@ -694,6 +836,9 @@ fn test_run_error_response(error: &TestRunError) -> Response {
     let (status, code, retry_after) = match error {
         TestRunError::Repository(error) => return test_repository_error_response(error),
         TestRunError::Reset(error) => return test_scenario_error_response(error),
+        TestRunError::Validation(error) => {
+            return runtime_test_definition_error_response(error);
+        }
         TestRunError::Submission(error) => return private_no_store(error_response(error)),
         TestRunError::Correlation(error) => {
             return private_no_store(correlation_error_response(error));

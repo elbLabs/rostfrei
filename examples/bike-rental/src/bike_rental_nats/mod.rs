@@ -1,7 +1,6 @@
 use std::{env, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rostfrei::{
     Command, CommandBindingRegistrationError, CommandBus, CommandMessageAdapter, CommandProcessor,
     CommittedDomainEvent, CommittedEventContext, DomainEvent, DomainEventDispatcher,
@@ -13,8 +12,8 @@ use rostfrei::{
 };
 use rostfrei_messaging_core::{
     ApplicationName, BoundedContext, CommandAddress, CommandRejectionClassification, ConsumeError,
-    ConsumerConfig, ContractError, DeliveryDisposition, IntegrationEventAddress, MessageDelivery,
-    MessageHandler, QuarantineReason, RetryDelay, TrafficScope,
+    ConsumerConfig, ContractError, CorrelationId, DeliveryDisposition, IntegrationEventAddress,
+    MessageDelivery, MessageHandler, MessageId, QuarantineReason, RetryDelay, TrafficScope,
 };
 use rostfrei_nats::{
     ApplicationMessagingConfig, CorrelatedMessage, CorrelatedMessageFamily,
@@ -580,14 +579,18 @@ pub struct BikeRentalNatsRuntime {
 
 struct TracerCorrelationHandler {
     observer: CorrelationObserver,
+    store: NatsEventStore,
 }
 
 #[async_trait]
 impl CorrelatedMessageHandler for TracerCorrelationHandler {
     async fn handle(&self, message: CorrelatedMessage) {
+        let identity = message
+            .message_id()
+            .map_or_else(|| message.subject().to_owned(), |id| id.as_str().to_owned());
         let result = match message.family() {
             CorrelatedMessageFamily::DomainEvent => {
-                observe_domain_message(&self.observer, &message).await
+                observe_domain_message(&self.observer, &self.store, &message).await
             }
             CorrelatedMessageFamily::IntegrationEvent => {
                 observe_integration_message(&self.observer, &message).await
@@ -596,6 +599,18 @@ impl CorrelatedMessageHandler for TracerCorrelationHandler {
         if let Err(error) = result
             && !matches!(error, CorrelationError::NotFound)
         {
+            if let Err(retain_error) = self
+                .observer
+                .record_observation_failure(
+                    message.correlation_id().as_str(),
+                    identity,
+                    error.to_string(),
+                )
+                .await
+                && !matches!(retain_error, CorrelationError::NotFound)
+            {
+                tracing::warn!(%retain_error, "correlated NATS observation failure could not be retained");
+            }
             tracing::warn!(%error, "correlated NATS message could not be observed");
         }
     }
@@ -862,9 +877,10 @@ impl BikeRentalNatsRuntime {
                 .as_str(),
         );
         let subscription = nats_observer.subscribe().await?;
+        let store = self.store.clone();
         Ok(tokio::spawn(async move {
             if let Err(error) = subscription
-                .run(Arc::new(TracerCorrelationHandler { observer }))
+                .run(Arc::new(TracerCorrelationHandler { observer, store }))
                 .await
             {
                 tracing::error!(%error, "bike-rental correlation observer stopped");
@@ -920,69 +936,98 @@ impl BikeRentalNatsRuntime {
 
 async fn observe_domain_message(
     observer: &CorrelationObserver,
+    store: &NatsEventStore,
     message: &CorrelatedMessage,
 ) -> Result<(), CorrelationError> {
-    let Ok(wire) = serde_json::from_slice::<Value>(message.payload()) else {
-        return Ok(());
-    };
-    let Some(event) = wire.get("event") else {
-        return Ok(());
-    };
-    let Some(event_type) = event.get("eventType").and_then(Value::as_str) else {
-        return Ok(());
-    };
-    let Some(schema_version) = event
-        .get("eventSchemaVersion")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-    else {
-        return Ok(());
-    };
-    let mut observation = DomainEventObservation::new(event_type, schema_version);
-    if let Some(stream_version) = event.get("streamVersion").and_then(Value::as_u64) {
-        observation = observation.with_stream_version(stream_version);
-    }
-    if let Some(encoded) = event.get("payloadBase64").and_then(Value::as_str)
-        && let Ok(payload) = STANDARD.decode(encoded)
-        && let Ok(payload) = serde_json::from_slice(&payload)
-    {
-        observation = observation.with_payload(payload);
-    }
+    let observation =
+        domain_event_observation(store, message).map_err(CorrelationError::InvalidId)?;
     observer
         .observe_domain_event(message.correlation_id().as_str(), observation)
         .await
+}
+
+fn domain_event_observation(
+    store: &NatsEventStore,
+    message: &CorrelatedMessage,
+) -> Result<DomainEventObservation, String> {
+    let event = store
+        .decode_observed_event(message.subject(), message.headers(), message.payload())
+        .map_err(|error| error.to_string())?;
+    if event.correlation_id() != Some(message.correlation_id()) {
+        return Err("stored event correlation does not match its delivery header".to_owned());
+    }
+    let payload = serde_json::from_slice::<Value>(event.payload())
+        .map_err(|error| format!("stored event payload is not valid JSON: {error}"))?;
+    let mut observation = DomainEventObservation::new(
+        event.event_id().as_str(),
+        event.event_type(),
+        event.schema_version(),
+    )
+    .with_aggregate(
+        event.stream_id().aggregate_type().as_str(),
+        event.stream_id().aggregate_id().as_str(),
+    )
+    .with_stream_version(event.stream_version().value())
+    .with_payload(payload);
+    if let Some(causation_id) = event.causation_id() {
+        observation = observation.with_causation_id(causation_id.as_str());
+    }
+    Ok(observation)
 }
 
 async fn observe_integration_message(
     observer: &CorrelationObserver,
     message: &CorrelatedMessage,
 ) -> Result<(), CorrelationError> {
-    let Ok(envelope) = serde_json::from_slice::<Value>(message.payload()) else {
-        return Ok(());
-    };
-    let event_type = message
-        .subject()
-        .rsplit('.')
-        .next()
-        .unwrap_or("integration-event");
-    let Some(schema_version) = envelope
-        .get("schema_version")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-    else {
-        return Ok(());
-    };
-    let mut observation = IntegrationEventObservation::new(event_type, schema_version)
-        .with_subject(message.subject());
-    if let Some(message_id) = message.message_id() {
-        observation = observation.with_message_id(message_id.as_str());
-    }
-    if let Some(payload) = envelope.get("payload") {
-        observation = observation.with_payload(payload.clone());
-    }
+    let observation = integration_event_observation(
+        message.subject(),
+        message.message_id(),
+        message.correlation_id(),
+        message.payload(),
+    )
+    .map_err(CorrelationError::InvalidId)?;
     observer
         .observe_integration_event(message.correlation_id().as_str(), observation)
         .await
+}
+
+fn integration_event_observation(
+    subject: &str,
+    message_id: Option<&MessageId>,
+    correlation_id: &CorrelationId,
+    payload: &[u8],
+) -> Result<IntegrationEventObservation, String> {
+    let address = subject
+        .parse::<IntegrationEventAddress>()
+        .map_err(|error| format!("invalid integration-event subject: {error}"))?;
+    let message_id = message_id
+        .cloned()
+        .ok_or_else(|| "integration event has no message identity".to_owned())?;
+    let message = EncodedIntegrationMessage::from_delivery(
+        address,
+        message_id,
+        payload.to_vec(),
+        Some(correlation_id.clone()),
+    )
+    .map_err(|error| format!("invalid integration-event delivery: {error}"))?;
+    let envelope = message
+        .decode::<BicycleRentalStarted>()
+        .map_err(|error| format!("invalid integration-event envelope: {error}"))?;
+    let causation_id = envelope
+        .causation_id()
+        .ok_or_else(|| "integration event has no causation identity".to_owned())?
+        .as_str()
+        .to_owned();
+    let payload = serde_json::to_value(envelope.payload())
+        .map_err(|error| format!("integration-event payload could not be encoded: {error}"))?;
+    Ok(IntegrationEventObservation::new(
+        envelope.message_id().as_str(),
+        BICYCLE_RENTAL_STARTED_EVENT_NAME,
+        envelope.schema_version().get(),
+        subject,
+    )
+    .with_causation_id(causation_id)
+    .with_payload(payload))
 }
 
 #[async_trait]

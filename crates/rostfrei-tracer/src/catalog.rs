@@ -4,7 +4,7 @@ use rostfrei_registry::{CommandDescriptor, DomainRegistry};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-const CATALOG_VERSION: u32 = 3;
+const CATALOG_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,9 +12,21 @@ pub struct TracerCatalog {
     pub catalog_version: u32,
     pub contexts: Vec<CatalogContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub behavioral_test: Option<CatalogBehavioralTest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub test_scenario: Option<CatalogTestScenario>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_repository: Option<CatalogTestRepository>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogBehavioralTest {
+    pub schema_href: String,
+    pub validate_href: String,
+    pub run_href: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub definitions_href: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -212,6 +224,12 @@ pub fn build_catalog(
                     .collect(),
             })
             .collect(),
+        behavioral_test: (test_enabled && reset_enabled).then(|| CatalogBehavioralTest {
+            schema_href: "/schemas/behavioral-test-v1".to_owned(),
+            validate_href: "/tests/validate".to_owned(),
+            run_href: "/test-runs".to_owned(),
+            definitions_href: test_repository_enabled.then(|| "/tests".to_owned()),
+        }),
         test_scenario: reset_enabled.then(|| CatalogTestScenario {
             reset_href: "/test-scenario/reset".to_owned(),
             fixtures: test_fixture.into_iter().map(str::to_owned).collect(),
