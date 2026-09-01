@@ -4,7 +4,7 @@ use rostfrei::{
 use serde::{Deserialize, Serialize};
 
 use super::bicycle::BicycleStatusActions;
-use super::{BicycleId, FleetId, RentalFleet, RentalFleetAggregate};
+use super::{BicycleId, FleetId, RentalFleet, RentalFleetActions, RentalFleetAggregate};
 use super::{BicycleStatus, assess_rental_eligibility::RentalEligibilityOutcome};
 
 #[derive(Command, Clone, Debug, Eq, PartialEq)]
@@ -83,7 +83,7 @@ impl CommandHandler<RentBicycle> for RentalFleetAggregate {
         command: &RentBicycle,
         aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        rent_bicycle(aggregate, &command.bicycle_id)
+        aggregate.rent_bicycle(command.bicycle_id.clone())
     }
 }
 
