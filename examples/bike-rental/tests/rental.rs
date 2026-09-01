@@ -6,10 +6,10 @@
 use bike_rental::{
     demo::{demo_stream, seed_demo},
     rental_fleet::{
-        self, BicycleAdded, BicycleAvailability, BicycleCondition, BicycleId, BicycleNotRented,
-        BicycleRented, BicycleReturned, BicycleStatus, BicycleUnavailable, FleetId,
-        ImportedBicycle, RentBicycle, RentalFleetActions, RentalFleetAggregate,
-        RentalFleetImported,
+        self, AddBicycleActions, BicycleAdded, BicycleAvailability, BicycleCondition, BicycleId,
+        BicycleNotRented, BicycleRented, BicycleReturned, BicycleStatus, BicycleUnavailable,
+        FleetId, ImportedBicycle, RentBicycle, RentBicycleActions, RentalFleetAggregate,
+        RentalFleetImported, ReturnBicycleActions,
     },
 };
 use rostfrei::{
