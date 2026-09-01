@@ -5,7 +5,6 @@ pub struct Attributes {
     pub label: LitStr,
     pub owner: TypePath,
     pub actions: Vec<Path>,
-    pub invariants: Vec<Path>,
 }
 
 impl Attributes {
@@ -15,7 +14,6 @@ impl Attributes {
         let mut label = None;
         let mut owner = None;
         let mut actions = None;
-        let mut invariants = None;
         domain.parse_nested_meta(|meta| {
             if meta.path.is_ident("id") {
                 if id.is_some() {
@@ -45,13 +43,6 @@ impl Attributes {
                 actions = Some(crate::helper::action_paths::parse(meta.value()?)?);
                 return Ok(());
             }
-            if meta.path.is_ident("invariants") {
-                if invariants.is_some() {
-                    return Err(meta.error("duplicate invariants"));
-                }
-                invariants = Some(crate::helper::invariant_paths::parse(meta.value()?)?);
-                return Ok(());
-            }
             Err(meta.error("unsupported domain attribute"))
         })?;
         let id = id.ok_or_else(|| syn::Error::new_spanned(domain, "missing id"))?;
@@ -62,7 +53,6 @@ impl Attributes {
             label,
             owner,
             actions: actions.unwrap_or_default(),
-            invariants: invariants.unwrap_or_default(),
         })
     }
 }

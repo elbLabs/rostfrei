@@ -163,7 +163,7 @@ pub fn derive_entity(input: TokenStream) -> TokenStream {
         .into()
 }
 
-#[proc_macro_derive(EntityLifecycle, attributes(domain, rostfrei, transition))]
+#[proc_macro_derive(EntityLifecycle, attributes(domain, rostfrei, state))]
 pub fn derive_entity_lifecycle(input: TokenStream) -> TokenStream {
     entity_lifecycle::expand(parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)

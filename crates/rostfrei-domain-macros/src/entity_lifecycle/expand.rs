@@ -11,8 +11,6 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         name: input.ident,
         id: attributes.id,
         label: attributes.label,
-        owner: attributes.owner,
-        initial: attributes.initial,
         states,
     };
     super::validation::validate(&lifecycle)?;

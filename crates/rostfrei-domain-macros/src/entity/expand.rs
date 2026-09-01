@@ -6,8 +6,10 @@ use super::{assembly, attributes::Attributes, input, validation};
 pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     let source_fields = input::extract(input)?;
     let attributes = Attributes::parse(&input.attrs)?;
+    crate::helper::id::validate(&attributes.id)?;
+    crate::helper::label::validate(&attributes.label)?;
     let fields = crate::field::extract(source_fields)?;
-    let identity = validation::validate(&attributes, &fields)?;
+    let identity = validation::validate(&fields)?;
     let domain_path = crate::helper::domain_api_path::resolve()?;
     Ok(assembly::assemble(
         &domain_path,

@@ -1,6 +1,0 @@
-error: domain invariant contract traits cannot have trait-level where clauses
- --> tests/ui/domain_invariant_contract/trait_where_clause.rs:7:1
-  |
-7 | / where
-8 | |     Self: Sized,
-  | |________________^

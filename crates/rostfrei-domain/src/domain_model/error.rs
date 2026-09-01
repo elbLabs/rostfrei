@@ -2,8 +2,8 @@ use std::{error::Error, fmt};
 
 use crate::{
     ActionId, ActionOwnerId, AggregateId, CommandId, DecisionId, DecisionOutcomeId,
-    DecisionOwnerId, DomainErrorId, DomainEventId, DomainIdentityId, EntityId, EntityLifecycleId,
-    EntityLifecycleStateId, InvariantId, InvariantOwnerId, QueryId, ScalarType, ValueObjectId,
+    DecisionOwnerId, DomainErrorId, DomainEventId, DomainIdentityId, EntityId, QueryId, ScalarType,
+    ValueObjectId,
 };
 
 /// A domain-model descriptor reference involved in an inventory validation failure.
@@ -70,62 +70,6 @@ pub enum DomainModelError {
         location: String,
         inventory_key: &'static str,
     },
-    UnregisteredInvariantOwner {
-        owner: Box<InvariantOwnerId>,
-    },
-    InvariantDescriptorOwnerMismatch {
-        id: Box<InvariantId>,
-    },
-    DuplicateInvariantId {
-        id: Box<InvariantId>,
-    },
-    LifecycleExtensionOnlyAction {
-        lifecycle_id: Box<EntityLifecycleId>,
-        action_id: Box<ActionId>,
-    },
-    LifecycleMissingAttachedAction {
-        lifecycle_id: Box<EntityLifecycleId>,
-        action_id: Box<ActionId>,
-    },
-    LifecycleDescriptorOwnerMismatch {
-        expected: Box<EntityId>,
-        found: Box<EntityId>,
-    },
-    LifecycleWithoutStates {
-        lifecycle_id: Box<EntityLifecycleId>,
-    },
-    DuplicateEntityLifecycleStateId {
-        id: Box<EntityLifecycleStateId>,
-    },
-    DuplicateLifecycleTransitionKey {
-        source: Box<EntityLifecycleStateId>,
-        action: Box<ActionId>,
-    },
-    LifecycleStateOwnershipMismatch {
-        location: &'static str,
-        expected: Box<EntityLifecycleId>,
-        found: Box<EntityLifecycleId>,
-    },
-    LifecycleStateNotDeclared {
-        location: &'static str,
-        id: Box<EntityLifecycleStateId>,
-    },
-    LifecycleTransitionActionOwnerMismatch {
-        expected: Box<ActionOwnerId>,
-        found: Box<ActionOwnerId>,
-    },
-    InvalidLifecycleLocalId {
-        local: &'static str,
-    },
-    EmptyLifecycleLabel {
-        label: &'static str,
-    },
-    InvalidLifecycleStateLocalId {
-        local: &'static str,
-    },
-    EmptyLifecycleStateLabel {
-        label: &'static str,
-    },
     DomainIdentitySemanticScalarRepresentationMismatch {
         canonical: ScalarType,
         semantic: ScalarType,
@@ -185,52 +129,6 @@ impl fmt::Display for DomainModelError {
                 location,
                 inventory_key,
             } => fmt_field_reference(formatter, reference, location, inventory_key),
-            Self::UnregisteredInvariantOwner { owner } => fmt_unregistered_inv(formatter, owner),
-            Self::InvariantDescriptorOwnerMismatch { id } => {
-                write!(formatter, "invariant descriptor owner mismatch: {id:?}")
-            }
-            Self::DuplicateInvariantId { id } => fmt_duplicate(formatter, "InvariantId", id),
-            Self::LifecycleExtensionOnlyAction {
-                lifecycle_id,
-                action_id,
-            } => fmt_extension_only_action(formatter, lifecycle_id, action_id),
-            Self::LifecycleMissingAttachedAction {
-                lifecycle_id,
-                action_id,
-            } => fmt_missing_attached_action(formatter, lifecycle_id, action_id),
-            Self::LifecycleDescriptorOwnerMismatch { expected, found } => {
-                fmt_lifecycle_owner_mismatch(formatter, expected, found)
-            }
-            Self::LifecycleWithoutStates { lifecycle_id } => {
-                fmt_lifecycle_without_states(formatter, lifecycle_id)
-            }
-            Self::DuplicateEntityLifecycleStateId { id } => {
-                write!(formatter, "duplicate EntityLifecycleStateId: {id:?}")
-            }
-            Self::DuplicateLifecycleTransitionKey { source, action } => {
-                fmt_duplicate_transition(formatter, source, action)
-            }
-            Self::LifecycleStateOwnershipMismatch {
-                location,
-                expected,
-                found,
-            } => fmt_state_ownership(formatter, location, expected, found),
-            Self::LifecycleStateNotDeclared { location, id } => {
-                fmt_state_not_declared(formatter, location, id)
-            }
-            Self::LifecycleTransitionActionOwnerMismatch { expected, found } => {
-                fmt_lifecycle_action_owner_mismatch(formatter, expected, found)
-            }
-            Self::InvalidLifecycleLocalId { local } => {
-                fmt_invalid_lifecycle_id(formatter, "", local)
-            }
-            Self::EmptyLifecycleLabel { label } => fmt_empty_lifecycle_label(formatter, "", label),
-            Self::InvalidLifecycleStateLocalId { local } => {
-                fmt_invalid_lifecycle_id(formatter, "state ", local)
-            }
-            Self::EmptyLifecycleStateLabel { label } => {
-                fmt_empty_lifecycle_label(formatter, "state ", label)
-            }
             Self::DomainIdentitySemanticScalarRepresentationMismatch {
                 canonical,
                 semantic,
@@ -267,13 +165,6 @@ fn fmt_duplicate_outcome(
     id: &DecisionOutcomeId,
 ) -> fmt::Result {
     fmt_duplicate(formatter, "DecisionOutcomeId", id)
-}
-
-fn fmt_unregistered_inv(
-    formatter: &mut fmt::Formatter<'_>,
-    owner: &InvariantOwnerId,
-) -> fmt::Result {
-    write!(formatter, "unregistered invariant owner: {owner:?}")
 }
 
 fn fmt_decision_owner(formatter: &mut fmt::Formatter<'_>, id: &DecisionId) -> fmt::Result {
@@ -340,116 +231,6 @@ fn fmt_field_reference(
         formatter,
         "Field reference inventory violation: field references missing {} at descriptor location `{location}`; add it to domain_model! inventory key `{inventory_key}`",
         ReferenceDebug(reference)
-    )
-}
-
-fn fmt_extension_only_action(
-    formatter: &mut fmt::Formatter<'_>,
-    lifecycle_id: &EntityLifecycleId,
-    action_id: &ActionId,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "Entity lifecycle action eligibility violation: lifecycle {lifecycle_id:?} references extension-only action {action_id:?}; action extensions are not eligible for lifecycle transitions"
-    )
-}
-
-fn fmt_missing_attached_action(
-    formatter: &mut fmt::Formatter<'_>,
-    lifecycle_id: &EntityLifecycleId,
-    action_id: &ActionId,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "Entity lifecycle action inventory violation: lifecycle {lifecycle_id:?} references missing attached action {action_id:?}; attach its action contract to the lifecycle owner"
-    )
-}
-
-fn fmt_lifecycle_owner_mismatch(
-    formatter: &mut fmt::Formatter<'_>,
-    expected: &EntityId,
-    found: &EntityId,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "entity lifecycle descriptor owner mismatch: expected {expected:?}, found {found:?}"
-    )
-}
-
-fn fmt_lifecycle_without_states(
-    formatter: &mut fmt::Formatter<'_>,
-    lifecycle_id: &EntityLifecycleId,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "entity lifecycle descriptor must declare at least one state: {lifecycle_id:?}"
-    )
-}
-
-fn fmt_duplicate_transition(
-    formatter: &mut fmt::Formatter<'_>,
-    source: &EntityLifecycleStateId,
-    action: &ActionId,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "duplicate entity lifecycle transition key: source {source:?}, action {action:?}"
-    )
-}
-
-fn fmt_state_ownership(
-    formatter: &mut fmt::Formatter<'_>,
-    location: &str,
-    expected: &EntityLifecycleId,
-    found: &EntityLifecycleId,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "entity lifecycle {location} ownership mismatch: expected {expected:?}, found {found:?}"
-    )
-}
-
-fn fmt_state_not_declared(
-    formatter: &mut fmt::Formatter<'_>,
-    location: &str,
-    id: &EntityLifecycleStateId,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "entity lifecycle {location} is not declared: {id:?}"
-    )
-}
-
-fn fmt_lifecycle_action_owner_mismatch(
-    formatter: &mut fmt::Formatter<'_>,
-    expected: &ActionOwnerId,
-    found: &ActionOwnerId,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "entity lifecycle transition action owner mismatch: expected {expected:?}, found {found:?}"
-    )
-}
-
-fn fmt_invalid_lifecycle_id(
-    formatter: &mut fmt::Formatter<'_>,
-    kind: &str,
-    local: &str,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "entity lifecycle {kind}local id must be nonempty lowercase kebab-case using ASCII letters and digits: {local:?}"
-    )
-}
-
-fn fmt_empty_lifecycle_label(
-    formatter: &mut fmt::Formatter<'_>,
-    kind: &str,
-    label: &str,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "entity lifecycle {kind}label must not be empty: {label:?}"
     )
 }
 

@@ -1,5 +1,0 @@
-error: invariant checkers cannot have generic parameters
- --> tests/ui/domain_invariant_contract/generic_method.rs:8:14
-  |
-8 |     fn valid<T>(candidate: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation>;
-  |              ^

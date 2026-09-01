@@ -12,10 +12,15 @@ struct Inbox;
 struct MailboxId(u64);
 
 #[derive(Entity)]
-#[domain(id = "mailbox-root", label = "Mailbox", owner = Mailbox)]
+#[domain(id = "mailbox-root", label = "Mailbox")]
 struct MailboxRoot {
     #[domain(identity)]
     id: MailboxId,
+}
+
+impl domain::EntityDefinition for MailboxRoot {
+    type Owner = Mailbox;
+    type Identity = MailboxId;
 }
 
 #[derive(Aggregate)]

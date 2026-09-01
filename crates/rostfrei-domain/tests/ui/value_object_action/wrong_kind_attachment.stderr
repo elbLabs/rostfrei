@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `Item: ActionOutputType<domain::__private::ValueObjectActionOutput<Item>>` is not satisfied
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:24:18
+  --> tests/ui/value_object_action/wrong_kind_attachment.rs:29:18
    |
-24 | impl Actions for Item {
+29 | impl Actions for Item {
    |                  ^^^^ unsatisfied trait bound
    |
 help: the trait `ActionOutputType<domain::__private::ValueObjectActionOutput<Item>>` is not implemented for `Item`
@@ -29,9 +29,9 @@ note: required by a bound in `Actions`
    = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Item: ValueObjectActionOwnerType` is not satisfied
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:24:18
+  --> tests/ui/value_object_action/wrong_kind_attachment.rs:29:18
    |
-24 | impl Actions for Item {
+29 | impl Actions for Item {
    |                  ^^^^ unsatisfied trait bound
    |
 help: the trait `ValueObjectActionOwnerType` is not implemented for `Item`
@@ -47,53 +47,3 @@ note: required by a bound in `Actions`
  8 | trait Actions {
    |       ------- required by a bound in this trait
    = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0277]: the trait bound `Item: ValueObjectActionOwnerType` is not satisfied
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:17:10
-   |
-17 | #[derive(Entity)]
-   |          ^^^^^^ unsatisfied trait bound
-   |
-help: the trait `ValueObjectActionOwnerType` is not implemented for `Item`
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:19:1
-   |
-19 | struct Item {
-   | ^^^^^^^^^^^
-note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:7:1
-   |
- 7 | #[domain_actions(value_object)]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
- 8 | trait Actions {
-   |       ------- required by a bound in this associated constant
-   = note: this error originates in the derive macro `Entity` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0277]: the trait bound `Item: ActionOutputType<domain::__private::ValueObjectActionOutput<Item>>` is not satisfied
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:17:10
-   |
-17 | #[derive(Entity)]
-   |          ^^^^^^ unsatisfied trait bound
-   |
-help: the trait `ActionOutputType<domain::__private::ValueObjectActionOutput<Item>>` is not implemented for `Item`
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:19:1
-   |
-19 | struct Item {
-   | ^^^^^^^^^^^
-   = help: the following other types implement trait `ActionOutputType<Contract>`:
-             ()
-             Option<T>
-             Vec<T>
-             bool
-             char
-             f32
-             f64
-             i128
-           and $N others
-note: required by a bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:7:1
-   |
- 7 | #[domain_actions(value_object)]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions::__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE`
- 8 | trait Actions {
-   |       ------- required by a bound in this associated constant
-   = note: this error originates in the derive macro `Entity` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

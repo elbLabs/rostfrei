@@ -37,7 +37,7 @@ pub fn assemble_assertions_with_path(
     quote! {
         const _: () = {
             fn assert_identity<T: #domain_path::DomainIdentityType>() {}
-            fn assert_entity<T, O>() where T: #domain_path::EntityType<Owner = O>, O: #domain_path::AggregateType {}
+            fn assert_entity<T, O>() where T: #domain_path::EntityDefinition<Owner = O>, O: #domain_path::AggregateType {}
             fn assert_value_object<T: #domain_path::ValueObjectType>() {}
             fn assert_semantic_scalar<P, V>()
             where
@@ -83,7 +83,7 @@ fn assemble_kind(domain_path: &Path, field: &Field) -> TokenStream {
         )),
         Role::Entity => {
             quote!(#domain_path::FieldKind::Entity(#domain_path::EntityId {
-                aggregate: <<#base as #domain_path::EntityType>::Owner as #domain_path::AggregateType>::DESCRIPTOR.id,
+                aggregate: <<#base as #domain_path::EntityDefinition>::Owner as #domain_path::AggregateType>::DESCRIPTOR.id,
                 local: <#base as #domain_path::EntityType>::LOCAL_ID,
             }))
         }

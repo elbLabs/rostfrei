@@ -17,17 +17,17 @@ pub struct Accounts;
 pub struct AccountId(u64);
 
 #[derive(Entity)]
-#[domain(
-    id = "account-root",
-    label = "Account root",
-    owner = Account,
-    actions = [AccountRootActions]
-)]
+#[domain(id = "account-root", label = "Account root")]
 pub struct AccountRoot {
     #[domain(identity)]
     id: AccountId,
     revision: u32,
     name: String,
+}
+
+impl domain::EntityDefinition for AccountRoot {
+    type Owner = Account;
+    type Identity = AccountId;
 }
 
 pub type AccountRootAlias = AccountRoot;
@@ -186,10 +186,15 @@ impl ActionGroupType for DuplicateAccountExtensionActions {
 pub struct UnlistedId(u64);
 
 #[derive(Entity)]
-#[domain(id = "unlisted-root", label = "Unlisted root", owner = UnlistedAggregate)]
+#[domain(id = "unlisted-root", label = "Unlisted root")]
 pub struct UnlistedRoot {
     #[domain(identity)]
     id: UnlistedId,
+}
+
+impl domain::EntityDefinition for UnlistedRoot {
+    type Owner = UnlistedAggregate;
+    type Identity = UnlistedId;
 }
 
 #[derive(Aggregate)]
@@ -217,14 +222,15 @@ impl UnlistedActions for UnlistedAggregate {
 struct OmittedActionsId(u64);
 
 #[derive(Entity)]
-#[domain(
-    id = "omitted-actions-root",
-    label = "Omitted actions root",
-    owner = OmittedActionsAggregate
-)]
+#[domain(id = "omitted-actions-root", label = "Omitted actions root")]
 struct OmittedActionsRoot {
     #[domain(identity)]
     id: OmittedActionsId,
+}
+
+impl domain::EntityDefinition for OmittedActionsRoot {
+    type Owner = OmittedActionsAggregate;
+    type Identity = OmittedActionsId;
 }
 
 #[derive(Aggregate)]
@@ -242,14 +248,15 @@ impl domain::AggregateDefinition for OmittedActionsAggregate {
 struct EmptyActionsId(u64);
 
 #[derive(Entity)]
-#[domain(
-    id = "empty-actions-root",
-    label = "Empty actions root",
-    owner = EmptyActionsAggregate
-)]
+#[domain(id = "empty-actions-root", label = "Empty actions root")]
 struct EmptyActionsRoot {
     #[domain(identity)]
     id: EmptyActionsId,
+}
+
+impl domain::EntityDefinition for EmptyActionsRoot {
+    type Owner = EmptyActionsAggregate;
+    type Identity = EmptyActionsId;
 }
 
 #[derive(Aggregate)]
@@ -267,10 +274,15 @@ impl domain::AggregateDefinition for EmptyActionsAggregate {
 pub struct DuplicateId(u64);
 
 #[derive(Entity)]
-#[domain(id = "duplicate-root", label = "Duplicate root", owner = DuplicateAggregate)]
+#[domain(id = "duplicate-root", label = "Duplicate root")]
 pub struct DuplicateRoot {
     #[domain(identity)]
     id: DuplicateId,
+}
+
+impl domain::EntityDefinition for DuplicateRoot {
+    type Owner = DuplicateAggregate;
+    type Identity = DuplicateId;
 }
 
 #[derive(Aggregate)]
@@ -410,10 +422,9 @@ fn model_projects_explicit_extensions_and_non_aggregate_attachments() {
             .iter()
             .map(|action| action["id"]["local"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["touch-root", "extension"]
+        ["extension"]
     );
-    assert_eq!(actions[0]["id"]["owner"]["kind"], "entity");
-    assert_eq!(actions[1]["id"]["owner"]["kind"], "aggregate");
+    assert_eq!(actions[0]["id"]["owner"]["kind"], "aggregate");
     assert!(actions.iter().all(|action| {
         action["id"]["local"] != "implemented-only" && action["id"]["local"] != "unlisted-action"
     }));

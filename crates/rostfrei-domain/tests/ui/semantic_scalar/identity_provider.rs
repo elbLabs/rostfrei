@@ -30,10 +30,15 @@ struct Context;
 struct RootId(uuid::Uuid);
 
 #[derive(Entity)]
-#[domain(id = "root", label = "Root", owner = Owner)]
+#[domain(id = "root", label = "Root")]
 struct Root {
     #[domain(identity)]
     id: RootId,
+}
+
+impl domain::EntityDefinition for Root {
+    type Owner = Owner;
+    type Identity = RootId;
 }
 
 #[derive(Aggregate)]

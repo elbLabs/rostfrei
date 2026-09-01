@@ -1,16 +1,15 @@
-use domain::{DomainIdentity, Entity};
+use domain::Entity;
 
-#[derive(DomainIdentity)]
 struct Id(u64);
 
 #[derive(Entity)]
-#[domain(id = "missing", label = "Missing", owner = Owner)]
+#[domain(id = "missing", label = "Missing")]
 struct Missing {
     id: Id,
 }
 
 #[derive(Entity)]
-#[domain(id = "multiple", label = "Multiple", owner = Owner)]
+#[domain(id = "multiple", label = "Multiple")]
 struct Multiple {
     #[domain(identity)]
     first: Id,
@@ -19,21 +18,21 @@ struct Multiple {
 }
 
 #[derive(Entity)]
-#[domain(id = "unsupported", label = "Unsupported", owner = Owner)]
+#[domain(id = "unsupported", label = "Unsupported")]
 struct Unsupported {
     #[domain(primary)]
     id: Id,
 }
 
 #[derive(Entity)]
-#[domain(id = "syntax", label = "Syntax", owner = Owner)]
+#[domain(id = "syntax", label = "Syntax")]
 struct Syntax {
     #[domain(identity = true)]
     id: Id,
 }
 
 #[derive(Entity)]
-#[domain(id = "duplicate", label = "Duplicate", owner = Owner)]
+#[domain(id = "duplicate", label = "Duplicate")]
 struct Duplicate {
     #[domain(identity)]
     #[domain(identity)]
@@ -41,7 +40,7 @@ struct Duplicate {
 }
 
 #[derive(Entity)]
-#[domain(id = "wrapped", label = "Wrapped", owner = Owner)]
+#[domain(id = "wrapped", label = "Wrapped")]
 struct Wrapped {
     #[domain(identity)]
     id: Option<Id>,

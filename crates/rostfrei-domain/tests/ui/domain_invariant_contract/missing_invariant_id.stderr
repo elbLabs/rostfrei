@@ -1,5 +1,5 @@
 error: missing id
- --> tests/ui/domain_invariant_contract/missing_invariant_id.rs:7:5
+ --> tests/ui/domain_invariant_contract/missing_invariant_id.rs:5:5
   |
-7 |     #[invariant(label = "Valid")]
+5 |     #[invariant(label = "Valid")]
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

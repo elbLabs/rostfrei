@@ -1,5 +1,0 @@
-error: invariant checkers cannot be async
- --> tests/ui/domain_invariant_contract/async_method.rs:8:5
-  |
-8 |     async fn valid(
-  |     ^^^^^

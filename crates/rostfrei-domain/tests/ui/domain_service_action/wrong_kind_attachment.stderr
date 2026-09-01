@@ -1,19 +1,19 @@
 error[E0277]: the trait bound `Owner: DomainServiceActionOwnerType` is not satisfied
-  --> tests/ui/domain_service_action/wrong_kind_attachment.rs:34:18
+  --> tests/ui/domain_service_action/wrong_kind_attachment.rs:39:18
    |
-34 | impl Actions for Owner {
+39 | impl Actions for Owner {
    |                  ^^^^^ unsatisfied trait bound
    |
 help: the trait `DomainServiceActionOwnerType` is not implemented for `Owner`
-  --> tests/ui/domain_service_action/wrong_kind_attachment.rs:26:1
+  --> tests/ui/domain_service_action/wrong_kind_attachment.rs:31:1
    |
-26 | struct Owner;
+31 | struct Owner;
    | ^^^^^^^^^^^^
 note: required by a bound in `Actions`
-  --> tests/ui/domain_service_action/wrong_kind_attachment.rs:18:1
+  --> tests/ui/domain_service_action/wrong_kind_attachment.rs:23:1
    |
-18 | #[domain_actions(domain_service)]
+23 | #[domain_actions(domain_service)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
-19 | pub trait Actions {
+24 | pub trait Actions {
    |           ------- required by a bound in this trait
    = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

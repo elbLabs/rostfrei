@@ -1,9 +1,9 @@
 use domain::EntityLifecycle;
 
 #[derive(EntityLifecycle)]
-#[domain(id = "workflow", label = "Workflow", owner = Todo, initial = Draft)]
-enum Lifecycle {
-    #[domain(id = "draft", label = "   ")]
+#[domain(id = "workflow", label = "Workflow")]
+enum Workflow {
+    #[state(id = "draft", label = " ")]
     Draft,
 }
 

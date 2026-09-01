@@ -58,25 +58,17 @@ impl DomainTestSubjectInput {
 
 impl TypedSubject {
     fn assemble(&self, domain_path: &Path, kind: TypedSubjectKind) -> TokenStream {
+        if matches!(kind, TypedSubjectKind::Invariant) {
+            return self.assemble_invariant(domain_path);
+        }
         let owner = &self.owner;
         let trait_path = &self.trait_path;
         let span = self.span;
-        let (marker, descriptor, reference, variant, subject) = match kind {
-            TypedSubjectKind::Action => (
-                format_ident!("__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE"),
-                format_ident!("ActionDescriptor"),
-                format_ident!("ActionReference"),
-                format_ident!("Action"),
-                "ACTION",
-            ),
-            TypedSubjectKind::Invariant => (
-                format_ident!("__DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE"),
-                format_ident!("InvariantDescriptor"),
-                format_ident!("InvariantReference"),
-                format_ident!("Invariant"),
-                "INVARIANT",
-            ),
-        };
+        let marker = format_ident!("__DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE");
+        let descriptor = format_ident!("ActionDescriptor");
+        let reference = format_ident!("ActionReference");
+        let variant = format_ident!("Action");
+        let subject = "ACTION";
         let hidden_reference = hidden_reference(subject, &self.reference);
 
         quote_spanned! {span=>
@@ -86,6 +78,22 @@ impl TypedSubject {
                 let reference: #domain_path::#reference<#owner> =
                     <#owner as #trait_path>::#hidden_reference;
                 #domain_path::DomainTestSubject::#variant(reference.id())
+            }
+        }
+    }
+
+    fn assemble_invariant(&self, domain_path: &Path) -> TokenStream {
+        let owner = &self.owner;
+        let trait_path = &self.trait_path;
+        let hidden_reference = hidden_reference("INVARIANT", &self.reference);
+        let span = self.span;
+        quote_spanned! {span=>
+            {
+                let _: &'static [#domain_path::InvariantDescriptor] =
+                    <#owner as #trait_path>::__DOMAIN_INVARIANTS;
+                let reference: #domain_path::InvariantReference =
+                    <#owner as #trait_path>::#hidden_reference;
+                #domain_path::DomainTestSubject::Invariant(reference.id())
             }
         }
     }
@@ -106,15 +114,8 @@ impl DecisionSubject {
 }
 
 fn parse_typed(kind: DomainTestKind, args: TokenStream) -> syn::Result<TypedSubject> {
-    let path: ExprPath = syn::parse2(args).map_err(|error| {
-        syn::Error::new(
-            error.span(),
-            format!(
-                "{} tests require exactly one owner-qualified reference in the form `<Owner as TraitPath>::CANONICAL_REFERENCE`",
-                kind.name()
-            ),
-        )
-    })?;
+    let path: ExprPath = syn::parse2(args)
+        .map_err(|error| syn::Error::new(error.span(), typed_reference_message(kind, true)))?;
     if !path.attrs.is_empty() {
         return Err(syn::Error::new_spanned(
             &path,
@@ -227,13 +228,20 @@ fn parse_decision(args: TokenStream) -> syn::Result<DecisionSubject> {
 }
 
 fn reference_shape_error(kind: DomainTestKind, tokens: impl quote::ToTokens) -> syn::Error {
-    syn::Error::new_spanned(
-        tokens,
-        format!(
-            "{} tests require an owner-qualified reference in the form `<Owner as TraitPath>::CANONICAL_REFERENCE`",
-            kind.name()
+    syn::Error::new_spanned(tokens, typed_reference_message(kind, false))
+}
+
+fn typed_reference_message(kind: DomainTestKind, exactly: bool) -> String {
+    let amount = if exactly { "exactly one " } else { "an " };
+    match kind {
+        DomainTestKind::Invariant => format!(
+            "invariant tests require {amount}implementor-qualified reference in the form `<Type as TraitPath>::CANONICAL_REFERENCE`"
         ),
-    )
+        _ => format!(
+            "{} tests require {amount}owner-qualified reference in the form `<Owner as TraitPath>::CANONICAL_REFERENCE`",
+            kind.name(),
+        ),
+    }
 }
 
 fn validate_canonical_reference(kind: DomainTestKind, reference: &Ident) -> syn::Result<()> {

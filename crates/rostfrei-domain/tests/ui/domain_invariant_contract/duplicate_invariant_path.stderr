@@ -1,5 +1,0 @@
-error: duplicate invariant path
-  --> tests/ui/domain_invariant_contract/duplicate_invariant_path.rs:13:31
-   |
-13 |     invariants = [Invariants, Invariants]
-   |                               ^^^^^^^^^^

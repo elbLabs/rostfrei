@@ -68,6 +68,10 @@ code, but aggregate-level compiled-model inventory and automatic invariant
 fanout are intentionally absent until Rostfrei has relationships it can derive
 or validate without manual lists.
 
+Entity declarations and owner-independent lifecycle and invariant tags follow
+the same separation principle in
+[ADR 0019](0019-explicit-entity-definition-and-owner-independent-tags.md).
+
 ## Consequences
 
 This is a breaking source change. Applications must remove `context`, `root`,

@@ -5,7 +5,7 @@ pub struct InvariantAttribute {
     pub label: LitStr,
 }
 
-pub fn extract(method: &mut TraitItemFn) -> syn::Result<InvariantAttribute> {
+pub fn extract(method: &mut TraitItemFn) -> syn::Result<Option<InvariantAttribute>> {
     let position = {
         let mut positions = method
             .attrs
@@ -13,10 +13,7 @@ pub fn extract(method: &mut TraitItemFn) -> syn::Result<InvariantAttribute> {
             .enumerate()
             .filter(|(_, attribute)| attribute.path().is_ident("invariant"));
         let Some((position, _)) = positions.next() else {
-            return Err(syn::Error::new_spanned(
-                &method.sig.ident,
-                "domain invariant contract methods require exactly one invariant attribute",
-            ));
+            return Ok(None);
         };
         if let Some((_, duplicate)) = positions.next() {
             return Err(syn::Error::new_spanned(
@@ -27,7 +24,7 @@ pub fn extract(method: &mut TraitItemFn) -> syn::Result<InvariantAttribute> {
         position
     };
 
-    parse(&method.attrs.remove(position))
+    parse(&method.attrs.remove(position)).map(Some)
 }
 
 fn parse(attribute: &Attribute) -> syn::Result<InvariantAttribute> {

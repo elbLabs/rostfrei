@@ -7,10 +7,15 @@ struct Inbox;
 struct PlainId(u64);
 
 #[derive(Entity)]
-#[domain(id = "plain-id-root", label = "Plain Id", owner = PlainIdAggregate)]
+#[domain(id = "plain-id-root", label = "Plain Id")]
 struct PlainIdRoot {
     #[domain(identity)]
     id: PlainId,
+}
+
+impl domain::EntityDefinition for PlainIdRoot {
+    type Owner = PlainIdAggregate;
+    type Identity = PlainId;
 }
 
 #[derive(Aggregate)]
@@ -30,10 +35,15 @@ struct MissingAggregate;
 struct ValidId(u64);
 
 #[derive(Entity)]
-#[domain(id = "missing-owner-root", label = "Missing Owner", owner = MissingAggregate)]
+#[domain(id = "missing-owner-root", label = "Missing Owner")]
 struct MissingOwnerRoot {
     #[domain(identity)]
     id: ValidId,
+}
+
+impl domain::EntityDefinition for MissingOwnerRoot {
+    type Owner = MissingAggregate;
+    type Identity = ValidId;
 }
 
 fn main() {}

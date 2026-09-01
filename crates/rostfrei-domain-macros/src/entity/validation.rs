@@ -2,11 +2,7 @@ use syn::Result;
 
 use crate::field::{Field, Role};
 
-use super::attributes::Attributes;
-
-pub fn validate<'a>(attributes: &Attributes, fields: &'a [Field]) -> Result<&'a Field> {
-    crate::helper::id::validate(&attributes.id)?;
-    crate::helper::label::validate(&attributes.label)?;
+pub fn validate(fields: &[Field]) -> Result<&Field> {
     let mut identities = fields
         .iter()
         .filter(|field| matches!(field.role, Role::Identity));

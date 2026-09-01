@@ -1,5 +1,0 @@
-error: invariant parameter must be a simple immutable identifier named `candidate`
- --> tests/ui/domain_invariant_contract/misnamed_candidate.rs:9:9
-  |
-9 |         value: &<Self as InvariantOwnerType>::Candidate,
-  |         ^^^^^

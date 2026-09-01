@@ -1,5 +1,0 @@
-error: invariant checkers cannot be unsafe
- --> tests/ui/domain_invariant_contract/unsafe_method.rs:8:5
-  |
-8 |     unsafe fn valid(
-  |     ^^^^^^

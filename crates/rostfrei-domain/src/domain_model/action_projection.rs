@@ -55,14 +55,6 @@ impl ActionProjection {
         Ok(())
     }
 
-    pub(super) fn attached_ids(&self) -> impl Iterator<Item = ActionId> + '_ {
-        self.actions.iter().map(|(descriptor, _)| descriptor.id)
-    }
-
-    pub(super) fn extension_ids(&self) -> impl Iterator<Item = ActionId> + '_ {
-        self.extensions.iter().map(|(descriptor, _)| descriptor.id)
-    }
-
     pub(super) fn validate_references(
         &self,
         inventory: &ActionReferenceInventory,

@@ -1,18 +1,19 @@
-use rostfrei::Entity;
+use rostfrei::{Entity, EntityDefinition};
 
 use super::{Bicycle, FleetId, RentalFleetAggregate};
 
 #[derive(Entity, Debug)]
-#[domain(
-    id = "rental-fleet-root",
-    label = "Rental fleet",
-    owner = RentalFleetAggregate
-)]
+#[domain(id = "rental-fleet-root", label = "Rental fleet")]
 pub struct RentalFleet {
     #[domain(identity)]
     pub(super) fleet_id: FleetId,
     #[domain(entity)]
     pub(super) bicycles: Vec<Bicycle>,
+}
+
+impl EntityDefinition for RentalFleet {
+    type Owner = RentalFleetAggregate;
+    type Identity = FleetId;
 }
 
 impl RentalFleet {

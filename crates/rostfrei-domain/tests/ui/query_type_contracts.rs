@@ -9,7 +9,7 @@ struct Catalog;
 struct FirstId(u64);
 
 #[derive(Entity)]
-#[domain(id = "first-root", label = "First", owner = First)]
+#[domain(id = "first-root", label = "First")]
 struct FirstRoot { #[domain(identity)] id: FirstId }
 
 #[derive(Aggregate)]
@@ -22,6 +22,11 @@ impl domain::AggregateDefinition for First {
     type Event = FirstEvents;
 }
 
+impl domain::EntityDefinition for FirstRoot {
+    type Owner = First;
+    type Identity = FirstId;
+}
+
 #[derive(domain::AggregateEvents)]
 enum FirstEvents {
     Event0(Event),
@@ -32,7 +37,7 @@ enum FirstEvents {
 struct SecondId(u64);
 
 #[derive(Entity)]
-#[domain(id = "second-root", label = "Second", owner = Second)]
+#[domain(id = "second-root", label = "Second")]
 struct SecondRoot { #[domain(identity)] id: SecondId }
 
 #[derive(Aggregate)]
@@ -43,6 +48,11 @@ impl domain::AggregateDefinition for Second {
     type Context = Catalog;
     type Root = SecondRoot;
     type Event = domain::NoDomainEvents;
+}
+
+impl domain::EntityDefinition for SecondRoot {
+    type Owner = Second;
+    type Identity = SecondId;
 }
 
 #[derive(Command)]

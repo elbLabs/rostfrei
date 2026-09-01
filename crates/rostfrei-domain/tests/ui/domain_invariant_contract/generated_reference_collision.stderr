@@ -1,11 +1,19 @@
 error: generated invariant reference constant `__DOMAIN_INVARIANT_REFERENCE_VALID` conflicts with trait item `__DOMAIN_INVARIANT_REFERENCE_VALID`
- --> tests/ui/domain_invariant_contract/generated_reference_collision.rs:7:22
+ --> tests/ui/domain_invariant_contract/generated_reference_collision.rs:8:22
   |
-7 |     #[invariant(id = "valid", label = "Valid")]
+8 |     #[invariant(id = "valid", label = "Valid")]
   |                      ^^^^^^^
 
 error: trait item `__DOMAIN_INVARIANT_REFERENCE_VALID` is declared here
- --> tests/ui/domain_invariant_contract/generated_reference_collision.rs:8:8
+ --> tests/ui/domain_invariant_contract/generated_reference_collision.rs:5:11
   |
-8 |     fn __DOMAIN_INVARIANT_REFERENCE_VALID(
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+5 |     const __DOMAIN_INVARIANT_REFERENCE_VALID: InvariantReference =
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `InvariantReference`
+ --> tests/ui/domain_invariant_contract/generated_reference_collision.rs:1:14
+  |
+1 | use domain::{InvariantReference, domain_invariants};
+  |              ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

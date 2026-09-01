@@ -1,7 +1,6 @@
-use syn::{Ident, LitStr};
+use syn::LitStr;
 
 pub struct Invariant {
     pub id: LitStr,
     pub label: LitStr,
-    pub method: Ident,
 }

@@ -23,16 +23,16 @@ trait LedgerRootActions {
 }
 
 #[derive(Entity)]
-#[domain(
-    id = "ledger-root",
-    label = "Ledger root",
-    owner = Ledger,
-    actions = [LedgerRootActions]
-)]
+#[domain(id = "ledger-root", label = "Ledger root")]
 pub struct LedgerRoot {
     #[domain(identity)]
     id: LedgerId,
     active: bool,
+}
+
+impl domain::EntityDefinition for LedgerRoot {
+    type Owner = Ledger;
+    type Identity = LedgerId;
 }
 
 impl LedgerRootActions for LedgerRoot {
@@ -358,7 +358,6 @@ fn model_orders_attached_then_extension_actions_and_omits_unlisted_contracts() {
             .map(|action| action["id"]["local"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "root-state",
             "from-minor",
             "clear",
             "increase",
@@ -372,7 +371,6 @@ fn model_orders_attached_then_extension_actions_and_omits_unlisted_contracts() {
             .map(|action| action["id"]["owner"]["kind"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "entity",
             "valueObject",
             "valueObject",
             "valueObject",

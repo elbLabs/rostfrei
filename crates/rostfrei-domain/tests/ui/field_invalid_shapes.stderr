@@ -13,45 +13,45 @@ error: custom domain fields require an explicit domain role
    |            ^^^^^^
 
 error: field must use a supported scalar or direct domain type
-  --> tests/ui/field_invalid_shapes.rs:21:12
+  --> tests/ui/field_invalid_shapes.rs:26:12
    |
-21 |     value: &'static str,
+26 |     value: &'static str,
    |            ^^^^^^^^^^^^
 
 error: field must use a supported scalar or direct domain type
-  --> tests/ui/field_invalid_shapes.rs:29:12
+  --> tests/ui/field_invalid_shapes.rs:39:12
    |
-29 |     value: [u8; 4],
+39 |     value: [u8; 4],
    |            ^^^^^^^
 
 error: field must use a supported scalar or direct domain type
-  --> tests/ui/field_invalid_shapes.rs:37:12
+  --> tests/ui/field_invalid_shapes.rs:52:12
    |
-37 |     value: (u8, u8),
+52 |     value: (u8, u8),
    |            ^^^^^^^^
 
 error: field base type must be direct and non-generic
-  --> tests/ui/field_invalid_shapes.rs:45:12
+  --> tests/ui/field_invalid_shapes.rs:65:12
    |
-45 |     value: std::collections::HashMap<String, String>,
+65 |     value: std::collections::HashMap<String, String>,
    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error: field base type must be direct and non-generic
-  --> tests/ui/field_invalid_shapes.rs:53:12
+  --> tests/ui/field_invalid_shapes.rs:78:12
    |
-53 |     value: collections::Vec<u8>,
+78 |     value: collections::Vec<u8>,
    |            ^^^^^^^^^^^^^^^^^^^^
 
 error: Vec and Option require exactly one plain type argument
-  --> tests/ui/field_invalid_shapes.rs:61:18
+  --> tests/ui/field_invalid_shapes.rs:91:18
    |
-61 |     value: Option<u8, u16>,
+91 |     value: Option<u8, u16>,
    |                  ^^^^^^^^^
 
 error[E0107]: enum takes 1 generic argument but 2 generic arguments were supplied
-  --> tests/ui/field_invalid_shapes.rs:61:12
+  --> tests/ui/field_invalid_shapes.rs:91:12
    |
-61 |     value: Option<u8, u16>,
+91 |     value: Option<u8, u16>,
    |            ^^^^^^   ----- help: remove the unnecessary generic argument
    |            |
    |            expected 1 generic argument
@@ -61,3 +61,241 @@ note: enum defined here, with 1 generic parameter: `T`
    |
    | pub enum Option<T> {
    |          ^^^^^^ -
+
+error[E0277]: the trait bound `Id: DomainIdentityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:18:21
+   |
+18 |     type Identity = Id;
+   |                     ^^ unsatisfied trait bound
+   |
+help: the trait `DomainIdentityType` is not implemented for `Id`
+  --> tests/ui/field_invalid_shapes.rs:4:1
+   |
+ 4 | struct Id(u64);
+   | ^^^^^^^^^
+note: required by a bound in `domain::EntityDefinition::Identity`
+  --> src/entity/definition.rs
+   |
+   |     type Identity: DomainIdentityType<Owner = Self>;
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EntityDefinition::Identity`
+
+error[E0277]: the trait bound `UntaggedCustom: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:16:35
+   |
+16 | impl domain::EntityDefinition for UntaggedCustom {
+   |                                   ^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `UntaggedCustom`
+  --> tests/ui/field_invalid_shapes.rs:10:1
+   |
+10 | struct UntaggedCustom {
+   | ^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+
+error[E0277]: the trait bound `Id: DomainIdentityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:31:21
+   |
+31 |     type Identity = Id;
+   |                     ^^ unsatisfied trait bound
+   |
+help: the trait `DomainIdentityType` is not implemented for `Id`
+  --> tests/ui/field_invalid_shapes.rs:4:1
+   |
+ 4 | struct Id(u64);
+   | ^^^^^^^^^
+note: required by a bound in `domain::EntityDefinition::Identity`
+  --> src/entity/definition.rs
+   |
+   |     type Identity: DomainIdentityType<Owner = Self>;
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EntityDefinition::Identity`
+
+error[E0277]: the trait bound `Reference: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:29:35
+   |
+29 | impl domain::EntityDefinition for Reference {
+   |                                   ^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `Reference`
+  --> tests/ui/field_invalid_shapes.rs:23:1
+   |
+23 | struct Reference {
+   | ^^^^^^^^^^^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+
+error[E0277]: the trait bound `Id: DomainIdentityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:44:21
+   |
+44 |     type Identity = Id;
+   |                     ^^ unsatisfied trait bound
+   |
+help: the trait `DomainIdentityType` is not implemented for `Id`
+  --> tests/ui/field_invalid_shapes.rs:4:1
+   |
+ 4 | struct Id(u64);
+   | ^^^^^^^^^
+note: required by a bound in `domain::EntityDefinition::Identity`
+  --> src/entity/definition.rs
+   |
+   |     type Identity: DomainIdentityType<Owner = Self>;
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EntityDefinition::Identity`
+
+error[E0277]: the trait bound `Array: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:42:35
+   |
+42 | impl domain::EntityDefinition for Array {
+   |                                   ^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `Array`
+  --> tests/ui/field_invalid_shapes.rs:36:1
+   |
+36 | struct Array {
+   | ^^^^^^^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+
+error[E0277]: the trait bound `Id: DomainIdentityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:57:21
+   |
+57 |     type Identity = Id;
+   |                     ^^ unsatisfied trait bound
+   |
+help: the trait `DomainIdentityType` is not implemented for `Id`
+  --> tests/ui/field_invalid_shapes.rs:4:1
+   |
+ 4 | struct Id(u64);
+   | ^^^^^^^^^
+note: required by a bound in `domain::EntityDefinition::Identity`
+  --> src/entity/definition.rs
+   |
+   |     type Identity: DomainIdentityType<Owner = Self>;
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EntityDefinition::Identity`
+
+error[E0277]: the trait bound `Tuple: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:55:35
+   |
+55 | impl domain::EntityDefinition for Tuple {
+   |                                   ^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `Tuple`
+  --> tests/ui/field_invalid_shapes.rs:49:1
+   |
+49 | struct Tuple {
+   | ^^^^^^^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+
+error[E0277]: the trait bound `Id: DomainIdentityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:70:21
+   |
+70 |     type Identity = Id;
+   |                     ^^ unsatisfied trait bound
+   |
+help: the trait `DomainIdentityType` is not implemented for `Id`
+  --> tests/ui/field_invalid_shapes.rs:4:1
+   |
+ 4 | struct Id(u64);
+   | ^^^^^^^^^
+note: required by a bound in `domain::EntityDefinition::Identity`
+  --> src/entity/definition.rs
+   |
+   |     type Identity: DomainIdentityType<Owner = Self>;
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EntityDefinition::Identity`
+
+error[E0277]: the trait bound `Map: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:68:35
+   |
+68 | impl domain::EntityDefinition for Map {
+   |                                   ^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `Map`
+  --> tests/ui/field_invalid_shapes.rs:62:1
+   |
+62 | struct Map {
+   | ^^^^^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+
+error[E0277]: the trait bound `Id: DomainIdentityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:83:21
+   |
+83 |     type Identity = Id;
+   |                     ^^ unsatisfied trait bound
+   |
+help: the trait `DomainIdentityType` is not implemented for `Id`
+  --> tests/ui/field_invalid_shapes.rs:4:1
+   |
+ 4 | struct Id(u64);
+   | ^^^^^^^^^
+note: required by a bound in `domain::EntityDefinition::Identity`
+  --> src/entity/definition.rs
+   |
+   |     type Identity: DomainIdentityType<Owner = Self>;
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EntityDefinition::Identity`
+
+error[E0277]: the trait bound `NonCanonical: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:81:35
+   |
+81 | impl domain::EntityDefinition for NonCanonical {
+   |                                   ^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `NonCanonical`
+  --> tests/ui/field_invalid_shapes.rs:75:1
+   |
+75 | struct NonCanonical {
+   | ^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
+
+error[E0277]: the trait bound `Id: DomainIdentityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:96:21
+   |
+96 |     type Identity = Id;
+   |                     ^^ unsatisfied trait bound
+   |
+help: the trait `DomainIdentityType` is not implemented for `Id`
+  --> tests/ui/field_invalid_shapes.rs:4:1
+   |
+ 4 | struct Id(u64);
+   | ^^^^^^^^^
+note: required by a bound in `domain::EntityDefinition::Identity`
+  --> src/entity/definition.rs
+   |
+   |     type Identity: DomainIdentityType<Owner = Self>;
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EntityDefinition::Identity`
+
+error[E0277]: the trait bound `MalformedWrapper: EntityType` is not satisfied
+  --> tests/ui/field_invalid_shapes.rs:94:35
+   |
+94 | impl domain::EntityDefinition for MalformedWrapper {
+   |                                   ^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EntityType` is not implemented for `MalformedWrapper`
+  --> tests/ui/field_invalid_shapes.rs:88:1
+   |
+88 | struct MalformedWrapper {
+   | ^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `EntityDefinition`
+  --> src/entity/definition.rs
+   |
+   | pub trait EntityDefinition: EntityType {
+   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`

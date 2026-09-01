@@ -1,11 +1,9 @@
-#![allow(unused, non_snake_case)]
+use domain::domain_invariants;
 
-use domain::{InvariantOwnerType, InvariantViolation, domain_invariants};
-
-#[domain_invariants(component)]
-trait Invariants {
+#[domain_invariants(entity)]
+trait Rules {
     #[invariant(id = "valid", label = "Valid")]
-    fn valid(candidate: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation>;
+    fn valid();
 }
 
 fn main() {}

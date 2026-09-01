@@ -51,14 +51,15 @@ pub struct Extensions;
 pub struct ExtensionRootId(u64);
 
 #[derive(Entity)]
-#[domain(
-    id = "extension-root",
-    label = "Extension root",
-    owner = ExtensionOwner
-)]
+#[domain(id = "extension-root", label = "Extension root")]
 pub struct ExtensionRoot {
     #[domain(identity)]
     id: ExtensionRootId,
+}
+
+impl domain::EntityDefinition for ExtensionRoot {
+    type Owner = ExtensionOwner;
+    type Identity = ExtensionRootId;
 }
 
 #[domain_actions(aggregate)]

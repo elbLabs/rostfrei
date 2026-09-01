@@ -34,14 +34,19 @@ struct Details {
 }
 
 #[derive(Entity)]
-#[domain(id = "part", label = "Part", owner = Product)]
+#[domain(id = "part", label = "Part")]
 struct Part {
     #[domain(identity)]
     id: PartId,
 }
 
+impl domain::EntityDefinition for Part {
+    type Owner = Product;
+    type Identity = PartId;
+}
+
 #[derive(Entity)]
-#[domain(id = "product-root", label = "Product", owner = Product)]
+#[domain(id = "product-root", label = "Product")]
 struct ProductRoot {
     #[domain(identity)]
     r#id: ProductId,
@@ -52,6 +57,11 @@ struct ProductRoot {
     details: Option<Vec<Details>>,
     #[domain(aggregate_ref = Product)]
     parent: Option<ProductId>,
+}
+
+impl domain::EntityDefinition for ProductRoot {
+    type Owner = Product;
+    type Identity = ProductId;
 }
 
 #[derive(Aggregate)]

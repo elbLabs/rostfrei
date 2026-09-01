@@ -1,5 +1,0 @@
-error: invariant checkers cannot be extern
- --> tests/ui/domain_invariant_contract/extern_method.rs:8:5
-  |
-8 |     extern "C" fn valid(
-  |     ^^^^^^^^^^

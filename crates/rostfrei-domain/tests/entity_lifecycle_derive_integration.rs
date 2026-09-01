@@ -1,27 +1,11 @@
 #![allow(dead_code)]
 
 use domain::{
-    ActionId, ActionOwnerId, Aggregate, AggregateId, BoundedContext, BoundedContextId,
-    DomainIdentity, Entity, EntityId, EntityLifecycle, EntityLifecycleDescriptor,
-    EntityLifecycleId, EntityLifecycleStateDescriptor, EntityLifecycleStateId,
-    EntityLifecycleTransitionDescriptor, EntityLifecycleType, EntityType, domain_actions,
+    Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle, EntityLifecycleDescriptor,
+    EntityLifecycleId, EntityLifecycleStateDescriptor, EntityLifecycleStateId, EntityLifecycleType,
     domain_model,
 };
-use serde_json::json;
-
-const CONTEXT_ID: BoundedContextId = BoundedContextId("operations");
-const AGGREGATE_ID: AggregateId = AggregateId {
-    context: CONTEXT_ID,
-    local: "work-queue",
-};
-const ENTITY_ID: EntityId = EntityId {
-    aggregate: AGGREGATE_ID,
-    local: "work-item",
-};
-const LIFECYCLE_ID: EntityLifecycleId = EntityLifecycleId {
-    owner: ENTITY_ID,
-    local: "progress",
-};
+const LIFECYCLE_ID: EntityLifecycleId = EntityLifecycleId("progress");
 const PENDING_ID: EntityLifecycleStateId = EntityLifecycleStateId {
     lifecycle: LIFECYCLE_ID,
     local: "pending",
@@ -34,44 +18,19 @@ const COMPLETED_ID: EntityLifecycleStateId = EntityLifecycleStateId {
     lifecycle: LIFECYCLE_ID,
     local: "completed",
 };
-const ACTIVATE_ID: ActionId = ActionId {
-    owner: ActionOwnerId::Entity(ENTITY_ID),
-    local: "activate",
-};
-const COMPLETE_ID: ActionId = ActionId {
-    owner: ActionOwnerId::Entity(ENTITY_ID),
-    local: "complete",
-};
 
 #[derive(BoundedContext)]
 #[domain(id = "operations", label = "Operations")]
 struct Operations;
 
-#[domain_actions(entity)]
-trait WorkItemActions {
-    #[action(id = "activate", label = "Activate work item")]
-    fn activate(&mut self);
-
-    #[action(id = "complete", label = "Complete work item")]
-    fn complete(&mut self);
-}
-
 #[derive(EntityLifecycle)]
-#[domain(
-    id = "progress",
-    label = "Work item progress",
-    owner = WorkItem,
-    initial = Pending
-)]
+#[domain(id = "progress", label = "Work item progress")]
 enum WorkItemLifecycle {
-    #[domain(id = "pending", label = "Pending")]
-    #[transition(action = WorkItemActions::ACTIVATE, to = Active)]
+    #[state(id = "pending", label = "Pending")]
     Pending,
-    #[domain(id = "active", label = "Active")]
-    #[transition(action = WorkItemActions::ACTIVATE, to = Active)]
-    #[transition(action = WorkItemActions::COMPLETE, to = Completed)]
+    #[state(id = "active", label = "Active")]
     Active,
-    #[domain(id = "completed", label = "Completed")]
+    #[state(id = "completed", label = "Completed")]
     Completed,
 }
 
@@ -80,16 +39,15 @@ enum WorkItemLifecycle {
 struct WorkItemId(u64);
 
 #[derive(Entity)]
-#[domain(
-    id = "work-item",
-    label = "Work item",
-    owner = WorkQueue,
-    actions = [WorkItemActions],
-    lifecycle = WorkItemLifecycle
-)]
+#[domain(id = "work-item", label = "Work item")]
 struct WorkItem {
     #[domain(identity)]
     id: WorkItemId,
+}
+
+impl domain::EntityDefinition for WorkItem {
+    type Owner = WorkQueue;
+    type Identity = WorkItemId;
 }
 
 #[derive(Aggregate)]
@@ -102,15 +60,8 @@ impl domain::AggregateDefinition for WorkQueue {
     type Event = domain::NoDomainEvents;
 }
 
-impl WorkItemActions for WorkItem {
-    fn activate(&mut self) {}
-
-    fn complete(&mut self) {}
-}
-
 #[test]
-#[allow(clippy::too_many_lines)]
-fn derives_attaches_and_projects_the_entity_lifecycle_contract() {
+fn derives_owner_independent_state_metadata_without_model_projection() {
     let expected_descriptor = EntityLifecycleDescriptor {
         id: LIFECYCLE_ID,
         label: "Work item progress",
@@ -128,28 +79,9 @@ fn derives_attaches_and_projects_the_entity_lifecycle_contract() {
                 label: "Completed",
             },
         ],
-        initial: PENDING_ID,
-        transitions: &[
-            EntityLifecycleTransitionDescriptor {
-                source: PENDING_ID,
-                action: ACTIVATE_ID,
-                target: ACTIVE_ID,
-            },
-            EntityLifecycleTransitionDescriptor {
-                source: ACTIVE_ID,
-                action: ACTIVATE_ID,
-                target: ACTIVE_ID,
-            },
-            EntityLifecycleTransitionDescriptor {
-                source: ACTIVE_ID,
-                action: COMPLETE_ID,
-                target: COMPLETED_ID,
-            },
-        ],
     };
 
     assert_eq!(WorkItemLifecycle::DESCRIPTOR, expected_descriptor);
-    assert_eq!(WorkItem::LIFECYCLE, Some(expected_descriptor));
 
     let model = domain_model! {
         contexts: [Operations],
@@ -164,81 +96,6 @@ fn derives_attaches_and_projects_the_entity_lifecycle_contract() {
     }
     .expect("entity lifecycle model projection should succeed");
 
-    assert_eq!(
-        model["entities"][0]["lifecycle"],
-        json!({
-            "id": "progress",
-            "label": "Work item progress",
-            "states": [
-                { "id": "pending", "label": "Pending" },
-                { "id": "active", "label": "Active" },
-                { "id": "completed", "label": "Completed" },
-            ],
-            "initial": "pending",
-            "transitions": [
-                {
-                    "source": "pending",
-                    "action": {
-                        "owner": {
-                            "kind": "entity",
-                            "id": {
-                                "aggregate": {
-                                    "context": "operations",
-                                    "local": "work-queue",
-                                },
-                                "local": "work-item",
-                            },
-                        },
-                        "local": "activate",
-                    },
-                    "target": "active",
-                },
-                {
-                    "source": "active",
-                    "action": {
-                        "owner": {
-                            "kind": "entity",
-                            "id": {
-                                "aggregate": {
-                                    "context": "operations",
-                                    "local": "work-queue",
-                                },
-                                "local": "work-item",
-                            },
-                        },
-                        "local": "activate",
-                    },
-                    "target": "active",
-                },
-                {
-                    "source": "active",
-                    "action": {
-                        "owner": {
-                            "kind": "entity",
-                            "id": {
-                                "aggregate": {
-                                    "context": "operations",
-                                    "local": "work-queue",
-                                },
-                                "local": "work-item",
-                            },
-                        },
-                        "local": "complete",
-                    },
-                    "target": "completed",
-                },
-            ],
-        })
-    );
-
-    let transitions = model["entities"][0]["lifecycle"]["transitions"]
-        .as_array()
-        .unwrap();
-    let actions = model["actions"].as_array().unwrap();
-
-    assert_eq!(actions.len(), 2);
-    assert_eq!(transitions[0]["action"], actions[0]["id"]);
-    assert_eq!(transitions[1]["action"], actions[0]["id"]);
-    assert_eq!(transitions[2]["action"], actions[1]["id"]);
-    assert!(model.get("lifecycles").is_none());
+    assert!(model["entities"][0].get("lifecycle").is_none());
+    assert!(model["actions"].as_array().unwrap().is_empty());
 }

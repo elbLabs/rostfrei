@@ -1,5 +1,0 @@
-error: `__DOMAIN_INVARIANTS_APPEND_VIOLATIONS` is reserved by domain_invariants
- --> tests/ui/domain_invariant_contract/reserved_append_method.rs:7:5
-  |
-7 |     fn __DOMAIN_INVARIANTS_APPEND_VIOLATIONS();
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

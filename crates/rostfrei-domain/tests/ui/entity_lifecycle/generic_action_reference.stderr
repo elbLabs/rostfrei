@@ -1,5 +1,0 @@
-error: transition action paths cannot contain generic arguments
- --> tests/ui/entity_lifecycle/generic_action_reference.rs:7:34
-  |
-7 |     #[transition(action = Actions::<Todo>::ACTIVATE, to = Draft)]
-  |                                  ^^^^^^^^

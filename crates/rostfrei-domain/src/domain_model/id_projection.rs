@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use crate::{
     ActionId, ActionOwnerId, AggregateId, CommandId, CommandOwnerId, DecisionId, DecisionOutcomeId,
     DecisionOwnerId, DomainErrorId, DomainErrorOwnerId, DomainEventId, DomainIdentityId, EntityId,
-    InvariantOwnerId, QueryId, ValueObjectId, ValueObjectOwnerId,
+    QueryId, ValueObjectId, ValueObjectOwnerId,
 };
 
 pub(super) fn action(id: ActionId) -> Value {
@@ -107,16 +107,6 @@ pub(super) fn entity(id: EntityId) -> Value {
         "aggregate": aggregate(id.aggregate),
         "local": id.local,
     })
-}
-
-pub(super) fn invariant_owner(id: InvariantOwnerId) -> Value {
-    match id {
-        InvariantOwnerId::Aggregate(id) => json!({ "kind": "aggregate", "id": aggregate(id) }),
-        InvariantOwnerId::Entity(id) => json!({ "kind": "entity", "id": entity(id) }),
-        InvariantOwnerId::ValueObject(id) => {
-            json!({ "kind": "valueObject", "id": value_object(id) })
-        }
-    }
 }
 
 pub(super) fn query(id: QueryId) -> Value {

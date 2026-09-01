@@ -11,14 +11,20 @@ struct Duplicate {
     #[domain(identity, value_object)]
     id: Id,
 }
+}
 
 #[derive(Entity)]
-#[domain(id = "bad", label = "Bad", owner = Owner)]
+#[domain(id = "bad", label = "Bad")]
 struct Unsupported {
     #[domain(identity)]
     id: Id,
     #[domain(owns)]
     value: String,
+}
+
+impl domain::EntityDefinition for Unsupported {
+    type Owner = Owner;
+    type Identity = Id;
 }
 
 #[derive(ValueObject)]

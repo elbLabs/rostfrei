@@ -63,9 +63,6 @@ fn checks_domain_test_attributes() {
 fn checks_entity_lifecycle_contracts() {
     let cases = trybuild::TestCases::new();
     cases.pass("tests/ui/entity_lifecycle/supported.rs");
-    cases.pass("tests/ui/entity_lifecycle/module_qualified_action.rs");
-    cases.pass("tests/ui/entity_lifecycle/self_transition_terminal.rs");
-    cases.pass("tests/ui/entity_lifecycle/numeric_reference.rs");
     cases.compile_fail("tests/ui/entity_lifecycle/non_enum.rs");
     cases.compile_fail("tests/ui/entity_lifecycle/generic_enum.rs");
     cases.compile_fail("tests/ui/entity_lifecycle/empty_enum.rs");
@@ -78,22 +75,6 @@ fn checks_entity_lifecycle_contracts() {
     cases.compile_fail("tests/ui/entity_lifecycle/duplicate_state_metadata.rs");
     cases.compile_fail("tests/ui/entity_lifecycle/duplicate_state_id.rs");
     cases.compile_fail("tests/ui/entity_lifecycle/blank_state_label.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/unknown_initial.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/unknown_target.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/malformed_action_reference.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/method_style_action_reference.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/generic_action_reference.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/hidden_action_reference.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/missing_transition_action.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/missing_transition_target.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/duplicate_transition_action.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/unknown_action_reference.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/duplicate_lexical_transition.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/duplicate_lifecycle_attachment.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/malformed_lifecycle_attachment.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/missing_action_implementation.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/unannotated_lifecycle.rs");
-    cases.compile_fail("tests/ui/entity_lifecycle/lifecycle_owner_mismatch.rs");
 }
 
 #[test]
@@ -172,66 +153,21 @@ fn checks_domain_decision_contracts() {
 fn checks_domain_invariant_contracts() {
     let cases = trybuild::TestCases::new();
     cases.pass("tests/ui/domain_invariant_contract/aggregate.rs");
-    cases.pass("tests/ui/domain_invariant_contract/entity.rs");
-    cases.pass("tests/ui/domain_invariant_contract/shadowed_prelude.rs");
-    cases.pass("tests/ui/domain_invariant_contract/value_object.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/async_method.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/auto_trait.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/bad_macro_kind.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/blank_label.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/by_value_candidate.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/default_method.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/destructured_candidate.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/domain_service_attachment.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/domain_service_kind.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/duplicate_invariant_attribute.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/duplicate_invariant_id.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/duplicate_invariant_key.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/duplicate_invariant_path.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/duplicate_invariants_key.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/empty_trait.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/existing_supertrait.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/explicit_lifetime_candidate.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/extern_method.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/generic_invariant_path.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/generated_reference_collision.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/generic_method.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/incomplete_implementation.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/invalid_invariant_id.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/keyed_macro_kind.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/legacy_group_on_impl.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/malformed_invariants_list.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/method_where_clause.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/misnamed_candidate.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/missing_implementation.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/missing_invariant_id.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/missing_invariant_label.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/missing_macro_kind.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/missing_output.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/multiple_candidates.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/multiple_macro_kinds.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/mutable_candidate.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/non_trait_target.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/qualified_self_invariant_path.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/receiver.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/removed_invariant_groups.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/reserved_append_method.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/reserved_descriptors.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/reserved_requirement.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/scalar_output.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/trait_generics.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/trait_where_clause.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/unannotated_attachment.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/untagged_method.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/unrestricted_public_trait.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/unsafe_method.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/unsafe_trait.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/unsupported_invariant_metadata.rs");
     cases.compile_fail("tests/ui/domain_invariant_contract/unsupported_trait_item.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/variadic_method.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/wrong_candidate_type.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/wrong_owner_kind_attachment.rs");
-    cases.compile_fail("tests/ui/domain_invariant_contract/zero_candidates.rs");
 }
 
 #[test]

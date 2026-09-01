@@ -11,10 +11,15 @@ struct Catalog;
 struct Id(u64);
 
 #[derive(Entity)]
-#[domain(id = "root", label = "Root", owner = Model)]
+#[domain(id = "root", label = "Root")]
 struct Root {
     #[domain(identity)]
     id: Id,
+}
+
+impl domain::EntityDefinition for Root {
+    type Owner = Model;
+    type Identity = Id;
 }
 
 #[derive(Aggregate)]

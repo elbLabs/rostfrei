@@ -12,9 +12,13 @@ pub fn expand(args: TokenStream, tokens: TokenStream) -> syn::Result<TokenStream
 }
 
 fn expand_trait(args: TokenStream, mut item: ItemTrait) -> syn::Result<TokenStream> {
-    let owner_kind = super::arguments::parse(args)?;
-    super::trait_validation::validate(&item)?;
+    if !args.is_empty() {
+        return Err(syn::Error::new_spanned(
+            args,
+            "domain_invariants does not accept arguments",
+        ));
+    }
     let invariants = super::invariant_collection::collect(&mut item.items)?;
     let domain_path = crate::helper::domain_api_path::resolve()?;
-    super::assembly::assemble(&domain_path, item, &invariants, owner_kind)
+    super::assembly::assemble(&domain_path, item, &invariants)
 }

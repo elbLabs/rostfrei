@@ -10,10 +10,15 @@ struct Context;
 struct Id(u64);
 
 #[derive(rostfrei::Entity)]
-#[rostfrei(id = "root", label = "Root", owner = Aggregate)]
+#[rostfrei(id = "root", label = "Root")]
 struct Root {
     #[rostfrei(identity)]
     id: Id,
+}
+
+impl rostfrei::EntityDefinition for Root {
+    type Owner = Aggregate;
+    type Identity = Id;
 }
 
 struct WrongRoot;

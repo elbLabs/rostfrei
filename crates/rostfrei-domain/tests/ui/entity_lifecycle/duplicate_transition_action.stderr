@@ -1,5 +1,0 @@
-error: duplicate transition action
- --> tests/ui/entity_lifecycle/duplicate_transition_action.rs:7:46
-  |
-7 |     #[transition(action = Actions::ACTIVATE, action = Actions::OTHER, to = Draft)]
-  |                                              ^^^^^^

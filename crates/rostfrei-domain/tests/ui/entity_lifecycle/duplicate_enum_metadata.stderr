@@ -1,5 +1,5 @@
-error: duplicate id
- --> tests/ui/entity_lifecycle/duplicate_enum_metadata.rs:4:27
+error: duplicate domain attribute
+ --> tests/ui/entity_lifecycle/duplicate_enum_metadata.rs:5:1
   |
-4 | #[domain(id = "workflow", id = "other", label = "Workflow", owner = Todo, initial = Draft)]
-  |                           ^^
+5 | #[domain(id = "other", label = "Other")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

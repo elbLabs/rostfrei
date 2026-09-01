@@ -1,4 +1,4 @@
-error: EntityLifecycle state variants require exactly one domain attribute
+error: EntityLifecycle state variants require exactly one state attribute
  --> tests/ui/entity_lifecycle/missing_state_metadata.rs:6:5
   |
 6 |     Draft,

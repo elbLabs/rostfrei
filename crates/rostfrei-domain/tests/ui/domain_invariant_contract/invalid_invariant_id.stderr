@@ -1,5 +1,5 @@
 error: id must be nonempty lowercase kebab-case using ASCII letters and digits
- --> tests/ui/domain_invariant_contract/invalid_invariant_id.rs:7:22
+ --> tests/ui/domain_invariant_contract/invalid_invariant_id.rs:5:22
   |
-7 |     #[invariant(id = "Bad Id", label = "Valid")]
-  |                      ^^^^^^^^
+5 |     #[invariant(id = "Invalid", label = "Valid")]
+  |                      ^^^^^^^^^

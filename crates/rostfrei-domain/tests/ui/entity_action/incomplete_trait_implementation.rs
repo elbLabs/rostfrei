@@ -18,10 +18,15 @@ trait Actions {
 struct Id(u8);
 
 #[derive(Entity)]
-#[domain(id = "item", label = "Item", owner = Owner, actions = [Actions])]
+#[domain(id = "item", label = "Item")]
 struct Item {
     #[domain(identity)]
     id: Id,
+}
+
+impl domain::EntityDefinition for Item {
+    type Owner = Owner;
+    type Identity = Id;
 }
 
 impl Actions for Item {

@@ -17,8 +17,8 @@ mod owner {
     pub struct RootId(u8);
 
     #[derive(Entity)]
-    #[domain(id = "root", label = "Root", owner = Owner)]
-    pub struct Root {
+#[domain(id = "root", label = "Root")]
+pub struct Root {
         #[domain(identity)]
         id: RootId,
     }
@@ -31,6 +31,11 @@ impl domain::AggregateDefinition for Owner {
     type Context = Context;
     type Root = Root;
     type Event = domain::NoDomainEvents;
+}
+
+impl domain::EntityDefinition for Root {
+    type Owner = Owner;
+    type Identity = RootId;
 }
 
     impl domain::AttachedDecisionGroup<PublicDecisions> for Owner {}

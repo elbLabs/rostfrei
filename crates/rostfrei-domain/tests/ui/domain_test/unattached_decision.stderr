@@ -1,13 +1,13 @@
 error[E0277]: the trait bound `Owner: domain::AttachedDecisionGroup<UnattachedDecisions>` is not satisfied
-  --> tests/ui/domain_test/unattached_decision.rs:56:31
+  --> tests/ui/domain_test/unattached_decision.rs:61:31
    |
-56 | #[domain_decision_test(Owner::UNATTACHED)]
+61 | #[domain_decision_test(Owner::UNATTACHED)]
    |                               ^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `domain::AttachedDecisionGroup<UnattachedDecisions>` is not implemented for `Owner`
-  --> tests/ui/domain_test/unattached_decision.rs:26:1
+  --> tests/ui/domain_test/unattached_decision.rs:31:1
    |
-26 | struct Owner;
+31 | struct Owner;
    | ^^^^^^^^^^^^
 note: required by a bound in `DecisionReference::<Group>::__attached_id`
   --> src/decision/reference.rs

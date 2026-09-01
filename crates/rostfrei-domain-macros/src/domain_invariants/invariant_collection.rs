@@ -14,13 +14,20 @@ pub fn collect(items: &mut [TraitItem]) -> syn::Result<Vec<Invariant>> {
                 format!("`{name}` is reserved by domain_invariants"),
             ));
         }
-        let TraitItem::Fn(method) = item else {
-            return Err(syn::Error::new_spanned(
-                item,
-                "domain invariant contract traits may only contain methods",
-            ));
-        };
-        invariants.push(collect_method(method, &mut ids)?);
+        match item {
+            TraitItem::Fn(method) => {
+                if let Some(invariant) = collect_method(method, &mut ids)? {
+                    invariants.push(invariant);
+                }
+            }
+            item if has_invariant_attribute(item) => {
+                return Err(syn::Error::new_spanned(
+                    item,
+                    "invariant may only be applied to trait methods",
+                ));
+            }
+            _ => {}
+        }
     }
     if invariants.is_empty() {
         return Err(syn::Error::new(
@@ -31,29 +38,34 @@ pub fn collect(items: &mut [TraitItem]) -> syn::Result<Vec<Invariant>> {
     Ok(invariants)
 }
 
-fn collect_method(method: &mut TraitItemFn, ids: &mut HashSet<String>) -> syn::Result<Invariant> {
-    let attribute = super::invariant_attribute::extract(method)?;
-    validate_body(method)?;
-    super::signature::validate(&method.sig)?;
+fn collect_method(
+    method: &mut TraitItemFn,
+    ids: &mut HashSet<String>,
+) -> syn::Result<Option<Invariant>> {
+    let Some(attribute) = super::invariant_attribute::extract(method)? else {
+        return Ok(None);
+    };
     crate::helper::id::validate(&attribute.id)?;
     crate::helper::label::validate(&attribute.label)?;
     validate_unique_id(&attribute.id, ids)?;
 
-    Ok(Invariant {
+    Ok(Some(Invariant {
         id: attribute.id,
         label: attribute.label,
-        method: method.sig.ident.clone(),
-    })
+    }))
 }
 
-fn validate_body(method: &TraitItemFn) -> syn::Result<()> {
-    if let Some(default) = &method.default {
-        return Err(syn::Error::new_spanned(
-            default,
-            "domain invariant checker methods cannot have default bodies",
-        ));
-    }
-    Ok(())
+fn has_invariant_attribute(item: &TraitItem) -> bool {
+    let attributes = match item {
+        TraitItem::Const(item) => &item.attrs,
+        TraitItem::Fn(item) => &item.attrs,
+        TraitItem::Type(item) => &item.attrs,
+        TraitItem::Macro(item) => &item.attrs,
+        _ => return false,
+    };
+    attributes
+        .iter()
+        .any(|attribute| attribute.path().is_ident("invariant"))
 }
 
 fn validate_unique_id(id: &syn::LitStr, ids: &mut HashSet<String>) -> syn::Result<()> {
@@ -71,11 +83,5 @@ fn reserved_name(item: &TraitItem) -> Option<&'static str> {
         TraitItem::Type(item) => &item.ident,
         _ => return None,
     };
-    [
-        "__DOMAIN_INVARIANTS",
-        "__DOMAIN_INVARIANTS_TRAIT_REQUIRES_DOMAIN_INVARIANTS_ATTRIBUTE",
-        "__DOMAIN_INVARIANTS_APPEND_VIOLATIONS",
-    ]
-    .into_iter()
-    .find(|name| identifier == name)
+    (identifier == "__DOMAIN_INVARIANTS").then_some("__DOMAIN_INVARIANTS")
 }

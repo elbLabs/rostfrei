@@ -15,12 +15,17 @@ pub struct Inbox;
 pub struct MailboxId(u64);
 
 #[derive(Entity)]
-#[domain(id = "mailbox-root", label = "Mailbox", owner = Mailbox)]
+#[domain(id = "mailbox-root", label = "Mailbox")]
 pub struct MailboxRoot {
     #[domain(identity)]
     id: MailboxId,
     #[domain(value_object)]
     address: Option<Vec<EmailAddress>>,
+}
+
+impl domain::EntityDefinition for MailboxRoot {
+    type Owner = Mailbox;
+    type Identity = MailboxId;
 }
 
 #[derive(Aggregate)]

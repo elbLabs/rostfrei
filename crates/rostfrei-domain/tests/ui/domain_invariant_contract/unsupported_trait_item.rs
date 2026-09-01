@@ -1,10 +1,9 @@
-#![allow(unused, non_snake_case)]
-
 use domain::domain_invariants;
 
-#[domain_invariants(entity)]
-trait Invariants {
-    const ENABLED: bool;
+#[domain_invariants]
+trait Rules {
+    #[invariant(id = "valid", label = "Valid")]
+    const VALID: bool;
 }
 
 fn main() {}

@@ -15,15 +15,15 @@ pub struct Operations;
 pub struct MailboxId(u64);
 
 #[derive(Entity)]
-#[domain(
-    id = "mailbox-root",
-    label = "Mailbox",
-    owner = Mailbox,
-    actions = [MailboxRootOutputActions]
-)]
+#[domain(id = "mailbox-root", label = "Mailbox")]
 pub struct MailboxRoot {
     #[domain(identity)]
     id: MailboxId,
+}
+
+impl domain::EntityDefinition for MailboxRoot {
+    type Owner = Mailbox;
+    type Identity = MailboxId;
 }
 
 #[derive(Aggregate)]
@@ -46,10 +46,15 @@ pub enum MailboxEvents {
 pub struct DeliveryId(u64);
 
 #[derive(Entity)]
-#[domain(id = "delivery-root", label = "Delivery", owner = Delivery)]
+#[domain(id = "delivery-root", label = "Delivery")]
 pub struct DeliveryRoot {
     #[domain(identity)]
     id: DeliveryId,
+}
+
+impl domain::EntityDefinition for DeliveryRoot {
+    type Owner = Delivery;
+    type Identity = DeliveryId;
 }
 
 #[derive(Aggregate)]
@@ -346,15 +351,6 @@ fn projects_only_explicitly_attached_non_aggregate_actions() {
             .iter()
             .map(|action| action["id"]["local"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        [
-            "unit",
-            "scalar",
-            "value-object",
-            "new",
-            "replace",
-            "unit",
-            "scalar",
-            "value-object",
-        ]
+        ["new", "replace", "unit", "scalar", "value-object",]
     );
 }

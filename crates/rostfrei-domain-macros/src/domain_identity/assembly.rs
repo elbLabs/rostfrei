@@ -45,7 +45,7 @@ pub fn assemble(
                 #domain_path::DomainIdentityDescriptor {
                     id: #domain_path::DomainIdentityId {
                         owner: #domain_path::EntityId {
-                            aggregate: <<#owner as #domain_path::EntityType>::Owner as #domain_path::AggregateType>::DESCRIPTOR.id,
+                            aggregate: <<#owner as #domain_path::EntityDefinition>::Owner as #domain_path::AggregateType>::DESCRIPTOR.id,
                             local: <#owner as #domain_path::EntityType>::LOCAL_ID,
                         },
                     },
@@ -55,21 +55,21 @@ pub fn assemble(
 
         #assertion
 
-        impl #domain_path::ActionInputType<<#owner as #domain_path::EntityType>::Owner> for #name {
+        impl #domain_path::ActionInputType<<#owner as #domain_path::EntityDefinition>::Owner> for #name {
             const DESCRIPTOR: #domain_path::ActionInputDescriptor =
                 #domain_path::ActionInputDescriptor::DomainIdentity(
                     <Self as #domain_path::DomainIdentityType>::DESCRIPTOR.id,
                 );
         }
 
-        impl #domain_path::QueryInputType<<#owner as #domain_path::EntityType>::Owner> for #name {
+        impl #domain_path::QueryInputType<<#owner as #domain_path::EntityDefinition>::Owner> for #name {
             const DESCRIPTOR: #domain_path::QueryInputDescriptor =
                 #domain_path::QueryInputDescriptor::DomainIdentity(
                     <Self as #domain_path::DomainIdentityType>::DESCRIPTOR.id,
                 );
         }
 
-        impl #domain_path::QueryOutputType<<#owner as #domain_path::EntityType>::Owner> for #name {
+        impl #domain_path::QueryOutputType<<#owner as #domain_path::EntityDefinition>::Owner> for #name {
             const DESCRIPTOR: #domain_path::QueryOutputDescriptor =
                 #domain_path::QueryOutputDescriptor::DomainIdentity(
                     <Self as #domain_path::DomainIdentityType>::DESCRIPTOR.id,

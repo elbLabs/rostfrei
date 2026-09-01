@@ -32,15 +32,15 @@ impl domain::AggregateDefinition for ProjectionAggregate {
 }
 
 #[derive(Entity)]
-#[domain(
-    id = "projection-root",
-    label = "Projection root",
-    owner = ProjectionAggregate,
-    decisions = [EntityProjectionDecisions]
-)]
+#[domain(id = "projection-root", label = "Projection root")]
 struct ProjectionRoot {
     #[domain(identity)]
     id: ProjectionIdentity,
+}
+
+impl domain::EntityDefinition for ProjectionRoot {
+    type Owner = ProjectionAggregate;
+    type Identity = ProjectionIdentity;
 }
 
 #[derive(ValueObject, Clone, Copy)]
@@ -134,21 +134,17 @@ fn projected_model() -> Result<Value, DomainModelError> {
 }
 
 #[test]
-fn projects_only_attached_entity_decisions() {
+fn entity_decisions_are_not_implicitly_projected() {
     let model = projected_model().expect("decision model projection should succeed");
     let decisions = model["decisions"].as_array().unwrap();
-    assert_eq!(decisions.len(), 1);
-    assert_eq!(decisions[0]["id"]["owner"]["kind"], "entity");
-    assert_eq!(decisions[0]["id"]["local"], "shared");
+    assert!(decisions.is_empty());
 }
 
 #[test]
 fn entity_outcome_ids_remain_decision_scoped() {
-    let model = projected_model().expect("decision model projection should succeed");
-    assert_eq!(
-        model["decisions"][0]["outcomes"][0]["id"]["decision"]["local"],
-        "shared"
-    );
+    let descriptor = <EntityProjectionDecisions as DecisionGroupType>::DECISIONS[0];
+    assert_eq!(descriptor.outcomes[0].local_id, "deferred");
+    assert_eq!(descriptor.id.local, "shared");
 }
 
 const DUPLICATE_CONTEXT_ID: BoundedContextId = BoundedContextId("duplicate-decisions");
@@ -192,10 +188,15 @@ struct DuplicateContext;
 struct DuplicateIdentity(u64);
 
 #[derive(Entity)]
-#[domain(id = "root", label = "Root", owner = DuplicateOwner)]
+#[domain(id = "root", label = "Root")]
 struct DuplicateRoot {
     #[domain(identity)]
     id: DuplicateIdentity,
+}
+
+impl domain::EntityDefinition for DuplicateRoot {
+    type Owner = DuplicateOwner;
+    type Identity = DuplicateIdentity;
 }
 
 #[derive(Aggregate)]
@@ -250,10 +251,15 @@ struct EmptyOutcomeGroup;
 struct EmptyOutcomeIdentity(u64);
 
 #[derive(Entity)]
-#[domain(id = "empty-root", label = "Empty root", owner = EmptyOutcomeOwner)]
+#[domain(id = "empty-root", label = "Empty root")]
 struct EmptyOutcomeRoot {
     #[domain(identity)]
     id: EmptyOutcomeIdentity,
+}
+
+impl domain::EntityDefinition for EmptyOutcomeRoot {
+    type Owner = EmptyOutcomeOwner;
+    type Identity = EmptyOutcomeIdentity;
 }
 
 #[derive(Aggregate)]
@@ -306,14 +312,15 @@ struct DuplicateOutcomeGroup;
 struct DuplicateOutcomeIdentity(u64);
 
 #[derive(Entity)]
-#[domain(
-    id = "duplicate-root",
-    label = "Duplicate root",
-    owner = DuplicateOutcomeOwner
-)]
+#[domain(id = "duplicate-root", label = "Duplicate root")]
 struct DuplicateOutcomeRoot {
     #[domain(identity)]
     id: DuplicateOutcomeIdentity,
+}
+
+impl domain::EntityDefinition for DuplicateOutcomeRoot {
+    type Owner = DuplicateOutcomeOwner;
+    type Identity = DuplicateOutcomeIdentity;
 }
 
 #[derive(Aggregate)]
