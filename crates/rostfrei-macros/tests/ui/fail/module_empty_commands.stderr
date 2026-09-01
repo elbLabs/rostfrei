@@ -1,4 +1,4 @@
-error: a module must contain at least one command
+error: a module must contain at least one command or query
  --> tests/ui/fail/module_empty_commands.rs:5:8
   |
 5 | struct Accounts;

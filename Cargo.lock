@@ -908,6 +908,7 @@ dependencies = [
  "rostfrei-core",
  "rostfrei-domain",
  "rostfrei-domain-runtime",
+ "rostfrei-macros",
  "rostfrei-messaging-core",
  "rostfrei-registry",
  "serde",
@@ -915,6 +916,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "trybuild",
+ "uuid",
 ]
 
 [[package]]
@@ -958,6 +960,21 @@ dependencies = [
  "rostfrei-domain",
  "rostfrei-registry",
  "serde",
+]
+
+[[package]]
+name = "rostfrei-http"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "http-body-util",
+ "rostfrei",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -1010,6 +1027,7 @@ version = "0.1.0"
 dependencies = [
  "rostfrei-core",
  "rostfrei-domain",
+ "rostfrei-messaging-core",
  "thiserror",
 ]
 
@@ -1747,6 +1765,7 @@ version = "1.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5772d71c9be8a8a6ac2117d949c5b224c1b72241bb611d9a3012edcf8af7812"
 dependencies = [
+ "getrandom 0.4.3",
  "js-sys",
  "sha1_smol",
  "wasm-bindgen",

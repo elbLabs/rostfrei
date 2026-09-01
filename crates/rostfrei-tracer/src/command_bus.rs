@@ -11,8 +11,6 @@ use crate::{
     CommandTransportError, CommandTransportErrorKind, CommandTransportObserver,
 };
 
-const COMMAND_ENVELOPE_OVERHEAD: usize = 64 * 1024;
-
 /// Adapts Tracer command invocations to the transport-neutral command bus.
 pub struct CommandBusTransport {
     bus: CommandBus,
@@ -43,9 +41,7 @@ impl CommandBusObserver for TransportObserverBridge {
 #[async_trait]
 impl CommandTransport for CommandBusTransport {
     fn maximum_payload_len(&self) -> usize {
-        self.bus
-            .maximum_payload_len()
-            .saturating_sub(COMMAND_ENVELOPE_OVERHEAD)
+        self.bus.maximum_payload_len()
     }
 
     async fn invoke(
@@ -124,9 +120,9 @@ impl CommandTransport for CommandBusTransport {
 
 fn command_bus_error(error: &rostfrei::CommandBusError) -> CommandTransportError {
     let kind = match error.kind() {
-        CommandBusErrorKind::Encoding | CommandBusErrorKind::InvalidMessage => {
-            CommandTransportErrorKind::InvalidRequest
-        }
+        CommandBusErrorKind::Encoding
+        | CommandBusErrorKind::PayloadTooLarge
+        | CommandBusErrorKind::InvalidMessage => CommandTransportErrorKind::InvalidRequest,
         CommandBusErrorKind::Timeout => CommandTransportErrorKind::Timeout,
         CommandBusErrorKind::Rejected => CommandTransportErrorKind::Rejected,
         CommandBusErrorKind::InvalidConfiguration => {
@@ -165,15 +161,12 @@ mod tests {
     }
 
     #[test]
-    fn raw_payload_limit_reserves_command_envelope_capacity() -> Result<(), Box<dyn Error>> {
+    fn raw_payload_limit_defers_exact_envelope_sizing_to_the_bus() -> Result<(), Box<dyn Error>> {
         let context = ApplicationName::new("tracer-test")?.bounded_context("orders")?;
         let adapter: Arc<dyn CommandMessageAdapter> = Arc::new(MaximumMessageAdapter);
         let transport = CommandBusTransport::new(CommandBus::new(context, adapter));
 
-        assert_eq!(
-            transport.maximum_payload_len(),
-            (1024 * 1024) - COMMAND_ENVELOPE_OVERHEAD
-        );
+        assert_eq!(transport.maximum_payload_len(), 1024 * 1024);
         Ok(())
     }
 

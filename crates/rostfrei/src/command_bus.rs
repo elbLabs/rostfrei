@@ -16,8 +16,8 @@ use rostfrei_messaging_core::{
     ApplicationErrorCode, BoundedContext, COMMAND_RESPONSE_SCHEMA_VERSION, CausationId,
     CommandAddress, CommandEnvelope, CommandRejection, CommandRejectionClassification,
     CommandResponse, CommandResponseOutcome, ContractError, CorrelationId, EnvelopeContext,
-    MessageId, MessageTimestamp, OperationId, OutboundMessage, SchemaVersion,
-    derive_command_response_address,
+    MessageBuildError, MessageBuildErrorKind, MessageId, MessageTimestamp, OperationId,
+    OutboundMessage, SchemaVersion, derive_command_response_address,
 };
 use rostfrei_registry::CommandDefinition;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
@@ -568,13 +568,16 @@ impl CommandBus {
             created_at,
             routed,
         )
-        .map_err(|error| CommandBusError::encoding(error.to_string()))?;
+        .map_err(|error| command_message_build_error(&error))?;
         let payload = canonical_serialize(&envelope)?;
         if payload.len() > self.maximum_payload_len() {
-            return Err(CommandBusError::encoding(format!(
-                "command payload exceeds its {}-byte adapter limit",
-                self.maximum_payload_len()
-            )));
+            return Err(CommandBusError::new(
+                CommandBusErrorKind::PayloadTooLarge,
+                format!(
+                    "command payload exceeds its {}-byte adapter limit",
+                    self.maximum_payload_len()
+                ),
+            ));
         }
         let message = OutboundMessage::new(address, message_id, payload)
             .map_err(|error| CommandBusError::encoding(error.to_string()))?
@@ -588,11 +591,22 @@ impl CommandBus {
     }
 }
 
+fn command_message_build_error(error: &MessageBuildError) -> CommandBusError {
+    let kind = if error.kind() == MessageBuildErrorKind::PayloadTooLarge {
+        CommandBusErrorKind::PayloadTooLarge
+    } else {
+        CommandBusErrorKind::Encoding
+    };
+    CommandBusError::new(kind, error.to_string())
+}
+
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum CommandBusErrorKind {
     #[error("command encoding failed")]
     Encoding,
+    #[error("command payload is too large")]
+    PayloadTooLarge,
     #[error("command message is invalid")]
     InvalidMessage,
     #[error("command dispatch timed out")]
