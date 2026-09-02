@@ -42,6 +42,7 @@ pub use rostfrei_messaging_core::{
     CausationId, CommandAddress, CommandPublisher, CommandRejection,
     CommandRejectionClassification, CommandResponse, CommandResponseOutcome, CommandResponseReader,
     CorrelationId, DurableName, IntegrationEventEnvelope, MessageId, MessageTimestamp,
+    TrafficScope,
 };
 pub use rostfrei_registry::{
     CommandDefinition, CommandDescriptor as CommandRegistrationDescriptor, DomainModule,

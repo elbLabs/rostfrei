@@ -2,13 +2,17 @@ use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
-use crate::{ContractError, ContractErrorKind, scope::validate_scope_segment};
+use crate::{
+    ContractError, ContractErrorKind,
+    scope::{TrafficScope, validate_scope_segment},
+};
 
-pub const COMMAND_ADDRESS_CONVENTION: &str = "<application>.command.<context>.<name>";
+pub const COMMAND_ADDRESS_CONVENTION: &str = "<application>[.test].command.<context>.<name>";
 pub const COMMAND_RESPONSE_ADDRESS_CONVENTION: &str =
-    "<application>.command-response.<context>.<name>";
-pub const INTEGRATION_EVENT_ADDRESS_CONVENTION: &str = "<application>.integration.<context>.<name>";
-pub const QUERY_ADDRESS_CONVENTION: &str = "<application>.query.<context>.<name>";
+    "<application>[.test].command-response.<context>.<name>";
+pub const INTEGRATION_EVENT_ADDRESS_CONVENTION: &str =
+    "<application>[.test].integration.<context>.<name>";
+pub const QUERY_ADDRESS_CONVENTION: &str = "<application>[.test].query.<context>.<name>";
 pub const MAX_ADDRESS_BYTES: usize = 256;
 pub const MAX_ADDRESS_SEGMENT_BYTES: usize = 64;
 
@@ -36,7 +40,23 @@ pub struct CommandAddress(String);
 
 impl CommandAddress {
     pub fn new(application: &str, context: &str, name: &str) -> Result<Self, ContractError> {
-        build_address(AddressKind::Command, application, context, name).map(Self)
+        Self::new_in_scope(application, TrafficScope::Normal, context, name)
+    }
+
+    pub fn new_in_scope(
+        application: &str,
+        traffic_scope: TrafficScope,
+        context: &str,
+        name: &str,
+    ) -> Result<Self, ContractError> {
+        build_address(
+            AddressKind::Command,
+            application,
+            traffic_scope,
+            context,
+            name,
+        )
+        .map(Self)
     }
 
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
@@ -51,12 +71,16 @@ impl CommandAddress {
         segment(&self.0, 0)
     }
 
+    pub fn traffic_scope(&self) -> TrafficScope {
+        address_traffic_scope(&self.0)
+    }
+
     pub fn context(&self) -> &str {
-        segment(&self.0, 2)
+        address_segment(&self.0, 2)
     }
 
     pub fn name(&self) -> &str {
-        segment(&self.0, 3)
+        address_segment(&self.0, 3)
     }
 }
 
@@ -65,7 +89,23 @@ pub struct CommandResponseAddress(String);
 
 impl CommandResponseAddress {
     pub fn new(application: &str, context: &str, name: &str) -> Result<Self, ContractError> {
-        build_address(AddressKind::CommandResponse, application, context, name).map(Self)
+        Self::new_in_scope(application, TrafficScope::Normal, context, name)
+    }
+
+    pub fn new_in_scope(
+        application: &str,
+        traffic_scope: TrafficScope,
+        context: &str,
+        name: &str,
+    ) -> Result<Self, ContractError> {
+        build_address(
+            AddressKind::CommandResponse,
+            application,
+            traffic_scope,
+            context,
+            name,
+        )
+        .map(Self)
     }
 
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
@@ -80,12 +120,16 @@ impl CommandResponseAddress {
         segment(&self.0, 0)
     }
 
+    pub fn traffic_scope(&self) -> TrafficScope {
+        address_traffic_scope(&self.0)
+    }
+
     pub fn context(&self) -> &str {
-        segment(&self.0, 2)
+        address_segment(&self.0, 2)
     }
 
     pub fn name(&self) -> &str {
-        segment(&self.0, 3)
+        address_segment(&self.0, 3)
     }
 }
 
@@ -94,7 +138,23 @@ pub struct IntegrationEventAddress(String);
 
 impl IntegrationEventAddress {
     pub fn new(application: &str, context: &str, name: &str) -> Result<Self, ContractError> {
-        build_address(AddressKind::IntegrationEvent, application, context, name).map(Self)
+        Self::new_in_scope(application, TrafficScope::Normal, context, name)
+    }
+
+    pub fn new_in_scope(
+        application: &str,
+        traffic_scope: TrafficScope,
+        context: &str,
+        name: &str,
+    ) -> Result<Self, ContractError> {
+        build_address(
+            AddressKind::IntegrationEvent,
+            application,
+            traffic_scope,
+            context,
+            name,
+        )
+        .map(Self)
     }
 
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
@@ -109,12 +169,16 @@ impl IntegrationEventAddress {
         segment(&self.0, 0)
     }
 
+    pub fn traffic_scope(&self) -> TrafficScope {
+        address_traffic_scope(&self.0)
+    }
+
     pub fn context(&self) -> &str {
-        segment(&self.0, 2)
+        address_segment(&self.0, 2)
     }
 
     pub fn name(&self) -> &str {
-        segment(&self.0, 3)
+        address_segment(&self.0, 3)
     }
 }
 
@@ -123,7 +187,23 @@ pub struct QueryAddress(String);
 
 impl QueryAddress {
     pub fn new(application: &str, context: &str, name: &str) -> Result<Self, ContractError> {
-        build_address(AddressKind::Query, application, context, name).map(Self)
+        Self::new_in_scope(application, TrafficScope::Normal, context, name)
+    }
+
+    pub fn new_in_scope(
+        application: &str,
+        traffic_scope: TrafficScope,
+        context: &str,
+        name: &str,
+    ) -> Result<Self, ContractError> {
+        build_address(
+            AddressKind::Query,
+            application,
+            traffic_scope,
+            context,
+            name,
+        )
+        .map(Self)
     }
 
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
@@ -138,12 +218,16 @@ impl QueryAddress {
         segment(&self.0, 0)
     }
 
+    pub fn traffic_scope(&self) -> TrafficScope {
+        address_traffic_scope(&self.0)
+    }
+
     pub fn context(&self) -> &str {
-        segment(&self.0, 2)
+        address_segment(&self.0, 2)
     }
 
     pub fn name(&self) -> &str {
-        segment(&self.0, 3)
+        address_segment(&self.0, 3)
     }
 }
 
@@ -158,36 +242,15 @@ pub enum MessageAddress {
 impl MessageAddress {
     pub fn parse(value: impl Into<String>) -> Result<Self, ContractError> {
         let value = value.into();
-        if value.is_empty() {
-            return Err(ContractError::new(ContractErrorKind::Empty, "address"));
-        }
-        if value.len() > MAX_ADDRESS_BYTES {
-            return Err(ContractError::bounded(
-                ContractErrorKind::TooLong,
-                "address",
-                value.len(),
-                MAX_ADDRESS_BYTES,
-            ));
-        }
-        if value.contains('*') || value.contains('>') {
-            return Err(ContractError::new(ContractErrorKind::Wildcard, "address"));
-        }
-        if value.chars().any(char::is_control) {
-            return Err(ContractError::new(
-                ContractErrorKind::ControlCharacter,
-                "address",
-            ));
-        }
-        let kind = value.split('.').nth(1).unwrap_or_default();
-        match kind {
-            "command" => CommandAddress::parse(value).map(Self::Command),
-            "command-response" => CommandResponseAddress::parse(value).map(Self::CommandResponse),
-            "integration" => IntegrationEventAddress::parse(value).map(Self::IntegrationEvent),
-            "query" => QueryAddress::parse(value).map(Self::Query),
-            _ => Err(ContractError::new(
-                ContractErrorKind::WrongAddressKind,
-                "address",
-            )),
+        match parse_address_parts(&value)?.kind {
+            AddressKind::Command => Ok(Self::Command(CommandAddress(value))),
+            AddressKind::CommandResponse => {
+                Ok(Self::CommandResponse(CommandResponseAddress(value)))
+            }
+            AddressKind::IntegrationEvent => {
+                Ok(Self::IntegrationEvent(IntegrationEventAddress(value)))
+            }
+            AddressKind::Query => Ok(Self::Query(QueryAddress(value))),
         }
     }
 
@@ -226,6 +289,24 @@ impl MessageAddress {
             Self::Query(address) => address.context(),
         }
     }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Command(address) => address.name(),
+            Self::CommandResponse(address) => address.name(),
+            Self::IntegrationEvent(address) => address.name(),
+            Self::Query(address) => address.name(),
+        }
+    }
+
+    pub fn traffic_scope(&self) -> TrafficScope {
+        match self {
+            Self::Command(address) => address.traffic_scope(),
+            Self::CommandResponse(address) => address.traffic_scope(),
+            Self::IntegrationEvent(address) => address.traffic_scope(),
+            Self::Query(address) => address.traffic_scope(),
+        }
+    }
 }
 
 mod private {
@@ -237,6 +318,7 @@ pub trait PublishableAddress:
 {
     fn as_str(&self) -> &str;
     fn application(&self) -> &str;
+    fn traffic_scope(&self) -> TrafficScope;
     fn context(&self) -> &str;
     fn kind(&self) -> AddressKind;
 }
@@ -252,6 +334,10 @@ impl PublishableAddress for CommandAddress {
 
     fn application(&self) -> &str {
         self.application()
+    }
+
+    fn traffic_scope(&self) -> TrafficScope {
+        self.traffic_scope()
     }
 
     fn context(&self) -> &str {
@@ -272,6 +358,10 @@ impl PublishableAddress for CommandResponseAddress {
         self.application()
     }
 
+    fn traffic_scope(&self) -> TrafficScope {
+        self.traffic_scope()
+    }
+
     fn context(&self) -> &str {
         self.context()
     }
@@ -290,6 +380,10 @@ impl PublishableAddress for IntegrationEventAddress {
         self.application()
     }
 
+    fn traffic_scope(&self) -> TrafficScope {
+        self.traffic_scope()
+    }
+
     fn context(&self) -> &str {
         self.context()
     }
@@ -302,13 +396,17 @@ impl PublishableAddress for IntegrationEventAddress {
 fn build_address(
     kind: AddressKind,
     application: &str,
+    traffic_scope: TrafficScope,
     context: &str,
     name: &str,
 ) -> Result<String, ContractError> {
     validate_scope_segment(application, "address application")?;
     validate_scope_segment(context, "address context")?;
     validate_address_name(name)?;
-    let value = format!("{application}.{}.{context}.{name}", kind.segment());
+    let value = traffic_scope.subject_segment().map_or_else(
+        || format!("{application}.{}.{context}.{name}", kind.segment()),
+        |scope| format!("{application}.{scope}.{}.{context}.{name}", kind.segment()),
+    );
     if value.len() > MAX_ADDRESS_BYTES {
         return Err(ContractError::bounded(
             ContractErrorKind::TooLong,
@@ -321,6 +419,21 @@ fn build_address(
 }
 
 fn parse_address(value: String, expected: AddressKind) -> Result<String, ContractError> {
+    let parts = parse_address_parts(&value)?;
+    if parts.kind != expected {
+        return Err(ContractError::new(
+            ContractErrorKind::WrongAddressKind,
+            "address",
+        ));
+    }
+    Ok(value)
+}
+
+struct AddressParts {
+    kind: AddressKind,
+}
+
+fn parse_address_parts(value: &str) -> Result<AddressParts, ContractError> {
     if value.is_empty() {
         return Err(ContractError::new(ContractErrorKind::Empty, "address"));
     }
@@ -343,26 +456,47 @@ fn parse_address(value: String, expected: AddressKind) -> Result<String, Contrac
     }
 
     let mut segments = value.split('.');
-    let application = segments.next();
-    let kind = segments.next();
+    let Some(application) = segments.next() else {
+        return Err(ContractError::new(
+            ContractErrorKind::InvalidFormat,
+            "address",
+        ));
+    };
+    let Some(second) = segments.next() else {
+        return Err(ContractError::new(
+            ContractErrorKind::InvalidFormat,
+            "address",
+        ));
+    };
+    let kind = if second == "test" {
+        segments.next()
+    } else {
+        Some(second)
+    };
     let context = segments.next();
     let name = segments.next();
-    if segments.next().is_some() || application.is_none() || context.is_none() || name.is_none() {
+    if segments.next().is_some() || kind.is_none() || context.is_none() || name.is_none() {
         return Err(ContractError::new(
             ContractErrorKind::InvalidFormat,
             "address",
         ));
     }
-    if kind != Some(expected.segment()) {
-        return Err(ContractError::new(
-            ContractErrorKind::WrongAddressKind,
-            "address",
-        ));
-    }
-    validate_scope_segment(application.unwrap_or_default(), "address application")?;
+    let kind = match kind.unwrap_or_default() {
+        "command" => AddressKind::Command,
+        "command-response" => AddressKind::CommandResponse,
+        "integration" => AddressKind::IntegrationEvent,
+        "query" => AddressKind::Query,
+        _ => {
+            return Err(ContractError::new(
+                ContractErrorKind::WrongAddressKind,
+                "address",
+            ));
+        }
+    };
+    validate_scope_segment(application, "address application")?;
     validate_scope_segment(context.unwrap_or_default(), "address context")?;
     validate_address_name(name.unwrap_or_default())?;
-    Ok(value)
+    Ok(AddressParts { kind })
 }
 
 fn validate_address_name(value: &str) -> Result<(), ContractError> {
@@ -401,6 +535,23 @@ fn validate_address_name(value: &str) -> Result<(), ContractError> {
 
 fn segment(value: &str, index: usize) -> &str {
     value.split('.').nth(index).unwrap_or_default()
+}
+
+fn address_traffic_scope(value: &str) -> TrafficScope {
+    if segment(value, 1) == "test" {
+        TrafficScope::Test
+    } else {
+        TrafficScope::Normal
+    }
+}
+
+fn address_segment(value: &str, normal_index: usize) -> &str {
+    let index = if address_traffic_scope(value) == TrafficScope::Test && normal_index > 0 {
+        normal_index.saturating_add(1)
+    } else {
+        normal_index
+    };
+    segment(value, index)
 }
 
 impl From<CommandAddress> for MessageAddress {
@@ -644,6 +795,26 @@ mod tests {
         ] {
             assert!(MessageAddress::parse(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn test_addresses_add_one_validated_scope_segment() {
+        let command =
+            CommandAddress::new_in_scope("acme", TrafficScope::Test, "orders", "place-order")
+                .unwrap();
+
+        assert_eq!(command.as_str(), "acme.test.command.orders.place-order");
+        assert_eq!(command.application(), "acme");
+        assert_eq!(command.traffic_scope(), TrafficScope::Test);
+        assert_eq!(command.context(), "orders");
+        assert_eq!(command.name(), "place-order");
+        assert_eq!(
+            MessageAddress::parse(command.as_str())
+                .unwrap()
+                .traffic_scope(),
+            TrafficScope::Test
+        );
+        assert!(MessageAddress::parse("acme.dev.command.orders.place-order").is_err());
     }
 
     #[test]

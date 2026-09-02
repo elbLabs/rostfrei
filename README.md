@@ -37,7 +37,10 @@ Cargo package:
 Messaging is application-scoped. An application name such as `fast-inbox`
 derives its command, command-response, integration-event, and quarantine streams
 and prefixes all rostfrei business subjects. Bounded contexts derive typed
-addresses and authoritative domain-event streams. See
+addresses and authoritative domain-event streams. Normal traffic uses that
+canonical namespace; Test automatically inserts a reserved `.test` subject
+scope and uses separate derived streams without inventing another application.
+See
 [`docs/adr`](docs/adr) for the messaging conventions and provisioning decisions.
 
 [`examples/bike-rental`](examples/bike-rental) is a self-contained public
@@ -54,7 +57,8 @@ while aggregate event JSON comes from the compiled aggregate codec.
 A Tracer instance receives an explicit test `EventHistory` for discovery,
 dynamic inputs, and read-only Simulate. Test and Dispatch instead use separately
 configured implementations of the same protocol-neutral command transport. The
-bike-rental example instantiates one NATS runtime definition for each environment:
+bike-rental example instantiates normal and test NATS runtimes for one canonical
+`bike-rental` application:
 both publish a durable command, execute through a command worker and `Executor`,
 append to the environment's `NatsEventStore`, publish a durable accepted or
 rejected response, and run the same post-commit domain and integration-event

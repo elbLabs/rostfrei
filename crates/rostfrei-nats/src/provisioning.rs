@@ -6,12 +6,12 @@ use async_nats::jetstream::{
     stream::{self, DiscardPolicy, RetentionPolicy, StorageType},
 };
 use rostfrei_messaging_core::{
-    ApplicationName, ConsumerConfig, MAX_MESSAGE_PAYLOAD_BYTES, PublishableAddress,
+    ApplicationName, ConsumerConfig, MAX_MESSAGE_PAYLOAD_BYTES, PublishableAddress, TrafficScope,
 };
 
 use crate::{
     error::NatsError,
-    messaging_config::{MessagingTopology, StreamName, SubjectFilter},
+    messaging_config::{MessagingTopology, StreamName, SubjectFilter, traffic_subject_prefix},
     stream_policy::{is_stream_not_found, stream_config_mismatches},
 };
 
@@ -37,6 +37,7 @@ pub enum StreamStorage {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamProvisioningConfig {
     application: ApplicationName,
+    traffic_scope: TrafficScope,
     name: StreamName,
     subjects: Vec<SubjectFilter>,
     description: Option<String>,
@@ -56,8 +57,19 @@ impl StreamProvisioningConfig {
         subjects: Vec<SubjectFilter>,
         retention: StreamRetention,
     ) -> Result<Self, NatsError> {
+        Self::new_in_scope(application, TrafficScope::Normal, name, subjects, retention)
+    }
+
+    pub fn new_in_scope(
+        application: &ApplicationName,
+        traffic_scope: TrafficScope,
+        name: StreamName,
+        subjects: Vec<SubjectFilter>,
+        retention: StreamRetention,
+    ) -> Result<Self, NatsError> {
         let config = Self {
             application: application.clone(),
+            traffic_scope,
             name,
             subjects,
             description: None,
@@ -120,7 +132,7 @@ impl StreamProvisioningConfig {
             description.len() > 1024 || description.chars().any(char::is_control)
         });
         if self.subjects.is_empty()
-            || !subjects_belong_to_application(&self.application, &self.subjects)
+            || !subjects_belong_to_scope(&self.application, self.traffic_scope, &self.subjects)
             || description_is_invalid
             || self.maximum_message_bytes <= 0
             || self.max_bytes < i64::from(self.maximum_message_bytes)
@@ -140,6 +152,10 @@ impl StreamProvisioningConfig {
 
     pub const fn application(&self) -> &ApplicationName {
         &self.application
+    }
+
+    pub const fn traffic_scope(&self) -> TrafficScope {
+        self.traffic_scope
     }
 
     pub fn subjects(&self) -> &[SubjectFilter] {
@@ -195,38 +211,65 @@ pub struct ApplicationMessagingConfig {
 
 impl ApplicationMessagingConfig {
     pub fn new(application: &ApplicationName) -> Result<Self, NatsError> {
-        let topology = MessagingTopology::for_application(application)?;
+        Self::new_in_scope(application, TrafficScope::Normal)
+    }
+
+    pub fn new_in_scope(
+        application: &ApplicationName,
+        traffic_scope: TrafficScope,
+    ) -> Result<Self, NatsError> {
+        let topology = MessagingTopology::for_application_in_scope(application, traffic_scope)?;
         let source_maximum_message_bytes =
             i32::try_from(MAX_MESSAGE_PAYLOAD_BYTES + SOURCE_STREAM_MESSAGE_OVERHEAD_BYTES)
                 .map_err(|_| NatsError::Configuration)?;
-        let commands = StreamProvisioningConfig::new(
+        let commands = StreamProvisioningConfig::new_in_scope(
             application,
+            traffic_scope,
             topology.command_stream().clone(),
-            vec![application_subject_filter(application, "command")?],
+            vec![application_subject_filter(
+                application,
+                traffic_scope,
+                "command",
+            )?],
             StreamRetention::WorkQueue,
         )?
         .with_description(format!("{} commands", application.as_str()))
         .with_maximum_message_bytes(source_maximum_message_bytes);
-        let command_responses = StreamProvisioningConfig::new(
+        let command_responses = StreamProvisioningConfig::new_in_scope(
             application,
+            traffic_scope,
             topology.command_response_stream().clone(),
-            vec![application_subject_filter(application, "command-response")?],
+            vec![application_subject_filter(
+                application,
+                traffic_scope,
+                "command-response",
+            )?],
             StreamRetention::Limits,
         )?
         .with_description(format!("{} command responses", application.as_str()))
         .with_maximum_message_bytes(source_maximum_message_bytes);
-        let integration_events = StreamProvisioningConfig::new(
+        let integration_events = StreamProvisioningConfig::new_in_scope(
             application,
+            traffic_scope,
             topology.integration_event_stream().clone(),
-            vec![application_subject_filter(application, "integration")?],
+            vec![application_subject_filter(
+                application,
+                traffic_scope,
+                "integration",
+            )?],
             StreamRetention::Limits,
         )?
         .with_description(format!("{} integration events", application.as_str()))
         .with_maximum_message_bytes(source_maximum_message_bytes);
-        let quarantine = StreamProvisioningConfig::new(
+        let quarantine = StreamProvisioningConfig::new_in_scope(
             application,
+            traffic_scope,
             topology.quarantine_stream().clone(),
-            vec![application_subject_filter(application, "quarantine")?],
+            vec![application_subject_filter(
+                application,
+                traffic_scope,
+                "quarantine",
+            )?],
             StreamRetention::Limits,
         )?
         .with_description(format!("{} quarantined messages", application.as_str()));
@@ -265,6 +308,10 @@ impl ApplicationMessagingConfig {
         self.topology.application()
     }
 
+    pub const fn traffic_scope(&self) -> TrafficScope {
+        self.topology.traffic_scope()
+    }
+
     pub const fn topology(&self) -> &MessagingTopology {
         &self.topology
     }
@@ -297,19 +344,33 @@ impl ApplicationMessagingConfig {
 
 fn application_subject_filter(
     application: &ApplicationName,
+    traffic_scope: TrafficScope,
     kind: &str,
 ) -> Result<SubjectFilter, NatsError> {
-    SubjectFilter::new(format!("{}.{kind}.>", application.as_str()))
+    SubjectFilter::new(format!(
+        "{}.{kind}.>",
+        traffic_subject_prefix(application.as_str(), traffic_scope)
+    ))
 }
 
-fn subjects_belong_to_application(
+fn subjects_belong_to_scope(
     application: &ApplicationName,
+    traffic_scope: TrafficScope,
     subjects: &[SubjectFilter],
 ) -> bool {
     !subjects.is_empty()
-        && subjects
-            .iter()
-            .all(|subject| subject.as_str().split('.').next() == Some(application.as_str()))
+        && subjects.iter().all(|subject| {
+            let mut tokens = subject.as_str().split('.');
+            if tokens.next() != Some(application.as_str()) {
+                return false;
+            }
+            match traffic_scope {
+                TrafficScope::Normal => tokens
+                    .next()
+                    .is_some_and(|token| !matches!(token, "test" | "*" | ">")),
+                TrafficScope::Test => tokens.next() == Some("test") && tokens.next().is_some(),
+            }
+        })
 }
 
 pub async fn provision_stream(
@@ -325,7 +386,7 @@ pub async fn provision_stream(
                 .iter()
                 .map(|subject| SubjectFilter::new(subject.clone()))
                 .collect::<Result<Vec<_>, _>>()?;
-            if !subjects_belong_to_application(config.application(), &subjects) {
+            if !subjects_belong_to_scope(config.application(), config.traffic_scope(), &subjects) {
                 return Err(NatsError::Configuration);
             }
         }
@@ -414,7 +475,9 @@ pub async fn provision_durable_consumer<A>(
 where
     A: PublishableAddress,
 {
-    if config.address().application() != topology.application().as_str() {
+    if config.address().application() != topology.application().as_str()
+        || config.address().traffic_scope() != topology.traffic_scope()
+    {
         return Err(NatsError::Configuration);
     }
     let stream_name = topology
@@ -496,6 +559,24 @@ mod tests {
             DEFAULT_STREAM_MAX_MESSAGE_BYTES
         );
         assert!(config.streams().iter().all(|stream| stream.replicas == 3));
+    }
+
+    #[test]
+    fn test_application_config_uses_the_test_subject_and_stream_scope() {
+        let application = ApplicationName::new("fast-inbox").unwrap();
+        let config =
+            ApplicationMessagingConfig::new_in_scope(&application, TrafficScope::Test).unwrap();
+
+        assert_eq!(config.traffic_scope(), TrafficScope::Test);
+        assert_eq!(config.commands.name().as_str(), "FAST_INBOX__TEST_COMMANDS");
+        assert_eq!(
+            config.commands.subjects()[0].as_str(),
+            "fast-inbox.test.command.>"
+        );
+        assert_eq!(
+            config.quarantine.subjects()[0].as_str(),
+            "fast-inbox.test.quarantine.>"
+        );
     }
 
     #[test]

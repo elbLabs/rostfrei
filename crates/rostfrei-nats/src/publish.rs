@@ -105,7 +105,9 @@ impl NatsPublisher {
         message: OutboundMessage<CommandResponseAddress>,
         publish_timeout: Duration,
     ) -> Result<NatsPublishAck, NatsError> {
-        if message.address().application() != self.topology.application().as_str() {
+        if message.address().application() != self.topology.application().as_str()
+            || message.address().traffic_scope() != self.topology.traffic_scope()
+        {
             return Err(NatsError::InvalidMessage);
         }
         let response = decode_outbound_command_response(&message)?;
@@ -137,7 +139,9 @@ impl NatsPublisher {
     where
         A: PublishableAddress,
     {
-        if message.address().application() != self.topology.application().as_str() {
+        if message.address().application() != self.topology.application().as_str()
+            || message.address().traffic_scope() != self.topology.traffic_scope()
+        {
             return Err(NatsError::InvalidMessage);
         }
         let mut headers = safe_headers(message.metadata(), message.trace_context());
