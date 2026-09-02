@@ -1,9 +1,8 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate, BoundedContext, DomainIdentity, DomainModelError, Entity, EntityType,
-    QueryGroupType, QueryInputDescriptor, QueryOutputDescriptor, ScalarType, ValueObject,
-    ValueObjectType, domain_model, domain_queries,
+    Aggregate, BoundedContext, DomainIdentity, DomainModelError, Entity, QueryGroupType,
+    domain_model, domain_queries,
 };
 use serde_json::json;
 
@@ -37,8 +36,7 @@ impl domain::AggregateDefinition for CatalogAggregate {
     type Event = domain::NoDomainEvents;
 }
 
-#[derive(ValueObject, Clone)]
-#[domain(id = "filter", label = "Filter", owner = CatalogAggregate)]
+#[derive(Clone)]
 struct Filter(String);
 
 #[domain_queries(group = CatalogQueries)]
@@ -86,26 +84,10 @@ impl CatalogAggregate {
 fn derives_query_descriptors_and_keeps_functions_callable() {
     let queries = CatalogQueries::QUERIES;
     assert_eq!(queries.len(), 4);
-    assert_eq!(queries[0].input, None);
-    assert_eq!(
-        queries[0].output,
-        QueryOutputDescriptor::Scalar(ScalarType::Usize)
-    );
-    assert_eq!(
-        queries[1].input,
-        Some(QueryInputDescriptor::Scalar(ScalarType::U64))
-    );
-    assert_eq!(
-        queries[2].input,
-        Some(QueryInputDescriptor::ValueObject(Filter::DESCRIPTOR.id))
-    );
-    assert_eq!(
-        queries[3].input,
-        Some(QueryInputDescriptor::DomainIdentity(
-            CatalogRoot::DESCRIPTOR.identity.identity
-        ))
-    );
-    assert!(matches!(queries[2].output, QueryOutputDescriptor::List(_)));
+    assert_eq!(queries[0].id.local, "count");
+    assert_eq!(queries[1].id.local, "contains");
+    assert_eq!(queries[2].id.local, "search");
+    assert_eq!(queries[3].id.local, "lookup");
     let root = CatalogRoot {
         id: CatalogId(7),
         count: 2,
@@ -124,7 +106,7 @@ fn projects_queries_and_identities_to_exact_json() {
         contexts: [Catalog],
         aggregates: [CatalogAggregate],
         entities: [CatalogRoot],
-        value_objects: [Filter],
+        value_objects: [],
         services: [],
         commands: [],
         errors: [],
@@ -145,15 +127,7 @@ fn projects_queries_and_identities_to_exact_json() {
         json!({
             "id": { "aggregate": aggregate, "local": "count" },
             "label": "Count",
-            "input": null,
-            "output": { "kind": "scalar", "scalar": "usize" },
         })
-    );
-    assert_eq!(model["queries"][2]["output"]["kind"], "list");
-    assert_eq!(model["queries"][2]["output"]["element"]["kind"], "optional");
-    assert_eq!(
-        model["queries"][2]["output"]["element"]["value"]["kind"],
-        "domainIdentity"
     );
 }
 

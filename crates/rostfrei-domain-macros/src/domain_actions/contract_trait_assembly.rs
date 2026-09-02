@@ -15,14 +15,8 @@ struct AssembledAction<'a> {
     signature: &'a ParsedSignature,
 }
 
-pub enum OutputPolicy {
-    Declared(Path),
-    OwnerSelf(Path),
-}
-
 pub struct Configuration {
     pub owner_supertrait: TypeParamBound,
-    pub output_policy: OutputPolicy,
     pub owner_predicate: Option<OwnerPredicateAssembler>,
 }
 
@@ -38,15 +32,10 @@ pub fn assemble(
         if let Some(assemble_owner_predicate) = configuration.owner_predicate {
             assemble_owner_predicate(domain_path, &mut item, action.action, action.signature)?;
         }
-        add_action_predicates(domain_path, &mut item, action, &configuration.output_policy)?;
+        add_action_predicates(domain_path, &mut item, action)?;
     }
     action_reference::add(domain_path, &mut item, actions)?;
-    add_action_descriptors(
-        domain_path,
-        &mut item,
-        &assembled_actions,
-        &configuration.output_policy,
-    )?;
+    add_action_descriptors(domain_path, &mut item, &assembled_actions)?;
     add_domain_actions_attribute_requirement(domain_path, &mut item)?;
     Ok(quote!(#item))
 }
@@ -75,30 +64,8 @@ fn add_action_predicates(
     domain_path: &Path,
     item: &mut ItemTrait,
     action: &AssembledAction<'_>,
-    output_policy: &OutputPolicy,
 ) -> syn::Result<()> {
     let signature = action.signature;
-    if let Some(input) = &signature.input {
-        push_predicate(item, input, &quote!(#domain_path::ActionInputType<Self>))?;
-    }
-    match output_policy {
-        OutputPolicy::Declared(output_owner) => push_predicate(
-            item,
-            &signature.output,
-            &quote!(#domain_path::ActionOutputType<#output_owner<Self>>),
-        )?,
-        OutputPolicy::OwnerSelf(output_owner) => {
-            push_predicate(
-                item,
-                &signature.output,
-                &quote!(#domain_path::__private::SameType<Type = Self>),
-            )?;
-            let predicate: WherePredicate = syn::parse2(quote! {
-                Self: #domain_path::ActionOutputType<#output_owner<Self>>
-            })?;
-            item.generics.make_where_clause().predicates.push(predicate);
-        }
-    }
     if let Some(error) = &signature.error {
         push_predicate(
             item,
@@ -119,11 +86,10 @@ fn add_action_descriptors(
     domain_path: &Path,
     item: &mut ItemTrait,
     actions: &[AssembledAction<'_>],
-    output_policy: &OutputPolicy,
 ) -> syn::Result<()> {
     let descriptors = actions
         .iter()
-        .map(|action| assemble_descriptor(domain_path, action, output_policy));
+        .map(|action| assemble_descriptor(domain_path, action));
     let span = item.ident.span();
     let constant: TraitItem = syn::parse2(quote_spanned! {span=>
         #[doc(hidden)]
@@ -150,23 +116,10 @@ fn add_domain_actions_attribute_requirement(
     Ok(())
 }
 
-fn assemble_descriptor(
-    domain_path: &Path,
-    action: &AssembledAction<'_>,
-    output_policy: &OutputPolicy,
-) -> TokenStream {
+fn assemble_descriptor(domain_path: &Path, action: &AssembledAction<'_>) -> TokenStream {
     let id = &action.action.id;
     let label = &action.action.label;
     let signature = action.signature;
-    let input = signature.input.as_ref().map_or_else(
-        || quote!(None),
-        |input| quote!(Some(<#input as #domain_path::ActionInputType<Self>>::DESCRIPTOR)),
-    );
-    let declared_output = &signature.output;
-    let (output, output_owner) = match output_policy {
-        OutputPolicy::Declared(output_owner) => (quote!(#declared_output), output_owner),
-        OutputPolicy::OwnerSelf(output_owner) => (quote!(Self), output_owner),
-    };
     let error = signature.error.as_ref().map_or_else(
         || quote!(None),
         |error| quote!(Some(<#error as #domain_path::DomainErrorType>::DESCRIPTOR.id)),
@@ -183,10 +136,6 @@ fn assemble_descriptor(
                 local: #id,
             },
             label: #label,
-            input: #input,
-            output: <#output as #domain_path::ActionOutputType<
-                #output_owner<Self>
-            >>::DESCRIPTOR,
             raises: &[#(#raises),*],
             error: #error,
         }

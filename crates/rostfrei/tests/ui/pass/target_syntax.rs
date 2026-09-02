@@ -33,21 +33,9 @@ impl AccountActions for Account {
     }
 }
 
-#[rostfrei::domain_actions(value_object)]
-trait AmountActions {
-    #[action(id = "new", label = "New")]
-    fn new(input: i64) -> Self;
-}
-
 #[derive(rostfrei::ValueObject)]
-#[rostfrei(id = "amount", label = "Amount", owner = Banking, actions = [AmountActions])]
+#[rostfrei(id = "amount", label = "Amount")]
 struct Amount(i64);
-
-impl AmountActions for Amount {
-    fn new(input: i64) -> Self {
-        Self(input)
-    }
-}
 
 #[derive(Serialize, Deserialize, rostfrei::DomainEvent)]
 #[rostfrei(id = "money-deposited", label = "Money deposited")]

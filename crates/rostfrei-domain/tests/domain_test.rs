@@ -12,11 +12,11 @@ use domain::{
 struct Testing;
 
 #[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
-#[domain(id = "decision-input", label = "Decision input", owner = TestAggregate)]
+#[domain(id = "decision-input", label = "Decision input")]
 struct DecisionInput(bool);
 
 #[derive(ValueObject, Debug, Eq, PartialEq)]
-#[domain(id = "decision-output", label = "Decision output", owner = TestAggregate)]
+#[domain(id = "decision-output", label = "Decision output")]
 struct DecisionOutput(bool);
 
 #[derive(DecisionOutcome, Debug, Eq, PartialEq)]

@@ -1,5 +1,0 @@
-error: scalar provider must be a direct, non-generic type path
- --> tests/ui/semantic_scalar/generic_provider.rs:7:30
-  |
-7 | struct GenericField(#[domain(scalar = Provider<u64>)] Custom);
-  |                              ^^^^^^^^^^^^^^^^^^^^^^

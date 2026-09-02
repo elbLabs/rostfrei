@@ -9,6 +9,5 @@ use crate::domain::rental_fleet::FleetId;
 pub struct RentalFleetImported {
     #[domain(identity)]
     pub fleet_id: FleetId,
-    #[domain(value_object)]
     pub bicycles: Vec<ImportedBicycle>,
 }

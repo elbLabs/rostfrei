@@ -4,16 +4,14 @@ use crate::{
     ActionOwnerId, AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId,
     BoundedContextDescriptor, CommandDescriptor, CommandId, DecisionOwnerId, DomainErrorDescriptor,
     DomainErrorId, DomainEventDescriptor, DomainEventId, DomainIdentityId, DomainServiceDescriptor,
-    DomainServiceType, EntityDefinition, EntityDescriptor, QueryDescriptor, QueryId,
-    QueryInputDescriptor, QueryOutputDescriptor, ValueObjectDescriptor, ValueObjectId,
-    ValueObjectType, extension::ActionGroupType,
+    DomainServiceType, EntityDefinition, EntityDescriptor, QueryDescriptor, QueryId, ValueObject,
+    ValueObjectDescriptor, ValueObjectId, extension::ActionGroupType,
 };
 
 use super::{
     action_projection::ActionProjection,
     action_reference_validation::ActionReferenceInventory,
     decision_projection::DecisionProjection,
-    decision_reference_validation::DecisionReferenceInventory,
     entity_projection::EntityProjection,
     error::DomainModelError,
     field_projection,
@@ -24,7 +22,6 @@ use super::{
         domain_error_owner as domain_error_owner_id, domain_identity as domain_identity_id,
         entity as entity_id, query as query_id, value_object as value_object_id,
     },
-    value_object_projection,
 };
 
 pub struct DomainModelBuilder {
@@ -131,25 +128,18 @@ impl DomainModelBuilder {
 
     pub fn add_value_object(&mut self, descriptor: ValueObjectDescriptor) {
         self.add_value_object_descriptor(descriptor);
-        self.field_references.add_value_object(descriptor);
     }
 
     fn add_value_object_descriptor(&mut self, descriptor: ValueObjectDescriptor) {
-        let mut value = json!({
+        let value = json!({
             "id": value_object_id(descriptor.id),
             "label": descriptor.label,
         });
-        value_object_projection::apply_shape(&mut value, descriptor.shape);
         self.value_objects.push((descriptor.id, value));
     }
 
-    pub fn add_value_object_type<V: ValueObjectType>(&mut self) -> Result<(), DomainModelError> {
+    pub fn add_value_object_type<V: ValueObject>(&mut self) -> Result<(), DomainModelError> {
         self.add_value_object(V::DESCRIPTOR);
-        let owner = ActionOwnerId::ValueObject(V::DESCRIPTOR.id);
-        self.actions.register_owner(owner);
-        for contract in V::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract)?;
-        }
         Ok(())
     }
 
@@ -259,8 +249,6 @@ impl DomainModelBuilder {
                 json!({
                     "id": query_id(descriptor.id),
                     "label": descriptor.label,
-                    "input": descriptor.input.map(query_input),
-                    "output": query_output(descriptor.output),
                 }),
             ));
         }
@@ -269,15 +257,10 @@ impl DomainModelBuilder {
 
     pub fn finish(self) -> Result<Value, DomainModelError> {
         let inventory = ActionReferenceInventory::new(
-            self.domain_identities.iter().map(|(id, _)| *id).collect(),
             self.domain_events.iter().map(|(id, _)| *id).collect(),
             self.domain_errors.iter().map(|(id, _)| *id).collect(),
-            self.value_objects.iter().map(|(id, _)| *id).collect(),
         );
         self.actions.validate_references(&inventory)?;
-        let decision_inventory =
-            DecisionReferenceInventory::new(self.value_objects.iter().map(|(id, _)| *id).collect());
-        self.decisions.validate_references(&decision_inventory)?;
         let field_inventory = FieldReferenceInventory::new(
             self.domain_identities.iter().map(|(id, _)| *id).collect(),
             self.entities.ids().collect(),
@@ -301,36 +284,6 @@ impl DomainModelBuilder {
             "queries": self.queries.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "invariants": [],
         }))
-    }
-}
-
-fn query_input(descriptor: QueryInputDescriptor) -> Value {
-    match descriptor {
-        QueryInputDescriptor::Scalar(scalar) => field_projection::scalar(scalar),
-        QueryInputDescriptor::ValueObject(id) => {
-            json!({ "kind": "valueObject", "id": value_object_id(id) })
-        }
-        QueryInputDescriptor::DomainIdentity(id) => {
-            json!({ "kind": "domainIdentity", "id": domain_identity_id(id) })
-        }
-    }
-}
-
-fn query_output(descriptor: QueryOutputDescriptor) -> Value {
-    match descriptor {
-        QueryOutputDescriptor::Scalar(scalar) => field_projection::scalar(scalar),
-        QueryOutputDescriptor::ValueObject(id) => {
-            json!({ "kind": "valueObject", "id": value_object_id(id) })
-        }
-        QueryOutputDescriptor::DomainIdentity(id) => {
-            json!({ "kind": "domainIdentity", "id": domain_identity_id(id) })
-        }
-        QueryOutputDescriptor::Optional(value) => {
-            json!({ "kind": "optional", "value": query_output(*value) })
-        }
-        QueryOutputDescriptor::List(element) => {
-            json!({ "kind": "list", "element": query_output(*element) })
-        }
     }
 }
 

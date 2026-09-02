@@ -9,4 +9,7 @@ mod expand;
 mod input;
 mod signature;
 
+#[cfg(test)]
+mod tests;
+
 pub use expand::expand;

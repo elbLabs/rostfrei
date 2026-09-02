@@ -5,8 +5,7 @@ use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, ActionOwnerType, Aggregate, AggregateId,
     BoundedContext, BoundedContextId, DomainIdentity, DomainModelError, DomainService,
-    DomainServiceId, Entity, EntityId, ValueObject, ValueObjectId, ValueObjectOwnerId,
-    domain_actions, domain_model,
+    DomainServiceId, Entity, EntityId, domain_actions, domain_model,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("extensions");
@@ -17,10 +16,6 @@ const AGGREGATE_ID: AggregateId = AggregateId {
 const ENTITY_ID: EntityId = EntityId {
     aggregate: AGGREGATE_ID,
     local: "extension-root",
-};
-const VALUE_OBJECT_ID: ValueObjectId = ValueObjectId {
-    owner: ValueObjectOwnerId::Aggregate(AGGREGATE_ID),
-    local: "extension-value",
 };
 const SERVICE_ID: DomainServiceId = DomainServiceId {
     context: CONTEXT_ID,
@@ -35,8 +30,6 @@ const fn action(owner: ActionOwnerId, local: &'static str) -> ActionDescriptor {
     ActionDescriptor {
         id: ActionId { owner, local },
         label: local,
-        input: None,
-        output: None,
         raises: &[],
         error: None,
     }
@@ -81,14 +74,6 @@ impl AttachedActions for ExtensionOwner {
     fn attached(_root: &mut ExtensionRoot) {}
 }
 
-#[derive(ValueObject)]
-#[domain(
-    id = "extension-value",
-    label = "Extension value",
-    owner = ExtensionOwner
-)]
-struct ExtensionValue(u64);
-
 #[derive(DomainService)]
 #[domain(
     id = "extension-service",
@@ -126,17 +111,6 @@ impl ActionGroupType for EntityExtension {
 
     const ACTIONS: &'static [ActionDescriptor] =
         &[action(ActionOwnerId::Entity(ENTITY_ID), "entity-extension")];
-}
-
-struct ValueObjectExtension;
-
-impl ActionGroupType for ValueObjectExtension {
-    type Owner = ExtensionValue;
-
-    const ACTIONS: &'static [ActionDescriptor] = &[action(
-        ActionOwnerId::ValueObject(VALUE_OBJECT_ID),
-        "value-object-extension",
-    )];
 }
 
 struct ServiceExtension;
@@ -248,9 +222,6 @@ fn accepts_extensions_for_every_registered_action_owner_kind() {
         .add_entity_type::<ExtensionRoot>()
         .expect("extension root should register");
     builder
-        .add_value_object_type::<ExtensionValue>()
-        .expect("extension value should register");
-    builder
         .add_domain_service_type::<ExtensionService>()
         .expect("extension service should register");
     builder
@@ -259,9 +230,6 @@ fn accepts_extensions_for_every_registered_action_owner_kind() {
     builder
         .add_action_extension::<EntityExtension>()
         .expect("entity extension should register");
-    builder
-        .add_action_extension::<ValueObjectExtension>()
-        .expect("value-object extension should register");
     builder
         .add_action_extension::<ServiceExtension>()
         .expect("service extension should register");
@@ -274,7 +242,6 @@ fn accepts_extensions_for_every_registered_action_owner_kind() {
             "extension-one",
             "extension-two",
             "entity-extension",
-            "value-object-extension",
             "service-extension",
         ]
     );

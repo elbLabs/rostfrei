@@ -1,29 +1,20 @@
-use crate::{
-    ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
-    DomainErrorId, DomainEventId, DomainIdentityId, ValueObjectId,
-};
+use crate::{ActionDescriptor, ActionId, ActionOwnerId, DomainErrorId, DomainEventId};
 
 use super::error::{DomainModelError, DomainModelReference};
 
 pub(super) struct ActionReferenceInventory {
-    domain_identities: Vec<DomainIdentityId>,
     domain_events: Vec<DomainEventId>,
     domain_errors: Vec<DomainErrorId>,
-    value_objects: Vec<ValueObjectId>,
 }
 
 impl ActionReferenceInventory {
     pub(super) const fn new(
-        domain_identities: Vec<DomainIdentityId>,
         domain_events: Vec<DomainEventId>,
         domain_errors: Vec<DomainErrorId>,
-        value_objects: Vec<ValueObjectId>,
     ) -> Self {
         Self {
-            domain_identities,
             domain_events,
             domain_errors,
-            value_objects,
         }
     }
 }
@@ -42,12 +33,6 @@ fn validate_references(
     descriptor: &ActionDescriptor,
     inventory: &ActionReferenceInventory,
 ) -> Result<(), DomainModelError> {
-    if let Some(input) = descriptor.input {
-        validate_input_reference(descriptor.id, input, inventory)?;
-    }
-    if let Some(output) = descriptor.output {
-        validate_output_references(descriptor.id, output, "output", inventory)?;
-    }
     for (index, id) in descriptor.raises.iter().enumerate() {
         let ActionOwnerId::Aggregate(owner) = descriptor.id.owner else {
             return Err(DomainModelError::ActionRaisedEventOwnerNotAggregate {
@@ -80,83 +65,6 @@ fn validate_references(
         ));
     }
     Ok(())
-}
-
-fn validate_input_reference(
-    action_id: ActionId,
-    input: ActionInputDescriptor,
-    inventory: &ActionReferenceInventory,
-) -> Result<(), DomainModelError> {
-    match input {
-        ActionInputDescriptor::Scalar(_) => Ok(()),
-        ActionInputDescriptor::ValueObject(id) => {
-            if inventory.value_objects.contains(&id) {
-                Ok(())
-            } else {
-                Err(missing_reference(
-                    action_id,
-                    DomainModelReference::ValueObject(Box::new(id)),
-                    "input",
-                    "value_objects",
-                ))
-            }
-        }
-        ActionInputDescriptor::DomainIdentity(id) => {
-            if inventory.domain_identities.contains(&id) {
-                Ok(())
-            } else {
-                Err(missing_reference(
-                    action_id,
-                    DomainModelReference::DomainIdentity(Box::new(id)),
-                    "input",
-                    "identities",
-                ))
-            }
-        }
-    }
-}
-
-fn validate_output_references(
-    action_id: ActionId,
-    output: ActionOutputDescriptor,
-    location: &str,
-    inventory: &ActionReferenceInventory,
-) -> Result<(), DomainModelError> {
-    match output {
-        ActionOutputDescriptor::Scalar(_) => Ok(()),
-        ActionOutputDescriptor::ValueObject(id) => {
-            if inventory.value_objects.contains(&id) {
-                Ok(())
-            } else {
-                Err(missing_reference(
-                    action_id,
-                    DomainModelReference::ValueObject(Box::new(id)),
-                    location,
-                    "value_objects",
-                ))
-            }
-        }
-        ActionOutputDescriptor::DomainEvent(id) => {
-            if inventory.domain_events.contains(&id) {
-                Ok(())
-            } else {
-                Err(missing_reference(
-                    action_id,
-                    DomainModelReference::DomainEvent(Box::new(id)),
-                    location,
-                    "events",
-                ))
-            }
-        }
-        ActionOutputDescriptor::Optional(value) => {
-            let location = format!("{location}.optional.value");
-            validate_output_references(action_id, *value, &location, inventory)
-        }
-        ActionOutputDescriptor::List(element) => {
-            let location = format!("{location}.list.element");
-            validate_output_references(action_id, *element, &location, inventory)
-        }
-    }
 }
 
 fn missing_reference(

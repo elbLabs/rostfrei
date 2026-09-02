@@ -15,23 +15,6 @@ pub fn assemble(domain_path: &Path, name: &Ident, variants: &[EventVariant]) -> 
                 __RostfreiAggregate: #domain_path::AggregateDefinition<Event = #name>,
             {
             }
-
-            impl<__RostfreiAggregate> #domain_path::ActionOutputType<
-                #domain_path::__private::AggregateActionOutput<__RostfreiAggregate>
-            > for #event
-            where
-                __RostfreiAggregate: #domain_path::AggregateDefinition<Event = #name>,
-            {
-                const DESCRIPTOR: ::core::option::Option<
-                    #domain_path::ActionOutputDescriptor
-                > = ::core::option::Option::Some(
-                    #domain_path::ActionOutputDescriptor::DomainEvent(
-                        <Self as #domain_path::DomainEventType<
-                            __RostfreiAggregate
-                        >>::DESCRIPTOR.id,
-                    ),
-                );
-            }
         }
     });
 

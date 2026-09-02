@@ -4,6 +4,9 @@
 
 Accepted.
 
+The parameter and outcome-payload modeling described by the original decision
+is superseded by [ADR 0022](0022-semantic-decision-outcomes-and-ordinary-payloads.md).
+
 ## Context
 
 [ADR 0013](0013-compiled-domain-model.md) established Decisions as inherent
@@ -57,10 +60,8 @@ ordinary typed Rust behavior, but are not projected into the compiled model
 until Rostfrei has a relationship it can derive or validate without a manual
 group list.
 
-Decision parameters may be owned values or top-level immutable references.
-`T` and `&T` produce identical parameter metadata for the modeled scalar or
-Value Object `T`. Mutable references and references nested anywhere inside a
-parameter type are rejected. Parameters remain simple immutable identifiers;
+Decision parameters are ordinary Rust inputs. Rostfrei does not classify or
+project their types; the authored function signature is authoritative.
 Decisions have no receiver, Aggregate root parameter, or hidden state input.
 
 Every Decision declares an explicit owned return type. That type is a
@@ -81,9 +82,9 @@ pub enum AssignmentOutcome {
 ```
 
 Every variant has one stable `#[outcome(id = "...", label = "...")]`. Variants
-may be unit, tuple, or named struct shapes. Tuple and named fields contain only
-supported scalars or Value Objects. Outcome order and field order follow Rust
-source order.
+may be unit, tuple, or named struct shapes with arbitrary ordinary Rust payload
+types. Only outcome IDs, labels, and source order are domain metadata; payload
+shape remains an implementation detail of the Rust enum.
 
 Each variant is projected as a first-class outcome whose ID is scoped to its
 Decision. The model does not classify variants as accepted, denied, success, or
@@ -110,10 +111,9 @@ from the stable Decision ID. The group type preserves exact attachment checking:
 the test compiles only when that exact group is attached to that exact owner.
 The hidden anchor is implementation machinery, not public application syntax.
 
-Compiled Decision JSON replaces singular `output` and `error` members with an
-ordered `outcomes` array. Each outcome contains its Decision-scoped stable ID,
-label, and explicit unit, tuple, or struct shape. Decision group names and
-attachments are not projected.
+Compiled Decision JSON contains an ordered `outcomes` array. Each outcome
+contains only its Decision-scoped stable ID and label. Decision parameters,
+payload shapes, group names, and attachments are not projected.
 
 ## Consequences
 
@@ -127,15 +127,12 @@ a Decision between attached groups does not change its model ID, but can change
 projection order and the hidden reference's group type; Domain Tests continue to
 verify exact attachment.
 
-Owned and immutably borrowed call signatures have the same compiled model, so
-authoring can avoid unnecessary clones without creating transport- or
-lifetime-shaped metadata.
+Input signatures have no compiled-model representation, so authoring can use
+the Rust types and borrowing strategy appropriate to the implementation.
 
-Outcome enums are closed and non-generic. Their payloads intentionally exclude
-Domain Errors, Domain Events, containers, references, and arbitrary Rust types.
-Actions remain responsible for translating policy outcomes into their own
-errors and events.
+Outcome enums are closed and non-generic, while their payload fields may use
+arbitrary Rust types. Actions remain responsible for translating policy
+outcomes into their own errors and events.
 
-Existing compiled Decision JSON consumers must migrate from `output`/`error` to
-`outcomes` and handle explicit outcome shapes. They must not expect Decision
-group data in the model.
+Compiled-model consumers must not expect Decision parameters, outcome payload
+shapes, or Decision group data in the model.

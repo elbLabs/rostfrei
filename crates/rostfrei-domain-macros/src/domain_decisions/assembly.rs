@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::{ItemImpl, LitStr, Path, TypePath};
+use syn::{ItemImpl, Path, TypePath};
 
 use super::{arguments::OwnerKind, decision::Decision};
 
@@ -21,7 +21,7 @@ pub fn assemble(
         .map(|decision| reference(domain_path, group, decision));
     let signature_assertions = decisions
         .iter()
-        .map(|decision| signature_assertion(owner, decision, &impl_cfg_attributes));
+        .map(|decision| signature_assertion(domain_path, owner, decision, &impl_cfg_attributes));
     let owner_bound = match owner_kind {
         OwnerKind::Aggregate => quote!(#domain_path::AggregateDecisionOwnerType),
         OwnerKind::Entity => quote!(#domain_path::EntityDecisionOwnerType),
@@ -58,19 +58,6 @@ fn descriptor(domain_path: &Path, owner: &TypePath, decision: &Decision) -> Toke
     let cfg_attributes = &decision.cfg_attributes;
     let id = &decision.id;
     let label = &decision.label;
-    let parameters = decision.parameters.iter().map(|parameter| {
-        let name = LitStr::new(
-            parameter.name.to_string().trim_start_matches("r#"),
-            parameter.name.span(),
-        );
-        let ty = &parameter.descriptor_type;
-        quote! {
-            #domain_path::DecisionParameterDescriptor {
-                name: #name,
-                input: <#ty as #domain_path::DecisionInputType>::DESCRIPTOR,
-            }
-        }
-    });
     let return_type = &decision.return_type;
     quote! {
         #(#cfg_attributes)*
@@ -80,7 +67,6 @@ fn descriptor(domain_path: &Path, owner: &TypePath, decision: &Decision) -> Toke
                 local: #id,
             },
             label: #label,
-            parameters: &[#(#parameters),*],
             outcomes: <#return_type as #domain_path::DecisionOutcomeType>::OUTCOMES,
             implementation: #domain_path::DecisionImplementationDescriptor::Rust,
         }
@@ -102,21 +88,21 @@ fn reference(domain_path: &Path, group: &TypePath, decision: &Decision) -> Token
 }
 
 fn signature_assertion(
+    domain_path: &Path,
     owner: &TypePath,
     decision: &Decision,
     impl_cfg_attributes: &[syn::Attribute],
 ) -> TokenStream {
     let name = &decision.name;
     let cfg_attributes = &decision.cfg_attributes;
-    let parameters = decision
-        .parameters
-        .iter()
-        .map(|parameter| &parameter.signature_type);
+    let parameters = &decision.parameters;
     let return_type = &decision.return_type;
     quote_spanned! {name.span()=>
         #(#impl_cfg_attributes)*
         #(#cfg_attributes)*
         const _: () = {
+            fn assert_outcome<T: #domain_path::DecisionOutcomeType>() {}
+            let _ = assert_outcome::<#return_type>;
             let _: fn(#(#parameters),*) -> #return_type = #owner::#name;
         };
     }

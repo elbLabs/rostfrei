@@ -5,7 +5,6 @@ mod domain_service;
 mod entity;
 mod invariant;
 mod lifecycle;
-mod value_object;
 
 use serde_json::{Value, json};
 

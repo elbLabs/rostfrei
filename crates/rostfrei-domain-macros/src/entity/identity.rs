@@ -23,31 +23,5 @@ pub fn assemble(domain_path: &Path, entity: &Ident, identity: &Field) -> TokenSt
                 };
         }
 
-        impl #domain_path::ActionInputType<
-            <#entity as #domain_path::EntityDefinition>::Owner
-        > for #identity {
-            const DESCRIPTOR: #domain_path::ActionInputDescriptor =
-                #domain_path::ActionInputDescriptor::DomainIdentity(
-                    <Self as #domain_path::__private::DomainIdentityType>::DESCRIPTOR.id,
-                );
-        }
-
-        impl #domain_path::QueryInputType<
-            <#entity as #domain_path::EntityDefinition>::Owner
-        > for #identity {
-            const DESCRIPTOR: #domain_path::QueryInputDescriptor =
-                #domain_path::QueryInputDescriptor::DomainIdentity(
-                    <Self as #domain_path::__private::DomainIdentityType>::DESCRIPTOR.id,
-                );
-        }
-
-        impl #domain_path::QueryOutputType<
-            <#entity as #domain_path::EntityDefinition>::Owner
-        > for #identity {
-            const DESCRIPTOR: #domain_path::QueryOutputDescriptor =
-                #domain_path::QueryOutputDescriptor::DomainIdentity(
-                    <Self as #domain_path::__private::DomainIdentityType>::DESCRIPTOR.id,
-                );
-        }
     }
 }

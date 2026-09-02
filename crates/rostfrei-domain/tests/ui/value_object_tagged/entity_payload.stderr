@@ -1,5 +1,0 @@
-error: contained Entity fields are only valid on Entity
-  --> tests/ui/value_object_tagged/entity_payload.rs:12:30
-   |
-12 |     Entity(#[domain(entity)] Other),
-   |                              ^^^^^

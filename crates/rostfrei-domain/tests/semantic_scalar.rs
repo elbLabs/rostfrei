@@ -3,8 +3,7 @@
 use domain::{
     Aggregate, BoundedContext, Command, CommandType, DomainError, DomainErrorType, DomainEvent,
     DomainEventDefinitionType, DomainIdentity, Entity, EntityType, FieldKind, FieldWrapper,
-    ScalarType, SemanticScalar, SemanticScalarDescriptor, ValueObject, ValueObjectType,
-    domain_model,
+    ScalarType, SemanticScalar, SemanticScalarDescriptor, domain_model,
 };
 use serde_json::json;
 
@@ -79,13 +78,6 @@ enum DocumentsEvents {
     Event0(DocumentCorrelated),
 }
 
-#[derive(ValueObject)]
-#[domain(id = "external-reference", label = "External reference", owner = SemanticScalars)]
-struct ExternalReference {
-    #[domain(scalar = UuidScalar)]
-    value: foreign::Uuid,
-}
-
 #[derive(Command)]
 #[domain(id = "correlate-document", label = "Correlate document", owner = Documents)]
 struct CorrelateDocument {
@@ -133,11 +125,6 @@ fn describes_semantic_fields_and_nested_wrappers() {
     assert_eq!(fields[3].value.kind, FieldKind::Scalar(ScalarType::String));
 
     let semantic_kinds = [
-        match ExternalReference::DESCRIPTOR.shape {
-            domain::ValueObjectShapeDescriptor::Struct { fields } => Some(fields[0].value.kind),
-            _ => None,
-        }
-        .expect("ExternalReference should have a struct descriptor"),
         CorrelateDocument::DESCRIPTOR.fields[0].value.kind,
         DocumentCorrelated::DEFINITION.fields[0].value.kind,
         DocumentCorrelationRejected::DESCRIPTOR.fields[0].value.kind,
@@ -156,7 +143,7 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
         contexts: [SemanticScalars],
         aggregates: [Documents],
         entities: [DocumentRoot, Revision],
-        value_objects: [ExternalReference],
+        value_objects: [],
         services: [],
         commands: [CorrelateDocument],
         errors: [DocumentCorrelationRejected],

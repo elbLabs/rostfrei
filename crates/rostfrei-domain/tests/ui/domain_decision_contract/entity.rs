@@ -35,7 +35,7 @@ impl domain::AggregateDefinition for Owner {
 }
 
 #[derive(ValueObject, Debug, Eq, PartialEq)]
-#[domain(id = "output", label = "Output", owner = Owner)]
+#[domain(id = "output", label = "Output")]
 struct Output(u8);
 
 #[derive(DecisionOutcome, Debug, Eq, PartialEq)]

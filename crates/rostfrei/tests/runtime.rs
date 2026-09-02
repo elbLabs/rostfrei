@@ -433,7 +433,6 @@ fn executable_actions_model_every_event_type_they_may_raise() {
         __DOMAIN_ACTIONS_TRAIT_REQUIRES_DOMAIN_ACTIONS_ATTRIBUTE;
 
     assert_eq!(actions.len(), 3);
-    assert!(actions.iter().all(|action| action.output.is_none()));
     assert_eq!(
         actions[0].raises,
         &[<MoneyDeposited as rostfrei::DomainEventType<AccountAggregate>>::DESCRIPTOR.id]

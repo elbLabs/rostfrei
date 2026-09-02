@@ -1,16 +1,12 @@
 use serde_json::{Value, json};
 
-use crate::{
-    ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
-};
+use crate::{ActionDescriptor, ActionId, ActionOwnerId};
 
 use super::{
     action_reference_validation::{self, ActionReferenceInventory},
     error::DomainModelError,
-    field_projection,
     id_projection::{
         action as action_id, domain_error as domain_error_id, domain_event as domain_event_id,
-        domain_identity as domain_identity_id, value_object as value_object_id,
     },
 };
 
@@ -147,39 +143,7 @@ fn action(descriptor: &ActionDescriptor) -> Value {
     json!({
         "id": action_id(descriptor.id),
         "label": descriptor.label,
-        "input": descriptor.input.map(action_input),
-        "output": descriptor.output.map(action_output),
         "raises": descriptor.raises.iter().copied().map(domain_event_id).collect::<Vec<_>>(),
         "error": descriptor.error.map(domain_error_id),
     })
-}
-
-fn action_input(descriptor: ActionInputDescriptor) -> Value {
-    match descriptor {
-        ActionInputDescriptor::Scalar(scalar) => field_projection::scalar(scalar),
-        ActionInputDescriptor::ValueObject(id) => {
-            json!({ "kind": "valueObject", "id": value_object_id(id) })
-        }
-        ActionInputDescriptor::DomainIdentity(id) => {
-            json!({ "kind": "domainIdentity", "id": domain_identity_id(id) })
-        }
-    }
-}
-
-fn action_output(descriptor: ActionOutputDescriptor) -> Value {
-    match descriptor {
-        ActionOutputDescriptor::Scalar(scalar) => field_projection::scalar(scalar),
-        ActionOutputDescriptor::ValueObject(id) => {
-            json!({ "kind": "valueObject", "id": value_object_id(id) })
-        }
-        ActionOutputDescriptor::DomainEvent(id) => {
-            json!({ "kind": "domainEvent", "id": domain_event_id(id) })
-        }
-        ActionOutputDescriptor::Optional(value) => {
-            json!({ "kind": "optional", "value": action_output(*value) })
-        }
-        ActionOutputDescriptor::List(element) => {
-            json!({ "kind": "list", "element": action_output(*element) })
-        }
-    }
 }

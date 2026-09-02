@@ -128,7 +128,7 @@ trait SkuBounds {
 }
 
 #[derive(ValueObject)]
-#[domain(id = "sku", label = "SKU", owner = Catalog)]
+#[domain(id = "sku", label = "SKU")]
 struct Sku(String);
 
 impl SkuBounds for Sku {

@@ -2,10 +2,9 @@
 
 use domain::extension::ActionGroupType;
 use domain::{
-    ActionDescriptor, ActionId, ActionInputDescriptor, ActionOutputDescriptor, ActionOwnerId,
-    Aggregate, AggregateType, BoundedContext, Command, CommandOwnerId, CommandType, DomainError,
-    DomainErrorOwnerId, DomainErrorType, DomainEvent, DomainIdentity, DomainModelError,
-    DomainService, DomainServiceType, Entity, ScalarType, ValueObject, ValueObjectType,
+    ActionDescriptor, ActionId, ActionOwnerId, Aggregate, AggregateType, BoundedContext, Command,
+    CommandOwnerId, CommandType, DomainError, DomainErrorOwnerId, DomainErrorType, DomainEvent,
+    DomainIdentity, DomainModelError, DomainService, DomainServiceType, Entity, ValueObject,
     domain_actions, domain_model,
 };
 
@@ -73,37 +72,15 @@ impl WorkActions for Work {
 #[domain(id = "work-started", label = "Work started")]
 pub struct WorkStarted;
 
-#[domain_actions(value_object)]
-trait ReceiptActions {
-    #[action(id = "new-receipt", label = "New receipt")]
-    fn new_receipt(input: u64) -> Self;
-}
-
 #[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
-#[domain(
-    id = "receipt",
-    label = "Receipt",
-    owner = Work,
-    actions = [ReceiptActions]
-)]
+#[domain(id = "receipt", label = "Receipt")]
 pub struct Receipt(u64);
-
-impl ReceiptActions for Receipt {
-    fn new_receipt(input: u64) -> Self {
-        Self(input)
-    }
-}
 
 #[derive(Command, Clone, Copy, Debug, Eq, PartialEq)]
 #[domain(id = "coordinate-work", label = "Coordinate work", owner = Coordinator)]
 pub struct CoordinateWork;
 
-#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
-#[domain(
-    id = "coordinate-work-input",
-    label = "Coordinate work input",
-    owner = Operations
-)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CoordinateWorkInput;
 
 #[derive(DomainError, Clone, Copy, Debug, Eq, PartialEq)]
@@ -234,8 +211,6 @@ impl ActionGroupType for WorkExtensionActions {
             local: "work-extension",
         },
         label: "Work extension",
-        input: None,
-        output: None,
         raises: &[],
         error: None,
     }];
@@ -252,8 +227,6 @@ impl ActionGroupType for DuplicateCoordinatorExtensionActions {
             local: "available",
         },
         label: "Duplicate available",
-        input: None,
-        output: Some(ActionOutputDescriptor::Scalar(ScalarType::Bool)),
         raises: &[],
         error: None,
     }];
@@ -304,7 +277,6 @@ fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() 
             .collect::<Vec<_>>(),
         ["receipt"]
     );
-    assert_eq!(contracts[0][0].input, None);
     assert_eq!(
         CoordinateWork::DESCRIPTOR.id.owner,
         CommandOwnerId::DomainService(Coordinator::DESCRIPTOR.id)
@@ -314,34 +286,8 @@ fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() 
         DomainErrorOwnerId::DomainService(Coordinator::DESCRIPTOR.id)
     );
     assert_eq!(
-        contracts[0][0].output,
-        Some(ActionOutputDescriptor::Scalar(ScalarType::Bool))
-    );
-    assert_eq!(
-        contracts[0][1].input,
-        Some(ActionInputDescriptor::ValueObject(
-            CoordinateWorkInput::DESCRIPTOR.id
-        ))
-    );
-    assert_eq!(
-        contracts[0][1].output,
-        Some(ActionOutputDescriptor::ValueObject(Receipt::DESCRIPTOR.id))
-    );
-    assert_eq!(
         contracts[0][1].error,
         Some(CoordinationFailed::DESCRIPTOR.id)
-    );
-    assert_eq!(
-        contracts[0][2].output,
-        Some(ActionOutputDescriptor::Optional(
-            &ActionOutputDescriptor::List(&ActionOutputDescriptor::Optional(
-                &ActionOutputDescriptor::ValueObject(Receipt::DESCRIPTOR.id),
-            )),
-        ))
-    );
-    assert_eq!(
-        contracts[1][0].output,
-        Some(ActionOutputDescriptor::ValueObject(Receipt::DESCRIPTOR.id))
     );
     assert_eq!(
         <Coordinator as UnattachedCoordination>::__DOMAIN_ACTIONS[0]
@@ -359,7 +305,7 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
         contexts: [Operations],
         aggregates: [Work],
         entities: [WorkRoot],
-        value_objects: [Receipt, CoordinateWorkInput],
+        value_objects: [Receipt],
         services: [Coordinator, OmittedActionsService, EmptyActionsService],
         commands: [CoordinateWork],
         errors: [CoordinationFailed],
@@ -375,7 +321,6 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
             .map(|action| action["id"]["local"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "new-receipt",
             "available",
             "coordinate",
             "planned-receipts",
@@ -389,7 +334,6 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
             .map(|action| action["id"]["owner"]["kind"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
-            "valueObject",
             "domainService",
             "domainService",
             "domainService",

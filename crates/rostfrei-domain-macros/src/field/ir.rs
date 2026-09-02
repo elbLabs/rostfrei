@@ -35,6 +35,7 @@ pub enum Role {
     AggregateReference(TypePath),
     SemanticScalar(TypePath),
     Scalar(Scalar),
+    Opaque,
 }
 
 #[derive(Clone)]

@@ -6,7 +6,6 @@ pub enum ContractKind {
     Aggregate,
     DomainService,
     Entity,
-    ValueObject,
 }
 
 pub struct ContractArguments {
@@ -19,7 +18,7 @@ impl Parse for ContractArguments {
         if input.is_empty() {
             return Err(syn::Error::new(
                 input.span(),
-                "domain action contract kind is required; expected `aggregate`, `domain_service`, `entity`, or `value_object`",
+                "domain action contract kind is required; expected `aggregate`, `domain_service`, or `entity`",
             ));
         }
 
@@ -34,11 +33,10 @@ impl Parse for ContractArguments {
             "aggregate" => ContractKind::Aggregate,
             "domain_service" => ContractKind::DomainService,
             "entity" => ContractKind::Entity,
-            "value_object" => ContractKind::ValueObject,
             _ => Err(syn::Error::new(
                 kind.span(),
                 format!(
-                    "unknown domain action contract kind `{kind}`; expected `aggregate`, `domain_service`, `entity`, or `value_object`"
+                    "unknown domain action contract kind `{kind}`; expected `aggregate`, `domain_service`, or `entity`"
                 ),
             ))?,
         };

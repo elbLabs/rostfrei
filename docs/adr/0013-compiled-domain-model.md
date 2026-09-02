@@ -98,6 +98,12 @@ subsequently simplified by [ADR 0020](0020-slim-domain-identities.md). Identity
 newtypes are marker-derived and discovered through `EntityDefinition`; they no
 longer have a separate model inventory or inferred scalar metadata.
 
+Value-object ownership, shape projection, and operation DTO contracts were
+subsequently simplified by
+[ADR 0021](0021-slim-value-objects-and-ordinary-dtos.md). Value objects now
+carry semantic ID and label metadata only; ordinary action/query DTOs are not
+promoted into the compiled domain model.
+
 ## Consequences
 
 rostfrei has one source of truth for domain identity, structure, event

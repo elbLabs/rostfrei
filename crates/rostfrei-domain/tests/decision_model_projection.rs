@@ -5,8 +5,8 @@ use domain::DecisionOutcome;
 use domain::{
     Aggregate, AggregateId, BoundedContext, BoundedContextId, DecisionDescriptor,
     DecisionGroupType, DecisionId, DecisionImplementationDescriptor, DecisionOutcomeDescriptor,
-    DecisionOutcomeShapeDescriptor, DecisionOwnerId, DomainIdentity, DomainModelError, Entity,
-    ValueObject, domain_decisions, domain_model,
+    DecisionOwnerId, DomainIdentity, DomainModelError, Entity, ValueObject, domain_decisions,
+    domain_model,
 };
 use serde_json::Value;
 
@@ -43,27 +43,15 @@ impl domain::EntityDefinition for ProjectionRoot {
 }
 
 #[derive(ValueObject, Clone, Copy)]
-#[domain(
-    id = "projection-input",
-    label = "Projection input",
-    owner = ProjectionAggregate
-)]
+#[domain(id = "projection-input", label = "Projection input")]
 struct ProjectionInput(u64);
 
 #[derive(ValueObject)]
-#[domain(
-    id = "projection-output",
-    label = "Projection output",
-    owner = ProjectionAggregate
-)]
+#[domain(id = "projection-output", label = "Projection output")]
 struct ProjectionOutput(bool);
 
 #[derive(ValueObject)]
-#[domain(
-    id = "projection-reason",
-    label = "Projection reason",
-    owner = ProjectionAggregate
-)]
+#[domain(id = "projection-reason", label = "Projection reason")]
 struct ProjectionReason;
 
 #[derive(DecisionOutcome)]
@@ -157,19 +145,16 @@ const DUPLICATE_ID: DecisionId = DecisionId {
 const DUPLICATE_OUTCOMES: &[DecisionOutcomeDescriptor] = &[DecisionOutcomeDescriptor {
     local_id: "done",
     label: "Done",
-    shape: DecisionOutcomeShapeDescriptor::Unit,
 }];
 const FIRST_DUPLICATE_DECISIONS: &[DecisionDescriptor] = &[DecisionDescriptor {
     id: DUPLICATE_ID,
     label: "First",
-    parameters: &[],
     outcomes: DUPLICATE_OUTCOMES,
     implementation: DecisionImplementationDescriptor::Rust,
 }];
 const SECOND_DUPLICATE_DECISIONS: &[DecisionDescriptor] = &[DecisionDescriptor {
     id: DUPLICATE_ID,
     label: "Second",
-    parameters: &[],
     outcomes: DUPLICATE_OUTCOMES,
     implementation: DecisionImplementationDescriptor::Rust,
 }];
@@ -236,7 +221,6 @@ const EMPTY_OUTCOME_DECISION_ID: DecisionId = DecisionId {
 const EMPTY_OUTCOME_DECISIONS: &[DecisionDescriptor] = &[DecisionDescriptor {
     id: EMPTY_OUTCOME_DECISION_ID,
     label: "Empty",
-    parameters: &[],
     outcomes: &[],
     implementation: DecisionImplementationDescriptor::Rust,
 }];
@@ -285,18 +269,15 @@ const DUPLICATE_LOCAL_OUTCOMES: &[DecisionOutcomeDescriptor] = &[
     DecisionOutcomeDescriptor {
         local_id: "same",
         label: "First",
-        shape: DecisionOutcomeShapeDescriptor::Unit,
     },
     DecisionOutcomeDescriptor {
         local_id: "same",
         label: "Second",
-        shape: DecisionOutcomeShapeDescriptor::Unit,
     },
 ];
 const DUPLICATE_OUTCOME_DECISIONS: &[DecisionDescriptor] = &[DecisionDescriptor {
     id: DUPLICATE_OUTCOME_DECISION_ID,
     label: "Duplicate",
-    parameters: &[],
     outcomes: DUPLICATE_LOCAL_OUTCOMES,
     implementation: DecisionImplementationDescriptor::Rust,
 }];
