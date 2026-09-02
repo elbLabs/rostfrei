@@ -1,5 +1,0 @@
-error: decisions must declare an explicit return type implementing DecisionOutcomeType
- --> tests/ui/domain_decision_contract/missing_output.rs:9:8
-  |
-9 |     fn decide() {}
-  |        ^^^^^^

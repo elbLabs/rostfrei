@@ -3,19 +3,15 @@ use crate::domain::rental_fleet::{
     Bicycle, BicycleCondition, BicycleId, BicycleStatus, FleetId, RentalFleet, RentalFleetAggregate,
 };
 
-#[test]
+#[rostfrei::domain_invariant_test(<RentalFleetAggregate as FleetConsistency>::DESCRIPTOR)]
 fn exposes_owner_independent_invariant_metadata() {
-    let descriptors = <RentalFleetAggregate as FleetConsistency>::__DOMAIN_INVARIANTS;
-    let reference = <RentalFleetAggregate as FleetConsistency>::
-        __DOMAIN_INVARIANT_REFERENCE_UNIQUE_BICYCLE_IDENTITIES;
+    let descriptor = <RentalFleetAggregate as FleetConsistency>::DESCRIPTOR;
 
-    assert_eq!(descriptors.len(), 1);
     assert_eq!(
-        descriptors[0].id,
+        descriptor.id,
         rostfrei::InvariantId("unique-bicycle-identities")
     );
-    assert_eq!(descriptors[0].label, "Bicycle identities are unique");
-    assert_eq!(reference.id(), descriptors[0].id);
+    assert_eq!(descriptor.label, "Bicycle identities are unique");
 }
 
 #[test]

@@ -1,30 +1,6 @@
 use serde_json::{Value, json};
 
-use crate::{
-    AggregateId, DecisionId, DecisionOutcomeId, DecisionOwnerId, DomainErrorId, DomainIdentityId,
-    EntityId, ValueObjectId,
-};
-
-pub(super) fn decision(id: DecisionId) -> Value {
-    json!({ "owner": decision_owner(id.owner), "local": id.local })
-}
-
-pub(super) fn decision_outcome(id: DecisionOutcomeId) -> Value {
-    json!({ "decision": decision(id.decision), "local": id.local })
-}
-
-pub(super) fn decision_owner(id: DecisionOwnerId) -> Value {
-    match id {
-        DecisionOwnerId::Aggregate(id) => json!({
-            "kind": "aggregate",
-            "id": aggregate(id),
-        }),
-        DecisionOwnerId::Entity(id) => json!({
-            "kind": "entity",
-            "id": entity(id),
-        }),
-    }
-}
+use crate::{AggregateId, DomainErrorId, DomainIdentityId, EntityId, ValueObjectId};
 
 pub(super) fn aggregate(id: AggregateId) -> Value {
     json!({

@@ -4,7 +4,7 @@ use syn::{Ident, Path};
 
 use crate::field::Field;
 
-use super::{attributes::Attributes, entity_type, identity as identity_binding, owner_traits};
+use super::{attributes::Attributes, entity_type, identity as identity_binding};
 
 pub fn assemble(
     domain_path: &Path,
@@ -20,11 +20,9 @@ pub fn assemble(
     );
     let field_assertions =
         crate::field::assemble_assertions_with_path(domain_path, name, Some(&owner), fields);
-    let owner_traits = owner_traits::assemble(domain_path, name);
     quote! {
         #entity_type
         #identity_binding
         #field_assertions
-        #owner_traits
     }
 }

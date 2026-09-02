@@ -1,0 +1,5 @@
+error: domain_invariant may only be applied to a trait
+ --> tests/ui/domain_invariant/invalid_target.rs:4:1
+  |
+4 | struct NotATrait;
+  | ^^^^^^^^^^^^^^^^^

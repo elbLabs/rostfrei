@@ -3,8 +3,8 @@
 use domain::DecisionOutcome;
 use domain::{
     Aggregate, BoundedContext, DomainIdentity, Entity, EntityLifecycle, EntityLifecycleType,
-    InvariantViolation, ValueObject, domain_action, domain_action_test, domain_decision_test,
-    domain_decisions, domain_invariant_test, domain_invariants, domain_lifecycle_test,
+    InvariantViolation, ValueObject, domain_action, domain_action_test, domain_decision,
+    domain_decision_test, domain_invariant, domain_invariant_test, domain_lifecycle_test,
 };
 
 #[derive(BoundedContext)]
@@ -27,17 +27,19 @@ enum TestDecisionOutcome {
     Rejected,
 }
 
-struct TestDecisions;
-
 #[domain_action(id = "mark", label = "Mark")]
 pub trait MarkAction {
     fn mark(root: &mut TestRoot, input: bool);
 }
 
-#[domain_invariants]
-trait AggregateInvariants {
-    #[invariant(id = "marked", label = "Marked")]
+#[domain_invariant(id = "marked", label = "Marked")]
+trait MarkedInvariant {
     fn marked(candidate: &TestRoot) -> Option<InvariantViolation>;
+}
+
+#[domain_decision(id = "accept", label = "Accept")]
+trait AcceptDecision {
+    fn accept(input: DecisionInput) -> TestDecisionOutcome;
 }
 
 #[derive(EntityLifecycle)]
@@ -76,12 +78,8 @@ impl domain::AggregateDefinition for TestAggregate {
     type Event = domain::NoDomainEvents;
 }
 
-impl domain::__private::AttachedDecisionGroup<TestDecisions> for TestAggregate {}
-
-#[domain_decisions(aggregate, group = TestDecisions)]
-impl TestAggregate {
-    #[decision(id = "accept", label = "Accept")]
-    const fn accept(input: DecisionInput) -> TestDecisionOutcome {
+impl AcceptDecision for TestAggregate {
+    fn accept(input: DecisionInput) -> TestDecisionOutcome {
         if input.0 {
             TestDecisionOutcome::Accepted(DecisionOutput(true))
         } else {
@@ -96,7 +94,7 @@ impl MarkAction for TestAggregate {
     }
 }
 
-impl AggregateInvariants for TestAggregate {
+impl MarkedInvariant for TestAggregate {
     fn marked(candidate: &TestRoot) -> Option<InvariantViolation> {
         (!candidate.marked).then(|| InvariantViolation::new("marked", "must be marked"))
     }
@@ -131,7 +129,7 @@ fn case_distinct_test_name() {}
 #[domain_action_test(<TestAggregate as MarkAction>::DESCRIPTOR)]
 fn CASE_DISTINCT_TEST_NAME() {}
 
-#[domain_decision_test(TestAggregate::ACCEPT)]
+#[domain_decision_test(<TestAggregate as AcceptDecision>::DESCRIPTOR)]
 fn decision_tests_keep_the_authored_body() {
     assert_eq!(
         TestAggregate::accept(DecisionInput(true)),
@@ -139,10 +137,10 @@ fn decision_tests_keep_the_authored_body() {
     );
 }
 
-#[domain_invariant_test(<TestAggregate as AggregateInvariants>::MARKED)]
+#[domain_invariant_test(<TestAggregate as MarkedInvariant>::DESCRIPTOR)]
 fn invariant_tests_keep_the_authored_body() {
     assert_eq!(
-        <TestAggregate as AggregateInvariants>::marked(&root()),
+        <TestAggregate as MarkedInvariant>::marked(&root()),
         Some(InvariantViolation::new("marked", "must be marked"))
     );
 }

@@ -1,5 +1,0 @@
-error: unsupported invariant attribute metadata
- --> tests/ui/domain_invariant_contract/unsupported_invariant_metadata.rs:5:48
-  |
-5 |     #[invariant(id = "valid", label = "Valid", owner = Rules)]
-  |                                                ^^^^^

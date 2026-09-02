@@ -132,6 +132,12 @@ Plural query groups and model registration were subsequently removed by
 singular ordinary traits implemented directly for the enclosing aggregate's
 declared root.
 
+Decision groups, plural invariant contracts, and generated test references were
+subsequently removed by
+[ADR 0030](0030-singular-decisions-invariants-and-tests.md). Decisions and
+Invariants are singular traits with direct aggregate/entity implementations,
+and tests name the concrete implementor/trait descriptor.
+
 Domain-error ownership and optional JSON generation were subsequently removed
 by [ADR 0025](0025-owner-independent-domain-errors.md). Errors keep their
 stable public code and message, while action return types and command handlers

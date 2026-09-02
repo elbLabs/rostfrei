@@ -1,5 +1,0 @@
-error: domain_invariants does not accept arguments
- --> tests/ui/domain_invariant_contract/bad_macro_kind.rs:3:21
-  |
-3 | #[domain_invariants(entity)]
-  |                     ^^^^^^

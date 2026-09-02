@@ -1,7 +1,5 @@
 mod action;
-mod aggregate;
 mod decision;
-mod entity;
 mod invariant;
 mod lifecycle;
 
