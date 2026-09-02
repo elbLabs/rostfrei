@@ -43,10 +43,7 @@ pub use decision::{
     EntityDecisionOwnerType,
 };
 pub use domain_error::{DomainError, DomainErrorDescriptor, DomainErrorId};
-pub use domain_event::{
-    DomainEventDefinition, DomainEventDefinitionType, DomainEventDescriptor, DomainEventId,
-    DomainEventType,
-};
+pub use domain_event::{DomainEvent, DomainEventDescriptor, DomainEventId, DomainEventType};
 pub use domain_identity::{DomainIdentity, DomainIdentityId};
 #[doc(hidden)]
 pub use domain_identity::{DomainIdentityDescriptor, DomainIdentityType};

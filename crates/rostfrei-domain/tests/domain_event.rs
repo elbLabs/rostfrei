@@ -1,7 +1,6 @@
 use domain::{
-    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainEvent,
-    DomainEventDefinitionType, DomainEventDescriptor, DomainEventId, DomainEventType,
-    DomainIdentity, Entity,
+    Aggregate, AggregateId, BoundedContext, BoundedContextId, DomainEvent, DomainEventDescriptor,
+    DomainEventId, DomainEventType, DomainIdentity, Entity,
 };
 
 #[derive(BoundedContext)]
@@ -76,25 +75,16 @@ fn derives_domain_event_descriptor() {
             fields: &[],
         }
     );
-    assert_eq!(
-        <MailboxCreated as DomainEventType<Mailbox>>::LOCAL_ID,
-        "mailbox-created"
-    );
-    assert_eq!(
-        <MailboxCreated as DomainEventType<Mailbox>>::SCHEMA_VERSION,
-        1
-    );
-    assert_eq!(
-        <MessageReceived as DomainEventType<Mailbox>>::SCHEMA_VERSION,
-        2
-    );
+    assert_eq!(<MailboxCreated as DomainEvent>::LOCAL_ID, "mailbox-created");
+    assert_eq!(<MailboxCreated as DomainEvent>::SCHEMA_VERSION, 1);
+    assert_eq!(<MessageReceived as DomainEvent>::SCHEMA_VERSION, 2);
 }
 
 #[test]
 fn describes_event_fields() {
-    assert_eq!(MailboxRenamed::DEFINITION.fields[0].name, "name");
+    assert_eq!(MailboxRenamed::FIELDS[0].name, "name");
     assert_eq!(
-        MailboxRenamed::DEFINITION.fields[0].value.kind,
+        MailboxRenamed::FIELDS[0].value.kind,
         domain::FieldKind::Scalar(domain::ScalarType::String)
     );
 }

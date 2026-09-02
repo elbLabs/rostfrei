@@ -7,9 +7,11 @@ use super::attributes::Attributes;
 pub fn validate(attributes: &Attributes, fields: &[Field]) -> Result<()> {
     crate::helper::id::validate(&attributes.id)?;
     crate::helper::label::validate(&attributes.label)?;
-    if attributes.schema_version.base10_parse::<u32>()? == 0 {
+    if let Some(schema_version) = &attributes.schema_version
+        && schema_version.base10_parse::<u32>()? == 0
+    {
         return Err(syn::Error::new_spanned(
-            &attributes.schema_version,
+            schema_version,
             "domain event schema version must be greater than zero",
         ));
     }
