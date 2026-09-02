@@ -11,7 +11,6 @@ use domain::{
 pub struct Operations;
 
 #[derive(DomainIdentity)]
-#[domain(owner = MailboxRoot)]
 pub struct MailboxId(u64);
 
 #[derive(Entity)]
@@ -42,7 +41,6 @@ pub enum MailboxEvents {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = DeliveryRoot)]
 pub struct DeliveryId(u64);
 
 #[derive(Entity)]
@@ -334,7 +332,6 @@ fn projects_only_explicitly_attached_non_aggregate_actions() {
         contexts: [Operations],
         aggregates: [Mailbox, Delivery],
         entities: [MailboxRoot, DeliveryRoot],
-        identities: [MailboxId, DeliveryId],
         value_objects: [Receipt],
         services: [Coordinator],
         commands: [],

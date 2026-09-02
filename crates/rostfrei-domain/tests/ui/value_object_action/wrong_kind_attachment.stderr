@@ -1,13 +1,13 @@
 error[E0277]: the trait bound `Item: ActionOutputType<domain::__private::ValueObjectActionOutput<Item>>` is not satisfied
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:29:18
+  --> tests/ui/value_object_action/wrong_kind_attachment.rs:28:18
    |
-29 | impl Actions for Item {
+28 | impl Actions for Item {
    |                  ^^^^ unsatisfied trait bound
    |
 help: the trait `ActionOutputType<domain::__private::ValueObjectActionOutput<Item>>` is not implemented for `Item`
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:19:1
+  --> tests/ui/value_object_action/wrong_kind_attachment.rs:18:1
    |
-19 | struct Item {
+18 | struct Item {
    | ^^^^^^^^^^^
    = help: the following other types implement trait `ActionOutputType<Contract>`:
              ()
@@ -29,15 +29,15 @@ note: required by a bound in `Actions`
    = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Item: ValueObjectActionOwnerType` is not satisfied
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:29:18
+  --> tests/ui/value_object_action/wrong_kind_attachment.rs:28:18
    |
-29 | impl Actions for Item {
+28 | impl Actions for Item {
    |                  ^^^^ unsatisfied trait bound
    |
 help: the trait `ValueObjectActionOwnerType` is not implemented for `Item`
-  --> tests/ui/value_object_action/wrong_kind_attachment.rs:19:1
+  --> tests/ui/value_object_action/wrong_kind_attachment.rs:18:1
    |
-19 | struct Item {
+18 | struct Item {
    | ^^^^^^^^^^^
 note: required by a bound in `Actions`
   --> tests/ui/value_object_action/wrong_kind_attachment.rs:7:1

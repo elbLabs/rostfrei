@@ -13,7 +13,6 @@ mod owner {
     pub struct Context;
 
     #[derive(DomainIdentity)]
-    #[domain(owner = Root)]
     pub struct RootId(u8);
 
     #[derive(Entity)]

@@ -7,7 +7,6 @@ struct Custom;
 struct GenericField(#[domain(scalar = Provider<u64>)] Custom);
 
 #[derive(DomainIdentity)]
-#[domain(owner = Entity, scalar = Provider<u64>)]
 struct GenericIdentity(Custom);
 
 fn main() {}

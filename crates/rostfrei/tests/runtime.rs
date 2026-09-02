@@ -61,7 +61,6 @@ fn fixture_error(context: &'static str, error: impl fmt::Display) -> TestError {
 struct Banking;
 
 #[derive(rostfrei::DomainIdentity)]
-#[rostfrei(owner = Account)]
 struct AccountId(String);
 
 #[derive(rostfrei::Entity)]
@@ -511,7 +510,6 @@ fn domain_model_projects_event_set_once_in_enum_declaration_order() {
         contexts: [Banking],
         aggregates: [AccountAggregate],
         entities: [Account],
-        identities: [AccountId],
         value_objects: [],
         services: [],
         commands: [],
@@ -521,6 +519,12 @@ fn domain_model_projects_event_set_once_in_enum_declaration_order() {
     .expect("runtime test domain model projection");
     let events = model["domainEvents"].as_array().expect("domain events");
 
+    let identities = model["domainIdentities"]
+        .as_array()
+        .expect("domain identities");
+    assert_eq!(identities.len(), 1);
+    assert!(identities[0].get("scalar").is_none());
+    assert_eq!(identities[0]["id"]["owner"]["local"], "account");
     assert_eq!(events.len(), 2);
     assert_eq!(events[0]["id"]["local"], "money-deposited");
     assert_eq!(events[0]["schemaVersion"], 2);

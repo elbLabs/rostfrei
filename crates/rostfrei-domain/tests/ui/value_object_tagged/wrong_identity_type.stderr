@@ -1,22 +1,22 @@
-error[E0277]: the trait bound `Plain: DomainIdentityType` is not satisfied
+error[E0277]: the trait bound `Plain: domain::DomainIdentityType` is not satisfied
   --> tests/ui/value_object_tagged/wrong_identity_type.rs:12:34
    |
 12 |     Identity(#[domain(identity)] Plain),
    |                                  ^^^^^ unsatisfied trait bound
    |
-help: the trait `DomainIdentityType` is not implemented for `Plain`
+help: the trait `domain::DomainIdentityType` is not implemented for `Plain`
   --> tests/ui/value_object_tagged/wrong_identity_type.rs:7:1
    |
  7 | struct Plain;
    | ^^^^^^^^^^^^
 
-error[E0277]: the trait bound `Plain: DomainIdentityType` is not satisfied
+error[E0277]: the trait bound `Plain: domain::DomainIdentityType` is not satisfied
   --> tests/ui/value_object_tagged/wrong_identity_type.rs:12:34
    |
 12 |     Identity(#[domain(identity)] Plain),
    |                                  ^^^^^ unsatisfied trait bound
    |
-help: the trait `DomainIdentityType` is not implemented for `Plain`
+help: the trait `domain::DomainIdentityType` is not implemented for `Plain`
   --> tests/ui/value_object_tagged/wrong_identity_type.rs:7:1
    |
  7 | struct Plain;

@@ -11,7 +11,6 @@ struct Services;
 struct Orders;
 
 #[derive(DomainIdentity)]
-#[domain(owner = OrderRoot)]
 struct OrderId(u8);
 
 #[derive(Entity)]

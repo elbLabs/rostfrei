@@ -1,14 +1,14 @@
 error[E0277]: the trait bound `Published: ActionOutputType<domain::__private::EntityActionOutput<Item>>` is not satisfied
-  --> tests/ui/entity_action/domain_event_output.rs:31:6
+  --> tests/ui/entity_action/domain_event_output.rs:30:6
    |
-31 | impl Actions for Item {
+30 | impl Actions for Item {
    |      ^^^^^^^ unsatisfied trait bound
    |
 help: the trait `ActionOutputType<domain::__private::EntityActionOutput<Item>>` is not implemented for `Published`
       but trait `ActionOutputType<domain::__private::AggregateActionOutput<_>>` is implemented for it
-  --> tests/ui/entity_action/domain_event_output.rs:51:10
+  --> tests/ui/entity_action/domain_event_output.rs:50:10
    |
-51 | #[derive(domain::AggregateEvents)]
+50 | #[derive(domain::AggregateEvents)]
    |          ^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `domain::__private::AggregateActionOutput<_>`, found `domain::__private::EntityActionOutput<Item>`
 note: required by a bound in `Actions`

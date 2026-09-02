@@ -93,6 +93,11 @@ Its explicit `EntityDefinition`, owner-independent lifecycle and invariant
 metadata, and absence of implicit entity capability projection supersede this
 ADR's entity attachments and owned lifecycle/invariant model relationships.
 
+Domain identity ownership, representation, and model discovery were
+subsequently simplified by [ADR 0020](0020-slim-domain-identities.md). Identity
+newtypes are marker-derived and discovered through `EntityDefinition`; they no
+longer have a separate model inventory or inferred scalar metadata.
+
 ## Consequences
 
 rostfrei has one source of truth for domain identity, structure, event

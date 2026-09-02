@@ -13,7 +13,6 @@ use domain::{
 pub struct Billing;
 
 #[derive(DomainIdentity)]
-#[domain(owner = LedgerRoot)]
 pub struct LedgerId(u64);
 
 #[domain_actions(entity)]
@@ -341,7 +340,6 @@ fn model_orders_attached_then_extension_actions_and_omits_unlisted_contracts() {
         contexts: [Billing],
         aggregates: [Ledger],
         entities: [LedgerRoot],
-        identities: [LedgerId],
         value_objects: [Money, OmittedActionsValue, EmptyActionsValue],
         services: [],
         commands: [],
@@ -396,7 +394,6 @@ fn rejects_duplicate_action_id_across_attached_value_object_contracts() {
         contexts: [],
         aggregates: [],
         entities: [],
-        identities: [],
         value_objects: [DuplicateValue],
         services: [],
         commands: [],
@@ -426,7 +423,6 @@ fn rejects_duplicate_action_id_between_attached_and_extension_value_object_group
         contexts: [],
         aggregates: [],
         entities: [],
-        identities: [],
         value_objects: [Money],
         services: [],
         commands: [],

@@ -5,7 +5,6 @@ use domain::{Aggregate, BoundedContext, Command, DomainError, DomainEvent, Domai
 struct Catalog;
 
 #[derive(DomainIdentity)]
-#[domain(owner = Root)]
 struct Id(u64);
 
 #[derive(Entity)]

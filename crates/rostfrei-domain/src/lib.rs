@@ -52,7 +52,9 @@ pub use domain_event::{
     DomainEventDefinition, DomainEventDefinitionType, DomainEventDescriptor, DomainEventId,
     DomainEventType,
 };
-pub use domain_identity::{DomainIdentityDescriptor, DomainIdentityId, DomainIdentityType};
+pub use domain_identity::{DomainIdentity, DomainIdentityId};
+#[doc(hidden)]
+pub use domain_identity::{DomainIdentityDescriptor, DomainIdentityType};
 pub use domain_model::{DomainModelError, DomainModelReference};
 pub use domain_query::{
     QueryDescriptor, QueryGroupType, QueryId, QueryInputDescriptor, QueryInputType,
@@ -90,6 +92,7 @@ pub mod __private {
         ValueObjectActionOutput,
     };
     pub use crate::decision::AttachedDecisionGroup;
+    pub use crate::domain_identity::{DomainIdentityDescriptor, DomainIdentityType};
     pub use crate::domain_model::{DomainModelBuilder, try_build};
     pub use crate::domain_test::emit_domain_test_metadata as emit_domain_test_descriptor;
     pub use serde;
@@ -102,7 +105,6 @@ macro_rules! domain_model {
         contexts: [$($context:ty),* $(,)?],
         aggregates: [$($aggregate:ty),* $(,)?],
         entities: [$($entity:ty),* $(,)?],
-        identities: [$($identity:ty),* $(,)?],
         value_objects: [$($value_object:ty),* $(,)?],
         services: [$($service:ty),* $(,)?],
         commands: [$($command:ty),* $(,)?],
@@ -114,7 +116,6 @@ macro_rules! domain_model {
             $(builder.add_bounded_context(<$context as $crate::BoundedContextType>::DESCRIPTOR);)*
             $(builder.add_aggregate_type::<$aggregate>()?;)*
             $(builder.add_entity_type::<$entity>()?;)*
-            $(builder.add_domain_identity_type::<$identity>()?;)*
             $(builder.add_value_object_type::<$value_object>()?;)*
             $(builder.add_domain_service_type::<$service>()?;)*
             $(builder.add_command(<$command as $crate::CommandType>::DESCRIPTOR)?;)*

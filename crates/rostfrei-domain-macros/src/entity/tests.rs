@@ -31,3 +31,25 @@ fn rejects_removed_entity_relationship_attributes() {
 
     assert!(super::attributes::Attributes::parse(&input.attrs).is_err());
 }
+
+#[test]
+fn entity_generates_the_scoped_identity_binding_and_adapters() {
+    let identity = crate::field::Field {
+        name: syn::LitStr::new("id", proc_macro2::Span::call_site()),
+        member: syn::Member::Named(syn::parse_quote!(id)),
+        base: syn::parse_quote!(BicycleId),
+        wrappers: Vec::new(),
+        role: crate::field::Role::Identity,
+    };
+    let output = super::identity::assemble(
+        &syn::parse_quote!(::domain),
+        &syn::parse_quote!(Bicycle),
+        &identity,
+    )
+    .to_string();
+
+    assert!(output.contains("__private :: DomainIdentityType for BicycleId"));
+    assert!(output.contains("ActionInputType"));
+    assert!(output.contains("QueryInputType"));
+    assert!(output.contains("QueryOutputType"));
+}

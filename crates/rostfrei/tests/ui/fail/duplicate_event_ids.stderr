@@ -1,7 +1,7 @@
 error[E0080]: evaluation panicked: duplicate domain event ID in aggregate
-  --> tests/ui/fail/duplicate_event_ids.rs:32:10
+  --> tests/ui/fail/duplicate_event_ids.rs:31:10
    |
-32 | #[derive(rostfrei::AggregateEvents)]
+31 | #[derive(rostfrei::AggregateEvents)]
    |          ^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed inside this call
    |
 note: inside `rostfrei::__private::rostfrei_domain_runtime::__private::assert_unique_event_ids`

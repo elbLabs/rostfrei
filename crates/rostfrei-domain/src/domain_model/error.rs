@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use crate::{
     ActionId, ActionOwnerId, AggregateId, CommandId, DecisionId, DecisionOutcomeId,
-    DecisionOwnerId, DomainErrorId, DomainEventId, DomainIdentityId, EntityId, QueryId, ScalarType,
+    DecisionOwnerId, DomainErrorId, DomainEventId, DomainIdentityId, EntityId, QueryId,
     ValueObjectId,
 };
 
@@ -70,10 +70,6 @@ pub enum DomainModelError {
         location: String,
         inventory_key: &'static str,
     },
-    DomainIdentitySemanticScalarRepresentationMismatch {
-        canonical: ScalarType,
-        semantic: ScalarType,
-    },
     DuplicateDomainIdentityId {
         id: Box<DomainIdentityId>,
     },
@@ -129,10 +125,6 @@ impl fmt::Display for DomainModelError {
                 location,
                 inventory_key,
             } => fmt_field_reference(formatter, reference, location, inventory_key),
-            Self::DomainIdentitySemanticScalarRepresentationMismatch {
-                canonical,
-                semantic,
-            } => fmt_semantic_scalar_mismatch(formatter, *canonical, *semantic),
             Self::DuplicateDomainIdentityId { id } => {
                 fmt_duplicate(formatter, "DomainIdentityId", id)
             }
@@ -231,17 +223,6 @@ fn fmt_field_reference(
         formatter,
         "Field reference inventory violation: field references missing {} at descriptor location `{location}`; add it to domain_model! inventory key `{inventory_key}`",
         ReferenceDebug(reference)
-    )
-}
-
-fn fmt_semantic_scalar_mismatch(
-    formatter: &mut fmt::Formatter<'_>,
-    canonical: ScalarType,
-    semantic: ScalarType,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "assertion `left == right` failed: DomainIdentity semantic scalar representation must match its canonical scalar descriptor\n  left: {canonical:#?}\n right: {semantic:#?}"
     )
 }
 

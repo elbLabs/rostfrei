@@ -301,7 +301,6 @@ impl EventCodec<Account> for AlternateAccountCodec {
 struct AutomaticAccounts;
 
 #[derive(domain::DomainIdentity)]
-#[domain(owner = AutomaticAccountRoot)]
 #[allow(dead_code)]
 struct AutomaticAccountId(String);
 

@@ -46,7 +46,6 @@ trait UnlistedTaskActions {
 struct Planning;
 
 #[derive(DomainIdentity)]
-#[domain(owner = Task)]
 struct TaskId(u64);
 
 #[derive(Entity)]
@@ -126,7 +125,6 @@ impl UnlistedTaskActions for Task {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = Comment)]
 struct CommentId(u64);
 
 #[derive(Entity)]
@@ -241,7 +239,6 @@ fn domain_model_does_not_implicitly_project_entity_action_traits() {
         contexts: [Planning],
         aggregates: [Project],
         entities: [Task, Comment],
-        identities: [TaskId, CommentId],
         value_objects: [Title],
         services: [],
         commands: [],
@@ -257,7 +254,6 @@ fn domain_model_does_not_implicitly_project_entity_action_traits() {
         contexts: [Planning],
         aggregates: [Project],
         entities: [Comment],
-        identities: [CommentId],
         value_objects: [],
         services: [],
         commands: [],

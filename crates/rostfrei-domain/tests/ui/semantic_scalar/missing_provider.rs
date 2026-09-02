@@ -7,7 +7,6 @@ struct Custom;
 struct MissingField(#[domain(scalar)] Custom);
 
 #[derive(DomainIdentity)]
-#[domain(owner = Entity, scalar)]
 struct MissingIdentity(Custom);
 
 fn main() {}

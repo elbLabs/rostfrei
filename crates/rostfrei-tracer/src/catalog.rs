@@ -310,17 +310,6 @@ fn payload_template(fields: &[Value], model: Option<&Value>) -> Value {
 fn value_template(value: &Value, model: Option<&Value>) -> Value {
     match value.get("kind").and_then(Value::as_str) {
         Some("scalar") => scalar_template(value.get("scalar")),
-        Some("identity") => model
-            .and_then(|model| model.get("domainIdentities"))
-            .and_then(Value::as_array)
-            .and_then(|identities| {
-                identities
-                    .iter()
-                    .find(|identity| identity.get("id") == value.get("id"))
-            })
-            .map_or(Value::Null, |identity| {
-                scalar_template(identity.get("scalar"))
-            }),
         Some("list") => Value::Array(Vec::new()),
         Some("valueObject") => value_object_template(value.get("id"), model),
         _ => Value::Null,
@@ -361,5 +350,32 @@ fn scalar_template(scalar: Option<&Value>) -> Value {
         ) => Value::from(0),
         Some("string" | "char") => Value::String(String::new()),
         _ => Value::Null,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::value_template;
+
+    #[test]
+    fn identity_payload_templates_do_not_invent_a_scalar_representation() {
+        let identity = json!({
+            "kind": "identity",
+            "id": {
+                "owner": {
+                    "aggregate": { "context": "banking", "local": "account" },
+                    "local": "account"
+                }
+            }
+        });
+        let model = json!({
+            "domainIdentities": [{
+                "id": identity["id"]
+            }]
+        });
+
+        assert_eq!(value_template(&identity, Some(&model)), Value::Null);
     }
 }

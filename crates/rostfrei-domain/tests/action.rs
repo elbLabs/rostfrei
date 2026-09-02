@@ -10,7 +10,6 @@ use domain::{
 struct Inbox;
 
 #[derive(DomainIdentity)]
-#[domain(owner = MailboxRoot)]
 struct MailboxId(u64);
 
 #[derive(Entity)]
@@ -134,7 +133,6 @@ impl contracts::MailTransferActions for MailTransfer {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = Message)]
 struct MessageId(u64);
 
 #[derive(Entity)]

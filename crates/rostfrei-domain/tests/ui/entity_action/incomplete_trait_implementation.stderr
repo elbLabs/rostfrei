@@ -1,8 +1,8 @@
 error[E0046]: not all trait items implemented, missing: `archive`
-  --> tests/ui/entity_action/incomplete_trait_implementation.rs:32:1
+  --> tests/ui/entity_action/incomplete_trait_implementation.rs:31:1
    |
 13 |     fn archive(&self);
    |     ------------------ `archive` from trait
 ...
-32 | impl Actions for Item {
+31 | impl Actions for Item {
    | ^^^^^^^^^^^^^^^^^^^^^ missing `archive` in implementation

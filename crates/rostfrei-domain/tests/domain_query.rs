@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use domain::{
-    Aggregate, BoundedContext, DomainIdentity, DomainIdentityType, DomainModelError, Entity,
+    Aggregate, BoundedContext, DomainIdentity, DomainModelError, Entity, EntityType,
     QueryGroupType, QueryInputDescriptor, QueryOutputDescriptor, ScalarType, ValueObject,
     ValueObjectType, domain_model, domain_queries,
 };
@@ -12,7 +12,6 @@ use serde_json::json;
 struct Catalog;
 
 #[derive(DomainIdentity, Clone)]
-#[domain(owner = CatalogRoot)]
 struct CatalogId(u64);
 
 #[derive(Entity)]
@@ -103,7 +102,7 @@ fn derives_query_descriptors_and_keeps_functions_callable() {
     assert_eq!(
         queries[3].input,
         Some(QueryInputDescriptor::DomainIdentity(
-            CatalogId::DESCRIPTOR.id
+            CatalogRoot::DESCRIPTOR.identity.identity
         ))
     );
     assert!(matches!(queries[2].output, QueryOutputDescriptor::List(_)));
@@ -125,7 +124,6 @@ fn projects_queries_and_identities_to_exact_json() {
         contexts: [Catalog],
         aggregates: [CatalogAggregate],
         entities: [CatalogRoot],
-        identities: [CatalogId],
         value_objects: [Filter],
         services: [],
         commands: [],
@@ -137,10 +135,7 @@ fn projects_queries_and_identities_to_exact_json() {
     let aggregate = json!({ "context": "catalog", "local": "catalog" });
     let entity = json!({ "aggregate": aggregate, "local": "catalog-root" });
     let identity = json!({ "owner": entity });
-    assert_eq!(
-        model["domainIdentities"],
-        json!([{ "id": identity, "scalar": "u64" }])
-    );
+    assert_eq!(model["domainIdentities"], json!([{ "id": identity }]));
     assert_eq!(
         model["entities"][0]["identity"],
         json!({ "field": "id", "id": identity })
@@ -172,7 +167,7 @@ impl QueryGroupType for DuplicateQueries {
 #[test]
 fn rejects_duplicate_query_ids_across_groups() {
     let error = domain_model! {
-        contexts: [], aggregates: [], entities: [], identities: [], value_objects: [],
+        contexts: [], aggregates: [], entities: [],value_objects: [],
         services: [], commands: [], errors: [],
         query_groups: [CatalogQueries, DuplicateQueries],
     }
@@ -184,24 +179,4 @@ fn rejects_duplicate_query_ids_across_groups() {
         DomainModelError::DuplicateQueryId { id: Box::new(id) }
     );
     assert_eq!(error.to_string(), format!("duplicate QueryId: {id:?}"));
-}
-
-#[test]
-fn rejects_duplicate_identity_ids() {
-    let error = domain_model! {
-        contexts: [], aggregates: [], entities: [], identities: [CatalogId, CatalogId],
-        value_objects: [], services: [], commands: [], errors: [],
-        query_groups: [],
-    }
-    .expect_err("duplicate identity IDs should be rejected");
-    let id = CatalogId::DESCRIPTOR.id;
-
-    assert_eq!(
-        error,
-        DomainModelError::DuplicateDomainIdentityId { id: Box::new(id) }
-    );
-    assert_eq!(
-        error.to_string(),
-        format!("duplicate DomainIdentityId: {id:?}")
-    );
 }

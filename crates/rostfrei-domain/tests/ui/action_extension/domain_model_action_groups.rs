@@ -5,7 +5,6 @@ fn main() {
         contexts: [],
         aggregates: [],
         entities: [],
-        identities: [],
         value_objects: [],
         services: [],
         commands: [],

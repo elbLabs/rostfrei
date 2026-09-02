@@ -1,13 +1,13 @@
 error[E0277]: the trait bound `Change: ActionInputType<Owner>` is not satisfied
-  --> tests/ui/aggregate_action/command_input.rs:71:6
+  --> tests/ui/aggregate_action/command_input.rs:69:6
    |
-71 | impl Actions for Owner {
+69 | impl Actions for Owner {
    |      ^^^^^^^ unsatisfied trait bound
    |
 help: the trait `ActionInputType<Owner>` is not implemented for `Change`
-  --> tests/ui/aggregate_action/command_input.rs:53:1
+  --> tests/ui/aggregate_action/command_input.rs:51:1
    |
-53 | pub struct Change;
+51 | pub struct Change;
    | ^^^^^^^^^^^^^^^^^
    = help: the following other types implement trait `ActionInputType<Owner>`:
              `Id` implements `ActionInputType<<Root as EntityDefinition>::Owner>`
@@ -20,10 +20,10 @@ help: the trait `ActionInputType<Owner>` is not implemented for `Change`
              `i16` implements `ActionInputType<Owner>`
            and $N others
 note: required by a bound in `Actions`
-  --> tests/ui/aggregate_action/command_input.rs:55:1
+  --> tests/ui/aggregate_action/command_input.rs:53:1
    |
-55 | #[domain_actions(aggregate)]
+53 | #[domain_actions(aggregate)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
-56 | pub trait Actions {
+54 | pub trait Actions {
    |           ------- required by a bound in this trait
    = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

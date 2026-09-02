@@ -1,11 +1,9 @@
 use domain::{DomainIdentity, Entity};
 
 #[derive(DomainIdentity)]
-#[domain(owner = MissingValue)]
 struct Id(u64);
 
 #[derive(DomainIdentity)]
-#[domain(owner = GenericTarget)]
 struct GenericId(u64);
 
 #[derive(Entity)]

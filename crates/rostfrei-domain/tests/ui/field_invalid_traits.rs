@@ -5,15 +5,12 @@ use domain::{Aggregate, BoundedContext, DomainIdentity, Entity, ValueObject};
 struct Context;
 
 #[derive(DomainIdentity)]
-#[domain(owner = Root)]
 struct Id(u64);
 
 #[derive(DomainIdentity)]
-#[domain(owner = OtherRoot)]
 struct OtherId(u64);
 
 #[derive(DomainIdentity)]
-#[domain(owner = Wrong)]
 struct WrongId(u64);
 
 struct Plain;

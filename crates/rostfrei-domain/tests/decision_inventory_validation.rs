@@ -36,7 +36,6 @@ struct InventoryDecisions;
 struct InventoryContext;
 
 #[derive(DomainIdentity)]
-#[domain(owner = InventoryRoot)]
 struct InventoryIdentity(u64);
 
 #[derive(Aggregate)]

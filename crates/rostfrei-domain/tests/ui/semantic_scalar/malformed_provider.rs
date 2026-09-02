@@ -7,7 +7,6 @@ struct Custom;
 struct MalformedField(#[domain(scalar = "Provider")] Custom);
 
 #[derive(DomainIdentity)]
-#[domain(owner = Entity, scalar = "Provider")]
 struct MalformedIdentity(Custom);
 
 fn main() {}

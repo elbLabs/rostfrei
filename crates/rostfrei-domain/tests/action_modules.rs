@@ -6,7 +6,6 @@ mod domain {
     pub struct Catalog;
 
     #[derive(DomainIdentity)]
-    #[domain(owner = TaxonomyRoot)]
     pub struct TaxonomyId(pub(crate) u64);
 
     #[derive(Entity)]
@@ -69,14 +68,13 @@ mod domain {
 mod model {
     use domain::{DomainModelError, domain_model};
 
-    use super::domain::{Catalog, ServiceTaxonomy, TaxonomyId, TaxonomyRoot};
+    use super::domain::{Catalog, ServiceTaxonomy, TaxonomyRoot};
 
     pub fn registered_owner() -> Result<serde_json::Value, DomainModelError> {
         domain_model! {
             contexts: [Catalog],
             aggregates: [ServiceTaxonomy],
             entities: [TaxonomyRoot],
-            identities: [TaxonomyId],
             value_objects: [],
             services: [],
             commands: [],

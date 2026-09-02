@@ -7,7 +7,6 @@ use domain::{
 struct Catalog;
 
 #[derive(DomainIdentity)]
-#[domain(owner = Root)]
 struct Id(u64);
 
 #[derive(Entity)]

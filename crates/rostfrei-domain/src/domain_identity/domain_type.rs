@@ -1,10 +1,10 @@
-use crate::{EntityDefinition, SemanticScalarDescriptor};
+/// Marks a Rust type as a domain identity.
+pub trait DomainIdentity: 'static + Sized {}
 
-use super::DomainIdentityDescriptor;
+/// Binds an identity marker to the Entity that declares it.
+#[doc(hidden)]
+pub trait DomainIdentityType: DomainIdentity {
+    type Owner: crate::EntityDefinition<Identity = Self>;
 
-pub trait DomainIdentityType: 'static + Sized {
-    type Owner: EntityDefinition<Identity = Self>;
-
-    const DESCRIPTOR: DomainIdentityDescriptor;
-    const SEMANTIC_SCALAR: Option<SemanticScalarDescriptor> = None;
+    const DESCRIPTOR: super::DomainIdentityDescriptor;
 }

@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 struct Catalog;
 
 #[derive(DomainIdentity)]
-#[domain(owner = CatalogRoot)]
 struct CatalogId(u64);
 
 #[derive(Entity)]

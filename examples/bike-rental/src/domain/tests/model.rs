@@ -17,6 +17,17 @@ fn omits_unattached_capabilities_and_lifecycle_metadata() {
     );
     assert_eq!(model["decisions"], json!([]));
     assert_eq!(model["invariants"], json!([]));
+    let identities = model["domainIdentities"]
+        .as_array()
+        .expect("domain identities should be an array");
+    assert_eq!(identities.len(), 2);
+    assert!(
+        identities
+            .iter()
+            .all(|identity| identity.get("scalar").is_none())
+    );
+    assert_eq!(identities[0]["id"]["owner"]["local"], "rental-fleet-root");
+    assert_eq!(identities[1]["id"]["owner"]["local"], "bicycle");
 
     let bicycle = model["entities"]
         .as_array()

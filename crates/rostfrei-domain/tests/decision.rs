@@ -22,7 +22,6 @@ struct RootDecisions;
 struct Lending;
 
 #[derive(DomainIdentity)]
-#[domain(owner = ApplicationRoot)]
 struct ApplicationId(u64);
 
 #[derive(Aggregate)]

@@ -488,7 +488,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(command["versions"][0]["schemaVersion"], 1);
     assert_eq!(
         command["versions"][0]["payloadTemplate"],
-        json!({ "bicycle_id": "" })
+        json!({ "bicycle_id": null })
     );
     assert_eq!(
         command["versions"][0]["simulateHrefTemplate"],

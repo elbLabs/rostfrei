@@ -56,7 +56,6 @@ const SIMULATION_PATH: &str =
 struct TestContext;
 
 #[derive(domain::DomainIdentity)]
-#[domain(owner = TestRoot)]
 struct TestRootId(String);
 
 #[derive(domain::Entity)]
@@ -161,7 +160,6 @@ impl CommandHandler<TestCommand> for TestAggregate {
 }
 
 #[derive(domain::DomainIdentity)]
-#[domain(owner = OtherTestRoot)]
 struct OtherTestRootId(String);
 
 #[derive(domain::Entity)]

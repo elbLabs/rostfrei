@@ -5,7 +5,6 @@ use domain::{Aggregate, BoundedContext, DomainError, DomainEvent, DomainIdentity
 struct Context;
 
 #[derive(DomainIdentity)]
-#[domain(owner = Root)]
 struct Id(u8);
 
 #[derive(Entity)]

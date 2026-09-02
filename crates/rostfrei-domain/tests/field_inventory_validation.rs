@@ -4,12 +4,11 @@ use domain::__private::DomainModelBuilder;
 use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, AggregateDescriptor, AggregateId, BoundedContext,
     BoundedContextId, CommandDescriptor, CommandId, CommandOwnerId, DomainErrorDescriptor,
-    DomainErrorId, DomainErrorOwnerId, DomainEventDescriptor, DomainEventId,
-    DomainIdentityDescriptor, DomainIdentityId, DomainModelError, DomainModelReference,
-    EntityDescriptor, EntityId, FieldDescriptor, FieldKind, FieldValue, FieldWrapper,
-    IdentityDescriptor, ScalarType, SemanticScalarDescriptor, ValueObjectDescriptor, ValueObjectId,
-    ValueObjectOwnerId, ValueObjectShapeDescriptor, ValueObjectType, ValueObjectVariantDescriptor,
-    ValueObjectVariantShapeDescriptor,
+    DomainErrorId, DomainErrorOwnerId, DomainEventDescriptor, DomainEventId, DomainIdentityId,
+    DomainModelError, DomainModelReference, EntityDescriptor, EntityId, FieldDescriptor, FieldKind,
+    FieldValue, FieldWrapper, IdentityDescriptor, ScalarType, SemanticScalarDescriptor,
+    ValueObjectDescriptor, ValueObjectId, ValueObjectOwnerId, ValueObjectShapeDescriptor,
+    ValueObjectType, ValueObjectVariantDescriptor, ValueObjectVariantShapeDescriptor,
 };
 
 const CONTEXT_ID: BoundedContextId = BoundedContextId("field-inventory");
@@ -199,10 +198,6 @@ const REGISTERED_ENTITY: EntityDescriptor = EntityDescriptor {
         },
     }],
 };
-const REGISTERED_IDENTITY: DomainIdentityDescriptor = DomainIdentityDescriptor {
-    id: IDENTITY_ID,
-    scalar: ScalarType::U64,
-};
 const REGISTERED_AGGREGATE: AggregateDescriptor = AggregateDescriptor {
     id: AGGREGATE_ID,
     label: "Registered aggregate",
@@ -381,8 +376,7 @@ fn accepts_forward_references_registered_cycles_wrappers_and_non_reference_scala
     let mut builder = DomainModelBuilder::new();
     builder.add_value_object(SOURCE_VALUE);
     builder.add_value_object(CYCLE_VALUE);
-    builder.add_entity(REGISTERED_ENTITY);
-    builder.add_domain_identity(REGISTERED_IDENTITY).unwrap();
+    builder.add_entity(REGISTERED_ENTITY).unwrap();
     builder.add_aggregate(REGISTERED_AGGREGATE);
 
     let model = builder.finish().unwrap();
@@ -555,7 +549,7 @@ fn reports_a_missing_reference_from_a_tagged_struct_variant() {
 #[test]
 fn reports_a_missing_reference_from_an_entity_field() {
     let mut builder = DomainModelBuilder::new();
-    builder.add_entity(ENTITY_REFERENCE);
+    builder.add_entity(ENTITY_REFERENCE).unwrap();
     let error = builder.finish().unwrap_err();
     let location = format!("entity {ENTITY_SOURCE_ID:?} field {:?}", "related");
 

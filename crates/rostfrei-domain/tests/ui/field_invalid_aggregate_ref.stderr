@@ -1,128 +1,25 @@
 error: expected `=`
-  --> tests/ui/field_invalid_aggregate_ref.rs:16:27
+  --> tests/ui/field_invalid_aggregate_ref.rs:14:27
    |
-16 |     #[domain(aggregate_ref)]
+14 |     #[domain(aggregate_ref)]
    |                           ^
 
 error: aggregate_ref target must be a direct, non-generic type path
-  --> tests/ui/field_invalid_aggregate_ref.rs:30:14
+  --> tests/ui/field_invalid_aggregate_ref.rs:28:14
    |
-30 |     #[domain(aggregate_ref = Vec<Target>)]
+28 |     #[domain(aggregate_ref = Vec<Target>)]
    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-error[E0271]: type mismatch resolving `<MissingValue as EntityDefinition>::Identity == Id`
-  --> tests/ui/field_invalid_aggregate_ref.rs:4:18
-   |
- 4 | #[domain(owner = MissingValue)]
-   |                  ^^^^^^^^^^^^ type mismatch resolving `<MissingValue as EntityDefinition>::Identity == Id`
-   |
-note: expected this to be `Id`
-  --> tests/ui/field_invalid_aggregate_ref.rs:22:21
-   |
-22 |     type Identity = GenericId;
-   |                     ^^^^^^^^^
-note: required by a bound in `domain::DomainIdentityType::Owner`
-  --> src/domain_identity/domain_type.rs
-   |
-   |     type Owner: EntityDefinition<Identity = Self>;
-   |                                  ^^^^^^^^^^^^^^^ required by this bound in `DomainIdentityType::Owner`
-
 error[E0277]: the trait bound `MissingValue: EntityType` is not satisfied
-  --> tests/ui/field_invalid_aggregate_ref.rs:4:18
+  --> tests/ui/field_invalid_aggregate_ref.rs:18:35
    |
- 4 | #[domain(owner = MissingValue)]
-   |                  ^^^^^^^^^^^^ unsatisfied trait bound
-   |
-help: the trait `EntityType` is not implemented for `MissingValue`
-  --> tests/ui/field_invalid_aggregate_ref.rs:13:1
-   |
-13 | struct MissingValue {
-   | ^^^^^^^^^^^^^^^^^^^
-help: the following other types implement trait `EntityDefinition`
-  --> tests/ui/field_invalid_aggregate_ref.rs:20:1
-   |
-20 | impl domain::EntityDefinition for MissingValue {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MissingValue`
-...
-34 | impl domain::EntityDefinition for GenericTarget {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `GenericTarget`
-   = note: required for `<Id as DomainIdentityType>::Owner` to implement `EntityDefinition`
-note: required by a bound in `domain::DomainIdentityType::Owner`
-  --> src/domain_identity/domain_type.rs
-   |
-   |     type Owner: EntityDefinition<Identity = Self>;
-   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `DomainIdentityType::Owner`
-
-error[E0271]: type mismatch resolving `<GenericTarget as EntityDefinition>::Identity == GenericId`
-  --> tests/ui/field_invalid_aggregate_ref.rs:8:18
-   |
- 8 | #[domain(owner = GenericTarget)]
-   |                  ^^^^^^^^^^^^^ type mismatch resolving `<GenericTarget as EntityDefinition>::Identity == GenericId`
-   |
-note: expected this to be `GenericId`
-  --> tests/ui/field_invalid_aggregate_ref.rs:36:21
-   |
-36 |     type Identity = Id;
-   |                     ^^
-note: required by a bound in `domain::DomainIdentityType::Owner`
-  --> src/domain_identity/domain_type.rs
-   |
-   |     type Owner: EntityDefinition<Identity = Self>;
-   |                                  ^^^^^^^^^^^^^^^ required by this bound in `DomainIdentityType::Owner`
-
-error[E0277]: the trait bound `GenericTarget: EntityType` is not satisfied
-  --> tests/ui/field_invalid_aggregate_ref.rs:8:18
-   |
- 8 | #[domain(owner = GenericTarget)]
-   |                  ^^^^^^^^^^^^^ unsatisfied trait bound
-   |
-help: the trait `EntityType` is not implemented for `GenericTarget`
-  --> tests/ui/field_invalid_aggregate_ref.rs:27:1
-   |
-27 | struct GenericTarget {
-   | ^^^^^^^^^^^^^^^^^^^^
-help: the following other types implement trait `EntityDefinition`
-  --> tests/ui/field_invalid_aggregate_ref.rs:20:1
-   |
-20 | impl domain::EntityDefinition for MissingValue {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MissingValue`
-...
-34 | impl domain::EntityDefinition for GenericTarget {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `GenericTarget`
-   = note: required for `<GenericId as DomainIdentityType>::Owner` to implement `EntityDefinition`
-note: required by a bound in `domain::DomainIdentityType::Owner`
-  --> src/domain_identity/domain_type.rs
-   |
-   |     type Owner: EntityDefinition<Identity = Self>;
-   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `DomainIdentityType::Owner`
-
-error[E0271]: type mismatch resolving `<GenericId as DomainIdentityType>::Owner == MissingValue`
-  --> tests/ui/field_invalid_aggregate_ref.rs:22:21
-   |
-22 |     type Identity = GenericId;
-   |                     ^^^^^^^^^ type mismatch resolving `<GenericId as DomainIdentityType>::Owner == MissingValue`
-   |
-note: expected this to be `MissingValue`
-  --> tests/ui/field_invalid_aggregate_ref.rs:8:18
-   |
- 8 | #[domain(owner = GenericTarget)]
-   |                  ^^^^^^^^^^^^^
-note: required by a bound in `domain::EntityDefinition::Identity`
-  --> src/entity/definition.rs
-   |
-   |     type Identity: DomainIdentityType<Owner = Self>;
-   |                                       ^^^^^^^^^^^^ required by this bound in `EntityDefinition::Identity`
-
-error[E0277]: the trait bound `MissingValue: EntityType` is not satisfied
-  --> tests/ui/field_invalid_aggregate_ref.rs:20:35
-   |
-20 | impl domain::EntityDefinition for MissingValue {
+18 | impl domain::EntityDefinition for MissingValue {
    |                                   ^^^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `EntityType` is not implemented for `MissingValue`
-  --> tests/ui/field_invalid_aggregate_ref.rs:13:1
+  --> tests/ui/field_invalid_aggregate_ref.rs:11:1
    |
-13 | struct MissingValue {
+11 | struct MissingValue {
    | ^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `EntityDefinition`
   --> src/entity/definition.rs
@@ -130,74 +27,19 @@ note: required by a bound in `EntityDefinition`
    | pub trait EntityDefinition: EntityType {
    |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
 
-error[E0271]: type mismatch resolving `<Id as DomainIdentityType>::Owner == GenericTarget`
-  --> tests/ui/field_invalid_aggregate_ref.rs:36:21
-   |
-36 |     type Identity = Id;
-   |                     ^^ type mismatch resolving `<Id as DomainIdentityType>::Owner == GenericTarget`
-   |
-note: expected this to be `GenericTarget`
-  --> tests/ui/field_invalid_aggregate_ref.rs:4:18
-   |
- 4 | #[domain(owner = MissingValue)]
-   |                  ^^^^^^^^^^^^
-note: required by a bound in `domain::EntityDefinition::Identity`
-  --> src/entity/definition.rs
-   |
-   |     type Identity: DomainIdentityType<Owner = Self>;
-   |                                       ^^^^^^^^^^^^ required by this bound in `EntityDefinition::Identity`
-
 error[E0277]: the trait bound `GenericTarget: EntityType` is not satisfied
-  --> tests/ui/field_invalid_aggregate_ref.rs:34:35
+  --> tests/ui/field_invalid_aggregate_ref.rs:32:35
    |
-34 | impl domain::EntityDefinition for GenericTarget {
+32 | impl domain::EntityDefinition for GenericTarget {
    |                                   ^^^^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `EntityType` is not implemented for `GenericTarget`
-  --> tests/ui/field_invalid_aggregate_ref.rs:27:1
+  --> tests/ui/field_invalid_aggregate_ref.rs:25:1
    |
-27 | struct GenericTarget {
+25 | struct GenericTarget {
    | ^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `EntityDefinition`
   --> src/entity/definition.rs
    |
    | pub trait EntityDefinition: EntityType {
    |                             ^^^^^^^^^^ required by this bound in `EntityDefinition`
-
-error[E0277]: the trait bound `MissingValue: EntityType` is not satisfied
-  --> tests/ui/field_invalid_aggregate_ref.rs:4:18
-   |
- 4 | #[domain(owner = MissingValue)]
-   |                  ^^^^^^^^^^^^ unsatisfied trait bound
-   |
-help: the trait `EntityType` is not implemented for `MissingValue`
-  --> tests/ui/field_invalid_aggregate_ref.rs:13:1
-   |
-13 | struct MissingValue {
-   | ^^^^^^^^^^^^^^^^^^^
-note: required by a bound in `domain::EntityDefinition::Owner`
-  --> src/entity/definition.rs
-   |
-   | pub trait EntityDefinition: EntityType {
-   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition::Owner`
-   |     type Owner: AggregateType;
-   |          ----- required by a bound in this associated type
-
-error[E0277]: the trait bound `GenericTarget: EntityType` is not satisfied
-  --> tests/ui/field_invalid_aggregate_ref.rs:8:18
-   |
- 8 | #[domain(owner = GenericTarget)]
-   |                  ^^^^^^^^^^^^^ unsatisfied trait bound
-   |
-help: the trait `EntityType` is not implemented for `GenericTarget`
-  --> tests/ui/field_invalid_aggregate_ref.rs:27:1
-   |
-27 | struct GenericTarget {
-   | ^^^^^^^^^^^^^^^^^^^^
-note: required by a bound in `domain::EntityDefinition::Owner`
-  --> src/entity/definition.rs
-   |
-   | pub trait EntityDefinition: EntityType {
-   |                             ^^^^^^^^^^ required by this bound in `EntityDefinition::Owner`
-   |     type Owner: AggregateType;
-   |          ----- required by a bound in this associated type

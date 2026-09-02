@@ -4,9 +4,8 @@ use super::{
     BikeRental,
     rental_fleet::{
         AddBicycle, Bicycle, BicycleAvailability, BicycleAvailabilityQueries, BicycleCondition,
-        BicycleId, BicycleNotRented, BicycleStatus, BicycleUnavailable, FleetId,
-        ImportRentalFleetInput, ImportedBicycle, RentBicycle, RentalFleet, RentalFleetAggregate,
-        ReturnBicycle,
+        BicycleNotRented, BicycleStatus, BicycleUnavailable, ImportRentalFleetInput,
+        ImportedBicycle, RentBicycle, RentalFleet, RentalFleetAggregate, ReturnBicycle,
     },
 };
 
@@ -15,7 +14,6 @@ pub fn domain_model() -> Result<serde_json::Value, rostfrei::DomainModelError> {
         contexts: [BikeRental],
         aggregates: [RentalFleetAggregate],
         entities: [RentalFleet, Bicycle],
-        identities: [FleetId, BicycleId],
         value_objects: [
             BicycleStatus,
             BicycleCondition,

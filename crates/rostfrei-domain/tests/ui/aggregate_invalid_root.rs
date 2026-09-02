@@ -17,7 +17,6 @@ impl domain::AggregateDefinition for PlainRootAggregate {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = OtherRoot)]
 struct Id(u64);
 
 #[derive(Entity)]

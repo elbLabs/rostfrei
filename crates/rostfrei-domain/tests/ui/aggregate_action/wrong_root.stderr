@@ -1,19 +1,19 @@
 error[E0271]: type mismatch resolving `<Owner as AggregateDefinition>::Root == WrongRoot`
-  --> tests/ui/aggregate_action/wrong_root.rs:41:18
+  --> tests/ui/aggregate_action/wrong_root.rs:40:18
    |
-41 | impl Actions for Owner {
+40 | impl Actions for Owner {
    |                  ^^^^^ type mismatch resolving `<Owner as AggregateDefinition>::Root == WrongRoot`
    |
 note: expected this to be `WrongRoot`
-  --> tests/ui/aggregate_action/wrong_root.rs:37:17
+  --> tests/ui/aggregate_action/wrong_root.rs:36:17
    |
-37 |     type Root = Root;
+36 |     type Root = Root;
    |                 ^^^^
 note: required by a bound in `Actions`
-  --> tests/ui/aggregate_action/wrong_root.rs:28:26
+  --> tests/ui/aggregate_action/wrong_root.rs:27:26
    |
-26 | pub trait Actions {
+25 | pub trait Actions {
    |           ------- required by a bound in this trait
-27 |     #[action(id = "change", label = "Change")]
-28 |     fn change(root: &mut WrongRoot);
+26 |     #[action(id = "change", label = "Change")]
+27 |     fn change(root: &mut WrongRoot);
    |                          ^^^^^^^^^ required by this bound in `Actions`

@@ -7,7 +7,6 @@ use domain::{
 struct Context;
 
 #[derive(DomainIdentity)]
-#[domain(owner = Root)]
 struct Id(u8);
 
 #[derive(Entity)]

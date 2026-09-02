@@ -100,7 +100,6 @@ const MISSING_ERROR_ID: DomainErrorId = DomainErrorId {
 pub struct InventoryContext;
 
 #[derive(DomainIdentity)]
-#[domain(owner = InventoryEntity)]
 pub struct InventoryEntityIdentity(u64);
 
 #[domain_actions(aggregate)]
@@ -303,7 +302,6 @@ struct ExtensionService;
 struct ExtensionInput;
 
 #[derive(DomainIdentity)]
-#[domain(owner = OrderedEntity)]
 struct OrderedEntityIdentity(u64);
 
 #[domain_actions(entity)]
@@ -509,9 +507,6 @@ fn accepts_references_added_after_all_owner_actions_are_registered() {
     builder.add_value_object(InputValue::DESCRIPTOR);
     builder.add_value_object(OutputValue::DESCRIPTOR);
     builder.add_value_object(ServiceActionInput::DESCRIPTOR);
-    builder
-        .add_domain_identity_type::<InventoryEntityIdentity>()
-        .unwrap();
 
     let model = builder.finish().unwrap();
 
@@ -618,9 +613,6 @@ fn reports_missing_raised_event() {
     builder
         .add_action_extension::<RaisedEventExtension>()
         .unwrap();
-    builder
-        .add_domain_identity_type::<InventoryEntityIdentity>()
-        .unwrap();
     builder.add_domain_error(AggregateError::DESCRIPTOR);
 
     let error = builder.finish().unwrap_err();
@@ -677,9 +669,6 @@ fn rejects_another_aggregates_raised_event() {
     builder.add_aggregate_type::<InventoryAggregate>().unwrap();
     builder
         .add_action_extension::<ForeignRaisedEventExtension>()
-        .unwrap();
-    builder
-        .add_domain_identity_type::<InventoryEntityIdentity>()
         .unwrap();
     builder.add_domain_error(AggregateError::DESCRIPTOR);
 

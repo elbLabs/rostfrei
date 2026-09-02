@@ -5,7 +5,6 @@ use domain::{Aggregate, BoundedContext, Command, DomainError, DomainEvent, Domai
 struct Catalog;
 
 #[derive(DomainIdentity)]
-#[domain(owner = FirstRoot)]
 struct FirstId(u64);
 
 #[derive(Entity)]
@@ -33,7 +32,6 @@ enum FirstEvents {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = SecondRoot)]
 struct SecondId(u64);
 
 #[derive(Entity)]

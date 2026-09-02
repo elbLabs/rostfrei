@@ -2,9 +2,9 @@
 
 use domain::{
     Aggregate, BoundedContext, Command, CommandType, DomainError, DomainErrorType, DomainEvent,
-    DomainEventDefinitionType, DomainIdentity, DomainIdentityDescriptor, DomainIdentityId,
-    DomainIdentityType, DomainModelError, Entity, EntityType, FieldKind, FieldWrapper, ScalarType,
-    SemanticScalar, SemanticScalarDescriptor, ValueObject, ValueObjectType, domain_model,
+    DomainEventDefinitionType, DomainIdentity, Entity, EntityType, FieldKind, FieldWrapper,
+    ScalarType, SemanticScalar, SemanticScalarDescriptor, ValueObject, ValueObjectType,
+    domain_model,
 };
 use serde_json::json;
 
@@ -30,11 +30,9 @@ impl SemanticScalar for UuidScalar {
 struct SemanticScalars;
 
 #[derive(DomainIdentity)]
-#[domain(owner = DocumentRoot, scalar = UuidScalar)]
 struct DocumentId(foreign::Uuid);
 
 #[derive(DomainIdentity)]
-#[domain(owner = Revision)]
 struct RevisionId(u64);
 
 #[derive(Entity)]
@@ -115,48 +113,6 @@ struct DocumentCorrelationRejected {
     correlation_id: foreign::Uuid,
 }
 
-struct ContradictoryId(foreign::Uuid);
-
-#[derive(Entity)]
-#[domain(id = "contradictory-root", label = "Contradictory")]
-struct ContradictoryRoot {
-    #[domain(identity)]
-    id: ContradictoryId,
-}
-
-impl domain::EntityDefinition for ContradictoryRoot {
-    type Owner = ContradictoryDocuments;
-    type Identity = ContradictoryId;
-}
-
-#[derive(Aggregate)]
-#[domain(id = "contradictory-documents", label = "Contradictory documents")]
-struct ContradictoryDocuments;
-
-impl domain::AggregateDefinition for ContradictoryDocuments {
-    type Context = SemanticScalars;
-    type Root = ContradictoryRoot;
-    type Event = domain::NoDomainEvents;
-}
-
-impl DomainIdentityType for ContradictoryId {
-    type Owner = ContradictoryRoot;
-
-    const DESCRIPTOR: DomainIdentityDescriptor = DomainIdentityDescriptor {
-        id: DomainIdentityId {
-            owner: domain::EntityId {
-                aggregate: domain::AggregateId {
-                    context: domain::BoundedContextId("semantic-scalars"),
-                    local: "contradictory-documents",
-                },
-                local: "contradictory-root",
-            },
-        },
-        scalar: ScalarType::U64,
-    };
-    const SEMANTIC_SCALAR: Option<SemanticScalarDescriptor> = Some(UuidScalar::DESCRIPTOR);
-}
-
 #[test]
 fn describes_semantic_fields_and_nested_wrappers() {
     let fields = DocumentRoot::DESCRIPTOR.fields;
@@ -194,22 +150,12 @@ fn describes_semantic_fields_and_nested_wrappers() {
 }
 
 #[test]
-fn describes_semantic_identity_representation_without_changing_identity_descriptor() {
-    assert_eq!(DocumentId::DESCRIPTOR.scalar, ScalarType::String);
-    assert_eq!(DocumentId::SEMANTIC_SCALAR, Some(UuidScalar::DESCRIPTOR));
-
-    assert_eq!(RevisionId::DESCRIPTOR.scalar, ScalarType::U64);
-    assert_eq!(RevisionId::SEMANTIC_SCALAR, None);
-}
-
-#[test]
 #[allow(clippy::too_many_lines)]
 fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
     let model = domain_model! {
         contexts: [SemanticScalars],
         aggregates: [Documents],
         entities: [DocumentRoot, Revision],
-        identities: [DocumentId, RevisionId],
         value_objects: [ExternalReference],
         services: [],
         commands: [CorrelateDocument],
@@ -299,12 +245,6 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
                     "local": "document-root",
                 },
             },
-            "scalar": {
-                "kind": "semantic",
-                "id": "uuid",
-                "label": "UUID",
-                "representation": "string",
-            },
         }, {
             "id": {
                 "owner": {
@@ -315,35 +255,6 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
                     "local": "revision",
                 },
             },
-            "scalar": "u64",
         }])
-    );
-}
-
-#[test]
-fn rejects_contradictory_manual_identity_scalar_metadata() {
-    let error = domain_model! {
-        contexts: [SemanticScalars],
-        aggregates: [ContradictoryDocuments],
-        entities: [ContradictoryRoot],
-        identities: [ContradictoryId],
-        value_objects: [],
-        services: [],
-        commands: [],
-        errors: [],
-        query_groups: [],
-    }
-    .expect_err("contradictory semantic scalar metadata should be rejected");
-
-    assert_eq!(
-        error,
-        DomainModelError::DomainIdentitySemanticScalarRepresentationMismatch {
-            canonical: ScalarType::U64,
-            semantic: ScalarType::String,
-        }
-    );
-    assert_eq!(
-        error.to_string(),
-        "assertion `left == right` failed: DomainIdentity semantic scalar representation must match its canonical scalar descriptor\n  left: U64\n right: String"
     );
 }

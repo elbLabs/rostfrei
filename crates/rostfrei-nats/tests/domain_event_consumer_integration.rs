@@ -42,7 +42,6 @@ type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 struct TestContext;
 
 #[derive(rostfrei::DomainIdentity)]
-#[rostfrei(owner = TestRoot)]
 struct TestId(String);
 
 #[derive(rostfrei::Entity)]

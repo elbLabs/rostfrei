@@ -57,7 +57,6 @@ enum TestLifecycle {
 }
 
 #[derive(DomainIdentity)]
-#[domain(owner = TestRoot)]
 struct TestId(u64);
 
 #[derive(Entity)]

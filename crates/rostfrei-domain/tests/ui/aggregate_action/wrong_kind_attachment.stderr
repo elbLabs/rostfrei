@@ -1,49 +1,49 @@
 error[E0277]: the trait bound `Item: AggregateDefinition` is not satisfied
-  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:29:18
+  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:28:18
    |
-29 | impl Actions for Item {
+28 | impl Actions for Item {
    |                  ^^^^ unsatisfied trait bound
    |
 help: the trait `AggregateDefinition` is not implemented for `Item`
-  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:19:1
+  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:18:1
    |
-19 | pub struct Item {
+18 | pub struct Item {
    | ^^^^^^^^^^^^^^^
 help: the trait `AggregateDefinition` is implemented for `Owner`
-  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:39:1
+  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:38:1
    |
-39 | impl domain::AggregateDefinition for Owner {
+38 | impl domain::AggregateDefinition for Owner {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `Actions`
-  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:11:1
+  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:10:1
    |
-11 | #[domain_actions(aggregate)]
+10 | #[domain_actions(aggregate)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
-12 | pub trait Actions {
+11 | pub trait Actions {
    |           ------- required by a bound in this trait
    = note: this error originates in the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Item: AggregateActionOwnerType` is not satisfied
-  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:29:18
+  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:28:18
    |
-29 | impl Actions for Item {
+28 | impl Actions for Item {
    |                  ^^^^ unsatisfied trait bound
    |
 help: the trait `AggregateActionOwnerType` is not implemented for `Item`
-  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:19:1
+  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:18:1
    |
-19 | pub struct Item {
+18 | pub struct Item {
    | ^^^^^^^^^^^^^^^
 help: the trait `AggregateActionOwnerType` is implemented for `Owner`
-  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:35:10
+  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:34:10
    |
-35 | #[derive(Aggregate)]
+34 | #[derive(Aggregate)]
    |          ^^^^^^^^^
 note: required by a bound in `Actions`
-  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:11:1
+  --> tests/ui/aggregate_action/wrong_kind_attachment.rs:10:1
    |
-11 | #[domain_actions(aggregate)]
+10 | #[domain_actions(aggregate)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Actions`
-12 | pub trait Actions {
+11 | pub trait Actions {
    |           ------- required by a bound in this trait
    = note: this error originates in the derive macro `Aggregate` which comes from the expansion of the attribute macro `domain_actions` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -9,17 +9,17 @@ help: you might have meant to use the associated type
 4 | #[domain(id = "email-address", label = "Email address", owner = Self::Owner)]
   |                                                                 ++++++
 
-error[E0277]: the trait bound `std::string::String: DomainIdentityType` is not satisfied
+error[E0277]: the trait bound `std::string::String: domain::DomainIdentityType` is not satisfied
  --> tests/ui/value_object_field_attributes.rs:5:41
   |
 5 | struct EmailAddress(#[domain(identity)] String);
-  |                                         ^^^^^^ the trait `DomainIdentityType` is not implemented for `std::string::String`
+  |                                         ^^^^^^ the trait `domain::DomainIdentityType` is not implemented for `std::string::String`
 
-error[E0277]: the trait bound `std::string::String: DomainIdentityType` is not satisfied
+error[E0277]: the trait bound `std::string::String: domain::DomainIdentityType` is not satisfied
  --> tests/ui/value_object_field_attributes.rs:5:41
   |
 5 | struct EmailAddress(#[domain(identity)] String);
-  |                                         ^^^^^^ the trait `DomainIdentityType` is not implemented for `std::string::String`
+  |                                         ^^^^^^ the trait `domain::DomainIdentityType` is not implemented for `std::string::String`
   |
 note: required by a bound in `assert_identity`
  --> tests/ui/value_object_field_attributes.rs:3:10

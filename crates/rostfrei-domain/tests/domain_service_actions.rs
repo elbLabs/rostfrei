@@ -14,7 +14,6 @@ use domain::{
 pub struct Operations;
 
 #[derive(DomainIdentity)]
-#[domain(owner = WorkRoot)]
 pub struct WorkId(u64);
 
 #[domain_actions(entity)]
@@ -360,7 +359,6 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
         contexts: [Operations],
         aggregates: [Work],
         entities: [WorkRoot],
-        identities: [WorkId],
         value_objects: [Receipt, CoordinateWorkInput],
         services: [Coordinator, OmittedActionsService, EmptyActionsService],
         commands: [CoordinateWork],
@@ -412,7 +410,6 @@ fn rejects_duplicate_action_id_across_attached_domain_service_contracts() {
         contexts: [],
         aggregates: [],
         entities: [],
-        identities: [],
         value_objects: [],
         services: [DuplicateService],
         commands: [],
@@ -438,7 +435,6 @@ fn rejects_duplicate_action_id_between_attached_and_extension_domain_service_gro
         contexts: [],
         aggregates: [],
         entities: [],
-        identities: [],
         value_objects: [],
         services: [Coordinator],
         commands: [],

@@ -1,149 +1,149 @@
 error[E0277]: the trait bound `Plain: ValueObjectType` is not satisfied
-  --> tests/ui/field_invalid_traits.rs:73:18
+  --> tests/ui/field_invalid_traits.rs:70:18
    |
-73 |     plain_value: Plain,
+70 |     plain_value: Plain,
    |                  ^^^^^ unsatisfied trait bound
    |
 help: the trait `ValueObjectType` is not implemented for `Plain`
-  --> tests/ui/field_invalid_traits.rs:19:1
+  --> tests/ui/field_invalid_traits.rs:16:1
    |
-19 | struct Plain;
+16 | struct Plain;
    | ^^^^^^^^^^^^
 help: the trait `ValueObjectType` is implemented for `WrongValue`
-  --> tests/ui/field_invalid_traits.rs:83:10
+  --> tests/ui/field_invalid_traits.rs:80:10
    |
-83 | #[derive(ValueObject)]
+80 | #[derive(ValueObject)]
    |          ^^^^^^^^^^^
    = note: this error originates in the derive macro `ValueObject` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Plain: AggregateType` is not satisfied
-  --> tests/ui/field_invalid_traits.rs:74:30
+  --> tests/ui/field_invalid_traits.rs:71:30
    |
-74 |     #[domain(aggregate_ref = Plain)]
+71 |     #[domain(aggregate_ref = Plain)]
    |                              ^^^^^ unsatisfied trait bound
    |
 help: the trait `AggregateType` is not implemented for `Plain`
-  --> tests/ui/field_invalid_traits.rs:19:1
+  --> tests/ui/field_invalid_traits.rs:16:1
    |
-19 | struct Plain;
+16 | struct Plain;
    | ^^^^^^^^^^^^
 help: the following other types implement trait `AggregateType`
-  --> tests/ui/field_invalid_traits.rs:33:10
+  --> tests/ui/field_invalid_traits.rs:30:10
    |
-33 | #[derive(Aggregate)]
+30 | #[derive(Aggregate)]
    |          ^^^^^^^^^ `First`
 ...
-55 | #[derive(Aggregate)]
+52 | #[derive(Aggregate)]
    |          ^^^^^^^^^ `Second`
    = note: this error originates in the derive macro `Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0271]: type mismatch resolving `<OtherRoot as EntityDefinition>::Owner == First`
-  --> tests/ui/field_invalid_traits.rs:71:12
+  --> tests/ui/field_invalid_traits.rs:68:12
    |
-71 |     other: OtherRoot,
+68 |     other: OtherRoot,
    |            ^^^^^^^^^ type mismatch resolving `<OtherRoot as EntityDefinition>::Owner == First`
    |
 note: expected this to be `First`
-  --> tests/ui/field_invalid_traits.rs:51:18
+  --> tests/ui/field_invalid_traits.rs:48:18
    |
-51 |     type Owner = Second;
+48 |     type Owner = Second;
    |                  ^^^^^^
 note: required by a bound in `_::assert_entity`
-  --> tests/ui/field_invalid_traits.rs:65:10
+  --> tests/ui/field_invalid_traits.rs:62:10
    |
-65 | #[derive(Entity)]
+62 | #[derive(Entity)]
    |          ^^^^^^ required by this bound in `assert_entity`
    = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Plain: ValueObjectType` is not satisfied
-  --> tests/ui/field_invalid_traits.rs:73:18
+  --> tests/ui/field_invalid_traits.rs:70:18
    |
-73 |     plain_value: Plain,
+70 |     plain_value: Plain,
    |                  ^^^^^ unsatisfied trait bound
    |
 help: the trait `ValueObjectType` is not implemented for `Plain`
-  --> tests/ui/field_invalid_traits.rs:19:1
+  --> tests/ui/field_invalid_traits.rs:16:1
    |
-19 | struct Plain;
+16 | struct Plain;
    | ^^^^^^^^^^^^
 help: the trait `ValueObjectType` is implemented for `WrongValue`
-  --> tests/ui/field_invalid_traits.rs:83:10
+  --> tests/ui/field_invalid_traits.rs:80:10
    |
-83 | #[derive(ValueObject)]
+80 | #[derive(ValueObject)]
    |          ^^^^^^^^^^^
 note: required by a bound in `_::assert_value_object`
-  --> tests/ui/field_invalid_traits.rs:65:10
+  --> tests/ui/field_invalid_traits.rs:62:10
    |
-65 | #[derive(Entity)]
+62 | #[derive(Entity)]
    |          ^^^^^^ required by this bound in `assert_value_object`
    = note: this error originates in the derive macro `ValueObject` which comes from the expansion of the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: the trait bound `Plain: DomainIdentityType` is not satisfied
-  --> tests/ui/field_invalid_traits.rs:75:16
+error[E0277]: the trait bound `Plain: domain::DomainIdentityType` is not satisfied
+  --> tests/ui/field_invalid_traits.rs:72:16
    |
-75 |     reference: Plain,
+72 |     reference: Plain,
    |                ^^^^^ unsatisfied trait bound
    |
-help: the trait `DomainIdentityType` is not implemented for `Plain`
-  --> tests/ui/field_invalid_traits.rs:19:1
+help: the trait `domain::DomainIdentityType` is not implemented for `Plain`
+  --> tests/ui/field_invalid_traits.rs:16:1
    |
-19 | struct Plain;
+16 | struct Plain;
    | ^^^^^^^^^^^^
-help: the following other types implement trait `DomainIdentityType`
-  --> tests/ui/field_invalid_traits.rs:7:10
+help: the following other types implement trait `domain::DomainIdentityType`
+  --> tests/ui/field_invalid_traits.rs:18:10
    |
- 7 | #[derive(DomainIdentity)]
-   |          ^^^^^^^^^^^^^^ `Id`
+18 | #[derive(Entity)]
+   |          ^^^^^^ `Id`
 ...
-11 | #[derive(DomainIdentity)]
-   |          ^^^^^^^^^^^^^^ `OtherId`
+40 | #[derive(Entity)]
+   |          ^^^^^^ `OtherId`
 ...
-15 | #[derive(DomainIdentity)]
-   |          ^^^^^^^^^^^^^^ `WrongId`
+62 | #[derive(Entity)]
+   |          ^^^^^^ `WrongId`
 note: required by a bound in `_::assert_identity`
-  --> tests/ui/field_invalid_traits.rs:65:10
+  --> tests/ui/field_invalid_traits.rs:62:10
    |
-65 | #[derive(Entity)]
+62 | #[derive(Entity)]
    |          ^^^^^^ required by this bound in `assert_identity`
-   = note: this error originates in the derive macro `DomainIdentity` which comes from the expansion of the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Plain: ValueObjectType` is not satisfied
-  --> tests/ui/field_invalid_traits.rs:85:43
+  --> tests/ui/field_invalid_traits.rs:82:43
    |
-85 | struct WrongValue(#[domain(value_object)] Plain);
+82 | struct WrongValue(#[domain(value_object)] Plain);
    |                                           ^^^^^ unsatisfied trait bound
    |
 help: the trait `ValueObjectType` is not implemented for `Plain`
-  --> tests/ui/field_invalid_traits.rs:19:1
+  --> tests/ui/field_invalid_traits.rs:16:1
    |
-19 | struct Plain;
+16 | struct Plain;
    | ^^^^^^^^^^^^
 help: the trait `ValueObjectType` is implemented for `WrongValue`
-  --> tests/ui/field_invalid_traits.rs:83:10
+  --> tests/ui/field_invalid_traits.rs:80:10
    |
-83 | #[derive(ValueObject)]
+80 | #[derive(ValueObject)]
    |          ^^^^^^^^^^^
    = note: this error originates in the derive macro `ValueObject` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `Plain: ValueObjectType` is not satisfied
-  --> tests/ui/field_invalid_traits.rs:85:43
+  --> tests/ui/field_invalid_traits.rs:82:43
    |
-85 | struct WrongValue(#[domain(value_object)] Plain);
+82 | struct WrongValue(#[domain(value_object)] Plain);
    |                                           ^^^^^ unsatisfied trait bound
    |
 help: the trait `ValueObjectType` is not implemented for `Plain`
-  --> tests/ui/field_invalid_traits.rs:19:1
+  --> tests/ui/field_invalid_traits.rs:16:1
    |
-19 | struct Plain;
+16 | struct Plain;
    | ^^^^^^^^^^^^
 help: the trait `ValueObjectType` is implemented for `WrongValue`
-  --> tests/ui/field_invalid_traits.rs:83:10
+  --> tests/ui/field_invalid_traits.rs:80:10
    |
-83 | #[derive(ValueObject)]
+80 | #[derive(ValueObject)]
    |          ^^^^^^^^^^^
 note: required by a bound in `_::assert_value_object`
-  --> tests/ui/field_invalid_traits.rs:83:10
+  --> tests/ui/field_invalid_traits.rs:80:10
    |
-83 | #[derive(ValueObject)]
+80 | #[derive(ValueObject)]
    |          ^^^^^^^^^^^ required by this bound in `assert_value_object`
    = note: this error originates in the derive macro `ValueObject` (in Nightly builds, run with -Z macro-backtrace for more info)
