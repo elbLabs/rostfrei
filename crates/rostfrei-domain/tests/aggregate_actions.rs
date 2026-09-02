@@ -152,7 +152,6 @@ impl ActionGroupType for AccountExtensionActions {
             local: "extension",
         },
         label: "Account extension action",
-        raises: &[],
         error: None,
     }];
 }
@@ -168,7 +167,6 @@ impl ActionGroupType for DuplicateAccountExtensionActions {
             local: "open",
         },
         label: "Duplicate open",
-        raises: &[],
         error: None,
     }];
 }
@@ -354,9 +352,7 @@ fn aggregate_action_contracts_preserve_method_order_and_descriptors() {
         ["freeze", "revision"]
     );
 
-    assert!(contracts[0][0].raises.is_empty());
     assert_eq!(contracts[0][0].error, None);
-    assert!(contracts[0][1].raises.is_empty());
     assert_eq!(contracts[0][1].error, Some(AccountDenied::DESCRIPTOR.id));
 
     let implemented_only = <Account as contracts::ImplementedOnly>::__DOMAIN_ACTIONS;
@@ -395,6 +391,7 @@ fn model_projects_explicit_extensions_and_non_aggregate_attachments() {
         ["extension"]
     );
     assert_eq!(actions[0]["id"]["owner"]["kind"], "aggregate");
+    assert!(actions[0].get("raises").is_none());
     assert!(actions.iter().all(|action| {
         action["id"]["local"] != "implemented-only" && action["id"]["local"] != "unlisted-action"
     }));

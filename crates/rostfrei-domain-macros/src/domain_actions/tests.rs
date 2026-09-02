@@ -6,11 +6,7 @@ fn arbitrary_input_and_output_types_do_not_generate_dto_bounds() {
             fn calculate(&self, input: ExternalInput) -> Vec<ExternalOutput>;
         }
     };
-    let mut actions = super::trait_attributes::extract(
-        &mut item.items,
-        super::trait_attributes::RaisesPolicy::Forbidden,
-    )
-    .expect("action tags");
+    let mut actions = super::trait_attributes::extract(&mut item.items).expect("action tags");
     super::trait_validation::validate(&item.items, &mut actions).expect("ordinary DTO signature");
     let output = super::trait_assembly::assemble(&syn::parse_quote!(::domain), item, &actions)
         .expect("action assembly")
@@ -20,6 +16,19 @@ fn arbitrary_input_and_output_types_do_not_generate_dto_bounds() {
     assert!(output.contains("ExternalOutput"));
     assert!(!output.contains("ActionInputType"));
     assert!(!output.contains("ActionOutputType"));
+    assert!(!output.contains("raises"));
+}
+
+#[test]
+fn authored_raises_metadata_is_rejected() {
+    let mut item: syn::ItemTrait = syn::parse_quote! {
+        trait Actions {
+            #[action(id = "record", label = "Record", raises = [Recorded])]
+            fn record(&mut self);
+        }
+    };
+
+    assert!(super::trait_attributes::extract(&mut item.items).is_err());
 }
 
 #[test]

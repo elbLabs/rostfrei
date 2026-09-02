@@ -1,5 +1,5 @@
 error: executable aggregate action receivers cannot have an explicit lifetime
- --> tests/ui/fail/action_explicit_receiver_lifetime.rs:6:17
+ --> tests/ui/fail/action_explicit_receiver_lifetime.rs:4:17
   |
-6 |     fn deposit(&'static mut self);
+4 |     fn deposit(&'static mut self);
   |                 ^^^^^^^

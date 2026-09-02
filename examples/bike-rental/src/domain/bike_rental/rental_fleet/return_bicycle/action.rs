@@ -1,14 +1,10 @@
 use rostfrei::domain_actions;
 
-use super::{BicycleNotRented, BicycleReturned};
+use super::BicycleNotRented;
 use crate::domain::rental_fleet::BicycleId;
 
 #[domain_actions(aggregate(instance = ReturnBicycleActions))]
 pub trait ReturnBicycleActionContract {
-    #[action(
-        id = "return-bicycle",
-        label = "Return bicycle",
-        raises = [BicycleReturned]
-    )]
+    #[action(id = "return-bicycle", label = "Return bicycle")]
     fn return_bicycle(&mut self, input: BicycleId) -> Result<(), BicycleNotRented>;
 }

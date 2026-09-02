@@ -1,5 +1,0 @@
-error: duplicate event path
- --> tests/ui/fail/action_duplicate_raises.rs:8:35
-  |
-8 |         raises = [MoneyDeposited, MoneyDeposited]
-  |                                   ^^^^^^^^^^^^^^

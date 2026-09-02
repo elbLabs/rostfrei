@@ -48,11 +48,7 @@ mod aggregate_actions {
 
     #[rostfrei::domain_actions(aggregate(instance = AccountAggregateActions))]
     pub trait AccountAggregateActionContract {
-        #[action(
-            id = "deposit",
-            label = "Deposit",
-            raises = [MoneyDeposited]
-        )]
+        #[action(id = "deposit", label = "Deposit")]
         fn deposit(&mut self, input: i64);
     }
 

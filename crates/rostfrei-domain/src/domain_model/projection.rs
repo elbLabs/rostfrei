@@ -9,8 +9,8 @@ use crate::{
 };
 
 use super::{
+    action_error_validation::ActionErrorInventory,
     action_projection::ActionProjection,
-    action_reference_validation::ActionReferenceInventory,
     decision_projection::DecisionProjection,
     entity_projection::EntityProjection,
     error::DomainModelError,
@@ -256,11 +256,9 @@ impl DomainModelBuilder {
     }
 
     pub fn finish(self) -> Result<Value, DomainModelError> {
-        let inventory = ActionReferenceInventory::new(
-            self.domain_events.iter().map(|(id, _)| *id).collect(),
-            self.domain_errors.iter().map(|(id, _)| *id).collect(),
-        );
-        self.actions.validate_references(&inventory)?;
+        let inventory =
+            ActionErrorInventory::new(self.domain_errors.iter().map(|(id, _)| *id).collect());
+        self.actions.validate_errors(&inventory)?;
         let field_inventory = FieldReferenceInventory::new(
             self.domain_identities.iter().map(|(id, _)| *id).collect(),
             self.entities.ids().collect(),
