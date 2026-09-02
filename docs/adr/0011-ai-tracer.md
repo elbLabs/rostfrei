@@ -1,4 +1,4 @@
-# ADR 0012: AI adapters use Tracer
+# ADR 0011: AI adapters use Tracer
 
 ## Status
 

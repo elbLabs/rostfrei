@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; address and topology ownership partially superseded by ADR 0015.
+Accepted; address and topology ownership partially superseded by ADR 0014.
 
 ## Decision
 

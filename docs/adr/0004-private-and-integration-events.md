@@ -19,7 +19,7 @@ policy, and consumers are independent from aggregate stream identity.
 ## Consequences
 
 Changing a public contract does not rewrite aggregate history, and changing a
-private domain model does not silently alter consumers. ADR 0017 adds a typed
+private domain model does not silently alter consumers. ADR 0016 adds a typed
 integration-event bus and post-commit handler path. Publication can be retried
 from durable domain-event consumption, but it is not atomic with event storage;
 an outbox is still required where that stronger guarantee is necessary.

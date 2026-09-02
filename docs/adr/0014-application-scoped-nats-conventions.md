@@ -1,4 +1,4 @@
-# ADR 0015: Application-scoped NATS conventions
+# ADR 0014: Application-scoped NATS conventions
 
 ## Status
 
@@ -81,10 +81,10 @@ NATS storage-envelope metadata rather than fields on the transport-independent
 to exactly one configured bounded context.
 
 This decision partially supersedes ADR 0001's exclusion of subjects and stream
-names from rostfrei, ADR 0005's deployment-owned event-store naming, ADR 0006's
-application-owned full addresses, and ADR 0008's application-owned topology
-facade. Applications continue to own business message names, schemas, delivery
-classification, environment variables, and operator composition.
+names from rostfrei, ADR 0005's deployment-owned event-store naming, and ADR
+0006's application-owned full addresses. Applications continue to own business
+message names, schemas, delivery classification, environment variables, and
+operator composition.
 
 ## Consequences
 
