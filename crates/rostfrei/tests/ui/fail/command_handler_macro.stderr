@@ -1,0 +1,11 @@
+error[E0433]: cannot find `command_handler` in `rostfrei`
+ --> tests/ui/fail/command_handler_macro.rs:2:15
+  |
+2 |     rostfrei::command_handler!(Command => handle);
+  |               ^^^^^^^^^^^^^^^ could not find `command_handler` in `rostfrei`
+
+error[E0433]: cannot find `command_handler` in `domain_runtime`
+ --> tests/ui/fail/command_handler_macro.rs:3:42
+  |
+3 |     rostfrei::__private::domain_runtime::command_handler!(Command => handle);
+  |                                          ^^^^^^^^^^^^^^^ could not find `command_handler` in `domain_runtime`
