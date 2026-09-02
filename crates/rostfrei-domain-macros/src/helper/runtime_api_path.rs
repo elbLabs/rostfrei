@@ -14,15 +14,6 @@ pub fn resolve_optional() -> Result<Option<Path>> {
     )
 }
 
-pub fn resolve() -> Result<Path> {
-    resolve_optional()?.ok_or_else(|| {
-        syn::Error::new(
-            Span::call_site(),
-            "executable domain behavior requires a dependency on `rostfrei` or `rostfrei-domain-runtime`",
-        )
-    })
-}
-
 fn facade_path(found: FoundCrate) -> Result<Path> {
     let root = dependency_path("rostfrei", found)?;
     syn::parse2(quote::quote!(#root::__private::domain_runtime))

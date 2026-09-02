@@ -8,20 +8,7 @@ fn composed_domain_model_builds() {
 #[test]
 fn omits_unattached_capabilities_and_lifecycle_metadata() {
     let model = crate::domain::model::domain_model().expect("comparison domain model should build");
-    assert!(
-        model["actions"]
-            .as_array()
-            .expect("actions should be an array")
-            .iter()
-            .all(|action| action["id"]["owner"]["kind"] != "aggregate")
-    );
-    assert!(
-        model["actions"]
-            .as_array()
-            .expect("actions should be an array")
-            .iter()
-            .all(|action| action["id"]["owner"]["kind"] != "domainService")
-    );
+    assert_eq!(model["actions"], json!([]));
     assert_eq!(model["domainServices"], json!([]));
     assert_eq!(model["decisions"], json!([]));
     assert_eq!(model["invariants"], json!([]));

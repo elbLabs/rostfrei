@@ -2,7 +2,7 @@ use rostfrei::Apply;
 
 use super::BicycleRented;
 use crate::domain::bike_rental::rental_fleet::{
-    RentalFleet, bicycle::mark_rented::MarkRentedAction,
+    RentalFleet, bicycle::mark_rented::MarkRentedAction as _,
 };
 
 impl Apply<BicycleRented> for RentalFleet {

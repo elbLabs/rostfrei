@@ -2,7 +2,7 @@ use rostfrei::Apply;
 
 use super::BicycleReturned;
 use crate::domain::{
-    bike_rental::rental_fleet::bicycle::mark_available::MarkAvailableAction,
+    bike_rental::rental_fleet::bicycle::mark_available::MarkAvailableAction as _,
     rental_fleet::RentalFleet,
 };
 

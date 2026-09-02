@@ -1,5 +1,0 @@
-error: domain action contract traits cannot have unrestricted public visibility
- --> tests/ui/entity_action/public_contract_trait.rs:4:1
-  |
-4 | pub trait Actions {
-  | ^^^

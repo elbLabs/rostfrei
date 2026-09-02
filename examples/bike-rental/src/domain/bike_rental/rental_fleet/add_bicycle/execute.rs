@@ -1,10 +1,10 @@
 use rostfrei::AggregateInstance;
 use uuid::Uuid;
 
-use super::{AddBicycleActions, BicycleAdded};
+use super::{AddBicycleAction, BicycleAdded};
 use crate::domain::rental_fleet::{BicycleCondition, BicycleId, RentalFleet, RentalFleetAggregate};
 
-impl AddBicycleActions for AggregateInstance<RentalFleetAggregate> {
+impl AddBicycleAction for AggregateInstance<RentalFleetAggregate> {
     fn add_bicycle(&mut self) {
         let fleet_id = self.state().fleet_id.clone();
         let bicycle_id = allocate_bicycle_id(self.state());

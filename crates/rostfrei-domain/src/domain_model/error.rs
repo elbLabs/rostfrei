@@ -1,8 +1,8 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    ActionId, ActionOwnerId, AggregateId, DecisionId, DecisionOutcomeId, DecisionOwnerId,
-    DomainErrorId, DomainEventId, DomainIdentityId, EntityId, QueryId, ValueObjectId,
+    AggregateId, DecisionId, DecisionOutcomeId, DecisionOwnerId, DomainErrorId, DomainEventId,
+    DomainIdentityId, EntityId, QueryId, ValueObjectId,
 };
 
 /// A domain-model descriptor reference involved in an inventory validation failure.
@@ -19,20 +19,6 @@ pub enum DomainModelReference {
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DomainModelError {
-    UnregisteredActionExtensionOwner {
-        owner: Box<ActionOwnerId>,
-    },
-    EmptyActionExtension,
-    ActionDescriptorOwnerMismatch {
-        id: Box<ActionId>,
-    },
-    DuplicateActionId {
-        id: Box<ActionId>,
-    },
-    ActionErrorInventoryViolation {
-        action_id: Box<ActionId>,
-        error_id: Box<DomainErrorId>,
-    },
     UnregisteredDecisionOwner {
         owner: Box<DecisionOwnerId>,
     },
@@ -70,18 +56,6 @@ pub enum DomainModelError {
 impl fmt::Display for DomainModelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnregisteredActionExtensionOwner { owner } => {
-                write!(formatter, "unregistered action extension owner: {owner:?}")
-            }
-            Self::EmptyActionExtension => write!(formatter, "action extension must not be empty"),
-            Self::ActionDescriptorOwnerMismatch { id } => {
-                write!(formatter, "action descriptor owner mismatch: {id:?}")
-            }
-            Self::DuplicateActionId { id } => write!(formatter, "duplicate ActionId: {id:?}"),
-            Self::ActionErrorInventoryViolation {
-                action_id,
-                error_id,
-            } => fmt_action_error(formatter, action_id, error_id),
             Self::UnregisteredDecisionOwner { owner } => fmt_unregistered_owner(formatter, owner),
             Self::DecisionDescriptorOwnerMismatch { id } => fmt_decision_owner(formatter, id),
             Self::DuplicateDecisionId { id } => write!(formatter, "duplicate DecisionId: {id:?}"),
@@ -136,17 +110,6 @@ fn fmt_empty_decision(formatter: &mut fmt::Formatter<'_>, decision_id: &Decision
     write!(
         formatter,
         "decision must declare at least one active outcome: {decision_id:?}"
-    )
-}
-
-fn fmt_action_error(
-    formatter: &mut fmt::Formatter<'_>,
-    action_id: &ActionId,
-    error_id: &DomainErrorId,
-) -> fmt::Result {
-    write!(
-        formatter,
-        "Action error inventory violation: action {action_id:?} references missing {error_id:?}; add it to domain_model! inventory key `errors`"
     )
 }
 

@@ -1,7 +1,6 @@
-use rostfrei::domain_actions;
+use rostfrei::domain_action;
 
-#[domain_actions(entity)]
-pub(in crate::domain::bike_rental::rental_fleet) trait MarkRentedAction {
-    #[action(id = "mark-rented", label = "Mark rented")]
+#[domain_action(id = "mark-rented", label = "Mark rented")]
+pub trait MarkRentedAction {
     fn mark_rented(&mut self);
 }

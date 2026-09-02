@@ -1,10 +1,9 @@
-use rostfrei::domain_actions;
+use rostfrei::domain_action;
 
 use super::BicycleUnavailable;
 use crate::domain::rental_fleet::BicycleId;
 
-#[domain_actions(aggregate(instance = RentBicycleActions))]
-pub trait RentBicycleActionContract {
-    #[action(id = "rent-bicycle", label = "Rent bicycle")]
+#[domain_action(id = "rent-bicycle", label = "Rent bicycle")]
+pub trait RentBicycleAction {
     fn rent_bicycle(&mut self, input: BicycleId) -> Result<(), BicycleUnavailable>;
 }

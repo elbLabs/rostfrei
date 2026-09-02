@@ -28,7 +28,7 @@ fn rejects_removed_context_and_action_attachments() {
 }
 
 #[test]
-fn descriptor_and_action_owners_forward_through_definition() {
+fn descriptor_forwards_through_definition() {
     let attributes = super::attributes::Attributes {
         id: syn::LitStr::new("pricing", proc_macro2::Span::call_site()),
         label: syn::LitStr::new("Pricing", proc_macro2::Span::call_site()),
@@ -41,7 +41,5 @@ fn descriptor_and_action_owners_forward_through_definition() {
     .to_string();
 
     assert!(output.contains("DomainServiceDefinition"));
-    assert!(output.contains("DomainServiceActionOwnerType"));
-    assert!(output.contains("ActionOwnerType"));
     assert!(!output.contains("ACTION_CONTRACTS"));
 }

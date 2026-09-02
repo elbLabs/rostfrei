@@ -1,6 +1,6 @@
 use rostfrei::{AggregateInstance, CommandHandler};
 
-use super::{BicycleNotRented, ReturnBicycle, ReturnBicycleActions};
+use super::{BicycleNotRented, ReturnBicycle, ReturnBicycleAction as _};
 use crate::domain::rental_fleet::RentalFleetAggregate;
 
 impl CommandHandler<ReturnBicycle> for RentalFleetAggregate {

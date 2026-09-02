@@ -1,5 +1,0 @@
-error: domain action contract traits cannot be auto traits
- --> tests/ui/entity_action/auto_contract_trait.rs:4:1
-  |
-4 | auto trait Actions {}
-  | ^^^^

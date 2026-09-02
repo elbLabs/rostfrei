@@ -1,11 +1,11 @@
 use rostfrei::AggregateInstance;
 
-use super::{BicycleRented, BicycleUnavailable, RentBicycleActions};
+use super::{BicycleRented, BicycleUnavailable, RentBicycleAction};
 use crate::domain::bike_rental::rental_fleet::{
     BicycleId, RentalFleetAggregate, assess_rental_eligibility::RentalEligibilityOutcome,
 };
 
-impl RentBicycleActions for AggregateInstance<RentalFleetAggregate> {
+impl RentBicycleAction for AggregateInstance<RentalFleetAggregate> {
     fn rent_bicycle(&mut self, input: BicycleId) -> Result<(), BicycleUnavailable> {
         let event = {
             let root = self.state();

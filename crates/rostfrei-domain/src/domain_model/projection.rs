@@ -1,16 +1,14 @@
 use serde_json::{Value, json};
 
 use crate::{
-    ActionOwnerId, AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId,
+    AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId,
     BoundedContextDescriptor, DecisionOwnerId, DomainErrorDescriptor, DomainErrorId,
     DomainEventDescriptor, DomainEventId, DomainIdentityId, DomainServiceDescriptor,
     DomainServiceType, EntityDefinition, EntityDescriptor, QueryDescriptor, QueryId, ValueObject,
-    ValueObjectDescriptor, ValueObjectId, extension::ActionGroupType,
+    ValueObjectDescriptor, ValueObjectId,
 };
 
 use super::{
-    action_error_validation::ActionErrorInventory,
-    action_projection::ActionProjection,
     decision_projection::DecisionProjection,
     entity_projection::EntityProjection,
     error::DomainModelError,
@@ -33,7 +31,6 @@ pub struct DomainModelBuilder {
     domain_services: Vec<Value>,
     domain_events: Vec<(DomainEventId, Value)>,
     domain_errors: Vec<(DomainErrorId, Value)>,
-    actions: ActionProjection,
     decisions: DecisionProjection,
     queries: Vec<(QueryId, Value)>,
     field_references: FieldReferenceCollection,
@@ -50,7 +47,6 @@ impl DomainModelBuilder {
             domain_services: Vec::new(),
             domain_events: Vec::new(),
             domain_errors: Vec::new(),
-            actions: ActionProjection::new(),
             decisions: DecisionProjection::new(),
             queries: Vec::new(),
             field_references: FieldReferenceCollection::new(),
@@ -77,11 +73,6 @@ impl DomainModelBuilder {
 
     pub fn add_aggregate_type<A: AggregateDefinition>(&mut self) -> Result<(), DomainModelError> {
         self.add_aggregate(A::DESCRIPTOR);
-        let owner = ActionOwnerId::Aggregate(A::DESCRIPTOR.id);
-        self.actions.register_owner(owner);
-        for contract in A::ACTION_CONTRACTS {
-            self.actions.add_group(owner, contract)?;
-        }
         let owner = DecisionOwnerId::Aggregate(A::DESCRIPTOR.id);
         self.decisions.register_owner(owner);
         for group in A::DECISION_GROUPS {
@@ -101,10 +92,7 @@ impl DomainModelBuilder {
     }
 
     pub fn add_entity_type<E: EntityDefinition>(&mut self) -> Result<(), DomainModelError> {
-        self.add_entity(E::DESCRIPTOR)?;
-        self.actions
-            .register_owner(ActionOwnerId::Entity(E::DESCRIPTOR.id));
-        Ok(())
+        self.add_entity(E::DESCRIPTOR)
     }
 
     fn add_domain_identity(&mut self, id: DomainIdentityId) -> Result<(), DomainModelError> {
@@ -155,8 +143,6 @@ impl DomainModelBuilder {
         &mut self,
     ) -> Result<(), DomainModelError> {
         self.add_domain_service(S::DESCRIPTOR);
-        let owner = ActionOwnerId::DomainService(S::DESCRIPTOR.id);
-        self.actions.register_owner(owner);
         Ok(())
     }
 
@@ -216,11 +202,6 @@ impl DomainModelBuilder {
         Ok(())
     }
 
-    pub fn add_action_extension<G: ActionGroupType>(&mut self) -> Result<(), DomainModelError> {
-        let owner = <G::Owner as crate::ActionOwnerType>::ACTION_OWNER_ID;
-        self.actions.add_extension(owner, G::ACTIONS)
-    }
-
     pub fn add_queries(
         &mut self,
         descriptors: &'static [QueryDescriptor],
@@ -243,9 +224,6 @@ impl DomainModelBuilder {
     }
 
     pub fn finish(self) -> Result<Value, DomainModelError> {
-        let inventory =
-            ActionErrorInventory::new(self.domain_errors.iter().map(|(id, _)| *id).collect());
-        self.actions.validate_errors(&inventory)?;
         let field_inventory = FieldReferenceInventory::new(
             self.domain_identities.iter().map(|(id, _)| *id).collect(),
             self.entities.ids().collect(),
@@ -263,7 +241,7 @@ impl DomainModelBuilder {
             "domainServices": self.domain_services,
             "domainEvents": self.domain_events.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "domainErrors": self.domain_errors.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
-            "actions": self.actions.into_values(),
+            "actions": [],
             "decisions": self.decisions.into_values(),
             "queries": self.queries.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
             "invariants": [],

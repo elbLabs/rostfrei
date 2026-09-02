@@ -1,9 +1,8 @@
-use rostfrei::domain_actions;
+use rostfrei::domain_action;
 
 use super::ImportRentalFleetInput;
 
-#[domain_actions(aggregate(instance = ImportRentalFleetActions))]
-pub trait ImportRentalFleetActionContract {
-    #[action(id = "import-rental-fleet", label = "Import rental fleet")]
+#[domain_action(id = "import-rental-fleet", label = "Import rental fleet")]
+pub trait ImportRentalFleetAction {
     fn import_rental_fleet(&mut self, input: ImportRentalFleetInput);
 }

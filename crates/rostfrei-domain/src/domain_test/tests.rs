@@ -3,8 +3,8 @@ use std::io::{self, Write};
 use serde_json::json;
 
 use crate::{
-    ActionId, ActionOwnerId, AggregateId, BoundedContextId, DecisionId, DecisionOwnerId, EntityId,
-    EntityLifecycleId, InvariantId,
+    ActionId, AggregateId, BoundedContextId, DecisionId, DecisionOwnerId, EntityLifecycleId,
+    InvariantId,
 };
 
 use super::{DomainTestDescriptor, DomainTestSubject, emitter, projection};
@@ -14,27 +14,14 @@ const AGGREGATE: AggregateId = AggregateId {
     context: CONTEXT,
     local: "order",
 };
-const ENTITY: EntityId = EntityId {
-    aggregate: AGGREGATE,
-    local: "line-item",
-};
 #[test]
 fn projects_subjects_with_model_id_shapes() {
     let cases = [
         (
-            DomainTestSubject::Action(ActionId {
-                owner: ActionOwnerId::Aggregate(AGGREGATE),
-                local: "submit",
-            }),
+            DomainTestSubject::Action(ActionId("submit")),
             json!({
                 "kind": "action",
-                "id": {
-                    "owner": {
-                        "kind": "aggregate",
-                        "id": { "context": "sales", "local": "order" },
-                    },
-                    "local": "submit",
-                },
+                "id": "submit",
             }),
         ),
         (
@@ -105,10 +92,7 @@ fn compact_projection_is_deterministic_and_single_line() {
 
 #[test]
 fn writer_emits_one_frame_and_surfaces_io_errors() {
-    let descriptor = descriptor(DomainTestSubject::Action(ActionId {
-        owner: ActionOwnerId::Entity(ENTITY),
-        local: "reserve",
-    }));
+    let descriptor = descriptor(DomainTestSubject::Action(ActionId("reserve")));
     let mut output = Vec::new();
 
     emitter::write_metadata(&mut output, descriptor).unwrap();

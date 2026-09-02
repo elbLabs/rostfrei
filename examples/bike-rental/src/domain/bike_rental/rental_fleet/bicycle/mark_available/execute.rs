@@ -1,5 +1,7 @@
-use super::super::{Bicycle, BicycleStatus};
-use super::MarkAvailableAction;
+use super::{
+    super::{Bicycle, BicycleStatus},
+    MarkAvailableAction,
+};
 
 impl MarkAvailableAction for Bicycle {
     fn mark_available(&mut self) {
