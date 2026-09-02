@@ -44,7 +44,7 @@ struct CommandDto;
 struct Event;
 
 #[derive(DomainError)]
-#[domain(id = "error", label = "Error", owner = Model, code = "ERROR", message = "Error.")]
+#[domain(id = "error", label = "Error", code = "ERROR", message = "Error.")]
 struct Error;
 
 struct Plain;

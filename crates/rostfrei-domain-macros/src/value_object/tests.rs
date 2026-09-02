@@ -36,7 +36,7 @@ fn rejects_removed_owner_and_action_metadata() {
 }
 
 #[test]
-fn generates_only_semantic_and_error_owner_contracts() {
+fn generates_only_the_semantic_value_object_contract() {
     let attributes = super::attributes::Attributes {
         id: syn::LitStr::new("money", proc_macro2::Span::call_site()),
         label: syn::LitStr::new("Money", proc_macro2::Span::call_site()),
@@ -51,6 +51,7 @@ fn generates_only_semantic_and_error_owner_contracts() {
     assert!(output.contains("impl :: domain :: ValueObject for Money"));
     assert!(!output.contains("DecisionInputType"));
     assert!(!output.contains("DecisionOutcomeValueType"));
+    assert!(!output.contains("DomainErrorOwnerType"));
     assert!(!output.contains("ActionInputType"));
     assert!(!output.contains("QueryInputType"));
     assert!(!output.contains("shape"));

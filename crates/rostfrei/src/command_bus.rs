@@ -6,7 +6,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use domain::{DomainErrorType, JsonCommandPayload, JsonErrorPayload};
+use domain::{DomainError, JsonCommandPayload, JsonErrorPayload};
 use rostfrei_core::{
     Aggregate, AggregateId, AggregateType, CommandExecutionError, CommandHandler, CommandOutcome,
     ContentFingerprint, Event, EventStore, EventStoreErrorKind, ExecutionMetadata, Executor,
@@ -692,7 +692,7 @@ impl JsonDomainRejectionMapper {
 
 impl<R> CommandRejectionMapper<R> for JsonDomainRejectionMapper
 where
-    R: DomainErrorType + JsonErrorPayload,
+    R: DomainError + JsonErrorPayload,
 {
     fn map(&self, rejection: &R) -> Result<CommandRejection, String> {
         let descriptor = R::DESCRIPTOR;

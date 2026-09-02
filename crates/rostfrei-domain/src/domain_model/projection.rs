@@ -18,7 +18,7 @@ use super::{
     field_reference_collection::FieldReferenceCollection,
     field_reference_validation::{self, FieldReferenceInventory},
     id_projection::{
-        aggregate as aggregate_id, domain_error_owner as domain_error_owner_id,
+        aggregate as aggregate_id, domain_error as domain_error_id,
         domain_identity as domain_identity_id, entity as entity_id, query as query_id,
         value_object as value_object_id,
     },
@@ -192,14 +192,23 @@ impl DomainModelBuilder {
         Ok(())
     }
 
-    pub fn add_domain_error(&mut self, descriptor: DomainErrorDescriptor) {
+    pub fn add_domain_error(
+        &mut self,
+        descriptor: DomainErrorDescriptor,
+    ) -> Result<(), DomainModelError> {
+        if self
+            .domain_errors
+            .iter()
+            .any(|(id, _)| *id == descriptor.id)
+        {
+            return Err(DomainModelError::DuplicateDomainErrorId {
+                id: Box::new(descriptor.id),
+            });
+        }
         self.domain_errors.push((
             descriptor.id,
             json!({
-                "id": {
-                    "owner": domain_error_owner_id(descriptor.id.owner),
-                    "local": descriptor.id.local,
-                },
+                "id": domain_error_id(descriptor.id),
                 "label": descriptor.label,
                 "code": descriptor.code,
                 "message": descriptor.message,
@@ -207,6 +216,7 @@ impl DomainModelBuilder {
             }),
         ));
         self.field_references.add_domain_error(descriptor);
+        Ok(())
     }
 
     pub fn add_action_extension<G: ActionGroupType>(&mut self) -> Result<(), DomainModelError> {

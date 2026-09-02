@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 
-use domain::{
-    DomainError, DomainErrorType, DomainIdentity, Entity, ValueObject, domain_actions, domain_model,
-};
+use domain::{DomainError, DomainIdentity, Entity, ValueObject, domain_actions, domain_model};
 
 pub mod contracts {
     use domain::domain_actions;
@@ -80,7 +78,6 @@ struct Title(String);
 #[domain(
     id = "task-rejected",
     label = "Task rejected",
-    owner = Task,
     code = "TASK_REJECTED",
     message = "The task change was rejected."
 )]

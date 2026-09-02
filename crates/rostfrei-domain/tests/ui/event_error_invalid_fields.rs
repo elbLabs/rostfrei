@@ -39,7 +39,7 @@ struct InvalidEvent {
 }
 
 #[derive(DomainError)]
-#[domain(id = "invalid-error", label = "Invalid error", owner = Owner, code = "INVALID", message = "Invalid.")]
+#[domain(id = "invalid-error", label = "Invalid error", code = "INVALID", message = "Invalid.")]
 struct InvalidError {
     #[domain(entity)]
     child: Child,

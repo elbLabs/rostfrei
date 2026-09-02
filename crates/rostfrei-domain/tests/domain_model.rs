@@ -79,7 +79,12 @@ struct MailTransfer;
 pub struct MailboxOpened;
 
 #[derive(DomainError)]
-#[domain(id = "transfer-denied", label = "Transfer denied", owner = MailTransfer, code = "TRANSFER_DENIED", message = "Mail transfer was denied.")]
+#[domain(
+    id = "transfer-denied",
+    label = "Transfer denied",
+    code = "TRANSFER_DENIED",
+    message = "Mail transfer was denied."
+)]
 struct TransferDenied;
 
 #[test]
@@ -192,16 +197,7 @@ fn compiles_explicit_domain_model_to_json() {
                 "fields": [],
             }],
             "domainErrors": [{
-                "id": {
-                    "owner": {
-                        "kind": "domainService",
-                        "id": {
-                            "context": "inbox",
-                            "local": "mail-transfer",
-                        },
-                    },
-                    "local": "transfer-denied",
-                },
+                "id": "transfer-denied",
                 "label": "Transfer denied",
                 "code": "TRANSFER_DENIED",
                 "message": "Mail transfer was denied.",

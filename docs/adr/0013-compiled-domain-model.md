@@ -114,6 +114,11 @@ inventory were subsequently replaced by
 authored relationship, and registry, processor, bus, and tracer APIs name the
 aggregate-command pair explicitly.
 
+Domain-error ownership and optional JSON generation were subsequently removed
+by [ADR 0025](0025-owner-independent-domain-errors.md). Errors keep their
+stable public code and message, while action return types and command handlers
+establish usage relationships and JSON rejection payloads are always available.
+
 ## Consequences
 
 rostfrei has one source of truth for domain identity, structure, event

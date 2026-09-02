@@ -84,7 +84,6 @@ fn checks_domain_service_action_contracts() {
     cases.compile_fail("tests/ui/domain_service_action/too_many_inputs.rs");
     cases.compile_fail("tests/ui/domain_service_action/bad_input_name.rs");
     cases.compile_fail("tests/ui/domain_service_action/bad_input_pattern.rs");
-    cases.compile_fail("tests/ui/domain_service_action/wrong_error_owner.rs");
     cases.compile_fail("tests/ui/domain_service_action/missing_trait_implementation.rs");
     cases.compile_fail("tests/ui/domain_service_action/incomplete_trait_implementation.rs");
     cases.compile_fail("tests/ui/domain_service_action/unannotated_trait.rs");

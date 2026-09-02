@@ -28,9 +28,10 @@ pub fn assemble(
     });
     let action_bounds = actions.iter().map(|action| {
         let signature = action.signature;
-        let error = signature.error.as_ref().map(
-            |error| quote!(#error: #domain_path::DomainErrorType<Owner = __RostfreiAggregate>,),
-        );
+        let error = signature
+            .error
+            .as_ref()
+            .map(|error| quote!(#error: #domain_path::DomainError,));
         quote! {
             #error
         }

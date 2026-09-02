@@ -114,10 +114,8 @@ struct TestCommand {
 #[domain(
     id = "test-rejection",
     label = "Test rejection",
-    owner = TestAggregate,
     code = "TEST_REJECTION",
-    message = "The test command was rejected.",
-    json
+    message = "The test command was rejected."
 )]
 struct TestRejection;
 

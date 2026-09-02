@@ -15,31 +15,19 @@ pub fn assemble(
 ) -> TokenStream {
     let id = &attributes.id;
     let label = &attributes.label;
-    let owner = &attributes.owner;
     let code = &attributes.code;
     let message = &attributes.message;
     let assertions = crate::field::assemble_assertions_with_path(domain_path, name, None, fields);
-    let encode_json = attributes
-        .json
-        .then(|| assemble_json_encoder(domain_path, name, syntax_fields));
+    let encode_json = assemble_json_encoder(domain_path, name, syntax_fields);
     let fields = crate::field::assemble_descriptors_with_path(domain_path, fields);
 
     quote! {
-        impl #domain_path::DomainErrorType for #name {
-            type Owner = #owner;
-
+        impl #domain_path::DomainError for #name {
             const LOCAL_ID: &'static str = #id;
-            const DESCRIPTOR: #domain_path::DomainErrorDescriptor =
-                #domain_path::DomainErrorDescriptor {
-                    id: #domain_path::DomainErrorId {
-                        owner: <#owner as #domain_path::DomainErrorOwnerType>::DOMAIN_ERROR_OWNER_ID,
-                        local: Self::LOCAL_ID,
-                    },
-                    label: #label,
-                    code: #code,
-                    message: #message,
-                    fields: #fields,
-                };
+            const LABEL: &'static str = #label;
+            const CODE: &'static str = #code;
+            const MESSAGE: &'static str = #message;
+            const FIELDS: &'static [#domain_path::FieldDescriptor] = #fields;
         }
 
         #assertions
@@ -88,7 +76,7 @@ fn assemble_json_encoder(domain_path: &Path, name: &Ident, fields: &Fields) -> T
                 #domain_path::__private::serde_json::Value,
                 ::std::string::String,
             > {
-                let descriptor = <Self as #domain_path::DomainErrorType>::DESCRIPTOR;
+                let descriptor = <Self as #domain_path::DomainError>::DESCRIPTOR;
                 let mut object = #domain_path::__private::serde_json::Map::new();
                 object.insert(
                     "code".to_owned(),

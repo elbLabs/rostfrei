@@ -36,7 +36,12 @@ impl domain::AggregateDefinition for Mailbox {
 }
 
 #[derive(DomainError)]
-#[domain(id = "mailbox-denied", label = "Mailbox denied", owner = Mailbox, code = "MAILBOX_DENIED", message = "Mailbox denied.")]
+#[domain(
+    id = "mailbox-denied",
+    label = "Mailbox denied",
+    code = "MAILBOX_DENIED",
+    message = "Mailbox denied."
+)]
 struct MailboxDenied;
 
 mod contracts {
@@ -109,7 +114,12 @@ impl contracts::MailboxArchivalActions for Mailbox {
 struct MailTransfer;
 
 #[derive(DomainError)]
-#[domain(id = "transfer-denied", label = "Transfer denied", owner = MailTransfer, code = "TRANSFER_DENIED", message = "Transfer denied.")]
+#[domain(
+    id = "transfer-denied",
+    label = "Transfer denied",
+    code = "TRANSFER_DENIED",
+    message = "Transfer denied."
+)]
 struct TransferDenied;
 
 impl contracts::MailTransferActions for MailTransfer {
@@ -139,7 +149,12 @@ impl domain::EntityDefinition for Message {
 }
 
 #[derive(DomainError)]
-#[domain(id = "message-denied", label = "Message denied", owner = Message, code = "MESSAGE_DENIED", message = "Message denied.")]
+#[domain(
+    id = "message-denied",
+    label = "Message denied",
+    code = "MESSAGE_DENIED",
+    message = "Message denied."
+)]
 struct MessageDenied;
 
 impl restricted_contracts::MessageActions for Message {

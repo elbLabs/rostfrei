@@ -3,9 +3,8 @@
 use domain::extension::ActionGroupType;
 use domain::{
     ActionDescriptor, ActionId, ActionOwnerId, Aggregate, AggregateType, BoundedContext, Command,
-    DomainError, DomainErrorOwnerId, DomainErrorType, DomainEvent, DomainIdentity,
-    DomainModelError, DomainService, DomainServiceType, Entity, ValueObject, domain_actions,
-    domain_model,
+    DomainError, DomainEvent, DomainIdentity, DomainModelError, DomainService, DomainServiceType,
+    Entity, ValueObject, domain_actions, domain_model,
 };
 
 #[derive(BoundedContext)]
@@ -87,7 +86,6 @@ pub struct CoordinateWorkInput;
 #[domain(
     id = "coordination-failed",
     label = "Coordination failed",
-    owner = Coordinator,
     code = "COORDINATION_FAILED",
     message = "Coordination failed."
 )]
@@ -276,10 +274,7 @@ fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() 
         ["receipt"]
     );
     assert_eq!(CoordinateWork::DESCRIPTOR.local_id, "coordinate-work");
-    assert_eq!(
-        CoordinationFailed::DESCRIPTOR.id.owner,
-        DomainErrorOwnerId::DomainService(Coordinator::DESCRIPTOR.id)
-    );
+    assert_eq!(CoordinationFailed::DESCRIPTOR.id.0, "coordination-failed");
     assert_eq!(
         contracts[0][1].error,
         Some(CoordinationFailed::DESCRIPTOR.id)

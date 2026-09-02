@@ -9,13 +9,11 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     let action_owner = assemble_action_owner(domain_path, name);
     let public_action_owner = assemble_public_action_owner(domain_path, name);
     let domain_service_action_owner = assemble_domain_service_action_owner(domain_path, name);
-    let domain_error_owner = assemble_domain_error_owner(domain_path, name);
     quote! {
         #domain_service
         #action_owner
         #public_action_owner
         #domain_service_action_owner
-        #domain_error_owner
     }
 }
 
@@ -39,16 +37,5 @@ fn assemble_action_owner(domain_path: &Path, name: &Ident) -> TokenStream {
 fn assemble_public_action_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
         impl #domain_path::PublicActionOwnerType for #name {}
-    }
-}
-
-fn assemble_domain_error_owner(domain_path: &Path, name: &Ident) -> TokenStream {
-    quote! {
-        impl #domain_path::DomainErrorOwnerType for #name {
-            const DOMAIN_ERROR_OWNER_ID: #domain_path::DomainErrorOwnerId =
-                #domain_path::DomainErrorOwnerId::DomainService(
-                    <Self as #domain_path::DomainServiceType>::DESCRIPTOR.id,
-                );
-        }
     }
 }

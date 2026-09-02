@@ -8,14 +8,12 @@ pub fn assemble(domain_path: &Path, name: &Ident) -> TokenStream {
     let entity_action_owner = assemble_entity_action_owner(domain_path, name);
     let decision_owner = assemble_decision_owner(domain_path, name);
     let entity_decision_owner = assemble_entity_decision_owner(domain_path, name);
-    let domain_error_owner = assemble_domain_error_owner(domain_path, name);
     quote! {
         #action_owner
         #internal_action_owner
         #entity_action_owner
         #decision_owner
         #entity_decision_owner
-        #domain_error_owner
     }
 }
 
@@ -56,16 +54,5 @@ fn assemble_decision_owner(domain_path: &Path, name: &Ident) -> TokenStream {
 fn assemble_internal_action_owner(domain_path: &Path, name: &Ident) -> TokenStream {
     quote! {
         impl #domain_path::InternalActionOwnerType for #name {}
-    }
-}
-
-fn assemble_domain_error_owner(domain_path: &Path, name: &Ident) -> TokenStream {
-    quote! {
-        impl #domain_path::DomainErrorOwnerType for #name {
-            const DOMAIN_ERROR_OWNER_ID: #domain_path::DomainErrorOwnerId =
-                #domain_path::DomainErrorOwnerId::Entity(
-                    <Self as #domain_path::EntityType>::DESCRIPTOR.id,
-                );
-        }
     }
 }

@@ -59,6 +59,9 @@ pub enum DomainModelError {
     DuplicateDomainEventId {
         id: Box<DomainEventId>,
     },
+    DuplicateDomainErrorId {
+        id: Box<DomainErrorId>,
+    },
     DuplicateQueryId {
         id: Box<QueryId>,
     },
@@ -95,6 +98,7 @@ impl fmt::Display for DomainModelError {
                 fmt_duplicate(formatter, "DomainIdentityId", id)
             }
             Self::DuplicateDomainEventId { id } => fmt_duplicate(formatter, "DomainEventId", id),
+            Self::DuplicateDomainErrorId { id } => fmt_duplicate(formatter, "DomainErrorId", id),
             Self::DuplicateQueryId { id } => write!(formatter, "duplicate QueryId: {id:?}"),
         }
     }

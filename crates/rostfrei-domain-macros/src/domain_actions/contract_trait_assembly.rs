@@ -67,11 +67,7 @@ fn add_action_predicates(
 ) -> syn::Result<()> {
     let signature = action.signature;
     if let Some(error) = &signature.error {
-        push_predicate(
-            item,
-            error,
-            &quote!(#domain_path::DomainErrorType<Owner = Self>),
-        )?;
+        push_predicate(item, error, &quote!(#domain_path::DomainError))?;
     }
     Ok(())
 }
@@ -122,7 +118,7 @@ fn assemble_descriptor(domain_path: &Path, action: &AssembledAction<'_>) -> Toke
     let signature = action.signature;
     let error = signature.error.as_ref().map_or_else(
         || quote!(None),
-        |error| quote!(Some(<#error as #domain_path::DomainErrorType>::DESCRIPTOR.id)),
+        |error| quote!(Some(<#error as #domain_path::DomainError>::DESCRIPTOR.id)),
     );
     quote! {
         #domain_path::ActionDescriptor {

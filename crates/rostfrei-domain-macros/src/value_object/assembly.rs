@@ -16,12 +16,5 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
                 };
         }
 
-        impl #domain_path::DomainErrorOwnerType for #name {
-            const DOMAIN_ERROR_OWNER_ID: #domain_path::DomainErrorOwnerId =
-                #domain_path::DomainErrorOwnerId::ValueObject(
-                    <Self as #domain_path::ValueObject>::DESCRIPTOR.id,
-                );
-        }
-
     }
 }
