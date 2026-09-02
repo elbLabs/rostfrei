@@ -40,7 +40,7 @@ pub use domain_identity::{DomainIdentity, DomainIdentityId};
 #[doc(hidden)]
 pub use domain_identity::{DomainIdentityDescriptor, DomainIdentityType};
 pub use domain_model::{DomainModelError, DomainModelReference};
-pub use domain_query::{QueryDescriptor, QueryGroupType, QueryId};
+pub use domain_query::{QueryDescriptor, QueryId};
 pub use domain_service::{
     DomainServiceDefinition, DomainServiceDescriptor, DomainServiceId, DomainServiceType,
 };
@@ -60,7 +60,7 @@ pub use rostfrei_domain_macros::{
     Aggregate, AggregateEvents, BoundedContext, Command, DecisionOutcome, DomainError, DomainEvent,
     DomainIdentity, DomainService, Entity, EntityLifecycle, ValueObject, domain_action,
     domain_action_test, domain_decision_test, domain_decisions, domain_invariant_test,
-    domain_invariants, domain_lifecycle_test, domain_queries,
+    domain_invariants, domain_lifecycle_test, domain_query,
 };
 pub use value_object::{ValueObject, ValueObjectDescriptor, ValueObjectId};
 
@@ -82,8 +82,7 @@ macro_rules! domain_model {
         entities: [$($entity:ty),* $(,)?],
         value_objects: [$($value_object:ty),* $(,)?],
         services: [$($service:ty),* $(,)?],
-        errors: [$($error:ty),* $(,)?],
-        query_groups: [$($query_group:ty),* $(,)?] $(,)?
+        errors: [$($error:ty),* $(,)?] $(,)?
     } => {{
         $crate::__private::try_build(|builder| {
             $(builder.add_bounded_context(<$context as $crate::BoundedContextType>::DESCRIPTOR);)*
@@ -92,7 +91,6 @@ macro_rules! domain_model {
             $(builder.add_value_object_type::<$value_object>()?;)*
             $(builder.add_domain_service_type::<$service>()?;)*
             $(builder.add_domain_error(<$error as $crate::DomainError>::DESCRIPTOR)?;)*
-            $(builder.add_queries(<$query_group as $crate::QueryGroupType>::QUERIES)?;)*
             Ok(())
         })
     }};

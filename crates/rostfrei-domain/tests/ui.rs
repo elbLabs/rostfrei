@@ -12,6 +12,14 @@ fn checks_minimal_domain_action() {
 }
 
 #[test]
+fn checks_minimal_domain_query() {
+    let cases = trybuild::TestCases::new();
+    cases.pass("tests/ui/domain_query/supported.rs");
+    cases.compile_fail("tests/ui/domain_query/invalid_metadata.rs");
+    cases.compile_fail("tests/ui/domain_query/invalid_target.rs");
+}
+
+#[test]
 fn checks_domain_test_attributes() {
     let cases = trybuild::TestCases::new();
     cases.compile_fail("tests/ui/domain_test/existing_test.rs");
@@ -89,12 +97,4 @@ fn checks_semantic_scalars() {
     let cases = trybuild::TestCases::new();
     cases.pass("tests/ui/semantic_scalar/field_provider.rs");
     cases.compile_fail("tests/ui/semantic_scalar/field_provider_type_mismatch.rs");
-}
-
-#[test]
-fn rejects_invalid_queries() {
-    let cases = trybuild::TestCases::new();
-    cases.compile_fail("tests/ui/query_invalid.rs");
-    cases.compile_fail("tests/ui/query_metadata.rs");
-    cases.compile_fail("tests/ui/query_type_contracts.rs");
 }

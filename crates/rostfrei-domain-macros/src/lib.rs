@@ -12,13 +12,13 @@ mod domain_error;
 mod domain_event;
 mod domain_identity;
 mod domain_invariants;
-mod domain_queries;
 mod domain_service;
 mod domain_test;
 mod entity;
 mod entity_lifecycle;
 mod field;
 mod helper;
+mod query;
 mod value_object;
 
 #[proc_macro_attribute]
@@ -43,8 +43,8 @@ pub fn domain_invariants(args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn domain_queries(args: TokenStream, input: TokenStream) -> TokenStream {
-    domain_queries::expand(args.into(), input.into())
+pub fn domain_query(args: TokenStream, input: TokenStream) -> TokenStream {
+    query::expand(&args.into(), input.into())
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

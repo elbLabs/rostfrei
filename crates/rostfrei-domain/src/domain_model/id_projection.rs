@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use crate::{
     AggregateId, DecisionId, DecisionOutcomeId, DecisionOwnerId, DomainErrorId, DomainIdentityId,
-    EntityId, QueryId, ValueObjectId,
+    EntityId, ValueObjectId,
 };
 
 pub(super) fn decision(id: DecisionId) -> Value {
@@ -46,10 +46,6 @@ pub(super) fn entity(id: EntityId) -> Value {
         "aggregate": aggregate(id.aggregate),
         "local": id.local,
     })
-}
-
-pub(super) fn query(id: QueryId) -> Value {
-    json!({ "aggregate": aggregate(id.aggregate), "local": id.local })
 }
 
 pub(super) fn value_object(id: ValueObjectId) -> Value {

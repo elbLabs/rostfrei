@@ -127,6 +127,11 @@ groups, owner kinds, extensions, and model projection were then removed by
 singular ordinary traits with direct implementations and owner-independent
 metadata.
 
+Plural query groups and model registration were subsequently removed by
+[ADR 0029](0029-trait-preserving-singular-domain-queries.md). Queries are
+singular ordinary traits implemented directly for the enclosing aggregate's
+declared root.
+
 Domain-error ownership and optional JSON generation were subsequently removed
 by [ADR 0025](0025-owner-independent-domain-errors.md). Errors keep their
 stable public code and message, while action return types and command handlers

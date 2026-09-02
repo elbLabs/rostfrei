@@ -145,7 +145,6 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
         value_objects: [],
         services: [],
         errors: [DocumentCorrelationRejected],
-        query_groups: [],
     }
     .expect("semantic scalar model projection should succeed");
 

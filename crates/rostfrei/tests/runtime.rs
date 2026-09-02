@@ -488,7 +488,6 @@ fn domain_model_projects_event_set_once_in_enum_declaration_order() {
         value_objects: [],
         services: [],
         errors: [],
-        query_groups: [],
     }
     .expect("runtime test domain model projection");
     let events = model["domainEvents"].as_array().expect("domain events");

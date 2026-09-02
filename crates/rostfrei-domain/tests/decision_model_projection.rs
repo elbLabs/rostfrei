@@ -114,7 +114,6 @@ fn projected_model() -> Result<Value, DomainModelError> {
         value_objects: [ProjectionInput, ProjectionOutput, ProjectionReason],
         services: [],
         errors: [],
-        query_groups: [],
     }
 }
 
