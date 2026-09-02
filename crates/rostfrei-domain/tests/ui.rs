@@ -84,13 +84,8 @@ fn checks_domain_service_action_contracts() {
     cases.compile_fail("tests/ui/domain_service_action/too_many_inputs.rs");
     cases.compile_fail("tests/ui/domain_service_action/bad_input_name.rs");
     cases.compile_fail("tests/ui/domain_service_action/bad_input_pattern.rs");
-    cases.compile_fail("tests/ui/domain_service_action/missing_trait_implementation.rs");
     cases.compile_fail("tests/ui/domain_service_action/incomplete_trait_implementation.rs");
-    cases.compile_fail("tests/ui/domain_service_action/unannotated_trait.rs");
     cases.compile_fail("tests/ui/domain_service_action/wrong_kind_attachment.rs");
-    cases.compile_fail("tests/ui/domain_service_action/malformed_actions_list.rs");
-    cases.compile_fail("tests/ui/domain_service_action/duplicate_action_path.rs");
-    cases.compile_fail("tests/ui/domain_service_action/duplicate_actions_key.rs");
 }
 
 #[test]

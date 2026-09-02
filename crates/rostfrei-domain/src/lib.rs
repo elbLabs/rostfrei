@@ -49,7 +49,9 @@ pub use domain_identity::{DomainIdentity, DomainIdentityId};
 pub use domain_identity::{DomainIdentityDescriptor, DomainIdentityType};
 pub use domain_model::{DomainModelError, DomainModelReference};
 pub use domain_query::{QueryDescriptor, QueryGroupType, QueryId};
-pub use domain_service::{DomainServiceDescriptor, DomainServiceId, DomainServiceType};
+pub use domain_service::{
+    DomainServiceDefinition, DomainServiceDescriptor, DomainServiceId, DomainServiceType,
+};
 pub use domain_test::{DomainTestDescriptor, DomainTestSubject};
 pub use entity::{EntityDefinition, EntityDescriptor, EntityId, EntityType, IdentityDescriptor};
 pub use entity_lifecycle::{

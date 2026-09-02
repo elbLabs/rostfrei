@@ -1,5 +1,0 @@
-error: duplicate action path
-  --> tests/ui/domain_service_action/duplicate_action_path.rs:11:25
-   |
-11 |     actions = [Actions, Actions]
-   |                         ^^^^^^^

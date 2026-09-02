@@ -105,13 +105,12 @@ impl contracts::MailboxArchivalActions for Mailbox {
 }
 
 #[derive(DomainService)]
-#[domain(
-    id = "mail-transfer",
-    label = "Mail transfer",
-    context = Inbox,
-    actions = [contracts::MailTransferActions]
-)]
+#[domain(id = "mail-transfer", label = "Mail transfer")]
 struct MailTransfer;
+
+impl domain::DomainServiceDefinition for MailTransfer {
+    type Context = Inbox;
+}
 
 #[derive(DomainError)]
 #[domain(
@@ -207,17 +206,17 @@ fn preserves_descriptor_shape_and_source_order() {
         <Mailbox as contracts::MailboxManagementActions>::__DOMAIN_ACTIONS,
         <Mailbox as contracts::MailboxArchivalActions>::__DOMAIN_ACTIONS,
     ];
-    let transfer_contracts = <MailTransfer as DomainServiceType>::ACTION_CONTRACTS;
+    let transfer_contract = <MailTransfer as contracts::MailTransferActions>::__DOMAIN_ACTIONS;
     let message_contracts = [<Message as restricted_contracts::MessageActions>::__DOMAIN_ACTIONS];
 
     assert_eq!(mailbox_contracts.len(), 2);
-    assert_eq!(transfer_contracts.len(), 1);
+    assert_eq!(transfer_contract.len(), 2);
     assert_eq!(message_contracts.len(), 1);
     assert_eq!(mailbox_contracts[0].len(), 1);
     assert_eq!(mailbox_contracts[0][0].id.local, "rename");
     assert_eq!(mailbox_contracts[1][0].id.local, "archive");
-    assert_eq!(transfer_contracts[0][0].id.local, "available");
-    assert_eq!(transfer_contracts[0][1].id.local, "transfer");
+    assert_eq!(transfer_contract[0].id.local, "available");
+    assert_eq!(transfer_contract[1].id.local, "transfer");
     assert_eq!(message_contracts[0].len(), 2);
     assert_eq!(
         mailbox_contracts[0][0],

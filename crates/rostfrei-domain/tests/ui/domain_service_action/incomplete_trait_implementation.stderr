@@ -1,8 +1,8 @@
 error[E0046]: not all trait items implemented, missing: `cancel`
-  --> tests/ui/domain_service_action/incomplete_trait_implementation.rs:20:1
+  --> tests/ui/domain_service_action/incomplete_trait_implementation.rs:24:1
    |
 13 |     fn cancel();
    |     ------------ `cancel` from trait
 ...
-20 | impl Actions for Service {
+24 | impl Actions for Service {
    | ^^^^^^^^^^^^^^^^^^^^^^^^ missing `cancel` in implementation

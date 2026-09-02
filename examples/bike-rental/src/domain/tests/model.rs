@@ -15,6 +15,14 @@ fn omits_unattached_capabilities_and_lifecycle_metadata() {
             .iter()
             .all(|action| action["id"]["owner"]["kind"] != "aggregate")
     );
+    assert!(
+        model["actions"]
+            .as_array()
+            .expect("actions should be an array")
+            .iter()
+            .all(|action| action["id"]["owner"]["kind"] != "domainService")
+    );
+    assert_eq!(model["domainServices"], json!([]));
     assert_eq!(model["decisions"], json!([]));
     assert_eq!(model["invariants"], json!([]));
     assert!(model.get("commands").is_none());

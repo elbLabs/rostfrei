@@ -122,13 +122,12 @@ pub trait UnattachedCoordination {
 }
 
 #[derive(DomainService)]
-#[domain(
-    id = "coordinator",
-    label = "Coordinator",
-    context = Operations,
-    actions = [contracts::Coordination, CoordinationReporting]
-)]
+#[domain(id = "coordinator", label = "Coordinator")]
 pub struct Coordinator;
+
+impl domain::DomainServiceDefinition for Coordinator {
+    type Context = Operations;
+}
 
 impl contracts::Coordination for Coordinator {
     fn available() -> bool {
@@ -157,17 +156,20 @@ impl UnattachedCoordination for Coordinator {
 }
 
 #[derive(DomainService)]
-#[domain(id = "omitted-actions", label = "Omitted actions", context = Operations)]
+#[domain(id = "omitted-actions", label = "Omitted actions")]
 struct OmittedActionsService;
 
+impl domain::DomainServiceDefinition for OmittedActionsService {
+    type Context = Operations;
+}
+
 #[derive(DomainService)]
-#[domain(
-    id = "empty-actions",
-    label = "Empty actions",
-    context = Operations,
-    actions = []
-)]
+#[domain(id = "empty-actions", label = "Empty actions")]
 struct EmptyActionsService;
+
+impl domain::DomainServiceDefinition for EmptyActionsService {
+    type Context = Operations;
+}
 
 #[domain_actions(domain_service)]
 pub trait FirstDuplicateActions {
@@ -182,13 +184,12 @@ pub trait SecondDuplicateActions {
 }
 
 #[derive(DomainService)]
-#[domain(
-    id = "duplicate-service",
-    label = "Duplicate service",
-    context = Operations,
-    actions = [FirstDuplicateActions, SecondDuplicateActions]
-)]
+#[domain(id = "duplicate-service", label = "Duplicate service")]
 struct DuplicateService;
+
+impl domain::DomainServiceDefinition for DuplicateService {
+    type Context = Operations;
+}
 
 impl FirstDuplicateActions for DuplicateService {
     fn first() {}
@@ -196,6 +197,42 @@ impl FirstDuplicateActions for DuplicateService {
 
 impl SecondDuplicateActions for DuplicateService {
     fn second() {}
+}
+
+struct CoordinationActions;
+
+impl ActionGroupType for CoordinationActions {
+    type Owner = Coordinator;
+
+    const ACTIONS: &'static [ActionDescriptor] =
+        <Coordinator as contracts::Coordination>::__DOMAIN_ACTIONS;
+}
+
+struct CoordinationReportingActions;
+
+impl ActionGroupType for CoordinationReportingActions {
+    type Owner = Coordinator;
+
+    const ACTIONS: &'static [ActionDescriptor] =
+        <Coordinator as CoordinationReporting>::__DOMAIN_ACTIONS;
+}
+
+struct FirstDuplicateActionGroup;
+
+impl ActionGroupType for FirstDuplicateActionGroup {
+    type Owner = DuplicateService;
+
+    const ACTIONS: &'static [ActionDescriptor] =
+        <DuplicateService as FirstDuplicateActions>::__DOMAIN_ACTIONS;
+}
+
+struct SecondDuplicateActionGroup;
+
+impl ActionGroupType for SecondDuplicateActionGroup {
+    type Owner = DuplicateService;
+
+    const ACTIONS: &'static [ActionDescriptor] =
+        <DuplicateService as SecondDuplicateActions>::__DOMAIN_ACTIONS;
 }
 
 struct WorkExtensionActions;
@@ -247,8 +284,11 @@ fn public_domain_service_contracts_are_invocable_with_zero_and_one_input() {
 }
 
 #[test]
-fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() {
-    let contracts = <Coordinator as DomainServiceType>::ACTION_CONTRACTS;
+fn domain_service_action_contracts_preserve_source_order_and_descriptors() {
+    let contracts = [
+        <Coordinator as contracts::Coordination>::__DOMAIN_ACTIONS,
+        <Coordinator as CoordinationReporting>::__DOMAIN_ACTIONS,
+    ];
 
     assert_eq!(contracts.len(), 2);
     assert_eq!(
@@ -285,12 +325,10 @@ fn domain_service_action_contracts_preserve_attachments_order_and_descriptors() 
             .local,
         "unattached"
     );
-    assert!(<OmittedActionsService as DomainServiceType>::ACTION_CONTRACTS.is_empty());
-    assert!(<EmptyActionsService as DomainServiceType>::ACTION_CONTRACTS.is_empty());
 }
 
 #[test]
-fn model_orders_attached_then_extension_actions_across_owner_kinds() {
+fn model_projects_only_explicit_action_groups_across_owner_kinds() {
     let model = domain_model! {
         contexts: [Operations],
         aggregates: [Work],
@@ -298,7 +336,7 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
         value_objects: [Receipt],
         services: [Coordinator, OmittedActionsService, EmptyActionsService],
         errors: [CoordinationFailed],
-        action_extensions: [WorkExtensionActions],
+        action_extensions: [CoordinationActions, CoordinationReportingActions, WorkExtensionActions],
         query_groups: [],
     }
     .expect("domain-service action model should be valid");
@@ -338,7 +376,23 @@ fn model_orders_attached_then_extension_actions_across_owner_kinds() {
 }
 
 #[test]
-fn rejects_duplicate_action_id_across_attached_domain_service_contracts() {
+fn omission_means_domain_service_actions_are_not_projected() {
+    let model = domain_model! {
+        contexts: [Operations],
+        aggregates: [],
+        entities: [],
+        value_objects: [],
+        services: [Coordinator],
+        errors: [CoordinationFailed],
+        query_groups: [],
+    }
+    .expect("omitted action groups should be valid");
+
+    assert!(model["actions"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn rejects_duplicate_action_id_across_explicit_domain_service_groups() {
     let error = domain_model! {
         contexts: [],
         aggregates: [],
@@ -346,9 +400,10 @@ fn rejects_duplicate_action_id_across_attached_domain_service_contracts() {
         value_objects: [],
         services: [DuplicateService],
         errors: [],
+        action_extensions: [FirstDuplicateActionGroup, SecondDuplicateActionGroup],
         query_groups: [],
     }
-    .expect_err("duplicate attached domain-service actions should be rejected");
+    .expect_err("duplicate explicit domain-service actions should be rejected");
     let id = ActionId {
         owner: ActionOwnerId::DomainService(DuplicateService::DESCRIPTOR.id),
         local: "duplicate",
@@ -362,7 +417,7 @@ fn rejects_duplicate_action_id_across_attached_domain_service_contracts() {
 }
 
 #[test]
-fn rejects_duplicate_action_id_between_attached_and_extension_domain_service_groups() {
+fn rejects_duplicate_action_id_between_explicit_domain_service_groups() {
     let error = domain_model! {
         contexts: [],
         aggregates: [],
@@ -370,10 +425,10 @@ fn rejects_duplicate_action_id_between_attached_and_extension_domain_service_gro
         value_objects: [],
         services: [Coordinator],
         errors: [],
-        action_extensions: [DuplicateCoordinatorExtensionActions],
+        action_extensions: [CoordinationActions, DuplicateCoordinatorExtensionActions],
         query_groups: [],
     }
-    .expect_err("an extension duplicating an attached domain-service action should be rejected");
+    .expect_err("an explicit group duplicating another action should be rejected");
     let id = ActionId {
         owner: ActionOwnerId::DomainService(Coordinator::DESCRIPTOR.id),
         local: "available",
