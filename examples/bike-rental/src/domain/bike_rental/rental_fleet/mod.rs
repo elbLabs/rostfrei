@@ -13,7 +13,7 @@ use rostfrei::{
 use serde::{Deserialize, Serialize};
 
 use super::BikeRental;
-use assess_rental_eligibility::RentalEligibilityDecisions;
+use assess_rental_eligibility::{RentalEligibilityDecisions, RentalEligibilityOutcome};
 
 pub use add_bicycle::{AddBicycle, BicycleAdded};
 pub use bicycle::{Bicycle, BicycleCondition, BicycleId, BicycleStatus};
@@ -137,18 +137,64 @@ pub trait RentalFleetActionContract {
 
 impl RentalFleetActions for AggregateInstance<RentalFleetAggregate> {
     fn import_rental_fleet(&mut self, input: ImportRentalFleetInput) {
-        import_rental_fleet::import_rental_fleet(self, input);
+        self.raise(RentalFleetImported {
+            fleet_id: self.state().fleet_id.clone(),
+            bicycles: input.into_bicycles(),
+        });
     }
 
     fn rent_bicycle(&mut self, input: BicycleId) -> Result<(), BicycleUnavailable> {
-        rent_bicycle::rent_bicycle(self, &input)
+        let event = {
+            let root = self.state();
+            let bicycle = root
+                .bicycles
+                .iter()
+                .find(|bicycle| bicycle.bicycle_id() == &input)
+                .ok_or_else(|| BicycleUnavailable {
+                    bicycle_id: input.clone(),
+                })?;
+            match RentalFleetAggregate::assess_rental_eligibility(
+                bicycle.status(),
+                bicycle.condition(),
+            ) {
+                RentalEligibilityOutcome::Eligible => BicycleRented {
+                    fleet_id: root.fleet_id.clone(),
+                    bicycle_id: input.clone(),
+                },
+                RentalEligibilityOutcome::AlreadyRented
+                | RentalEligibilityOutcome::MaintenanceRequired => {
+                    return Err(BicycleUnavailable { bicycle_id: input });
+                }
+            }
+        };
+
+        self.raise(event);
+        Ok(())
     }
 
     fn return_bicycle(&mut self, input: BicycleId) -> Result<(), BicycleNotRented> {
-        return_bicycle::return_bicycle(self, &input)
+        let root = self.state();
+        let rented = root.bicycles.iter().any(|bicycle| {
+            bicycle.bicycle_id() == &input && bicycle.status() == BicycleStatus::Rented
+        });
+        if !rented {
+            return Err(BicycleNotRented { bicycle_id: input });
+        }
+        let fleet_id = root.fleet_id.clone();
+        self.raise(BicycleReturned {
+            fleet_id,
+            bicycle_id: input,
+        });
+        Ok(())
     }
 
     fn add_bicycle(&mut self) {
-        add_bicycle::add_bicycle(self);
+        let fleet_id = self.state().fleet_id.clone();
+        let bicycle_id = add_bicycle::allocate_bicycle_id(self.state());
+        self.raise(BicycleAdded {
+            fleet_id,
+            bicycle_id,
+            condition: BicycleCondition::Serviceable,
+        });
     }
 }

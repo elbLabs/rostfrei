@@ -3,9 +3,9 @@ use rostfrei::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::BicycleStatus;
 use super::bicycle::BicycleStatusActions;
-use super::{BicycleId, FleetId, RentalFleet, RentalFleetAggregate};
-use super::{BicycleStatus, assess_rental_eligibility::RentalEligibilityOutcome};
+use super::{BicycleId, FleetId, RentalFleet, RentalFleetActions, RentalFleetAggregate};
 
 #[derive(Command, Clone, Debug, Eq, PartialEq)]
 #[domain(
@@ -44,38 +44,6 @@ pub struct BicycleUnavailable {
     pub bicycle_id: BicycleId,
 }
 
-pub(super) fn rent_bicycle(
-    aggregate: &mut AggregateInstance<RentalFleetAggregate>,
-    input: &BicycleId,
-) -> Result<(), BicycleUnavailable> {
-    let event = {
-        let root = aggregate.state();
-        let bicycle = root
-            .bicycles
-            .iter()
-            .find(|bicycle| bicycle.bicycle_id() == input)
-            .ok_or_else(|| BicycleUnavailable {
-                bicycle_id: input.clone(),
-            })?;
-        match RentalFleetAggregate::assess_rental_eligibility(bicycle.status(), bicycle.condition())
-        {
-            RentalEligibilityOutcome::Eligible => BicycleRented {
-                fleet_id: root.fleet_id.clone(),
-                bicycle_id: input.clone(),
-            },
-            RentalEligibilityOutcome::AlreadyRented
-            | RentalEligibilityOutcome::MaintenanceRequired => {
-                return Err(BicycleUnavailable {
-                    bicycle_id: input.clone(),
-                });
-            }
-        }
-    };
-
-    aggregate.raise(event);
-    Ok(())
-}
-
 impl CommandHandler<RentBicycle> for RentalFleetAggregate {
     type Rejection = <RentBicycle as CommandType>::Rejection;
 
@@ -83,7 +51,7 @@ impl CommandHandler<RentBicycle> for RentalFleetAggregate {
         command: &RentBicycle,
         aggregate: &mut AggregateInstance<Self>,
     ) -> Result<(), Self::Rejection> {
-        rent_bicycle(aggregate, &command.bicycle_id)
+        aggregate.rent_bicycle(command.bicycle_id.clone())
     }
 }
 
