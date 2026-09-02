@@ -17,6 +17,7 @@ fn omits_unattached_capabilities_and_lifecycle_metadata() {
     );
     assert_eq!(model["decisions"], json!([]));
     assert_eq!(model["invariants"], json!([]));
+    assert!(model.get("commands").is_none());
     let identities = model["domainIdentities"]
         .as_array()
         .expect("domain identities should be an array");

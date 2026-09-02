@@ -479,7 +479,6 @@ fn domain_model_projects_event_set_once_in_enum_declaration_order() {
         entities: [Account],
         value_objects: [],
         services: [],
-        commands: [],
         errors: [],
         query_groups: [],
     }

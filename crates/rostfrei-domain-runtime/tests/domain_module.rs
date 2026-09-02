@@ -2,11 +2,11 @@
 
 use domain::{
     Aggregate as DomainAggregate, AggregateDefinition, AggregateEvents, AggregateType,
-    BoundedContext, Command, CommandType, DomainEvent, DomainIdentity, Entity, JsonCommandPayload,
+    BoundedContext, Command, DomainEvent, DomainIdentity, Entity, JsonCommandPayload,
 };
 use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance, CommandHandler};
-use rostfrei_domain_runtime::{Apply, Initialize, domain_module};
-use rostfrei_registry::{CommandDefinition, DomainRegistry, QueryDefinition};
+use rostfrei_domain_runtime::{Apply, Initialize};
+use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::{Deserialize, Serialize};
 
 #[derive(BoundedContext)]
@@ -45,41 +45,17 @@ enum CatalogEvents {
 }
 
 #[derive(Command)]
-#[domain(
-    id = "open-catalog",
-    label = "Open catalog",
-    owner = CatalogAggregate,
-    runtime
-)]
+#[domain(id = "open-catalog", label = "Open catalog")]
 struct OpenCatalog;
 
 #[derive(Command)]
-#[domain(
-    id = "describe-catalog",
-    label = "Describe catalog",
-    owner = CatalogAggregate
-)]
+#[domain(id = "describe-catalog", label = "Describe catalog")]
 struct DescribeCatalog;
 
 #[derive(Debug, Command, Eq, PartialEq)]
-#[domain(
-    id = "rename-catalog",
-    label = "Rename catalog",
-    owner = CatalogAggregate,
-    json
-)]
+#[domain(id = "rename-catalog", label = "Rename catalog")]
 struct RenameCatalog {
     r#type: String,
-}
-
-struct CatalogSummary;
-
-impl QueryDefinition for CatalogSummary {
-    type Response = String;
-
-    const BOUNDED_CONTEXT: &'static str = "catalog";
-    const QUERY_NAME: &'static str = "catalog-summary";
-    const SCHEMA_VERSION: u32 = 1;
 }
 
 #[derive(Deserialize, DomainEvent, Serialize)]
@@ -123,58 +99,29 @@ impl CommandHandler<OpenCatalog> for CatalogAggregate {
     }
 }
 
-domain_module! {
-    struct CatalogModule {
-        commands: [OpenCatalog],
-        queries: [CatalogSummary],
-    }
-}
-
 #[test]
-fn registers_runtime_metadata_from_the_command() {
+fn registers_handler_linked_runtime_metadata() {
     let mut registry = DomainRegistry::new();
-    registry.register_module::<CatalogModule>().unwrap();
+    registry
+        .register_command::<CatalogAggregate, OpenCatalog>()
+        .unwrap();
 
     let descriptor = registry
         .command("catalog/catalog", "open-catalog", 1)
         .unwrap();
 
     assert_eq!(descriptor.aggregate_type, "catalog/catalog");
-    assert_eq!(descriptor.modeled_command(), Some(&OpenCatalog::DESCRIPTOR));
+    assert_eq!(descriptor.modeled_command(), &OpenCatalog::DESCRIPTOR);
     assert_eq!(
-        <OpenCatalog as CommandDefinition>::Aggregate::AGGREGATE_TYPE,
-        "catalog"
-    );
-    assert_eq!(
-        <OpenCatalog as CommandDefinition>::Aggregate::aggregate_type().as_ref(),
-        "catalog/catalog"
+        <OpenCatalog as CommandDefinition<CatalogAggregate>>::descriptor().aggregate_type,
+        CatalogAggregate::aggregate_type()
     );
     assert_eq!(CatalogAggregate::DESCRIPTOR.id.local, "catalog");
-    assert_eq!(
-        registry.query("catalog", "catalog-summary", 1),
-        Some(&CatalogSummary::descriptor())
-    );
-}
-
-#[test]
-fn commands_can_register_without_a_runtime_module() {
-    let mut registry = DomainRegistry::new();
-
-    registry.register_command::<OpenCatalog>().unwrap();
-
-    assert_eq!(registry.modules().count(), 0);
-    assert_eq!(
-        registry
-            .command("catalog/catalog", "open-catalog", 1)
-            .unwrap()
-            .modeled_command(),
-        Some(&OpenCatalog::DESCRIPTOR)
-    );
 }
 
 #[test]
 fn command_metadata_does_not_require_an_executable_handler() {
-    assert_eq!(DescribeCatalog::DESCRIPTOR.id.local, "describe-catalog");
+    assert_eq!(DescribeCatalog::DESCRIPTOR.local_id, "describe-catalog");
 }
 
 fn assert_raw_identifier_command(command: &RenameCatalog) {

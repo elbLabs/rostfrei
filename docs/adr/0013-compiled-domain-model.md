@@ -63,12 +63,11 @@ the aggregate's authored event set; actions do not repeat possible event types.
 Commands remain an application boundary and map their payloads into one or more
 Action inputs rather than being passed to Actions directly.
 
-`Command` derives the runtime command definition from its owner, local ID,
-and schema version. Registering a command runtime binding inserts that descriptor
-into the registry when it is not already present. `domain_module!` remains an
-optional grouping mechanism, not a prerequisite for command registration and
-not a declaration of every modeled domain capability. Decision metadata is
-attached to explicit inherent aggregate or entity impl blocks.
+`Command` derives owner-independent local ID, label, schema version, field, and
+JSON payload metadata. The handler implementation supplies its aggregate and
+rejection relationship. Runtime registration explicitly pairs the aggregate
+and command. Decision metadata is attached to explicit inherent aggregate or
+entity impl blocks.
 
 The Decision-specific attachment, signature, outcome, testing, and model shape
 contracts were subsequently refined by
@@ -108,6 +107,12 @@ Action-level event claims were subsequently removed by
 [ADR 0023](0023-aggregate-event-sets-authorize-raising.md). The aggregate event
 set is the sole authority for membership, conversion, execution, and replay;
 actions no longer declare or project `raises` lists.
+
+Command ownership, rejection, runtime registration, and compiled-model
+inventory were subsequently replaced by
+[ADR 0024](0024-handler-linked-commands.md). `CommandHandler<C> for A` is the
+authored relationship, and registry, processor, bus, and tracer APIs name the
+aggregate-command pair explicitly.
 
 ## Consequences
 

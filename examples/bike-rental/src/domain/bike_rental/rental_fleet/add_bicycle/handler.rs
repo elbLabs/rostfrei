@@ -1,10 +1,12 @@
-use rostfrei::{AggregateInstance, CommandHandler, CommandType};
+use std::convert::Infallible;
+
+use rostfrei::{AggregateInstance, CommandHandler};
 
 use super::{AddBicycle, AddBicycleActions};
 use crate::domain::rental_fleet::RentalFleetAggregate;
 
 impl CommandHandler<AddBicycle> for RentalFleetAggregate {
-    type Rejection = <AddBicycle as CommandType>::Rejection;
+    type Rejection = Infallible;
 
     fn handle(
         _command: &AddBicycle,

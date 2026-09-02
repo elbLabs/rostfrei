@@ -8,7 +8,7 @@ struct Catalog;
 struct Generic<T>(T);
 
 #[derive(Command)]
-#[domain(id = "not-struct", label = "Not struct", owner = Catalog)]
+#[domain(id = "not-struct", label = "Not struct")]
 enum NotAStruct {
     Value,
 }
@@ -17,25 +17,21 @@ enum NotAStruct {
 struct MissingMetadata;
 
 #[derive(Command)]
-#[domain(id = "missing-label", owner = Catalog)]
+#[domain(id = "missing-label")]
 struct MissingLabel;
 
 #[derive(Command)]
-#[domain(id = "missing-owner", label = "Missing owner")]
-struct MissingOwner;
-
-#[derive(Command)]
-#[domain(id = "bad_id", label = "Bad ID", owner = Catalog)]
+#[domain(id = "bad_id", label = "Bad ID")]
 struct InvalidId;
 
 #[derive(Command)]
 #[domain(id = "invalid-owner", label = "Invalid owner", owner = Catalog)]
-struct InvalidOwner;
+struct UnsupportedOwner;
 
 struct Child;
 
 #[derive(Command)]
-#[domain(id = "contains-entity", label = "Contains entity", owner = Catalog)]
+#[domain(id = "contains-entity", label = "Contains entity")]
 struct ContainsEntity {
     #[domain(entity)]
     child: Child,

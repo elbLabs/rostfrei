@@ -20,7 +20,7 @@ use rostfrei_core::{
     AggregateInstance, CommandHandler, EventHistory, EventStoreError, EventStoreErrorKind,
     InMemoryEventStore, RecordedEvent, StreamId,
 };
-use rostfrei_registry::{CommandDefinition, DomainModule, DomainRegistry, ModuleDescriptor};
+use rostfrei_registry::DomainRegistry;
 use rostfrei_tracer::{
     CommandInvocation, CommandPublication, CommandReceipt, CommandRejection, CommandTransport,
     CommandTransportError, CommandTransportErrorKind, CommandTransportObserver, CorrelationError,
@@ -104,23 +104,10 @@ impl rostfrei::Apply<TestEvent> for TestRoot {
 }
 
 #[derive(domain::Command)]
-#[domain(
-    id = "test-command",
-    label = "Test command",
-    owner = TestAggregate,
-    rejection = TestRejection,
-    json
-)]
+#[domain(id = "test-command", label = "Test command")]
 struct TestCommand {
     reject: bool,
     panic: Option<bool>,
-}
-
-impl CommandDefinition for TestCommand {
-    type Aggregate = TestAggregate;
-
-    const COMMAND_NAME: &'static str = COMMAND_NAME;
-    const SCHEMA_VERSION: u32 = 1;
 }
 
 #[derive(domain::DomainError)]
@@ -197,21 +184,9 @@ impl rostfrei::Apply<TestEvent> for OtherTestRoot {
 }
 
 #[derive(domain::Command)]
-#[domain(
-    id = "test-command",
-    label = "Test command",
-    owner = OtherTestAggregate,
-    json
-)]
+#[domain(id = "test-command", label = "Test command")]
 struct OtherTestCommand {
     reject: bool,
-}
-
-impl CommandDefinition for OtherTestCommand {
-    type Aggregate = OtherTestAggregate;
-
-    const COMMAND_NAME: &'static str = COMMAND_NAME;
-    const SCHEMA_VERSION: u32 = 1;
 }
 
 impl CommandHandler<OtherTestCommand> for OtherTestAggregate {
@@ -231,38 +206,12 @@ impl CommandHandler<OtherTestCommand> for OtherTestAggregate {
     }
 }
 
-struct TestDomainModule;
-
-impl DomainModule for TestDomainModule {
-    const MODULE_NAME: &'static str = "test-domain";
-
-    fn descriptor() -> ModuleDescriptor {
-        ModuleDescriptor {
-            module_name: Self::MODULE_NAME,
-            commands: vec![TestCommand::descriptor()],
-            queries: Vec::new(),
-        }
-    }
-}
-
-struct OtherTestDomainModule;
-
-impl DomainModule for OtherTestDomainModule {
-    const MODULE_NAME: &'static str = "other-test-domain";
-
-    fn descriptor() -> ModuleDescriptor {
-        ModuleDescriptor {
-            module_name: Self::MODULE_NAME,
-            commands: vec![OtherTestCommand::descriptor()],
-            queries: Vec::new(),
-        }
-    }
-}
-
 #[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
 fn builder(history: Arc<dyn EventHistory>) -> TracerBuilder {
     let mut registry = DomainRegistry::new();
-    registry.register_module::<TestDomainModule>().unwrap();
+    registry
+        .register_command::<TestAggregate, TestCommand>()
+        .unwrap();
     TracerBuilder::new(history, registry)
 }
 
@@ -270,7 +219,9 @@ fn builder(history: Arc<dyn EventHistory>) -> TracerBuilder {
 fn tracer(maximum_operations: usize) -> Tracer {
     let mut builder =
         builder(Arc::new(InMemoryEventStore::new())).with_maximum_operations(maximum_operations);
-    builder.register_json::<TestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     builder.build().unwrap()
 }
 
@@ -545,7 +496,9 @@ impl TracePayloadPolicy for OversizedTracePayloads {
 async fn exposed_operation_payloads_are_bounded_across_retained_operations() {
     let mut builder = builder(Arc::new(InMemoryEventStore::new()))
         .with_trace_payload_policy(Arc::new(OversizedTracePayloads));
-    builder.register_json::<TestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     let tracer = builder.build().unwrap();
 
     submit(
@@ -564,30 +517,22 @@ async fn exposed_operation_payloads_are_bounded_across_retained_operations() {
     assert!(!trace.contains(&"x".repeat(128 * 1024)));
 }
 
-struct MismatchedTestDomainModule;
-
-impl DomainModule for MismatchedTestDomainModule {
-    const MODULE_NAME: &'static str = "mismatched-test-domain";
-
-    fn descriptor() -> ModuleDescriptor {
-        let mut command = TestCommand::descriptor();
-        command.rust_command_type = "different::TestCommand";
-        ModuleDescriptor {
-            module_name: Self::MODULE_NAME,
-            commands: vec![command],
-            queries: Vec::new(),
-        }
-    }
-}
-
 #[tokio::test]
 async fn runtime_bindings_scope_local_command_names_to_the_aggregate() {
     let mut registry = DomainRegistry::new();
-    registry.register_module::<TestDomainModule>().unwrap();
-    registry.register_module::<OtherTestDomainModule>().unwrap();
+    registry
+        .register_command::<TestAggregate, TestCommand>()
+        .unwrap();
+    registry
+        .register_command::<OtherTestAggregate, OtherTestCommand>()
+        .unwrap();
     let mut builder = TracerBuilder::new(Arc::new(InMemoryEventStore::new()), registry);
-    builder.register_json::<TestCommand>().unwrap();
-    builder.register_json::<OtherTestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
+    builder
+        .register_json::<OtherTestAggregate, OtherTestCommand>()
+        .unwrap();
     let tracer = builder.build().unwrap();
 
     for (aggregate_type, operation_id) in [
@@ -612,29 +557,12 @@ async fn runtime_bindings_scope_local_command_names_to_the_aggregate() {
 }
 
 #[test]
-fn runtime_binding_rejects_a_registry_descriptor_for_a_different_command_contract() {
-    let mut registry = DomainRegistry::new();
-    registry
-        .register_module::<MismatchedTestDomainModule>()
-        .unwrap();
-    let mut builder = TracerBuilder::new(Arc::new(InMemoryEventStore::new()), registry);
-
-    assert!(matches!(
-        builder.register_json::<TestCommand>(),
-        Err(RuntimeRegistrationError::DescriptorMismatch {
-            command: COMMAND_NAME,
-            schema_version: 1,
-        })
-    ));
-}
-
-#[test]
 fn runtime_bindings_require_exact_registry_coverage() {
     let history: Arc<dyn EventHistory> = Arc::new(InMemoryEventStore::new());
     let mut empty_registry_builder =
         TracerBuilder::new(Arc::clone(&history), DomainRegistry::new());
     assert!(matches!(
-        empty_registry_builder.register_json::<TestCommand>(),
+        empty_registry_builder.register_json::<TestAggregate, TestCommand>(),
         Err(RuntimeRegistrationError::MissingDescriptor {
             command: COMMAND_NAME,
             schema_version: 1,
@@ -651,9 +579,11 @@ fn runtime_bindings_require_exact_registry_coverage() {
     ));
 
     let mut duplicate_binding = builder(history);
-    duplicate_binding.register_json::<TestCommand>().unwrap();
+    duplicate_binding
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     assert!(matches!(
-        duplicate_binding.register_json::<TestCommand>(),
+        duplicate_binding.register_json::<TestAggregate, TestCommand>(),
         Err(RuntimeRegistrationError::DuplicateBinding {
             command: COMMAND_NAME,
             schema_version: 1,
@@ -666,7 +596,9 @@ fn excessive_concurrency_configuration_does_not_panic() {
     let mut builder = builder(Arc::new(InMemoryEventStore::new()))
         .with_maximum_operations(usize::MAX)
         .with_maximum_concurrent_simulations(usize::MAX);
-    builder.register_json::<TestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
 
     builder.build().unwrap();
 }
@@ -721,7 +653,9 @@ fn blocking_tracer(
     let mut builder = builder(history)
         .with_maximum_operations(maximum_operations)
         .with_maximum_concurrent_simulations(maximum_concurrent_simulations);
-    builder.register_json::<TestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     (builder.build().unwrap(), entered, release)
 }
 
@@ -791,7 +725,9 @@ async fn simulation_admission_does_not_exhaust_dispatch_capacity() {
         )))
         .with_maximum_operations(4)
         .with_maximum_concurrent_simulations(1);
-    builder.register_json::<TestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     let tracer = builder.build().unwrap();
 
     tracer
@@ -870,7 +806,9 @@ async fn corrupt_history_and_infrastructure_failures_have_distinct_codes() {
         (EventStoreErrorKind::Unavailable, "history-unavailable"),
     ] {
         let mut builder = builder(Arc::new(FailedHistory(kind)));
-        builder.register_json::<TestCommand>().unwrap();
+        builder
+            .register_json::<TestAggregate, TestCommand>()
+            .unwrap();
         let tracer = builder.build().unwrap();
         submit(
             &tracer,
@@ -888,7 +826,9 @@ async fn corrupt_history_and_infrastructure_failures_have_distinct_codes() {
 async fn command_handler_panics_become_one_terminal_failure_and_release_admission() {
     let mut builder =
         builder(Arc::new(InMemoryEventStore::new())).with_maximum_concurrent_simulations(1);
-    builder.register_json::<TestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     let tracer = builder.build().unwrap();
     submit(
         &tracer,
@@ -1096,7 +1036,9 @@ fn transported_tracer(
         tracer_builder = tracer_builder
             .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     }
-    tracer_builder.register_json::<TestCommand>().unwrap();
+    tracer_builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     tracer_builder.build().unwrap()
 }
 
@@ -1754,7 +1696,9 @@ async fn unavailable_modes_require_their_complete_configuration() {
     let store = Arc::new(InMemoryEventStore::new());
     let history: Arc<dyn EventHistory> = store.clone();
     let mut store_only = builder(history).with_test_event_store(store);
-    store_only.register_json::<TestCommand>().unwrap();
+    store_only
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     let store_only = store_only.build().unwrap();
     assert_eq!(
         store_only
@@ -1852,7 +1796,9 @@ fn resettable_tracer(reset: Arc<dyn TestScenarioReset>) -> Tracer {
         .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
         .with_dispatch_transport(Arc::new(FakeTransport::accepted("dispatch", false)))
         .with_test_scenario_reset(reset);
-    builder.register_json::<TestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     builder.build().unwrap()
 }
 
@@ -1969,7 +1915,9 @@ fn reset_requires_test_backing_and_test_transport() {
     let mut missing_store = builder(Arc::clone(&history))
         .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
         .with_test_scenario_reset(Arc::clone(&reset));
-    missing_store.register_json::<TestCommand>().unwrap();
+    missing_store
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     assert!(matches!(
         missing_store.build(),
         Err(RuntimeRegistrationError::ResetWithoutTestStore)
@@ -1979,7 +1927,9 @@ fn reset_requires_test_backing_and_test_transport() {
     let mut missing_transport = builder(history)
         .with_test_event_store(store)
         .with_test_scenario_reset(reset);
-    missing_transport.register_json::<TestCommand>().unwrap();
+    missing_transport
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     assert!(matches!(
         missing_transport.build(),
         Err(RuntimeRegistrationError::ResetWithoutTestTransport)
@@ -2078,7 +2028,9 @@ fn behavioral_tracer(
         .with_test_fixture("test-fixture", Arc::new(NoopReset))
         .with_test_repository(repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
-    builder.register_json::<TestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     builder.build().unwrap()
 }
 

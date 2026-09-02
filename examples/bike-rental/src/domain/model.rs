@@ -3,9 +3,8 @@ use rostfrei::domain_model;
 use super::{
     BikeRental,
     rental_fleet::{
-        AddBicycle, Bicycle, BicycleAvailabilityQueries, BicycleCondition, BicycleNotRented,
-        BicycleStatus, BicycleUnavailable, RentBicycle, RentalFleet, RentalFleetAggregate,
-        ReturnBicycle,
+        Bicycle, BicycleAvailabilityQueries, BicycleCondition, BicycleNotRented, BicycleStatus,
+        BicycleUnavailable, RentalFleet, RentalFleetAggregate,
     },
 };
 
@@ -16,7 +15,6 @@ pub fn domain_model() -> Result<serde_json::Value, rostfrei::DomainModelError> {
         entities: [RentalFleet, Bicycle],
         value_objects: [BicycleStatus, BicycleCondition],
         services: [],
-        commands: [RentBicycle, ReturnBicycle, AddBicycle],
         errors: [BicycleUnavailable, BicycleNotRented],
         query_groups: [BicycleAvailabilityQueries],
     }

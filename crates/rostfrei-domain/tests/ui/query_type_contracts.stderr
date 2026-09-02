@@ -45,13 +45,13 @@ warning: unused variable: `root`
 warning: unused variable: `root`
   --> tests/ui/query_type_contracts.rs:88:20
    |
-88 |     pub fn command(root: &FirstRoot, input: &Command) -> bool { true }
+88 |     pub fn command(root: &FirstRoot, input: &CommandDto) -> bool { true }
    |                    ^^^^ help: if this is intentional, prefix it with an underscore: `_root`
 
 warning: unused variable: `input`
   --> tests/ui/query_type_contracts.rs:88:38
    |
-88 |     pub fn command(root: &FirstRoot, input: &Command) -> bool { true }
+88 |     pub fn command(root: &FirstRoot, input: &CommandDto) -> bool { true }
    |                                      ^^^^^ help: if this is intentional, prefix it with an underscore: `_input`
 
 warning: unused variable: `root`

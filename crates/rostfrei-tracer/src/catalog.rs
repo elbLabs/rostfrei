@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use rostfrei_registry::{CommandDescriptor, DomainRegistry};
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 const CATALOG_VERSION: u32 = 3;
 
@@ -121,18 +121,8 @@ pub fn build_catalog(
             model_context_label(domain_model, &context_id).unwrap_or_else(|| context_id.clone());
         let aggregate_label = model_aggregate_label(domain_model, &context_id, &aggregate_id)
             .unwrap_or_else(|| aggregate_id.clone());
-        let command_label = descriptor.modeled_command().map_or_else(
-            || descriptor.command_name.to_owned(),
-            |command| command.label.to_owned(),
-        );
-        let fields = model_command_fields(
-            domain_model,
-            &context_id,
-            &aggregate_id,
-            descriptor
-                .modeled_command()
-                .map_or(descriptor.command_name, |command| command.id.local),
-        );
+        let command_label = descriptor.modeled_command().label.to_owned();
+        let fields = command_fields(descriptor.modeled_command().fields);
         let payload_template = payload_template(&fields);
         let context = contexts
             .entry(context_id.clone())
@@ -233,11 +223,6 @@ pub fn build_catalog(
 }
 
 fn http_coordinates(descriptor: &CommandDescriptor) -> Option<(String, String)> {
-    if let Some(command) = descriptor.modeled_command()
-        && let domain::CommandOwnerId::Aggregate(aggregate) = command.id.owner
-    {
-        return Some((aggregate.context.0.to_owned(), aggregate.local.to_owned()));
-    }
     let (context, aggregate) = descriptor.aggregate_type.split_once('/')?;
     if context.is_empty() || aggregate.is_empty() || aggregate.contains('/') {
         return None;
@@ -270,27 +255,91 @@ fn model_aggregate_label(model: Option<&Value>, context: &str, aggregate: &str) 
         .map(str::to_owned)
 }
 
-fn model_command_fields(
-    model: Option<&Value>,
-    context: &str,
-    aggregate: &str,
-    command: &str,
-) -> Vec<Value> {
-    model
-        .and_then(|model| model.get("commands"))
-        .and_then(Value::as_array)
-        .and_then(|commands| {
-            commands.iter().find(|item| {
-                item.pointer("/id/owner/kind").and_then(Value::as_str) == Some("aggregate")
-                    && item.pointer("/id/owner/id/context").and_then(Value::as_str) == Some(context)
-                    && item.pointer("/id/owner/id/local").and_then(Value::as_str) == Some(aggregate)
-                    && item.pointer("/id/local").and_then(Value::as_str) == Some(command)
-            })
+fn command_fields(descriptors: &[domain::FieldDescriptor]) -> Vec<Value> {
+    descriptors
+        .iter()
+        .map(|descriptor| {
+            let mut value = field_kind(descriptor.value.kind);
+            for wrapper in descriptor.value.wrappers.iter().rev() {
+                value = match wrapper {
+                    domain::FieldWrapper::List => json!({ "kind": "list", "element": value }),
+                    domain::FieldWrapper::Optional => {
+                        json!({ "kind": "optional", "value": value })
+                    }
+                };
+            }
+            json!({ "name": descriptor.name, "value": value })
         })
-        .and_then(|command| command.get("fields"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
+        .collect()
+}
+
+fn field_kind(kind: domain::FieldKind) -> Value {
+    match kind {
+        domain::FieldKind::Scalar(scalar) => {
+            json!({ "kind": "scalar", "scalar": scalar_name(scalar) })
+        }
+        domain::FieldKind::SemanticScalar(descriptor) => json!({
+            "kind": "scalar",
+            "scalar": {
+                "kind": "semantic",
+                "id": descriptor.id,
+                "label": descriptor.label,
+                "representation": scalar_name(descriptor.representation),
+            }
+        }),
+        domain::FieldKind::DomainIdentity(id) => json!({
+            "kind": "identity",
+            "id": {
+                "owner": {
+                    "aggregate": {
+                        "context": id.owner.aggregate.context.0,
+                        "local": id.owner.aggregate.local,
+                    },
+                    "local": id.owner.local,
+                }
+            }
+        }),
+        domain::FieldKind::Entity(id) => json!({
+            "kind": "entity",
+            "id": {
+                "aggregate": {
+                    "context": id.aggregate.context.0,
+                    "local": id.aggregate.local,
+                },
+                "local": id.local,
+            }
+        }),
+        domain::FieldKind::ValueObject(id) => {
+            json!({ "kind": "valueObject", "id": id.0 })
+        }
+        domain::FieldKind::AggregateReference(id) => json!({
+            "kind": "aggregateReference",
+            "aggregate": { "context": id.context.0, "local": id.local }
+        }),
+        _ => json!({ "kind": "opaque" }),
+    }
+}
+
+const fn scalar_name(scalar: domain::ScalarType) -> &'static str {
+    match scalar {
+        domain::ScalarType::Bool => "bool",
+        domain::ScalarType::String => "string",
+        domain::ScalarType::Char => "char",
+        domain::ScalarType::F32 => "f32",
+        domain::ScalarType::F64 => "f64",
+        domain::ScalarType::I8 => "i8",
+        domain::ScalarType::I16 => "i16",
+        domain::ScalarType::I32 => "i32",
+        domain::ScalarType::I64 => "i64",
+        domain::ScalarType::I128 => "i128",
+        domain::ScalarType::Isize => "isize",
+        domain::ScalarType::U8 => "u8",
+        domain::ScalarType::U16 => "u16",
+        domain::ScalarType::U32 => "u32",
+        domain::ScalarType::U64 => "u64",
+        domain::ScalarType::U128 => "u128",
+        domain::ScalarType::Usize => "usize",
+    }
 }
 
 fn payload_template(fields: &[Value]) -> Value {

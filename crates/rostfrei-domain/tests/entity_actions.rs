@@ -213,7 +213,6 @@ fn domain_model_does_not_implicitly_project_entity_action_traits() {
         entities: [Task, Comment],
         value_objects: [Title],
         services: [],
-        commands: [],
         errors: [TaskRejected],
         query_groups: [],
     }
@@ -228,7 +227,6 @@ fn domain_model_does_not_implicitly_project_entity_action_traits() {
         entities: [Comment],
         value_objects: [],
         services: [],
-        commands: [],
         errors: [],
         query_groups: [],
     }

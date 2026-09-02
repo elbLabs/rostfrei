@@ -7,7 +7,6 @@ fn main() {
         entities: [],
         value_objects: [],
         services: [],
-        commands: [],
         errors: [],
         action_groups: [],
         query_groups: [],

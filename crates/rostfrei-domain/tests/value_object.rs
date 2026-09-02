@@ -19,7 +19,6 @@ fn projects_only_id_and_label() {
         entities: [],
         value_objects: [Subject, DeliveryState],
         services: [],
-        commands: [],
         errors: [],
         query_groups: [],
     }

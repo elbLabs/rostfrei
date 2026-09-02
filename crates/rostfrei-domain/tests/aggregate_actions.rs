@@ -58,7 +58,7 @@ pub enum AccountEvents {
 }
 
 #[derive(Command)]
-#[domain(id = "rename-account", label = "Rename account", owner = Account)]
+#[domain(id = "rename-account", label = "Rename account")]
 pub struct RenameAccount;
 
 pub struct RenameAccountInput;
@@ -375,7 +375,6 @@ fn model_projects_explicit_extensions_and_non_aggregate_attachments() {
         entities: [AccountRoot],
         value_objects: [],
         services: [],
-        commands: [RenameAccount],
         errors: [AccountDenied],
         action_extensions: [AccountExtensionActions],
         query_groups: [],
@@ -412,7 +411,6 @@ fn unattached_duplicate_aggregate_traits_are_not_registered() {
         entities: [],
         value_objects: [],
         services: [],
-        commands: [],
         errors: [],
         query_groups: [],
     }
@@ -428,7 +426,6 @@ fn extension_is_registered_when_same_named_contract_is_unattached() {
         entities: [],
         value_objects: [],
         services: [],
-        commands: [],
         errors: [],
         action_extensions: [DuplicateAccountExtensionActions],
         query_groups: [],

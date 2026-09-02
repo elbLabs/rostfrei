@@ -1,10 +1,10 @@
-use rostfrei::{AggregateInstance, CommandHandler, CommandType};
+use rostfrei::{AggregateInstance, CommandHandler};
 
-use super::{ReturnBicycle, ReturnBicycleActions};
+use super::{BicycleNotRented, ReturnBicycle, ReturnBicycleActions};
 use crate::domain::rental_fleet::RentalFleetAggregate;
 
 impl CommandHandler<ReturnBicycle> for RentalFleetAggregate {
-    type Rejection = <ReturnBicycle as CommandType>::Rejection;
+    type Rejection = BicycleNotRented;
 
     fn handle(
         command: &ReturnBicycle,

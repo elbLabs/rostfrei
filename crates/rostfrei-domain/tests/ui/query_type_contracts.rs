@@ -54,8 +54,8 @@ impl domain::EntityDefinition for SecondRoot {
 }
 
 #[derive(Command)]
-#[domain(id = "command", label = "Command", owner = First)]
-struct Command;
+#[domain(id = "command", label = "Command")]
+struct CommandDto;
 
 #[derive(DomainEvent)]
 #[domain(id = "event", label = "Event")]
@@ -85,7 +85,7 @@ impl First {
     pub fn plain(root: &FirstRoot) -> Plain { Plain }
 
     #[query(id = "command", label = "Command")]
-    pub fn command(root: &FirstRoot, input: &Command) -> bool { true }
+    pub fn command(root: &FirstRoot, input: &CommandDto) -> bool { true }
 
     #[query(id = "cross", label = "Cross")]
     pub fn cross(root: &FirstRoot, input: &SecondId) -> SecondId { SecondId(1) }

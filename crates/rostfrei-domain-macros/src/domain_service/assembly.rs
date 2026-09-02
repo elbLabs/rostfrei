@@ -10,27 +10,12 @@ pub fn assemble(domain_path: &Path, name: &Ident, attributes: &Attributes) -> To
     let public_action_owner = assemble_public_action_owner(domain_path, name);
     let domain_service_action_owner = assemble_domain_service_action_owner(domain_path, name);
     let domain_error_owner = assemble_domain_error_owner(domain_path, name);
-    let command_owner = assemble_command_owner(domain_path, name);
     quote! {
         #domain_service
         #action_owner
         #public_action_owner
         #domain_service_action_owner
         #domain_error_owner
-        #command_owner
-    }
-}
-
-fn assemble_command_owner(domain_path: &Path, name: &Ident) -> TokenStream {
-    quote! {
-        impl #domain_path::CommandOwnerType for #name {
-            const COMMAND_OWNER_ID: #domain_path::CommandOwnerId =
-                #domain_path::CommandOwnerId::DomainService(
-                    <Self as #domain_path::DomainServiceType>::DESCRIPTOR.id,
-                );
-            const COMMAND_NAMESPACE: &'static str =
-                <Self as #domain_path::DomainServiceType>::DESCRIPTOR.id.context.0;
-        }
     }
 }
 

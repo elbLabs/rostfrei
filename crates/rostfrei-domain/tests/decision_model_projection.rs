@@ -113,7 +113,6 @@ fn projected_model() -> Result<Value, DomainModelError> {
         entities: [ProjectionRoot],
         value_objects: [ProjectionInput, ProjectionOutput, ProjectionReason],
         services: [],
-        commands: [],
         errors: [],
         query_groups: [],
     }
