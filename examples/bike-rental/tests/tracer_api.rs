@@ -423,14 +423,36 @@ async fn terminal_operation(app: &axum::Router, operation_id: &str, token: &str)
     panic!("operation did not become terminal");
 }
 
+fn assert_event_evidence(operation: &Value, kind: &str) {
+    let operation_id = operation["operationId"].as_str().unwrap();
+    let correlation_id = operation["correlationId"].as_str().unwrap();
+    assert_eq!(
+        operation["operationEventsHref"],
+        format!("/operations/{operation_id}/events")
+    );
+    assert_eq!(
+        operation["correlationEventsHref"],
+        format!("/correlations/{correlation_id}/events")
+    );
+    assert_eq!(operation["events"]["kind"], kind);
+    let evidence_href = if kind == "predicted" {
+        &operation["operationEventsHref"]
+    } else {
+        &operation["correlationEventsHref"]
+    };
+    assert_eq!(&operation["events"]["href"], evidence_href);
+}
+
 fn assert_published_result(operation: &Value) {
     let result = &operation["result"];
     assert_eq!(result["published"], true);
     assert_eq!(result["duplicate"], false);
     assert_eq!(result["baseStreamVersion"], Value::Null);
     assert_eq!(result["appended"], Value::Null);
+    assert!(result.get("predictedEvents").is_none());
     assert_eq!(result["commandMessageId"].as_str().unwrap().len(), 64);
     assert_eq!(result["responseMessageId"].as_str().unwrap().len(), 64);
+    assert_event_evidence(operation, "observed");
 }
 
 #[tokio::test]
@@ -763,6 +785,7 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
     let queued = json_body(response).await;
     assert_eq!(queued["operationId"], "operation-accepted");
     assert_eq!(queued["status"], "queued");
+    assert_event_evidence(&queued, "predicted");
 
     let response = app
         .clone()
@@ -810,6 +833,7 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
     assert_eq!(completed["result"]["baseStreamVersion"], 1);
     assert_eq!(completed["result"]["appended"], false);
     assert_eq!(completed["result"]["published"], false);
+    assert_event_evidence(&completed, "predicted");
     assert_eq!(completed["aggregateType"], "bike-rental/rental-fleet");
     assert_eq!(
         completed["result"]["predictedEvents"][0]["schemaVersion"],
@@ -983,15 +1007,13 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::ACCEPTED);
-    let first_id = json_body(response).await["operationId"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let queued = json_body(response).await;
+    assert_event_evidence(&queued, "observed");
+    let first_id = queued["operationId"].as_str().unwrap().to_owned();
     let first = terminal_operation(&app, &first_id, API_TOKEN).await;
     assert_eq!(first["mode"], "test");
     assert_eq!(first["result"]["decision"], "accepted");
     assert_published_result(&first);
-    assert_eq!(first["result"]["predictedEvents"], json!([]));
     assert_eq!(
         first["messageSeriesHref"],
         format!("/operations/{first_id}/message-series")
@@ -1095,7 +1117,6 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
     let returned = terminal_operation(&app, &return_id, API_TOKEN).await;
     assert_eq!(returned["result"]["decision"], "accepted");
     assert_published_result(&returned);
-    assert_eq!(returned["result"]["predictedEvents"], json!([]));
     assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 3);
     assert_eq!(
         test_store
@@ -1126,7 +1147,6 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
     let added = terminal_operation(&app, &add_id, API_TOKEN).await;
     assert_eq!(added["result"]["decision"], "accepted");
     assert_published_result(&added);
-    assert_eq!(added["result"]["predictedEvents"], json!([]));
     let history = test_store.load(&demo_stream()).await.unwrap();
     let added_event = history.last().unwrap();
     assert_eq!(added_event.event_type(), "bicycle-added");

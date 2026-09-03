@@ -167,15 +167,24 @@ values, uses only `ROSTFREI_DISPATCH_TOKEN`, warns that production and downstrea
 integrations may change, and asks for explicit confirmation. It never
 automatically retries an ambiguous publication or an `indeterminate` operation.
 
+Every operation snapshot distinguishes execution lifecycle from business-event
+evidence. `operationEventsHref` links to the Tracer lifecycle SSE stream, while
+`correlationEventsHref` links to the correlated business-message SSE stream.
+The `events` descriptor identifies the relevant evidence: Simulation reports
+`kind: predicted` and links to operation events; Test and Dispatch report
+`kind: observed` and link to correlation events. Consequently, `predictedEvents`
+is serialized only for accepted Simulation results and is omitted from
+transported results.
+
 After a command, the skill can follow the operation's `messageSeriesHref` and
-wait for terminal status plus a bounded idle settling window. The finite series
-contains the canonical messages and command outcomes observed by the capture;
-rejections, no-event decisions, or an unsettled timeout may omit some message
-categories or produce a partial series. Mermaid edges are drawn only from an
-explicit `causationId` to its matching `messageId`; array position and timestamps
-never imply causality. Preview or incomplete/conflicting identities are reported
-with grouped fidelity, while complete consistent transported identities are
-exact.
+wait for terminal status plus a bounded idle settling window. Unlike the live
+SSE links, this produces a finite capture containing the canonical messages and
+command outcomes. Rejections, no-event decisions, or an unsettled timeout may
+omit some message categories or produce a partial series. Mermaid edges are
+drawn only from an explicit `causationId` to its matching `messageId`; array
+position and timestamps never imply causality. Preview or
+incomplete/conflicting identities are reported with grouped fidelity, while
+complete consistent transported identities are exact.
 
 Behavioral tests are canonical JSON documents in `tests/tracer`. They select a
 fixture from `fixtures/` and describe one expected causal graph. Fixtures are
