@@ -1,0 +1,697 @@
+import type { StructureNode } from "./types"
+
+type NodeCopy = Pick<
+  StructureNode,
+  "role" | "summary" | "allowed" | "guarantee"
+>
+
+function file(
+  id: string,
+  name: string,
+  path: string,
+  copy: NodeCopy
+): StructureNode {
+  return { id, name, path, kind: "file", ...copy }
+}
+
+function moduleFile(id: string, path: string): StructureNode {
+  return file(`${id}-module`, "mod.rs", `${path}/mod.rs`, {
+    role: "Module composition",
+    summary:
+      "Declares and re-exports the focused files and child modules in this directory.",
+    allowed: ["Module declarations", "Scoped re-exports", "No domain behavior"],
+    guarantee:
+      "Composition stays separate from declarations and implementation logic.",
+  })
+}
+
+function directory(
+  id: string,
+  name: string,
+  path: string,
+  copy: NodeCopy,
+  children: StructureNode[]
+): StructureNode {
+  return {
+    id,
+    name,
+    path,
+    kind: "directory",
+    ...copy,
+    children: [moduleFile(id, path), ...children],
+  }
+}
+
+const markRented = directory(
+  "mark-rented",
+  "mark_rented",
+  "src/domain/bike_rental/rental_fleet/bicycle/mark_rented",
+  {
+    role: "Entity action",
+    summary:
+      "A small behavior capability nested directly beneath the Entity it changes.",
+    allowed: [
+      "action.rs contract",
+      "execute.rs implementation",
+      "mod.rs composition",
+    ],
+    guarantee:
+      "The checker binds the action trait implementation to Bicycle from its location.",
+  },
+  [
+    file(
+      "entity-action",
+      "action.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/mark_rented/action.rs",
+      {
+        role: "Action contract",
+        summary: "An ordinary Rust trait with a stable semantic ID and label.",
+        allowed: [
+          "One #[domain_action] trait",
+          "Its method signature",
+          "Imports",
+        ],
+        guarantee:
+          "The trait remains normal Rust and provides a stable structure-checking anchor.",
+      }
+    ),
+    file(
+      "entity-execute",
+      "execute.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/mark_rented/execute.rs",
+      {
+        role: "Entity action implementation",
+        summary: "Implements MarkRentedAction directly for Bicycle.",
+        allowed: [
+          "One matching trait implementation",
+          "Private helpers",
+          "Imports",
+        ],
+        guarantee:
+          "Trait and Entity implementor names must match their neighboring declarations.",
+      }
+    ),
+  ]
+)
+
+const rentalStatus = directory(
+  "rental-status",
+  "rental_status",
+  "src/domain/bike_rental/rental_fleet/bicycle/rental_status",
+  {
+    role: "Entity lifecycle",
+    summary: "Keeps the ordered state vocabulary beside Bicycle.",
+    allowed: ["lifecycle.rs", "mod.rs"],
+    guarantee:
+      "Lifecycle state IDs and labels remain stable without mixing transition behavior into the Entity file.",
+  },
+  [
+    file(
+      "lifecycle",
+      "lifecycle.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs",
+      {
+        role: "Lifecycle declaration",
+        summary:
+          "Declares the owner-independent lifecycle and its ordered states.",
+        allowed: ["One EntityLifecycle enum", "State metadata", "Imports"],
+        guarantee:
+          "The state vocabulary is reviewable as one closed semantic declaration.",
+      }
+    ),
+  ]
+)
+
+const bicycle = directory(
+  "bicycle",
+  "bicycle",
+  "src/domain/bike_rental/rental_fleet/bicycle",
+  {
+    role: "Nested Entity",
+    summary:
+      "Groups Bicycle identity, state concepts, lifecycle, and Entity-local behavior.",
+    allowed: [
+      "entity.rs and identity.rs",
+      "Value Object leaves",
+      "Lifecycle and action directories",
+    ],
+    guarantee:
+      "Related concepts stay nested with their owner instead of being flattened into type buckets.",
+  },
+  [
+    file(
+      "entity",
+      "entity.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/entity.rs",
+      {
+        role: "Entity declaration",
+        summary:
+          "Defines Bicycle state and its explicit EntityDefinition identity accessor.",
+        allowed: [
+          "One Entity declaration",
+          "Its EntityDefinition implementation",
+        ],
+        guarantee:
+          "Owner and identity types are compiler-checked while generic systems can read identity().",
+      }
+    ),
+    file(
+      "entity-identity",
+      "identity.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/identity.rs",
+      {
+        role: "Domain identity",
+        summary: "Defines the opaque BicycleId marker type.",
+        allowed: [
+          "One DomainIdentity declaration",
+          "Identity-specific constructors or accessors",
+        ],
+        guarantee:
+          "Identity representation stays private to the type rather than inferred by metadata.",
+      }
+    ),
+    file(
+      "condition",
+      "condition.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/condition.rs",
+      {
+        role: "Value Object",
+        summary: "Names a stable domain concept used by Bicycle behavior.",
+        allowed: [
+          "One ValueObject declaration",
+          "Intrinsic Value Object behavior",
+        ],
+        guarantee:
+          "Only genuine semantic concepts enter the Value Object catalog.",
+      }
+    ),
+    rentalStatus,
+    markRented,
+  ]
+)
+
+const rentBicycle = directory(
+  "rent-bicycle",
+  "rent_bicycle",
+  "src/domain/bike_rental/rental_fleet/rent_bicycle",
+  {
+    role: "Aggregate action capability",
+    summary:
+      "Composes one complete command-to-event behavior slice without creating a large aggregate file.",
+    allowed: [
+      "Action and execution",
+      "Command and handler",
+      "Event, apply, rejection, and input companions",
+    ],
+    guarantee:
+      "Each file has one job and execute.rs must target AggregateInstance<RentalFleetAggregate>.",
+  },
+  [
+    file(
+      "aggregate-action",
+      "action.rs",
+      "src/domain/bike_rental/rental_fleet/rent_bicycle/action.rs",
+      {
+        role: "Action contract",
+        summary: "Declares the single Rent Bicycle behavior trait.",
+        allowed: [
+          "One #[domain_action] trait",
+          "Its method signature",
+          "Imports",
+        ],
+        guarantee:
+          "The behavior contract is stable, small, and independently reviewable.",
+      }
+    ),
+    file(
+      "aggregate-execute",
+      "execute.rs",
+      "src/domain/bike_rental/rental_fleet/rent_bicycle/execute.rs",
+      {
+        role: "Aggregate action implementation",
+        summary: "Evaluates state and raises the corresponding domain event.",
+        allowed: [
+          "One matching AggregateInstance implementation",
+          "Private helpers",
+          "Imports",
+        ],
+        guarantee:
+          "The filesystem checker verifies both trait and aggregate implementor shapes.",
+      }
+    ),
+    file(
+      "command",
+      "command.rs",
+      "src/domain/bike_rental/rental_fleet/rent_bicycle/command.rs",
+      {
+        role: "Command",
+        summary: "Defines the serializable application-boundary request.",
+        allowed: ["One Command declaration", "Payload fields", "Imports"],
+        guarantee:
+          "Runtime registration, not authored owner metadata, connects the Command to its handler.",
+      }
+    ),
+    file(
+      "handler",
+      "handler.rs",
+      "src/domain/bike_rental/rental_fleet/rent_bicycle/handler.rs",
+      {
+        role: "Command handler",
+        summary: "Routes the Command into the aggregate action implementation.",
+        allowed: ["One CommandHandler implementation", "Imports"],
+        guarantee:
+          "Aggregate and rejection relationships are compiler-enforced by the handler trait.",
+      }
+    ),
+    file(
+      "event",
+      "event.rs",
+      "src/domain/bike_rental/rental_fleet/rent_bicycle/event.rs",
+      {
+        role: "Domain event",
+        summary: "Captures the persisted Bicycle Rented fact.",
+        allowed: [
+          "One DomainEvent declaration",
+          "Serializable fact fields",
+          "Imports",
+        ],
+        guarantee:
+          "Membership in event_set.rs supplies aggregate-scoped stream identity.",
+      }
+    ),
+    file(
+      "apply",
+      "apply.rs",
+      "src/domain/bike_rental/rental_fleet/rent_bicycle/apply.rs",
+      {
+        role: "Event application",
+        summary: "Applies BicycleRented to aggregate state.",
+        allowed: ["One Apply implementation", "Imports"],
+        guarantee:
+          "State transition code is isolated from command evaluation and transport.",
+      }
+    ),
+    file(
+      "rejection",
+      "rejection.rs",
+      "src/domain/bike_rental/rental_fleet/rent_bicycle/rejection.rs",
+      {
+        role: "Domain rejection",
+        summary:
+          "Defines the stable business rejection returned by the action.",
+        allowed: [
+          "One DomainError declaration",
+          "Serializable context fields",
+          "Imports",
+        ],
+        guarantee: "Code and message remain stable without owner annotations.",
+      }
+    ),
+    file(
+      "input",
+      "input.rs",
+      "src/domain/bike_rental/rental_fleet/rent_bicycle/input.rs",
+      {
+        role: "Action input",
+        summary:
+          "Keeps an operation-specific DTO separate from semantic Value Objects.",
+        allowed: ["One ordinary Rust input type", "Serialization helpers"],
+        guarantee:
+          "DTO shape remains ordinary Rust and is not projected as a domain concept.",
+      }
+    ),
+  ]
+)
+
+const availabilityQuery = directory(
+  "availability-query",
+  "bicycle_availability",
+  "src/domain/bike_rental/rental_fleet/bicycle_availability",
+  {
+    role: "Query capability",
+    summary: "Pairs one read contract with its returned view type.",
+    allowed: ["query.rs", "output.rs", "mod.rs"],
+    guarantee:
+      "The Query stays owner-independent while structure binds its implementation to the aggregate root.",
+  },
+  [
+    file(
+      "query",
+      "query.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle_availability/query.rs",
+      {
+        role: "Query contract",
+        summary: "An ordinary trait carrying the stable query ID and label.",
+        allowed: [
+          "One #[domain_query] trait",
+          "Its query signature",
+          "Imports",
+        ],
+        guarantee:
+          "Read behavior remains callable Rust without group or model inventory plumbing.",
+      }
+    ),
+    file(
+      "query-output",
+      "output.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle_availability/output.rs",
+      {
+        role: "Query view",
+        summary: "Defines the ordinary Rust view returned by the Query.",
+        allowed: ["One output DTO", "View-specific helpers"],
+        guarantee: "A returned view is not mislabeled as a Value Object.",
+      }
+    ),
+  ]
+)
+
+const eligibilityDecision = directory(
+  "eligibility-decision",
+  "assess_rental_eligibility",
+  "src/domain/bike_rental/rental_fleet/assess_rental_eligibility",
+  {
+    role: "Decision capability",
+    summary:
+      "Keeps one pure business decision beside its closed outcome vocabulary.",
+    allowed: ["decision.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
+    guarantee:
+      "Policy evaluation stays separate from state mutation and event recording.",
+  },
+  [
+    file(
+      "decision",
+      "decision.rs",
+      "src/domain/bike_rental/rental_fleet/assess_rental_eligibility/decision.rs",
+      {
+        role: "Decision contract",
+        summary: "An ordinary trait with a stable Decision ID and label.",
+        allowed: [
+          "One #[domain_decision] trait",
+          "Its method signature",
+          "Imports",
+        ],
+        guarantee:
+          "Decision metadata is global and independent of an implementation owner.",
+      }
+    ),
+    file(
+      "outcome",
+      "outcome.rs",
+      "src/domain/bike_rental/rental_fleet/assess_rental_eligibility/outcome.rs",
+      {
+        role: "Decision outcome",
+        summary:
+          "Declares the closed, ordered vocabulary returned by the Decision.",
+        allowed: [
+          "One DecisionOutcome enum",
+          "Tagged variants",
+          "Ordinary payload fields",
+        ],
+        guarantee:
+          "Outcome IDs and labels are stable while payload shapes remain Rust details.",
+      }
+    ),
+    file(
+      "evaluate",
+      "evaluate.rs",
+      "src/domain/bike_rental/rental_fleet/assess_rental_eligibility/evaluate.rs",
+      {
+        role: "Decision implementation",
+        summary: "Implements the policy for the aggregate root.",
+        allowed: [
+          "One matching trait implementation",
+          "Private helpers",
+          "Imports",
+        ],
+        guarantee:
+          "The evaluator is pure domain behavior with no persistence responsibility.",
+      }
+    ),
+  ]
+)
+
+const fleetInvariant = directory(
+  "fleet-invariant",
+  "fleet_consistency",
+  "src/domain/bike_rental/rental_fleet/fleet_consistency",
+  {
+    role: "Invariant capability",
+    summary: "Names and evaluates one rule that must hold for Rental Fleet.",
+    allowed: ["contract.rs", "evaluate.rs", "mod.rs"],
+    guarantee:
+      "Stable invariant metadata and executable validation remain independently testable.",
+  },
+  [
+    file(
+      "invariant",
+      "contract.rs",
+      "src/domain/bike_rental/rental_fleet/fleet_consistency/contract.rs",
+      {
+        role: "Invariant contract",
+        summary: "Declares the Fleet Consistency trait and semantic metadata.",
+        allowed: [
+          "One #[domain_invariant] trait",
+          "Its validation signature",
+          "Imports",
+        ],
+        guarantee:
+          "The rule has one stable name without plural reference plumbing.",
+      }
+    ),
+    file(
+      "invariant-evaluate",
+      "evaluate.rs",
+      "src/domain/bike_rental/rental_fleet/fleet_consistency/evaluate.rs",
+      {
+        role: "Invariant evaluation",
+        summary: "Returns an InvariantViolation when fleet consistency fails.",
+        allowed: [
+          "One matching trait implementation",
+          "Private helpers",
+          "Imports",
+        ],
+        guarantee:
+          "Validation behavior stays isolated from its semantic declaration.",
+      }
+    ),
+  ]
+)
+
+const rentalFleet = directory(
+  "rental-fleet",
+  "rental_fleet",
+  "src/domain/bike_rental/rental_fleet",
+  {
+    role: "Aggregate boundary",
+    summary:
+      "Owns Rental Fleet state, event membership, nested objects, and focused capabilities.",
+    allowed: [
+      "Aggregate anchor files",
+      "Entity directories",
+      "Action, Query, Decision, and Invariant capabilities",
+    ],
+    guarantee:
+      "Aggregate relationships are explicit in Rust and visible in the filesystem.",
+  },
+  [
+    file(
+      "aggregate",
+      "aggregate.rs",
+      "src/domain/bike_rental/rental_fleet/aggregate.rs",
+      {
+        role: "Aggregate declaration",
+        summary: "Pairs minimal metadata with AggregateDefinition.",
+        allowed: [
+          "One Aggregate declaration",
+          "Its AggregateDefinition implementation",
+        ],
+        guarantee:
+          "Context, root, and event set are compiler-checked in one focused file.",
+      }
+    ),
+    file(
+      "event-set",
+      "event_set.rs",
+      "src/domain/bike_rental/rental_fleet/event_set.rs",
+      {
+        role: "Closed event set",
+        summary: "Lists the event types that belong to Rental Fleet.",
+        allowed: ["One AggregateEvents enum", "One typed variant per event"],
+        guarantee:
+          "Only registered event types can be recorded, decoded, and replayed.",
+      }
+    ),
+    file("root", "root.rs", "src/domain/bike_rental/rental_fleet/root.rs", {
+      role: "Aggregate root Entity",
+      summary:
+        "Defines persisted Rental Fleet state and its identity accessor.",
+      allowed: [
+        "One Entity declaration",
+        "Its EntityDefinition implementation",
+      ],
+      guarantee:
+        "Root identity is available generically without field-name metadata.",
+    }),
+    file(
+      "aggregate-identity",
+      "identity.rs",
+      "src/domain/bike_rental/rental_fleet/identity.rs",
+      {
+        role: "Aggregate identity type",
+        summary: "Defines the opaque FleetId used by the root Entity.",
+        allowed: [
+          "One DomainIdentity declaration",
+          "Identity-specific behavior",
+        ],
+        guarantee:
+          "The representation stays encapsulated behind a typed identity.",
+      }
+    ),
+    file(
+      "initialize",
+      "initialize.rs",
+      "src/domain/bike_rental/rental_fleet/initialize.rs",
+      {
+        role: "Aggregate initialization",
+        summary: "Builds the Rental Fleet root for an empty event stream.",
+        allowed: ["One Initialize implementation", "Imports"],
+        guarantee:
+          "The event-sourcing runtime has one deterministic initial-state path.",
+      }
+    ),
+    file(
+      "stream",
+      "stream.rs",
+      "src/domain/bike_rental/rental_fleet/stream.rs",
+      {
+        role: "Stream identity boundary",
+        summary:
+          "Translates the Fleet identity into its runtime stream address.",
+        allowed: ["Stream construction helpers", "Imports"],
+        guarantee:
+          "Storage addressing remains isolated from the aggregate declaration and behavior.",
+      }
+    ),
+    bicycle,
+    rentBicycle,
+    availabilityQuery,
+    eligibilityDecision,
+    fleetInvariant,
+  ]
+)
+
+const fleetPlanning = directory(
+  "fleet-planning",
+  "fleet_planning",
+  "src/domain/bike_rental/fleet_planning",
+  {
+    role: "Domain service",
+    summary:
+      "Represents stateless domain behavior that does not belong to one Entity or Aggregate.",
+    allowed: ["service.rs", "Focused service capability directories", "mod.rs"],
+    guarantee:
+      "DomainServiceDefinition explicitly binds the service to Bike Rental.",
+  },
+  [
+    file(
+      "service",
+      "service.rs",
+      "src/domain/bike_rental/fleet_planning/service.rs",
+      {
+        role: "Domain service declaration",
+        summary:
+          "Pairs minimal service metadata with its bounded-context definition.",
+        allowed: [
+          "One DomainService declaration",
+          "Its DomainServiceDefinition implementation",
+        ],
+        guarantee:
+          "Context ownership is compiler-checked without implicit behavior attachments.",
+      }
+    ),
+  ]
+)
+
+const bikeRental = directory(
+  "bike-rental",
+  "bike_rental",
+  "src/domain/bike_rental",
+  {
+    role: "Bounded context",
+    summary:
+      "Owns one language boundary and its Aggregate and Domain Service modules.",
+    allowed: [
+      "context.rs",
+      "Aggregate directories",
+      "Domain Service directories",
+      "mod.rs",
+    ],
+    guarantee:
+      "Context boundaries remain visible in paths and generated aggregate identities.",
+  },
+  [
+    file("context", "context.rs", "src/domain/bike_rental/context.rs", {
+      role: "Bounded-context declaration",
+      summary: "Declares the stable Bike Rental ID and label.",
+      allowed: ["One BoundedContext declaration", "Imports"],
+      guarantee: "The bounded context has one semantic source of truth.",
+    }),
+    rentalFleet,
+    fleetPlanning,
+  ]
+)
+
+export const STRUCTURE: StructureNode[] = [
+  directory(
+    "domain",
+    "domain",
+    "src/domain",
+    {
+      role: "Typed domain root",
+      summary: "The single entry point for the model and bounded contexts.",
+      allowed: [
+        "model.rs",
+        "Bounded-context directories",
+        "A composition-only mod.rs",
+      ],
+      guarantee:
+        "Every modeled concept starts from one predictable, reviewable root.",
+    },
+    [
+      file("model", "model.rs", "src/domain/model.rs", {
+        role: "Domain model inventory",
+        summary:
+          "Composes only the stable declarations Rostfrei can verify deterministically.",
+        allowed: [
+          "One domain_model! composition",
+          "Imports needed by that composition",
+        ],
+        guarantee:
+          "The compiled model remains explicit and free of runtime-only relationships.",
+      }),
+      bikeRental,
+    ]
+  ),
+]
+
+export const DEFAULT_SELECTED_ID = "aggregate-action"
+export const DEFAULT_EXPANDED_IDS = [
+  "domain",
+  "bike-rental",
+  "rental-fleet",
+  "rent-bicycle",
+]
+
+export function findStructureNode(
+  nodes: StructureNode[],
+  id: string
+): StructureNode | undefined {
+  for (const node of nodes) {
+    if (node.id === id) return node
+    const child = node.children
+      ? findStructureNode(node.children, id)
+      : undefined
+    if (child) return child
+  }
+  return undefined
+}
