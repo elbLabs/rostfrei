@@ -4,6 +4,7 @@ pub(super) enum DirectoryRole {
     Aggregate,
     DomainService,
     Entity,
+    ValueObject,
     Action,
     Decision,
     Query,
@@ -11,8 +12,11 @@ pub(super) enum DirectoryRole {
     Lifecycle,
 }
 
-const CONTEXT_CHILDREN: &[DirectoryRole] =
-    &[DirectoryRole::Aggregate, DirectoryRole::DomainService];
+const CONTEXT_CHILDREN: &[DirectoryRole] = &[
+    DirectoryRole::Aggregate,
+    DirectoryRole::DomainService,
+    DirectoryRole::ValueObject,
+];
 const DOMAIN_SERVICE_CHILDREN: &[DirectoryRole] = &[DirectoryRole::Action];
 const AGGREGATE_CHILDREN: &[DirectoryRole] = &[
     DirectoryRole::Entity,
@@ -20,20 +24,28 @@ const AGGREGATE_CHILDREN: &[DirectoryRole] = &[
     DirectoryRole::Decision,
     DirectoryRole::Query,
     DirectoryRole::Invariant,
+    DirectoryRole::ValueObject,
 ];
 const ENTITY_CHILDREN: &[DirectoryRole] = &[
     DirectoryRole::Action,
     DirectoryRole::Decision,
     DirectoryRole::Invariant,
     DirectoryRole::Lifecycle,
+    DirectoryRole::ValueObject,
+];
+const VALUE_OBJECT_CHILDREN: &[DirectoryRole] = &[
+    DirectoryRole::Action,
+    DirectoryRole::Decision,
+    DirectoryRole::Invariant,
 ];
 
 impl DirectoryRole {
-    pub(super) const ALL: [Self; 9] = [
+    pub(super) const ALL: [Self; 10] = [
         Self::BoundedContext,
         Self::Aggregate,
         Self::DomainService,
         Self::Entity,
+        Self::ValueObject,
         Self::Action,
         Self::Decision,
         Self::Query,
@@ -47,6 +59,7 @@ impl DirectoryRole {
             Self::Aggregate => "aggregate.rs",
             Self::DomainService => "service.rs",
             Self::Entity => "entity.rs",
+            Self::ValueObject => "value.rs",
             Self::Action => "action.rs",
             Self::Decision => "decision.rs",
             Self::Query => "query.rs",
@@ -61,6 +74,7 @@ impl DirectoryRole {
             Self::Aggregate => "aggregate",
             Self::DomainService => "domain service",
             Self::Entity => "entity",
+            Self::ValueObject => "value object",
             Self::Action => "action",
             Self::Decision => "decision",
             Self::Query => "query",
@@ -75,6 +89,7 @@ impl DirectoryRole {
             Self::Aggregate => AGGREGATE_CHILDREN,
             Self::DomainService => DOMAIN_SERVICE_CHILDREN,
             Self::Entity => ENTITY_CHILDREN,
+            Self::ValueObject => VALUE_OBJECT_CHILDREN,
             Self::Action | Self::Decision | Self::Query | Self::Invariant | Self::Lifecycle => &[],
         }
     }

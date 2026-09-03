@@ -59,8 +59,9 @@ fn entity_definition_accessor_replaces_identity_and_value_object_field_tags() {
 fn semantic_value_objects_and_plain_dto_companions_are_valid() {
     let domain_root = fixture_domain("valid_domain");
     let diagnostics = check_domain_root(&domain_root);
-    let status = fs::read_to_string(domain_root.join("bike_rental/rental_fleet/bicycle/status.rs"))
-        .expect("semantic value object fixture");
+    let status =
+        fs::read_to_string(domain_root.join("bike_rental/rental_fleet/bicycle/status/value.rs"))
+            .expect("semantic value object fixture");
     let input =
         fs::read_to_string(domain_root.join("bike_rental/rental_fleet/rent_bicycle/input.rs"))
             .expect("action input DTO fixture");
@@ -75,6 +76,109 @@ fn semantic_value_objects_and_plain_dto_companions_are_valid() {
     assert!(!status.contains("actions ="));
     assert!(!input.contains("ValueObject"));
     assert!(!output.contains("ValueObject"));
+}
+
+#[test]
+fn value_objects_are_modules_with_owned_behavior_and_mirrored_tests() {
+    let domain_root = fixture_domain("valid_domain");
+    let diagnostics = check_domain_root(&domain_root);
+    let registration = "bike_rental/rental_fleet/bicycle/registration_number";
+
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+    for path in [
+        "value.rs",
+        "normalize/action.rs",
+        "normalize/execute.rs",
+        "validity/contract.rs",
+        "validity/evaluate.rs",
+        "choose_format/decision.rs",
+        "choose_format/outcome.rs",
+        "choose_format/evaluate.rs",
+    ] {
+        assert!(
+            domain_root.join(registration).join(path).is_file(),
+            "missing value object fixture {registration}/{path}"
+        );
+    }
+    for path in ["normalize.rs", "validity.rs", "choose_format.rs"] {
+        assert!(
+            domain_root
+                .join("tests/bike_rental/rental_fleet/bicycle/registration_number")
+                .join(path)
+                .is_file(),
+            "missing mirrored value object test {path}"
+        );
+    }
+}
+
+#[test]
+fn invalid_value_object_module_and_behavior_conventions_are_typed() {
+    let domain_root = fixture_domain("value_object_conventions");
+    let diagnostics = check_domain_root(&domain_root);
+    let cases = [
+        (
+            DiagnosticCode::WrongPlacement,
+            "bike_rental/rental_fleet/status.rs",
+            "ValueObject must be declared in `value.rs`",
+        ),
+        (
+            DiagnosticCode::InvalidStructure,
+            "bike_rental/fleet_planning/invalid_value/value.rs",
+            "found value object directory anchored by `value.rs`",
+        ),
+        (
+            DiagnosticCode::InvalidStructure,
+            "bike_rental/rental_fleet/registration_number/invalid_query/query.rs",
+            "found query directory anchored by `query.rs`",
+        ),
+        (
+            DiagnosticCode::InvalidStructure,
+            "bike_rental/rental_fleet/registration_number/missing_action/execute.rs",
+            "action directory requires `execute.rs`",
+        ),
+        (
+            DiagnosticCode::InvalidStructure,
+            "bike_rental/rental_fleet/registration_number/wrong_action/execute.rs",
+            "`WrongAction` must be implemented for `RegistrationNumber`; found `OtherValue`",
+        ),
+        (
+            DiagnosticCode::InvalidStructure,
+            "bike_rental/rental_fleet/registration_number/qualified_decision/evaluate.rs",
+            "`QualifiedDecision` must be implemented for `RegistrationNumber` using direct unqualified, unaliased type names",
+        ),
+        (
+            DiagnosticCode::InvalidCardinality,
+            "bike_rental/rental_fleet/registration_number/duplicate_invariant/evaluate.rs",
+            "`evaluate.rs` must contain exactly one `DuplicateInvariant` implementation; found 2",
+        ),
+        (
+            DiagnosticCode::UnexpectedRoleContent,
+            "bike_rental/rental_fleet/impure_value/value.rs",
+            "implementation is not allowed in `value.rs`",
+        ),
+        (
+            DiagnosticCode::InvalidCardinality,
+            "bike_rental/rental_fleet/missing_value/value.rs",
+            "`value.rs` must contain exactly one ValueObject declaration; found 0",
+        ),
+        (
+            DiagnosticCode::InvalidCardinality,
+            "bike_rental/rental_fleet/duplicate_value/value.rs",
+            "`value.rs` must contain exactly one ValueObject declaration; found 2",
+        ),
+    ];
+
+    for (code, path, message) in cases {
+        let expected_path = domain_root.join(path);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == code
+                    && diagnostic.path == expected_path
+                    && diagnostic.message.contains(message)
+            }),
+            "missing {code} at {path} containing `{message}`: {diagnostics:#?}"
+        );
+    }
 }
 
 #[test]

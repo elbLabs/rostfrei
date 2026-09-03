@@ -160,6 +160,7 @@ fn expected_owner<'a>(
     for (file, kind) in [
         ("aggregate.rs", PrimaryKind::Aggregate),
         ("entity.rs", PrimaryKind::Entity),
+        ("value.rs", PrimaryKind::ValueObject),
     ] {
         if let Some(name) = facts
             .get(&directory.join(file))

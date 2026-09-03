@@ -89,7 +89,7 @@ pub(super) fn check_counts(file: &SourceFileFacts, diagnostics: &mut Vec<Diagnos
 fn primary_is_placed(kind: PrimaryKind, file_name: Option<&str>) -> bool {
     match kind {
         PrimaryKind::Entity => matches!(file_name, Some("entity.rs" | "root.rs")),
-        PrimaryKind::ValueObject => !matches!(file_name, Some("mod.rs")),
+        PrimaryKind::ValueObject => file_name == Some("value.rs"),
         _ => kind.expected_file() == file_name,
     }
 }
@@ -209,6 +209,7 @@ fn role_kind(file_name: &str) -> Option<PrimaryKind> {
         "entity.rs" | "root.rs" => Some(PrimaryKind::Entity),
         "identity.rs" => Some(PrimaryKind::Identity),
         "service.rs" => Some(PrimaryKind::DomainService),
+        "value.rs" => Some(PrimaryKind::ValueObject),
         "action.rs" => Some(PrimaryKind::Action),
         "command.rs" => Some(PrimaryKind::Command),
         "event.rs" => Some(PrimaryKind::Event),

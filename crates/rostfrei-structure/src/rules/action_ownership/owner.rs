@@ -16,6 +16,7 @@ pub(super) fn expected_owner(
         ("aggregate.rs", PrimaryKind::Aggregate),
         ("entity.rs", PrimaryKind::Entity),
         ("service.rs", PrimaryKind::DomainService),
+        ("value.rs", PrimaryKind::ValueObject),
     ]
     .into_iter()
     .filter_map(|(file, kind)| {
