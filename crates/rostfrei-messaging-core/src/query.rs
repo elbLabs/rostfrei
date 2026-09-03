@@ -13,6 +13,8 @@ use crate::{
 pub const MAX_APPLICATION_ERROR_CODE_BYTES: usize = 128;
 pub const MAX_QUERY_ERROR_MESSAGE_BYTES: usize = 1024;
 pub const MAX_QUERY_TIMEOUT: Duration = Duration::from_mins(5);
+pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_MAXIMUM_QUERY_RESPONSE_BYTES: usize = MAX_ENVELOPE_BYTES;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct QueryRequest<T> {
@@ -271,6 +273,14 @@ impl QueryErrorPayload {
     pub fn message(&self) -> &str {
         &self.message
     }
+
+    pub fn internal_error() -> Self {
+        Self {
+            classification: QueryErrorClassification::Internal,
+            code: ApplicationErrorCode("rostfrei.query.internal".to_owned()),
+            message: "The query could not be completed.".to_owned(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -470,6 +480,15 @@ impl QueryOptions {
 
     pub const fn maximum_response_bytes(self) -> usize {
         self.maximum_response_bytes
+    }
+}
+
+impl Default for QueryOptions {
+    fn default() -> Self {
+        Self {
+            timeout: DEFAULT_QUERY_TIMEOUT,
+            maximum_response_bytes: DEFAULT_MAXIMUM_QUERY_RESPONSE_BYTES,
+        }
     }
 }
 

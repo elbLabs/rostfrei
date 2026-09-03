@@ -6,7 +6,8 @@ Accepted.
 
 ## Decision
 
-`rostfrei` owns the application-facing `CommandBus` and `IntegrationEventBus`.
+`rostfrei` owns the application-facing `CommandBus`, `QueryBus`, and
+`IntegrationEventBus`.
 They derive addresses from a bounded context, encode canonical JSON envelopes,
 propagate correlation and causation, enforce payload bounds, and derive stable
 content fingerprints and message identities. Applications submit typed command
@@ -20,6 +21,10 @@ stable accepted or rejected command responses. Adding a command registers a
 typed binding; processors and adapters do not branch on command-name strings.
 `InMemoryMessagingAdapter` implements command and integration-event adapter
 capabilities for local execution and contract tests.
+
+ADR 0019 extends the same boundary to request/reply queries. `QueryBus` prepares
+typed or dynamic query envelopes, while `QueryProcessor` owns typed handler
+bindings and `InMemoryQueryAdapter` provides the local reference path.
 
 `rostfrei-messaging-core` continues to own validated addresses, envelopes,
 metadata values, response and rejection contracts, and low-level publishing and

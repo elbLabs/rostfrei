@@ -9,6 +9,7 @@ license.workspace = true
 thiserror.workspace = true
 rostfrei-core = { path = "../rostfrei-core" }
 rostfrei-domain = { path = "../rostfrei-domain" }
+rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
 
 [lints]
 workspace = true

@@ -1,7 +1,7 @@
 use rostfrei_core::{Aggregate, AggregateInstance, CommandHandler, StreamId};
 use rostfrei_registry::{
     CommandDefinition, CommandDescriptor, DomainModule, DomainRegistry, ModuleDescriptor,
-    RegistrationError,
+    QueryDefinition, QueryDescriptor, RegistrationError,
 };
 
 fn command(
@@ -19,6 +19,21 @@ fn command(
     }
 }
 
+const fn query(
+    bounded_context: &'static str,
+    query_name: &'static str,
+    schema_version: u32,
+) -> QueryDescriptor {
+    QueryDescriptor {
+        bounded_context,
+        query_name,
+        schema_version,
+        rust_request_type: "test::Query",
+        rust_response_type: "test::Response",
+        modeled_query: None,
+    }
+}
+
 struct Banking;
 
 impl DomainModule for Banking {
@@ -31,6 +46,7 @@ impl DomainModule for Banking {
                 command("withdraw-money", 1, "bank-account"),
                 command("deposit-money", 1, "bank-account"),
             ],
+            queries: Vec::new(),
         }
     }
 }
@@ -44,6 +60,7 @@ impl DomainModule for Lending {
         ModuleDescriptor {
             module_name: Self::MODULE_NAME,
             commands: vec![command("open-loan", 2, "loan")],
+            queries: Vec::new(),
         }
     }
 }
@@ -116,6 +133,7 @@ impl DomainModule for DuplicateBanking {
         ModuleDescriptor {
             module_name: Self::MODULE_NAME,
             commands: vec![command("another-command", 1, "bank-account")],
+            queries: Vec::new(),
         }
     }
 }
@@ -150,6 +168,7 @@ impl DomainModule for InternallyDuplicated {
                 command("same-command", 1, "account"),
                 command("same-command", 1, "account"),
             ],
+            queries: Vec::new(),
         }
     }
 }
@@ -185,6 +204,7 @@ impl DomainModule for OverlappingModule {
                 command("new-command", 1, "new-aggregate"),
                 command("deposit-money", 1, "bank-account"),
             ],
+            queries: Vec::new(),
         }
     }
 }
@@ -198,6 +218,7 @@ impl DomainModule for SameLocalCommandForAnotherAggregate {
         ModuleDescriptor {
             module_name: Self::MODULE_NAME,
             commands: vec![command("deposit-money", 1, "another-aggregate")],
+            queries: Vec::new(),
         }
     }
 }
@@ -260,6 +281,7 @@ impl DomainModule for EmptyModuleName {
         ModuleDescriptor {
             module_name: Self::MODULE_NAME,
             commands: vec![command("valid-command", 1, "account")],
+            queries: Vec::new(),
         }
     }
 }
@@ -276,6 +298,7 @@ impl DomainModule for EmptyCommandName {
                 command("valid-command", 1, "account"),
                 command("", 1, "account"),
             ],
+            queries: Vec::new(),
         }
     }
 }
@@ -292,6 +315,7 @@ impl DomainModule for ZeroSchemaVersion {
                 command("valid-command", 1, "account"),
                 command("invalid-command", 0, "account"),
             ],
+            queries: Vec::new(),
         }
     }
 }
@@ -308,6 +332,7 @@ impl DomainModule for EmptyAggregateType {
                 command("valid-command", 1, "account"),
                 command("invalid-command", 1, ""),
             ],
+            queries: Vec::new(),
         }
     }
 }
@@ -339,6 +364,7 @@ fn assert_invalid<M: DomainModule>(expected: RegistrationError) {
 fn assert_registry_is_empty(registry: &DomainRegistry) {
     assert_eq!(registry.modules().count(), 0);
     assert_eq!(registry.commands().count(), 0);
+    assert_eq!(registry.queries().count(), 0);
     assert_eq!(registry.aggregates().count(), 0);
 }
 
@@ -390,4 +416,102 @@ fn commands_can_be_registered_without_a_module() {
         registry.command("direct-aggregate", "direct-command", 1),
         Some(&DirectCommand::descriptor())
     );
+}
+
+struct FindAccount;
+
+impl QueryDefinition for FindAccount {
+    type Response = String;
+
+    const BOUNDED_CONTEXT: &'static str = "banking";
+    const QUERY_NAME: &'static str = "find-account";
+    const SCHEMA_VERSION: u32 = 1;
+}
+
+struct InvalidRoutedQuery;
+
+impl QueryDefinition for InvalidRoutedQuery {
+    type Response = String;
+
+    const BOUNDED_CONTEXT: &'static str = "Banking";
+    const QUERY_NAME: &'static str = "find-account";
+    const SCHEMA_VERSION: u32 = 1;
+}
+
+struct Reporting;
+
+impl DomainModule for Reporting {
+    const MODULE_NAME: &'static str = "reporting";
+
+    fn descriptor() -> ModuleDescriptor {
+        ModuleDescriptor {
+            module_name: Self::MODULE_NAME,
+            commands: Vec::new(),
+            queries: vec![
+                query("banking", "account-balance", 1),
+                query("banking", "account-history", 2),
+            ],
+        }
+    }
+}
+
+#[test]
+fn queries_register_directly_and_through_modules() {
+    let mut registry = DomainRegistry::new();
+    registry.register_query::<FindAccount>().unwrap();
+    registry.register_module::<Reporting>().unwrap();
+
+    assert_eq!(registry.queries().count(), 3);
+    assert_eq!(
+        registry.query("banking", "find-account", 1),
+        Some(&FindAccount::descriptor())
+    );
+    assert_eq!(
+        registry
+            .queries_for_context("banking")
+            .map(|query| (query.query_name, query.schema_version))
+            .collect::<Vec<_>>(),
+        [
+            ("account-balance", 1),
+            ("account-history", 2),
+            ("find-account", 1),
+        ]
+    );
+}
+
+#[test]
+fn duplicate_query_registration_fails_without_partial_mutation() {
+    let mut registry = DomainRegistry::new();
+    registry.register_query::<FindAccount>().unwrap();
+
+    let error = registry.register_query::<FindAccount>().unwrap_err();
+
+    assert_eq!(
+        error,
+        RegistrationError::DuplicateQueryIdentityAcrossModules {
+            query_name: "find-account",
+            schema_version: 1,
+            existing_module_name: "<direct query registration>",
+            attempted_module_name: "<direct query registration>",
+        }
+    );
+    assert_eq!(registry.queries().count(), 1);
+}
+
+#[test]
+fn unroutable_query_definitions_fail_registration() {
+    let mut registry = DomainRegistry::new();
+
+    let error = registry.register_query::<InvalidRoutedQuery>().unwrap_err();
+
+    assert_eq!(
+        error,
+        RegistrationError::InvalidQueryIdentity {
+            module_name: "<direct query registration>",
+            query_name: "find-account",
+            schema_version: 1,
+            reason: "address context has an invalid format".to_owned(),
+        }
+    );
+    assert_registry_is_empty(&registry);
 }

@@ -51,9 +51,10 @@ pub use publish::{
     MAX_MESSAGE_PAYLOAD_BYTES, OutboundMessage, PublishReceipt,
 };
 pub use query::{
-    ApplicationErrorCode, MAX_APPLICATION_ERROR_CODE_BYTES, MAX_QUERY_ERROR_MESSAGE_BYTES,
-    MAX_QUERY_TIMEOUT, QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryOptions,
-    QueryOutcome, QueryRequest, QueryRequester, QueryResponse, QueryResult, QueryServer,
+    ApplicationErrorCode, DEFAULT_MAXIMUM_QUERY_RESPONSE_BYTES, DEFAULT_QUERY_TIMEOUT,
+    MAX_APPLICATION_ERROR_CODE_BYTES, MAX_QUERY_ERROR_MESSAGE_BYTES, MAX_QUERY_TIMEOUT,
+    QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryOptions, QueryOutcome,
+    QueryRequest, QueryRequester, QueryResponse, QueryResult, QueryServer,
 };
 pub use scope::{
     ApplicationName, BoundedContext, BoundedContextName, MAX_SCOPE_NAME_BYTES, TrafficScope,

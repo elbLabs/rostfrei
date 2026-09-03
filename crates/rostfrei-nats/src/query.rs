@@ -73,6 +73,7 @@ where
         }
         let request_id = request.message_id().clone();
         let correlation_id = request.correlation_id().clone();
+        let schema_version = request.schema_version();
         let payload = serde_json::to_vec(&request)
             .map_err(|_| QueryRequestError::new(QueryRequestErrorKind::Serialization))?;
         let mut headers = safe_headers(request.metadata(), request.trace_context());
@@ -99,7 +100,10 @@ where
         validate_response_headers(headers, &request_id, &correlation_id)?;
         let response: QueryResponse<Response> = serde_json::from_slice(&response.payload)
             .map_err(|_| QueryRequestError::new(QueryRequestErrorKind::InvalidResponse))?;
-        if response.request_id() != &request_id || response.correlation_id() != &correlation_id {
+        if response.request_id() != &request_id
+            || response.correlation_id() != &correlation_id
+            || response.schema_version() != schema_version
+        {
             return Err(QueryRequestError::new(
                 QueryRequestErrorKind::InvalidResponse,
             ));
