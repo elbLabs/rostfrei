@@ -64,3 +64,4 @@ impl CommandHandler<Command> for Aggregate {
 }
 
 fn main() {}
+rostfrei::install_macro_support!();

@@ -19,3 +19,4 @@ fn main() {
     let descriptor: ActionDescriptor = <Item as Rename>::DESCRIPTOR;
     assert_eq!(descriptor.id, ActionId("rename"));
 }
+rostfrei_domain_macros::__install_test_macro_support!();

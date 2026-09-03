@@ -28,3 +28,4 @@ fn derives_domain_service_descriptor() {
         }
     );
 }
+rostfrei_domain_macros::__install_test_macro_support!();

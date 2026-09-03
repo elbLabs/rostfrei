@@ -144,3 +144,4 @@ fn generated_json_supports_commands_without_modeled_rejection_metadata() {
 
     assert_json_error_payload::<Infallible>();
 }
+rostfrei_domain_macros::__install_test_macro_support!();

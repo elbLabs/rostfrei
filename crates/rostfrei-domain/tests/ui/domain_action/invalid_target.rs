@@ -4,3 +4,4 @@ use domain::domain_action;
 struct NotATrait;
 
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();

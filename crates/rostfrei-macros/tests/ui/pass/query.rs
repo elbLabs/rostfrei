@@ -14,3 +14,4 @@ struct FindProduct {
 fn main() {
     let _ = <FindProduct as zs_registry::QueryDefinition>::descriptor();
 }
+rostfrei_macros::__install_test_macro_support!();

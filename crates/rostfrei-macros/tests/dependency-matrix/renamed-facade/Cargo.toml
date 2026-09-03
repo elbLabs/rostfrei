@@ -1,0 +1,9 @@
+[package]
+name = "macro-path-renamed-facade"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rf = { package = "rostfrei", path = "../../../../rostfrei" }
+serde = { version = "1", features = ["derive"] }

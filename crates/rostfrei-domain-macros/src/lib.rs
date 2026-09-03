@@ -1,6 +1,35 @@
 use proc_macro::TokenStream;
 use syn::{DeriveInput, Error, parse_macro_input};
 
+#[doc(hidden)]
+#[proc_macro]
+pub fn __install_test_macro_support(input: TokenStream) -> TokenStream {
+    if !input.is_empty() {
+        return Error::new(
+            proc_macro2::Span::call_site(),
+            "internal macro support installer does not accept arguments",
+        )
+        .into_compile_error()
+        .into();
+    }
+    quote::quote! {
+        #[doc(hidden)]
+        pub mod __rostfrei_macro_support {
+            pub use ::domain::*;
+
+            pub mod __private {
+                pub use ::domain::__private::*;
+            }
+
+            macro_rules! __runtime {
+                ($($tokens:tt)*) => {};
+            }
+            pub(crate) use __runtime;
+        }
+    }
+    .into()
+}
+
 mod action;
 mod aggregate;
 mod aggregate_events;

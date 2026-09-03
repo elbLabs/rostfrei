@@ -206,3 +206,4 @@ fn supports_all_struct_shapes() {
     assert_eq!(root.id.0, 1);
     assert_eq!(subject.0, "Hello");
 }
+rostfrei_domain_macros::__install_test_macro_support!();

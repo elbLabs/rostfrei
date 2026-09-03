@@ -210,3 +210,4 @@ fn supports_empty_declaration_lists() {
             .all(|value| value.as_array().is_some_and(Vec::is_empty))
     );
 }
+rostfrei_domain_macros::__install_test_macro_support!();

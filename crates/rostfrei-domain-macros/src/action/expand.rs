@@ -16,6 +16,6 @@ pub fn expand(arguments: &TokenStream, input: TokenStream) -> syn::Result<TokenS
     let attributes = Attributes::parse(arguments)?;
     validation::validate(&attributes)?;
     validation::validate_trait(&item)?;
-    let domain_path = crate::helper::domain_api_path::resolve()?;
+    let domain_path = crate::helper::domain_api_path::resolve();
     Ok(assembly::assemble(&domain_path, item, &attributes))
 }

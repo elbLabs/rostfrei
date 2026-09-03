@@ -10,3 +10,4 @@ use rostfrei_macros::QueryDefinition;
 struct FindProduct;
 
 fn main() {}
+rostfrei_macros::__install_test_macro_support!();

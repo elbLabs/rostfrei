@@ -337,3 +337,4 @@ fn invalid_authentication_challenge_is_rejected() {
         Err(HttpApiConfigError::InvalidAuthenticationChallenge)
     );
 }
+rostfrei::install_macro_support!();

@@ -57,3 +57,4 @@ fn derives_aggregate_descriptor_with_context_id() {
     let root = MailboxRoot { id: MailboxId(1) };
     assert_eq!(root.id.0, 1);
 }
+rostfrei_domain_macros::__install_test_macro_support!();

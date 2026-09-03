@@ -9,3 +9,4 @@ struct Inbox(String);
 struct Mailbox { name: String }
 
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();

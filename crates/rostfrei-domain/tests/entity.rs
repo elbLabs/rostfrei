@@ -80,3 +80,4 @@ fn derives_entity_descriptor_with_identity_metadata() {
     assert_eq!(root.r#id.0, 1);
     assert_eq!(root.message_count, 2);
 }
+rostfrei_domain_macros::__install_test_macro_support!();

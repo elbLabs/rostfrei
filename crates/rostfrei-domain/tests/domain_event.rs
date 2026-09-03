@@ -104,3 +104,4 @@ fn supports_all_struct_shapes() {
     assert_eq!(renamed.name, "Primary");
     assert_eq!(root.id.0, 1);
 }
+rostfrei_domain_macros::__install_test_macro_support!();

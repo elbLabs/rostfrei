@@ -65,3 +65,4 @@ fn derives_identity_marker_and_entity_scoped_descriptor() {
         }
     );
 }
+rostfrei_domain_macros::__install_test_macro_support!();

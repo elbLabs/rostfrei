@@ -42,3 +42,4 @@ fn annotated_trait_keeps_ordinary_behavior_and_global_metadata() {
         <RentalFleet as RentBicycle>::DESCRIPTOR
     );
 }
+rostfrei_domain_macros::__install_test_macro_support!();

@@ -154,3 +154,4 @@ fn lifecycle_tests_keep_the_authored_body() {
     assert_eq!(lifecycle.states[0].id.local, "draft");
     assert_eq!(lifecycle.states[1].id.local, "active");
 }
+rostfrei_domain_macros::__install_test_macro_support!();

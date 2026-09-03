@@ -2209,3 +2209,4 @@ async fn behavioral_tests_are_discoverable_and_runnable_over_http() {
     assert_eq!(run.headers()["cache-control"], "private, no-store");
     assert_eq!(json_body(run).await["status"], "passed");
 }
+rostfrei::install_macro_support!();

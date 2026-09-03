@@ -6,7 +6,7 @@ use crate::support::{Errors, registry_path, required, rostfrei_attributes, set_o
 
 pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     let attributes = Attributes::parse(&input.attrs, input)?;
-    let registry = registry_path()?;
+    let registry = registry_path();
     let ident = &input.ident;
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
     let context = attributes.context;

@@ -6,3 +6,4 @@ enum Events {
 }
 
 fn main() {}
+rostfrei::install_macro_support!();

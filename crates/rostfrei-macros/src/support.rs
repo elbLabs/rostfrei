@@ -1,5 +1,3 @@
-use proc_macro_crate::{FoundCrate, crate_name};
-use quote::quote;
 use syn::{Attribute, DeriveInput, Error, Path};
 
 pub fn rostfrei_attributes(attributes: &[Attribute]) -> impl Iterator<Item = &Attribute> {
@@ -32,32 +30,8 @@ pub fn required<T>(
     value
 }
 
-pub fn registry_path() -> syn::Result<Path> {
-    if let Ok(found) = crate_name("rostfrei-registry") {
-        found_crate_path("rostfrei-registry", found)
-    } else {
-        let facade = dependency_path("rostfrei")?;
-        syn::parse2(quote!(#facade::__private::registry))
-    }
-}
-
-fn dependency_path(package: &str) -> syn::Result<Path> {
-    let found = crate_name(package).map_err(|error| {
-        Error::new(
-            proc_macro2::Span::call_site(),
-            format!("could not resolve the `{package}` dependency: {error}"),
-        )
-    })?;
-
-    found_crate_path(package, found)
-}
-
-fn found_crate_path(package: &str, found: FoundCrate) -> syn::Result<Path> {
-    match found {
-        FoundCrate::Itself if package == "rostfrei" => syn::parse_str("::rostfrei"),
-        FoundCrate::Itself => syn::parse_str("crate"),
-        FoundCrate::Name(name) => syn::parse_str(&format!("::{name}")),
-    }
+pub fn registry_path() -> Path {
+    syn::parse_quote!(crate::__rostfrei_macro_support::__private::registry)
 }
 
 #[derive(Default)]

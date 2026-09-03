@@ -14,3 +14,4 @@ fn derives_bounded_context_descriptor() {
         }
     );
 }
+rostfrei_domain_macros::__install_test_macro_support!();

@@ -271,3 +271,4 @@ async fn processor_rejects_tampered_identity_and_bus_bounds_payloads() -> TestRe
     assert_eq!(error.kind(), CommandBusErrorKind::PayloadTooLarge);
     Ok(())
 }
+rostfrei::install_macro_support!();

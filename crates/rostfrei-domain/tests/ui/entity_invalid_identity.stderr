@@ -4,7 +4,7 @@ error[E0046]: not all trait items implemented, missing: `identity`
 19 | impl domain::EntityDefinition for MissingAccessor {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing `identity` in implementation
    |
-   = help: implement the missing item: `fn identity(&self) -> &<Self as EntityDefinition>::Identity { todo!() }`
+   = help: implement the missing item: `fn identity(&self) -> &<Self as domain::EntityDefinition>::Identity { todo!() }`
 
 error[E0308]: mismatched types
   --> tests/ui/entity_invalid_identity.rs:46:9

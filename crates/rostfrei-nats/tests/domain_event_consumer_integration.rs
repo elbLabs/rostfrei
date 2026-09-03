@@ -1033,3 +1033,4 @@ fn unique_suffix() -> TestResult<String> {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     Ok(format!("{}-{nanos}", std::process::id()))
 }
+rostfrei::install_macro_support!();

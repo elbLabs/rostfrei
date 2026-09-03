@@ -18,3 +18,4 @@ fn main() {
     assert_eq!(descriptor.id, DecisionId("eligible"));
     assert!(Fleet.eligible());
 }
+rostfrei_domain_macros::__install_test_macro_support!();

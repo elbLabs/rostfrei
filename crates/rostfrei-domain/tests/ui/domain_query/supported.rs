@@ -18,3 +18,4 @@ fn main() {
     assert_eq!(descriptor.id, QueryId("available"));
     assert!(Catalog.available(1));
 }
+rostfrei_domain_macros::__install_test_macro_support!();

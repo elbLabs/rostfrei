@@ -1,15 +1,15 @@
-error[E0277]: the trait bound `PlainRoot: EntityDefinition` is not satisfied
+error[E0277]: the trait bound `PlainRoot: domain::EntityDefinition` is not satisfied
   --> tests/ui/aggregate_invalid_root.rs:15:17
    |
 15 |     type Root = PlainRoot;
    |                 ^^^^^^^^^ unsatisfied trait bound
    |
-help: the trait `EntityDefinition` is not implemented for `PlainRoot`
+help: the trait `domain::EntityDefinition` is not implemented for `PlainRoot`
   --> tests/ui/aggregate_invalid_root.rs:7:1
    |
  7 | struct PlainRoot;
    | ^^^^^^^^^^^^^^^^
-help: the trait `EntityDefinition` is implemented for `OtherRoot`
+help: the trait `domain::EntityDefinition` is implemented for `OtherRoot`
   --> tests/ui/aggregate_invalid_root.rs:28:1
    |
 28 | impl domain::EntityDefinition for OtherRoot {
@@ -37,18 +37,18 @@ note: required by a bound in `domain::AggregateDefinition::Root`
    |     type Root: EntityDefinition<Owner = Self>;
    |                                 ^^^^^^^^^^^^ required by this bound in `AggregateDefinition::Root`
 
-error[E0277]: the trait bound `PlainRoot: EntityType` is not satisfied
+error[E0277]: the trait bound `PlainRoot: domain::EntityType` is not satisfied
   --> tests/ui/aggregate_invalid_root.rs:9:10
    |
  9 | #[derive(Aggregate)]
    |          ^^^^^^^^^ unsatisfied trait bound
    |
-help: the trait `EntityType` is not implemented for `PlainRoot`
+help: the trait `domain::EntityType` is not implemented for `PlainRoot`
   --> tests/ui/aggregate_invalid_root.rs:7:1
    |
  7 | struct PlainRoot;
    | ^^^^^^^^^^^^^^^^
-help: the trait `EntityType` is implemented for `OtherRoot`
+help: the trait `domain::EntityType` is implemented for `OtherRoot`
   --> tests/ui/aggregate_invalid_root.rs:22:10
    |
 22 | #[derive(Entity)]

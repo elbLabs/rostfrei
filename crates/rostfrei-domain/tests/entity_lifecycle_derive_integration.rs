@@ -98,3 +98,4 @@ fn derives_owner_independent_state_metadata_without_model_projection() {
     assert!(model["entities"][0].get("lifecycle").is_none());
     assert!(model["actions"].as_array().unwrap().is_empty());
 }
+rostfrei_domain_macros::__install_test_macro_support!();
