@@ -79,6 +79,15 @@ struct HttpState {
     config: HttpConfig,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandSubmissionResponse {
+    #[serde(flatten)]
+    operation: OperationSnapshot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idempotency_key: Option<String>,
+}
+
 pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
     let control_routes = Router::new()
         .route("/catalog", get(get_catalog))
@@ -426,10 +435,14 @@ async fn submit_command(
     match result {
         Ok(operation) => {
             let location = format!("/operations/{}", operation.operation_id);
+            let submission = CommandSubmissionResponse {
+                operation,
+                idempotency_key: idempotency_key.map(str::to_owned),
+            };
             (
                 StatusCode::ACCEPTED,
                 [(header::LOCATION, location)],
-                Json(operation),
+                Json(submission),
             )
                 .into_response()
         }

@@ -967,6 +967,65 @@ async fn transported_http_commands_require_an_idempotency_key() {
     }
 }
 
+async fn accepted_submission(app: &axum::Router, request: Request<Body>) -> Value {
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    json_body(response).await
+}
+
+#[tokio::test]
+async fn submissions_echo_idempotency_keys_without_retaining_them() {
+    let (tracer, _, _) = fixture().await;
+    let app = app(tracer);
+
+    let simulation = accepted_submission(
+        &app,
+        simulation_request("idempotency-simulation", "bike-42"),
+    )
+    .await;
+    assert_eq!(simulation["operationId"], "idempotency-simulation");
+    assert_eq!(simulation["idempotencyKey"], "idempotency-simulation");
+
+    let test = accepted_submission(
+        &app,
+        command_request("test", "idempotency-test", "bike-42", API_TOKEN),
+    )
+    .await;
+    assert_eq!(test["idempotencyKey"], "idempotency-test");
+    assert_ne!(test["operationId"], test["idempotencyKey"]);
+    let test_id = test["operationId"].as_str().unwrap().to_owned();
+    assert!(test_id.starts_with("test:"));
+
+    let repeated = accepted_submission(
+        &app,
+        command_request("test", "idempotency-test", "bike-42", API_TOKEN),
+    )
+    .await;
+    assert_eq!(repeated["operationId"], test_id);
+    assert_eq!(repeated["idempotencyKey"], "idempotency-test");
+
+    let completed = terminal_operation(&app, &test_id, API_TOKEN).await;
+    assert!(completed.get("idempotencyKey").is_none());
+
+    let dispatch = accepted_submission(
+        &app,
+        command_request(
+            "dispatch",
+            "idempotency-dispatch",
+            "bike-42",
+            DISPATCH_TOKEN,
+        ),
+    )
+    .await;
+    assert_eq!(dispatch["idempotencyKey"], "idempotency-dispatch");
+    assert_ne!(dispatch["operationId"], dispatch["idempotencyKey"]);
+    let dispatch_id = dispatch["operationId"].as_str().unwrap().to_owned();
+    assert!(dispatch_id.starts_with("dispatch:"));
+
+    let completed = terminal_operation(&app, &dispatch_id, DISPATCH_TOKEN).await;
+    assert!(completed.get("idempotencyKey").is_none());
+}
+
 #[tokio::test]
 async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated() {
     let (tracer, test_store, production_store) = fixture().await;
