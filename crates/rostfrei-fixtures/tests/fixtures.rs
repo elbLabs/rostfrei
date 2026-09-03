@@ -127,40 +127,31 @@ fn fixture(messages: Vec<Value>) -> Result<Fixture, serde_json::Error> {
     }))
 }
 
-fn command(message_id: &str, correlation_id: &str, aggregate_type: &str, id: &str) -> Value {
-    json!({
-        "kind": "command",
-        "messageId": message_id,
-        "correlationId": correlation_id,
-        "name": "open-account",
-        "schemaVersion": 1,
-        "aggregate": { "type": aggregate_type, "id": id },
-        "payload": { "amount": 10 },
-    })
-}
-
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn domain_event(
     message_id: &str,
     correlation_id: &str,
-    causation_id: &str,
+    causation_id: Option<&str>,
     aggregate_type: &str,
     id: &str,
     stream_version: u64,
     name: &str,
     payload: Value,
 ) -> Value {
-    json!({
+    let mut event = json!({
         "kind": "domain-event",
         "messageId": message_id,
         "correlationId": correlation_id,
-        "causationId": causation_id,
         "name": name,
         "schemaVersion": 1,
         "aggregate": { "type": aggregate_type, "id": id },
         "streamVersion": stream_version,
         "payload": payload,
-    })
+    });
+    if let (Some(causation_id), Value::Object(fields)) = (causation_id, &mut event) {
+        fields.insert("causationId".to_owned(), Value::from(causation_id));
+    }
+    event
 }
 
 fn stream_id(aggregate_type: &str, id: &str) -> TestResult<StreamId> {
@@ -171,14 +162,13 @@ fn stream_id(aggregate_type: &str, id: &str) -> TestResult<StreamId> {
 }
 
 #[tokio::test]
-async fn persists_only_domain_events_and_replays_them_through_the_typed_aggregate() -> TestResult {
+async fn persists_and_replays_the_domain_event_series_through_the_typed_aggregate() -> TestResult {
     REPLAY_APPLY_COUNT.store(0, Ordering::SeqCst);
     let fixture = fixture(vec![
-        command("command-1", "correlation-1", "replay-account", "one"),
         domain_event(
             "event-1",
             "correlation-1",
-            "command-1",
+            None,
             "replay-account",
             "one",
             1,
@@ -188,29 +178,13 @@ async fn persists_only_domain_events_and_replays_them_through_the_typed_aggregat
         domain_event(
             "event-2",
             "correlation-1",
-            "event-1",
+            Some("event-1"),
             "replay-account",
             "one",
             2,
             "account-credited",
             json!({ "amount": 5 }),
         ),
-        json!({
-            "kind": "integration-event",
-            "messageId": "integration-1",
-            "correlationId": "correlation-1",
-            "causationId": "event-2",
-            "name": "account-announced",
-            "schemaVersion": 1,
-            "payload": { "accountId": "one" },
-        }),
-        json!({
-            "kind": "command-outcome",
-            "messageId": "outcome-1",
-            "correlationId": "correlation-1",
-            "causationId": "command-1",
-            "outcome": { "status": "accepted" },
-        }),
     ])?;
     let store = InMemoryEventStore::new();
     let mut engine = MessageSeriesEngine::new();
@@ -226,13 +200,15 @@ async fn persists_only_domain_events_and_replays_them_through_the_typed_aggregat
         events.first().map(RecordedEvent::event_type),
         Some("account-opened")
     );
+    assert_eq!(
+        events.first().map(|event| event.operation_id().as_str()),
+        Some("fixture:f95f043ac9a0a646bdd3fb8c73dd037069ea98075941ac0d2f790a202f8bbde3")
+    );
     assert!(
         events
             .first()
             .and_then(RecordedEvent::causation_id)
-            .is_some_and(|id| {
-                id.as_str().starts_with("fixture-message:") && id.as_str() != "command-1"
-            })
+            .is_none()
     );
     assert_eq!(
         events
@@ -244,29 +220,26 @@ async fn persists_only_domain_events_and_replays_them_through_the_typed_aggregat
     assert_eq!(REPLAY_APPLY_COUNT.load(Ordering::SeqCst), 2);
     assert_eq!(report.fixture_id(), fixture.id());
     assert_eq!(report.fixture_revision(), fixture.revision());
-    assert_eq!(report.total_provenance_message_count(), 5);
+    assert_eq!(report.fixture_domain_event_count(), 2);
     assert_eq!(report.applied_domain_event_count(), 2);
     assert_eq!(report.reused_domain_event_count(), 0);
     assert_eq!(report.fixture(), &fixture);
-    assert_eq!(report.fixture().messages().len(), 5);
+    assert_eq!(report.fixture().messages().len(), 2);
     Ok(())
 }
 
 #[tokio::test]
 async fn a_second_application_is_an_exact_prefix_reuse() -> TestResult {
-    let fixture = fixture(vec![
-        command("command-1", "correlation-1", "account", "one"),
-        domain_event(
-            "event-1",
-            "correlation-1",
-            "command-1",
-            "account",
-            "one",
-            1,
-            "account-opened",
-            json!({ "amount": 10 }),
-        ),
-    ])?;
+    let fixture = fixture(vec![domain_event(
+        "event-1",
+        "correlation-1",
+        None,
+        "account",
+        "one",
+        1,
+        "account-opened",
+        json!({ "amount": 10 }),
+    )])?;
     let store = InMemoryEventStore::new();
     let mut engine = MessageSeriesEngine::new();
     engine.register_json::<Account>()?;
@@ -285,19 +258,16 @@ async fn a_second_application_is_an_exact_prefix_reuse() -> TestResult {
 
 #[tokio::test]
 async fn a_fixture_remains_applied_after_business_history_extends_it() -> TestResult {
-    let fixture = fixture(vec![
-        command("command-1", "correlation-1", "account", "one"),
-        domain_event(
-            "event-1",
-            "correlation-1",
-            "command-1",
-            "account",
-            "one",
-            1,
-            "account-opened",
-            json!({ "amount": 10 }),
-        ),
-    ])?;
+    let fixture = fixture(vec![domain_event(
+        "event-1",
+        "correlation-1",
+        None,
+        "account",
+        "one",
+        1,
+        "account-opened",
+        json!({ "amount": 10 }),
+    )])?;
     let store = InMemoryEventStore::new();
     let mut engine = MessageSeriesEngine::new();
     engine.register_json::<Account>()?;
@@ -335,7 +305,7 @@ async fn a_root_domain_event_needs_no_synthetic_command() -> TestResult {
     let report = engine.apply(&store, &fixture).await?;
     let events = store.load(&stream_id("account", "one")?).await?;
 
-    assert_eq!(report.total_provenance_message_count(), 1);
+    assert_eq!(report.fixture_domain_event_count(), 1);
     assert_eq!(report.applied_domain_event_count(), 1);
     assert_eq!(events.len(), 1);
     assert!(
@@ -351,7 +321,7 @@ fn rejects_unresolved_cycles_cross_correlation_and_parent_after_child() {
     let unresolved = fixture(vec![domain_event(
         "event-1",
         "correlation-1",
-        "missing-command",
+        Some("missing-event"),
         "account",
         "one",
         1,
@@ -364,65 +334,7 @@ fn rejects_unresolved_cycles_cross_correlation_and_parent_after_child() {
         domain_event(
             "event-1",
             "correlation-1",
-            "command-1",
-            "account",
-            "one",
-            1,
-            "account-opened",
-            json!({ "amount": 10 }),
-        ),
-        command("command-1", "correlation-1", "account", "one"),
-    ]);
-    assert!(parent_after_child.is_err());
-
-    let cycle = fixture(vec![
-        json!({
-            "kind": "command",
-            "messageId": "command-1",
-            "correlationId": "correlation-1",
-            "causationId": "command-2",
-            "name": "one",
-            "schemaVersion": 1,
-            "aggregate": { "type": "account", "id": "one" },
-            "payload": {},
-        }),
-        json!({
-            "kind": "command",
-            "messageId": "command-2",
-            "correlationId": "correlation-1",
-            "causationId": "command-1",
-            "name": "two",
-            "schemaVersion": 1,
-            "aggregate": { "type": "account", "id": "one" },
-            "payload": {},
-        }),
-    ]);
-    assert!(cycle.is_err());
-
-    let cross_correlation = fixture(vec![
-        command("command-1", "correlation-1", "account", "one"),
-        domain_event(
-            "event-1",
-            "correlation-2",
-            "command-1",
-            "account",
-            "one",
-            1,
-            "account-opened",
-            json!({ "amount": 10 }),
-        ),
-    ]);
-    assert!(cross_correlation.is_err());
-}
-
-#[test]
-fn rejects_noncontiguous_versions_and_invalid_outcome_edges() {
-    let versions = fixture(vec![
-        command("command-1", "correlation-1", "account", "one"),
-        domain_event(
-            "event-1",
-            "correlation-1",
-            "command-1",
+            Some("event-2"),
             "account",
             "one",
             1,
@@ -432,7 +344,82 @@ fn rejects_noncontiguous_versions_and_invalid_outcome_edges() {
         domain_event(
             "event-2",
             "correlation-1",
+            None,
+            "account",
+            "one",
+            2,
+            "account-credited",
+            json!({ "amount": 1 }),
+        ),
+    ]);
+    assert!(parent_after_child.is_err());
+
+    let cycle = fixture(vec![
+        domain_event(
             "event-1",
+            "correlation-1",
+            Some("event-2"),
+            "account",
+            "one",
+            1,
+            "account-opened",
+            json!({ "amount": 10 }),
+        ),
+        domain_event(
+            "event-2",
+            "correlation-1",
+            Some("event-1"),
+            "account",
+            "one",
+            2,
+            "account-credited",
+            json!({ "amount": 1 }),
+        ),
+    ]);
+    assert!(cycle.is_err());
+
+    let cross_correlation = fixture(vec![
+        domain_event(
+            "event-1",
+            "correlation-1",
+            None,
+            "account",
+            "one",
+            1,
+            "account-opened",
+            json!({ "amount": 10 }),
+        ),
+        domain_event(
+            "event-2",
+            "correlation-2",
+            Some("event-1"),
+            "account",
+            "one",
+            2,
+            "account-credited",
+            json!({ "amount": 1 }),
+        ),
+    ]);
+    assert!(cross_correlation.is_err());
+}
+
+#[test]
+fn rejects_noncontiguous_versions_and_non_domain_messages() {
+    let versions = fixture(vec![
+        domain_event(
+            "event-1",
+            "correlation-1",
+            None,
+            "account",
+            "one",
+            1,
+            "account-opened",
+            json!({ "amount": 10 }),
+        ),
+        domain_event(
+            "event-2",
+            "correlation-1",
+            Some("event-1"),
             "account",
             "one",
             3,
@@ -442,72 +429,39 @@ fn rejects_noncontiguous_versions_and_invalid_outcome_edges() {
     ]);
     assert!(versions.is_err());
 
-    let outcome_parent = fixture(vec![
-        command("command-1", "correlation-1", "account", "one"),
-        domain_event(
+    for kind in ["command", "command-outcome", "integration-event"] {
+        let mut non_domain_message = domain_event(
             "event-1",
             "correlation-1",
-            "command-1",
+            None,
             "account",
             "one",
             1,
             "account-opened",
             json!({ "amount": 10 }),
-        ),
-        json!({
-            "kind": "command-outcome",
-            "messageId": "outcome-1",
-            "correlationId": "correlation-1",
-            "causationId": "event-1",
-            "outcome": { "status": "accepted" },
-        }),
-    ]);
-    assert!(outcome_parent.is_err());
-
-    let duplicate_outcome = fixture(vec![
-        command("command-1", "correlation-1", "account", "one"),
-        json!({
-            "kind": "command-outcome",
-            "messageId": "outcome-1",
-            "correlationId": "correlation-1",
-            "causationId": "command-1",
-            "outcome": { "status": "accepted" },
-        }),
-        json!({
-            "kind": "command-outcome",
-            "messageId": "outcome-2",
-            "correlationId": "correlation-1",
-            "causationId": "command-1",
-            "outcome": { "status": "accepted" },
-        }),
-    ]);
-    assert!(duplicate_outcome.is_err());
+        );
+        non_domain_message["kind"] = Value::from(kind);
+        assert!(fixture(vec![non_domain_message]).is_err());
+    }
 }
 
 #[tokio::test]
 async fn unknown_codec_fails_before_any_stream_is_written() -> TestResult {
     let fixture = fixture(vec![
-        command("known-command", "known-correlation", "account", "known"),
         domain_event(
             "known-event",
             "known-correlation",
-            "known-command",
+            None,
             "account",
             "known",
             1,
             "account-opened",
             json!({ "amount": 1 }),
         ),
-        command(
-            "unknown-command",
-            "unknown-correlation",
-            "unknown-account",
-            "unknown",
-        ),
         domain_event(
             "unknown-event",
             "unknown-correlation",
-            "unknown-command",
+            None,
             "unknown-account",
             "unknown",
             1,
@@ -541,26 +495,6 @@ async fn unknown_codec_fails_before_any_stream_is_written() -> TestResult {
 }
 
 #[tokio::test]
-async fn a_command_only_aggregate_requires_a_registered_codec() -> TestResult {
-    let fixture = fixture(vec![command(
-        "unknown-command",
-        "unknown-correlation",
-        "unknown-account",
-        "unknown",
-    )])?;
-    let store = InMemoryEventStore::new();
-    let mut engine = MessageSeriesEngine::new();
-    engine.register_json::<Account>()?;
-
-    assert!(matches!(
-        engine.apply(&store, &fixture).await,
-        Err(FixtureApplyError::UnknownAggregateCodec { aggregate_type })
-            if aggregate_type.as_str() == "unknown-account"
-    ));
-    Ok(())
-}
-
-#[tokio::test]
 async fn malformed_and_wrong_typed_events_fail_before_writes() -> TestResult {
     for (name, schema_version, payload, expected_kind) in [
         (
@@ -585,7 +519,7 @@ async fn malformed_and_wrong_typed_events_fail_before_writes() -> TestResult {
         let mut event = domain_event(
             "event-1",
             "correlation-1",
-            "command-1",
+            None,
             "account",
             "one",
             1,
@@ -595,10 +529,7 @@ async fn malformed_and_wrong_typed_events_fail_before_writes() -> TestResult {
         if let Value::Object(fields) = &mut event {
             fields.insert("schemaVersion".to_owned(), Value::from(schema_version));
         }
-        let fixture = fixture(vec![
-            command("command-1", "correlation-1", "account", "one"),
-            event,
-        ])?;
+        let fixture = fixture(vec![event])?;
         let store = InMemoryEventStore::new();
         let mut engine = MessageSeriesEngine::new();
         engine.register_json::<Account>()?;
@@ -620,22 +551,20 @@ async fn a_conflicting_prefix_prevents_new_writes_to_every_stream() -> TestResul
     let first_stream = stream_id("account", "a")?;
     seed_conflicting_event(&store, &first_stream).await?;
     let fixture = fixture(vec![
-        command("command-a", "correlation-a", "account", "a"),
         domain_event(
             "event-a",
             "correlation-a",
-            "command-a",
+            None,
             "account",
             "a",
             1,
             "account-opened",
             json!({ "amount": 10 }),
         ),
-        command("command-b", "correlation-b", "account", "b"),
         domain_event(
             "event-b",
             "correlation-b",
-            "command-b",
+            None,
             "account",
             "b",
             1,
@@ -660,22 +589,20 @@ async fn a_conflicting_prefix_prevents_new_writes_to_every_stream() -> TestResul
 #[tokio::test]
 async fn applies_independent_contiguous_plans_to_multiple_streams() -> TestResult {
     let fixture = fixture(vec![
-        command("command-a", "correlation-a", "account", "a"),
         domain_event(
             "event-a",
             "correlation-a",
-            "command-a",
+            None,
             "account",
             "a",
             1,
             "account-opened",
             json!({ "amount": 10 }),
         ),
-        command("command-b", "correlation-b", "account", "b"),
         domain_event(
             "event-b",
             "correlation-b",
-            "command-b",
+            None,
             "account",
             "b",
             1,
@@ -698,11 +625,10 @@ async fn applies_independent_contiguous_plans_to_multiple_streams() -> TestResul
 #[tokio::test]
 async fn appends_cross_stream_causation_in_authored_order() -> TestResult {
     let fixture = fixture(vec![
-        command("command-z", "correlation-1", "account", "z"),
         domain_event(
             "event-z",
             "correlation-1",
-            "command-z",
+            None,
             "account",
             "z",
             1,
@@ -712,7 +638,7 @@ async fn appends_cross_stream_causation_in_authored_order() -> TestResult {
         domain_event(
             "event-a",
             "correlation-1",
-            "event-z",
+            Some("event-z"),
             "account",
             "a",
             1,
@@ -732,19 +658,16 @@ async fn appends_cross_stream_causation_in_authored_order() -> TestResult {
 
 #[test]
 fn deserialization_is_strict_and_round_trips_camel_case_documents() -> TestResult {
-    let fixture = fixture(vec![
-        command("command-1", "correlation-1", "account", "one"),
-        domain_event(
-            "event-1",
-            "correlation-1",
-            "command-1",
-            "account",
-            "one",
-            1,
-            "account-opened",
-            json!({ "amount": 10 }),
-        ),
-    ])?;
+    let fixture = fixture(vec![domain_event(
+        "event-1",
+        "correlation-1",
+        None,
+        "account",
+        "one",
+        1,
+        "account-opened",
+        json!({ "amount": 10 }),
+    )])?;
     let value = serde_json::to_value(&fixture)?;
     let round_trip = serde_json::from_value::<Fixture>(value)?;
     assert_eq!(round_trip, fixture);

@@ -1,14 +1,13 @@
-//! Typed, deterministic event-store fixtures with complete message provenance.
+//! Typed, deterministic event-store fixtures expressed as domain-event series.
 //!
 //! A [`Fixture`] retains the authored [`MessageSeries`] as its canonical
-//! artifact. [`MessageSeriesEngine::apply`] validates the entire artifact but
-//! persists only domain-event nodes. Each domain-event node is appended as its
-//! own one-event atomic batch. All streams are preflighted before the first
-//! append, but applying a multi-stream fixture is not globally atomic. The
-//! deterministic plans make an interrupted application safe to retry.
+//! artifact. [`MessageSeriesEngine::apply`] validates and persists each domain
+//! event as its own one-event atomic batch. All streams are preflighted before
+//! the first append, but applying a multi-stream fixture is not globally atomic.
+//! The deterministic plans make an interrupted application safe to retry.
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     fmt,
     marker::PhantomData,
     sync::Arc,
@@ -21,8 +20,8 @@ use rostfrei_core::{
     OperationId, RecordedEvent, StreamId, StreamVersion,
 };
 use rostfrei_messaging_core::{
-    CausationId, ContractError, CorrelationId, MAX_MESSAGE_PAYLOAD_BYTES, MessageId, MessageSeries,
-    MessageSeriesNode, MessageSeriesTopologyIssue, SchemaVersion,
+    CausationId, ContractError, CorrelationId, MessageId, MessageSeries, MessageSeriesNode,
+    MessageSeriesTopologyIssue, SchemaVersion,
 };
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer, de::Error as _, ser::SerializeStruct,
@@ -35,7 +34,7 @@ pub const FIXTURE_SCHEMA_VERSION: u32 = 1;
 
 const FIXTURE_OPERATION_ID_PREFIX: &str = "fixture:";
 
-/// A validated aggregate stream address used by fixture messages.
+/// A validated aggregate stream address used by fixture domain events.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FixtureAggregate {
     aggregate_type: AggregateType,
@@ -96,109 +95,87 @@ impl<'de> Deserialize<'de> for FixtureAggregate {
     }
 }
 
-/// A message retained by a fixture's causal series.
-///
-/// Commands and domain events may be roots or causally linked messages.
-/// Outcomes and integration events require an explicit parent; applying a
-/// fixture never synthesizes or executes a command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum FixtureDomainEventKind {
+    DomainEvent,
+}
+
+/// A domain event retained by a fixture's causal series.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(
-    deny_unknown_fields,
-    tag = "kind",
-    rename_all = "kebab-case",
-    rename_all_fields = "camelCase"
-)]
-pub enum FixtureMessage {
-    Command {
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct FixtureDomainEvent {
+    kind: FixtureDomainEventKind,
+    message_id: MessageId,
+    correlation_id: CorrelationId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    causation_id: Option<MessageId>,
+    name: String,
+    schema_version: SchemaVersion,
+    aggregate: FixtureAggregate,
+    stream_version: u64,
+    payload: Value,
+}
+
+impl FixtureDomainEvent {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
         message_id: MessageId,
         correlation_id: CorrelationId,
-        #[serde(skip_serializing_if = "Option::is_none")]
         causation_id: Option<MessageId>,
-        name: String,
-        schema_version: SchemaVersion,
-        aggregate: FixtureAggregate,
-        payload: Value,
-    },
-    CommandOutcome {
-        message_id: MessageId,
-        correlation_id: CorrelationId,
-        causation_id: MessageId,
-        outcome: Value,
-    },
-    DomainEvent {
-        message_id: MessageId,
-        correlation_id: CorrelationId,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        causation_id: Option<MessageId>,
-        name: String,
+        name: impl Into<String>,
         schema_version: SchemaVersion,
         aggregate: FixtureAggregate,
         stream_version: u64,
         payload: Value,
-    },
-    IntegrationEvent {
-        message_id: MessageId,
-        correlation_id: CorrelationId,
-        causation_id: MessageId,
-        name: String,
-        schema_version: SchemaVersion,
-        payload: Value,
-    },
-}
-
-impl FixtureMessage {
-    pub const fn is_domain_event(&self) -> bool {
-        matches!(self, Self::DomainEvent { .. })
+    ) -> Self {
+        Self {
+            kind: FixtureDomainEventKind::DomainEvent,
+            message_id,
+            correlation_id,
+            causation_id,
+            name: name.into(),
+            schema_version,
+            aggregate,
+            stream_version,
+            payload,
+        }
     }
 
     pub const fn message_id(&self) -> &MessageId {
-        match self {
-            Self::Command { message_id, .. }
-            | Self::CommandOutcome { message_id, .. }
-            | Self::DomainEvent { message_id, .. }
-            | Self::IntegrationEvent { message_id, .. } => message_id,
-        }
+        &self.message_id
     }
 
     pub const fn correlation_id(&self) -> &CorrelationId {
-        match self {
-            Self::Command { correlation_id, .. }
-            | Self::CommandOutcome { correlation_id, .. }
-            | Self::DomainEvent { correlation_id, .. }
-            | Self::IntegrationEvent { correlation_id, .. } => correlation_id,
-        }
+        &self.correlation_id
     }
 
     pub const fn causation_id(&self) -> Option<&MessageId> {
-        match self {
-            Self::Command { causation_id, .. } | Self::DomainEvent { causation_id, .. } => {
-                causation_id.as_ref()
-            }
-            Self::CommandOutcome { causation_id, .. }
-            | Self::IntegrationEvent { causation_id, .. } => Some(causation_id),
-        }
+        self.causation_id.as_ref()
     }
 
-    const fn payload(&self) -> &Value {
-        match self {
-            Self::Command { payload, .. }
-            | Self::DomainEvent { payload, .. }
-            | Self::IntegrationEvent { payload, .. } => payload,
-            Self::CommandOutcome { outcome, .. } => outcome,
-        }
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
-    fn name(&self) -> Option<&str> {
-        match self {
-            Self::Command { name, .. }
-            | Self::DomainEvent { name, .. }
-            | Self::IntegrationEvent { name, .. } => Some(name),
-            Self::CommandOutcome { .. } => None,
-        }
+    pub const fn schema_version(&self) -> SchemaVersion {
+        self.schema_version
+    }
+
+    pub const fn aggregate(&self) -> &FixtureAggregate {
+        &self.aggregate
+    }
+
+    pub const fn stream_version(&self) -> u64 {
+        self.stream_version
+    }
+
+    pub const fn payload(&self) -> &Value {
+        &self.payload
     }
 }
 
-impl MessageSeriesNode for FixtureMessage {
+impl MessageSeriesNode for FixtureDomainEvent {
     type CorrelationId = CorrelationId;
     type MessageId = MessageId;
 
@@ -215,21 +192,21 @@ impl MessageSeriesNode for FixtureMessage {
     }
 }
 
-/// A named and revisioned, immutable message-series fixture.
+/// A named and revisioned, immutable domain-event series fixture.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Fixture {
     schema_version: u32,
     id: MessageId,
     revision: MessageId,
-    messages: MessageSeries<FixtureMessage>,
+    messages: MessageSeries<FixtureDomainEvent>,
 }
 
 impl Fixture {
     pub fn new(
         id: impl Into<String>,
         revision: impl Into<String>,
-        messages: MessageSeries<FixtureMessage>,
+        messages: MessageSeries<FixtureDomainEvent>,
     ) -> Result<Self, FixtureValidationError> {
         let id = MessageId::new(id).map_err(|source| FixtureValidationError::InvalidIdentity {
             field: "id",
@@ -265,7 +242,7 @@ impl Fixture {
         self.revision.as_str()
     }
 
-    pub const fn messages(&self) -> &MessageSeries<FixtureMessage> {
+    pub const fn messages(&self) -> &MessageSeries<FixtureDomainEvent> {
         &self.messages
     }
 
@@ -277,7 +254,6 @@ impl Fixture {
         }
         validate_topology(&self.messages)?;
         validate_parent_order(&self.messages)?;
-        validate_outcomes(&self.messages)?;
         validate_stream_versions(&self.messages)?;
         for message in self.messages.iter() {
             validate_message(message)?;
@@ -297,7 +273,7 @@ impl<'de> Deserialize<'de> for Fixture {
             schema_version: u32,
             id: String,
             revision: String,
-            messages: MessageSeries<FixtureMessage>,
+            messages: MessageSeries<FixtureDomainEvent>,
         }
 
         let wire = Wire::deserialize(deserializer)?;
@@ -328,10 +304,6 @@ pub enum FixtureValidationError {
     InvalidTopology { message_id: String, reason: String },
     #[error("fixture parent `{parent_id}` must precede child `{child_id}`")]
     ParentMustPrecede { child_id: String, parent_id: String },
-    #[error("command outcome `{outcome_id}` must name a command as its parent")]
-    OutcomeParentNotCommand { outcome_id: String },
-    #[error("command `{command_id}` has more than one outcome")]
-    DuplicateCommandOutcome { command_id: String },
     #[error(
         "domain event `{message_id}` has stream version {actual}; expected contiguous version {expected} for `{stream_id}`"
     )]
@@ -341,12 +313,12 @@ pub enum FixtureValidationError {
         actual: u64,
         expected: u64,
     },
-    #[error("fixture message `{message_id}` is invalid: {reason}")]
+    #[error("fixture domain event `{message_id}` is invalid: {reason}")]
     InvalidMessage { message_id: String, reason: String },
 }
 
 fn validate_topology(
-    messages: &MessageSeries<FixtureMessage>,
+    messages: &MessageSeries<FixtureDomainEvent>,
 ) -> Result<(), FixtureValidationError> {
     let Some(issue) = messages.topology_issues().into_iter().next() else {
         return Ok(());
@@ -355,7 +327,7 @@ fn validate_topology(
         MessageSeriesTopologyIssue::UnresolvedParent { child } => {
             Err(FixtureValidationError::InvalidTopology {
                 message_id: child.message_id().to_string(),
-                reason: "causationId does not resolve to a fixture message".to_owned(),
+                reason: "causationId does not resolve to a fixture domain event".to_owned(),
             })
         }
         MessageSeriesTopologyIssue::CrossCorrelation { child, parent } => {
@@ -390,7 +362,7 @@ fn validate_topology(
 }
 
 fn validate_parent_order(
-    messages: &MessageSeries<FixtureMessage>,
+    messages: &MessageSeries<FixtureDomainEvent>,
 ) -> Result<(), FixtureValidationError> {
     let indexes = messages
         .iter()
@@ -414,57 +386,18 @@ fn validate_parent_order(
     Ok(())
 }
 
-fn validate_outcomes(
-    messages: &MessageSeries<FixtureMessage>,
-) -> Result<(), FixtureValidationError> {
-    let mut commands_with_outcomes = HashSet::new();
-    for message in messages.iter() {
-        let FixtureMessage::CommandOutcome {
-            message_id,
-            causation_id,
-            ..
-        } = message
-        else {
-            continue;
-        };
-        if !messages
-            .get(causation_id)
-            .is_some_and(|parent| matches!(parent, FixtureMessage::Command { .. }))
-        {
-            return Err(FixtureValidationError::OutcomeParentNotCommand {
-                outcome_id: message_id.to_string(),
-            });
-        }
-        if !commands_with_outcomes.insert(causation_id) {
-            return Err(FixtureValidationError::DuplicateCommandOutcome {
-                command_id: causation_id.to_string(),
-            });
-        }
-    }
-    Ok(())
-}
-
 fn validate_stream_versions(
-    messages: &MessageSeries<FixtureMessage>,
+    messages: &MessageSeries<FixtureDomainEvent>,
 ) -> Result<(), FixtureValidationError> {
     let mut expected_versions = BTreeMap::<StreamId, u64>::new();
     for message in messages.iter() {
-        let FixtureMessage::DomainEvent {
-            message_id,
-            aggregate,
-            stream_version,
-            ..
-        } = message
-        else {
-            continue;
-        };
-        let stream_id = aggregate.stream_id();
+        let stream_id = message.aggregate.stream_id();
         let expected = expected_versions.entry(stream_id.clone()).or_insert(1);
-        if stream_version != expected {
+        if message.stream_version != *expected {
             return Err(FixtureValidationError::InvalidStreamVersion {
-                message_id: message_id.to_string(),
+                message_id: message.message_id.to_string(),
                 stream_id,
-                actual: *stream_version,
+                actual: message.stream_version,
                 expected: *expected,
             });
         }
@@ -472,27 +405,26 @@ fn validate_stream_versions(
             expected
                 .checked_add(1)
                 .ok_or_else(|| FixtureValidationError::InvalidMessage {
-                    message_id: message_id.to_string(),
+                    message_id: message.message_id.to_string(),
                     reason: "stream version space is exhausted".to_owned(),
                 })?;
     }
     Ok(())
 }
 
-fn validate_message(message: &FixtureMessage) -> Result<(), FixtureValidationError> {
-    if let Some(name) = message.name() {
-        let invalid = name.is_empty()
-            || name.len() > MAX_EVENT_TYPE_LEN
-            || name.trim() != name
-            || name.chars().any(char::is_control);
-        if invalid {
-            return Err(FixtureValidationError::InvalidMessage {
-                message_id: message.message_id().to_string(),
-                reason: format!(
-                    "name must be 1 to {MAX_EVENT_TYPE_LEN} bytes without surrounding whitespace or control characters"
-                ),
-            });
-        }
+fn validate_message(message: &FixtureDomainEvent) -> Result<(), FixtureValidationError> {
+    let name = message.name();
+    let invalid = name.is_empty()
+        || name.len() > MAX_EVENT_TYPE_LEN
+        || name.trim() != name
+        || name.chars().any(char::is_control);
+    if invalid {
+        return Err(FixtureValidationError::InvalidMessage {
+            message_id: message.message_id().to_string(),
+            reason: format!(
+                "name must be 1 to {MAX_EVENT_TYPE_LEN} bytes without surrounding whitespace or control characters"
+            ),
+        });
     }
 
     let payload = canonical_json_bytes(message.payload()).map_err(|reason| {
@@ -501,15 +433,10 @@ fn validate_message(message: &FixtureMessage) -> Result<(), FixtureValidationErr
             reason,
         }
     })?;
-    let maximum = if message.is_domain_event() {
-        MAX_EVENT_PAYLOAD_LEN
-    } else {
-        MAX_MESSAGE_PAYLOAD_BYTES
-    };
-    if payload.len() > maximum {
+    if payload.len() > MAX_EVENT_PAYLOAD_LEN {
         return Err(FixtureValidationError::InvalidMessage {
             message_id: message.message_id().to_string(),
-            reason: format!("payload exceeds its {maximum}-byte limit"),
+            reason: format!("payload exceeds its {MAX_EVENT_PAYLOAD_LEN}-byte limit"),
         });
     }
     Ok(())
@@ -546,11 +473,11 @@ impl MessageSeriesEngine {
     }
 
     fn validate_aggregate_types(&self, fixture: &Fixture) -> Result<(), FixtureApplyError> {
-        for aggregate_type in fixture.messages.iter().filter_map(|message| match message {
-            FixtureMessage::Command { aggregate, .. }
-            | FixtureMessage::DomainEvent { aggregate, .. } => Some(aggregate.aggregate_type()),
-            FixtureMessage::CommandOutcome { .. } | FixtureMessage::IntegrationEvent { .. } => None,
-        }) {
+        for aggregate_type in fixture
+            .messages
+            .iter()
+            .map(|message| message.aggregate.aggregate_type())
+        {
             if !self.codecs.contains_key(aggregate_type) {
                 return Err(FixtureApplyError::UnknownAggregateCodec {
                     aggregate_type: aggregate_type.clone(),
@@ -659,7 +586,7 @@ impl MessageSeriesEngine {
         Ok(FixtureApplyReport {
             fixture_id: fixture.id.clone(),
             fixture_revision: fixture.revision.clone(),
-            total_provenance_message_count: fixture.messages.len(),
+            fixture_domain_event_count: fixture.messages.len(),
             applied_domain_event_count: applied,
             reused_domain_event_count: reused,
             fixture: fixture.clone(),
@@ -703,8 +630,8 @@ pub enum FixtureApplyError {
     },
     #[error("fixture identity construction failed: {source}")]
     Identity { source: IdentityError },
-    #[error("fixture message identity construction failed: {source}")]
-    MessageIdentity { source: ContractError },
+    #[error("fixture domain-event identity construction failed: {source}")]
+    EventIdentity { source: ContractError },
     #[error("fixture event envelope is invalid: {source}")]
     Envelope { source: EnvelopeError },
     #[error("fixture canonicalization failed: {message}")]
@@ -730,12 +657,12 @@ pub enum FixtureApplyError {
     EventCountOverflow,
 }
 
-/// The outcome of applying a fixture, including the unchanged provenance artifact.
+/// The outcome of applying a fixture, including the unchanged domain-event series.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FixtureApplyReport {
     fixture_id: MessageId,
     fixture_revision: MessageId,
-    total_provenance_message_count: usize,
+    fixture_domain_event_count: usize,
     applied_domain_event_count: usize,
     reused_domain_event_count: usize,
     fixture: Fixture,
@@ -783,8 +710,8 @@ impl FixtureApplyReport {
         self.fixture_revision.as_str()
     }
 
-    pub const fn total_provenance_message_count(&self) -> usize {
-        self.total_provenance_message_count
+    pub const fn fixture_domain_event_count(&self) -> usize {
+        self.fixture_domain_event_count
     }
 
     pub const fn applied_domain_event_count(&self) -> usize {
@@ -857,7 +784,7 @@ struct FingerprintDocument<'a> {
     format: &'static str,
     fixture_id: &'a MessageId,
     fixture_revision: &'a MessageId,
-    message: &'a FixtureMessage,
+    message: &'a FixtureDomainEvent,
 }
 
 fn build_plan(fixture: &Fixture) -> Result<Vec<PlannedEvent>, FixtureApplyError> {
@@ -880,76 +807,61 @@ fn build_plan(fixture: &Fixture) -> Result<Vec<PlannedEvent>, FixtureApplyError>
             })
             .transpose()?;
 
-        let physical_id = if let FixtureMessage::DomainEvent {
-            correlation_id,
-            name,
-            schema_version,
-            aggregate,
-            stream_version,
+        let stream_id = message.aggregate.stream_id();
+        let operation_id = OperationId::new(format!("{FIXTURE_OPERATION_ID_PREFIX}{fingerprint}"))
+            .map_err(|source| FixtureApplyError::Identity { source })?;
+        let mut metadata = ExecutionMetadata::new(stream_id.clone(), operation_id, fingerprint)
+            .with_correlation_id(message.correlation_id.clone());
+        if let Some(causation_id) = parent_physical_id {
+            metadata = metadata.with_causation_id(causation_id);
+        }
+        let event_id = metadata.event_id(0);
+        let payload = canonical_json_bytes(&message.payload)
+            .map_err(|message| FixtureApplyError::Canonicalization { message })?;
+        let new_event = NewEvent::new(
+            event_id.clone(),
+            &message.name,
+            message.schema_version.get(),
+            payload.clone(),
+        )
+        .map_err(|source| FixtureApplyError::Envelope { source })?;
+        let mut batch = EventBatch::new(
+            metadata.commit_id().clone(),
+            metadata.operation_id().clone(),
+            metadata.operation_fingerprint(),
+            vec![new_event],
+        )
+        .map_err(|source| FixtureApplyError::Envelope { source })?
+        .with_correlation_id(message.correlation_id.clone());
+        let mut recorded = RecordedEvent::new(
+            stream_id.clone(),
+            StreamVersion::new(message.stream_version),
+            event_id.clone(),
+            metadata.commit_id().clone(),
+            metadata.operation_id().clone(),
+            metadata.operation_fingerprint(),
+            &message.name,
+            message.schema_version.get(),
             payload,
-            ..
-        } = message
-        {
-            let stream_id = aggregate.stream_id();
-            let operation_id =
-                OperationId::new(format!("{FIXTURE_OPERATION_ID_PREFIX}{fingerprint}"))
-                    .map_err(|source| FixtureApplyError::Identity { source })?;
-            let mut metadata = ExecutionMetadata::new(stream_id.clone(), operation_id, fingerprint)
-                .with_correlation_id(correlation_id.clone());
-            if let Some(causation_id) = parent_physical_id {
-                metadata = metadata.with_causation_id(causation_id);
-            }
-            let event_id = metadata.event_id(0);
-            let payload = canonical_json_bytes(payload)
-                .map_err(|message| FixtureApplyError::Canonicalization { message })?;
-            let new_event = NewEvent::new(
-                event_id.clone(),
-                name,
-                schema_version.get(),
-                payload.clone(),
-            )
-            .map_err(|source| FixtureApplyError::Envelope { source })?;
-            let mut batch = EventBatch::new(
-                metadata.commit_id().clone(),
-                metadata.operation_id().clone(),
-                metadata.operation_fingerprint(),
-                vec![new_event],
-            )
-            .map_err(|source| FixtureApplyError::Envelope { source })?
-            .with_correlation_id(correlation_id.clone());
-            let mut recorded = RecordedEvent::new(
-                stream_id.clone(),
-                StreamVersion::new(*stream_version),
-                event_id.clone(),
-                metadata.commit_id().clone(),
-                metadata.operation_id().clone(),
-                metadata.operation_fingerprint(),
-                name,
-                schema_version.get(),
-                payload,
-            )
-            .map_err(|source| FixtureApplyError::Envelope { source })?
-            .with_correlation_id(correlation_id.clone());
-            if let Some(causation_id) = metadata.causation_id() {
-                batch = batch.with_causation_id(causation_id.clone());
-                recorded = recorded.with_causation_id(causation_id.clone());
-            }
-            let stream_event_count = stream_event_counts.entry(stream_id).or_default();
-            let stream_ordinal = *stream_event_count;
-            *stream_event_count = stream_event_count
-                .checked_add(1)
-                .ok_or(FixtureApplyError::EventCountOverflow)?;
-            plan.push(PlannedEvent {
-                recorded,
-                batch,
-                stream_ordinal,
-            });
-            CausationId::new(event_id.as_str())
-                .map_err(|source| FixtureApplyError::MessageIdentity { source })?
-        } else {
-            CausationId::new(format!("fixture-message:{fingerprint}"))
-                .map_err(|source| FixtureApplyError::MessageIdentity { source })?
-        };
+        )
+        .map_err(|source| FixtureApplyError::Envelope { source })?
+        .with_correlation_id(message.correlation_id.clone());
+        if let Some(causation_id) = metadata.causation_id() {
+            batch = batch.with_causation_id(causation_id.clone());
+            recorded = recorded.with_causation_id(causation_id.clone());
+        }
+        let stream_event_count = stream_event_counts.entry(stream_id).or_default();
+        let stream_ordinal = *stream_event_count;
+        *stream_event_count = stream_event_count
+            .checked_add(1)
+            .ok_or(FixtureApplyError::EventCountOverflow)?;
+        plan.push(PlannedEvent {
+            recorded,
+            batch,
+            stream_ordinal,
+        });
+        let physical_id = CausationId::new(event_id.as_str())
+            .map_err(|source| FixtureApplyError::EventIdentity { source })?;
         physical_ids.insert(message.message_id().clone(), physical_id);
     }
 
@@ -958,7 +870,7 @@ fn build_plan(fixture: &Fixture) -> Result<Vec<PlannedEvent>, FixtureApplyError>
 
 fn message_fingerprint(
     fixture: &Fixture,
-    message: &FixtureMessage,
+    message: &FixtureDomainEvent,
 ) -> Result<ContentFingerprint, FixtureApplyError> {
     let value = serde_json::to_value(FingerprintDocument {
         format: "rostfrei-fixture-message-v1",

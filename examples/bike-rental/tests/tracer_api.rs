@@ -515,6 +515,33 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(fixture["messages"][0]["kind"], "domain-event");
     assert_eq!(fixture["messages"][0]["name"], "rental-fleet-imported");
     assert!(fixture["messages"][0].get("causationId").is_none());
+    let rented_fixture_href = fixtures["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == "rented-demo-fleet")
+        .and_then(|item| item["fixtureHref"].as_str())
+        .unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(rented_fixture_href)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let rented_fixture = json_body(response).await;
+    assert_eq!(rented_fixture["revision"], "2");
+    let rented_fixture_events = rented_fixture["messages"].as_array().unwrap();
+    assert_eq!(rented_fixture_events.len(), 2);
+    assert!(
+        rented_fixture_events
+            .iter()
+            .all(|message| message["kind"] == "domain-event")
+    );
     assert_eq!(catalog["contexts"][0]["id"], "bike-rental");
     assert_eq!(catalog["contexts"][0]["label"], "Bike Rental");
     let aggregate = &catalog["contexts"][0]["aggregates"][0];

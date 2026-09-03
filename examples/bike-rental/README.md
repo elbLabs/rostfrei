@@ -87,7 +87,7 @@ Each scope has separate command, command-response, integration-event,
 quarantine, and authoritative domain-event streams, plus separate durables.
 Test resources use the `BIKE_RENTAL__TEST` stream prefix. Test reset stops its
 workers, recreates that complete topology, replays the selected fixture's
-domain-event nodes through the shared MessageSeries engine, and restarts the
+domain-event series through the shared MessageSeries engine, and restarts the
 workers without touching normal Dispatch resources.
 A failed reset leaves Test, Simulate, instances, and dynamic inputs unavailable
 until a later reset succeeds rather than exposing partially rebuilt state.
@@ -179,9 +179,8 @@ exact.
 
 Behavioral tests are canonical JSON documents in `tests/tracer`. They select a
 fixture from `fixtures/` and describe one expected causal graph. Fixtures are
-themselves MessageSeries documents. Their domain-event nodes are replayed into
-isolated history; command outcomes and integration events remain provenance and
-are not re-executed. The root command in `expected.graphs[0]` is then published
+MessageSeries documents containing only the domain events replayed into isolated
+history. The root command in `expected.graphs[0]` is then published
 through the isolated Test NATS WorkQueue. The server constructs the observed
 command, durable response, domain-event, and integration-event series and
 performs the comparison. Expected JSON objects use subset semantics, while
