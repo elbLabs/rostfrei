@@ -2,7 +2,7 @@ use std::any::type_name;
 use std::collections::{BTreeMap, BTreeSet};
 
 use rostfrei_core::{Aggregate, CommandHandler};
-use rostfrei_messaging_core::QueryAddress;
+use rostfrei_messaging_core::{CommandAddress, QueryAddress};
 use thiserror::Error;
 
 const DIRECT_QUERY_REGISTRATION: &str = "<direct query registration>";
@@ -122,6 +122,14 @@ pub enum RegistrationError {
     EmptyAggregateType {
         command_name: &'static str,
         schema_version: u32,
+    },
+    #[error(
+        "command `{command_name}` version {schema_version} has an invalid routing identity: {reason}"
+    )]
+    InvalidCommandIdentity {
+        command_name: &'static str,
+        schema_version: u32,
+        reason: String,
     },
     #[error(
         "command `{command_name}` version {schema_version} is already registered for aggregate `{aggregate_type}`"
@@ -282,6 +290,28 @@ impl DomainRegistry {
             return Err(RegistrationError::EmptyAggregateType {
                 command_name: command.command_name,
                 schema_version: command.schema_version,
+            });
+        }
+        let (bounded_context, aggregate) = match command.aggregate_type.split_once('/') {
+            Some((bounded_context, aggregate)) if !aggregate.contains('/') => {
+                (bounded_context, aggregate)
+            }
+            Some(_) => {
+                return Err(RegistrationError::InvalidCommandIdentity {
+                    command_name: command.command_name,
+                    schema_version: command.schema_version,
+                    reason: "aggregate type must contain at most one context separator".to_owned(),
+                });
+            }
+            None => ("registry", command.aggregate_type.as_str()),
+        };
+        if let Err(error) = CommandAddress::new("rostfrei", bounded_context, command.command_name)
+            .and_then(|_| CommandAddress::new("rostfrei", "registry", aggregate))
+        {
+            return Err(RegistrationError::InvalidCommandIdentity {
+                command_name: command.command_name,
+                schema_version: command.schema_version,
+                reason: error.to_string(),
             });
         }
         if self
