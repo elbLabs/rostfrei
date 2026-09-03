@@ -102,7 +102,7 @@ accounts for Test and Dispatch.
 
 The repository-local OpenCode skill at
 `.opencode/skills/rostfrei-tracer/SKILL.md` discovers Tracer capabilities from
-Catalog v4. Run OpenCode from the repository root so it loads that skill:
+Catalog v1. Run OpenCode from the repository root so it loads that skill:
 
 ```sh
 export ROSTFREI_TRACER_URL=http://127.0.0.1:1309
@@ -145,7 +145,7 @@ behavioral-test run, the agent presents the exact action and asks for the
 required confirmation; a behavioral-test run resets the complete isolated test
 scenario to its selected fixture before the subject command executes.
 
-The skill starts from Catalog v4 and follows its advertised links for commands,
+The skill starts from Catalog v1 and follows its advertised links for commands,
 schema versions, isolated test instances, dynamic test inputs, behavioral-test
 definitions, fixture MessageSeries, actions, reset, operations, and finite
 message series. It does not embed bike-rental routes or silently select among

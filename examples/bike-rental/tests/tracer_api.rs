@@ -463,7 +463,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["cache-control"], "private, no-store");
     let catalog = json_body(response).await;
-    assert_eq!(catalog["catalogVersion"], 4);
+    assert_eq!(catalog["catalogVersion"], 1);
     assert_eq!(catalog["testScenario"]["resetHref"], "/test-scenario/reset");
     assert_eq!(
         catalog["testScenario"]["fixtures"],

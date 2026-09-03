@@ -50,7 +50,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if has_legacy_demo_seed(dispatch_runtime.store()).await? {
         println!("preserving the compatible legacy production demo seed");
     } else {
-        dispatch_runtime.apply_fixture(&default_test_fixture).await?;
+        dispatch_runtime
+            .apply_fixture(&default_test_fixture)
+            .await?;
     }
     dispatch_runtime.start_workers().await?;
 
