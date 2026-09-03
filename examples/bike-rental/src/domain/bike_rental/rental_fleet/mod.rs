@@ -15,7 +15,11 @@ mod stream;
 
 pub use add_bicycle::{AddBicycle, AddBicycleAction, BicycleAdded};
 pub use aggregate::RentalFleetAggregate;
-pub use bicycle::{Bicycle, BicycleCondition, BicycleId, BicycleRentalLifecycle, BicycleStatus};
+pub use bicycle::{
+    Bicycle, BicycleCondition, BicycleId, BicycleRentalLifecycle, BicycleStatus,
+    ChooseRegistrationNumberFormat, NormalizeRegistrationNumber, RegistrationNumber,
+    RegistrationNumberFormat, RegistrationNumberValidity,
+};
 pub use bicycle_availability::{BicycleAvailability, BicycleAvailabilityQuery};
 pub use event_set::RentalFleetEvent;
 pub use identity::FleetId;

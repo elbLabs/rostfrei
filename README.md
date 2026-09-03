@@ -7,7 +7,7 @@ keeps domain aggregates independent from persistence, serialization, and brokers
 while providing a compiled domain model, strict execution, developer tooling,
 and NATS JetStream adapters at the application edge.
 
-The workspace contains twelve framework crates plus the bike-rental example
+The workspace contains thirteen framework crates plus the bike-rental example
 Cargo package:
 
 - `rostfrei`: application facade for the compiled domain model, typed command,
@@ -26,6 +26,8 @@ Cargo package:
   behavior contracts.
 - `rostfrei-domain-runtime`: stream-aware aggregate initialization, event
   application, and runtime registration for compiled domain types.
+- `rostfrei-structure`: the versioned typed-domain filesystem checker and
+  `cargo-rostfrei` command.
 - `rostfrei-registry`: handler-linked command metadata, registered query
   metadata, and deterministic runtime registration.
 - `rostfrei-macros`: the low-level `QueryDefinition` derive for registered
@@ -111,13 +113,18 @@ Enable the tracked Git hooks once per checkout:
 git config core.hooksPath .githooks
 ```
 
-The pre-commit hook runs Clippy for every workspace package, target, and feature:
+The pre-commit hook runs the Rostfrei structure checker, then Clippy for every
+workspace package, target, and feature:
 
 ```sh
+cargo rostfrei check --workspace
 cargo clippy --workspace --all-targets --all-features
 ```
 
-A commit is rejected when Clippy reports an error.
+`cargo rostfrei check` validates the versioned typed-domain structure configured
+by participating packages and executes each package's `rostfrei-domain-check`
+target to validate its compiled domain model. A commit is rejected when either
+check or Clippy reports an error.
 
 ## License
 

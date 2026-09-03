@@ -28,3 +28,7 @@ tower = { version = "0.5", features = ["util"] }
 
 [lints]
 workspace = true
+
+[package.metadata.rostfrei.structure]
+version = 1
+domain-root = "src/domain"

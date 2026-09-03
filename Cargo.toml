@@ -12,6 +12,7 @@ members = [
     "crates/rostfrei-messaging-core",
     "crates/rostfrei-nats",
     "crates/rostfrei-registry",
+    "crates/rostfrei-structure",
     "crates/rostfrei-testing",
     "examples/bike-rental",
 ]

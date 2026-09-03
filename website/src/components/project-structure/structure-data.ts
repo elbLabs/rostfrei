@@ -122,6 +122,228 @@ const rentalStatus = directory(
   ]
 )
 
+const bicycleCondition = directory(
+  "bicycle-condition",
+  "condition",
+  "src/domain/bike_rental/rental_fleet/bicycle/condition",
+  {
+    role: "Simple Value Object",
+    summary:
+      "Uses the same module shape as a behaviorful Value Object with no extra capability directories.",
+    allowed: ["value.rs", "mod.rs"],
+    guarantee:
+      "A simple Value Object can grow behavior without changing its module identity or moving its declaration later.",
+  },
+  [
+    file(
+      "condition-value",
+      "value.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/condition/value.rs",
+      {
+        role: "Value Object declaration",
+        summary: "Defines BicycleCondition and its stable semantic metadata.",
+        allowed: [
+          "One ValueObject declaration",
+          "Direct inherent implementations",
+          "Imports",
+        ],
+        guarantee:
+          "The checker requires exactly one Value Object in the module anchor.",
+      }
+    ),
+  ]
+)
+
+const normalizeRegistrationNumber = directory(
+  "normalize-registration-number",
+  "normalize",
+  "src/domain/bike_rental/rental_fleet/bicycle/registration_number/normalize",
+  {
+    role: "Value Object action",
+    summary: "Normalizes one Registration Number through an ordinary trait.",
+    allowed: ["action.rs", "execute.rs", "mod.rs"],
+    guarantee:
+      "The action implementation must directly target RegistrationNumber from the parent value.rs.",
+  },
+  [
+    file(
+      "registration-action",
+      "action.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/normalize/action.rs",
+      {
+        role: "Value Object action contract",
+        summary: "Declares NormalizeRegistrationNumber and its semantic ID.",
+        allowed: [
+          "One #[domain_action] trait",
+          "Its method signature",
+          "Imports",
+        ],
+        guarantee: "The action contract remains ordinary callable Rust.",
+      }
+    ),
+    file(
+      "registration-action-execute",
+      "execute.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/normalize/execute.rs",
+      {
+        role: "Value Object action implementation",
+        summary: "Implements normalization directly for RegistrationNumber.",
+        allowed: [
+          "One matching trait implementation",
+          "Private helpers",
+          "Imports",
+        ],
+        guarantee:
+          "The checker rejects another owner, qualified aliases, and duplicate implementations.",
+      }
+    ),
+  ]
+)
+
+const registrationNumberValidity = directory(
+  "registration-number-validity",
+  "validity",
+  "src/domain/bike_rental/rental_fleet/bicycle/registration_number/validity",
+  {
+    role: "Value Object invariant",
+    summary: "Names and evaluates the Registration Number validity rule.",
+    allowed: ["contract.rs", "evaluate.rs", "mod.rs"],
+    guarantee:
+      "The invariant implementation must directly target RegistrationNumber.",
+  },
+  [
+    file(
+      "registration-invariant",
+      "contract.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/validity/contract.rs",
+      {
+        role: "Value Object invariant contract",
+        summary: "Declares RegistrationNumberValidity and its semantic ID.",
+        allowed: [
+          "One #[domain_invariant] trait",
+          "Its validation signature",
+          "Imports",
+        ],
+        guarantee: "Validity remains explicit and independently testable.",
+      }
+    ),
+    file(
+      "registration-invariant-evaluate",
+      "evaluate.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/validity/evaluate.rs",
+      {
+        role: "Value Object invariant implementation",
+        summary: "Evaluates validity directly on RegistrationNumber.",
+        allowed: [
+          "One matching trait implementation",
+          "Private helpers",
+          "Imports",
+        ],
+        guarantee:
+          "The evaluator cannot silently attach to an aggregate or entity instead.",
+      }
+    ),
+  ]
+)
+
+const chooseRegistrationNumberFormat = directory(
+  "choose-registration-number-format",
+  "choose_format",
+  "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format",
+  {
+    role: "Value Object decision",
+    summary: "Chooses one closed Registration Number format outcome.",
+    allowed: ["decision.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
+    guarantee:
+      "The decision implementation must directly target RegistrationNumber.",
+  },
+  [
+    file(
+      "registration-decision",
+      "decision.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format/decision.rs",
+      {
+        role: "Value Object decision contract",
+        summary: "Declares ChooseRegistrationNumberFormat and its semantic ID.",
+        allowed: [
+          "One #[domain_decision] trait",
+          "Its method signature",
+          "Imports",
+        ],
+        guarantee: "The policy stays separate from its outcome vocabulary.",
+      }
+    ),
+    file(
+      "registration-outcome",
+      "outcome.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format/outcome.rs",
+      {
+        role: "Decision outcome",
+        summary: "Defines compact and segmented Registration Number formats.",
+        allowed: ["One DecisionOutcome enum", "Tagged variants", "Imports"],
+        guarantee: "Outcome IDs and labels remain stable and exhaustive.",
+      }
+    ),
+    file(
+      "registration-decision-evaluate",
+      "evaluate.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format/evaluate.rs",
+      {
+        role: "Value Object decision implementation",
+        summary: "Evaluates the format directly for RegistrationNumber.",
+        allowed: [
+          "One matching trait implementation",
+          "Private helpers",
+          "Imports",
+        ],
+        guarantee:
+          "The checker binds the decision to the Value Object declared by value.rs.",
+      }
+    ),
+  ]
+)
+
+const registrationNumber = directory(
+  "registration-number",
+  "registration_number",
+  "src/domain/bike_rental/rental_fleet/bicycle/registration_number",
+  {
+    role: "Behaviorful Value Object",
+    summary:
+      "Keeps one semantic value and its action, invariant, and decision capabilities together.",
+    allowed: [
+      "value.rs",
+      "Action directories",
+      "Invariant directories",
+      "Decision directories",
+      "mod.rs",
+    ],
+    guarantee:
+      "Value Object behavior stays nested with its semantic owner instead of being flattened beside the Entity.",
+  },
+  [
+    file(
+      "registration-value",
+      "value.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/value.rs",
+      {
+        role: "Value Object declaration",
+        summary: "Defines the opaque RegistrationNumber value and accessors.",
+        allowed: [
+          "One ValueObject declaration",
+          "Direct inherent implementations",
+          "Imports",
+        ],
+        guarantee:
+          "The stable value anchor supplies the owner name for every child capability.",
+      }
+    ),
+    normalizeRegistrationNumber,
+    registrationNumberValidity,
+    chooseRegistrationNumberFormat,
+  ]
+)
+
 const bicycle = directory(
   "bicycle",
   "bicycle",
@@ -132,7 +354,7 @@ const bicycle = directory(
       "Groups Bicycle identity, state concepts, lifecycle, and Entity-local behavior.",
     allowed: [
       "entity.rs and identity.rs",
-      "Value Object leaves",
+      "Value Object modules",
       "Lifecycle and action directories",
     ],
     guarantee:
@@ -170,21 +392,8 @@ const bicycle = directory(
           "Identity representation stays private to the type rather than inferred by metadata.",
       }
     ),
-    file(
-      "condition",
-      "condition.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/condition.rs",
-      {
-        role: "Value Object",
-        summary: "Names a stable domain concept used by Bicycle behavior.",
-        allowed: [
-          "One ValueObject declaration",
-          "Intrinsic Value Object behavior",
-        ],
-        guarantee:
-          "Only genuine semantic concepts enter the Value Object catalog.",
-      }
-    ),
+    bicycleCondition,
+    registrationNumber,
     rentalStatus,
     markRented,
   ]

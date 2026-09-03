@@ -8,7 +8,8 @@ compiled domain metadata without depending on a production application:
 - `RentalEligibilityDecision` is a Rust decision;
 - fleet-imported, bicycle-added, rented, and returned events describe successful transitions;
 - unavailable and not-rented errors describe command rejections;
-- `FleetConsistency` detects duplicate bicycle identities; and
+- `FleetConsistency` detects duplicate bicycle identities;
+- `RegistrationNumber` demonstrates Value Object-local actions, invariants, and decisions; and
 - `BicycleAvailabilityQuery` exposes a read-only availability query.
 
 Print the compiled domain model:
