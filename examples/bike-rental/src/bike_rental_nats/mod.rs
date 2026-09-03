@@ -1,7 +1,6 @@
 use std::{env, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rostfrei::{
     Command, CommandBindingRegistrationError, CommandBus, CommandMessageAdapter, CommandProcessor,
     CommittedDomainEvent, CommittedEventContext, DomainEvent, DomainEventDispatcher,
@@ -11,10 +10,11 @@ use rostfrei::{
     IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationMessageAdapter,
     JsonDomainRejectionMapper,
 };
+use rostfrei_fixtures::{Fixture, FixtureApplyReport, FixtureEventSet};
 use rostfrei_messaging_core::{
     ApplicationName, BoundedContext, CommandAddress, CommandRejectionClassification, ConsumeError,
-    ConsumerConfig, ContractError, DeliveryDisposition, IntegrationEventAddress, MessageDelivery,
-    MessageHandler, QuarantineReason, RetryDelay, TrafficScope,
+    ConsumerConfig, ContractError, CorrelationId, DeliveryDisposition, IntegrationEventAddress,
+    MessageDelivery, MessageHandler, MessageId, QuarantineReason, RetryDelay, TrafficScope,
 };
 use rostfrei_nats::{
     ApplicationMessagingConfig, CorrelatedMessage, CorrelatedMessageFamily,
@@ -38,7 +38,7 @@ use tokio::{
 };
 
 use crate::{
-    demo::{SeedError, seed_demo},
+    demo::{DemoFixtureError, apply_fixture as apply_message_series_fixture},
     rental_fleet::{
         AddBicycle, BicycleId, BicycleRented, FleetId, RentBicycle, RentalFleetAggregate,
         ReturnBicycle,
@@ -87,7 +87,7 @@ pub enum BikeRentalNatsError {
     #[error("only a test-scoped NATS runtime can be reset")]
     ResetRequiresTestScope,
     #[error(transparent)]
-    Seed(#[from] SeedError),
+    Fixture(#[from] DemoFixtureError),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -464,11 +464,18 @@ impl IntegrationEvent for BicycleRentalStarted {
 
 pub struct BicycleRentedIntegrationMapper {
     bus: IntegrationEventBus,
+    fixture_events: Arc<RwLock<FixtureEventSet>>,
 }
 
 impl BicycleRentedIntegrationMapper {
-    pub const fn new(bus: IntegrationEventBus) -> Self {
-        Self { bus }
+    pub const fn new(
+        bus: IntegrationEventBus,
+        fixture_events: Arc<RwLock<FixtureEventSet>>,
+    ) -> Self {
+        Self {
+            bus,
+            fixture_events,
+        }
     }
 }
 
@@ -478,6 +485,9 @@ impl DomainEventHandler<BicycleRented> for BicycleRentedIntegrationMapper {
         &self,
         event: &CommittedDomainEvent<'_, BicycleRented>,
     ) -> Result<(), DomainEventHandlerError> {
+        if self.fixture_events.read().await.contains(event.recorded()) {
+            return Ok(());
+        }
         let committed = CommittedEventContext::new(event.recorded())
             .map_err(|error| classify_integration_event_error(&error))?;
         self.bus
@@ -575,19 +585,24 @@ pub struct BikeRentalNatsRuntime {
     messaging: Arc<NatsMessagingAdapter>,
     transport: Arc<ScopedCommandTransport>,
     scope_gate: Arc<RwLock<()>>,
+    fixture_events: Arc<RwLock<FixtureEventSet>>,
     workers: Mutex<Vec<JoinHandle<()>>>,
 }
 
 struct TracerCorrelationHandler {
     observer: CorrelationObserver,
+    store: NatsEventStore,
 }
 
 #[async_trait]
 impl CorrelatedMessageHandler for TracerCorrelationHandler {
     async fn handle(&self, message: CorrelatedMessage) {
+        let identity = message
+            .message_id()
+            .map_or_else(|| message.subject().to_owned(), |id| id.as_str().to_owned());
         let result = match message.family() {
             CorrelatedMessageFamily::DomainEvent => {
-                observe_domain_message(&self.observer, &message).await
+                observe_domain_message(&self.observer, &self.store, &message).await
             }
             CorrelatedMessageFamily::IntegrationEvent => {
                 observe_integration_message(&self.observer, &message).await
@@ -596,6 +611,18 @@ impl CorrelatedMessageHandler for TracerCorrelationHandler {
         if let Err(error) = result
             && !matches!(error, CorrelationError::NotFound)
         {
+            if let Err(retain_error) = self
+                .observer
+                .record_observation_failure(
+                    message.correlation_id().as_str(),
+                    identity,
+                    error.to_string(),
+                )
+                .await
+                && !matches!(retain_error, CorrelationError::NotFound)
+            {
+                tracing::warn!(%retain_error, "correlated NATS observation failure could not be retained");
+            }
             tracing::warn!(%error, "correlated NATS message could not be observed");
         }
     }
@@ -687,6 +714,7 @@ impl BikeRentalNatsRuntime {
             messaging,
             transport,
             scope_gate,
+            fixture_events: Arc::new(RwLock::new(FixtureEventSet::default())),
             workers: Mutex::new(Vec::new()),
         })
     }
@@ -703,8 +731,19 @@ impl BikeRentalNatsRuntime {
         self.transport.clone()
     }
 
-    pub async fn seed_demo(&self) -> Result<(), BikeRentalNatsError> {
-        seed_demo(&self.store).await.map_err(Into::into)
+    pub async fn apply_fixture(
+        &self,
+        fixture: &Fixture,
+    ) -> Result<FixtureApplyReport, BikeRentalNatsError> {
+        let new_fixture_events =
+            FixtureEventSet::new(std::slice::from_ref(fixture)).map_err(DemoFixtureError::from)?;
+        let mut fixture_events = self.fixture_events.write().await;
+        fixture_events.extend(new_fixture_events);
+        let result = apply_message_series_fixture(&self.store, fixture)
+            .await
+            .map_err(Into::into);
+        drop(fixture_events);
+        result
     }
 
     pub async fn start_workers(&self) -> Result<(), BikeRentalNatsError> {
@@ -789,7 +828,10 @@ impl BikeRentalNatsRuntime {
         let mut dispatcher = DomainEventDispatcher::new();
         dispatcher.register::<RentalFleetAggregate, BicycleRented, _>(
             BicycleRented::LOCAL_ID,
-            Arc::new(BicycleRentedIntegrationMapper::new(integration_bus)),
+            Arc::new(BicycleRentedIntegrationMapper::new(
+                integration_bus,
+                Arc::clone(&self.fixture_events),
+            )),
         )?;
         let domain_consumer = NatsDomainEventConsumer::connect(
             self.connection.jetstream().clone(),
@@ -862,9 +904,10 @@ impl BikeRentalNatsRuntime {
                 .as_str(),
         );
         let subscription = nats_observer.subscribe().await?;
+        let store = self.store.clone();
         Ok(tokio::spawn(async move {
             if let Err(error) = subscription
-                .run(Arc::new(TracerCorrelationHandler { observer }))
+                .run(Arc::new(TracerCorrelationHandler { observer, store }))
                 .await
             {
                 tracing::error!(%error, "bike-rental correlation observer stopped");
@@ -905,7 +948,7 @@ impl BikeRentalNatsRuntime {
         Ok(())
     }
 
-    async fn reset_scope(&self) -> Result<(), BikeRentalNatsError> {
+    async fn reset_scope(&self, fixture: &Fixture) -> Result<(), BikeRentalNatsError> {
         if self.config.context().traffic_scope() != TrafficScope::Test {
             return Err(BikeRentalNatsError::ResetRequiresTestScope);
         }
@@ -913,82 +956,121 @@ impl BikeRentalNatsRuntime {
         self.stop_workers_in_scope().await;
         self.delete_resources().await?;
         self.config.provision(&self.connection).await?;
-        self.seed_demo().await?;
+        self.apply_fixture(fixture).await?;
         self.start_workers_in_scope().await
     }
 }
 
 async fn observe_domain_message(
     observer: &CorrelationObserver,
+    store: &NatsEventStore,
     message: &CorrelatedMessage,
 ) -> Result<(), CorrelationError> {
-    let Ok(wire) = serde_json::from_slice::<Value>(message.payload()) else {
-        return Ok(());
-    };
-    let Some(event) = wire.get("event") else {
-        return Ok(());
-    };
-    let Some(event_type) = event.get("eventType").and_then(Value::as_str) else {
-        return Ok(());
-    };
-    let Some(schema_version) = event
-        .get("eventSchemaVersion")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-    else {
-        return Ok(());
-    };
-    let mut observation = DomainEventObservation::new(event_type, schema_version);
-    if let Some(stream_version) = event.get("streamVersion").and_then(Value::as_u64) {
-        observation = observation.with_stream_version(stream_version);
-    }
-    if let Some(encoded) = event.get("payloadBase64").and_then(Value::as_str)
-        && let Ok(payload) = STANDARD.decode(encoded)
-        && let Ok(payload) = serde_json::from_slice(&payload)
-    {
-        observation = observation.with_payload(payload);
-    }
+    let observation =
+        domain_event_observation(store, message).map_err(CorrelationError::InvalidId)?;
     observer
         .observe_domain_event(message.correlation_id().as_str(), observation)
         .await
+}
+
+fn domain_event_observation(
+    store: &NatsEventStore,
+    message: &CorrelatedMessage,
+) -> Result<DomainEventObservation, String> {
+    let event = store
+        .decode_observed_event(message.subject(), message.headers(), message.payload())
+        .map_err(|error| error.to_string())?;
+    if event.correlation_id() != Some(message.correlation_id()) {
+        return Err("stored event correlation does not match its delivery header".to_owned());
+    }
+    let message_id = message
+        .message_id()
+        .ok_or_else(|| "stored event has no message identity".to_owned())?;
+    if message_id.as_str() != event.event_id().as_str() {
+        return Err("stored event identity does not match its delivery header".to_owned());
+    }
+    let payload = serde_json::from_slice::<Value>(event.payload())
+        .map_err(|error| format!("stored event payload is not valid JSON: {error}"))?;
+    let mut observation = DomainEventObservation::new(
+        event.event_id().as_str(),
+        event.event_type(),
+        event.schema_version(),
+    )
+    .with_aggregate(
+        event.stream_id().aggregate_type().as_str(),
+        event.stream_id().aggregate_id().as_str(),
+    )
+    .with_stream_version(event.stream_version().value())
+    .with_payload(payload);
+    if let Some(causation_id) = event.causation_id() {
+        observation = observation.with_causation_id(causation_id.as_str());
+    }
+    Ok(observation)
 }
 
 async fn observe_integration_message(
     observer: &CorrelationObserver,
     message: &CorrelatedMessage,
 ) -> Result<(), CorrelationError> {
-    let Ok(envelope) = serde_json::from_slice::<Value>(message.payload()) else {
-        return Ok(());
-    };
-    let event_type = message
-        .subject()
-        .rsplit('.')
-        .next()
-        .unwrap_or("integration-event");
-    let Some(schema_version) = envelope
-        .get("schema_version")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-    else {
-        return Ok(());
-    };
-    let mut observation = IntegrationEventObservation::new(event_type, schema_version)
-        .with_subject(message.subject());
-    if let Some(message_id) = message.message_id() {
-        observation = observation.with_message_id(message_id.as_str());
-    }
-    if let Some(payload) = envelope.get("payload") {
-        observation = observation.with_payload(payload.clone());
-    }
+    let observation = integration_event_observation(
+        message.subject(),
+        message.message_id(),
+        message.correlation_id(),
+        message.payload(),
+    )
+    .map_err(CorrelationError::InvalidId)?;
     observer
         .observe_integration_event(message.correlation_id().as_str(), observation)
         .await
 }
 
+fn integration_event_observation(
+    subject: &str,
+    message_id: Option<&MessageId>,
+    correlation_id: &CorrelationId,
+    payload: &[u8],
+) -> Result<IntegrationEventObservation, String> {
+    let address = subject
+        .parse::<IntegrationEventAddress>()
+        .map_err(|error| format!("invalid integration-event subject: {error}"))?;
+    let message_id = message_id
+        .cloned()
+        .ok_or_else(|| "integration event has no message identity".to_owned())?;
+    let transport_message_id = message_id.as_str().to_owned();
+    let message = EncodedIntegrationMessage::from_delivery(
+        address,
+        message_id,
+        payload.to_vec(),
+        Some(correlation_id.clone()),
+    )
+    .map_err(|error| format!("invalid integration-event delivery: {error}"))?;
+    let envelope = message
+        .decode::<BicycleRentalStarted>()
+        .map_err(|error| format!("invalid integration-event envelope: {error}"))?;
+    if envelope.message_id().as_str() != transport_message_id {
+        return Err("integration-event identity does not match its delivery header".to_owned());
+    }
+    let causation_id = envelope
+        .causation_id()
+        .ok_or_else(|| "integration event has no causation identity".to_owned())?
+        .as_str()
+        .to_owned();
+    let payload = serde_json::to_value(envelope.payload())
+        .map_err(|error| format!("integration-event payload could not be encoded: {error}"))?;
+    Ok(IntegrationEventObservation::new(
+        envelope.message_id().as_str(),
+        BICYCLE_RENTAL_STARTED_EVENT_NAME,
+        envelope.schema_version().get(),
+        subject,
+    )
+    .with_causation_id(causation_id)
+    .with_payload(payload))
+}
+
 #[async_trait]
 impl TestScenarioReset for BikeRentalNatsRuntime {
-    async fn reset(&self) -> Result<(), TestScenarioResetError> {
-        self.reset_scope()
+    async fn reset(&self, fixture: &Fixture) -> Result<(), TestScenarioResetError> {
+        self.reset_scope(fixture)
             .await
             .map_err(|error| TestScenarioResetError::Failed(error.to_string()))
     }

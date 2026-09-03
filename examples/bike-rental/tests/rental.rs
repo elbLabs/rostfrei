@@ -4,7 +4,7 @@
 )]
 
 use bike_rental::{
-    demo::{demo_stream, seed_demo},
+    demo::{apply_demo_fixture, demo_stream},
     rental_fleet::{
         self, AddBicycleAction as _, BicycleAdded, BicycleAvailability,
         BicycleAvailabilityQuery as _, BicycleCondition, BicycleId, BicycleNotRented,
@@ -122,7 +122,7 @@ fn adds_serviceable_bicycles_with_generated_unique_ids() {
 #[tokio::test]
 async fn rejects_renting_the_same_bicycle_twice_when_commands_are_executed() {
     let store = InMemoryEventStore::new();
-    seed_demo(&store).await.unwrap();
+    apply_demo_fixture(&store).await.unwrap();
     let bicycle_id = BicycleId::new("bike-42").unwrap();
     let command = RentBicycle {
         bicycle_id: bicycle_id.clone(),

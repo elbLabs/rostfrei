@@ -73,16 +73,22 @@ durable command, domain-event, or integration-event consumer stops.
 
 The example uses one canonical application with two disjoint traffic scopes:
 
-- `bike-rental.test.>` is recreated and deterministically seeded on startup and
-  by `POST /test-scenario/reset`;
+- `bike-rental.test.>` is recreated and its default `demo-fleet` MessageSeries
+  fixture is applied on startup and by `POST /test-scenario/reset`;
 - normal `bike-rental` subjects such as `bike-rental.command.>` persist across
   restarts and are never affected by test reset.
+
+Upgrades preserve the exact `seed-city-fleet` demo history written by the
+earlier behavioral-test runtime. Fresh namespaces use the canonical
+`demo-fleet` MessageSeries fixture; any other conflicting seed history still
+fails startup.
 
 Each scope has separate command, command-response, integration-event,
 quarantine, and authoritative domain-event streams, plus separate durables.
 Test resources use the `BIKE_RENTAL__TEST` stream prefix. Test reset stops its
-workers, recreates that complete topology, reseeds it, and restarts the workers
-without touching normal Dispatch resources.
+workers, recreates that complete topology, replays the selected fixture's
+domain-event series through the shared MessageSeries engine, and restarts the
+workers without touching normal Dispatch resources.
 A failed reset leaves Test, Simulate, instances, and dynamic inputs unavailable
 until a later reset succeeds rather than exposing partially rebuilt state.
 
@@ -92,26 +98,99 @@ streams and exposes trace payloads for demonstration. Production deployments
 should provision infrastructure separately and use distinct NATS credentials or
 accounts for Test and Dispatch.
 
-The API advertises all command fields, runtime choices, instances, mode actions,
-and reset links through `GET /catalog` and its linked resources. Clients can
-follow these links without embedding bike-rental values.
+## Agent-first Tracer workflow
 
-Behavioral tests are YAML files in `tests/tracer`. They name the deterministic
-`demo-fleet` fixture, run setup and subject commands through the isolated test
-NATS pipeline, and assert the command outcome plus correlated domain or
-integration events. The filesystem remains the source of truth:
+The repository-local OpenCode skill at
+`.opencode/skills/rostfrei-tracer/SKILL.md` discovers Tracer capabilities from
+Catalog v1. Run OpenCode from the repository root so it loads that skill:
 
 ```sh
-curl --header 'authorization: Bearer local-development-token' \
-  http://127.0.0.1:1309/tests
-
-curl --request POST \
-  --header 'authorization: Bearer local-development-token' \
-  http://127.0.0.1:1309/tests/rent-available-bicycle/runs
+export ROSTFREI_TRACER_URL=http://127.0.0.1:1309
+export ROSTFREI_API_TOKEN=local-development-token
+export ROSTFREI_DISPATCH_TOKEN=local-dispatch-token
+opencode
 ```
 
+`ROSTFREI_TRACER_URL` defaults to `http://127.0.0.1:1309`. The control token is
+used for discovery, Preview, isolated Test publication, behavioral tests, reset,
+and inspection of those operations. The separate dispatch token is used only
+for production dispatch and inspection of production operations. The skill is
+instructed not to print or persist either token.
+
+Ask in domain language rather than assembling HTTP routes. For example:
+
+```text
+List the available Rostfrei behavioral tests and summarize their intent.
+
+Read the rent-available-bicycle behavioral test and explain it as Given, When,
+Then without running it.
+
+Run the rent-available-bicycle behavioral test. Explain the result and render
+the observed causal message series as Mermaid.
+
+Preview renting bike-42 from city-fleet and show the causal Mermaid flow.
+
+Publish a Test rental of bike-42 from city-fleet, then explain the result and
+show its causal Mermaid flow.
+
+Return the currently rented bicycle in isolated Test state and visualize what
+happened.
+
+Preview adding a bicycle to city-fleet and visualize the predicted messages.
+```
+
+Preview is read-only and never appends. Test publication uses the normal command
+pipeline but appends only to isolated Test state. Before a Test publication or a
+behavioral-test run, the agent presents the exact action and asks for the
+required confirmation; a behavioral-test run resets the complete isolated test
+scenario to its selected fixture before the subject command executes.
+
+The skill starts from Catalog v1 and follows its advertised links for commands,
+schema versions, isolated test instances, dynamic test inputs, behavioral-test
+definitions, fixture MessageSeries, actions, reset, operations, and finite
+message series. It does not embed bike-rental routes or silently select among
+multiple schema versions.
+Values discovered through test links are treated only as isolated Test data and
+are never assumed to exist in production.
+
+For production, make the target and intent explicit:
+
+```text
+Dispatch RentBicycle schema version 1 to production aggregate city-fleet with
+payload bicycle_id bike-42 and idempotency key prod-rental-2026-09-02-01. Show
+the exact request for confirmation before publishing, then explain the result
+and render its causal Mermaid flow.
+```
+
+The agent requires independently supplied production aggregate and payload
+values, uses only `ROSTFREI_DISPATCH_TOKEN`, warns that production and downstream
+integrations may change, and asks for explicit confirmation. It never
+automatically retries an ambiguous publication or an `indeterminate` operation.
+
+After a command, the skill can follow the operation's `messageSeriesHref` and
+wait for terminal status plus a bounded idle settling window. The finite series
+contains the canonical messages and command outcomes observed by the capture;
+rejections, no-event decisions, or an unsettled timeout may omit some message
+categories or produce a partial series. Mermaid edges are drawn only from an
+explicit `causationId` to its matching `messageId`; array position and timestamps
+never imply causality. Preview or incomplete/conflicting identities are reported
+with grouped fidelity, while complete consistent transported identities are
+exact.
+
+Behavioral tests are canonical JSON documents in `tests/tracer`. They select a
+fixture from `fixtures/` and describe one expected causal graph. Fixtures are
+MessageSeries documents containing only the domain events replayed into isolated
+history. The root command in `expected.graphs[0]` is then published
+through the isolated Test NATS WorkQueue. The server constructs the observed
+command, durable response, domain-event, and integration-event series and
+performs the comparison. Expected JSON objects use subset semantics, while
+scalar values and array lengths/order must match exactly. The filesystem remains
+the source of truth, and the skill can list, read, validate, and run both
+persisted and inline JSON definitions through advertised Catalog links.
+
 Run the dispatch-isolation check and all three behavioral definitions against
-a real NATS server:
+a real NATS Server 2.12.1 or newer. These tests are deliberately ignored during
+normal test runs; the explicit command is:
 
 ```sh
 ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
@@ -119,38 +198,15 @@ ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
   ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES=268435456 \
   ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES=524288 \
   cargo test --locked -p bike-rental \
-  --test nats_runtime_integration
+  --test nats_runtime_integration -- --ignored --test-threads=1
 ```
 
-Submit a simulation:
-
-```sh
-curl --request POST \
-  http://127.0.0.1:1309/contexts/bike-rental/aggregates/rental-fleet/city-fleet/commands/rent-bicycle/simulate \
-  --header 'content-type: application/json' \
-  --header 'authorization: Bearer local-development-token' \
-  --header 'idempotency-key: rental-operation-1' \
-  --data '{"schemaVersion":1,"payload":{"bicycle_id":"bike-42"}}'
-```
-
-Stream its correlated business flow:
-
-```sh
-curl --no-buffer \
-  --header 'authorization: Bearer local-development-token' \
-  http://127.0.0.1:1309/correlations/rental-operation-1/events
-```
-
-Retrieve the current or final operation resource:
-
-```sh
-curl --header 'authorization: Bearer local-development-token' \
-  http://127.0.0.1:1309/operations/rental-operation-1
-```
+The opt-in run fails rather than skips when `ROSTFREI_NATS_URL` is missing,
+empty, unreachable, or points to an unsupported server version.
 
 The three Tracer actions have distinct semantics:
 
-- `simulate` replays the current test NATS history but never appends;
+- `simulate` loads the current test NATS history but never appends;
 - `test` publishes through the normal command pipeline and appends only to the
   isolated test NATS history;
 - `dispatch` uses the identical pipeline against the canonical unsuffixed
@@ -168,8 +224,8 @@ that the business command failed.
 Running Test for `bike-42` twice accepts and appends the first command, then
 replays that new state and rejects the second with `BICYCLE_UNAVAILABLE`.
 Simulate subsequently observes the same rejection without changing history.
-Reset returns the test stream to the deterministic seed and does not touch
-Dispatch state.
+Reset returns the test stream to the default `demo-fleet` MessageSeries fixture
+and does not touch Dispatch state.
 
 `ReturnBicycle` advertises currently rented bicycles as runtime input choices and
 makes the selected bicycle available again. `AddBicycle` has no user-supplied
@@ -177,11 +233,6 @@ payload. The aggregate assigns the next unused deterministic UUID and adds the
 bicycle as available and serviceable. All three commands use their generated
 JSON payload contracts; Tracer has no command-specific wire codecs.
 
-Correlation feeds report the command, observed domain events, observed integration
-events, and the command result. They remain open for downstream integration events;
-reconnect with `Last-Event-ID` to replay retained events after a previous SSE frame.
-Operation traces remain available at `/operations/{operationId}/events` for
-Tracer lifecycle details.
 Reusing an `Idempotency-Key` returns the retained operation only for the exact
 same request and returns `409 Conflict` for different content.
 Each Test reset rotates the Test scenario generation, so a key reused afterward
@@ -193,8 +244,10 @@ use generated JSON contracts rather than handwritten bike-rental codecs.
 
 Operation resources, traces, and correlation feeds remain count- and
 byte-bounded in memory even though domain events are durable in NATS. Operation
-and correlation payload retention each have a 64 MiB aggregate budget; payloads
-that cannot fit a record's share are omitted rather than retained without bound.
-Concurrent admission is bounded, and operation retention is pressure-based
-rather than durable or time-based. This server is therefore a local development
-example, not a production audit system.
+payload retention has a 64 MiB aggregate budget. Raw correlation evidence has a
+separate 64 MiB total budget split evenly between control modes and production
+dispatch, so Preview or Test captures cannot consume dispatch evidence capacity.
+Payloads that cannot fit a record's share are omitted rather than retained
+without bound. Concurrent admission is bounded, and operation retention is
+pressure-based rather than durable or time-based. This server is therefore a
+local development example, not a production audit system.

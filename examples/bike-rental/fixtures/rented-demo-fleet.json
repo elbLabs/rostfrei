@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "rented-demo-fleet",
+  "revision": "2",
+  "messages": [
+    {
+      "kind": "domain-event",
+      "messageId": "rented-demo-fleet-imported",
+      "correlationId": "fixture:rented-demo-fleet:2:import",
+      "name": "rental-fleet-imported",
+      "schemaVersion": 1,
+      "aggregate": {
+        "type": "bike-rental/rental-fleet",
+        "id": "city-fleet"
+      },
+      "streamVersion": 1,
+      "payload": {
+        "fleet_id": "city-fleet",
+        "bicycles": [
+          {
+            "bicycle_id": "bike-42",
+            "status": "available",
+            "condition": "serviceable"
+          },
+          {
+            "bicycle_id": "bike-99",
+            "status": "available",
+            "condition": "maintenance-required"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "domain-event",
+      "messageId": "fixture-bike-42-rented",
+      "correlationId": "fixture:rented-demo-fleet:2:rent",
+      "name": "bicycle-rented",
+      "schemaVersion": 1,
+      "aggregate": {
+        "type": "bike-rental/rental-fleet",
+        "id": "city-fleet"
+      },
+      "streamVersion": 2,
+      "payload": {
+        "fleet_id": "city-fleet",
+        "bicycle_id": "bike-42"
+      }
+    }
+  ]
+}

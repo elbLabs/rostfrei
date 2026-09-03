@@ -1,16 +1,18 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Write as _};
 
 use rostfrei_registry::{CommandDescriptor, DomainRegistry};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-const CATALOG_VERSION: u32 = 3;
+const CATALOG_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TracerCatalog {
     pub catalog_version: u32,
     pub contexts: Vec<CatalogContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behavioral_test: Option<CatalogBehavioralTest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_scenario: Option<CatalogTestScenario>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -19,9 +21,35 @@ pub struct TracerCatalog {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CatalogBehavioralTest {
+    pub schema_href: String,
+    pub validate_href: String,
+    pub run_href: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub definitions_href: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CatalogTestScenario {
     pub reset_href: String,
+    pub fixtures_href: String,
     pub fixtures: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestFixtureCollection {
+    pub items: Vec<TestFixtureSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestFixtureSummary {
+    pub id: String,
+    pub revision: String,
+    pub fixture_href: String,
+    pub is_default: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -44,7 +72,7 @@ pub struct CatalogAggregate {
     pub id: String,
     pub label: String,
     pub aggregate_type: String,
-    pub instances_href: String,
+    pub test_instances_href: String,
     pub commands: Vec<CatalogCommand>,
 }
 
@@ -63,7 +91,7 @@ pub struct CatalogCommandVersion {
     pub content_type: &'static str,
     pub fields: Vec<Value>,
     pub payload_template: Value,
-    pub inputs_href_template: String,
+    pub test_inputs_href_template: String,
     pub simulate_href_template: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_href_template: Option<String>,
@@ -103,15 +131,20 @@ struct CommandBuilder {
 }
 
 #[allow(clippy::fn_params_excessive_bools, clippy::too_many_lines)]
-pub fn build_catalog(
+pub fn build_catalog<'a>(
     registry: &DomainRegistry,
     domain_model: Option<&Value>,
     test_enabled: bool,
     dispatch_enabled: bool,
     reset_enabled: bool,
-    test_fixture: Option<&str>,
+    test_fixture_ids: impl IntoIterator<Item = &'a str>,
     test_repository_enabled: bool,
 ) -> TracerCatalog {
+    let mut test_fixtures = test_fixture_ids
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    test_fixtures.sort();
     let mut contexts = BTreeMap::<String, ContextBuilder>::new();
     for descriptor in registry.commands() {
         let Some((context_id, aggregate_id)) = http_coordinates(descriptor) else {
@@ -150,7 +183,7 @@ pub fn build_catalog(
             content_type: "application/json",
             fields,
             payload_template,
-            inputs_href_template: format!(
+            test_inputs_href_template: format!(
                 "/contexts/{context_id}/aggregates/{aggregate_id}/{{aggregateId}}/commands/{}/schemas/{}/inputs",
                 descriptor.command_name, descriptor.schema_version
             ),
@@ -184,7 +217,7 @@ pub fn build_catalog(
                     .aggregates
                     .into_iter()
                     .map(|(id, aggregate)| CatalogAggregate {
-                        instances_href: format!(
+                        test_instances_href: format!(
                             "/contexts/{}/aggregates/{id}/instances",
                             aggregate
                                 .aggregate_type
@@ -212,14 +245,40 @@ pub fn build_catalog(
                     .collect(),
             })
             .collect(),
+        behavioral_test: (test_enabled && reset_enabled).then(|| CatalogBehavioralTest {
+            schema_href: "/schemas/behavioral-test-v1".to_owned(),
+            validate_href: "/tests/validate".to_owned(),
+            run_href: "/test-runs".to_owned(),
+            definitions_href: test_repository_enabled.then(|| "/tests".to_owned()),
+        }),
         test_scenario: reset_enabled.then(|| CatalogTestScenario {
             reset_href: "/test-scenario/reset".to_owned(),
-            fixtures: test_fixture.into_iter().map(str::to_owned).collect(),
+            fixtures_href: "/test-scenario/fixtures".to_owned(),
+            fixtures: test_fixtures,
         }),
         test_repository: test_repository_enabled.then(|| CatalogTestRepository {
             definitions_href: "/tests".to_owned(),
         }),
     }
+}
+
+pub fn test_fixture_href(fixture_id: &str) -> String {
+    format!(
+        "/test-scenario/fixtures/{}",
+        encode_path_segment(fixture_id)
+    )
+}
+
+fn encode_path_segment(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            let _ = write!(&mut encoded, "%{byte:02X}");
+        }
+    }
+    encoded
 }
 
 fn http_coordinates(descriptor: &CommandDescriptor) -> Option<(String, String)> {

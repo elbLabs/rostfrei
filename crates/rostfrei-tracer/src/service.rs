@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -12,8 +12,13 @@ use rostfrei_core::{
     Aggregate, AggregateId, AggregateType, CommandHandler, ContentFingerprint, Event, EventHistory,
     EventStore, EventStoreErrorKind, OperationId, SimulationError, StreamDirectory,
 };
+use rostfrei_fixtures::Fixture;
+use rostfrei_messaging_core::{
+    ApplicationErrorCode, CommandRejection as MessagingCommandRejection,
+    CommandRejectionClassification, CommandResponseOutcome,
+};
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, Semaphore};
@@ -21,22 +26,27 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 use crate::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandReceipt, CommandTransport,
     CommandTransportError, CommandTransportErrorKind, CommandTransportObserver,
-    CorrelationCommandOutcome, CorrelationError, CorrelationEventKind, CorrelationObserver,
-    CorrelationSubscription, DomainEventObservation, OperationEventKind, OperationMode,
-    OperationResult, OperationSnapshot, OperationSubscription, PredictedDomainEvent,
-    RuntimeRegistrationError, SubscriptionError,
+    CorrelationCommandOutcome, CorrelationError, CorrelationObserver, CorrelationSubscription,
+    DomainEventObservation, OperationEventKind, OperationMode, OperationResult, OperationSnapshot,
+    OperationSubscription, PredictedDomainEvent, RuntimeRegistrationError, SubscriptionError,
     behavioral::{
-        TestCommand, TestDefinitionCollection, TestDefinitionRevision, TestExpectationResult,
-        TestOutcome, TestReport, TestReportFailure, TestReportStatus, TestRepository,
-        TestRepositoryError, TraceExpectation,
+        TestAggregate, TestCommand, TestDefinition, TestDefinitionCollection,
+        TestDefinitionRevision, TestReport, TestReportStatus, TestRepository, TestRepositoryError,
+        TestTimeout,
     },
     catalog::{
-        AggregateInstanceCollection, AggregateInstanceSummary, TracerCatalog, build_catalog,
+        AggregateInstanceCollection, AggregateInstanceSummary, TestFixtureCollection,
+        TestFixtureSummary, TracerCatalog, build_catalog, test_fixture_href,
     },
     command_execution_fingerprint,
-    correlation::CorrelationHub,
+    correlation::{CorrelationEvidenceSnapshot, CorrelationEvidenceSubscription, CorrelationHub},
     input::{CommandInputDocument, CommandInputOptions},
-    operation::{NewOperation, OperationRecord, subscribe},
+    message_series::{
+        MessageGraphDefinition, MessageSeriesComparison, MessageSeriesComparisonContext,
+        MessageSeriesComparisonDiagnostic, MessageSeriesComparisonStatus, MessageSeriesDefinition,
+        ObservedCommandOutcome, ObservedMessageSeries, compare_message_series,
+    },
+    operation::{NewOperation, OperationCaptureSnapshot, OperationRecord, subscribe},
     runtime::{
         CommandKey, ErasedCommandInputOptions, ErasedCommandSimulator, RuntimeBindings,
         RuntimeDecision, RuntimeSimulationError, stream_id,
@@ -49,6 +59,7 @@ const DEFAULT_MAXIMUM_OPERATIONS: usize = 1024;
 const DEFAULT_MAXIMUM_CONCURRENT_OPERATIONS: usize = 32;
 const DEFAULT_MAXIMUM_OPERATION_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 const MAXIMUM_TOTAL_OPERATION_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
+const TEST_EVALUATION_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,9 +68,48 @@ pub struct SimulationRequest {
     pub payload: Value,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageSeriesFidelity {
+    Exact,
+    Grouped,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageSeriesCapture {
+    pub settled: bool,
+    pub settled_for: TestTimeout,
+    pub fidelity: MessageSeriesFidelity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationMessageSeries {
+    pub operation_id: String,
+    pub correlation_id: String,
+    pub mode: OperationMode,
+    pub message_series: ObservedMessageSeries,
+    pub capture: MessageSeriesCapture,
+}
+
+#[derive(Debug, Error)]
+pub enum MessageSeriesCaptureError {
+    #[error(transparent)]
+    Operation(#[from] SubmissionError),
+    #[error(transparent)]
+    Correlation(#[from] CorrelationError),
+    #[error("message-series payload policy failed: {0}")]
+    PayloadPolicy(String),
+    #[error("message-series capture timeout exceeds the supported timer range")]
+    TimerRange,
+}
+
 #[async_trait]
 pub trait TestScenarioReset: Send + Sync {
-    async fn reset(&self) -> Result<(), TestScenarioResetError>;
+    async fn reset(&self, fixture: &Fixture) -> Result<(), TestScenarioResetError>;
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -76,16 +126,8 @@ pub enum TestRunError {
     Repository(#[from] TestRepositoryError),
     #[error(transparent)]
     Reset(#[from] TestScenarioResetError),
-    #[error(
-        "test definition `{test_id}` references fixture `{actual}`, but Tracer provides `{expected}`"
-    )]
-    FixtureMismatch {
-        test_id: String,
-        expected: String,
-        actual: String,
-    },
-    #[error("test setup command {index} was rejected")]
-    SetupRejected { index: usize },
+    #[error(transparent)]
+    Validation(#[from] TestDefinitionValidationError),
     #[error("test command failed: {0}")]
     CommandFailed(String),
     #[error("test correlation closed before evaluation completed")]
@@ -94,6 +136,53 @@ pub enum TestRunError {
     Submission(#[from] SubmissionError),
     #[error(transparent)]
     Correlation(#[from] CorrelationError),
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum TestDefinitionValidationError {
+    #[error("test definition `{test_id}` has no executable root command")]
+    MissingSubject { test_id: String },
+    #[error("test definition `{test_id}` references unknown fixture `{fixture}`")]
+    UnknownFixture { test_id: String, fixture: String },
+    #[error(
+        "test definition `{test_id}` references unknown command `{command}` version {schema_version} for aggregate `{aggregate_type}`"
+    )]
+    UnknownCommand {
+        test_id: String,
+        path: String,
+        aggregate_type: String,
+        command: String,
+        schema_version: u32,
+    },
+    #[error(
+        "test definition `{test_id}` has an invalid payload for command `{command}`: {message}"
+    )]
+    InvalidCommandPayload {
+        test_id: String,
+        path: String,
+        command: String,
+        message: String,
+    },
+    #[error(
+        "test definition `{test_id}` has an invalid aggregate ID `{aggregate_id}` for command `{command}`: {message}"
+    )]
+    InvalidAggregateId {
+        test_id: String,
+        path: String,
+        command: String,
+        aggregate_id: String,
+        message: String,
+    },
+    #[error(
+        "test definition `{test_id}` payload for command `{command}` is {actual} bytes and exceeds the configured {maximum}-byte limit"
+    )]
+    CommandPayloadTooLarge {
+        test_id: String,
+        path: String,
+        command: String,
+        actual: usize,
+        maximum: usize,
+    },
 }
 
 pub trait TracePayloadPolicy: Send + Sync {
@@ -105,6 +194,20 @@ pub trait TracePayloadPolicy: Send + Sync {
 
     fn observed_event_payload(&self, _payload: Value) -> Option<Value> {
         None
+    }
+
+    fn observed_rejection(
+        &self,
+        _rejection: MessagingCommandRejection,
+    ) -> Result<MessagingCommandRejection, String> {
+        let code = ApplicationErrorCode::new("REDACTED").map_err(|error| error.to_string())?;
+        MessagingCommandRejection::new(
+            CommandRejectionClassification::Internal,
+            code,
+            "observed rejection redacted",
+            None,
+        )
+        .map_err(|error| error.to_string())
     }
 }
 
@@ -144,6 +247,13 @@ impl TracePayloadPolicy for ExposeTracePayloadsForLocalDevelopment {
 
     fn observed_event_payload(&self, payload: Value) -> Option<Value> {
         Some(payload)
+    }
+
+    fn observed_rejection(
+        &self,
+        rejection: MessagingCommandRejection,
+    ) -> Result<MessagingCommandRejection, String> {
+        Ok(rejection)
     }
 }
 
@@ -217,7 +327,9 @@ pub struct TracerBuilder {
     test_transport: Option<Arc<dyn CommandTransport>>,
     dispatch_transport: Option<Arc<dyn CommandTransport>>,
     test_scenario_reset: Option<Arc<dyn TestScenarioReset>>,
-    test_fixture: Option<String>,
+    test_fixtures: BTreeMap<String, Fixture>,
+    default_test_fixture: Option<String>,
+    fixture_registration_error: Option<RuntimeRegistrationError>,
     test_repository: Option<Arc<dyn TestRepository>>,
     bindings: RuntimeBindings,
     domain_model: Option<Value>,
@@ -235,7 +347,9 @@ impl TracerBuilder {
             test_transport: None,
             dispatch_transport: None,
             test_scenario_reset: None,
-            test_fixture: None,
+            test_fixtures: BTreeMap::new(),
+            default_test_fixture: None,
+            fixture_registration_error: None,
             test_repository: None,
             bindings: RuntimeBindings::new(registry),
             domain_model: None,
@@ -287,14 +401,36 @@ impl TracerBuilder {
     }
 
     #[must_use]
-    pub fn with_test_fixture(
-        mut self,
-        name: impl Into<String>,
-        reset: Arc<dyn TestScenarioReset>,
-    ) -> Self {
-        self.test_fixture = Some(name.into());
-        self.test_scenario_reset = Some(reset);
+    pub fn with_default_test_fixture(mut self, fixture: Fixture) -> Self {
+        let fixture_id = fixture.id().to_owned();
+        if let Some(first) = self.default_test_fixture.as_ref() {
+            self.fixture_registration_error.get_or_insert_with(|| {
+                RuntimeRegistrationError::MultipleDefaultTestFixtures {
+                    first: first.clone(),
+                    second: fixture_id.clone(),
+                }
+            });
+        } else {
+            self.default_test_fixture = Some(fixture_id);
+        }
+        self.register_test_fixture(fixture);
         self
+    }
+
+    #[must_use]
+    pub fn with_test_fixture(mut self, fixture: Fixture) -> Self {
+        self.register_test_fixture(fixture);
+        self
+    }
+
+    fn register_test_fixture(&mut self, fixture: Fixture) {
+        let fixture_id = fixture.id().to_owned();
+        if self.test_fixtures.contains_key(&fixture_id) {
+            self.fixture_registration_error
+                .get_or_insert(RuntimeRegistrationError::DuplicateTestFixture { fixture_id });
+            return;
+        }
+        self.test_fixtures.insert(fixture_id, fixture);
     }
 
     #[must_use]
@@ -357,24 +493,28 @@ impl TracerBuilder {
 
     pub fn build(self) -> Result<Tracer, RuntimeRegistrationError> {
         self.bindings.validate()?;
+        if let Some(error) = self.fixture_registration_error.as_ref() {
+            return Err(error.clone());
+        }
+        if self.test_scenario_reset.is_some() && self.default_test_fixture.is_none() {
+            return Err(RuntimeRegistrationError::ResetWithoutDefaultTestFixture);
+        }
+        if self.test_scenario_reset.is_none() && !self.test_fixtures.is_empty() {
+            return Err(RuntimeRegistrationError::TestFixtureWithoutReset);
+        }
         if self.test_scenario_reset.is_some() && self.test_event_store.is_none() {
             return Err(RuntimeRegistrationError::ResetWithoutTestStore);
         }
         if self.test_scenario_reset.is_some() && self.test_transport.is_none() {
             return Err(RuntimeRegistrationError::ResetWithoutTestTransport);
         }
-        if self.test_repository.is_some()
-            && self
-                .test_fixture
-                .as_deref()
-                .is_none_or(|fixture| fixture.trim().is_empty())
-        {
-            return Err(RuntimeRegistrationError::TestRepositoryWithoutFixture);
-        }
-        if let (Some(repository), Some(fixture)) =
-            (self.test_repository.as_ref(), self.test_fixture.as_deref())
-        {
-            validate_test_repository(repository.as_ref(), fixture, &self.bindings.simulators)?;
+        if let Some(repository) = self.test_repository.as_ref() {
+            validate_test_repository(
+                repository.as_ref(),
+                &self.test_fixtures,
+                &self.bindings.simulators,
+                test_transport_payload_limit(self.test_transport.as_deref()),
+            )?;
         }
         let test_enabled = self.test_event_store.is_some() && self.test_transport.is_some();
         let catalog = build_catalog(
@@ -383,7 +523,7 @@ impl TracerBuilder {
             test_enabled,
             self.dispatch_transport.is_some(),
             self.test_scenario_reset.is_some(),
-            self.test_fixture.as_deref(),
+            self.test_fixtures.keys().map(String::as_str),
             self.test_repository.is_some(),
         );
         let maximum_concurrent_operations = self
@@ -398,7 +538,8 @@ impl TracerBuilder {
                 test_transport: self.test_transport,
                 dispatch_transport: self.dispatch_transport,
                 test_scenario_reset: self.test_scenario_reset,
-                test_fixture: self.test_fixture,
+                test_fixtures: self.test_fixtures,
+                default_test_fixture: self.default_test_fixture,
                 test_repository: self.test_repository,
                 test_scenario_gate: Arc::new(RwLock::new(())),
                 test_run_gate: Mutex::new(()),
@@ -424,8 +565,9 @@ impl TracerBuilder {
 
 fn validate_test_repository(
     repository: &dyn TestRepository,
-    fixture: &str,
+    fixtures: &BTreeMap<String, Fixture>,
     simulators: &HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
+    maximum_payload_len: usize,
 ) -> Result<(), RuntimeRegistrationError> {
     for summary in repository.list().items {
         let revision = repository.get(&summary.id).map_err(|error| {
@@ -435,44 +577,120 @@ fn validate_test_repository(
             }
         })?;
         let definition = &revision.definition;
-        if definition.given.fixture != fixture {
-            return Err(RuntimeRegistrationError::InvalidTestDefinition {
-                id: definition.id.clone(),
-                message: format!(
-                    "fixture `{}` is unavailable; configured fixture is `{fixture}`",
-                    definition.given.fixture
-                ),
-            });
-        }
-        for command in definition
-            .given
-            .commands
-            .iter()
-            .chain(std::iter::once(&definition.when.command))
-        {
-            let key = CommandKey::new(
-                &command.aggregate.aggregate_type,
-                &command.name,
-                command.schema_version,
-            );
-            let simulator = simulators.get(&key).ok_or_else(|| {
-                RuntimeRegistrationError::InvalidTestDefinition {
-                    id: definition.id.clone(),
-                    message: format!(
-                        "unknown command `{}` version {} for aggregate `{}`",
-                        command.name, command.schema_version, command.aggregate.aggregate_type
-                    ),
-                }
-            })?;
-            if let Err(message) = simulator.validate_payload(&command.payload) {
-                return Err(RuntimeRegistrationError::InvalidTestDefinition {
-                    id: definition.id.clone(),
-                    message: format!("invalid payload for command `{}`: {message}", command.name),
-                });
+        validate_test_definition_against_runtime(
+            definition,
+            fixtures,
+            simulators,
+            maximum_payload_len,
+        )
+        .map_err(|error| match error {
+            TestDefinitionValidationError::UnknownFixture { .. } if fixtures.is_empty() => {
+                RuntimeRegistrationError::TestRepositoryWithoutFixture
             }
-        }
+            error => RuntimeRegistrationError::InvalidTestDefinition {
+                id: definition.id().to_owned(),
+                message: error.to_string(),
+            },
+        })?;
     }
     Ok(())
+}
+
+fn validate_test_definition_against_runtime(
+    definition: &TestDefinition,
+    fixtures: &BTreeMap<String, Fixture>,
+    simulators: &HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
+    maximum_payload_len: usize,
+) -> Result<(), TestDefinitionValidationError> {
+    let setup = definition.setup();
+    if !fixtures.contains_key(&setup.fixture) {
+        return Err(TestDefinitionValidationError::UnknownFixture {
+            test_id: definition.id().to_owned(),
+            fixture: setup.fixture.clone(),
+        });
+    }
+    let subject =
+        definition
+            .subject()
+            .ok_or_else(|| TestDefinitionValidationError::MissingSubject {
+                test_id: definition.id().to_owned(),
+            })?;
+    let root_index = definition
+        .expected_graph()
+        .and_then(|graph| {
+            graph
+                .nodes()
+                .iter()
+                .position(|node| node.parent_key().is_none())
+        })
+        .unwrap_or(0);
+    validate_test_command(
+        definition.id(),
+        &subject.to_test_command(),
+        &format!("/expected/graphs/0/nodes/{root_index}"),
+        simulators,
+        maximum_payload_len,
+    )
+}
+
+fn validate_test_command(
+    test_id: &str,
+    command: &TestCommand,
+    path: &str,
+    simulators: &HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
+    maximum_payload_len: usize,
+) -> Result<(), TestDefinitionValidationError> {
+    AggregateId::new(&command.aggregate.id).map_err(|error| {
+        TestDefinitionValidationError::InvalidAggregateId {
+            test_id: test_id.to_owned(),
+            path: format!("{path}/aggregate/id"),
+            command: command.name.clone(),
+            aggregate_id: command.aggregate.id.clone(),
+            message: error.to_string(),
+        }
+    })?;
+    let key = CommandKey::new(
+        &command.aggregate.aggregate_type,
+        &command.name,
+        command.schema_version,
+    );
+    let simulator =
+        simulators
+            .get(&key)
+            .ok_or_else(|| TestDefinitionValidationError::UnknownCommand {
+                test_id: test_id.to_owned(),
+                path: format!("{path}/name"),
+                aggregate_type: command.aggregate.aggregate_type.clone(),
+                command: command.name.clone(),
+                schema_version: command.schema_version,
+            })?;
+    simulator
+        .validate_payload(&command.payload)
+        .map_err(
+            |message| TestDefinitionValidationError::InvalidCommandPayload {
+                test_id: test_id.to_owned(),
+                path: format!("{path}/payload"),
+                command: command.name.clone(),
+                message,
+            },
+        )?;
+    let actual = canonical_json_payload(&command.payload).len();
+    if actual > maximum_payload_len {
+        return Err(TestDefinitionValidationError::CommandPayloadTooLarge {
+            test_id: test_id.to_owned(),
+            path: format!("{path}/payload"),
+            command: command.name.clone(),
+            actual,
+            maximum: maximum_payload_len,
+        });
+    }
+    Ok(())
+}
+
+fn test_transport_payload_limit(transport: Option<&dyn CommandTransport>) -> usize {
+    transport.map_or(MAX_COMMAND_PAYLOAD_LEN, |transport| {
+        transport.maximum_payload_len().min(MAX_COMMAND_PAYLOAD_LEN)
+    })
 }
 
 struct TracerInner {
@@ -481,7 +699,8 @@ struct TracerInner {
     test_transport: Option<Arc<dyn CommandTransport>>,
     dispatch_transport: Option<Arc<dyn CommandTransport>>,
     test_scenario_reset: Option<Arc<dyn TestScenarioReset>>,
-    test_fixture: Option<String>,
+    test_fixtures: BTreeMap<String, Fixture>,
+    default_test_fixture: Option<String>,
     test_repository: Option<Arc<dyn TestRepository>>,
     test_scenario_gate: Arc<RwLock<()>>,
     test_run_gate: Mutex<()>,
@@ -502,16 +721,50 @@ struct TracerInner {
     trace_payload_policy: Arc<dyn TracePayloadPolicy>,
 }
 
+impl TracerInner {
+    fn default_test_fixture(&self) -> Option<&Fixture> {
+        self.default_test_fixture
+            .as_ref()
+            .and_then(|fixture_id| self.test_fixtures.get(fixture_id))
+    }
+}
+
 struct OperationTransportObserver {
     record: Arc<OperationRecord>,
+    correlations: Arc<CorrelationHub>,
+    operation_id: String,
+    correlation_id: String,
+    command: String,
+    schema_version: u32,
+    aggregate: TestAggregate,
+    payload: Value,
     publication: Mutex<Option<CommandPublication>>,
+    observation_error: Mutex<Option<CorrelationError>>,
 }
 
 impl OperationTransportObserver {
-    fn new(record: Arc<OperationRecord>) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        record: Arc<OperationRecord>,
+        correlations: Arc<CorrelationHub>,
+        operation_id: String,
+        correlation_id: String,
+        command: String,
+        schema_version: u32,
+        aggregate: TestAggregate,
+        payload: Value,
+    ) -> Self {
         Self {
             record,
+            correlations,
+            operation_id,
+            correlation_id,
+            command,
+            schema_version,
+            aggregate,
+            payload,
             publication: Mutex::new(None),
+            observation_error: Mutex::new(None),
         }
     }
 
@@ -529,14 +782,21 @@ impl OperationTransportObserver {
     async fn publication(&self) -> Option<CommandPublication> {
         self.publication.lock().await.clone()
     }
+
+    async fn observation_error(&self) -> Option<CorrelationError> {
+        self.observation_error.lock().await.clone()
+    }
 }
 
 #[async_trait]
 impl CommandTransportObserver for OperationTransportObserver {
     async fn command_published(&self, publication: CommandPublication) {
-        let mut observed = self.publication.lock().await;
-        if observed.is_some() {
-            return;
+        {
+            let mut observed = self.publication.lock().await;
+            if observed.is_some() {
+                return;
+            }
+            *observed = Some(publication.clone());
         }
         self.record
             .command_published(
@@ -544,7 +804,23 @@ impl CommandTransportObserver for OperationTransportObserver {
                 publication.duplicate(),
             )
             .await;
-        *observed = Some(publication);
+        if let Err(error) = self
+            .correlations
+            .observe_command(
+                &self.correlation_id,
+                self.operation_id.clone(),
+                publication.command_message_id().to_owned(),
+                None,
+                publication.duplicate(),
+                self.command.clone(),
+                self.schema_version,
+                self.aggregate.clone(),
+                Some(self.payload.clone()),
+            )
+            .await
+        {
+            *self.observation_error.lock().await = Some(error);
+        }
     }
 }
 
@@ -591,12 +867,15 @@ pub struct Tracer {
     inner: Arc<TracerInner>,
 }
 
-struct TestCommandEvaluation {
-    operation_id: String,
-    correlation_id: String,
-    outcome: Option<CorrelationCommandOutcome>,
-    expectations: Vec<TestExpectationResult>,
-    failure: Option<TestReportFailure>,
+struct TestDefinitionEvaluation {
+    operation: OperationSnapshot,
+    observed: ObservedMessageSeries,
+    comparison: MessageSeriesComparison,
+}
+
+struct OperationSubmission {
+    snapshot: OperationSnapshot,
+    correlation_lease: Option<CorrelationSubscription>,
 }
 
 impl Tracer {
@@ -612,6 +891,26 @@ impl Tracer {
             .ok_or(TestRepositoryError::Unavailable)
     }
 
+    pub fn test_fixtures(&self) -> TestFixtureCollection {
+        TestFixtureCollection {
+            items: self
+                .inner
+                .test_fixtures
+                .values()
+                .map(|fixture| TestFixtureSummary {
+                    id: fixture.id().to_owned(),
+                    revision: fixture.revision().to_owned(),
+                    fixture_href: test_fixture_href(fixture.id()),
+                    is_default: self.inner.default_test_fixture.as_deref() == Some(fixture.id()),
+                })
+                .collect(),
+        }
+    }
+
+    pub fn test_fixture(&self, fixture_id: &str) -> Option<Fixture> {
+        self.inner.test_fixtures.get(fixture_id).cloned()
+    }
+
     pub fn test_definition(
         &self,
         test_id: &str,
@@ -623,79 +922,103 @@ impl Tracer {
             .get(test_id)
     }
 
+    pub fn validate_test_definition(
+        &self,
+        definition: &TestDefinition,
+    ) -> Result<(), TestDefinitionValidationError> {
+        validate_test_definition_against_runtime(
+            definition,
+            &self.inner.test_fixtures,
+            &self.inner.simulators,
+            test_transport_payload_limit(self.inner.test_transport.as_deref()),
+        )
+    }
+
+    pub async fn run_inline_test(
+        &self,
+        definition: TestDefinition,
+    ) -> Result<TestReport, TestRunError> {
+        self.run_test_definition(definition, None).await
+    }
+
     pub async fn run_test(&self, test_id: &str) -> Result<TestReport, TestRunError> {
         let revision = self.test_definition(test_id)?;
-        let fixture = self
-            .inner
-            .test_fixture
-            .as_ref()
-            .ok_or(TestRepositoryError::Unavailable)?;
-        if revision.definition.given.fixture != *fixture {
-            return Err(TestRunError::FixtureMismatch {
-                test_id: test_id.to_owned(),
-                expected: fixture.clone(),
-                actual: revision.definition.given.fixture.clone(),
-            });
-        }
+        self.run_test_definition(revision.definition, Some(revision.revision))
+            .await
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn run_test_definition(
+        &self,
+        definition: TestDefinition,
+        revision: Option<String>,
+    ) -> Result<TestReport, TestRunError> {
+        self.validate_test_definition(&definition)?;
+        let graph = definition.expected_graph().cloned().ok_or_else(|| {
+            TestRunError::CommandFailed("test definition has no executable graph".to_owned())
+        })?;
+        let subject = definition
+            .subject()
+            .map(crate::ExpectedCommandFields::to_test_command)
+            .ok_or_else(|| {
+                TestRunError::CommandFailed("test definition has no executable subject".to_owned())
+            })?;
+        let expected = definition.expected().clone();
+        let within = graph.effective_within(&expected).as_duration();
+        let settle_for = graph.effective_settle_for(&expected).as_duration();
+        let test_id = definition.id().to_owned();
 
         let sequence = self.inner.test_run_sequence.fetch_add(1, Ordering::Relaxed);
         let run_id = format!("test-run-{sequence}");
         let _test_run = self.inner.test_run_gate.lock().await;
-        self.reset_test_scenario_unlocked().await?;
-
-        for (index, command) in revision.definition.given.commands.iter().enumerate() {
-            let evaluation = self
-                .evaluate_test_command(
-                    command,
-                    &TestOutcome::Accepted,
-                    &[],
-                    revision.definition.then.within.as_duration(),
-                    &format!("{run_id}-setup-{index}"),
-                )
-                .await?;
-            if evaluation.failure.is_some() {
-                return Err(TestRunError::SetupRejected { index });
-            }
+        if !self.inner.test_backing_configured || self.inner.test_transport.is_none() {
+            return Err(SubmissionError::ModeUnavailable("test").into());
         }
+        if self.inner.test_scenario_reset.is_none() {
+            return Err(TestScenarioResetError::Unavailable.into());
+        }
+        let setup = definition.setup();
+        let fixture = self
+            .inner
+            .test_fixtures
+            .get(&setup.fixture)
+            .ok_or_else(|| TestDefinitionValidationError::UnknownFixture {
+                test_id: definition.id().to_owned(),
+                fixture: setup.fixture.clone(),
+            })?;
+        let deadline = run_deadline(within)?;
+        tokio::time::timeout_at(deadline, self.reset_test_scenario_unlocked(fixture))
+            .await
+            .map_err(|_| {
+                TestScenarioResetError::Failed(
+                    "the behavioral test deadline elapsed during reset".to_owned(),
+                )
+            })??;
 
         let evaluation = self
-            .evaluate_test_command(
-                &revision.definition.when.command,
-                &revision.definition.then.outcome,
-                &revision.definition.then.trace.contains,
-                revision.definition.then.within.as_duration(),
+            .evaluate_test_subject(
+                &subject,
+                &graph,
+                deadline,
+                settle_for,
                 &format!("{run_id}-subject"),
             )
             .await?;
-        let status = if evaluation.failure.is_some() {
-            TestReportStatus::Failed
-        } else {
-            TestReportStatus::Passed
-        };
-        Ok(TestReport {
-            run_id,
-            test_id: revision.definition.id,
-            revision: revision.revision,
-            status,
-            operation_id: evaluation.operation_id,
-            correlation_id: evaluation.correlation_id,
-            outcome: evaluation.outcome,
-            expectations: evaluation.expectations,
-            failure: evaluation.failure,
-        })
+        self.build_test_report(run_id, test_id, revision, expected, evaluation)
     }
 
-    #[allow(clippy::too_many_lines)]
-    async fn evaluate_test_command(
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    async fn evaluate_test_subject(
         &self,
         command: &TestCommand,
-        expected_outcome: &TestOutcome,
-        expected_trace: &[TraceExpectation],
-        timeout: Duration,
+        graph: &MessageGraphDefinition,
+        deadline: tokio::time::Instant,
+        settle_for: Duration,
         idempotency_key: &str,
-    ) -> Result<TestCommandEvaluation, TestRunError> {
-        let queued = self
-            .submit_test_unlocked(
+    ) -> Result<TestDefinitionEvaluation, TestRunError> {
+        let (queued, _correlation_lease) = tokio::time::timeout_at(
+            deadline,
+            self.submit_test_unlocked_pinned(
                 &command.aggregate.aggregate_type,
                 &command.aggregate.id,
                 &command.name,
@@ -704,106 +1027,265 @@ impl Tracer {
                     payload: command.payload.clone(),
                 },
                 Some(idempotency_key),
+            ),
+        )
+        .await
+        .map_err(|_| {
+            TestRunError::CommandFailed(
+                "test subject could not be submitted before the deadline".to_owned(),
             )
-            .await?;
-        let mut subscription = self
-            .subscribe_correlation(&queued.correlation_id, 0)
-            .await?;
-        let mut expectations = expected_trace
-            .iter()
-            .cloned()
-            .map(|expectation| TestExpectationResult {
-                expectation,
-                matched_event_id: None,
-            })
-            .collect::<Vec<_>>();
-        let deadline = tokio::time::sleep(timeout);
-        tokio::pin!(deadline);
-        let mut outcome = None;
+        })??;
+        let record = self.record(&queued.operation_id).await?;
+        let mut context = MessageSeriesComparisonContext::default();
+        let mut settle_deadline = None;
+        let mut last_comparison = None;
 
         loop {
-            tokio::select! {
-                event = subscription.next() => {
-                    let Some(event) = event else {
-                        return Err(TestRunError::CorrelationClosed);
-                    };
-                    match &event.kind {
-                        CorrelationEventKind::DomainEvent { .. }
-                        | CorrelationEventKind::IntegrationEvent { .. } => {
-                            if let Some(expectation) = expectations.iter_mut().find(|expectation| {
-                                expectation.matched_event_id.is_none()
-                                    && expectation.expectation.matches(&event)
-                            }) {
-                                expectation.matched_event_id = Some(event.id);
-                            }
-                        }
-                        CorrelationEventKind::CommandResult {
-                            outcome: actual,
-                            result,
-                            ..
-                        } => {
-                            outcome = Some(*actual);
-                            match actual {
-                                CorrelationCommandOutcome::Failed
-                                | CorrelationCommandOutcome::Indeterminate => {
-                                    return Err(TestRunError::CommandFailed(
-                                        result.as_ref().map_or_else(
-                                            || "command execution failed without details".to_owned(),
-                                            Value::to_string,
-                                        ),
-                                    ));
-                                }
-                                CorrelationCommandOutcome::Accepted
-                                | CorrelationCommandOutcome::Rejected => {
-                                    if !expected_outcome.matches(*actual, result.as_ref()) {
-                                        return Ok(TestCommandEvaluation {
-                                            operation_id: queued.operation_id,
-                                            correlation_id: queued.correlation_id,
-                                            outcome,
-                                            expectations,
-                                            failure: Some(TestReportFailure {
-                                                code: "unexpected-outcome",
-                                                message: format!(
-                                                    "command outcome `{actual:?}` did not match the test definition"
-                                                ),
-                                            }),
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                        CorrelationEventKind::Command { .. } => {}
-                    }
+            let operation = record.snapshot().await;
+            let evidence = self
+                .observed_evidence_snapshot(&queued.correlation_id)
+                .await?;
+            let now = tokio::time::Instant::now();
 
-                    if outcome.is_some()
-                        && expectations
-                            .iter()
-                            .all(|expectation| expectation.matched_event_id.is_some())
-                    {
-                        return Ok(TestCommandEvaluation {
-                            operation_id: queued.operation_id,
-                            correlation_id: queued.correlation_id,
-                            outcome,
-                            expectations,
-                            failure: None,
-                        });
-                    }
+            match operation.status {
+                crate::OperationStatus::Failed | crate::OperationStatus::Indeterminate => {
+                    return Err(operation_run_error(&operation));
                 }
-                () = &mut deadline => {
-                    self.abort_operation(&queued.operation_id).await;
-                    return Ok(TestCommandEvaluation {
-                        operation_id: queued.operation_id,
-                        correlation_id: queued.correlation_id,
-                        outcome,
-                        expectations,
-                        failure: Some(TestReportFailure {
-                            code: "deadline-exceeded",
-                            message: "the expected correlated behavior was not observed before the deadline".to_owned(),
-                        }),
-                    });
-                }
+                crate::OperationStatus::Queued
+                | crate::OperationStatus::Running
+                | crate::OperationStatus::Completed => {}
             }
+
+            if evidence.failure.is_some() {
+                return Ok(TestDefinitionEvaluation {
+                    operation,
+                    observed: evidence.observed.clone(),
+                    comparison: evidence_failure_comparison(&evidence),
+                });
+            }
+
+            if now >= deadline {
+                return self
+                    .timed_out_test_evaluation(
+                        &record,
+                        &queued.operation_id,
+                        &queued.correlation_id,
+                        settle_deadline.is_some(),
+                        false,
+                        last_comparison,
+                    )
+                    .await;
+            }
+
+            if let Some(settle_deadline) = settle_deadline
+                && settle_deadline <= deadline
+                && now >= settle_deadline
+            {
+                context.settle_completed_at_order =
+                    Some(next_observation_order(&evidence.observed));
+                let Some(comparison) =
+                    compare_evidence_snapshot_until(graph, &evidence, context, deadline).await?
+                else {
+                    return self
+                        .timed_out_test_evaluation(
+                            &record,
+                            &queued.operation_id,
+                            &queued.correlation_id,
+                            true,
+                            true,
+                            last_comparison,
+                        )
+                        .await;
+                };
+                if self
+                    .inner
+                    .correlations
+                    .evidence_revision(&queued.correlation_id)?
+                    != evidence.revision
+                {
+                    continue;
+                }
+                return Ok(TestDefinitionEvaluation {
+                    operation,
+                    observed: evidence.observed,
+                    comparison,
+                });
+            }
+
+            let Some(comparison) =
+                compare_evidence_snapshot_until(graph, &evidence, context, deadline).await?
+            else {
+                return self
+                    .timed_out_test_evaluation(
+                        &record,
+                        &queued.operation_id,
+                        &queued.correlation_id,
+                        settle_deadline.is_some(),
+                        true,
+                        last_comparison,
+                    )
+                    .await;
+            };
+            last_comparison = Some((evidence.revision, comparison.clone()));
+
+            if settle_deadline.is_some()
+                && comparison.status == MessageSeriesComparisonStatus::Failed
+            {
+                return Ok(TestDefinitionEvaluation {
+                    operation,
+                    observed: evidence.observed,
+                    comparison,
+                });
+            }
+
+            if comparison
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "comparison-work-limit-exceeded")
+            {
+                return Ok(TestDefinitionEvaluation {
+                    operation,
+                    observed: evidence.observed,
+                    comparison,
+                });
+            }
+
+            if operation.status == crate::OperationStatus::Completed
+                && comparison
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == "command-outcome-mismatch")
+            {
+                return Ok(TestDefinitionEvaluation {
+                    operation,
+                    observed: evidence.observed,
+                    comparison,
+                });
+            }
+
+            if settle_deadline.is_none()
+                && operation.status == crate::OperationStatus::Completed
+                && comparison.status == MessageSeriesComparisonStatus::Passed
+            {
+                context.settle_started_at_order = Some(next_observation_order(&evidence.observed));
+                settle_deadline = Some(settle_deadline_at(now, settle_for)?);
+                continue;
+            }
+
+            let mut wake = next_poll_at(now, deadline);
+            if let Some(settle_deadline) = settle_deadline {
+                wake = wake.min(settle_deadline);
+            }
+            tokio::time::sleep_until(wake).await;
         }
+    }
+
+    async fn timed_out_test_evaluation(
+        &self,
+        record: &Arc<OperationRecord>,
+        operation_id: &str,
+        correlation_id: &str,
+        settling: bool,
+        comparison_timed_out: bool,
+        last_comparison: Option<(u64, MessageSeriesComparison)>,
+    ) -> Result<TestDefinitionEvaluation, TestRunError> {
+        if !record.is_terminal() {
+            self.abort_operation_for_deadline(operation_id).await;
+        }
+        let operation = record.snapshot().await;
+        let evidence = self.observed_evidence_snapshot(correlation_id).await?;
+        // Diagnostics must describe the same evidence serialized into the report.
+        let mut comparison = last_comparison
+            .filter(|(revision, _)| *revision == evidence.revision)
+            .map_or_else(
+                || evidence_failure_comparison(&evidence),
+                |(_, comparison)| comparison,
+            );
+        add_deadline_diagnostic(&mut comparison, settling);
+        if comparison_timed_out {
+            comparison
+                .diagnostics
+                .push(MessageSeriesComparisonDiagnostic {
+                    code: "comparison-deadline-exceeded",
+                    path: "/expected".to_owned(),
+                    message:
+                        "message-series comparison did not complete before the overall deadline"
+                            .to_owned(),
+                    expected: None,
+                    observed: None,
+                });
+        }
+        Ok(TestDefinitionEvaluation {
+            operation,
+            observed: evidence.observed,
+            comparison,
+        })
+    }
+
+    async fn observed_evidence_snapshot(
+        &self,
+        correlation_id: &str,
+    ) -> Result<CorrelationEvidenceSnapshot, CorrelationError> {
+        self.inner
+            .correlations
+            .evidence_snapshot(correlation_id)
+            .await
+    }
+
+    fn build_test_report(
+        &self,
+        run_id: String,
+        test_id: String,
+        revision: Option<String>,
+        expected: MessageSeriesDefinition,
+        evaluation: TestDefinitionEvaluation,
+    ) -> Result<TestReport, TestRunError> {
+        let TestDefinitionEvaluation {
+            operation,
+            observed,
+            mut comparison,
+        } = evaluation;
+        let observed =
+            redact_observed_message_series(&observed, self.inner.trace_payload_policy.as_ref())
+                .map_err(TestRunError::CommandFailed)?;
+        redact_comparison(&mut comparison, self.inner.trace_payload_policy.as_ref())
+            .map_err(TestRunError::CommandFailed)?;
+        let command_message_id = operation_command_message_id(&operation)
+            .map(str::to_owned)
+            .or_else(|| {
+                let root_key = expected.graphs().first()?.root_command()?.key;
+                comparison
+                    .matches
+                    .iter()
+                    .find(|matched| matched.expected_key == root_key)
+                    .map(|matched| matched.observed_message_id.clone())
+            });
+        let command_outcome = command_message_id
+            .as_deref()
+            .and_then(|message_id| observed.command_outcome(message_id))
+            .cloned();
+        let status = match comparison.status {
+            MessageSeriesComparisonStatus::Passed => TestReportStatus::Passed,
+            MessageSeriesComparisonStatus::Failed => TestReportStatus::Failed,
+        };
+        let operation_id = operation.operation_id.clone();
+        let correlation_id = operation.correlation_id.clone();
+        Ok(TestReport {
+            run_id,
+            test_id,
+            revision,
+            status,
+            expected,
+            observed,
+            comparison,
+            command_outcome,
+            operation_id: operation_id.clone(),
+            correlation_id: correlation_id.clone(),
+            operation_href: format!("/operations/{operation_id}"),
+            operation_events_href: format!("/operations/{operation_id}/events"),
+            correlation_events_href: format!("/correlations/{correlation_id}/events"),
+            operation,
+        })
     }
 
     pub async fn aggregate_instances(
@@ -887,10 +1369,17 @@ impl Tracer {
 
     pub async fn reset_test_scenario(&self) -> Result<(), TestScenarioResetError> {
         let _test_run = self.inner.test_run_gate.lock().await;
-        self.reset_test_scenario_unlocked().await
+        let fixture = self
+            .inner
+            .default_test_fixture()
+            .ok_or(TestScenarioResetError::Unavailable)?;
+        self.reset_test_scenario_unlocked(fixture).await
     }
 
-    async fn reset_test_scenario_unlocked(&self) -> Result<(), TestScenarioResetError> {
+    async fn reset_test_scenario_unlocked(
+        &self,
+        fixture: &Fixture,
+    ) -> Result<(), TestScenarioResetError> {
         let reset = self
             .inner
             .test_scenario_reset
@@ -909,7 +1398,7 @@ impl Tracer {
             .await
             .retain_dispatch_operations();
         self.inner.correlations.retain_dispatch_correlations();
-        let result = reset.reset().await;
+        let result = reset.reset(fixture).await;
         if result.is_ok() {
             self.inner
                 .test_scenario_healthy
@@ -975,6 +1464,33 @@ impl Tracer {
         .await
     }
 
+    async fn submit_test_unlocked_pinned(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: &str,
+        command: &str,
+        request: SimulationRequest,
+        idempotency_key: Option<&str>,
+    ) -> Result<(OperationSnapshot, CorrelationSubscription), SubmissionError> {
+        let submission = self
+            .submit_operation_internal(
+                OperationMode::Test,
+                aggregate_type,
+                aggregate_id,
+                command,
+                request,
+                idempotency_key,
+                true,
+            )
+            .await?;
+        let lease = submission.correlation_lease.ok_or_else(|| {
+            SubmissionError::InvalidOperationId(
+                "subject correlation lease was not acquired".to_owned(),
+            )
+        })?;
+        Ok((submission.snapshot, lease))
+    }
+
     pub async fn submit_dispatch(
         &self,
         aggregate_type: &str,
@@ -994,11 +1510,6 @@ impl Tracer {
         .await
     }
 
-    #[allow(clippy::too_many_lines)]
-    #[expect(
-        clippy::significant_drop_tightening,
-        reason = "the reset guard must remain held until the spawned operation completes"
-    )]
     async fn submit_operation(
         &self,
         mode: OperationMode,
@@ -1008,6 +1519,34 @@ impl Tracer {
         request: SimulationRequest,
         idempotency_key: Option<&str>,
     ) -> Result<OperationSnapshot, SubmissionError> {
+        self.submit_operation_internal(
+            mode,
+            aggregate_type,
+            aggregate_id,
+            command,
+            request,
+            idempotency_key,
+            false,
+        )
+        .await
+        .map(|submission| submission.snapshot)
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "the reset guard must remain held until the spawned operation completes"
+    )]
+    async fn submit_operation_internal(
+        &self,
+        mode: OperationMode,
+        aggregate_type: &str,
+        aggregate_id: &str,
+        command: &str,
+        request: SimulationRequest,
+        idempotency_key: Option<&str>,
+        pin_correlation: bool,
+    ) -> Result<OperationSubmission, SubmissionError> {
         let transport = match mode {
             OperationMode::Simulate => None,
             OperationMode::Test => {
@@ -1134,8 +1673,24 @@ impl Tracer {
                     return Err(SubmissionError::IdentityConflict);
                 }
                 let snapshot = existing.snapshot().await;
+                let correlation_lease = if pin_correlation {
+                    Some(
+                        self.inner
+                            .correlations
+                            .subscribe(&correlation_id, 0)
+                            .await
+                            .map_err(|error| {
+                                SubmissionError::InvalidOperationId(error.to_string())
+                            })?,
+                    )
+                } else {
+                    None
+                };
                 drop(operations);
-                return Ok(snapshot);
+                return Ok(OperationSubmission {
+                    snapshot,
+                    correlation_lease,
+                });
             }
             if operations.records.len() >= self.inner.maximum_operations
                 && !operations.has_evictable(&self.inner.correlations)
@@ -1183,9 +1738,27 @@ impl Tracer {
                 drop(operations);
                 return Err(error);
             }
+            let correlation_lease = if pin_correlation {
+                match self.inner.correlations.subscribe(&correlation_id, 0).await {
+                    Ok(lease) => Some(lease),
+                    Err(error) => {
+                        operations.records.remove(&operation_key);
+                        operations
+                            .insertion_order
+                            .retain(|retained| retained != &operation_key);
+                        self.inner.correlations.remove_if_inactive(&correlation_id);
+                        drop(operations);
+                        return Err(SubmissionError::InvalidOperationId(error.to_string()));
+                    }
+                }
+            } else {
+                None
+            };
             drop(operations);
-            permit
+            (permit, correlation_lease)
         };
+
+        let (permit, correlation_lease) = permit;
 
         let tracer = self.clone();
         let panic_tracer = self.clone();
@@ -1221,19 +1794,20 @@ impl Tracer {
         });
         panic_record.set_execution(execution.abort_handle());
         tokio::spawn(async move {
-            if execution.await.is_err() {
+            if let Err(error) = execution.await {
+                let (code, message) = operation_task_failure(&error);
                 panic_record
-                    .fail_after_possible_publication(
-                        "operation-panicked",
-                        "the command operation task panicked".to_owned(),
-                    )
+                    .fail_after_possible_publication(code, message.to_owned())
                     .await;
                 panic_tracer
                     .record_correlation_result(&panic_correlation_id, &panic_record)
                     .await;
             }
         });
-        Ok(queued)
+        Ok(OperationSubmission {
+            snapshot: queued,
+            correlation_lease,
+        })
     }
 
     pub async fn operation(
@@ -1244,7 +1818,123 @@ impl Tracer {
         Ok(record.snapshot().await)
     }
 
-    async fn abort_operation(&self, operation_id: &str) {
+    pub async fn operation_message_series(
+        &self,
+        operation_id: &str,
+        within: TestTimeout,
+        settle_for: TestTimeout,
+    ) -> Result<OperationMessageSeries, MessageSeriesCaptureError> {
+        let deadline = tokio::time::Instant::now()
+            .checked_add(within.as_duration())
+            .ok_or(MessageSeriesCaptureError::TimerRange)?;
+        let (record, mut evidence_subscription) = self.operation_capture(operation_id).await?;
+        let mut operation = record.capture_snapshot().await;
+
+        if !operation.status.is_terminal() {
+            let mut operation_subscription = subscribe(&record, operation.latest_event_id)
+                .await
+                .map_err(SubmissionError::from)?;
+            let terminal = tokio::time::timeout_at(deadline, async {
+                while operation_subscription.next().await.is_some() {}
+            })
+            .await
+            .is_ok();
+            operation = record.capture_snapshot().await;
+            if !terminal || !operation.status.is_terminal() {
+                let evidence = evidence_subscription.snapshot().await?;
+                return self.message_series_response(operation, &evidence, settle_for, false);
+            }
+        }
+
+        let mut idle_deadline = tokio::time::Instant::now()
+            .checked_add(settle_for.as_duration())
+            .ok_or(MessageSeriesCaptureError::TimerRange)?;
+        loop {
+            let wake = idle_deadline.min(deadline);
+            match tokio::time::timeout_at(wake, evidence_subscription.changed()).await {
+                Ok(Ok(())) => {
+                    idle_deadline = tokio::time::Instant::now()
+                        .checked_add(settle_for.as_duration())
+                        .ok_or(MessageSeriesCaptureError::TimerRange)?;
+                }
+                Ok(Err(error)) => return Err(error.into()),
+                Err(_) if deadline <= idle_deadline => {
+                    let evidence = evidence_subscription.snapshot().await?;
+                    return self.message_series_response(operation, &evidence, settle_for, false);
+                }
+                Err(_) => {
+                    let revision = evidence_subscription.revision();
+                    let latest = evidence_subscription.snapshot().await?;
+                    if latest.revision != revision {
+                        idle_deadline = tokio::time::Instant::now()
+                            .checked_add(settle_for.as_duration())
+                            .ok_or(MessageSeriesCaptureError::TimerRange)?;
+                        continue;
+                    }
+                    return self.message_series_response(operation, &latest, settle_for, true);
+                }
+            }
+        }
+    }
+
+    async fn operation_capture(
+        &self,
+        operation_id: &str,
+    ) -> Result<(Arc<OperationRecord>, CorrelationEvidenceSubscription), MessageSeriesCaptureError>
+    {
+        OperationId::new(operation_id)
+            .map_err(|error| SubmissionError::InvalidOperationId(error.to_string()))?;
+        let operations = self.inner.operations.lock().await;
+        let record = operations
+            .records
+            .get(operation_id)
+            .cloned()
+            .ok_or(SubmissionError::NotFound)?;
+        let snapshot = record.capture_snapshot().await;
+        let subscription = self
+            .inner
+            .correlations
+            .subscribe_evidence(&snapshot.correlation_id)
+            .await
+            .map_err(|error| match error {
+                CorrelationError::NotFound => {
+                    MessageSeriesCaptureError::Operation(SubmissionError::NotFound)
+                }
+                error => MessageSeriesCaptureError::Correlation(error),
+            })?;
+        drop(operations);
+        Ok((record, subscription))
+    }
+
+    fn message_series_response(
+        &self,
+        operation: OperationCaptureSnapshot,
+        evidence: &CorrelationEvidenceSnapshot,
+        settle_for: TestTimeout,
+        settled: bool,
+    ) -> Result<OperationMessageSeries, MessageSeriesCaptureError> {
+        let fidelity = message_series_fidelity(&operation, evidence, settled);
+        let note = message_series_note(&operation, evidence, settled, fidelity);
+        let message_series = redact_observed_message_series(
+            &evidence.observed,
+            self.inner.trace_payload_policy.as_ref(),
+        )
+        .map_err(MessageSeriesCaptureError::PayloadPolicy)?;
+        Ok(OperationMessageSeries {
+            operation_id: operation.operation_id,
+            correlation_id: operation.correlation_id,
+            mode: operation.mode,
+            message_series,
+            capture: MessageSeriesCapture {
+                settled,
+                settled_for: settle_for,
+                fidelity,
+                note,
+            },
+        })
+    }
+
+    async fn abort_operation_for_deadline(&self, operation_id: &str) {
         let record = self
             .inner
             .operations
@@ -1359,17 +2049,81 @@ impl Tracer {
             }
             let invocation = CommandInvocation::new(
                 operation_id,
-                correlation_id,
+                correlation_id.clone(),
                 execution_fingerprint,
-                aggregate_type,
-                aggregate_id,
+                aggregate_type.clone(),
+                aggregate_id.clone(),
+                command.clone(),
+                schema_version,
+                payload.clone(),
+            );
+            let observer = Arc::new(OperationTransportObserver::new(
+                Arc::clone(&record),
+                Arc::clone(&self.inner.correlations),
+                invocation.operation_id().as_str().to_owned(),
+                correlation_id.clone(),
                 command,
                 schema_version,
+                TestAggregate {
+                    aggregate_type,
+                    id: aggregate_id.as_str().to_owned(),
+                },
                 payload,
-            );
-            let observer = Arc::new(OperationTransportObserver::new(Arc::clone(&record)));
+            ));
             match transport.invoke(invocation, observer.clone()).await {
                 Ok(receipt) if observer.matches(&receipt).await => {
+                    if let Some(error) = observer.observation_error().await {
+                        record
+                            .fail_after_possible_publication(
+                                "invalid-command-observation",
+                                bounded_failure_message(
+                                    self.inner.trace_payload_policy.as_ref(),
+                                    error.to_string(),
+                                    self.inner.maximum_operation_payload_bytes,
+                                ),
+                            )
+                            .await;
+                        return;
+                    }
+                    let outcome = match command_response_outcome(&receipt) {
+                        Ok(outcome) => outcome,
+                        Err(message) => {
+                            record
+                                .fail_after_possible_publication(
+                                    "invalid-command-transport-response",
+                                    bounded_failure_message(
+                                        self.inner.trace_payload_policy.as_ref(),
+                                        message,
+                                        self.inner.maximum_operation_payload_bytes,
+                                    ),
+                                )
+                                .await;
+                            return;
+                        }
+                    };
+                    if let Err(error) = self
+                        .inner
+                        .correlations
+                        .observe_command_outcome(
+                            &correlation_id,
+                            receipt.response_message_id().to_owned(),
+                            receipt.command_message_id().to_owned(),
+                            outcome,
+                        )
+                        .await
+                    {
+                        record
+                            .fail_after_possible_publication(
+                                "invalid-command-outcome-observation",
+                                bounded_failure_message(
+                                    self.inner.trace_payload_policy.as_ref(),
+                                    error.to_string(),
+                                    self.inner.maximum_operation_payload_bytes,
+                                ),
+                            )
+                            .await;
+                        return;
+                    }
                     complete_transport(
                         &record,
                         receipt,
@@ -1424,6 +2178,35 @@ impl Tracer {
             return;
         }
 
+        let simulated_command_id = synthetic_message_id(&correlation_id, "preview-command");
+        let simulated_response_id = synthetic_message_id(&correlation_id, "preview-response");
+        let simulation_aggregate = TestAggregate {
+            aggregate_type: aggregate_type.clone(),
+            id: aggregate_id.as_str().to_owned(),
+        };
+        if let Err(error) = self
+            .inner
+            .correlations
+            .observe_simulated_command(
+                &correlation_id,
+                simulated_command_id.clone(),
+                command,
+                schema_version,
+                simulation_aggregate.clone(),
+                Some(payload.clone()),
+            )
+            .await
+        {
+            let _ = self
+                .correlation_observer(OperationMode::Simulate)
+                .record_observation_failure(
+                    &correlation_id,
+                    &simulated_command_id,
+                    error.to_string(),
+                )
+                .await;
+        }
+
         let stream = match stream_id(simulator.descriptor(), aggregate_id) {
             Ok(stream) => stream,
             Err(error) => {
@@ -1463,9 +2246,22 @@ impl Tracer {
                     self.inner.maximum_operation_payload_bytes,
                 );
                 for event in &events {
-                    let mut observation =
-                        DomainEventObservation::new(event.event_type.clone(), event.schema_version)
-                            .with_stream_version(event.predicted_stream_version);
+                    let message_id = ContentFingerprint::digest(format!(
+                        "{correlation_id}:predicted-domain-event:{}",
+                        event.ordinal
+                    ))
+                    .to_hex();
+                    let mut observation = DomainEventObservation::new(
+                        message_id,
+                        event.event_type.clone(),
+                        event.schema_version,
+                    )
+                    .with_causation_id(&simulated_command_id)
+                    .with_aggregate(
+                        simulation_aggregate.aggregate_type.clone(),
+                        simulation_aggregate.id.clone(),
+                    )
+                    .with_stream_version(event.predicted_stream_version);
                     if let Some(payload) = event.payload.clone() {
                         observation = observation.with_payload(payload);
                     }
@@ -1476,6 +2272,13 @@ impl Tracer {
                         .observe_domain_event(&correlation_id, observation)
                         .await;
                 }
+                self.record_simulated_command_outcome(
+                    &correlation_id,
+                    simulated_response_id,
+                    simulated_command_id,
+                    CommandResponseOutcome::Accepted,
+                )
+                .await;
                 complete_simulation_accepted(&record, base_stream_version, events).await;
             }
             Ok(RuntimeDecision::Rejected {
@@ -1486,6 +2289,27 @@ impl Tracer {
                     self.inner.trace_payload_policy.rejection(rejection),
                     self.inner.maximum_operation_payload_bytes,
                 );
+                match simulated_rejection_outcome(rejection.clone()) {
+                    Ok(outcome) => {
+                        self.record_simulated_command_outcome(
+                            &correlation_id,
+                            simulated_response_id,
+                            simulated_command_id,
+                            outcome,
+                        )
+                        .await;
+                    }
+                    Err(message) => {
+                        let _ = self
+                            .correlation_observer(OperationMode::Simulate)
+                            .record_observation_failure(
+                                &correlation_id,
+                                &simulated_command_id,
+                                message,
+                            )
+                            .await;
+                    }
+                }
                 complete_simulation_rejected(&record, base_stream_version, rejection).await;
             }
             Err(error) => {
@@ -1535,6 +2359,31 @@ impl Tracer {
         record.mark_correlation_recorded();
     }
 
+    async fn record_simulated_command_outcome(
+        &self,
+        correlation_id: &str,
+        response_message_id: String,
+        command_message_id: String,
+        outcome: CommandResponseOutcome,
+    ) {
+        if let Err(error) = self
+            .inner
+            .correlations
+            .observe_command_outcome(
+                correlation_id,
+                response_message_id.clone(),
+                command_message_id,
+                outcome,
+            )
+            .await
+        {
+            let _ = self
+                .correlation_observer(OperationMode::Simulate)
+                .record_observation_failure(correlation_id, response_message_id, error.to_string())
+                .await;
+        }
+    }
+
     fn generated_operation_id(&self, mode: OperationMode) -> Result<OperationId, SubmissionError> {
         let sequence = self.inner.generated_ids.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
@@ -1551,6 +2400,359 @@ impl Tracer {
     }
 }
 
+fn message_series_fidelity(
+    operation: &OperationCaptureSnapshot,
+    evidence: &CorrelationEvidenceSnapshot,
+    settled: bool,
+) -> MessageSeriesFidelity {
+    let messages = evidence.observed.messages();
+    let roots = messages.roots().collect::<Vec<_>>();
+    let exact = settled
+        && operation.mode != OperationMode::Simulate
+        && operation.status.is_terminal()
+        && evidence.conflicts.is_empty()
+        && evidence.failure.is_none()
+        && roots.len() == 1
+        && roots.first().is_some_and(|root| root.is_command())
+        && messages
+            .iter()
+            .all(|message| message.correlation_id() == operation.correlation_id)
+        && messages
+            .iter()
+            .filter(|message| !message.is_command())
+            .all(|message| message.causation_id().is_some())
+        && messages
+            .iter()
+            .filter(|message| message.is_command())
+            .all(|command| {
+                evidence
+                    .observed
+                    .command_outcome(command.message_id())
+                    .is_some()
+            })
+        && evidence.observed.topology_issues().is_empty()
+        && evidence.observed.outcome_issues().is_empty();
+    if exact {
+        MessageSeriesFidelity::Exact
+    } else {
+        MessageSeriesFidelity::Grouped
+    }
+}
+
+fn message_series_note(
+    operation: &OperationCaptureSnapshot,
+    evidence: &CorrelationEvidenceSnapshot,
+    settled: bool,
+    fidelity: MessageSeriesFidelity,
+) -> Option<String> {
+    if !settled {
+        return Some(
+            "capture reached `within` before terminal-plus-idle settling completed; the message series may be partial"
+                .to_owned(),
+        );
+    }
+    if fidelity == MessageSeriesFidelity::Exact {
+        return None;
+    }
+    if !evidence.conflicts.is_empty() || evidence.failure.is_some() {
+        return Some(
+            "conflicting or incomplete observations were grouped with the operation and must not be treated as exact causality"
+                .to_owned(),
+        );
+    }
+    if operation.mode == OperationMode::Simulate {
+        return Some(
+            "Preview messages use synthetic identities and are grouped with the operation; only explicit causation links are causal"
+                .to_owned(),
+        );
+    }
+    Some(
+        "one or more message, causation, or outcome identities are incomplete; association with the operation is uncertain"
+            .to_owned(),
+    )
+}
+
+fn operation_run_error(operation: &OperationSnapshot) -> TestRunError {
+    let message = operation.failure.as_ref().map_or_else(
+        || format!("operation ended with status `{:?}`", operation.status),
+        |failure| format!("{}: {}", failure.code, failure.message),
+    );
+    TestRunError::CommandFailed(message)
+}
+
+fn operation_task_failure(error: &tokio::task::JoinError) -> (&'static str, &'static str) {
+    if error.is_cancelled() {
+        (
+            "operation-cancelled",
+            "the command operation task was cancelled",
+        )
+    } else {
+        ("operation-panicked", "the command operation task panicked")
+    }
+}
+
+fn run_deadline(within: Duration) -> Result<tokio::time::Instant, TestRunError> {
+    tokio::time::Instant::now()
+        .checked_add(within)
+        .ok_or_else(|| {
+            TestRunError::CommandFailed("within exceeds the supported timer range".to_owned())
+        })
+}
+
+fn settle_deadline_at(
+    now: tokio::time::Instant,
+    settle_for: Duration,
+) -> Result<tokio::time::Instant, TestRunError> {
+    now.checked_add(settle_for).ok_or_else(|| {
+        TestRunError::CommandFailed("settleFor exceeds the supported timer range".to_owned())
+    })
+}
+
+fn next_poll_at(now: tokio::time::Instant, deadline: tokio::time::Instant) -> tokio::time::Instant {
+    now.checked_add(TEST_EVALUATION_POLL_INTERVAL)
+        .map_or(deadline, |poll| poll.min(deadline))
+}
+
+fn compare_evidence_snapshot(
+    graph: &MessageGraphDefinition,
+    evidence: &CorrelationEvidenceSnapshot,
+    context: MessageSeriesComparisonContext,
+) -> MessageSeriesComparison {
+    let mut comparison = compare_message_series(graph, &evidence.observed, context);
+    append_evidence_diagnostics(&mut comparison, evidence);
+    comparison
+}
+
+async fn compare_evidence_snapshot_until(
+    graph: &MessageGraphDefinition,
+    evidence: &CorrelationEvidenceSnapshot,
+    context: MessageSeriesComparisonContext,
+    deadline: tokio::time::Instant,
+) -> Result<Option<MessageSeriesComparison>, TestRunError> {
+    let graph = graph.clone();
+    let evidence = evidence.clone();
+    let comparison =
+        tokio::task::spawn_blocking(move || compare_evidence_snapshot(&graph, &evidence, context));
+    match tokio::time::timeout_at(deadline, comparison).await {
+        Ok(Ok(comparison)) => Ok(Some(comparison)),
+        Ok(Err(error)) => Err(TestRunError::CommandFailed(format!(
+            "message-series comparison task failed: {error}"
+        ))),
+        Err(_) => Ok(None),
+    }
+}
+
+fn evidence_failure_comparison(evidence: &CorrelationEvidenceSnapshot) -> MessageSeriesComparison {
+    let mut comparison = MessageSeriesComparison {
+        status: MessageSeriesComparisonStatus::Failed,
+        matches: Vec::new(),
+        diagnostics: Vec::new(),
+    };
+    append_evidence_diagnostics(&mut comparison, evidence);
+    comparison
+}
+
+fn append_evidence_diagnostics(
+    comparison: &mut MessageSeriesComparison,
+    evidence: &CorrelationEvidenceSnapshot,
+) {
+    for conflict in &evidence.conflicts {
+        comparison
+            .diagnostics
+            .push(MessageSeriesComparisonDiagnostic {
+                code: "observation-conflict",
+                path: "/observed".to_owned(),
+                message: format!(
+                    "conflicting observations were recorded for `{}`: {}",
+                    conflict.identity, conflict.message
+                ),
+                expected: conflict.existing.clone(),
+                observed: conflict.observed.clone(),
+            });
+    }
+    if !evidence.conflicts.is_empty() {
+        comparison.status = MessageSeriesComparisonStatus::Failed;
+    }
+    if let Some(failure) = &evidence.failure {
+        comparison
+            .diagnostics
+            .push(MessageSeriesComparisonDiagnostic {
+                code: "observation-failure",
+                path: "/observed".to_owned(),
+                message: format!(
+                    "failed to retain correlated observation `{}` ({} occurrence(s)): {}",
+                    failure.identity, failure.count, failure.message
+                ),
+                expected: None,
+                observed: None,
+            });
+        comparison.status = MessageSeriesComparisonStatus::Failed;
+    }
+}
+
+fn next_observation_order(observed: &ObservedMessageSeries) -> u64 {
+    observed
+        .messages()
+        .iter()
+        .map(crate::ObservedMessageNode::observation_order)
+        .chain(
+            observed
+                .command_outcomes()
+                .iter()
+                .map(ObservedCommandOutcome::observation_order),
+        )
+        .max()
+        .map_or(0, |order| order.saturating_add(1))
+}
+
+fn add_deadline_diagnostic(comparison: &mut MessageSeriesComparison, settling: bool) {
+    if settling {
+        comparison
+            .diagnostics
+            .push(MessageSeriesComparisonDiagnostic {
+                code: "timeout-during-settle",
+                path: "/expected/settleFor".to_owned(),
+                message: "the overall deadline elapsed before settling completed".to_owned(),
+                expected: None,
+                observed: None,
+            });
+    } else if !comparison
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code.starts_with("timeout"))
+    {
+        comparison
+            .diagnostics
+            .push(MessageSeriesComparisonDiagnostic {
+                code: "timeout-before-expectations",
+                path: "/expected/within".to_owned(),
+                message: "the expected behavior did not complete before the deadline".to_owned(),
+                expected: None,
+                observed: None,
+            });
+    }
+    comparison.status = MessageSeriesComparisonStatus::Failed;
+}
+
+fn operation_command_message_id(operation: &OperationSnapshot) -> Option<&str> {
+    match operation.result.as_ref()? {
+        OperationResult::Accepted {
+            command_message_id, ..
+        }
+        | OperationResult::Rejected {
+            command_message_id, ..
+        } => command_message_id.as_deref(),
+    }
+}
+
+fn redact_observed_message_series(
+    observed: &ObservedMessageSeries,
+    policy: &dyn TracePayloadPolicy,
+) -> Result<ObservedMessageSeries, String> {
+    let mut wire = serde_json::to_value(observed).map_err(|error| error.to_string())?;
+    let object = wire
+        .as_object_mut()
+        .ok_or_else(|| "observed message series did not serialize as an object".to_owned())?;
+    let messages = object
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "observed messages did not serialize as an array".to_owned())?;
+    for message in messages {
+        redact_wire_payload(message, policy);
+    }
+    let outcomes = object
+        .get_mut("commandOutcomes")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "observed command outcomes did not serialize as an array".to_owned())?;
+    for outcome in outcomes {
+        if let Some(outcome) = outcome.get_mut("outcome") {
+            redact_wire_command_outcome(outcome, policy)?;
+        }
+    }
+    serde_json::from_value(wire).map_err(|error| error.to_string())
+}
+
+fn redact_comparison(
+    comparison: &mut MessageSeriesComparison,
+    policy: &dyn TracePayloadPolicy,
+) -> Result<(), String> {
+    for diagnostic in &mut comparison.diagnostics {
+        match diagnostic.code {
+            "payload-mismatch" => {
+                diagnostic.observed = diagnostic
+                    .observed
+                    .take()
+                    .and_then(|payload| policy.observed_event_payload(payload));
+            }
+            "unexpected-observed" => {
+                if let Some(observed) = diagnostic.observed.as_mut() {
+                    redact_wire_payload(observed, policy);
+                }
+            }
+            "command-outcome-mismatch" => {
+                if let Some(observed) = diagnostic.observed.as_mut() {
+                    redact_wire_command_outcome(observed, policy)?;
+                }
+            }
+            "observation-conflict" => {
+                if let Some(existing) = diagnostic.expected.as_mut() {
+                    redact_wire_observation(existing, policy)?;
+                }
+                if let Some(observed) = diagnostic.observed.as_mut() {
+                    redact_wire_observation(observed, policy)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn redact_wire_payload(value: &mut Value, policy: &dyn TracePayloadPolicy) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    let Some(payload) = object.remove("payload") else {
+        return;
+    };
+    if let Some(payload) = policy.observed_event_payload(payload) {
+        object.insert("payload".to_owned(), payload);
+    }
+}
+
+fn redact_wire_observation(
+    value: &mut Value,
+    policy: &dyn TracePayloadPolicy,
+) -> Result<(), String> {
+    redact_wire_payload(value, policy);
+    if let Some(outcome) = value.get_mut("outcome") {
+        redact_wire_command_outcome(outcome, policy)?;
+    }
+    Ok(())
+}
+
+fn redact_wire_command_outcome(
+    value: &mut Value,
+    policy: &dyn TracePayloadPolicy,
+) -> Result<(), String> {
+    if value.get("status").and_then(Value::as_str) != Some("rejected") {
+        return Ok(());
+    }
+    let Some(rejection) = value.get_mut("value").and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    let typed =
+        serde_json::from_value::<MessagingCommandRejection>(Value::Object(rejection.clone()))
+            .map_err(|error| error.to_string())?;
+    let filtered = policy.observed_rejection(typed)?;
+    *rejection = serde_json::to_value(filtered)
+        .map_err(|error| error.to_string())?
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "observed rejection did not serialize as an object".to_owned())?;
+    Ok(())
+}
+
 fn validate_http_operation_id(value: &str) -> Result<&str, SubmissionError> {
     OperationId::new(value)
         .map_err(|error| SubmissionError::InvalidOperationId(error.to_string()))?;
@@ -1563,6 +2765,28 @@ fn validate_http_operation_id(value: &str) -> Result<&str, SubmissionError> {
         ));
     }
     Ok(value)
+}
+
+fn synthetic_message_id(correlation_id: &str, kind: &str) -> String {
+    ContentFingerprint::digest(format!("{correlation_id}:{kind}")).to_hex()
+}
+
+fn simulated_rejection_outcome(rejection: Value) -> Result<CommandResponseOutcome, String> {
+    let fallback =
+        ApplicationErrorCode::new("SIMULATED_REJECTION").map_err(|error| error.to_string())?;
+    let code = rejection
+        .get("code")
+        .and_then(Value::as_str)
+        .and_then(|code| ApplicationErrorCode::new(code).ok())
+        .unwrap_or(fallback);
+    MessagingCommandRejection::new(
+        CommandRejectionClassification::Conflict,
+        code,
+        "simulated command was rejected",
+        Some(rejection),
+    )
+    .map(CommandResponseOutcome::Rejected)
+    .map_err(|error| error.to_string())
 }
 
 fn operation_id_from_key(
@@ -1643,6 +2867,38 @@ async fn complete_simulation_rejected(
             ],
         )
         .await;
+}
+
+fn command_response_outcome(receipt: &CommandReceipt) -> Result<CommandResponseOutcome, String> {
+    let CommandOutcome::Rejected(rejection) = receipt.outcome() else {
+        return Ok(CommandResponseOutcome::Accepted);
+    };
+    let classification = match rejection.classification.as_str() {
+        "invalid_request" | "invalid-request" => CommandRejectionClassification::InvalidRequest,
+        "unauthorized" => CommandRejectionClassification::Unauthorized,
+        "forbidden" => CommandRejectionClassification::Forbidden,
+        "not_found" | "not-found" => CommandRejectionClassification::NotFound,
+        "conflict" => CommandRejectionClassification::Conflict,
+        "rate_limited" | "rate-limited" => CommandRejectionClassification::RateLimited,
+        "unavailable" => CommandRejectionClassification::Unavailable,
+        "internal" => CommandRejectionClassification::Internal,
+        classification => {
+            return Err(format!(
+                "command transport returned unknown rejection classification `{classification}`"
+            ));
+        }
+    };
+    let code = ApplicationErrorCode::new(rejection.code.clone()).map_err(|error| {
+        format!("command transport returned an invalid rejection code: {error}")
+    })?;
+    let rejection = MessagingCommandRejection::new(
+        classification,
+        code,
+        rejection.message.clone(),
+        rejection.details.clone(),
+    )
+    .map_err(|error| format!("command transport returned an invalid rejection: {error}"))?;
+    Ok(CommandResponseOutcome::Rejected(rejection))
 }
 
 async fn complete_transport(
@@ -1818,7 +3074,31 @@ fn framed_fingerprint(values: &[&[u8]]) -> ContentFingerprint {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
+
+    fn command_series_definition(payload: &Value, outcome: &Value) -> MessageSeriesDefinition {
+        serde_json::from_value(json!({
+            "within": "2s",
+            "settleFor": "1ms",
+            "graphs": [{
+                "nodes": [{
+                    "kind": "command",
+                    "key": "subject",
+                    "name": "rent-bicycle",
+                    "schemaVersion": 1,
+                    "aggregate": {
+                        "type": "rental/bicycle",
+                        "id": "bike-1"
+                    },
+                    "payload": payload,
+                    "outcome": outcome
+                }]
+            }]
+        }))
+        .expect("valid command message series")
+    }
 
     #[test]
     fn request_fingerprints_use_deterministic_fixed_width_framing() {
@@ -1835,5 +3115,240 @@ mod tests {
             fingerprint.to_hex(),
             "9300fe8edfdb87c65efd101d49fb3eefeedde2020109cea3b2628464f1af35af"
         );
+    }
+
+    #[test]
+    fn transport_rejection_converts_to_the_exact_messaging_outcome() {
+        let receipt = CommandReceipt::rejected(
+            "command-1",
+            "response-1",
+            false,
+            crate::CommandRejection::new(
+                "conflict",
+                "rental.already_rented",
+                "The bicycle is already rented.",
+                Some(json!({ "bicycleId": "bike-1" })),
+            ),
+        );
+
+        let CommandResponseOutcome::Rejected(rejection) =
+            command_response_outcome(&receipt).expect("valid transport rejection")
+        else {
+            panic!("expected a rejected messaging outcome");
+        };
+        assert_eq!(
+            rejection.classification(),
+            CommandRejectionClassification::Conflict
+        );
+        assert_eq!(rejection.code().as_str(), "rental.already_rented");
+        assert_eq!(rejection.message(), "The bicycle is already rented.");
+        assert_eq!(rejection.details(), Some(&json!({ "bicycleId": "bike-1" })));
+    }
+
+    #[test]
+    fn report_comparison_uses_raw_rejection_before_typed_redaction() {
+        let aggregate = TestAggregate {
+            aggregate_type: "rental/bicycle".to_owned(),
+            id: "bike-1".to_owned(),
+        };
+        let payload = json!({
+            "metadata": { "payload": { "application": true } },
+            "secret": true
+        });
+        let rejection = MessagingCommandRejection::new(
+            CommandRejectionClassification::Conflict,
+            ApplicationErrorCode::new("rental.already_rented").expect("valid code"),
+            "The bicycle is already rented.",
+            Some(json!({ "private": true })),
+        )
+        .expect("valid rejection");
+        let observed = ObservedMessageSeries::try_from_parts(
+            [crate::ObservedMessageNode::command(
+                "command-1",
+                "correlation-1",
+                None,
+                "rent-bicycle",
+                1,
+                aggregate,
+                Some(payload.clone()),
+            )],
+            [ObservedCommandOutcome::try_new(
+                "response-1",
+                "command-1",
+                "correlation-1",
+                CommandResponseOutcome::Rejected(rejection),
+            )
+            .expect("valid outcome")],
+        )
+        .expect("valid observed series");
+
+        let definition = command_series_definition(
+            &payload,
+            &json!({ "rejected": { "code": "rental.already_rented" } }),
+        );
+        assert_eq!(
+            compare_message_series(
+                &definition.graphs()[0],
+                &observed,
+                MessageSeriesComparisonContext::default(),
+            )
+            .status,
+            MessageSeriesComparisonStatus::Passed
+        );
+
+        let redacted = redact_observed_message_series(&observed, &RedactTracePayloads)
+            .expect("redacted series");
+        assert_eq!(
+            redacted.messages().get("command-1").unwrap().payload(),
+            None
+        );
+        let CommandResponseOutcome::Rejected(rejection) = redacted.command_outcomes()[0].outcome()
+        else {
+            panic!("expected a rejected outcome");
+        };
+        assert_eq!(
+            rejection.classification(),
+            CommandRejectionClassification::Internal
+        );
+        assert_eq!(rejection.code().as_str(), "REDACTED");
+        assert_eq!(rejection.message(), "observed rejection redacted");
+        assert_eq!(rejection.details(), None);
+        assert_eq!(
+            compare_message_series(
+                &definition.graphs()[0],
+                &redacted,
+                MessageSeriesComparisonContext::default(),
+            )
+            .status,
+            MessageSeriesComparisonStatus::Failed
+        );
+
+        let exposed =
+            redact_observed_message_series(&observed, &ExposeTracePayloadsForLocalDevelopment)
+                .expect("exposed series");
+        assert_eq!(
+            exposed.messages().get("command-1").unwrap().payload(),
+            Some(&payload)
+        );
+        let CommandResponseOutcome::Rejected(rejection) = exposed.command_outcomes()[0].outcome()
+        else {
+            panic!("expected a rejected outcome");
+        };
+        assert_eq!(
+            rejection.classification(),
+            CommandRejectionClassification::Conflict
+        );
+        assert_eq!(rejection.code().as_str(), "rental.already_rented");
+        assert_eq!(rejection.message(), "The bicycle is already rented.");
+        assert_eq!(rejection.details(), Some(&json!({ "private": true })));
+    }
+
+    #[test]
+    fn observation_conflicts_force_a_failed_comparison() {
+        let aggregate = TestAggregate {
+            aggregate_type: "rental/bicycle".to_owned(),
+            id: "bike-1".to_owned(),
+        };
+        let observed = ObservedMessageSeries::try_from_parts(
+            [crate::ObservedMessageNode::command(
+                "command-1",
+                "correlation-1",
+                None,
+                "rent-bicycle",
+                1,
+                aggregate,
+                Some(json!({ "bicycleId": "bike-1" })),
+            )],
+            [ObservedCommandOutcome::try_new(
+                "response-1",
+                "command-1",
+                "correlation-1",
+                CommandResponseOutcome::Accepted,
+            )
+            .expect("valid outcome")],
+        )
+        .expect("valid observed series");
+        let definition =
+            command_series_definition(&json!({ "bicycleId": "bike-1" }), &json!("accepted"));
+        let graph = &definition.graphs()[0];
+        assert_eq!(
+            compare_message_series(graph, &observed, MessageSeriesComparisonContext::default())
+                .status,
+            MessageSeriesComparisonStatus::Passed
+        );
+
+        let comparison = compare_evidence_snapshot(
+            graph,
+            &CorrelationEvidenceSnapshot {
+                observed: observed.clone(),
+                conflicts: vec![crate::correlation::CorrelationObservationConflict {
+                    identity: "message:command-1".to_owned(),
+                    message: "same message ID carried different evidence".to_owned(),
+                    existing: Some(json!({ "payload": { "bicycleId": "bike-1" } })),
+                    observed: Some(json!({ "payload": { "bicycleId": "bike-2" } })),
+                }],
+                failure: None,
+                revision: 1,
+            },
+            MessageSeriesComparisonContext::default(),
+        );
+
+        assert_eq!(comparison.status, MessageSeriesComparisonStatus::Failed);
+        assert!(
+            comparison
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "observation-conflict")
+        );
+
+        let comparison = compare_evidence_snapshot(
+            graph,
+            &CorrelationEvidenceSnapshot {
+                observed,
+                conflicts: Vec::new(),
+                failure: Some(crate::correlation::CorrelationObservationFailure {
+                    identity: "event-2".to_owned(),
+                    message: "stored event checksum is invalid".to_owned(),
+                    count: 1,
+                }),
+                revision: 1,
+            },
+            MessageSeriesComparisonContext::default(),
+        );
+        assert_eq!(comparison.status, MessageSeriesComparisonStatus::Failed);
+        assert!(
+            comparison
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "observation-failure")
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_operation_tasks_have_a_distinct_terminal_code() {
+        let task = tokio::spawn(std::future::pending::<()>());
+        task.abort();
+        let error = task
+            .await
+            .expect_err("aborted task must return a join error");
+        let (code, message) = operation_task_failure(&error);
+        let record = OperationRecord::new(NewOperation {
+            operation_id: "operation-1".to_owned(),
+            correlation_id: "correlation-1".to_owned(),
+            fingerprint: "fingerprint".to_owned(),
+            mode: OperationMode::Test,
+            command: "rent-bicycle",
+            schema_version: 1,
+            aggregate_type: "rental/bicycle",
+            aggregate_id: "bike-1",
+        });
+        record.start().await;
+        record
+            .fail_after_possible_publication(code, message.to_owned())
+            .await;
+
+        let snapshot = record.snapshot().await;
+        assert_eq!(snapshot.status, crate::OperationStatus::Failed);
+        assert_eq!(snapshot.failure.expect("terminal failure").code, code);
     }
 }

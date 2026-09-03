@@ -46,6 +46,14 @@ pub enum RuntimeRegistrationError {
     ResetWithoutTestStore,
     #[error("a test scenario reset requires a configured test command transport")]
     ResetWithoutTestTransport,
+    #[error("a test scenario reset requires an explicit default test fixture")]
+    ResetWithoutDefaultTestFixture,
+    #[error("test fixtures require a configured test scenario reset")]
+    TestFixtureWithoutReset,
+    #[error("test fixture `{fixture_id}` is registered more than once")]
+    DuplicateTestFixture { fixture_id: String },
+    #[error("default test fixture `{second}` conflicts with existing default `{first}`")]
+    MultipleDefaultTestFixtures { first: String, second: String },
     #[error("a test repository requires a named test fixture")]
     TestRepositoryWithoutFixture,
     #[error("test definition `{id}` is invalid: {message}")]

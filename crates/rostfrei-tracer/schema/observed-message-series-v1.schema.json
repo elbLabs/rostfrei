@@ -1,51 +1,24 @@
 {
-  "$id": "https://rostfrei.dev/schemas/tracer/observed-message-series-v1.schema.json",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Rostfrei Tracer Observed Message Series",
-  "description": "Insertion-ordered causal message observations with independently arriving command outcomes.",
-  "type": "object",
-  "properties": {
-    "commandOutcomes": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/ObservedCommandOutcome"
-      },
-      "maxItems": 4096
-    },
-    "messages": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/ObservedMessageNode"
-      },
-      "maxItems": 4096
-    }
-  },
-  "additionalProperties": false,
-  "required": [
-    "messages",
-    "commandOutcomes"
-  ],
   "$defs": {
     "AggregateSchema": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "id": {
-          "type": "string",
-          "pattern": "\\S"
+          "pattern": "\\S",
+          "type": "string"
         },
         "type": {
-          "type": "string",
-          "pattern": "\\S"
+          "pattern": "\\S",
+          "type": "string"
         }
       },
-      "additionalProperties": false,
       "required": [
         "type",
         "id"
-      ]
+      ],
+      "type": "object"
     },
     "CommandRejectionClassificationSchema": {
-      "type": "string",
       "enum": [
         "invalid_request",
         "unauthorized",
@@ -55,42 +28,42 @@
         "rate_limited",
         "unavailable",
         "internal"
-      ]
+      ],
+      "type": "string"
     },
     "CommandRejectionSchema": {
-      "type": "object",
       "properties": {
         "classification": {
           "$ref": "#/$defs/CommandRejectionClassificationSchema"
         },
         "code": {
           "description": "A 1-128 byte ASCII application error code.",
-          "type": "string",
           "maxLength": 128,
           "minLength": 1,
-          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$"
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$",
+          "type": "string"
         },
         "details": true,
         "message": {
           "description": "A nonempty rejection message. Runtime validation additionally rejects Unicode control characters and values exceeding 1024 UTF-8 bytes; JSON Schema cannot express that byte limit.",
-          "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "type": "string"
         }
       },
       "required": [
         "classification",
         "code",
         "message"
-      ]
+      ],
+      "type": "object"
     },
     "CommandResponseOutcomeSchema": {
       "oneOf": [
         {
-          "type": "object",
           "properties": {
             "status": {
-              "type": "string",
-              "const": "accepted"
+              "const": "accepted",
+              "type": "string"
             },
             "value": {
               "type": "null"
@@ -98,14 +71,14 @@
           },
           "required": [
             "status"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "status": {
-              "type": "string",
-              "const": "rejected"
+              "const": "rejected",
+              "type": "string"
             },
             "value": {
               "$ref": "#/$defs/CommandRejectionSchema"
@@ -114,28 +87,35 @@
           "required": [
             "status",
             "value"
-          ]
+          ],
+          "type": "object"
         }
       ]
     },
     "IdentifierSchema": {
-      "type": "string",
       "maxLength": 256,
       "minLength": 1,
-      "pattern": "^[!-~]+$"
+      "pattern": "^[!-~]+$",
+      "type": "string"
     },
     "NonEmptyStringSchema": {
-      "type": "string",
-      "pattern": "\\S"
+      "pattern": "\\S",
+      "type": "string"
     },
     "ObservedCommandOutcome": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "commandMessageId": {
           "$ref": "#/$defs/IdentifierSchema"
         },
         "correlationId": {
           "$ref": "#/$defs/IdentifierSchema"
+        },
+        "observationOrder": {
+          "format": "uint64",
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
         },
         "outcome": {
           "$ref": "#/$defs/CommandResponseOutcomeSchema"
@@ -144,18 +124,19 @@
           "$ref": "#/$defs/IdentifierSchema"
         }
       },
-      "additionalProperties": false,
       "required": [
         "responseMessageId",
         "commandMessageId",
         "correlationId",
+        "observationOrder",
         "outcome"
-      ]
+      ],
+      "type": "object"
     },
     "ObservedMessageNode": {
       "oneOf": [
         {
-          "type": "object",
+          "additionalProperties": false,
           "properties": {
             "aggregate": {
               "$ref": "#/$defs/AggregateSchema"
@@ -174,8 +155,8 @@
               "$ref": "#/$defs/IdentifierSchema"
             },
             "kind": {
-              "type": "string",
-              "const": "command"
+              "const": "command",
+              "type": "string"
             },
             "messageId": {
               "$ref": "#/$defs/IdentifierSchema"
@@ -183,25 +164,93 @@
             "name": {
               "$ref": "#/$defs/NonEmptyStringSchema"
             },
+            "observationOrder": {
+              "format": "uint64",
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
             "payload": true,
             "schemaVersion": {
-              "type": "integer",
               "format": "uint32",
-              "minimum": 1
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
             }
           },
-          "additionalProperties": false,
           "required": [
             "kind",
             "messageId",
             "correlationId",
+            "observationOrder",
             "name",
             "schemaVersion",
             "aggregate"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "aggregate": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AggregateSchema"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "causationId": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IdentifierSchema"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "correlationId": {
+              "$ref": "#/$defs/IdentifierSchema"
+            },
+            "kind": {
+              "const": "domain-event",
+              "type": "string"
+            },
+            "messageId": {
+              "$ref": "#/$defs/IdentifierSchema"
+            },
+            "name": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "observationOrder": {
+              "format": "uint64",
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "payload": true,
+            "schemaVersion": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "messageId",
+            "correlationId",
+            "observationOrder",
+            "name",
+            "schemaVersion"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "properties": {
             "causationId": {
               "anyOf": [
@@ -217,8 +266,8 @@
               "$ref": "#/$defs/IdentifierSchema"
             },
             "kind": {
-              "type": "string",
-              "const": "domain-event"
+              "const": "integration-event",
+              "type": "string"
             },
             "messageId": {
               "$ref": "#/$defs/IdentifierSchema"
@@ -226,65 +275,57 @@
             "name": {
               "$ref": "#/$defs/NonEmptyStringSchema"
             },
+            "observationOrder": {
+              "format": "uint64",
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
             "payload": true,
             "schemaVersion": {
-              "type": "integer",
               "format": "uint32",
-              "minimum": 1
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
             }
           },
-          "additionalProperties": false,
           "required": [
             "kind",
             "messageId",
             "correlationId",
+            "observationOrder",
             "name",
             "schemaVersion"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "causationId": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/IdentifierSchema"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "correlationId": {
-              "$ref": "#/$defs/IdentifierSchema"
-            },
-            "kind": {
-              "type": "string",
-              "const": "integration-event"
-            },
-            "messageId": {
-              "$ref": "#/$defs/IdentifierSchema"
-            },
-            "name": {
-              "$ref": "#/$defs/NonEmptyStringSchema"
-            },
-            "payload": true,
-            "schemaVersion": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 1
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "kind",
-            "messageId",
-            "correlationId",
-            "name",
-            "schemaVersion"
-          ]
+          ],
+          "type": "object"
         }
       ]
     }
-  }
+  },
+  "$id": "https://rostfrei.dev/schemas/tracer/observed-message-series-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Insertion-ordered causal message observations with independently arriving command outcomes.",
+  "properties": {
+    "commandOutcomes": {
+      "items": {
+        "$ref": "#/$defs/ObservedCommandOutcome"
+      },
+      "maxItems": 4096,
+      "type": "array"
+    },
+    "messages": {
+      "items": {
+        "$ref": "#/$defs/ObservedMessageNode"
+      },
+      "maxItems": 4096,
+      "type": "array"
+    }
+  },
+  "required": [
+    "messages",
+    "commandOutcomes"
+  ],
+  "title": "Rostfrei Tracer Observed Message Series",
+  "type": "object"
 }

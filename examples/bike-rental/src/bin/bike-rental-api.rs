@@ -1,7 +1,9 @@
 use std::{env, path::PathBuf, sync::Arc};
 
 use bike_rental::{
-    APPLICATION_NAME, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime, domain_model,
+    APPLICATION_NAME, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
+    demo::{demo_fixture, has_legacy_demo_seed, rented_demo_fixture},
+    domain_model,
     rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
     tracer::{self, RentBicycleInputOptions, ReturnBicycleInputOptions},
 };
@@ -33,7 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?,
     );
-    test_runtime.reset().await?;
+    let default_test_fixture = demo_fixture()?;
+    let rented_test_fixture = rented_demo_fixture()?;
+    test_runtime.reset(&default_test_fixture).await?;
 
     let dispatch_runtime = Arc::new(
         BikeRentalNatsRuntime::provision_with_resource_limits(
@@ -43,7 +47,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?,
     );
-    dispatch_runtime.seed_demo().await?;
+    if has_legacy_demo_seed(dispatch_runtime.store()).await? {
+        println!("preserving the compatible legacy production demo seed");
+    } else {
+        dispatch_runtime
+            .apply_fixture(&default_test_fixture)
+            .await?;
+    }
     dispatch_runtime.start_workers().await?;
 
     let test_store = Arc::new(test_runtime.store().clone());
@@ -58,7 +68,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_stream_directory(test_store)
         .with_test_transport(test_runtime.transport())
         .with_dispatch_transport(dispatch_runtime.transport())
-        .with_test_fixture("demo-fleet", test_reset)
+        .with_test_scenario_reset(test_reset)
+        .with_default_test_fixture(default_test_fixture)
+        .with_test_fixture(rented_test_fixture)
         .with_test_repository(test_repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder.register_json::<RentalFleetAggregate, RentBicycle>()?;
