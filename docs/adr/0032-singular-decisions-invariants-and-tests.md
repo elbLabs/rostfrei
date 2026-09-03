@@ -1,4 +1,4 @@
-# ADR 0030: Singular decisions, invariants, and normalized tests
+# ADR 0032: Singular decisions, invariants, and normalized tests
 
 ## Status
 

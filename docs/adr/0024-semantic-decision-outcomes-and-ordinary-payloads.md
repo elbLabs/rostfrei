@@ -1,4 +1,4 @@
-# ADR 0022: Semantic decision outcomes and ordinary payloads
+# ADR 0024: Semantic decision outcomes and ordinary payloads
 
 ## Status
 
@@ -48,6 +48,6 @@ Compiled-model consumers must stop expecting Decision `parameters` and outcome
 `shape` fields. Rostfrei deliberately does not provide a transport schema for
 Decision calls or outcome payloads.
 
-[ADR 0030](0030-singular-decisions-invariants-and-tests.md) subsequently
+[ADR 0032](0032-singular-decisions-invariants-and-tests.md) subsequently
 removes Decision groups, ownership, and projection. `DecisionOutcome` remains
 the independent semantic enum contract described here.

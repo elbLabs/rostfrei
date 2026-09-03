@@ -1,4 +1,4 @@
-# ADR 0031: Entity identity accessor and opaque custom fields
+# ADR 0033: Entity identity accessor and opaque custom fields
 
 ## Status
 

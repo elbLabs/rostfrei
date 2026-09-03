@@ -1,4 +1,4 @@
-# ADR 0028: Trait-preserving singular domain actions
+# ADR 0030: Trait-preserving singular domain actions
 
 ## Status
 

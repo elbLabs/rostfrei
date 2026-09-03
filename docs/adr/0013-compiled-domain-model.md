@@ -77,7 +77,7 @@ and `DecisionOutcome` enum contract supersede earlier single-block and
 
 The Aggregate-specific declaration and event-membership contracts were
 subsequently replaced by
-[ADR 0018](0018-aggregate-definition-and-event-set.md). Its explicit
+[ADR 0020](0020-aggregate-definition-and-event-set.md). Its explicit
 `AggregateDefinition` implementation and authored `AggregateEvents` enum
 supersede this ADR's `events = [...]` attachment and generated hidden event
 representation. ADR 0018 also supersedes aggregate-level action, decision, and
@@ -87,65 +87,65 @@ lists.
 
 The Entity-specific declaration, lifecycle, and invariant contracts were
 subsequently replaced by
-[ADR 0019](0019-explicit-entity-definition-and-owner-independent-tags.md).
+[ADR 0021](0021-explicit-entity-definition-and-owner-independent-tags.md).
 Its explicit `EntityDefinition`, owner-independent lifecycle and invariant
 metadata, and absence of implicit entity capability projection supersede this
 ADR's entity attachments and owned lifecycle/invariant model relationships.
 
 Domain identity ownership, representation, and model discovery were
-subsequently simplified by [ADR 0020](0020-slim-domain-identities.md). Identity
+subsequently simplified by [ADR 0022](0022-slim-domain-identities.md). Identity
 newtypes are marker-derived and discovered through `EntityDefinition`; they no
 longer have a separate model inventory or inferred scalar metadata.
 
 Value-object ownership, shape projection, and operation DTO contracts were
 subsequently simplified by
-[ADR 0021](0021-slim-value-objects-and-ordinary-dtos.md). Value objects now
+[ADR 0023](0023-slim-value-objects-and-ordinary-dtos.md). Value objects now
 carry semantic ID and label metadata only; ordinary action/query DTOs are not
 promoted into the compiled domain model.
 
 Action-level event claims were subsequently removed by
-[ADR 0023](0023-aggregate-event-sets-authorize-raising.md). The aggregate event
+[ADR 0025](0025-aggregate-event-sets-authorize-raising.md). The aggregate event
 set is the sole authority for membership, conversion, execution, and replay;
 actions no longer declare or project `raises` lists.
 
 Command ownership, rejection, runtime registration, and compiled-model
 inventory were subsequently replaced by
-[ADR 0024](0024-handler-linked-commands.md). `CommandHandler<C> for A` is the
+[ADR 0026](0026-handler-linked-commands.md). `CommandHandler<C> for A` is the
 authored relationship, and registry, processor, bus, and tracer APIs name the
 aggregate-command pair explicitly.
 
 The standalone event-definition API was subsequently removed by
-[ADR 0026](0026-semantic-domain-events.md). `DomainEvent` directly exposes
+[ADR 0028](0028-semantic-domain-events.md). `DomainEvent` directly exposes
 local semantic and wire metadata, while `AggregateEvents` remains responsible
 for owned descriptors and runtime membership.
 
 Domain-service context and action attachment were subsequently separated by
-[ADR 0027](0027-explicit-domain-service-definitions.md): a matching
+[ADR 0029](0029-explicit-domain-service-definitions.md): a matching
 `DomainServiceDefinition` supplies the context. The remaining plural action
 groups, owner kinds, extensions, and model projection were then removed by
-[ADR 0028](0028-trait-preserving-singular-domain-actions.md). Actions are now
+[ADR 0030](0030-trait-preserving-singular-domain-actions.md). Actions are now
 singular ordinary traits with direct implementations and owner-independent
 metadata.
 
 Plural query groups and model registration were subsequently removed by
-[ADR 0029](0029-trait-preserving-singular-domain-queries.md). Queries are
+[ADR 0031](0031-trait-preserving-singular-domain-queries.md). Queries are
 singular ordinary traits implemented directly for the enclosing aggregate's
 declared root.
 
 Decision groups, plural invariant contracts, and generated test references were
 subsequently removed by
-[ADR 0030](0030-singular-decisions-invariants-and-tests.md). Decisions and
+[ADR 0032](0032-singular-decisions-invariants-and-tests.md). Decisions and
 Invariants are singular traits with direct aggregate/entity implementations,
 and tests name the concrete implementor/trait descriptor.
 
 Entity identity field selection and identity/Value Object use-site tags were
 subsequently removed by
-[ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md).
+[ADR 0033](0033-entity-identity-accessor-and-opaque-fields.md).
 `EntityDefinition::identity` is authoritative and unclassified custom fields
 are projected as opaque.
 
 Domain-error ownership and optional JSON generation were subsequently removed
-by [ADR 0025](0025-owner-independent-domain-errors.md). Errors keep their
+by [ADR 0027](0027-owner-independent-domain-errors.md). Errors keep their
 stable public code and message, while action return types and command handlers
 establish usage relationships and JSON rejection payloads are always available.
 

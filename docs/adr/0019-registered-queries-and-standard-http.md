@@ -10,7 +10,7 @@ Accepted.
 the existing command path. A query request type implements `QueryDefinition`,
 which declares its bounded context, stable query name, schema version, and
 response type. `DomainRegistry` stores query metadata deterministically and
-domain modules may group command and query definitions atomically.
+applications register each query explicitly with `register_query::<Q>()`.
 
 `QueryBus` prepares the existing transport-neutral query envelope, propagates
 caller metadata and W3C trace context, and supports typed and dynamic requests.
@@ -19,7 +19,7 @@ one erased JSON route without branching on query names. Query transport remains
 request/reply rather than durable command delivery; the existing NATS query
 requester and server remain the broker adapters. Registered application queries
 may invoke compiled-domain query functions, projections, or other read models,
-but `#[domain_queries]` remains the declaration of synchronous domain reads and
+but `#[domain_query]` remains the declaration of synchronous domain reads and
 does not itself select an application transport.
 
 `rostfrei-http` is a separate optional application-edge adapter. An application

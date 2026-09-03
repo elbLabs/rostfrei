@@ -1,4 +1,4 @@
-# ADR 0021: Slim value objects and ordinary DTOs
+# ADR 0023: Slim value objects and ordinary DTOs
 
 ## Status
 
@@ -53,9 +53,9 @@ signatures, including these arbitrary DTO types. Their macros tag the operation
 but do not infer or project input and output shapes. `DecisionOutcome` remains
 the explicit semantic metadata contract for decision result vocabularies, with
 its payload simplification specified by
-[ADR 0022](0022-semantic-decision-outcomes-and-ordinary-payloads.md).
+[ADR 0024](0024-semantic-decision-outcomes-and-ordinary-payloads.md).
 
-[ADR 0029](0029-trait-preserving-singular-domain-queries.md) subsequently
+[ADR 0031](0031-trait-preserving-singular-domain-queries.md) subsequently
 makes each query a singular ordinary trait implemented directly for its
 aggregate root and removes query-group model registration altogether.
 
@@ -79,7 +79,7 @@ Rust DTO schema. Domain concepts retain stable IDs and labels, while operation
 payload evolution remains governed by ordinary Rust types and boundary-specific
 serialization or schema contracts.
 
-[ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md) removes Value
+[ADR 0033](0033-entity-identity-accessor-and-opaque-fields.md) removes Value
 Object use-site field tags as well. A field whose custom Rust type is not
 otherwise classified is represented as opaque rather than as a semantic Value
 Object reference.
