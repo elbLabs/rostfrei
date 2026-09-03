@@ -8,6 +8,7 @@ members = [
     "crates/rostfrei-domain",
     "crates/rostfrei-domain-macros",
     "crates/rostfrei-domain-runtime",
+    "crates/rostfrei-fixtures",
     "crates/rostfrei-macros",
     "crates/rostfrei-messaging-core",
     "crates/rostfrei-nats",

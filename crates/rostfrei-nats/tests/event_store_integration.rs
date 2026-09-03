@@ -343,6 +343,14 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         );
         let wire: serde_json::Value =
             serde_json::from_slice(&stored_event.payload).expect("stored event should be JSON");
+        assert_eq!(
+            stored_event
+                .headers
+                .get("Nats-Msg-Id")
+                .map(async_nats::HeaderValue::as_str),
+            wire.pointer("/event/eventId")
+                .and_then(serde_json::Value::as_str)
+        );
         assert!(wire.get("events").is_none());
         assert_eq!(
             wire.pointer("/schemaVersion")
@@ -809,6 +817,16 @@ async fn transaction_contract_and_wire_policy(
                 "next transaction event stream sequence",
             )?;
             let wire: serde_json::Value = serde_json::from_slice(&message.payload)?;
+            check(
+                message
+                    .headers
+                    .get("Nats-Msg-Id")
+                    .map(async_nats::HeaderValue::as_str)
+                    == wire
+                        .pointer("/event/eventId")
+                        .and_then(serde_json::Value::as_str),
+                "transaction event transport identity does not match its envelope",
+            )?;
             check(
                 wire.pointer("/schemaVersion")
                     .and_then(serde_json::Value::as_u64)

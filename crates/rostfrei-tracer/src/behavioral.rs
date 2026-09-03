@@ -27,7 +27,6 @@ const TEST_DEFINITION_SCHEMA_VERSION: u32 = 1;
 const BEHAVIORAL_TEST_SCHEMA_ID: &str =
     "https://rostfrei.dev/schemas/tracer/behavioral-test-v1.schema.json";
 const MAX_TEST_TIMEOUT_MILLIS: u64 = 60_000;
-const MAX_TEST_SETUP_COMMANDS: usize = 32;
 const MAX_TEST_DEFINITIONS: usize = 256;
 const MAX_TEST_DEFINITION_BYTES: usize = 1024 * 1024;
 const MAX_TEST_REPOSITORY_BYTES: usize = 8 * 1024 * 1024;
@@ -49,9 +48,7 @@ pub struct TestDefinition {
     #[schemars(with = "NonEmptyBehavioralStringSchema")]
     #[serde(deserialize_with = "deserialize_nonempty")]
     name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(transform = disallow_null)]
-    setup: Option<TestSetup>,
+    setup: TestSetup,
     #[schemars(with = "BehavioralExpectedSchema")]
     expected: MessageSeriesDefinition,
 }
@@ -91,8 +88,8 @@ impl TestDefinition {
         &self.name
     }
 
-    pub const fn setup(&self) -> Option<&TestSetup> {
-        self.setup.as_ref()
+    pub const fn setup(&self) -> &TestSetup {
+        &self.setup
     }
 
     pub const fn expected(&self) -> &MessageSeriesDefinition {
@@ -159,8 +156,7 @@ struct TestDefinitionWire {
     id: String,
     #[serde(deserialize_with = "deserialize_nonempty")]
     name: String,
-    #[serde(default, deserialize_with = "deserialize_present_setup")]
-    setup: Option<TestSetup>,
+    setup: TestSetup,
     expected: Value,
 }
 
@@ -170,9 +166,6 @@ pub struct TestSetup {
     #[schemars(with = "NonEmptyBehavioralStringSchema")]
     #[serde(deserialize_with = "deserialize_nonempty")]
     pub fixture: String,
-    #[serde(default, deserialize_with = "deserialize_setup_commands")]
-    #[schemars(length(max = 32))]
-    pub commands: Vec<TestCommand>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -244,26 +237,6 @@ impl fmt::Display for TestDefinitionError {
 }
 
 impl std::error::Error for TestDefinitionError {}
-
-fn deserialize_setup_commands<'de, D>(deserializer: D) -> Result<Vec<TestCommand>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let commands = Vec::<TestCommand>::deserialize(deserializer)?;
-    if commands.len() > MAX_TEST_SETUP_COMMANDS {
-        return Err(de::Error::custom(format!(
-            "setup contains more than {MAX_TEST_SETUP_COMMANDS} commands"
-        )));
-    }
-    Ok(commands)
-}
-
-fn deserialize_present_setup<'de, D>(deserializer: D) -> Result<Option<TestSetup>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    TestSetup::deserialize(deserializer).map(Some)
-}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -405,7 +378,7 @@ pub struct TestRejection {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct TestTimeout(Duration);
+pub struct TestTimeout(pub(crate) Duration);
 
 impl TestTimeout {
     pub const fn as_duration(self) -> Duration {
@@ -860,16 +833,6 @@ pub fn behavioral_test_definition_schema() -> Schema {
     schema
 }
 
-fn disallow_null(schema: &mut Schema) {
-    if let Some(options) = schema
-        .as_object_mut()
-        .and_then(|schema| schema.get_mut("anyOf"))
-        .and_then(Value::as_array_mut)
-    {
-        options.retain(|option| option.get("type").and_then(Value::as_str) != Some("null"));
-    }
-}
-
 fn reserve_validate_id(schema: &mut Schema) {
     schema.insert("not".to_owned(), serde_json::json!({ "const": "validate" }));
 }
@@ -930,13 +893,7 @@ mod tests {
             "id": id,
             "name": "Rent a bike",
             "setup": {
-                "fixture": "available-bike",
-                "commands": [{
-                    "name": "register-bike",
-                    "schemaVersion": 1,
-                    "aggregate": { "type": "rental/bicycle", "id": "bike-1" },
-                    "payload": {}
-                }]
+                "fixture": "available-bike"
             },
             "expected": {
                 "within": "2s",
@@ -977,7 +934,7 @@ mod tests {
 
         assert_eq!(parsed.schema_version(), 1);
         assert_eq!(parsed.id(), "rent-a-bike");
-        assert_eq!(parsed.setup().unwrap().commands.len(), 1);
+        assert_eq!(parsed.setup().fixture, "available-bike");
         assert_eq!(parsed.expected().graphs().len(), 1);
         assert_eq!(parsed.subject().unwrap().key, "subject");
         assert_eq!(
@@ -992,12 +949,7 @@ mod tests {
             value.as_object_mut().unwrap().remove("setup");
             value
         };
-        assert!(
-            TestDefinition::from_json_value(without_setup)
-                .unwrap()
-                .setup()
-                .is_none()
-        );
+        assert!(TestDefinition::from_json_value(without_setup).is_err());
     }
 
     #[test]
@@ -1047,11 +999,10 @@ mod tests {
     }
 
     #[test]
-    fn setup_and_scalar_bounds_are_strict() {
-        let mut too_many = definition("too-many");
-        let command = too_many["setup"]["commands"][0].clone();
-        too_many["setup"]["commands"] = Value::Array(vec![command; MAX_TEST_SETUP_COMMANDS + 1]);
-        assert!(TestDefinition::from_json_value(too_many).is_err());
+    fn setup_and_scalar_contracts_are_strict() {
+        let mut setup_commands = definition("setup-commands");
+        setup_commands["setup"]["commands"] = json!([]);
+        assert!(TestDefinition::from_json_value(setup_commands).is_err());
 
         for (pointer, invalid) in [
             ("/schemaVersion", json!(2)),

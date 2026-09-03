@@ -3,8 +3,7 @@
   "id": "rent-available-bicycle",
   "name": "Rent an available bicycle",
   "setup": {
-    "fixture": "demo-fleet",
-    "commands": []
+    "fixture": "demo-fleet"
   },
   "expected": {
     "within": "35s",

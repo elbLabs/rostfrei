@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "id": "rented-demo-fleet",
+  "revision": "1",
+  "messages": [
+    {
+      "kind": "domain-event",
+      "messageId": "rented-demo-fleet-imported",
+      "correlationId": "fixture:rented-demo-fleet:1:import",
+      "name": "rental-fleet-imported",
+      "schemaVersion": 1,
+      "aggregate": {
+        "type": "bike-rental/rental-fleet",
+        "id": "city-fleet"
+      },
+      "streamVersion": 1,
+      "payload": {
+        "fleet_id": "city-fleet",
+        "bicycles": [
+          {
+            "bicycle_id": "bike-42",
+            "status": "available",
+            "condition": "serviceable"
+          },
+          {
+            "bicycle_id": "bike-99",
+            "status": "available",
+            "condition": "maintenance-required"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "command",
+      "messageId": "fixture-rent-bike-42",
+      "correlationId": "fixture:rented-demo-fleet:1:rent",
+      "name": "rent-bicycle",
+      "schemaVersion": 1,
+      "aggregate": {
+        "type": "bike-rental/rental-fleet",
+        "id": "city-fleet"
+      },
+      "payload": {
+        "bicycle_id": "bike-42"
+      }
+    },
+    {
+      "kind": "domain-event",
+      "messageId": "fixture-bike-42-rented",
+      "correlationId": "fixture:rented-demo-fleet:1:rent",
+      "causationId": "fixture-rent-bike-42",
+      "name": "bicycle-rented",
+      "schemaVersion": 1,
+      "aggregate": {
+        "type": "bike-rental/rental-fleet",
+        "id": "city-fleet"
+      },
+      "streamVersion": 2,
+      "payload": {
+        "fleet_id": "city-fleet",
+        "bicycle_id": "bike-42"
+      }
+    },
+    {
+      "kind": "command-outcome",
+      "messageId": "fixture-rent-bike-42-accepted",
+      "correlationId": "fixture:rented-demo-fleet:1:rent",
+      "causationId": "fixture-rent-bike-42",
+      "outcome": {
+        "status": "accepted"
+      }
+    },
+    {
+      "kind": "integration-event",
+      "messageId": "fixture-rental-started",
+      "correlationId": "fixture:rented-demo-fleet:1:rent",
+      "causationId": "fixture-bike-42-rented",
+      "name": "bicycle-rental-started",
+      "schemaVersion": 1,
+      "payload": {
+        "source_event_id": "fixture-bike-42-rented",
+        "fleet_id": "city-fleet",
+        "bicycle_id": "bike-42"
+      }
+    }
+  ]
+}

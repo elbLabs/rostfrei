@@ -24,7 +24,7 @@ pub use behavioral::{
 pub use catalog::{
     AggregateInstanceCollection, AggregateInstanceSummary, CatalogAggregate, CatalogBehavioralTest,
     CatalogCommand, CatalogCommandVersion, CatalogContext, CatalogTestRepository,
-    CatalogTestScenario, TracerCatalog,
+    CatalogTestScenario, TestFixtureCollection, TestFixtureSummary, TracerCatalog,
 };
 pub use command_bus::CommandBusTransport;
 pub use correlation::{
@@ -46,12 +46,17 @@ pub use operation::{
     OperationSnapshot, OperationStatus, OperationSubscription, PredictedDomainEvent,
     SubscriptionError,
 };
+pub use rostfrei_fixtures::{
+    Fixture, FixtureAggregate, FixtureApplyError, FixtureApplyReport,
+    FixtureCodecRegistrationError, FixtureMessage, FixtureValidationError, MessageSeriesEngine,
+};
 pub use runtime::RuntimeRegistrationError;
 pub use service::{
     CommandInputError, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
-    MAX_COMMAND_PAYLOAD_LEN, RedactTracePayloads, SimulationRequest, SubmissionError,
-    TestDefinitionValidationError, TestRunError, TestScenarioReset, TestScenarioResetError,
-    TracePayloadPolicy, Tracer, TracerBuilder,
+    MAX_COMMAND_PAYLOAD_LEN, MessageSeriesCapture, MessageSeriesCaptureError,
+    MessageSeriesFidelity, OperationMessageSeries, RedactTracePayloads, SimulationRequest,
+    SubmissionError, TestDefinitionValidationError, TestRunError, TestScenarioReset,
+    TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
 };
 pub use transport::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandReceipt, CommandRejection,

@@ -24,6 +24,7 @@ const DEFAULT_MAXIMUM_BYTES_PER_CORRELATION: usize = 4 * 1024 * 1024;
 const MAXIMUM_TOTAL_CORRELATION_BYTES: usize = 64 * 1024 * 1024;
 const MAXIMUM_RAW_EVIDENCE_BYTES_PER_CORRELATION: usize = 4 * 1024 * 1024;
 const MAXIMUM_TOTAL_RAW_EVIDENCE_BYTES: usize = 64 * 1024 * 1024;
+const MAXIMUM_RAW_EVIDENCE_BYTES_PER_CAPABILITY: usize = MAXIMUM_TOTAL_RAW_EVIDENCE_BYTES / 2;
 // Preserve room for diagnostics even when a correlation approaches its raw-series limit.
 const RAW_EVIDENCE_CONFLICT_RESERVE_BYTES: usize = 256 * 1024;
 const MAXIMUM_RAW_SERIES_BYTES_PER_CORRELATION: usize =
@@ -383,6 +384,46 @@ pub struct CorrelationSubscription {
     cursor: u64,
 }
 
+pub struct CorrelationEvidenceSubscription {
+    record: Arc<CorrelationRecord>,
+    receiver: watch::Receiver<u64>,
+    revision: u64,
+}
+
+impl Drop for CorrelationEvidenceSubscription {
+    fn drop(&mut self) {
+        self.record.subscribers.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+impl CorrelationEvidenceSubscription {
+    pub(super) const fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub(super) async fn snapshot(
+        &mut self,
+    ) -> Result<CorrelationEvidenceSnapshot, CorrelationError> {
+        let snapshot = self.record.evidence_snapshot().await?;
+        self.revision = snapshot.revision;
+        Ok(snapshot)
+    }
+
+    pub(super) async fn changed(&mut self) -> Result<(), CorrelationError> {
+        loop {
+            let revision = self.record.evidence_revision()?;
+            if revision != self.revision {
+                self.revision = revision;
+                return Ok(());
+            }
+            self.receiver
+                .changed()
+                .await
+                .map_err(|_| CorrelationError::NotFound)?;
+        }
+    }
+}
+
 impl Drop for CorrelationSubscription {
     fn drop(&mut self) {
         self.record.subscribers.fetch_sub(1, Ordering::AcqRel);
@@ -418,7 +459,8 @@ pub struct CorrelationHub {
     maximum_correlations: usize,
     maximum_events_per_correlation: usize,
     maximum_bytes_per_correlation: usize,
-    raw_evidence_budget: Arc<RawEvidenceBudget>,
+    control_raw_evidence_budget: Arc<RawEvidenceBudget>,
+    dispatch_raw_evidence_budget: Arc<RawEvidenceBudget>,
 }
 
 impl CorrelationHub {
@@ -429,7 +471,12 @@ impl CorrelationHub {
             maximum_correlations,
             maximum_events_per_correlation: DEFAULT_MAXIMUM_EVENTS_PER_CORRELATION,
             maximum_bytes_per_correlation: correlation_byte_budget(maximum_correlations),
-            raw_evidence_budget: Arc::new(RawEvidenceBudget::new(MAXIMUM_TOTAL_RAW_EVIDENCE_BYTES)),
+            control_raw_evidence_budget: Arc::new(RawEvidenceBudget::new(
+                MAXIMUM_RAW_EVIDENCE_BYTES_PER_CAPABILITY,
+            )),
+            dispatch_raw_evidence_budget: Arc::new(RawEvidenceBudget::new(
+                MAXIMUM_RAW_EVIDENCE_BYTES_PER_CAPABILITY,
+            )),
         })
     }
 
@@ -466,12 +513,18 @@ impl CorrelationHub {
         if table.records.len() >= self.maximum_correlations {
             return Err(CorrelationError::CapacityExhausted);
         }
+        let raw_evidence_budget = match mode {
+            OperationMode::Simulate | OperationMode::Test => {
+                Arc::clone(&self.control_raw_evidence_budget)
+            }
+            OperationMode::Dispatch => Arc::clone(&self.dispatch_raw_evidence_budget),
+        };
         let record = CorrelationRecord::new(
             correlation_id.to_owned(),
             mode,
             self.maximum_events_per_correlation,
             self.maximum_bytes_per_correlation,
-            Arc::clone(&self.raw_evidence_budget),
+            raw_evidence_budget,
             CorrelationEventKind::Command {
                 operation_id,
                 message_id: None,
@@ -536,6 +589,30 @@ impl CorrelationHub {
             },
         )
         .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn observe_simulated_command(
+        &self,
+        correlation_id: &str,
+        message_id: String,
+        command: String,
+        schema_version: u32,
+        aggregate: TestAggregate,
+        payload: Option<Value>,
+    ) -> Result<(), CorrelationError> {
+        let message = ObservedMessageNode::command(
+            message_id,
+            correlation_id,
+            None,
+            command,
+            schema_version,
+            aggregate,
+            payload,
+        );
+        self.observe_message(correlation_id, message)
+            .await
+            .map(|_| ())
     }
 
     pub(crate) async fn observe_command_outcome(
@@ -727,6 +804,35 @@ impl CorrelationHub {
         ))
     }
 
+    pub(super) async fn subscribe_evidence(
+        &self,
+        correlation_id: &str,
+    ) -> Result<CorrelationEvidenceSubscription, CorrelationError> {
+        let record = self.record(correlation_id)?;
+        let state = record.state.lock().await;
+        let lifecycle = record
+            .lifecycle
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if record.closed.load(Ordering::Acquire) {
+            return Err(CorrelationError::NotFound);
+        }
+        let revision = record
+            .evidence
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .revision;
+        record.subscribers.fetch_add(1, Ordering::AcqRel);
+        let receiver = record.evidence_changed.subscribe();
+        drop(lifecycle);
+        drop(state);
+        Ok(CorrelationEvidenceSubscription {
+            record,
+            receiver,
+            revision,
+        })
+    }
+
     pub fn retain_dispatch_correlations(&self) {
         let mut table = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let removed = table
@@ -794,7 +900,12 @@ impl Default for CorrelationHub {
             maximum_correlations: DEFAULT_MAXIMUM_CORRELATIONS,
             maximum_events_per_correlation: DEFAULT_MAXIMUM_EVENTS_PER_CORRELATION,
             maximum_bytes_per_correlation: correlation_byte_budget(DEFAULT_MAXIMUM_CORRELATIONS),
-            raw_evidence_budget: Arc::new(RawEvidenceBudget::new(MAXIMUM_TOTAL_RAW_EVIDENCE_BYTES)),
+            control_raw_evidence_budget: Arc::new(RawEvidenceBudget::new(
+                MAXIMUM_RAW_EVIDENCE_BYTES_PER_CAPABILITY,
+            )),
+            dispatch_raw_evidence_budget: Arc::new(RawEvidenceBudget::new(
+                MAXIMUM_RAW_EVIDENCE_BYTES_PER_CAPABILITY,
+            )),
         }
     }
 }
@@ -812,6 +923,7 @@ struct CorrelationRecord {
     maximum_bytes: usize,
     state: Mutex<CorrelationState>,
     evidence: StdMutex<CorrelationEvidenceState>,
+    evidence_changed: watch::Sender<u64>,
     raw_evidence_budget: Arc<RawEvidenceBudget>,
     lifecycle: StdMutex<()>,
     changed: watch::Sender<u64>,
@@ -838,6 +950,7 @@ impl CorrelationRecord {
         )?;
         let retained_bytes = serialized_event_len(&event);
         let (changed, _) = watch::channel(1);
+        let (evidence_changed, _) = watch::channel(0);
         Ok(Arc::new(Self {
             correlation_id,
             mode,
@@ -849,6 +962,7 @@ impl CorrelationRecord {
                 retained_bytes,
             }),
             evidence: StdMutex::new(CorrelationEvidenceState::default()),
+            evidence_changed,
             raw_evidence_budget,
             lifecycle: StdMutex::new(()),
             changed,
@@ -917,7 +1031,7 @@ impl CorrelationRecord {
             self.insert_message_evidence(&mut evidence, &message)
         };
         if notify {
-            self.notify_state_change();
+            self.notify_evidence_change();
         }
         result
     }
@@ -942,7 +1056,7 @@ impl CorrelationRecord {
             self.insert_command_outcome_evidence(&mut evidence, &outcome)
         };
         if notify {
-            self.notify_state_change();
+            self.notify_evidence_change();
         }
         result
     }
@@ -1044,7 +1158,7 @@ impl CorrelationRecord {
         }
         evidence.revision = evidence.revision.saturating_add(1);
         drop(evidence);
-        self.notify_state_change();
+        self.notify_evidence_change();
         Ok(())
     }
 
@@ -1187,6 +1301,7 @@ impl CorrelationRecord {
     fn close_locked(&self) {
         self.closed.store(true, Ordering::Release);
         self.clear_evidence();
+        self.evidence_changed.send_replace(0);
         self.notify_state_change();
     }
 
@@ -1203,6 +1318,16 @@ impl CorrelationRecord {
     fn notify_state_change(&self) {
         let latest = *self.changed.borrow();
         self.changed.send_replace(latest);
+    }
+
+    fn notify_evidence_change(&self) {
+        let revision = self
+            .evidence
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .revision;
+        self.evidence_changed.send_replace(revision);
+        self.notify_state_change();
     }
 }
 
@@ -1440,7 +1565,8 @@ mod tests {
             maximum_correlations,
             maximum_events_per_correlation: maximum_events,
             maximum_bytes_per_correlation: DEFAULT_MAXIMUM_BYTES_PER_CORRELATION,
-            raw_evidence_budget: Arc::new(RawEvidenceBudget::new(maximum_raw_bytes)),
+            control_raw_evidence_budget: Arc::new(RawEvidenceBudget::new(maximum_raw_bytes)),
+            dispatch_raw_evidence_budget: Arc::new(RawEvidenceBudget::new(maximum_raw_bytes)),
         })
     }
 
@@ -1855,7 +1981,7 @@ mod tests {
                 .messages()
                 .is_empty()
         );
-        assert_eq!(hub.raw_evidence_budget.retained_bytes(), 0);
+        assert_eq!(hub.control_raw_evidence_budget.retained_bytes(), 0);
         assert!(hub.subscribe("correlation-1", 1).await.is_ok());
     }
 
@@ -1897,7 +2023,10 @@ mod tests {
             .expect_err("second correlation must exhaust global budget");
 
         assert_eq!(error, CorrelationError::CapacityExhausted);
-        assert_eq!(hub.raw_evidence_budget.retained_bytes(), maximum_raw_bytes);
+        assert_eq!(
+            hub.control_raw_evidence_budget.retained_bytes(),
+            maximum_raw_bytes
+        );
         assert!(
             hub.observed_message_series("correlation-2")
                 .await
@@ -1908,9 +2037,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn control_raw_capacity_cannot_exhaust_dispatch_evidence() {
+        let payload = json!({ "value": "x".repeat(512) });
+        let control_message = ObservedMessageNode::domain_event(
+            "control-event-1",
+            "control-1",
+            None,
+            "bicycle-rented",
+            1,
+            None,
+            Some(payload.clone()),
+        );
+        let mut fixture = ObservedMessageSeries::new();
+        fixture
+            .insert_message(control_message.clone())
+            .expect("build raw evidence fixture");
+        let maximum_raw_bytes =
+            fit_raw_evidence(&fixture, &mut VecDeque::new(), 0).expect("measure raw evidence");
+        let hub = test_hub(3, DEFAULT_MAXIMUM_EVENTS_PER_CORRELATION, maximum_raw_bytes);
+        register(&hub, "control-1");
+        register(&hub, "control-2");
+        register_mode(&hub, "dispatch-1", OperationMode::Dispatch);
+
+        hub.observe_message("control-1", control_message)
+            .await
+            .expect("first control observation fills its capability budget");
+        let error = hub
+            .observe_message(
+                "control-2",
+                raw_domain_message("control-2", "control-event-2"),
+            )
+            .await
+            .expect_err("second control observation must exhaust the control budget");
+        assert_eq!(error, CorrelationError::CapacityExhausted);
+        hub.observe_message(
+            "dispatch-1",
+            raw_domain_message("dispatch-1", "dispatch-event-1"),
+        )
+        .await
+        .expect("dispatch retains evidence from its independent budget");
+        assert_eq!(
+            hub.control_raw_evidence_budget.retained_bytes(),
+            maximum_raw_bytes
+        );
+        assert!(hub.dispatch_raw_evidence_budget.retained_bytes() > 0);
+    }
+
+    #[tokio::test]
     async fn raw_accounting_is_released_on_removal_reset_and_drop() {
         let hub = test_hub(4, DEFAULT_MAXIMUM_EVENTS_PER_CORRELATION, 64 * 1024);
-        let budget = Arc::clone(&hub.raw_evidence_budget);
+        let control_budget = Arc::clone(&hub.control_raw_evidence_budget);
+        let dispatch_budget = Arc::clone(&hub.dispatch_raw_evidence_budget);
         register(&hub, "test-1");
         register_mode(&hub, "dispatch-1", OperationMode::Dispatch);
         hub.observe_message("test-1", raw_domain_message("test-1", "test-event-1"))
@@ -1922,29 +2099,31 @@ mod tests {
         )
         .await
         .expect("retain dispatch evidence");
-        let both = budget.retained_bytes();
-        assert!(both > 0);
+        let dispatch_only = dispatch_budget.retained_bytes();
+        assert!(control_budget.retained_bytes() > 0);
+        assert!(dispatch_only > 0);
 
         assert!(hub.remove_if_inactive("test-1"));
-        let dispatch_only = budget.retained_bytes();
-        assert!(dispatch_only > 0);
-        assert!(dispatch_only < both);
+        assert_eq!(control_budget.retained_bytes(), 0);
+        assert_eq!(dispatch_budget.retained_bytes(), dispatch_only);
 
         register(&hub, "test-2");
         hub.observe_message("test-2", raw_domain_message("test-2", "test-event-2"))
             .await
             .expect("retain reset evidence");
-        assert!(budget.retained_bytes() > dispatch_only);
+        assert!(control_budget.retained_bytes() > 0);
         hub.retain_dispatch_correlations();
-        assert_eq!(budget.retained_bytes(), dispatch_only);
+        assert_eq!(control_budget.retained_bytes(), 0);
+        assert_eq!(dispatch_budget.retained_bytes(), dispatch_only);
 
         register_mode(&hub, "drop-1", OperationMode::Dispatch);
         hub.observe_message("drop-1", raw_domain_message("drop-1", "drop-event-1"))
             .await
             .expect("retain drop evidence");
-        assert!(budget.retained_bytes() > dispatch_only);
+        assert!(dispatch_budget.retained_bytes() > dispatch_only);
         drop(hub);
-        assert_eq!(budget.retained_bytes(), 0);
+        assert_eq!(control_budget.retained_bytes(), 0);
+        assert_eq!(dispatch_budget.retained_bytes(), 0);
     }
 
     #[tokio::test]

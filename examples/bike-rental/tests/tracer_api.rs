@@ -15,7 +15,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bike_rental::{
-    demo::{demo_stream, seed_demo},
+    demo::{apply_fixture, demo_fixture, demo_stream, rented_demo_fixture},
     domain_model,
     rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
     tracer::{self, RentBicycleInputOptions, ReturnBicycleInputOptions},
@@ -33,7 +33,7 @@ use rostfrei_messaging_core::CorrelationId;
 use rostfrei_tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandReceipt, CommandRejection,
     CommandTransport, CommandTransportError, CommandTransportErrorKind, CommandTransportObserver,
-    ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, TestRepository,
+    ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, Fixture, TestRepository,
     TestScenarioReset, TestScenarioResetError, Tracer,
     http::{self, HttpConfig},
 };
@@ -60,10 +60,11 @@ impl ResettableStore {
         self.store.read().await.clone()
     }
 
-    async fn reset_and_seed(&self) -> Result<(), TestScenarioResetError> {
+    async fn reset_and_apply(&self, fixture: &Fixture) -> Result<(), TestScenarioResetError> {
         *self.store.write().await = InMemoryEventStore::new();
-        seed_demo(self)
+        apply_fixture(self, fixture)
             .await
+            .map(|_| ())
             .map_err(|error| TestScenarioResetError::Failed(error.to_string()))
     }
 }
@@ -123,8 +124,8 @@ impl StreamDirectory for ResettableStore {
 
 #[async_trait]
 impl TestScenarioReset for ResettableStore {
-    async fn reset(&self) -> Result<(), TestScenarioResetError> {
-        self.reset_and_seed().await
+    async fn reset(&self, fixture: &Fixture) -> Result<(), TestScenarioResetError> {
+        self.reset_and_apply(fixture).await
     }
 }
 
@@ -280,9 +281,12 @@ fn local_transport_error(
 
 async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
     let test_store = ResettableStore::new();
-    seed_demo(&test_store).await.unwrap();
+    let default_fixture = demo_fixture().unwrap();
+    apply_fixture(&test_store, &default_fixture).await.unwrap();
     let production_store = InMemoryEventStore::new();
-    seed_demo(&production_store).await.unwrap();
+    apply_fixture(&production_store, &default_fixture)
+        .await
+        .unwrap();
     let history: Arc<dyn EventHistory> = Arc::new(test_store.clone());
     let test_transport: Arc<dyn CommandTransport> =
         Arc::new(LocalCommandTransport::new(test_store.clone()));
@@ -302,7 +306,9 @@ async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
         .with_test_transport(test_transport)
         .with_dispatch_transport(production_transport)
         .with_stream_directory(Arc::new(test_store.clone()))
-        .with_test_fixture("demo-fleet", test_reset)
+        .with_test_scenario_reset(test_reset)
+        .with_default_test_fixture(default_fixture)
+        .with_test_fixture(rented_demo_fixture().unwrap())
         .with_test_repository(test_repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder
@@ -459,7 +465,14 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     let catalog = json_body(response).await;
     assert_eq!(catalog["catalogVersion"], 4);
     assert_eq!(catalog["testScenario"]["resetHref"], "/test-scenario/reset");
-    assert_eq!(catalog["testScenario"]["fixtures"][0], "demo-fleet");
+    assert_eq!(
+        catalog["testScenario"]["fixtures"],
+        json!(["demo-fleet", "rented-demo-fleet"])
+    );
+    assert_eq!(
+        catalog["testScenario"]["fixturesHref"],
+        "/test-scenario/fixtures"
+    );
     assert_eq!(catalog["testRepository"]["definitionsHref"], "/tests");
     assert_eq!(
         catalog["behavioralTest"],
@@ -470,6 +483,38 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
             "definitionsHref": "/tests"
         })
     );
+
+    let response = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(catalog["testScenario"]["fixturesHref"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let fixtures = json_body(response).await;
+    assert_eq!(fixtures["items"][0]["id"], "demo-fleet");
+    assert_eq!(fixtures["items"][0]["isDefault"], true);
+    let response = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(fixtures["items"][0]["fixtureHref"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let fixture = json_body(response).await;
+    assert_eq!(fixture["id"], "demo-fleet");
+    assert_eq!(fixture["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(fixture["messages"][0]["kind"], "domain-event");
+    assert_eq!(fixture["messages"][0]["name"], "rental-fleet-imported");
+    assert!(fixture["messages"][0].get("causationId").is_none());
     assert_eq!(catalog["contexts"][0]["id"], "bike-rental");
     assert_eq!(catalog["contexts"][0]["label"], "Bike Rental");
     let aggregate = &catalog["contexts"][0]["aggregates"][0];
@@ -477,9 +522,10 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(aggregate["label"], "Rental fleet");
     assert_eq!(aggregate["aggregateType"], "bike-rental/rental-fleet");
     assert_eq!(
-        aggregate["instancesHref"],
+        aggregate["testInstancesHref"],
         "/contexts/bike-rental/aggregates/rental-fleet/instances"
     );
+    assert!(aggregate.get("instancesHref").is_none());
     let commands = aggregate["commands"].as_array().unwrap();
     assert_eq!(
         commands
@@ -522,9 +568,10 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         "/contexts/bike-rental/aggregates/rental-fleet/{aggregateId}/commands/rent-bicycle/dispatch"
     );
     assert_eq!(
-        command["versions"][0]["inputsHrefTemplate"],
+        command["versions"][0]["testInputsHrefTemplate"],
         "/contexts/bike-rental/aggregates/rental-fleet/{aggregateId}/commands/rent-bicycle/schemas/1/inputs"
     );
+    assert!(command["versions"][0].get("inputsHrefTemplate").is_none());
 
     let tests = app
         .clone()
@@ -576,7 +623,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         .clone()
         .oneshot(
             authorize(Request::builder())
-                .uri(aggregate["instancesHref"].as_str().unwrap())
+                .uri(aggregate["testInstancesHref"].as_str().unwrap())
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -593,7 +640,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         })
     );
 
-    let inputs_href = command["versions"][0]["inputsHrefTemplate"]
+    let inputs_href = command["versions"][0]["testInputsHrefTemplate"]
         .as_str()
         .unwrap()
         .replace("{aggregateId}", "city-fleet");
@@ -623,7 +670,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         })
     );
 
-    let inputs_href = add_command["versions"][0]["inputsHrefTemplate"]
+    let inputs_href = add_command["versions"][0]["testInputsHrefTemplate"]
         .as_str()
         .unwrap()
         .replace("{aggregateId}", "city-fleet");
@@ -644,7 +691,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         .iter()
         .find(|command| command["id"] == "return-bicycle")
         .unwrap();
-    let inputs_href = return_command["versions"][0]["inputsHrefTemplate"]
+    let inputs_href = return_command["versions"][0]["testInputsHrefTemplate"]
         .as_str()
         .unwrap()
         .replace("{aggregateId}", "city-fleet");
@@ -918,6 +965,38 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
     assert_eq!(first["result"]["decision"], "accepted");
     assert_published_result(&first);
     assert_eq!(first["result"]["predictedEvents"], json!([]));
+    assert_eq!(
+        first["messageSeriesHref"],
+        format!("/operations/{first_id}/message-series")
+    );
+    let series = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(format!(
+                    "{}?within=1s&settleFor=1ms",
+                    first["messageSeriesHref"].as_str().unwrap()
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(series.status(), StatusCode::OK);
+    let series = json_body(series).await;
+    assert_eq!(series["capture"]["fidelity"], "exact");
+    assert_eq!(
+        series["messageSeries"]["messages"][0]["payload"],
+        json!({ "bicycle_id": "bike-42" })
+    );
+    assert_eq!(
+        series["messageSeries"]["messages"][0]["messageId"],
+        first["result"]["commandMessageId"]
+    );
+    assert_eq!(
+        series["messageSeries"]["commandOutcomes"][0]["responseMessageId"],
+        first["result"]["responseMessageId"]
+    );
     assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 2);
     assert_eq!(
         production_store.load(&demo_stream()).await.unwrap().len(),
@@ -1130,6 +1209,7 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
     );
 
     let cleared_test_operation = app
+        .clone()
         .oneshot(
             authorize(Request::builder())
                 .uri(format!("/operations/{add_id}"))
@@ -1139,4 +1219,17 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
         .await
         .unwrap();
     assert_eq!(cleared_test_operation.status(), StatusCode::NOT_FOUND);
+
+    let cleared_message_series = app
+        .oneshot(
+            authorize(Request::builder())
+                .uri(format!(
+                    "/operations/{add_id}/message-series?within=1s&settleFor=1ms"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cleared_message_series.status(), StatusCode::NOT_FOUND);
 }

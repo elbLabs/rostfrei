@@ -3,20 +3,7 @@
   "id": "return-rented-bicycle",
   "name": "Return a rented bicycle",
   "setup": {
-    "fixture": "demo-fleet",
-    "commands": [
-      {
-        "name": "rent-bicycle",
-        "schemaVersion": 1,
-        "aggregate": {
-          "type": "bike-rental/rental-fleet",
-          "id": "city-fleet"
-        },
-        "payload": {
-          "bicycle_id": "bike-42"
-        }
-      }
-    ]
+    "fixture": "rented-demo-fleet"
   },
   "expected": {
     "within": "35s",

@@ -24,7 +24,7 @@ use axum::{
 use bike_rental::{
     BicycleRentalStarted, BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
     BikeRentalNatsRuntime,
-    demo::demo_stream,
+    demo::{demo_fixture, demo_stream, rented_demo_fixture},
     rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
     tracer,
 };
@@ -116,8 +116,9 @@ async fn command_workers_and_test_reset_are_subject_scope_isolated() -> TestResu
             )
             .await?,
         );
-        test_runtime.seed_demo().await?;
-        production_runtime.seed_demo().await?;
+        let fixture = demo_fixture()?;
+        test_runtime.apply_fixture(&fixture).await?;
+        production_runtime.apply_fixture(&fixture).await?;
         test_runtime.start_workers().await?;
         production_runtime.start_workers().await?;
 
@@ -167,7 +168,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
         let mut builder = tracer::builder(history)?
             .with_test_event_store(test_store)
             .with_test_transport(test_runtime.transport())
-            .with_test_fixture("demo-fleet", test_reset)
+            .with_test_scenario_reset(test_reset)
+            .with_default_test_fixture(demo_fixture()?)
+            .with_test_fixture(rented_demo_fixture()?)
             .with_test_repository(test_repository)
             .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
         builder.register_json::<RentalFleetAggregate, RentBicycle>()?;
@@ -369,16 +372,21 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
 
             wait_for_history_len(&test_runtime, 2).await?;
             let history = test_runtime.store().load(&demo_stream()).await?;
-            let seeded_event = history
+            let fixture_event = history
                 .first()
-                .ok_or_else(|| io::Error::other("demo fixture seed event is absent"))?;
+                .ok_or_else(|| io::Error::other("demo fixture domain event is absent"))?;
             ensure(
-                seeded_event.event_type() == "rental-fleet-imported"
-                    && seeded_event.operation_id().as_str() == "seed-city-fleet"
-                    && seeded_event.stream_version().value() == 1
-                    && seeded_event.correlation_id().is_none()
-                    && seeded_event.causation_id().is_none(),
-                "inline run did not reset and seed the deterministic demo fixture",
+                fixture_event.event_type() == "rental-fleet-imported"
+                    && fixture_event
+                        .operation_id()
+                        .as_str()
+                        .starts_with("fixture:")
+                    && fixture_event.stream_version().value() == 1
+                    && fixture_event
+                        .correlation_id()
+                        .is_some_and(|id| id.as_str() == "fixture:demo-fleet:1")
+                    && fixture_event.causation_id().is_none(),
+                "inline run did not apply the deterministic demo MessageSeries fixture",
             )?;
             let persisted_event = history
                 .get(1)
@@ -549,6 +557,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                 )?;
                 if id == "reject-unavailable-bicycle" {
                     assert_rejection_report(&report)?;
+                }
+                if id == "return-rented-bicycle" {
+                    assert_fixture_provenance_was_not_published(&connection, &test_runtime).await?;
                 }
             }
             Ok(())
@@ -757,10 +768,10 @@ async fn run_isolation_test(
             .await?,
         "pre-reset fixture stream was already absent",
     )?;
-    test_runtime.reset().await?;
+    test_runtime.reset(&demo_fixture()?).await?;
     ensure(
         test_runtime.store().load(&demo_stream()).await?.len() == 1,
-        "Test reset did not restore deterministic seed history",
+        "Test reset did not restore the deterministic fixture history",
     )?;
     ensure(
         production_runtime.store().load(&demo_stream()).await?.len() == 2,
@@ -836,6 +847,13 @@ async fn run_isolation_test(
         1,
     )
     .await?;
+    let reprovision = production_runtime.apply_fixture(&demo_fixture()?).await?;
+    ensure(
+        reprovision.applied_domain_event_count() == 0
+            && reprovision.reused_domain_event_count() == 1
+            && production_runtime.store().load(&demo_stream()).await?.len() == 3,
+        "production fixture provisioning did not tolerate extended business history",
+    )?;
     wait_for_command_stream_empty(connection, test_runtime).await?;
     wait_for_command_stream_empty(connection, production_runtime).await
 }
@@ -1094,6 +1112,58 @@ async fn wait_for_command_stream_empty(
         }
         if Instant::now() >= deadline {
             return Err(io::Error::other("timed out waiting for command acknowledgement").into());
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+async fn assert_fixture_provenance_was_not_published(
+    connection: &NatsConnection,
+    runtime: &BikeRentalNatsRuntime,
+) -> TestResult {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let topology = runtime.config().messaging().topology();
+    loop {
+        let domain_info = consumer_info(
+            connection,
+            runtime.config().event_store().stream_name(),
+            runtime
+                .config()
+                .domain_event_consumer()
+                .durable_name()
+                .as_str(),
+        )
+        .await?;
+        let integration_info = consumer_info(
+            connection,
+            topology.integration_event_stream().as_str(),
+            runtime
+                .config()
+                .integration_event_route()
+                .consumer()
+                .durable_name()
+                .as_str(),
+        )
+        .await?;
+        if domain_info.num_pending == 0 && domain_info.num_ack_pending == 0 {
+            let mut integration_stream = connection
+                .jetstream()
+                .get_stream(topology.integration_event_stream().as_str())
+                .await?;
+            ensure(
+                integration_stream.info().await?.state.messages == 0
+                    && integration_info.num_pending == 0
+                    && integration_info.num_ack_pending == 0
+                    && integration_info.ack_floor.stream_sequence == 0,
+                "rented fixture provenance was published as a new integration event",
+            )?;
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::other(
+                "timed out waiting for rented-fixture domain events to be acknowledged",
+            )
+            .into());
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
