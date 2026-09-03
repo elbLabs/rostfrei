@@ -2499,7 +2499,9 @@ fn fixture_registry_configuration_is_validated_at_build() {
         .with_test_event_store(store)
         .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
         .with_test_scenario_reset(Arc::new(NoopReset));
-    missing_default.register_json::<TestCommand>().unwrap();
+    missing_default
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     assert!(matches!(
         missing_default.build(),
         Err(RuntimeRegistrationError::ResetWithoutDefaultTestFixture)
@@ -2514,7 +2516,9 @@ fn fixture_registry_configuration_is_validated_at_build() {
         .with_test_scenario_reset(Arc::new(NoopReset))
         .with_default_test_fixture(duplicate.clone())
         .with_test_fixture(duplicate);
-    duplicate_fixture.register_json::<TestCommand>().unwrap();
+    duplicate_fixture
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     assert!(matches!(
         duplicate_fixture.build(),
         Err(RuntimeRegistrationError::DuplicateTestFixture { fixture_id })
@@ -2532,7 +2536,9 @@ fn catalog_lists_all_registered_fixtures_in_id_order() {
         .with_test_scenario_reset(Arc::new(NoopReset))
         .with_default_test_fixture(empty_fixture("z-default"))
         .with_test_fixture(empty_fixture("a-additional"));
-    builder.register_json::<TestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     let tracer = builder.build().unwrap();
 
     assert_eq!(
@@ -2656,7 +2662,9 @@ fn repository_definitions_are_validated_against_the_fixture_registry() {
         .with_test_scenario_reset(Arc::new(NoopReset))
         .with_default_test_fixture(empty_fixture("default-fixture"))
         .with_test_repository(repository);
-    builder.register_json::<TestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
 
     assert!(matches!(
         builder.build(),
@@ -2701,7 +2709,9 @@ async fn behavioral_comparison_precedes_default_trace_payload_redaction() {
         .with_default_test_fixture(empty_fixture("default-fixture"))
         .with_test_fixture(empty_fixture("test-fixture"))
         .with_test_repository(repository);
-    builder.register_json::<TestCommand>().unwrap();
+    builder
+        .register_json::<TestAggregate, TestCommand>()
+        .unwrap();
     let tracer = builder.build().unwrap();
 
     let report = tracer.run_test("behavioral-test").await.unwrap();

@@ -257,7 +257,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                 command_execution_fingerprint(
                     &aggregate_type,
                     "city-fleet",
-                    RentBicycle::COMMAND_NAME,
+                    RentBicycle::LOCAL_ID,
                     RentBicycle::SCHEMA_VERSION,
                     &command_payload,
                 ),
@@ -284,7 +284,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                     && report["operation"]["correlationId"] == correlation_id
                     && report["operation"]["mode"] == "test"
                     && report["operation"]["status"] == "completed"
-                    && report["operation"]["command"] == RentBicycle::COMMAND_NAME
+                    && report["operation"]["command"] == RentBicycle::LOCAL_ID
                     && report["operation"]["schemaVersion"] == RentBicycle::SCHEMA_VERSION
                     && report["operation"]["aggregateType"] == aggregate_type
                     && report["operation"]["aggregateId"] == "city-fleet",
@@ -347,7 +347,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             ensure(
                 command.message_id() == expected_command_message_id.as_str()
                     && command.causation_id().is_none()
-                    && command.name() == RentBicycle::COMMAND_NAME
+                    && command.name() == RentBicycle::LOCAL_ID
                     && command.schema_version() == RentBicycle::SCHEMA_VERSION
                     && command.payload() == Some(&command_payload)
                     && command.aggregate().is_some_and(|aggregate| {
