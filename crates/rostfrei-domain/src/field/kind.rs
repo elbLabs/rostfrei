@@ -1,4 +1,4 @@
-use crate::{AggregateId, DomainIdentityId, EntityId, ValueObjectId};
+use crate::{AggregateId, EntityId};
 
 use super::{ScalarType, SemanticScalarDescriptor};
 
@@ -7,9 +7,7 @@ use super::{ScalarType, SemanticScalarDescriptor};
 pub enum FieldKind {
     Scalar(ScalarType),
     SemanticScalar(SemanticScalarDescriptor),
-    DomainIdentity(DomainIdentityId),
     Entity(EntityId),
-    ValueObject(ValueObjectId),
     AggregateReference(AggregateId),
     Opaque,
 }

@@ -29,9 +29,7 @@ pub enum Scalar {
 
 #[derive(Clone)]
 pub enum Role {
-    Identity,
     Entity,
-    ValueObject,
     AggregateReference(TypePath),
     SemanticScalar(TypePath),
     Scalar(Scalar),

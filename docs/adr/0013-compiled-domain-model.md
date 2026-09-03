@@ -138,6 +138,12 @@ subsequently removed by
 Invariants are singular traits with direct aggregate/entity implementations,
 and tests name the concrete implementor/trait descriptor.
 
+Entity identity field selection and identity/Value Object use-site tags were
+subsequently removed by
+[ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md).
+`EntityDefinition::identity` is authoritative and unclassified custom fields
+are projected as opaque.
+
 Domain-error ownership and optional JSON generation were subsequently removed
 by [ADR 0025](0025-owner-independent-domain-errors.md). Errors keep their
 stable public code and message, while action return types and command handlers

@@ -1,5 +1,5 @@
 error: ValueObject domain attributes are only supported on the type declaration
  --> tests/ui/value_object_field_attributes.rs:5:21
   |
-5 | struct EmailAddress(#[domain(identity)] String);
-  |                     ^^^^^^^^^^^^^^^^^^^
+5 | struct EmailAddress(#[domain(entity)] String);
+  |                     ^^^^^^^^^^^^^^^^^

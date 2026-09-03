@@ -8,7 +8,6 @@ struct Custom;
 #[derive(Entity)]
 #[domain(id = "custom", label = "Custom")]
 struct UntaggedCustom {
-    #[domain(identity)]
     id: Id,
     value: Custom,
 }
@@ -16,12 +15,15 @@ struct UntaggedCustom {
 impl domain::EntityDefinition for UntaggedCustom {
     type Owner = Owner;
     type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Entity)]
 #[domain(id = "reference", label = "Reference")]
 struct Reference {
-    #[domain(identity)]
     id: Id,
     value: &'static str,
 }
@@ -29,12 +31,15 @@ struct Reference {
 impl domain::EntityDefinition for Reference {
     type Owner = Owner;
     type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Entity)]
 #[domain(id = "array", label = "Array")]
 struct Array {
-    #[domain(identity)]
     id: Id,
     value: [u8; 4],
 }
@@ -42,12 +47,15 @@ struct Array {
 impl domain::EntityDefinition for Array {
     type Owner = Owner;
     type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Entity)]
 #[domain(id = "tuple", label = "Tuple")]
 struct Tuple {
-    #[domain(identity)]
     id: Id,
     value: (u8, u8),
 }
@@ -55,12 +63,15 @@ struct Tuple {
 impl domain::EntityDefinition for Tuple {
     type Owner = Owner;
     type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Entity)]
 #[domain(id = "map", label = "Map")]
 struct Map {
-    #[domain(identity)]
     id: Id,
     value: std::collections::HashMap<String, String>,
 }
@@ -68,12 +79,15 @@ struct Map {
 impl domain::EntityDefinition for Map {
     type Owner = Owner;
     type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Entity)]
 #[domain(id = "alias", label = "Alias")]
 struct NonCanonical {
-    #[domain(identity)]
     id: Id,
     value: collections::Vec<u8>,
 }
@@ -81,12 +95,15 @@ struct NonCanonical {
 impl domain::EntityDefinition for NonCanonical {
     type Owner = Owner;
     type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Entity)]
 #[domain(id = "malformed", label = "Malformed")]
 struct MalformedWrapper {
-    #[domain(identity)]
     id: Id,
     value: Option<u8, u16>,
 }
@@ -94,6 +111,10 @@ struct MalformedWrapper {
 impl domain::EntityDefinition for MalformedWrapper {
     type Owner = Owner;
     type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 fn main() {}

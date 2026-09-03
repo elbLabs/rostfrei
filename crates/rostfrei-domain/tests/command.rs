@@ -3,8 +3,8 @@
 use std::convert::Infallible;
 
 use domain::{
-    Aggregate, BoundedContext, Command, DomainIdentity, Entity, EntityType, FieldKind,
-    FieldWrapper, JsonCommandPayload, JsonErrorPayload, ValueObject,
+    Aggregate, BoundedContext, Command, DomainIdentity, Entity, FieldKind, FieldWrapper,
+    JsonCommandPayload, JsonErrorPayload, ValueObject,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -19,13 +19,16 @@ struct ProductId(u64);
 #[derive(Entity)]
 #[domain(id = "catalog-root", label = "Catalog")]
 struct CatalogRoot {
-    #[domain(identity)]
     id: ProductId,
 }
 
 impl domain::EntityDefinition for CatalogRoot {
     type Owner = CatalogAggregate;
     type Identity = ProductId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]
@@ -45,11 +48,8 @@ struct Status(String);
 #[derive(Command)]
 #[domain(id = "change-status", label = "Change status")]
 struct ChangeStatus {
-    #[domain(identity)]
     target_id: ProductId,
-    #[domain(value_object)]
     status: Status,
-    #[domain(value_object)]
     alternatives: Option<Vec<Status>>,
 }
 
@@ -86,13 +86,9 @@ fn describes_owner_independent_command_fields_and_schema() {
         fields.iter().map(|field| field.name).collect::<Vec<_>>(),
         ["target_id", "status", "alternatives"]
     );
-    assert_eq!(
-        fields[0].value.kind,
-        FieldKind::DomainIdentity(CatalogRoot::DESCRIPTOR.identity.identity)
-    );
-    assert!(
-        matches!(fields[1].value.kind, FieldKind::ValueObject(id) if id == Status::DESCRIPTOR.id)
-    );
+    assert_eq!(fields[0].value.kind, FieldKind::Opaque);
+    assert_eq!(fields[1].value.kind, FieldKind::Opaque);
+    assert_eq!(fields[2].value.kind, FieldKind::Opaque);
     assert_eq!(
         fields[2].value.wrappers,
         &[FieldWrapper::Optional, FieldWrapper::List]

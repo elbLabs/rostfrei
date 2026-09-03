@@ -32,15 +32,13 @@ pub use decision::{
 pub use domain_error::{DomainError, DomainErrorDescriptor, DomainErrorId};
 pub use domain_event::{DomainEvent, DomainEventDescriptor, DomainEventId, DomainEventType};
 pub use domain_identity::{DomainIdentity, DomainIdentityId};
-#[doc(hidden)]
-pub use domain_identity::{DomainIdentityDescriptor, DomainIdentityType};
 pub use domain_model::{DomainModelError, DomainModelReference};
 pub use domain_query::{QueryDescriptor, QueryId};
 pub use domain_service::{
     DomainServiceDefinition, DomainServiceDescriptor, DomainServiceId, DomainServiceType,
 };
 pub use domain_test::{DomainTestDescriptor, DomainTestSubject};
-pub use entity::{EntityDefinition, EntityDescriptor, EntityId, EntityType, IdentityDescriptor};
+pub use entity::{EntityDefinition, EntityDescriptor, EntityId, EntityType};
 pub use entity_lifecycle::{
     EntityLifecycleDescriptor, EntityLifecycleId, EntityLifecycleStateDescriptor,
     EntityLifecycleStateId, EntityLifecycleType,
@@ -61,7 +59,6 @@ pub use value_object::{ValueObject, ValueObjectDescriptor, ValueObjectId};
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::domain_identity::{DomainIdentityDescriptor, DomainIdentityType};
     pub use crate::domain_model::{DomainModelBuilder, try_build};
     pub use crate::domain_test::emit_domain_test_metadata as emit_domain_test_descriptor;
     pub use serde;

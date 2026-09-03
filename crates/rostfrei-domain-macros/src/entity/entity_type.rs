@@ -11,12 +11,9 @@ pub fn assemble(
     name: &Ident,
     attributes: &Attributes,
     fields: &[Field],
-    identity: &Field,
 ) -> TokenStream {
     let id = &attributes.id;
     let label = &attributes.label;
-    let identity_name = &identity.name;
-    let identity_type = &identity.base;
     let fields = crate::field::assemble_descriptors_with_path(domain_path, fields);
     quote! {
         impl #domain_path::EntityType for #name {
@@ -30,23 +27,10 @@ pub fn assemble(
                 #domain_path::EntityDescriptor {
                     id,
                     label: #label,
-                    identity: #domain_path::IdentityDescriptor {
-                        field: #identity_name,
-                        identity: #domain_path::DomainIdentityId { owner: id },
-                    },
+                    identity: #domain_path::DomainIdentityId { owner: id },
                     fields: #fields,
                 }
             };
         }
-
-        const _: () = {
-            fn assert_identity_field<Identity>()
-            where
-                #name: #domain_path::EntityDefinition<Identity = Identity>,
-                Identity: #domain_path::DomainIdentity,
-            {
-            }
-            let _ = assert_identity_field::<#identity_type>;
-        };
     }
 }

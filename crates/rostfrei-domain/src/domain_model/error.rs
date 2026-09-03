@@ -1,13 +1,11 @@
 use std::{error::Error, fmt};
 
-use crate::{AggregateId, DomainErrorId, DomainEventId, DomainIdentityId, EntityId, ValueObjectId};
+use crate::{AggregateId, DomainErrorId, DomainEventId, DomainIdentityId, EntityId};
 
 /// A domain-model descriptor reference involved in an inventory validation failure.
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DomainModelReference {
-    DomainIdentity(Box<DomainIdentityId>),
-    ValueObject(Box<ValueObjectId>),
     Entity(Box<EntityId>),
     Aggregate(Box<AggregateId>),
 }
@@ -77,8 +75,6 @@ struct ReferenceDebug<'a>(&'a DomainModelReference);
 impl fmt::Display for ReferenceDebug<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
-            DomainModelReference::DomainIdentity(id) => write!(formatter, "{id:?}"),
-            DomainModelReference::ValueObject(id) => write!(formatter, "{id:?}"),
             DomainModelReference::Entity(id) => write!(formatter, "{id:?}"),
             DomainModelReference::Aggregate(id) => write!(formatter, "{id:?}"),
         }

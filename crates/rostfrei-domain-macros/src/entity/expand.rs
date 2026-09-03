@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use syn::DeriveInput;
 
-use super::{assembly, attributes::Attributes, input, validation};
+use super::{assembly, attributes::Attributes, input};
 
 pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     let source_fields = input::extract(input)?;
@@ -9,13 +9,11 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     crate::helper::id::validate(&attributes.id)?;
     crate::helper::label::validate(&attributes.label)?;
     let fields = crate::field::extract(source_fields)?;
-    let identity = validation::validate(&fields)?;
     let domain_path = crate::helper::domain_api_path::resolve()?;
     Ok(assembly::assemble(
         &domain_path,
         &input.ident,
         &attributes,
         &fields,
-        identity,
     ))
 }

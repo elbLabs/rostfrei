@@ -1,6 +1,6 @@
 use domain::{
-    Aggregate, AggregateType, BoundedContext, DomainIdentity, DomainIdentityId, Entity, EntityId,
-    EntityType, FieldKind,
+    Aggregate, AggregateType, BoundedContext, DomainIdentity, DomainIdentityId, Entity,
+    EntityDefinition, EntityId, EntityType, FieldKind,
 };
 
 #[derive(BoundedContext)]
@@ -13,13 +13,16 @@ struct MailboxId(u64);
 #[derive(Entity)]
 #[domain(id = "mailbox-root", label = "Mailbox")]
 struct MailboxRoot {
-    #[domain(identity)]
     id: MailboxId,
 }
 
 impl domain::EntityDefinition for MailboxRoot {
     type Owner = Mailbox;
     type Identity = MailboxId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Aggregate)]
@@ -41,17 +44,18 @@ fn derives_identity_marker_and_entity_scoped_descriptor() {
     assert_eq!(identity.0, 7);
     let root = MailboxRoot { id: MailboxId(8) };
     assert_eq!(root.id.0, 8);
-    let descriptor = MailboxRoot::DESCRIPTOR.identity.identity;
+    assert_eq!(root.identity().0, 8);
+    let descriptor = MailboxRoot::DESCRIPTOR.identity;
     assert_eq!(
         descriptor,
         DomainIdentityId {
             owner: MailboxRoot::DESCRIPTOR.id
         }
     );
-    assert_eq!(MailboxRoot::DESCRIPTOR.identity.identity, descriptor);
+    assert_eq!(MailboxRoot::DESCRIPTOR.identity, descriptor);
     assert_eq!(
         MailboxRoot::DESCRIPTOR.fields[0].value.kind,
-        FieldKind::DomainIdentity(descriptor)
+        FieldKind::Opaque
     );
     assert_eq!(
         descriptor.owner,

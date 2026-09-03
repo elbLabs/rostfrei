@@ -1,22 +1,23 @@
 use syn::DeriveInput;
 
 #[test]
-fn accepts_identity_tag_and_definition_owned_metadata() {
+fn accepts_arbitrary_named_fields_without_an_identity_tag() {
     let input: DeriveInput = syn::parse_quote! {
         #[domain(id = "bicycle", label = "Bicycle")]
         struct Bicycle {
-            #[domain(identity)]
             id: BicycleId,
+            details: BicycleDetails,
             active: bool,
         }
     };
     let attributes = super::attributes::Attributes::parse(&input.attrs).expect("attributes");
     let fields =
         crate::field::extract(super::input::extract(&input).expect("input")).expect("fields");
-    let identity = super::validation::validate(&fields).expect("identity");
 
     assert_eq!(attributes.id.value(), "bicycle");
-    assert_eq!(identity.name.value(), "id");
+    assert_eq!(fields.len(), 3);
+    assert!(matches!(fields[0].role, crate::field::Role::Opaque));
+    assert!(matches!(fields[1].role, crate::field::Role::Opaque));
 }
 
 #[test]
@@ -24,7 +25,6 @@ fn rejects_removed_entity_relationship_attributes() {
     let input: DeriveInput = syn::parse_quote! {
         #[domain(id = "bicycle", label = "Bicycle", owner = Fleet)]
         struct Bicycle {
-            #[domain(identity)]
             id: BicycleId,
         }
     };
@@ -33,23 +33,49 @@ fn rejects_removed_entity_relationship_attributes() {
 }
 
 #[test]
-fn entity_generates_the_scoped_identity_binding() {
-    let identity = crate::field::Field {
-        name: syn::LitStr::new("id", proc_macro2::Span::call_site()),
-        member: syn::Member::Named(syn::parse_quote!(id)),
-        base: syn::parse_quote!(BicycleId),
-        wrappers: Vec::new(),
-        role: crate::field::Role::Identity,
+fn descriptor_uses_the_entity_id_without_hidden_identity_binding() {
+    let input: DeriveInput = syn::parse_quote! {
+        #[domain(id = "bicycle", label = "Bicycle")]
+        struct Bicycle {
+            id: BicycleId,
+            details: BicycleDetails,
+        }
     };
-    let output = super::identity::assemble(
+    let attributes = super::attributes::Attributes::parse(&input.attrs).expect("attributes");
+    let fields =
+        crate::field::extract(super::input::extract(&input).expect("input")).expect("fields");
+    let output = super::assembly::assemble(
         &syn::parse_quote!(::domain),
         &syn::parse_quote!(Bicycle),
-        &identity,
+        &attributes,
+        &fields,
     )
     .to_string();
 
-    assert!(output.contains("__private :: DomainIdentityType for BicycleId"));
-    assert!(!output.contains("ActionInputType"));
-    assert!(!output.contains("QueryInputType"));
-    assert!(!output.contains("QueryOutputType"));
+    assert!(output.contains("identity : :: domain :: DomainIdentityId { owner : id }"));
+    assert!(!output.contains("IdentityDescriptor"));
+    assert!(!output.contains("DomainIdentityType"));
+}
+
+#[test]
+fn rejects_obsolete_identity_and_value_object_field_tags() {
+    for role in [quote::quote!(identity), quote::quote!(value_object)] {
+        let input: DeriveInput = syn::parse2(quote::quote! {
+            #[domain(id = "bicycle", label = "Bicycle")]
+            struct Bicycle {
+                #[domain(#role)]
+                value: BicycleId,
+            }
+        })
+        .expect("derive input");
+        let fields = super::input::extract(&input).expect("input");
+        let error = crate::field::extract(fields)
+            .err()
+            .expect("obsolete role must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported field domain attribute")
+        );
+    }
 }

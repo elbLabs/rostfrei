@@ -47,13 +47,16 @@ struct TestId(String);
 #[derive(rostfrei::Entity)]
 #[rostfrei(id = "consumer", label = "Consumer")]
 struct TestRoot {
-    #[rostfrei(identity)]
     id: TestId,
 }
 
 impl rostfrei::EntityDefinition for TestRoot {
     type Owner = TestAggregate;
     type Identity = TestId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, rostfrei::DomainEvent)]

@@ -1,41 +1,18 @@
-error[E0277]: the trait bound `PlainId: domain::DomainIdentity` is not satisfied
-  --> tests/ui/entity_invalid_bounds.rs:13:9
+error[E0277]: the trait bound `PlainId: DomainIdentity` is not satisfied
+  --> tests/ui/entity_invalid_bounds.rs:17:21
    |
-13 |     id: PlainId,
-   |         ^^^^^^^ unsatisfied trait bound
-   |
-help: the trait `domain::DomainIdentity` is not implemented for `PlainId`
-  --> tests/ui/entity_invalid_bounds.rs:7:1
-   |
- 7 | struct PlainId(u64);
-   | ^^^^^^^^^^^^^^
-help: the trait `domain::DomainIdentity` is implemented for `ValidId`
-  --> tests/ui/entity_invalid_bounds.rs:33:10
-   |
-33 | #[derive(DomainIdentity)]
-   |          ^^^^^^^^^^^^^^
-note: required by a bound in `domain::DomainIdentityType`
-  --> src/domain_identity/domain_type.rs
-   |
-   | pub trait DomainIdentityType: DomainIdentity {
-   |                               ^^^^^^^^^^^^^^ required by this bound in `DomainIdentityType`
-   = note: this error originates in the derive macro `DomainIdentity` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0277]: the trait bound `PlainId: domain::DomainIdentity` is not satisfied
-  --> tests/ui/entity_invalid_bounds.rs:18:21
-   |
-18 |     type Identity = PlainId;
+17 |     type Identity = PlainId;
    |                     ^^^^^^^ unsatisfied trait bound
    |
-help: the trait `domain::DomainIdentity` is not implemented for `PlainId`
+help: the trait `DomainIdentity` is not implemented for `PlainId`
   --> tests/ui/entity_invalid_bounds.rs:7:1
    |
  7 | struct PlainId(u64);
    | ^^^^^^^^^^^^^^
-help: the trait `domain::DomainIdentity` is implemented for `ValidId`
-  --> tests/ui/entity_invalid_bounds.rs:33:10
+help: the trait `DomainIdentity` is implemented for `ValidId`
+  --> tests/ui/entity_invalid_bounds.rs:36:10
    |
-33 | #[derive(DomainIdentity)]
+36 | #[derive(DomainIdentity)]
    |          ^^^^^^^^^^^^^^
 note: required by a bound in `domain::EntityDefinition::Identity`
   --> src/entity/definition.rs
@@ -45,20 +22,20 @@ note: required by a bound in `domain::EntityDefinition::Identity`
    = note: this error originates in the derive macro `DomainIdentity` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `MissingAggregate: AggregateType` is not satisfied
-  --> tests/ui/entity_invalid_bounds.rs:44:18
+  --> tests/ui/entity_invalid_bounds.rs:46:18
    |
-44 |     type Owner = MissingAggregate;
+46 |     type Owner = MissingAggregate;
    |                  ^^^^^^^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `AggregateType` is not implemented for `MissingAggregate`
-  --> tests/ui/entity_invalid_bounds.rs:31:1
+  --> tests/ui/entity_invalid_bounds.rs:34:1
    |
-31 | struct MissingAggregate;
+34 | struct MissingAggregate;
    | ^^^^^^^^^^^^^^^^^^^^^^^
 help: the trait `AggregateType` is implemented for `PlainIdAggregate`
-  --> tests/ui/entity_invalid_bounds.rs:21:10
+  --> tests/ui/entity_invalid_bounds.rs:24:10
    |
-21 | #[derive(Aggregate)]
+24 | #[derive(Aggregate)]
    |          ^^^^^^^^^
 note: required by a bound in `domain::EntityDefinition::Owner`
   --> src/entity/definition.rs
@@ -67,69 +44,20 @@ note: required by a bound in `domain::EntityDefinition::Owner`
    |                 ^^^^^^^^^^^^^ required by this bound in `EntityDefinition::Owner`
    = note: this error originates in the derive macro `Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: the trait bound `PlainId: domain::DomainIdentity` is not satisfied
-  --> tests/ui/entity_invalid_bounds.rs:13:9
-   |
-13 |     id: PlainId,
-   |         ^^^^^^^ unsatisfied trait bound
-   |
-help: the trait `domain::DomainIdentity` is not implemented for `PlainId`
-  --> tests/ui/entity_invalid_bounds.rs:7:1
-   |
- 7 | struct PlainId(u64);
-   | ^^^^^^^^^^^^^^
-help: the trait `domain::DomainIdentity` is implemented for `ValidId`
-  --> tests/ui/entity_invalid_bounds.rs:33:10
-   |
-33 | #[derive(DomainIdentity)]
-   |          ^^^^^^^^^^^^^^
-note: required by a bound in `domain::DomainIdentityType::DESCRIPTOR`
-  --> src/domain_identity/domain_type.rs
-   |
-   | pub trait DomainIdentityType: DomainIdentity {
-   |                               ^^^^^^^^^^^^^^ required by this bound in `DomainIdentityType::DESCRIPTOR`
-...
-   |     const DESCRIPTOR: super::DomainIdentityDescriptor;
-   |           ---------- required by a bound in this associated constant
-   = note: this error originates in the derive macro `DomainIdentity` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0277]: the trait bound `PlainId: domain::DomainIdentity` is not satisfied
-  --> tests/ui/entity_invalid_bounds.rs:13:9
-   |
-13 |     id: PlainId,
-   |         ^^^^^^^ unsatisfied trait bound
-   |
-help: the trait `domain::DomainIdentity` is not implemented for `PlainId`
-  --> tests/ui/entity_invalid_bounds.rs:7:1
-   |
- 7 | struct PlainId(u64);
-   | ^^^^^^^^^^^^^^
-help: the trait `domain::DomainIdentity` is implemented for `ValidId`
-  --> tests/ui/entity_invalid_bounds.rs:33:10
-   |
-33 | #[derive(DomainIdentity)]
-   |          ^^^^^^^^^^^^^^
-note: required by a bound in `_::assert_identity_field`
-  --> tests/ui/entity_invalid_bounds.rs:9:10
-   |
- 9 | #[derive(Entity)]
-   |          ^^^^^^ required by this bound in `assert_identity_field`
-   = note: this error originates in the derive macro `DomainIdentity` which comes from the expansion of the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
-
 error[E0277]: the trait bound `MissingAggregate: AggregateType` is not satisfied
-  --> tests/ui/entity_invalid_bounds.rs:36:10
+  --> tests/ui/entity_invalid_bounds.rs:39:10
    |
-36 | #[derive(Entity)]
+39 | #[derive(Entity)]
    |          ^^^^^^ unsatisfied trait bound
    |
 help: the trait `AggregateType` is not implemented for `MissingAggregate`
-  --> tests/ui/entity_invalid_bounds.rs:31:1
+  --> tests/ui/entity_invalid_bounds.rs:34:1
    |
-31 | struct MissingAggregate;
+34 | struct MissingAggregate;
    | ^^^^^^^^^^^^^^^^^^^^^^^
 help: the trait `AggregateType` is implemented for `PlainIdAggregate`
-  --> tests/ui/entity_invalid_bounds.rs:21:10
+  --> tests/ui/entity_invalid_bounds.rs:24:10
    |
-21 | #[derive(Aggregate)]
+24 | #[derive(Aggregate)]
    |          ^^^^^^^^^
    = note: this error originates in the derive macro `Entity` which comes from the expansion of the derive macro `Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)

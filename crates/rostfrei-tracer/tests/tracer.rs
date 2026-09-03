@@ -61,13 +61,16 @@ struct TestRootId(String);
 #[derive(domain::Entity)]
 #[domain(id = "test-root", label = "Test root")]
 struct TestRoot {
-    #[domain(identity)]
     id: TestRootId,
 }
 
 impl domain::EntityDefinition for TestRoot {
     type Owner = TestAggregate;
     type Identity = TestRootId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(domain::Aggregate)]
@@ -150,13 +153,16 @@ struct OtherTestRootId(String);
 #[derive(domain::Entity)]
 #[domain(id = "other-test-root", label = "Other test root")]
 struct OtherTestRoot {
-    #[domain(identity)]
     id: OtherTestRootId,
 }
 
 impl domain::EntityDefinition for OtherTestRoot {
     type Owner = OtherTestAggregate;
     type Identity = OtherTestRootId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(domain::Aggregate)]

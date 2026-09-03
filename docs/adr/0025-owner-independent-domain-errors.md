@@ -26,7 +26,6 @@ and Rust payload fields:
     message = "The requested bicycle cannot currently be rented."
 )]
 pub struct BicycleUnavailable {
-    #[domain(identity)]
     bicycle_id: BicycleId,
 }
 ```
@@ -56,3 +55,7 @@ domain-error attributes. They no longer generate or consume owner-binding
 metadata for errors. JSON encoding and runtime rejection behavior remain
 available by default, while the compiler checks each executable relationship
 where the error type is actually used.
+
+[ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md) removes identity
+and Value Object field tags from Domain Errors. Custom rejection fields are
+opaque metadata without changing their JSON payload behavior.

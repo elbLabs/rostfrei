@@ -1,25 +1,7 @@
-error: ValueObject domain attributes are only supported on the type declaration
-  --> tests/ui/field_invalid_traits.rs:82:19
-   |
-82 | struct WrongValue(#[domain(value_object)] Plain);
-   |                   ^^^^^^^^^^^^^^^^^^^^^^^
-
-error[E0277]: the trait bound `Plain: domain::ValueObject` is not satisfied
-  --> tests/ui/field_invalid_traits.rs:70:18
-   |
-70 |     plain_value: Plain,
-   |                  ^^^^^ unsatisfied trait bound
-   |
-help: the trait `domain::ValueObject` is not implemented for `Plain`
-  --> tests/ui/field_invalid_traits.rs:16:1
-   |
-16 | struct Plain;
-   | ^^^^^^^^^^^^
-
 error[E0277]: the trait bound `Plain: AggregateType` is not satisfied
-  --> tests/ui/field_invalid_traits.rs:71:30
+  --> tests/ui/field_invalid_traits.rs:75:30
    |
-71 |     #[domain(aggregate_ref = Plain)]
+75 |     #[domain(aggregate_ref = Plain)]
    |                              ^^^^^ unsatisfied trait bound
    |
 help: the trait `AggregateType` is not implemented for `Plain`
@@ -28,76 +10,58 @@ help: the trait `AggregateType` is not implemented for `Plain`
 16 | struct Plain;
    | ^^^^^^^^^^^^
 help: the following other types implement trait `AggregateType`
-  --> tests/ui/field_invalid_traits.rs:30:10
+  --> tests/ui/field_invalid_traits.rs:33:10
    |
-30 | #[derive(Aggregate)]
+33 | #[derive(Aggregate)]
    |          ^^^^^^^^^ `First`
 ...
-52 | #[derive(Aggregate)]
+58 | #[derive(Aggregate)]
    |          ^^^^^^^^^ `Second`
    = note: this error originates in the derive macro `Aggregate` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0271]: type mismatch resolving `<OtherRoot as EntityDefinition>::Owner == First`
-  --> tests/ui/field_invalid_traits.rs:68:12
+  --> tests/ui/field_invalid_traits.rs:73:12
    |
-68 |     other: OtherRoot,
+73 |     other: OtherRoot,
    |            ^^^^^^^^^ type mismatch resolving `<OtherRoot as EntityDefinition>::Owner == First`
    |
 note: expected this to be `First`
-  --> tests/ui/field_invalid_traits.rs:48:18
+  --> tests/ui/field_invalid_traits.rs:50:18
    |
-48 |     type Owner = Second;
+50 |     type Owner = Second;
    |                  ^^^^^^
 note: required by a bound in `_::assert_entity`
-  --> tests/ui/field_invalid_traits.rs:62:10
+  --> tests/ui/field_invalid_traits.rs:68:10
    |
-62 | #[derive(Entity)]
+68 | #[derive(Entity)]
    |          ^^^^^^ required by this bound in `assert_entity`
    = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: the trait bound `Plain: domain::ValueObject` is not satisfied
-  --> tests/ui/field_invalid_traits.rs:70:18
+error[E0277]: the trait bound `Plain: DomainIdentity` is not satisfied
+  --> tests/ui/field_invalid_traits.rs:76:16
    |
-70 |     plain_value: Plain,
-   |                  ^^^^^ unsatisfied trait bound
-   |
-help: the trait `domain::ValueObject` is not implemented for `Plain`
-  --> tests/ui/field_invalid_traits.rs:16:1
-   |
-16 | struct Plain;
-   | ^^^^^^^^^^^^
-note: required by a bound in `_::assert_value_object`
-  --> tests/ui/field_invalid_traits.rs:62:10
-   |
-62 | #[derive(Entity)]
-   |          ^^^^^^ required by this bound in `assert_value_object`
-   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0277]: the trait bound `Plain: domain::DomainIdentityType` is not satisfied
-  --> tests/ui/field_invalid_traits.rs:72:16
-   |
-72 |     reference: Plain,
+76 |     reference: Plain,
    |                ^^^^^ unsatisfied trait bound
    |
-help: the trait `domain::DomainIdentityType` is not implemented for `Plain`
+help: the trait `DomainIdentity` is not implemented for `Plain`
   --> tests/ui/field_invalid_traits.rs:16:1
    |
 16 | struct Plain;
    | ^^^^^^^^^^^^
-help: the following other types implement trait `domain::DomainIdentityType`
-  --> tests/ui/field_invalid_traits.rs:18:10
+help: the following other types implement trait `DomainIdentity`
+  --> tests/ui/field_invalid_traits.rs:7:10
    |
-18 | #[derive(Entity)]
-   |          ^^^^^^ `Id`
+ 7 | #[derive(DomainIdentity)]
+   |          ^^^^^^^^^^^^^^ `Id`
 ...
-40 | #[derive(Entity)]
-   |          ^^^^^^ `OtherId`
+10 | #[derive(DomainIdentity)]
+   |          ^^^^^^^^^^^^^^ `OtherId`
 ...
-62 | #[derive(Entity)]
-   |          ^^^^^^ `WrongId`
-note: required by a bound in `_::assert_identity`
-  --> tests/ui/field_invalid_traits.rs:62:10
+13 | #[derive(DomainIdentity)]
+   |          ^^^^^^^^^^^^^^ `WrongId`
+note: required by a bound in `_::assert_domain_identity`
+  --> tests/ui/field_invalid_traits.rs:68:10
    |
-62 | #[derive(Entity)]
-   |          ^^^^^^ required by this bound in `assert_identity`
-   = note: this error originates in the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)
+68 | #[derive(Entity)]
+   |          ^^^^^^ required by this bound in `assert_domain_identity`
+   = note: this error originates in the derive macro `DomainIdentity` which comes from the expansion of the derive macro `Entity` (in Nightly builds, run with -Z macro-backtrace for more info)

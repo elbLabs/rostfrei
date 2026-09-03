@@ -307,7 +307,6 @@ struct AutomaticAccountId(String);
 #[derive(domain::Entity)]
 #[domain(id = "automatic-account-root", label = "Automatic account")]
 struct AutomaticAccountRoot {
-    #[domain(identity)]
     #[allow(dead_code)]
     id: AutomaticAccountId,
     balance: i64,
@@ -316,6 +315,10 @@ struct AutomaticAccountRoot {
 impl domain::EntityDefinition for AutomaticAccountRoot {
     type Owner = AutomaticAccountDefinition;
     type Identity = AutomaticAccountId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, domain::DomainEvent, Eq, PartialEq, Serialize)]

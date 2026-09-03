@@ -62,3 +62,7 @@ UUIDs, use composite structs, or represent imported identifier variants
 without pretending they are primitive domain scalars. Generated catalogs lose
 speculative identity examples and use `null`, making the absence of
 representation metadata explicit.
+
+[ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md) completes this
+separation by making `EntityDefinition::identity` the identity-value authority
+and removing identity field selection from derives.

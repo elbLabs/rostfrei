@@ -493,6 +493,10 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(command["label"], "Rent bicycle");
     assert_eq!(command["versions"][0]["schemaVersion"], 1);
     assert_eq!(
+        command["versions"][0]["fields"],
+        json!([{ "name": "bicycle_id", "value": { "kind": "opaque" } }])
+    );
+    assert_eq!(
         command["versions"][0]["payloadTemplate"],
         json!({ "bicycle_id": null })
     );

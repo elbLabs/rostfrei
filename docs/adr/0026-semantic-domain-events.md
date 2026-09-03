@@ -20,7 +20,6 @@ local ID and label; schema version `1` is implicit:
 #[derive(DomainEvent)]
 #[domain(id = "bicycle-rented", label = "Bicycle rented")]
 pub struct BicycleRented {
-    #[domain(identity)]
     bicycle_id: BicycleId,
 }
 ```
@@ -49,3 +48,7 @@ versions remain visible and testable.
 The runtime wire contract is unchanged: event execution still applies
 immediately, persisted records retain the declared schema version and canonical
 JSON bytes, and replay decodes through the aggregate event set.
+
+[ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md) removes identity
+and Value Object field-role tags from Events. Custom payload fields become
+opaque descriptor values while their persisted JSON contract is unchanged.

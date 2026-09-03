@@ -26,13 +26,16 @@ compiler-checked owner and identity relationships:
 #[derive(Entity)]
 #[domain(id = "bicycle", label = "Bicycle")]
 pub struct Bicycle {
-    #[domain(identity)]
     bicycle_id: BicycleId,
 }
 
 impl EntityDefinition for Bicycle {
     type Owner = RentalFleetAggregate;
     type Identity = BicycleId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.bicycle_id
+    }
 }
 ```
 
@@ -103,3 +106,7 @@ Value-object declarations and operation-specific DTOs are separated by
 [ADR 0021](0021-slim-value-objects-and-ordinary-dtos.md). Semantic value
 objects retain ID and label metadata, while action inputs and query outputs are
 ordinary Rust types with no inferred model shape.
+
+[ADR 0031](0031-entity-identity-accessor-and-opaque-fields.md) subsequently
+makes the `EntityDefinition::identity` accessor authoritative and removes
+identity and Value Object field-role tags.

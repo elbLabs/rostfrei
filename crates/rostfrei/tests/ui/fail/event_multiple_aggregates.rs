@@ -11,13 +11,14 @@ struct FirstId(u64);
 #[derive(rostfrei::Entity)]
 #[rostfrei(id = "first", label = "First")]
 struct FirstRoot {
-    #[rostfrei(identity)]
     id: FirstId,
 }
 
 impl rostfrei::EntityDefinition for FirstRoot {
     type Owner = FirstAggregate;
     type Identity = FirstId;
+
+    fn identity(&self) -> &Self::Identity { &self.id }
 }
 
 #[derive(rostfrei::DomainIdentity)]
@@ -26,13 +27,14 @@ struct SecondId(u64);
 #[derive(rostfrei::Entity)]
 #[rostfrei(id = "second", label = "Second")]
 struct SecondRoot {
-    #[rostfrei(identity)]
     id: SecondId,
 }
 
 impl rostfrei::EntityDefinition for SecondRoot {
     type Owner = SecondAggregate;
     type Identity = SecondId;
+
+    fn identity(&self) -> &Self::Identity { &self.id }
 }
 
 #[derive(Deserialize, Serialize, rostfrei::DomainEvent)]

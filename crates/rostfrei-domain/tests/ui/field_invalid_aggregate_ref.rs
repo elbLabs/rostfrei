@@ -9,7 +9,6 @@ struct GenericId(u64);
 #[derive(Entity)]
 #[domain(id = "missing", label = "Missing")]
 struct MissingValue {
-    #[domain(identity)]
     id: GenericId,
     #[domain(aggregate_ref)]
     target: Id,
@@ -18,12 +17,15 @@ struct MissingValue {
 impl domain::EntityDefinition for MissingValue {
     type Owner = Owner;
     type Identity = GenericId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 #[derive(Entity)]
 #[domain(id = "generic", label = "Generic")]
 struct GenericTarget {
-    #[domain(identity)]
     id: Id,
     #[domain(aggregate_ref = Vec<Target>)]
     target: Id,
@@ -32,6 +34,10 @@ struct GenericTarget {
 impl domain::EntityDefinition for GenericTarget {
     type Owner = Owner;
     type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
 }
 
 fn main() {}
