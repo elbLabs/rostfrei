@@ -1,35 +1,29 @@
 error: missing id
  --> tests/ui/domain_service_invalid_attributes.rs:4:1
   |
-4 | #[domain(label = "Missing id", context = Context)]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4 | #[domain(label = "Missing id")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error: missing label
  --> tests/ui/domain_service_invalid_attributes.rs:8:1
   |
-8 | #[domain(id = "missing-label", context = Context)]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-error: missing context
-  --> tests/ui/domain_service_invalid_attributes.rs:12:1
-   |
-12 | #[domain(id = "missing-context", label = "Missing context")]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+8 | #[domain(id = "missing-label")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error: id must be nonempty lowercase kebab-case using ASCII letters and digits
-  --> tests/ui/domain_service_invalid_attributes.rs:16:15
+  --> tests/ui/domain_service_invalid_attributes.rs:12:15
    |
-16 | #[domain(id = "Invalid", label = "Invalid", context = Context)]
+12 | #[domain(id = "Invalid", label = "Invalid")]
    |               ^^^^^^^^^
 
 error: label must not be empty
-  --> tests/ui/domain_service_invalid_attributes.rs:20:38
+  --> tests/ui/domain_service_invalid_attributes.rs:16:38
    |
-20 | #[domain(id = "blank-label", label = " ", context = Context)]
+16 | #[domain(id = "blank-label", label = " ")]
    |                                      ^^^
 
 error: unsupported domain attribute
-  --> tests/ui/domain_service_invalid_attributes.rs:24:72
+  --> tests/ui/domain_service_invalid_attributes.rs:20:53
    |
-24 | #[domain(id = "unsupported", label = "Unsupported", context = Context, owner = Context)]
-   |                                                                        ^^^^^
+20 | #[domain(id = "unsupported", label = "Unsupported", context = Context)]
+   |                                                     ^^^^^^^

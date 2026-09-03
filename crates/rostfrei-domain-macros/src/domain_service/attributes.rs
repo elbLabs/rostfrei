@@ -1,10 +1,8 @@
-use syn::{Attribute, LitStr, Path, Result, TypePath};
+use syn::{Attribute, LitStr, Result};
 
 pub struct Attributes {
     pub id: LitStr,
     pub label: LitStr,
-    pub context: TypePath,
-    pub actions: Vec<Path>,
 }
 
 impl Attributes {
@@ -12,8 +10,6 @@ impl Attributes {
         let domain = crate::helper::domain_attribute::locate(attributes)?;
         let mut id = None;
         let mut label = None;
-        let mut context = None;
-        let mut actions = None;
 
         domain.parse_nested_meta(|meta| {
             if meta.path.is_ident("id") {
@@ -30,31 +26,11 @@ impl Attributes {
                 label = Some(meta.value()?.parse::<LitStr>()?);
                 return Ok(());
             }
-            if meta.path.is_ident("context") {
-                if context.is_some() {
-                    return Err(meta.error("duplicate context"));
-                }
-                context = Some(meta.value()?.parse::<TypePath>()?);
-                return Ok(());
-            }
-            if meta.path.is_ident("actions") {
-                if actions.is_some() {
-                    return Err(meta.error("duplicate actions"));
-                }
-                actions = Some(crate::helper::action_paths::parse(meta.value()?)?);
-                return Ok(());
-            }
             Err(meta.error("unsupported domain attribute"))
         })?;
 
         let id = id.ok_or_else(|| syn::Error::new_spanned(domain, "missing id"))?;
         let label = label.ok_or_else(|| syn::Error::new_spanned(domain, "missing label"))?;
-        let context = context.ok_or_else(|| syn::Error::new_spanned(domain, "missing context"))?;
-        Ok(Self {
-            id,
-            label,
-            context,
-            actions: actions.unwrap_or_default(),
-        })
+        Ok(Self { id, label })
     }
 }

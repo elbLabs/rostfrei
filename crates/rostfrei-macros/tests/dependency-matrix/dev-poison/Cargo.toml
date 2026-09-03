@@ -1,0 +1,14 @@
+[package]
+name = "macro-path-dev-poison"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rostfrei = { path = "../../../../rostfrei" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+domain_poison = { package = "rostfrei-domain", path = "../../../../rostfrei-domain" }
+registry_poison = { package = "rostfrei-registry", path = "../../../../rostfrei-registry" }
+runtime_poison = { package = "rostfrei-domain-runtime", path = "../../../../rostfrei-domain-runtime" }

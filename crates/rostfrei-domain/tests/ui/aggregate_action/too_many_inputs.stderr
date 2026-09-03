@@ -1,5 +1,0 @@
-error: aggregate actions accept at most one business input; group multiple values into one type
- --> tests/ui/aggregate_action/too_many_inputs.rs:9:46
-  |
-9 |     fn change(root: &mut Root, input: Input, other: Input);
-  |                                              ^^^^^^^^^^^^

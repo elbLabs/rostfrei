@@ -1,5 +1,0 @@
-error: missing label
- --> tests/ui/domain_invariant_contract/missing_invariant_label.rs:7:5
-  |
-7 |     #[invariant(id = "valid")]
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^

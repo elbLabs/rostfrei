@@ -1,5 +1,0 @@
-error: duplicate action attribute
- --> tests/ui/entity_action/duplicate_action_attribute.rs:6:5
-  |
-6 |     #[action(id = "second", label = "Second")]
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -315,7 +315,7 @@ const rentBicycle = directory(
         role: "Action input",
         summary:
           "Keeps an operation-specific DTO separate from semantic Value Objects.",
-        allowed: ["One ordinary Rust input type", "Serialization helpers"],
+        allowed: ["Ordinary Rust input types", "Serialization helpers"],
         guarantee:
           "DTO shape remains ordinary Rust and is not projected as a domain concept.",
       }
@@ -330,7 +330,7 @@ const availabilityQuery = directory(
   {
     role: "Query capability",
     summary: "Pairs one read contract with its returned view type.",
-    allowed: ["query.rs", "output.rs", "mod.rs"],
+    allowed: ["query.rs", "execute.rs", "output.rs", "mod.rs"],
     guarantee:
       "The Query stays owner-independent while structure binds its implementation to the aggregate root.",
   },
@@ -352,13 +352,29 @@ const availabilityQuery = directory(
       }
     ),
     file(
+      "query-execute",
+      "execute.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle_availability/execute.rs",
+      {
+        role: "Query implementation",
+        summary: "Implements BicycleAvailabilityQuery for the aggregate root.",
+        allowed: [
+          "One matching trait implementation",
+          "Private helpers",
+          "Imports",
+        ],
+        guarantee:
+          "The checker requires the direct aggregate-root implementation selected by the enclosing AggregateDefinition.",
+      }
+    ),
+    file(
       "query-output",
       "output.rs",
       "src/domain/bike_rental/rental_fleet/bicycle_availability/output.rs",
       {
         role: "Query view",
         summary: "Defines the ordinary Rust view returned by the Query.",
-        allowed: ["One output DTO", "View-specific helpers"],
+        allowed: ["Ordinary output DTOs", "View-specific helpers"],
         guarantee: "A returned view is not mislabeled as a Value Object.",
       }
     ),
@@ -417,7 +433,7 @@ const eligibilityDecision = directory(
       "src/domain/bike_rental/rental_fleet/assess_rental_eligibility/evaluate.rs",
       {
         role: "Decision implementation",
-        summary: "Implements the policy for the aggregate root.",
+        summary: "Implements the policy for the enclosing aggregate type.",
         allowed: [
           "One matching trait implementation",
           "Private helpers",

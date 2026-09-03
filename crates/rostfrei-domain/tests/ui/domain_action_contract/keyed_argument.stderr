@@ -1,5 +1,0 @@
-error: domain action contract kinds must be unkeyed; use `entity`
- --> tests/ui/domain_action_contract/keyed_argument.rs:3:18
-  |
-3 | #[domain_actions(entity = Actions)]
-  |                  ^^^^^^

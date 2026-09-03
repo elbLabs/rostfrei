@@ -1,5 +1,5 @@
-error: duplicate state domain attribute
+error: duplicate state attribute
  --> tests/ui/entity_lifecycle/duplicate_state_metadata.rs:7:5
   |
-7 |     #[domain(id = "other", label = "Other")]
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+7 |     #[state(id = "other", label = "Other")]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

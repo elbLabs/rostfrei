@@ -11,6 +11,27 @@ export type MacroSlide = {
 
 export const MACROS: MacroSlide[] = [
   {
+    name: "install_macro_support!",
+    family: "setup",
+    headline: "Install macro support once.",
+    description:
+      "One crate-root call gives every Rostfrei macro a deterministic path to its domain, runtime, and registry support.",
+    points: [
+      "One call per declaring crate",
+      "Safe with renamed dependencies",
+      "No per-type path configuration",
+    ],
+    file: "src/lib.rs",
+    authored: `rostfrei::install_macro_support!();
+
+pub mod domain;`,
+    generated: `#[doc(hidden)]
+pub mod __rostfrei_macro_support {
+    // Hygienic re-exports supplied by rostfrei.
+    // Domain macros target this crate-local bridge.
+}`,
+  },
+  {
     name: "BoundedContext",
     family: "derive",
     headline: "Name one domain language.",
@@ -23,13 +44,13 @@ export const MACROS: MacroSlide[] = [
     ],
     file: "src/domain/bike_rental/context.rs",
     authored: `#[derive(BoundedContext)]
-#[domain(id = "bike-rental", label = "Bike rental")]
+#[domain(id = "bike-rental", label = "Bike Rental")]
 pub struct BikeRental;`,
     generated: `impl BoundedContextType for BikeRental {
     const DESCRIPTOR: BoundedContextDescriptor =
         BoundedContextDescriptor {
             id: BoundedContextId("bike-rental"),
-            label: "Bike rental",
+            label: "Bike Rental",
         };
 }`,
   },
@@ -79,6 +100,7 @@ impl rostfrei_core::Aggregate for RentalFleetAggregate {
     file: "src/domain/bike_rental/rental_fleet/event_set.rs",
     authored: `#[derive(AggregateEvents)]
 pub enum RentalFleetEvent {
+    RentalFleetImported(RentalFleetImported),
     BicycleAdded(BicycleAdded),
     BicycleRented(BicycleRented),
     BicycleReturned(BicycleReturned),
@@ -112,6 +134,7 @@ where A: AggregateDefinition<Event = Self>
 pub struct Bicycle {
     bicycle_id: BicycleId,
     status: BicycleStatus,
+    condition: BicycleCondition,
 }
 
 impl EntityDefinition for Bicycle {
@@ -145,7 +168,7 @@ impl EntityDefinition for Bicycle {
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/identity.rs",
     authored: `#[derive(DomainIdentity, Clone, Debug, Eq, PartialEq)]
-pub struct BicycleId(uuid::Uuid);`,
+pub struct BicycleId(String);`,
     generated: `impl DomainIdentity for BicycleId {}
 
 // No owner, string conversion, scalar metadata,
@@ -188,7 +211,7 @@ pub enum BicycleStatus {
       "Context relationship is explicit",
       "No implicit actions",
     ],
-    file: "src/domain/bike_rental/fleet_planning/service.rs",
+    file: "src/domain/<context>/<service>/service.rs",
     authored: `#[derive(DomainService)]
 #[domain(id = "fleet-planning", label = "Fleet planning")]
 pub struct FleetPlanning;
@@ -275,7 +298,7 @@ pub struct BicycleRented {
     id = "bicycle-unavailable",
     label = "Bicycle unavailable",
     code = "BICYCLE_UNAVAILABLE",
-    message = "The bicycle cannot currently be rented."
+    message = "The requested bicycle cannot currently be rented."
 )]
 pub struct BicycleUnavailable {
     pub bicycle_id: BicycleId,
@@ -284,7 +307,7 @@ pub struct BicycleUnavailable {
     const LOCAL_ID: &str = "bicycle-unavailable";
     const LABEL: &str = "Bicycle unavailable";
     const CODE: &str = "BICYCLE_UNAVAILABLE";
-    const MESSAGE: &str = "The bicycle cannot currently be rented.";
+    const MESSAGE: &str = "The requested bicycle cannot currently be rented.";
     const FIELDS: &[FieldDescriptor] = /* … */;
 }
 
@@ -308,6 +331,11 @@ pub enum RentalEligibilityOutcome {
     Eligible,
     #[outcome(id = "already-rented", label = "Already rented")]
     AlreadyRented,
+    #[outcome(
+        id = "maintenance-required",
+        label = "Maintenance required"
+    )]
+    MaintenanceRequired,
 }`,
     generated: `impl DecisionOutcomeType for RentalEligibilityOutcome {
     const OUTCOMES: &[DecisionOutcomeDescriptor] = &[
@@ -332,7 +360,7 @@ pub enum RentalEligibilityOutcome {
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs",
     authored: `#[derive(EntityLifecycle)]
-#[domain(id = "rental-status", label = "Rental status")]
+#[domain(id = "rental-status", label = "Bicycle rental status")]
 pub enum BicycleRentalLifecycle {
     #[state(id = "available", label = "Available")]
     Available,
@@ -343,7 +371,7 @@ pub enum BicycleRentalLifecycle {
     const DESCRIPTOR: EntityLifecycleDescriptor =
         EntityLifecycleDescriptor {
             id: EntityLifecycleId("rental-status"),
-            label: "Rental status",
+            label: "Bicycle rental status",
             states: &[/* available, rented */],
         };
 }`,
@@ -364,13 +392,13 @@ pub enum BicycleRentalLifecycle {
 pub trait RentBicycleAction {
     fn rent_bicycle(
         &mut self,
-        bicycle_id: BicycleId,
+        input: BicycleId,
     ) -> Result<(), BicycleUnavailable>;
 }`,
     generated: `pub trait RentBicycleAction {
     fn rent_bicycle(
         &mut self,
-        bicycle_id: BicycleId,
+        input: BicycleId,
     ) -> Result<(), BicycleUnavailable>;
 
     const LOCAL_ID: &str = "rent-bicycle";
@@ -397,13 +425,13 @@ pub trait RentBicycleAction {
 pub trait BicycleAvailabilityQuery {
     fn bicycle_availability(
         &self,
-        bicycle_id: &BicycleId,
+        input: &BicycleId,
     ) -> Option<BicycleAvailability>;
 }`,
     generated: `pub trait BicycleAvailabilityQuery {
     fn bicycle_availability(
         &self,
-        bicycle_id: &BicycleId,
+        input: &BicycleId,
     ) -> Option<BicycleAvailability>;
 
     const LOCAL_ID: &str = "bicycle-availability";
@@ -428,13 +456,13 @@ pub trait BicycleAvailabilityQuery {
     label = "Assess rental eligibility"
 )]
 pub trait RentalEligibilityDecision {
-    fn assess(
+    fn assess_rental_eligibility(
         status: BicycleStatus,
         condition: BicycleCondition,
     ) -> RentalEligibilityOutcome;
 }`,
     generated: `pub trait RentalEligibilityDecision {
-    fn assess(
+    fn assess_rental_eligibility(
         status: BicycleStatus,
         condition: BicycleCondition,
     ) -> RentalEligibilityOutcome;
@@ -461,12 +489,12 @@ pub trait RentalEligibilityDecision {
     label = "Bicycle identities are unique"
 )]
 pub trait FleetConsistency {
-    fn validate(
+    fn unique_bicycle_identities(
         candidate: &RentalFleet,
     ) -> Option<InvariantViolation>;
 }`,
     generated: `pub trait FleetConsistency {
-    fn validate(
+    fn unique_bicycle_identities(
         candidate: &RentalFleet,
     ) -> Option<InvariantViolation>;
 
@@ -490,11 +518,11 @@ pub trait FleetConsistency {
     authored: `#[domain_invariant_test(
     <RentalFleetAggregate as FleetConsistency>::DESCRIPTOR
 )]
-fn duplicate_bicycles_are_rejected() {
-    // arrange, evaluate, assert
+fn exposes_owner_independent_invariant_metadata() {
+    // inspect the authored invariant descriptor
 }`,
     generated: `#[test]
-fn duplicate_bicycles_are_rejected() {
+fn exposes_owner_independent_invariant_metadata() {
     // authored body unchanged
 }
 
@@ -524,15 +552,17 @@ const __DOMAIN_TEST_SUBJECT: DomainTestSubject =
     entities: [RentalFleet, Bicycle],
     value_objects: [BicycleStatus, BicycleCondition],
     services: [],
-    errors: [BicycleUnavailable],
+    errors: [BicycleUnavailable, BicycleNotRented],
 }`,
     generated: `try_build(|builder| {
-    builder.add_bounded_context(BikeRental::DESCRIPTOR);
+    builder.add_bounded_context(BikeRental::DESCRIPTOR)?;
     builder.add_aggregate_type::<RentalFleetAggregate>()?;
     builder.add_entity_type::<RentalFleet>()?;
     builder.add_entity_type::<Bicycle>()?;
     builder.add_value_object_type::<BicycleStatus>()?;
+    builder.add_value_object_type::<BicycleCondition>()?;
     builder.add_domain_error(BicycleUnavailable::DESCRIPTOR)?;
+    builder.add_domain_error(BicycleNotRented::DESCRIPTOR)?;
     Ok(())
 })`,
   },

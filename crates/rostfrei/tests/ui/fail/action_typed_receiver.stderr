@@ -1,5 +1,0 @@
-error: executable aggregate actions do not support typed receivers
- --> tests/ui/fail/action_typed_receiver.rs:6:16
-  |
-6 |     fn deposit(self: &mut Self);
-  |                ^^^^^^^^^^^^^^^

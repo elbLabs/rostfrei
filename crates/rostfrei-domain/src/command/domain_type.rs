@@ -1,10 +1,15 @@
-use super::{CommandDescriptor, CommandOwnerType};
+use super::CommandDescriptor;
+use crate::FieldDescriptor;
 
-pub trait CommandType: 'static {
-    type Owner: CommandOwnerType;
-    type Rejection: 'static;
-
+pub trait Command: 'static {
     const LOCAL_ID: &'static str;
-    const SCHEMA_VERSION: u32;
-    const DESCRIPTOR: CommandDescriptor;
+    const LABEL: &'static str;
+    const FIELDS: &'static [FieldDescriptor];
+    const SCHEMA_VERSION: u32 = 1;
+    const DESCRIPTOR: CommandDescriptor = CommandDescriptor {
+        local_id: Self::LOCAL_ID,
+        label: Self::LABEL,
+        fields: Self::FIELDS,
+        schema_version: Self::SCHEMA_VERSION,
+    };
 }

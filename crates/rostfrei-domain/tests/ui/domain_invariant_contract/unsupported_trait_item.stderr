@@ -1,5 +1,0 @@
-error: domain invariant contract traits may only contain methods
- --> tests/ui/domain_invariant_contract/unsupported_trait_item.rs:7:5
-  |
-7 |     const ENABLED: bool;
-  |     ^^^^^^^^^^^^^^^^^^^^

@@ -2,104 +2,39 @@ use std::io::{self, Write};
 
 use serde_json::json;
 
-use crate::{
-    ActionId, ActionOwnerId, AggregateId, BoundedContextId, DecisionId, DecisionOwnerId, EntityId,
-    EntityLifecycleId, InvariantId, InvariantOwnerId, ValueObjectId, ValueObjectOwnerId,
-};
+use crate::{ActionId, DecisionId, EntityLifecycleId, InvariantId};
 
 use super::{DomainTestDescriptor, DomainTestSubject, emitter, projection};
 
-const CONTEXT: BoundedContextId = BoundedContextId("sales");
-const AGGREGATE: AggregateId = AggregateId {
-    context: CONTEXT,
-    local: "order",
-};
-const ENTITY: EntityId = EntityId {
-    aggregate: AGGREGATE,
-    local: "line-item",
-};
-const VALUE_OBJECT: ValueObjectId = ValueObjectId {
-    owner: ValueObjectOwnerId::Entity(ENTITY),
-    local: "quantity",
-};
-
 #[test]
-fn projects_subjects_with_model_id_shapes() {
+fn projects_global_subject_ids_consistently() {
     let cases = [
         (
-            DomainTestSubject::Action(ActionId {
-                owner: ActionOwnerId::Aggregate(AGGREGATE),
-                local: "submit",
-            }),
+            DomainTestSubject::Action(ActionId("submit")),
             json!({
                 "kind": "action",
-                "id": {
-                    "owner": {
-                        "kind": "aggregate",
-                        "id": { "context": "sales", "local": "order" },
-                    },
-                    "local": "submit",
-                },
+                "id": "submit",
             }),
         ),
         (
-            DomainTestSubject::Decision(DecisionId {
-                owner: DecisionOwnerId::Aggregate(AGGREGATE),
-                local: "can-submit",
-            }),
+            DomainTestSubject::Decision(DecisionId("can-submit")),
             json!({
                 "kind": "decision",
-                "id": {
-                    "owner": {
-                        "kind": "aggregate",
-                        "id": { "context": "sales", "local": "order" },
-                    },
-                    "local": "can-submit",
-                },
+                "id": "can-submit",
             }),
         ),
         (
-            DomainTestSubject::Invariant(InvariantId {
-                owner: InvariantOwnerId::ValueObject(VALUE_OBJECT),
-                local: "positive",
-            }),
+            DomainTestSubject::Invariant(InvariantId("positive")),
             json!({
                 "kind": "invariant",
-                "id": {
-                    "owner": {
-                        "kind": "valueObject",
-                        "id": {
-                            "owner": {
-                                "kind": "entity",
-                                "id": {
-                                    "aggregate": {
-                                        "context": "sales",
-                                        "local": "order",
-                                    },
-                                    "local": "line-item",
-                                },
-                            },
-                            "local": "quantity",
-                        },
-                    },
-                    "local": "positive",
-                },
+                "id": "positive",
             }),
         ),
         (
-            DomainTestSubject::Lifecycle(EntityLifecycleId {
-                owner: ENTITY,
-                local: "fulfillment",
-            }),
+            DomainTestSubject::Lifecycle(EntityLifecycleId("fulfillment")),
             json!({
                 "kind": "lifecycle",
-                "id": {
-                    "owner": {
-                        "aggregate": { "context": "sales", "local": "order" },
-                        "local": "line-item",
-                    },
-                    "local": "fulfillment",
-                },
+                "id": "fulfillment",
             }),
         ),
     ];
@@ -123,10 +58,9 @@ fn projects_subjects_with_model_id_shapes() {
 
 #[test]
 fn compact_projection_is_deterministic_and_single_line() {
-    let descriptor = descriptor(DomainTestSubject::Lifecycle(EntityLifecycleId {
-        owner: ENTITY,
-        local: "fulfillment",
-    }));
+    let descriptor = descriptor(DomainTestSubject::Lifecycle(EntityLifecycleId(
+        "fulfillment",
+    )));
     let first = projection::compact(descriptor);
     let second = projection::compact(descriptor);
 
@@ -141,10 +75,7 @@ fn compact_projection_is_deterministic_and_single_line() {
 
 #[test]
 fn writer_emits_one_frame_and_surfaces_io_errors() {
-    let descriptor = descriptor(DomainTestSubject::Action(ActionId {
-        owner: ActionOwnerId::Entity(ENTITY),
-        local: "reserve",
-    }));
+    let descriptor = descriptor(DomainTestSubject::Action(ActionId("reserve")));
     let mut output = Vec::new();
 
     emitter::write_metadata(&mut output, descriptor).unwrap();

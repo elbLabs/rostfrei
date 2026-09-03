@@ -26,10 +26,10 @@ Cargo package:
   behavior contracts.
 - `rostfrei-domain-runtime`: stream-aware aggregate initialization, event
   application, and runtime registration for compiled domain types.
-- `rostfrei-registry`: explicit command and query metadata, domain modules, and
-  deterministic runtime registration.
-- `rostfrei-macros`: low-level `CommandDefinition`, `QueryDefinition`, and
-  `Module` derives for direct registry and kernel users.
+- `rostfrei-registry`: handler-linked command metadata, registered query
+  metadata, and deterministic runtime registration.
+- `rostfrei-macros`: the low-level `QueryDefinition` derive for registered
+  application queries.
 - `rostfrei-messaging-core`: transport-neutral commands, integration events,
   queries, envelopes, and delivery contracts.
 - `rostfrei-nats`: command and integration-event bus adapters, NATS messaging,
@@ -53,7 +53,7 @@ Test and Dispatch through the shared `CommandBus`, executes against
 and publishes them through `IntegrationEventBus`. Simulate remains read-only,
 Test uses resettable isolated state, and Dispatch requires separate production
 authorization. The aggregate identity in the API is qualified by its bounded
-context, and `#[domain(json)]` supplies the generated command and rejection JSON
+context. Command and rejection derives supply their canonical JSON codecs,
 while aggregate event JSON comes from the compiled aggregate codec.
 
 A Tracer instance receives an explicit test `EventHistory` for discovery,
@@ -87,6 +87,18 @@ The ADR-derived product overview is in
 The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual decisions are
 recorded in [`docs/adr`](docs/adr).
+
+## Macro setup
+
+Crates that declare Rostfrei domain types install macro support once at their
+crate root:
+
+```rust
+rostfrei::install_macro_support!();
+```
+
+The generated crate-local bridge keeps macro expansion deterministic without
+adding technical path arguments to individual domain declarations.
 
 ## Development
 

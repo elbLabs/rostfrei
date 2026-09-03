@@ -1,5 +1,0 @@
-error: label must not be empty
- --> tests/ui/entity_action/blank_label.rs:5:36
-  |
-5 |     #[action(id = "blank", label = "  ")]
-  |                                    ^^^^

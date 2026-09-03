@@ -1,5 +1,0 @@
-error: unsupported domain_decisions argument `domain_service`; expected `aggregate` or `entity`, and `group = GroupType`
- --> tests/ui/domain_decision_contract/bad_macro_kind.rs:7:20
-  |
-7 | #[domain_decisions(domain_service, group = Group)]
-  |                    ^^^^^^^^^^^^^^

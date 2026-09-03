@@ -21,52 +21,23 @@ error: missing domain attribute
 error: missing label
   --> tests/ui/command_invalid.rs:20:1
    |
-20 | #[domain(id = "missing-label", owner = Catalog)]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-error: missing owner
-  --> tests/ui/command_invalid.rs:24:1
-   |
-24 | #[domain(id = "missing-owner", label = "Missing owner")]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+20 | #[domain(id = "missing-label")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error: id must be nonempty lowercase kebab-case using ASCII letters and digits
-  --> tests/ui/command_invalid.rs:28:15
+  --> tests/ui/command_invalid.rs:24:15
    |
-28 | #[domain(id = "bad_id", label = "Bad ID", owner = Catalog)]
+24 | #[domain(id = "bad_id", label = "Bad ID")]
    |               ^^^^^^^^
 
+error: unsupported domain attribute
+  --> tests/ui/command_invalid.rs:28:57
+   |
+28 | #[domain(id = "invalid-owner", label = "Invalid owner", owner = Catalog)]
+   |                                                         ^^^^^
+
 error: Command cannot contain Entity fields
-  --> tests/ui/command_invalid.rs:41:12
+  --> tests/ui/command_invalid.rs:37:12
    |
-41 |     child: Child,
+37 |     child: Child,
    |            ^^^^^
-
-error[E0277]: the trait bound `Catalog: CommandOwnerType` is not satisfied
-  --> tests/ui/command_invalid.rs:32:65
-   |
-32 | #[domain(id = "invalid-owner", label = "Invalid owner", owner = Catalog)]
-   |                                                                 ^^^^^^^ unsatisfied trait bound
-   |
-help: the trait `CommandOwnerType` is not implemented for `Catalog`
-  --> tests/ui/command_invalid.rs:5:1
-   |
- 5 | struct Catalog;
-   | ^^^^^^^^^^^^^^
-note: required by a bound in `domain::CommandType::Owner`
-  --> src/command/domain_type.rs
-   |
-   |     type Owner: CommandOwnerType;
-   |                 ^^^^^^^^^^^^^^^^ required by this bound in `CommandType::Owner`
-
-error[E0277]: the trait bound `Catalog: CommandOwnerType` is not satisfied
-  --> tests/ui/command_invalid.rs:32:65
-   |
-32 | #[domain(id = "invalid-owner", label = "Invalid owner", owner = Catalog)]
-   |                                                                 ^^^^^^^ unsatisfied trait bound
-   |
-help: the trait `CommandOwnerType` is not implemented for `Catalog`
-  --> tests/ui/command_invalid.rs:5:1
-   |
- 5 | struct Catalog;
-   | ^^^^^^^^^^^^^^

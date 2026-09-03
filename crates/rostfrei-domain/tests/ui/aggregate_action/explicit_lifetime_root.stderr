@@ -1,5 +1,0 @@
-error: aggregate root cannot have an explicit lifetime
- --> tests/ui/aggregate_action/explicit_lifetime_root.rs:8:21
-  |
-8 |     fn change(root: &'static mut Root);
-  |                     ^^^^^^^^^^^^^^^^^

@@ -7,8 +7,8 @@ use rostfrei::{
 use thiserror::Error;
 
 use crate::rental_fleet::{
-    self, BicycleCondition, BicycleId, BicycleStatus, ImportRentalFleetInput, ImportedBicycle,
-    RentalFleetActions, RentalFleetAggregate,
+    self, BicycleCondition, BicycleId, BicycleStatus, ImportRentalFleetAction as _,
+    ImportRentalFleetInput, ImportedBicycle, RentalFleetAggregate,
 };
 
 pub const DEMO_FLEET_ID: &str = "city-fleet";

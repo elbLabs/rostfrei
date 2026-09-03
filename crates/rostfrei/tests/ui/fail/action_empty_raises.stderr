@@ -1,5 +1,0 @@
-error: executable aggregate actions must declare at least one raised event
- --> tests/ui/fail/action_empty_raises.rs:5:5
-  |
-5 |     #[action(id = "deposit", label = "Deposit", raises = [])]
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

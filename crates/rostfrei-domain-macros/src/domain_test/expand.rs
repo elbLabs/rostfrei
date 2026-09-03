@@ -23,7 +23,7 @@ pub fn expand(
     };
     validation::validate_function(&function, kind)?;
     let companion_attributes = validation::companion_attributes(&function)?;
-    let domain_path = crate::helper::domain_api_path::resolve()?;
+    let domain_path = crate::helper::domain_api_path::resolve();
     let function_name = function.sig.ident.clone();
     let companion_name = format_ident!(
         "__domain_test_metadata_{}_{}",

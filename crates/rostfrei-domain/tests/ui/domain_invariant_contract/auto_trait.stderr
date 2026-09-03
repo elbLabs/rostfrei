@@ -1,5 +1,0 @@
-error: domain invariant contract traits cannot be auto traits
- --> tests/ui/domain_invariant_contract/auto_trait.rs:6:1
-  |
-6 | auto trait Invariants {}
-  | ^^^^

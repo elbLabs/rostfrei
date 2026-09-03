@@ -1,5 +1,0 @@
-error: domain action contract traits cannot have existing supertraits
- --> tests/ui/entity_action/existing_supertrait.rs:6:16
-  |
-6 | trait Actions: Base {
-  |                ^^^^

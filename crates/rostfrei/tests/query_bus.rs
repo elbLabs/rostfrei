@@ -200,3 +200,4 @@ async fn duplicate_bindings_and_context_mismatches_fail_explicitly() -> TestResu
     assert_eq!(error.kind(), QueryBusErrorKind::Encoding);
     Ok(())
 }
+rostfrei::install_macro_support!();

@@ -8,19 +8,32 @@ use domain::{
 struct Inbox;
 
 #[derive(DomainIdentity)]
-#[domain(owner = MailboxRoot)]
 struct MailboxId(u64);
 
 #[derive(Entity)]
-#[domain(id = "mailbox-root", label = "Mailbox", owner = Mailbox)]
+#[domain(id = "mailbox-root", label = "Mailbox")]
 struct MailboxRoot {
-    #[domain(identity)]
     id: MailboxId,
 }
 
+impl domain::EntityDefinition for MailboxRoot {
+    type Owner = Mailbox;
+    type Identity = MailboxId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
+}
+
 #[derive(Aggregate)]
-#[domain(id = "mailbox", label = "Mailbox", context = Inbox, root = MailboxRoot)]
+#[domain(id = "mailbox", label = "Mailbox")]
 struct Mailbox;
+
+impl domain::AggregateDefinition for Mailbox {
+    type Context = Inbox;
+    type Root = MailboxRoot;
+    type Event = domain::NoDomainEvents;
+}
 
 #[test]
 fn derives_aggregate_descriptor_with_context_id() {
@@ -44,3 +57,4 @@ fn derives_aggregate_descriptor_with_context_id() {
     let root = MailboxRoot { id: MailboxId(1) };
     assert_eq!(root.id.0, 1);
 }
+rostfrei_domain_macros::__install_test_macro_support!();

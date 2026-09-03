@@ -1,10 +1,12 @@
 use domain::EntityLifecycle;
 
 #[derive(EntityLifecycle)]
-#[domain(id = "workflow", id = "other", label = "Workflow", owner = Todo, initial = Draft)]
-enum Lifecycle {
-    #[domain(id = "draft", label = "Draft")]
+#[domain(id = "workflow", label = "Workflow")]
+#[domain(id = "other", label = "Other")]
+enum Workflow {
+    #[state(id = "draft", label = "Draft")]
     Draft,
 }
 
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();

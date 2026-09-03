@@ -1,5 +1,0 @@
-error: value object action contract methods do not support typed receivers
- --> tests/ui/value_object_action/typed_receiver.rs:6:18
-  |
-6 |     fn normalize(self: Box<Self>) -> Self;
-  |                  ^^^^^^^^^^^^^^^

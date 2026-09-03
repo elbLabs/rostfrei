@@ -9,8 +9,8 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    AggregateId, AggregateType, ContentFingerprint, EventHistory, EventStore, EventStoreErrorKind,
-    OperationId, SimulationError, StreamDirectory,
+    Aggregate, AggregateId, AggregateType, CommandHandler, ContentFingerprint, Event, EventHistory,
+    EventStore, EventStoreErrorKind, OperationId, SimulationError, StreamDirectory,
 };
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::Deserialize;
@@ -327,31 +327,31 @@ impl TracerBuilder {
         self
     }
 
-    pub fn register_json<Command>(&mut self) -> Result<&mut Self, RuntimeRegistrationError>
+    pub fn register_json<A, C>(&mut self) -> Result<&mut Self, RuntimeRegistrationError>
     where
-        Command: CommandDefinition + domain::JsonCommandPayload,
-        Command::Aggregate: rostfrei_core::CommandHandler<Command>,
-        <Command::Aggregate as rostfrei_core::Aggregate>::State: Send,
-        <Command::Aggregate as rostfrei_core::Aggregate>::Event: rostfrei_core::Event + Send,
-        <Command::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection:
-            domain::JsonErrorPayload,
+        A: Aggregate + CommandHandler<C> + 'static,
+        C: CommandDefinition<A> + domain::JsonCommandPayload,
+        A::State: Send,
+        A::Event: Event + Send,
+        <A as CommandHandler<C>>::Rejection: domain::JsonErrorPayload,
     {
-        self.bindings.register_json::<Command>()?;
+        self.bindings.register_json::<A, C>()?;
         Ok(self)
     }
 
-    pub fn register_input_options<Command, Provider>(
+    pub fn register_input_options<A, C, Provider>(
         &mut self,
         provider: Provider,
     ) -> Result<&mut Self, RuntimeRegistrationError>
     where
-        Command: CommandDefinition,
-        <Command::Aggregate as rostfrei_core::Aggregate>::State: Send,
-        <Command::Aggregate as rostfrei_core::Aggregate>::Event: rostfrei_core::Event + Send,
-        Provider: CommandInputOptions<Command> + 'static,
+        A: Aggregate + CommandHandler<C> + 'static,
+        C: CommandDefinition<A>,
+        A::State: Send,
+        A::Event: Event + Send,
+        Provider: CommandInputOptions<A, C> + 'static,
     {
         self.bindings
-            .register_input_options::<Command, Provider>(provider)?;
+            .register_input_options::<A, C, Provider>(provider)?;
         Ok(self)
     }
 

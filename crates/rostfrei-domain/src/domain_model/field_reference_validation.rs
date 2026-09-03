@@ -1,4 +1,4 @@
-use crate::{AggregateId, DomainIdentityId, EntityId, ValueObjectId};
+use crate::{AggregateId, EntityId};
 
 use super::{
     error::{DomainModelError, DomainModelReference},
@@ -6,23 +6,14 @@ use super::{
 };
 
 pub(super) struct FieldReferenceInventory {
-    identities: Vec<DomainIdentityId>,
     entities: Vec<EntityId>,
-    value_objects: Vec<ValueObjectId>,
     aggregates: Vec<AggregateId>,
 }
 
 impl FieldReferenceInventory {
-    pub(super) const fn new(
-        identities: Vec<DomainIdentityId>,
-        entities: Vec<EntityId>,
-        value_objects: Vec<ValueObjectId>,
-        aggregates: Vec<AggregateId>,
-    ) -> Self {
+    pub(super) const fn new(entities: Vec<EntityId>, aggregates: Vec<AggregateId>) -> Self {
         Self {
-            identities,
             entities,
-            value_objects,
             aggregates,
         }
     }
@@ -34,30 +25,12 @@ pub(super) fn validate(
 ) -> Result<(), DomainModelError> {
     for record in references {
         match record.reference {
-            FieldReference::DomainIdentity(id) => {
-                if !inventory.identities.contains(&id) {
-                    return Err(missing_reference(
-                        DomainModelReference::DomainIdentity(Box::new(id)),
-                        record.location,
-                        "identities",
-                    ));
-                }
-            }
             FieldReference::Entity(id) => {
                 if !inventory.entities.contains(&id) {
                     return Err(missing_reference(
                         DomainModelReference::Entity(Box::new(id)),
                         record.location,
                         "entities",
-                    ));
-                }
-            }
-            FieldReference::ValueObject(id) => {
-                if !inventory.value_objects.contains(&id) {
-                    return Err(missing_reference(
-                        DomainModelReference::ValueObject(Box::new(id)),
-                        record.location,
-                        "value_objects",
                     ));
                 }
             }

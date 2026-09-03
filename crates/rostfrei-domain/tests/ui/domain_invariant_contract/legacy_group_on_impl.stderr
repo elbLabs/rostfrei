@@ -1,5 +1,0 @@
-error: domain_invariants may only be applied to a trait
- --> tests/ui/domain_invariant_contract/legacy_group_on_impl.rs:8:1
-  |
-8 | impl Owner {}
-  | ^^^^^^^^^^^^^

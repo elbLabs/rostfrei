@@ -1,11 +1,5 @@
-use super::{ValueObjectDescriptor, ValueObjectOwnerType};
-use crate::{ActionDescriptor, InvariantDescriptor};
+use super::ValueObjectDescriptor;
 
-pub trait ValueObjectType: 'static {
-    type Owner: ValueObjectOwnerType;
-
-    const LOCAL_ID: &'static str;
+pub trait ValueObject: 'static {
     const DESCRIPTOR: ValueObjectDescriptor;
-    const ACTION_CONTRACTS: &'static [&'static [ActionDescriptor]] = &[];
-    const INVARIANT_CONTRACTS: &'static [&'static [InvariantDescriptor]] = &[];
 }

@@ -1,0 +1,5 @@
+error: missing id
+ --> tests/ui/domain_invariant/invalid_metadata.rs:3:20
+  |
+3 | #[domain_invariant(label = "Missing ID")]
+  |                    ^^^^^^^^^^^^^^^^^^^^

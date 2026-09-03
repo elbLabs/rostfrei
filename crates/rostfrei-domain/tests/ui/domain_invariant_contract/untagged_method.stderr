@@ -1,5 +1,0 @@
-error: domain invariant contract methods require exactly one invariant attribute
- --> tests/ui/domain_invariant_contract/untagged_method.rs:7:8
-  |
-7 |     fn valid(candidate: &<Self as InvariantOwnerType>::Candidate) -> Option<InvariantViolation>;
-  |        ^^^^^

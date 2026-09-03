@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 
-use domain::{
-    BoundedContext, ScalarType, SemanticScalar, SemanticScalarDescriptor, ValueObject,
-};
+use domain::{DomainEvent, ScalarType, SemanticScalar, SemanticScalarDescriptor};
 
 mod uuid {
     pub struct Uuid;
@@ -20,15 +18,12 @@ impl SemanticScalar for UuidScalar {
     };
 }
 
-#[derive(BoundedContext)]
-#[domain(id = "context", label = "Context")]
-struct Context;
-
-#[derive(ValueObject)]
-#[domain(id = "custom-fields", label = "Custom fields", owner = Context)]
+#[derive(DomainEvent)]
+#[domain(id = "custom-fields", label = "Custom fields")]
 struct CustomFields {
     #[domain(scalar = UuidScalar)]
     values: Option<Vec<uuid::Uuid>>,
 }
 
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();

@@ -301,37 +301,45 @@ impl EventCodec<Account> for AlternateAccountCodec {
 struct AutomaticAccounts;
 
 #[derive(domain::DomainIdentity)]
-#[domain(owner = AutomaticAccountRoot)]
 #[allow(dead_code)]
 struct AutomaticAccountId(String);
 
 #[derive(domain::Entity)]
-#[domain(
-    id = "automatic-account-root",
-    label = "Automatic account",
-    owner = AutomaticAccountDefinition
-)]
+#[domain(id = "automatic-account-root", label = "Automatic account")]
 struct AutomaticAccountRoot {
-    #[domain(identity)]
     #[allow(dead_code)]
     id: AutomaticAccountId,
     balance: i64,
 }
 
-#[derive(domain::Aggregate)]
-#[domain(
-    id = "automatic-account",
-    label = "Automatic account",
-    context = AutomaticAccounts,
-    root = AutomaticAccountRoot,
-    events = [MoneyDeposited]
-)]
-struct AutomaticAccountDefinition;
+impl domain::EntityDefinition for AutomaticAccountRoot {
+    type Owner = AutomaticAccountDefinition;
+    type Identity = AutomaticAccountId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, domain::DomainEvent, Eq, PartialEq, Serialize)]
 #[domain(id = "money-deposited", label = "Money deposited", schema_version = 2)]
 struct MoneyDeposited {
     amount: i64,
+}
+
+#[derive(domain::AggregateEvents)]
+enum AutomaticAccountEvents {
+    MoneyDeposited(MoneyDeposited),
+}
+
+#[derive(domain::Aggregate)]
+#[domain(id = "automatic-account", label = "Automatic account")]
+struct AutomaticAccountDefinition;
+
+impl domain::AggregateDefinition for AutomaticAccountDefinition {
+    type Context = AutomaticAccounts;
+    type Root = AutomaticAccountRoot;
+    type Event = AutomaticAccountEvents;
 }
 
 impl Initialize<AutomaticAccountDefinition> for AutomaticAccountRoot {
@@ -1402,4 +1410,21 @@ async fn append_raw_version(
             message: error.to_string(),
         })?;
     Ok(())
+}
+#[doc(hidden)]
+pub mod __rostfrei_macro_support {
+    pub use domain::*;
+    pub use rostfrei_domain_runtime::*;
+
+    macro_rules! __runtime {
+        ($($tokens:tt)*) => {
+            $($tokens)*
+        };
+    }
+    pub(crate) use __runtime;
+
+    pub mod __private {
+        pub use domain::__private::*;
+        pub use rostfrei_domain_runtime::__private::{assert_unique_event_ids, core};
+    }
 }

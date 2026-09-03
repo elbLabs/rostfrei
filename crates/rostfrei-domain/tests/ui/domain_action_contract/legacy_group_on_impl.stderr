@@ -1,5 +1,0 @@
-error: domain_actions may only be applied to a trait
- --> tests/ui/domain_action_contract/legacy_group_on_impl.rs:6:1
-  |
-6 | impl Owner {}
-  | ^^^^^^^^^^^^^

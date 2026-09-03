@@ -6,14 +6,19 @@ use serde::{Deserialize, Serialize};
 struct Context;
 
 #[derive(rostfrei::DomainIdentity)]
-#[rostfrei(owner = Root)]
 struct Id(u64);
 
 #[derive(rostfrei::Entity)]
-#[rostfrei(id = "root", label = "Root", owner = Aggregate)]
+#[rostfrei(id = "root", label = "Root")]
 struct Root {
-    #[rostfrei(identity)]
     id: Id,
+}
+
+impl rostfrei::EntityDefinition for Root {
+    type Owner = Aggregate;
+    type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity { &self.id }
 }
 
 #[derive(Deserialize, Serialize, rostfrei::DomainEvent)]
@@ -24,15 +29,20 @@ struct Registered;
 #[rostfrei(id = "unregistered", label = "Unregistered")]
 struct Unregistered;
 
+#[derive(rostfrei::AggregateEvents)]
+enum Events {
+    Registered(Registered),
+}
+
 #[derive(rostfrei::Aggregate)]
-#[rostfrei(
-    id = "aggregate",
-    label = "Aggregate",
-    context = Context,
-    root = Root,
-    events = [Registered]
-)]
+#[rostfrei(id = "aggregate", label = "Aggregate")]
 struct Aggregate;
+
+impl rostfrei::AggregateDefinition for Aggregate {
+    type Context = Context;
+    type Root = Root;
+    type Event = Events;
+}
 
 impl Initialize<Aggregate> for Root {
     fn initialize(_: &rostfrei::StreamId) -> Self { Self { id: Id(1) } }
@@ -54,3 +64,4 @@ impl CommandHandler<Command> for Aggregate {
 }
 
 fn main() {}
+rostfrei::install_macro_support!();

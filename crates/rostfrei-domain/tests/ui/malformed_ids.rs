@@ -5,7 +5,8 @@ use domain::{Aggregate, BoundedContext};
 struct CustomerSupport;
 
 #[derive(Aggregate)]
-#[domain(id = "", label = "Mailbox", context = CustomerSupport, root = MailboxRoot)]
+#[domain(id = "", label = "Mailbox")]
 struct Mailbox;
 
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();

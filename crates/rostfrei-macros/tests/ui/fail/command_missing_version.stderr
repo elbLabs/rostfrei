@@ -1,5 +1,0 @@
-error: missing `version` in `rostfrei` attribute
- --> tests/ui/fail/command_missing_version.rs:7:8
-  |
-7 | struct OpenAccount;
-  |        ^^^^^^^^^^^

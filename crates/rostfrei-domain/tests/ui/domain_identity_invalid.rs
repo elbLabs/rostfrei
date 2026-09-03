@@ -13,3 +13,4 @@ struct Multiple(u64, u64);
 struct Generic<T>(T);
 
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();

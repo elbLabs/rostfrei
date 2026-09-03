@@ -129,59 +129,60 @@ pub trait ErasedCommandInputOptions: Send + Sync {
     ) -> Result<CommandInputDocument, RuntimeInputError>;
 }
 
-struct TypedCommandInputOptions<Command, Provider>
+struct TypedCommandInputOptions<A, C, Provider>
 where
-    Command: CommandDefinition,
+    A: Aggregate + rostfrei_core::CommandHandler<C>,
+    C: CommandDefinition<A>,
 {
     provider: Provider,
-    marker: std::marker::PhantomData<fn() -> Command>,
+    marker: std::marker::PhantomData<fn() -> (A, C)>,
 }
 
 #[async_trait]
-impl<Command, Provider> ErasedCommandInputOptions for TypedCommandInputOptions<Command, Provider>
+impl<A, C, Provider> ErasedCommandInputOptions for TypedCommandInputOptions<A, C, Provider>
 where
-    Command: CommandDefinition,
-    <Command::Aggregate as Aggregate>::State: Send,
-    <Command::Aggregate as Aggregate>::Event: Event + Send,
-    Provider: CommandInputOptions<Command> + 'static,
+    A: Aggregate + rostfrei_core::CommandHandler<C>,
+    C: CommandDefinition<A>,
+    A::State: Send,
+    A::Event: Event + Send,
+    Provider: CommandInputOptions<A, C> + 'static,
 {
     async fn fields(
         &self,
         history: Arc<dyn EventHistory>,
         stream_id: StreamId,
     ) -> Result<CommandInputDocument, RuntimeInputError> {
-        let aggregate = Executor::new(history)
-            .rehydrate::<Command::Aggregate>(&stream_id)
-            .await?;
+        let aggregate = Executor::new(history).rehydrate::<A>(&stream_id).await?;
         Ok(CommandInputDocument {
             fields: self.provider.fields(aggregate.state()),
         })
     }
 }
 
-struct TypedCommandSimulator<Command>
+struct TypedCommandSimulator<A, C>
 where
-    Command: CommandDefinition,
+    A: Aggregate + rostfrei_core::CommandHandler<C>,
+    C: CommandDefinition<A>,
 {
     descriptor: CommandDescriptor,
-    marker: std::marker::PhantomData<fn() -> Command>,
+    marker: std::marker::PhantomData<fn() -> (A, C)>,
 }
 
 #[async_trait]
-impl<Command> ErasedCommandSimulator for TypedCommandSimulator<Command>
+impl<A, C> ErasedCommandSimulator for TypedCommandSimulator<A, C>
 where
-    Command: CommandDefinition + JsonCommandPayload,
-    Command::Aggregate: rostfrei_core::CommandHandler<Command>,
-    <Command::Aggregate as Aggregate>::State: Send,
-    <Command::Aggregate as rostfrei_core::Aggregate>::Event: Event + Send,
-    <Command::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection: JsonErrorPayload,
+    A: Aggregate + rostfrei_core::CommandHandler<C>,
+    C: CommandDefinition<A> + JsonCommandPayload,
+    A::State: Send,
+    A::Event: Event + Send,
+    <A as rostfrei_core::CommandHandler<C>>::Rejection: JsonErrorPayload,
 {
     fn descriptor(&self) -> &CommandDescriptor {
         &self.descriptor
     }
 
     fn validate_payload(&self, payload: &Value) -> Result<(), String> {
-        Command::decode_json(payload).map(|_| ())
+        C::decode_json(payload).map(|_| ())
     }
 
     async fn simulate(
@@ -192,11 +193,10 @@ where
         fingerprint: ContentFingerprint,
         payload: Value,
     ) -> Result<RuntimeDecision, RuntimeSimulationError> {
-        let command =
-            Command::decode_json(&payload).map_err(RuntimeSimulationError::InvalidPayload)?;
+        let command = C::decode_json(&payload).map_err(RuntimeSimulationError::InvalidPayload)?;
         let metadata = ExecutionMetadata::new(stream_id, operation_id, fingerprint);
         let outcome = Executor::new(history)
-            .simulate::<Command::Aggregate, Command>(metadata, &command)
+            .simulate::<A, C>(metadata, &command)
             .await?;
         let (base_version, decision) = outcome.into_parts();
         match decision {
@@ -254,47 +254,43 @@ impl RuntimeBindings {
         }
     }
 
-    pub fn register_json<Command>(&mut self) -> Result<(), RuntimeRegistrationError>
+    pub fn register_json<A, C>(&mut self) -> Result<(), RuntimeRegistrationError>
     where
-        Command: CommandDefinition + JsonCommandPayload,
-        Command::Aggregate: rostfrei_core::CommandHandler<Command>,
-        <Command::Aggregate as Aggregate>::State: Send,
-        <Command::Aggregate as Aggregate>::Event: Event + Send,
-        <Command::Aggregate as rostfrei_core::CommandHandler<Command>>::Rejection: JsonErrorPayload,
+        A: Aggregate + rostfrei_core::CommandHandler<C> + 'static,
+        C: CommandDefinition<A> + JsonCommandPayload,
+        A::State: Send,
+        A::Event: Event + Send,
+        <A as rostfrei_core::CommandHandler<C>>::Rejection: JsonErrorPayload,
     {
-        let expected_descriptor = Command::descriptor();
+        let expected_descriptor = <C as CommandDefinition<A>>::descriptor();
         let descriptor = self
             .registry
             .command(
                 &expected_descriptor.aggregate_type,
-                Command::COMMAND_NAME,
-                <Command as CommandDefinition>::SCHEMA_VERSION,
+                C::LOCAL_ID,
+                C::SCHEMA_VERSION,
             )
             .cloned()
             .ok_or(RuntimeRegistrationError::MissingDescriptor {
-                command: Command::COMMAND_NAME,
-                schema_version: <Command as CommandDefinition>::SCHEMA_VERSION,
+                command: C::LOCAL_ID,
+                schema_version: C::SCHEMA_VERSION,
             })?;
         if descriptor != expected_descriptor {
             return Err(RuntimeRegistrationError::DescriptorMismatch {
-                command: Command::COMMAND_NAME,
-                schema_version: <Command as CommandDefinition>::SCHEMA_VERSION,
+                command: C::LOCAL_ID,
+                schema_version: C::SCHEMA_VERSION,
             });
         }
-        let key = CommandKey::new(
-            &descriptor.aggregate_type,
-            Command::COMMAND_NAME,
-            <Command as CommandDefinition>::SCHEMA_VERSION,
-        );
+        let key = CommandKey::new(&descriptor.aggregate_type, C::LOCAL_ID, C::SCHEMA_VERSION);
         if self.simulators.contains_key(&key) {
             return Err(RuntimeRegistrationError::DuplicateBinding {
-                command: Command::COMMAND_NAME,
-                schema_version: <Command as CommandDefinition>::SCHEMA_VERSION,
+                command: C::LOCAL_ID,
+                schema_version: C::SCHEMA_VERSION,
             });
         }
         self.simulators.insert(
             key,
-            Arc::new(TypedCommandSimulator::<Command> {
+            Arc::new(TypedCommandSimulator::<A, C> {
                 descriptor,
                 marker: std::marker::PhantomData,
             }),
@@ -302,48 +298,45 @@ impl RuntimeBindings {
         Ok(())
     }
 
-    pub fn register_input_options<Command, Provider>(
+    pub fn register_input_options<A, C, Provider>(
         &mut self,
         provider: Provider,
     ) -> Result<(), RuntimeRegistrationError>
     where
-        Command: CommandDefinition,
-        <Command::Aggregate as Aggregate>::State: Send,
-        <Command::Aggregate as Aggregate>::Event: Event + Send,
-        Provider: CommandInputOptions<Command> + 'static,
+        A: Aggregate + rostfrei_core::CommandHandler<C> + 'static,
+        C: CommandDefinition<A>,
+        A::State: Send,
+        A::Event: Event + Send,
+        Provider: CommandInputOptions<A, C> + 'static,
     {
-        let expected_descriptor = Command::descriptor();
+        let expected_descriptor = <C as CommandDefinition<A>>::descriptor();
         let descriptor = self
             .registry
             .command(
                 &expected_descriptor.aggregate_type,
-                Command::COMMAND_NAME,
-                Command::SCHEMA_VERSION,
+                C::LOCAL_ID,
+                C::SCHEMA_VERSION,
             )
             .ok_or(RuntimeRegistrationError::MissingDescriptor {
-                command: Command::COMMAND_NAME,
-                schema_version: Command::SCHEMA_VERSION,
+                command: C::LOCAL_ID,
+                schema_version: C::SCHEMA_VERSION,
             })?;
         if descriptor != &expected_descriptor {
             return Err(RuntimeRegistrationError::DescriptorMismatch {
-                command: Command::COMMAND_NAME,
-                schema_version: Command::SCHEMA_VERSION,
+                command: C::LOCAL_ID,
+                schema_version: C::SCHEMA_VERSION,
             });
         }
-        let key = CommandKey::new(
-            &descriptor.aggregate_type,
-            Command::COMMAND_NAME,
-            Command::SCHEMA_VERSION,
-        );
+        let key = CommandKey::new(&descriptor.aggregate_type, C::LOCAL_ID, C::SCHEMA_VERSION);
         if self.input_options.contains_key(&key) {
             return Err(RuntimeRegistrationError::DuplicateInputOptions {
-                command: Command::COMMAND_NAME,
-                schema_version: Command::SCHEMA_VERSION,
+                command: C::LOCAL_ID,
+                schema_version: C::SCHEMA_VERSION,
             });
         }
         self.input_options.insert(
             key,
-            Arc::new(TypedCommandInputOptions::<Command, Provider> {
+            Arc::new(TypedCommandInputOptions::<A, C, Provider> {
                 provider,
                 marker: std::marker::PhantomData,
             }),

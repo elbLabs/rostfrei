@@ -1,5 +1,0 @@
-error: expected `impl`
- --> tests/ui/domain_decision_contract/non_trait_target.rs:6:1
-  |
-6 | struct Owner;
-  | ^^^^^^

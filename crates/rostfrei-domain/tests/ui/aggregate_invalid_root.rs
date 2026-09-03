@@ -4,33 +4,55 @@ use domain::{Aggregate, BoundedContext, DomainIdentity, Entity};
 #[domain(id = "inbox", label = "Inbox")]
 struct Inbox;
 
-#[derive(Aggregate)]
-#[domain(id = "missing-root", label = "Missing Root", context = Inbox)]
-struct MissingRoot;
-
 struct PlainRoot;
 
 #[derive(Aggregate)]
-#[domain(id = "plain-root", label = "Plain Root", context = Inbox, root = PlainRoot)]
+#[domain(id = "plain-root", label = "Plain Root")]
 struct PlainRootAggregate;
 
+impl domain::AggregateDefinition for PlainRootAggregate {
+    type Context = Inbox;
+    type Root = PlainRoot;
+    type Event = domain::NoDomainEvents;
+}
+
 #[derive(DomainIdentity)]
-#[domain(owner = OtherRoot)]
 struct Id(u64);
 
 #[derive(Entity)]
-#[domain(id = "other-root", label = "Other", owner = OtherAggregate)]
+#[domain(id = "other-root", label = "Other")]
 struct OtherRoot {
-    #[domain(identity)]
     id: Id,
 }
 
+impl domain::EntityDefinition for OtherRoot {
+    type Owner = OtherAggregate;
+    type Identity = Id;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
+}
+
 #[derive(Aggregate)]
-#[domain(id = "wrong-owner", label = "Wrong Owner", context = Inbox, root = OtherRoot)]
+#[domain(id = "wrong-owner", label = "Wrong Owner")]
 struct WrongOwner;
 
+impl domain::AggregateDefinition for WrongOwner {
+    type Context = Inbox;
+    type Root = OtherRoot;
+    type Event = domain::NoDomainEvents;
+}
+
 #[derive(Aggregate)]
-#[domain(id = "other", label = "Other", context = Inbox, root = OtherRoot)]
+#[domain(id = "other", label = "Other")]
 struct OtherAggregate;
 
+impl domain::AggregateDefinition for OtherAggregate {
+    type Context = Inbox;
+    type Root = OtherRoot;
+    type Event = domain::NoDomainEvents;
+}
+
 fn main() {}
+rostfrei_domain_macros::__install_test_macro_support!();
