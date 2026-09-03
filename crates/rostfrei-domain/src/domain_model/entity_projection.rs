@@ -22,6 +22,12 @@ impl EntityProjection {
         self.entities.push((descriptor.id, entity(descriptor)));
     }
 
+    pub(super) fn contains(&self, id: EntityId) -> bool {
+        self.entities
+            .iter()
+            .any(|(registered, _)| *registered == id)
+    }
+
     pub(super) fn ids(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.entities.iter().map(|(id, _)| *id)
     }

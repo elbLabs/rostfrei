@@ -76,7 +76,7 @@ macro_rules! domain_model {
         errors: [$($error:ty),* $(,)?] $(,)?
     } => {{
         $crate::__private::try_build(|builder| {
-            $(builder.add_bounded_context(<$context as $crate::BoundedContextType>::DESCRIPTOR);)*
+            $(builder.add_bounded_context(<$context as $crate::BoundedContextType>::DESCRIPTOR)?;)*
             $(builder.add_aggregate_type::<$aggregate>()?;)*
             $(builder.add_entity_type::<$entity>()?;)*
             $(builder.add_value_object_type::<$value_object>()?;)*
