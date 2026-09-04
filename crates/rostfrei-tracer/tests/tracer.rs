@@ -1144,6 +1144,7 @@ async fn correlation_feed_contains_command_domain_integration_and_result_events(
             &queued.correlation_id,
             IntegrationEventObservation::new("test-event-published", 1)
                 .with_message_id("integration-1")
+                .with_causation_id("domain-1")
                 .with_subject("test.integration.test-context.test-event-published")
                 .with_payload(json!({ "public": true })),
         )
@@ -1175,10 +1176,14 @@ async fn correlation_feed_contains_command_domain_integration_and_result_events(
         integration_event.kind,
         CorrelationEventKind::IntegrationEvent {
             ref event_type,
+            ref message_id,
+            ref causation_id,
             payload: None,
             ..
         }
             if event_type == "test-event-published"
+                && message_id.as_deref() == Some("integration-1")
+                && causation_id.as_deref() == Some("domain-1")
     ));
     assert_eq!(
         tracer

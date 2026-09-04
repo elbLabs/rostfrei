@@ -45,6 +45,10 @@ pub enum CorrelationEventKind {
         event_type: String,
         schema_version: u32,
         #[serde(skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        causation_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         stream_version: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<Value>,
@@ -54,6 +58,8 @@ pub enum CorrelationEventKind {
         schema_version: u32,
         #[serde(skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        causation_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         subject: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -91,6 +97,8 @@ pub enum CorrelationCommandOutcome {
 pub struct DomainEventObservation {
     pub event_type: String,
     pub schema_version: u32,
+    pub message_id: Option<String>,
+    pub causation_id: Option<String>,
     pub stream_version: Option<u64>,
     pub payload: Option<Value>,
 }
@@ -100,9 +108,23 @@ impl DomainEventObservation {
         Self {
             event_type: event_type.into(),
             schema_version,
+            message_id: None,
+            causation_id: None,
             stream_version: None,
             payload: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_message_id(mut self, message_id: impl Into<String>) -> Self {
+        self.message_id = Some(message_id.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_causation_id(mut self, causation_id: impl Into<String>) -> Self {
+        self.causation_id = Some(causation_id.into());
+        self
     }
 
     #[must_use]
@@ -123,6 +145,7 @@ pub struct IntegrationEventObservation {
     pub event_type: String,
     pub schema_version: u32,
     pub message_id: Option<String>,
+    pub causation_id: Option<String>,
     pub subject: Option<String>,
     pub payload: Option<Value>,
 }
@@ -133,9 +156,16 @@ impl IntegrationEventObservation {
             event_type: event_type.into(),
             schema_version,
             message_id: None,
+            causation_id: None,
             subject: None,
             payload: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_causation_id(mut self, causation_id: impl Into<String>) -> Self {
+        self.causation_id = Some(causation_id.into());
+        self
     }
 
     #[must_use]
@@ -196,6 +226,8 @@ impl CorrelationObserver {
                 CorrelationEventKind::DomainEvent {
                     event_type: observation.event_type,
                     schema_version: observation.schema_version,
+                    message_id: observation.message_id,
+                    causation_id: observation.causation_id,
                     stream_version: observation.stream_version,
                     payload,
                 },
@@ -219,6 +251,7 @@ impl CorrelationObserver {
                     event_type: observation.event_type,
                     schema_version: observation.schema_version,
                     message_id: observation.message_id,
+                    causation_id: observation.causation_id,
                     subject: observation.subject,
                     payload,
                 },
@@ -671,6 +704,37 @@ pub fn validate_correlation_id(value: &str) -> Result<(), CorrelationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn observed_events_serialize_optional_causal_identities() {
+        let event = CorrelationEvent {
+            id: 2,
+            correlation_id: "correlation-1".to_owned(),
+            kind: CorrelationEventKind::DomainEvent {
+                event_type: "bicycle-rented".to_owned(),
+                schema_version: 1,
+                message_id: Some("domain-event-1".to_owned()),
+                causation_id: Some("command-1".to_owned()),
+                stream_version: Some(2),
+                payload: None,
+            },
+        };
+
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            json!({
+                "id": 2,
+                "correlationId": "correlation-1",
+                "type": "domain-event",
+                "eventType": "bicycle-rented",
+                "schemaVersion": 1,
+                "messageId": "domain-event-1",
+                "causationId": "command-1",
+                "streamVersion": 2,
+            })
+        );
+    }
 
     #[tokio::test]
     #[allow(

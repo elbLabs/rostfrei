@@ -926,6 +926,8 @@ then:
             kind: CorrelationEventKind::DomainEvent {
                 event_type: "rental-started".to_owned(),
                 schema_version: 1,
+                message_id: Some("domain-event-1".to_owned()),
+                causation_id: Some("command-1".to_owned()),
                 stream_version: Some(2),
                 payload: Some(json!({ "bike": { "id": "bike-1", "secret": true } })),
             },
@@ -944,6 +946,7 @@ then:
                 event_type: "bicycle-rented".to_owned(),
                 schema_version: 2,
                 message_id: Some("message-1".to_owned()),
+                causation_id: Some("domain-event-1".to_owned()),
                 subject: None,
                 payload: None,
             },

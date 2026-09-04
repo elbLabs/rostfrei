@@ -939,6 +939,12 @@ async fn observe_domain_message(
         return Ok(());
     };
     let mut observation = DomainEventObservation::new(event_type, schema_version);
+    if let Some(message_id) = event.get("eventId").and_then(Value::as_str) {
+        observation = observation.with_message_id(message_id);
+    }
+    if let Some(causation_id) = event.get("causationId").and_then(Value::as_str) {
+        observation = observation.with_causation_id(causation_id);
+    }
     if let Some(stream_version) = event.get("streamVersion").and_then(Value::as_u64) {
         observation = observation.with_stream_version(stream_version);
     }
@@ -976,6 +982,9 @@ async fn observe_integration_message(
         .with_subject(message.subject());
     if let Some(message_id) = message.message_id() {
         observation = observation.with_message_id(message_id.as_str());
+    }
+    if let Some(causation_id) = envelope.get("causation_id").and_then(Value::as_str) {
+        observation = observation.with_causation_id(causation_id);
     }
     if let Some(payload) = envelope.get("payload") {
         observation = observation.with_payload(payload.clone());
