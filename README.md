@@ -83,14 +83,9 @@ addition to atomic multi-event commits, one event transaction can atomically
 append commits to multiple aggregate streams in the same bounded-context event
 store.
 
-The current implementation status, agreed direction, delivery order, and
-architecture decision map are in
-[`docs/project-status-and-direction.md`](docs/project-status-and-direction.md).
-The ADR-derived product overview is in
-[`docs/cofounder-project-summary.md`](docs/cofounder-project-summary.md).
 The canonical project terminology is in
-[`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual decisions are
-recorded in [`docs/adr`](docs/adr).
+[`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual architecture
+decisions are recorded in [`docs/adr`](docs/adr).
 
 ## Macro setup
 
