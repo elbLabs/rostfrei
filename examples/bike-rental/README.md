@@ -216,10 +216,17 @@ Both transported modes wait for command PubAck and a durable accepted or
 rejected response. Accepted rentals then flow through a durable post-commit
 domain-event handler, publish the correlated `bicycle-rental-started`
 integration event, and consume it through the normal integration-event durable.
-An `Idempotency-Key` is required for Test and Dispatch. If an error occurs after
-PubAck but before a valid durable response is observed, the operation is
-`indeterminate` and preserves its command message identity instead of claiming
-that the business command failed.
+An `Idempotency-Key` is required for Test and Dispatch. The authenticated
+`202 Accepted` submission response echoes it as `idempotencyKey` alongside the
+resolved `operationId`, but retained operation resources do not store or return
+the raw key. Test and Dispatch derive a mode-namespaced operation identity from
+the key and command address, so clients must follow the response `Location`
+header rather than assume the key is the operation ID. Idempotency keys should
+not contain secrets.
+
+If an error occurs after PubAck but before a valid durable response is observed,
+the operation is `indeterminate` and preserves its command message identity
+instead of claiming that the business command failed.
 
 Running Test for `bike-42` twice accepts and appends the first command, then
 replays that new state and rejects the second with `BICYCLE_UNAVAILABLE`.
@@ -234,7 +241,8 @@ bicycle as available and serviceable. All three commands use their generated
 JSON payload contracts; Tracer has no command-specific wire codecs.
 
 Reusing an `Idempotency-Key` returns the retained operation only for the exact
-same request and returns `409 Conflict` for different content.
+same request, echoes the same key and resolved operation identity in the new
+submission response, and returns `409 Conflict` for different content.
 Each Test reset rotates the Test scenario generation, so a key reused afterward
 cannot receive delayed correlation events from the previous scenario.
 
