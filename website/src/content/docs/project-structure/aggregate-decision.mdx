@@ -1,0 +1,31 @@
+# Aggregate decision
+
+An aggregate decision keeps a pure business policy beside its closed outcome vocabulary. The contract, outcomes, and evaluation live separately so policy remains reviewable without state mutation or persistence code.
+
+- Declare the trait in `decision.rs`.
+- Define exhaustive outcomes in `outcome.rs`.
+- Implement the decision for the aggregate type in `evaluate.rs`.
+
+Path: `src/domain/bike_rental/rental_fleet/assess_rental_eligibility`
+
+<ProjectStructureExample name="aggregate-decision">
+
+```rust
+use rostfrei::domain_decision;
+
+use super::RentalEligibilityOutcome;
+use crate::domain::rental_fleet::{BicycleCondition, BicycleStatus};
+
+#[domain_decision(
+    id = "assess-rental-eligibility",
+    label = "Assess rental eligibility"
+)]
+pub(in crate::domain) trait RentalEligibilityDecision {
+    fn assess_rental_eligibility(
+        status: BicycleStatus,
+        condition: BicycleCondition,
+    ) -> RentalEligibilityOutcome;
+}
+```
+
+</ProjectStructureExample>

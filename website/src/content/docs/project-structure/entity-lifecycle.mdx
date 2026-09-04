@@ -1,0 +1,26 @@
+# Entity lifecycle
+
+An entity lifecycle keeps the entity’s ordered state vocabulary in one closed declaration. It describes meaningful states and stable metadata without mixing transition behavior into the entity or lifecycle file.
+
+- Put the lifecycle enum in `lifecycle.rs`.
+- Give every state a stable ID and label.
+- Keep state-changing actions in separate capability directories.
+
+Path: `src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs`
+
+<ProjectStructureExample name="entity-lifecycle">
+
+```rust
+use rostfrei::EntityLifecycle;
+
+#[derive(EntityLifecycle)]
+#[domain(id = "rental-status", label = "Bicycle rental status")]
+pub enum BicycleRentalLifecycle {
+    #[state(id = "available", label = "Available")]
+    Available,
+    #[state(id = "rented", label = "Rented")]
+    Rented,
+}
+```
+
+</ProjectStructureExample>

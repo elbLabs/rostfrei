@@ -1,0 +1,35 @@
+# Value-object action
+
+A value-object action expresses behavior owned by one semantic value. Its capability directory separates the callable trait from the implementation while remaining directly below the value-object module.
+
+- Declare the trait in `action.rs`.
+- Implement it for the parent value object in `execute.rs`.
+- Return a new value when the object is immutable.
+
+Path: `src/domain/bike_rental/rental_fleet/bicycle/registration_number/normalize`
+
+<ProjectStructureExample name="value-object-action">
+
+```rust
+#[domain_action(
+    id = "normalize-registration-number",
+    label = "Normalize registration number"
+)]
+pub trait NormalizeRegistrationNumber {
+    fn normalize(&self) -> RegistrationNumber;
+}
+
+impl NormalizeRegistrationNumber for RegistrationNumber {
+    fn normalize(&self) -> RegistrationNumber {
+        Self::new(
+            self.as_str()
+                .split_whitespace()
+                .map(str::to_ascii_uppercase)
+                .collect::<Vec<_>>()
+                .join("-"),
+        )
+    }
+}
+```
+
+</ProjectStructureExample>

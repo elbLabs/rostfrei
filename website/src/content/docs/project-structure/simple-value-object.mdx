@@ -1,0 +1,24 @@
+# Simple value object
+
+A simple value object gets its own module even when it has no capabilities. This stable shape lets behavior be added later without moving the declaration or changing its module identity.
+
+- Put the declaration in `value.rs`.
+- Keep representation and direct inherent methods there.
+- Add child capability directories only when needed.
+
+Path: `src/domain/bike_rental/rental_fleet/bicycle/condition/value.rs`
+
+<ProjectStructureExample name="simple-value-object">
+
+```rust
+use rostfrei::ValueObject;
+
+#[derive(ValueObject, Clone, Copy, Debug, Eq, PartialEq)]
+#[domain(id = "bicycle-condition", label = "Bicycle condition")]
+pub enum BicycleCondition {
+    Serviceable,
+    MaintenanceRequired,
+}
+```
+
+</ProjectStructureExample>

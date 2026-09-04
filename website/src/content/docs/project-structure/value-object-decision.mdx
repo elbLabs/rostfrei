@@ -1,0 +1,33 @@
+# Value-object decision
+
+A value-object decision evaluates policy owned by one semantic value and returns a closed outcome. Keeping contract, outcome, and evaluation separate prevents policy vocabulary from becoming incidental implementation detail.
+
+- Put the contract in `decision.rs`.
+- Put the `DecisionOutcome` enum in `outcome.rs`.
+- Implement the trait for the parent value object in `evaluate.rs`.
+
+Path: `src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format`
+
+<ProjectStructureExample name="value-object-decision">
+
+```rust
+#[domain_decision(
+    id = "choose-registration-number-format",
+    label = "Choose registration number format"
+)]
+pub trait ChooseRegistrationNumberFormat {
+    fn choose_format(&self) -> RegistrationNumberFormat;
+}
+
+impl ChooseRegistrationNumberFormat for RegistrationNumber {
+    fn choose_format(&self) -> RegistrationNumberFormat {
+        if self.as_str().contains('-') {
+            RegistrationNumberFormat::Segmented
+        } else {
+            RegistrationNumberFormat::Compact
+        }
+    }
+}
+```
+
+</ProjectStructureExample>

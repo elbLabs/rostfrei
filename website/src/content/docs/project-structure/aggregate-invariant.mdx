@@ -1,0 +1,29 @@
+# Aggregate invariant
+
+An aggregate invariant names a rule that must hold for aggregate state and isolates its executable validation. The contract stays stable while evaluation can inspect the aggregate root as a candidate.
+
+- Declare one `#[domain_invariant]` trait in `contract.rs`.
+- Implement it for the aggregate type in `evaluate.rs`.
+- Return `None` when the candidate satisfies the rule.
+
+Path: `src/domain/bike_rental/rental_fleet/fleet_consistency`
+
+<ProjectStructureExample name="aggregate-invariant">
+
+```rust
+use rostfrei::{InvariantViolation, domain_invariant};
+
+use crate::domain::rental_fleet::RentalFleet;
+
+#[domain_invariant(
+    id = "unique-bicycle-identities",
+    label = "Bicycle identities are unique"
+)]
+pub(in crate::domain) trait FleetConsistency {
+    fn unique_bicycle_identities(
+        candidate: &RentalFleet,
+    ) -> Option<InvariantViolation>;
+}
+```
+
+</ProjectStructureExample>

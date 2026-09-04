@@ -1,0 +1,11 @@
+# `DecisionOutcome`
+
+Keep outcomes closed and exhaustive. The enum remains ordinary Rust while each business outcome receives a stable local ID and label. Attach metadata directly to each possible outcome.
+
+- Non-empty enum
+- Ordered outcome metadata
+- Arbitrary Rust payloads
+
+**Placement:** [Aggregate decision](/docs/project-structure/aggregate-decision) or [value-object decision](/docs/project-structure/value-object-decision) — `outcome.rs`.
+
+<MacroExample name="DecisionOutcome" />

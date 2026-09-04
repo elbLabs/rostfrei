@@ -1,0 +1,28 @@
+# Query
+
+A query capability pairs a read contract with its ordinary output view. The trait stays owner-independent, while its location binds the implementation to the aggregate root selected by the aggregate definition.
+
+- Put the contract in `query.rs` and implementation in `execute.rs`.
+- Keep view DTOs in `output.rs`.
+- Implement reads without mutating aggregate state.
+
+Path: `src/domain/bike_rental/rental_fleet/bicycle_availability`
+
+<ProjectStructureExample name="query">
+
+```rust
+use rostfrei::domain_query;
+
+use super::BicycleAvailability;
+use crate::domain::bike_rental::rental_fleet::BicycleId;
+
+#[domain_query(id = "bicycle-availability", label = "Bicycle availability")]
+pub trait BicycleAvailabilityQuery {
+    fn bicycle_availability(
+        &self,
+        input: &BicycleId,
+    ) -> Option<BicycleAvailability>;
+}
+```
+
+</ProjectStructureExample>

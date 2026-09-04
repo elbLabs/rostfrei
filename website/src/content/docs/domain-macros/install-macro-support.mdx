@@ -1,0 +1,11 @@
+# `install_macro_support!`
+
+Install macro support once. One crate-root call gives every Rostfrei macro a deterministic path to its domain, runtime, and registry support. Declare it before exposing the crate's domain modules.
+
+- One call per declaring crate
+- Safe with renamed dependencies
+- No per-type path configuration
+
+**Placement:** [Domain root](/docs/project-structure/domain-root) — once at the crate root.
+
+<MacroExample name="install_macro_support!" />

@@ -1,0 +1,11 @@
+# `domain_query`
+
+Read state through a normal trait. A query stays a normal method on the aggregate root. The checker proves that execute.rs implements the correct trait for that root.
+
+- Root is the receiver
+- Inputs and outputs are ordinary Rust
+- No model group
+
+**Placement:** [Query](/docs/project-structure/query) — `query.rs`.
+
+<MacroExample name="domain_query" />

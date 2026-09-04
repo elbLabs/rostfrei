@@ -1,0 +1,28 @@
+# Aggregate action
+
+An aggregate action groups one state-changing capability beneath its aggregate. The trait is the stable contract, while `execute.rs` implements it directly for the matching `AggregateInstance`.
+
+- Declare one `#[domain_action]` trait in `action.rs`.
+- Implement it for `AggregateInstance<RentalFleetAggregate>`.
+- Keep commands, events, handlers, and rejections in the same capability directory.
+
+Path: `src/domain/bike_rental/rental_fleet/rent_bicycle`
+
+<ProjectStructureExample name="aggregate-action">
+
+```rust
+use rostfrei::domain_action;
+
+use super::BicycleUnavailable;
+use crate::domain::rental_fleet::BicycleId;
+
+#[domain_action(id = "rent-bicycle", label = "Rent bicycle")]
+pub trait RentBicycleAction {
+    fn rent_bicycle(
+        &mut self,
+        input: BicycleId,
+    ) -> Result<(), BicycleUnavailable>;
+}
+```
+
+</ProjectStructureExample>

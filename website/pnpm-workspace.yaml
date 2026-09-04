@@ -1,5 +1,3 @@
-packages: []
-
 allowBuilds:
   esbuild: true
-  msw: false
+  lightningcss: true

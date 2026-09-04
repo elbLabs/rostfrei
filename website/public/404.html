@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Redirecting…</title>
+    <script>
+      // GitHub Pages serves this file for unknown routes. Preserve the route in
+      // the query string so index.html can restore it before the SPA starts.
+      ;(function (location) {
+        const isGitHubPages = location.hostname.endsWith(".github.io")
+        const pathSegmentsToKeep = isGitHubPages ? 1 : 0
+        const pathSegments = location.pathname.split("/")
+        const basePath = pathSegments.slice(0, pathSegmentsToKeep + 1).join("/")
+        const routePath = pathSegments
+          .slice(pathSegmentsToKeep + 1)
+          .join("/")
+          .replace(/&/g, "~and~")
+        const query = location.search
+          ? "&" + location.search.slice(1).replace(/&/g, "~and~")
+          : ""
+
+        location.replace(
+          location.origin + basePath + "/?/" + routePath + query + location.hash
+        )
+      })(window.location)
+    </script>
+  </head>
+  <body></body>
+</html>

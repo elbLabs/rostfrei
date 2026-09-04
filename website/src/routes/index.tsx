@@ -1,3 +1,5 @@
+import { createFileRoute } from "@tanstack/react-router"
+
 import { MacroExplorerSection } from "@/components/macro-explorer/MacroExplorerSection"
 import {
   HeroSection,
@@ -7,13 +9,17 @@ import {
 } from "@/components/page-shell"
 import { ProjectStructureSection } from "@/components/project-structure/ProjectStructureSection"
 
-export function App() {
+export const Route = createFileRoute("/")({
+  component: LandingPage,
+})
+
+function LandingPage() {
   return (
-    <div className="min-h-svh overflow-hidden bg-background text-foreground">
+    <div className="flex min-h-svh flex-col overflow-hidden">
       <SiteHeader />
       <main
         id="top"
-        className="mx-auto w-full max-w-[1180px] min-w-0 overflow-hidden px-5 sm:px-8"
+        className="mx-auto w-full max-w-295 min-w-0 flex-1 overflow-hidden px-5 sm:px-8"
       >
         <HeroSection />
         <PrinciplesBar />
@@ -24,5 +30,3 @@ export function App() {
     </div>
   )
 }
-
-export default App

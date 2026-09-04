@@ -8,10 +8,30 @@
       name="description"
       content="Rostfrei keeps Rust domain structure explicit, typed, and easy to review."
     />
+    <script>
+      // Restore paths redirected by public/404.html before the router starts.
+      ;(function (location) {
+        if (location.search.startsWith("?/")) {
+          const restoredPath = location.search
+            .slice(1)
+            .split("&")
+            .map(function (part) {
+              return part.replace(/~and~/g, "&")
+            })
+            .join("?")
+
+          window.history.replaceState(
+            null,
+            "",
+            location.pathname.slice(0, -1) + restoredPath + location.hash
+          )
+        }
+      })(window.location)
+    </script>
     <title>Rostfrei · Typed domain structure for Rust</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="app"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -1,0 +1,32 @@
+# Entity
+
+An entity module keeps an identity-bearing object close to its value objects, lifecycle, and local behavior. `EntityDefinition` makes the aggregate owner and opaque identity type explicit.
+
+- Declare state in `entity.rs` and identity in `identity.rs`.
+- Implement `EntityDefinition` on the entity.
+- Nest entity-specific capabilities below its directory.
+
+Path: `src/domain/bike_rental/rental_fleet/bicycle/entity.rs`
+
+<ProjectStructureExample name="entity">
+
+```rust
+#[derive(Entity, Debug)]
+#[domain(id = "bicycle", label = "Bicycle")]
+pub struct Bicycle {
+    bicycle_id: BicycleId,
+    status: BicycleStatus,
+    condition: BicycleCondition,
+}
+
+impl EntityDefinition for Bicycle {
+    type Owner = RentalFleetAggregate;
+    type Identity = BicycleId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.bicycle_id
+    }
+}
+```
+
+</ProjectStructureExample>

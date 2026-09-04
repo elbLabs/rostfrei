@@ -1,0 +1,11 @@
+# `DomainError`
+
+Make business rejection stable. A Domain Error owns its public code and message and always gets the conventional JSON rejection encoding. Its fields retain the structured context for a rejection.
+
+- Global semantic ID
+- Stable code and message
+- JSON encoding by default
+
+**Placement:** [Aggregate action](/docs/project-structure/aggregate-action) — `rejection.rs`.
+
+<MacroExample name="DomainError" />

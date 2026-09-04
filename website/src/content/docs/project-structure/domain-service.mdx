@@ -1,0 +1,23 @@
+# Domain service
+
+A domain service holds stateless behavior that does not naturally belong to one entity or aggregate. Its definition explicitly connects the service marker to the enclosing bounded context.
+
+- Put the service declaration and context definition together in `service.rs`.
+- Nest each focused service capability directory beside that stable anchor.
+- Keep application orchestration and infrastructure outside the domain service.
+
+Path: `src/domain/bike_rental/fleet_planning`
+
+<ProjectStructureExample name="domain-service">
+
+```rust
+#[derive(DomainService)]
+#[domain(id = "fleet-planning", label = "Fleet planning")]
+pub struct FleetPlanning;
+
+impl DomainServiceDefinition for FleetPlanning {
+    type Context = BikeRental;
+}
+```
+
+</ProjectStructureExample>

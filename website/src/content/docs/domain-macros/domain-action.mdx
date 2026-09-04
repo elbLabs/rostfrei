@@ -1,0 +1,11 @@
+# `domain_action`
+
+Keep actions as ordinary traits. The macro preserves the trait and adds only owner-independent metadata. The checker links its implementation through nesting. Method signatures remain normal, directly callable Rust.
+
+- No generated second trait
+- No prescribed signature
+- Direct method calls remain
+
+**Placement:** [Aggregate action](/docs/project-structure/aggregate-action), [entity action](/docs/project-structure/entity-action), or [value-object action](/docs/project-structure/value-object-action) — `action.rs`.
+
+<MacroExample name="domain_action" />
