@@ -9,11 +9,11 @@ use rostfrei::{
     InfallibleCommandRejectionMapper, Initialize, IntegrationCommand, IntegrationCommandMapper,
     IntegrationEvent, IntegrationEventBus, IntegrationEventCommandHandler,
     IntegrationEventDispatcherExt, IntegrationEventMapper, IntegrationMessageAdapter, OperationId,
-    StreamAggregateId, StreamAggregateType, StreamId,
+    RoutedAggregateCommand, StreamAggregateId, StreamAggregateType, StreamId,
 };
 use rostfrei_messaging_core::{
-    ApplicationName, CallerMetadata, CommandResponseOutcome, CorrelationId, DeliveryDisposition,
-    DeliveryInfo, MessageDelivery, MessageHandler, RetryDelay,
+    ApplicationName, CallerMetadata, CommandEnvelope, CommandResponseOutcome, CorrelationId,
+    DeliveryDisposition, DeliveryInfo, MessageDelivery, MessageHandler, RetryDelay,
 };
 use serde::{Deserialize, Serialize};
 
@@ -262,7 +262,27 @@ async fn committed_domain_event_drives_integration_command_mapping() -> TestResu
             .and_then(rostfrei::RecordedEvent::correlation_id),
         Some(&correlation_id)
     );
-    assert_eq!(adapter.command_messages().await.len(), 2);
+    let commands = adapter.command_messages().await;
+    assert_eq!(commands.len(), 2);
+    let generated = commands.get(1).ok_or("mapped command was not published")?;
+    let wire: serde_json::Value = serde_json::from_slice(generated.payload())?;
+    assert_eq!(
+        wire.pointer("/payload/events_caused_by_command"),
+        Some(&serde_json::Value::Bool(true))
+    );
+    let envelope: CommandEnvelope<RoutedAggregateCommand> =
+        serde_json::from_slice(generated.payload())?;
+    assert_eq!(
+        envelope.causation_id().map(rostfrei::CausationId::as_str),
+        Some(message.message_id().as_str())
+    );
+    assert_eq!(
+        history
+            .get(1)
+            .and_then(rostfrei::RecordedEvent::causation_id)
+            .map(rostfrei::CausationId::as_str),
+        Some(generated.message_id().as_str())
+    );
     Ok(())
 }
 
