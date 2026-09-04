@@ -43,6 +43,7 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | Term | Definition | Aliases to avoid |
 | --- | --- | --- |
 | **Integration event** | A bounded, independently versioned public contract normally derived from committed private domain events. | Domain event, raw event, notification |
+| **Integration-command mapping** | A consuming bounded context's pure mapping from one integration event to one typed command and target aggregate identity, dispatched under a stable durable identity. | Transport handler, event side effect |
 | **Projection** | A read-oriented model derived from committed domain events without becoming aggregate truth. | Aggregate, source of truth |
 | **Domain-event handler** | A post-commit application handler for one or more private domain events. It may perform side effects but never participates in aggregate decisions or changes the originating commit. | Projection handler, reaction, event projector |
 
@@ -79,6 +80,7 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 - **Replay** reconstructs **aggregate state** at a selected **stream version**.
 - A **query** reads state and never appends a **commit**.
 - An **integration event** is a public contract separate from the private **domain events** from which it may be derived.
+- An **integration-command mapping** produces exactly one **command**; independent mappings use independent durable identities.
 - A **projection** may consume committed **domain events**, but it does not replace the **aggregate stream** as authoritative history.
 - A **test repository** contains zero or more **test definitions**, whose **test revisions** are supplied by source control.
 - One **test run** executes exactly one **test revision** against one **test environment**.

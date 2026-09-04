@@ -54,8 +54,9 @@ example with rental, return, and fleet-addition commands plus their decisions,
 queries, events, and domain errors. Its runnable NATS-backed local Tracer routes
 Test and Dispatch through the shared `CommandBus`, executes against
 `NatsEventStore`, maps committed domain events to public integration events,
-and publishes them through `IntegrationEventBus`. Simulate remains read-only,
-Test uses resettable isolated state, and Dispatch requires separate production
+publishes them through `IntegrationEventBus`, and adapts typed integration-command
+mappings to deterministic dispatch. Simulate remains read-only, Test
+uses resettable isolated state, and Dispatch requires separate production
 authorization. The aggregate identity in the API is qualified by its bounded
 context. Command and rejection derives supply their canonical JSON codecs,
 while aggregate event JSON comes from the compiled aggregate codec.

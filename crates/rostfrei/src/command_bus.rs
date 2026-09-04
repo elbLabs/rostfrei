@@ -37,6 +37,7 @@ pub struct CommandRequest<C> {
     correlation_id: Option<CorrelationId>,
     causation_id: Option<CausationId>,
     created_at: Option<MessageTimestamp>,
+    events_caused_by_command: bool,
 }
 
 impl<C> CommandRequest<C> {
@@ -48,6 +49,7 @@ impl<C> CommandRequest<C> {
             correlation_id: None,
             causation_id: None,
             created_at: None,
+            events_caused_by_command: false,
         }
     }
 
@@ -68,6 +70,11 @@ impl<C> CommandRequest<C> {
         self.created_at = Some(created_at);
         self
     }
+
+    pub(crate) const fn with_events_caused_by_command(mut self) -> Self {
+        self.events_caused_by_command = true;
+        self
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -81,6 +88,7 @@ pub struct DynamicCommandRequest {
     correlation_id: Option<CorrelationId>,
     causation_id: Option<CausationId>,
     created_at: Option<MessageTimestamp>,
+    events_caused_by_command: bool,
 }
 
 impl DynamicCommandRequest {
@@ -110,6 +118,7 @@ impl DynamicCommandRequest {
             correlation_id: None,
             causation_id: None,
             created_at: None,
+            events_caused_by_command: false,
         })
     }
 
@@ -139,6 +148,8 @@ pub struct RoutedAggregateCommand {
     command: String,
     schema_version: u32,
     payload: Value,
+    #[serde(skip_serializing_if = "is_false")]
+    events_caused_by_command: bool,
 }
 
 impl RoutedAggregateCommand {
@@ -164,6 +175,7 @@ impl RoutedAggregateCommand {
             command,
             schema_version,
             payload,
+            events_caused_by_command: false,
         })
     }
 
@@ -186,6 +198,15 @@ impl RoutedAggregateCommand {
     pub const fn payload(&self) -> &Value {
         &self.payload
     }
+
+    const fn with_events_caused_by_command(mut self, enabled: bool) -> Self {
+        self.events_caused_by_command = enabled;
+        self
+    }
+
+    const fn events_caused_by_command(&self) -> bool {
+        self.events_caused_by_command
+    }
 }
 
 #[derive(Deserialize)]
@@ -195,6 +216,8 @@ struct RoutedAggregateCommandWire {
     command: String,
     schema_version: u32,
     payload: Value,
+    #[serde(default)]
+    events_caused_by_command: bool,
 }
 
 impl<'de> Deserialize<'de> for RoutedAggregateCommand {
@@ -210,8 +233,17 @@ impl<'de> Deserialize<'de> for RoutedAggregateCommand {
             wire.schema_version,
             wire.payload,
         )
+        .map(|command| command.with_events_caused_by_command(wire.events_caused_by_command))
         .map_err(D::Error::custom)
     }
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if requires a shared reference"
+)]
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -256,14 +288,8 @@ impl EncodedCommand {
     ) -> Result<Self, CommandProcessorError> {
         let envelope: CommandEnvelope<RoutedAggregateCommand> = serde_json::from_slice(&payload)
             .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
-        let fingerprint = command_execution_fingerprint(
-            envelope.payload().aggregate_type(),
-            envelope.payload().aggregate_id(),
-            envelope.payload().command(),
-            envelope.payload().schema_version(),
-            envelope.payload().payload(),
-        )
-        .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+        let fingerprint = routed_command_execution_fingerprint(envelope.payload())
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
         let message = OutboundMessage::new(address, message_id, payload)
             .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
         Ok(Self::new(
@@ -495,6 +521,7 @@ impl CommandBus {
             correlation_id: request.correlation_id,
             causation_id: request.causation_id,
             created_at: request.created_at,
+            events_caused_by_command: request.events_caused_by_command,
         })
     }
 
@@ -541,14 +568,9 @@ impl CommandBus {
             request.schema_version,
             request.payload,
         )
-        .map_err(|error| CommandBusError::encoding(error.to_string()))?;
-        let fingerprint = command_execution_fingerprint(
-            routed.aggregate_type(),
-            routed.aggregate_id(),
-            routed.command(),
-            routed.schema_version(),
-            routed.payload(),
-        )?;
+        .map_err(|error| CommandBusError::encoding(error.to_string()))?
+        .with_events_caused_by_command(request.events_caused_by_command);
+        let fingerprint = routed_command_execution_fingerprint(&routed)?;
         let message_id = command_message_id(
             &address,
             &operation_id,
@@ -946,14 +968,8 @@ fn validate_command(
         serde_json::from_slice(encoded.payload())
             .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
     let routed = envelope.payload();
-    let fingerprint = command_execution_fingerprint(
-        routed.aggregate_type(),
-        routed.aggregate_id(),
-        routed.command(),
-        routed.schema_version(),
-        routed.payload(),
-    )
-    .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+    let fingerprint = routed_command_execution_fingerprint(routed)
+        .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
     let expected_message_id = command_message_id(
         encoded.address(),
         envelope.operation_id(),
@@ -985,10 +1001,15 @@ fn validate_command(
         .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
     let mut metadata = ExecutionMetadata::new(stream, operation_id, fingerprint)
         .with_correlation_id(envelope.correlation_id().clone());
-    let causation_id = match envelope.causation_id() {
-        Some(causation_id) => causation_id.clone(),
-        None => CausationId::new(encoded.message_id().as_str())
-            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?,
+    let causation_id = if routed.events_caused_by_command() {
+        CausationId::new(encoded.message_id().as_str())
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?
+    } else {
+        match envelope.causation_id() {
+            Some(causation_id) => causation_id.clone(),
+            None => CausationId::new(encoded.message_id().as_str())
+                .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?,
+        }
     };
     metadata = metadata.with_causation_id(causation_id);
 
@@ -1068,6 +1089,25 @@ pub fn command_execution_fingerprint(
         &schema_version,
         &payload,
     ]))
+}
+
+fn routed_command_execution_fingerprint(
+    command: &RoutedAggregateCommand,
+) -> Result<ContentFingerprint, CommandBusError> {
+    let fingerprint = command_execution_fingerprint(
+        command.aggregate_type(),
+        command.aggregate_id(),
+        command.command(),
+        command.schema_version(),
+        command.payload(),
+    )?;
+    if command.events_caused_by_command() {
+        return Ok(framed_fingerprint(&[
+            b"rostfrei:integration-command-execution:v1",
+            fingerprint.as_bytes(),
+        ]));
+    }
+    Ok(fingerprint)
 }
 
 pub fn command_message_id(
