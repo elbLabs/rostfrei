@@ -1,6 +1,6 @@
-use rostfrei::{Entity, EntityDefinition};
+use rostfrei::{Entity, EntityDefinition, StateTransition as _};
 
-use super::{BicycleCondition, BicycleId, BicycleStatus};
+use super::{BicycleCondition, BicycleId, BicycleRentalTransition, BicycleStatus};
 use crate::domain::rental_fleet::RentalFleetAggregate;
 
 #[allow(
@@ -47,5 +47,12 @@ impl Bicycle {
 
     pub const fn condition(&self) -> BicycleCondition {
         self.condition
+    }
+
+    pub(in crate::domain::bike_rental::rental_fleet) fn apply_transition(
+        &mut self,
+        transition: BicycleRentalTransition,
+    ) {
+        self.status = transition.descriptor().to;
     }
 }

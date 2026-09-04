@@ -324,7 +324,7 @@ impl JsonErrorPayload for BicycleUnavailable { /* … */ }`,
       "Ordered outcome metadata",
       "Arbitrary Rust payloads",
     ],
-    file: "src/domain/bike_rental/rental_fleet/assess_rental_eligibility/outcome.rs",
+    file: "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/outcome.rs",
     authored: `#[derive(DecisionOutcome, Clone, Copy, Debug)]
 pub enum RentalEligibilityOutcome {
     #[outcome(id = "eligible", label = "Eligible")]
@@ -487,22 +487,16 @@ pub trait BicycleAvailabilityQuery {
       "No owner metadata",
       "No projection group",
     ],
-    file: "src/domain/bike_rental/rental_fleet/assess_rental_eligibility/decision.rs",
+    file: "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/decision.rs",
     authored: `#[domain_decision(
     id = "assess-rental-eligibility",
     label = "Assess rental eligibility"
 )]
 pub trait RentalEligibilityDecision {
-    fn assess_rental_eligibility(
-        status: BicycleStatus,
-        condition: BicycleCondition,
-    ) -> RentalEligibilityOutcome;
+    fn assess_rental_eligibility(&self) -> RentalEligibilityOutcome;
 }`,
     generated: `pub trait RentalEligibilityDecision {
-    fn assess_rental_eligibility(
-        status: BicycleStatus,
-        condition: BicycleCondition,
-    ) -> RentalEligibilityOutcome;
+    fn assess_rental_eligibility(&self) -> RentalEligibilityOutcome;
 
     const LOCAL_ID: &str = "assess-rental-eligibility";
     const LABEL: &str = "Assess rental eligibility";
@@ -589,7 +583,7 @@ const __DOMAIN_TEST_SUBJECT: DomainTestSubject =
     entities: [RentalFleet, Bicycle],
     value_objects: [BicycleCondition, RegistrationNumber],
     services: [],
-    errors: [BicycleUnavailable, BicycleNotRented],
+    errors: [BicycleUnavailable, BicycleNotRented, InvalidRentalFleet],
 }`,
     generated: `try_build(|builder| {
     builder.add_bounded_context(BikeRental::DESCRIPTOR)?;
@@ -600,6 +594,7 @@ const __DOMAIN_TEST_SUBJECT: DomainTestSubject =
     builder.add_value_object_type::<RegistrationNumber>()?;
     builder.add_domain_error(BicycleUnavailable::DESCRIPTOR)?;
     builder.add_domain_error(BicycleNotRented::DESCRIPTOR)?;
+    builder.add_domain_error(InvalidRentalFleet::DESCRIPTOR)?;
     Ok(())
 })`,
   },

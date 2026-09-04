@@ -74,6 +74,8 @@ export const docsRegistry = {
     import("@/content/docs/project-structure/query.mdx"),
   "project-structure/aggregate-decision": () =>
     import("@/content/docs/project-structure/aggregate-decision.mdx"),
+  "project-structure/entity-decision": () =>
+    import("@/content/docs/project-structure/entity-decision.mdx"),
   "project-structure/value-object-decision": () =>
     import("@/content/docs/project-structure/value-object-decision.mdx"),
   "project-structure/aggregate-invariant": () =>

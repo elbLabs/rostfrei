@@ -6,19 +6,21 @@ An entity action is a small behavior capability nested directly below the entity
 - Implement the trait directly for the entity in `execute.rs`.
 - Keep unrelated aggregate orchestration outside this directory.
 
-Path: `src/domain/bike_rental/rental_fleet/bicycle/mark_rented`
+Illustrative path: `src/domain/bike_rental/rental_fleet/bicycle/change_condition`
+
+This capability is intentionally illustrative. The bike-rental example applies rental-status changes from recorded events through its lifecycle instead of exposing them as Entity actions.
 
 <ProjectStructureExample name="entity-action">
 
 ```rust
-#[domain_action(id = "mark-rented", label = "Mark rented")]
-pub trait MarkRentedAction {
-    fn mark_rented(&mut self);
+#[domain_action(id = "change-condition", label = "Change condition")]
+pub trait ChangeConditionAction {
+    fn change_condition(&mut self, condition: BicycleCondition);
 }
 
-impl MarkRentedAction for Bicycle {
-    fn mark_rented(&mut self) {
-        self.status = BicycleStatus::Rented;
+impl ChangeConditionAction for Bicycle {
+    fn change_condition(&mut self, condition: BicycleCondition) {
+        self.condition = condition;
     }
 }
 ```
