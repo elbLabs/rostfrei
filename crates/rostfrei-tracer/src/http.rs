@@ -93,7 +93,7 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
         .route("/tests", get(get_tests))
         .route("/tests/{test_id}", get(get_test))
         .route("/tests/{test_id}/runs", post(run_test))
-        .route("/test-scenario/reset", post(reset_test_scenario))
+        .route("/test-scenario/reset/{fixture}", post(reset_test_scenario))
         .layer(middleware::from_fn_with_state(
             config.clone(),
             authorize_control_request,
@@ -327,8 +327,11 @@ async fn submit_command(
     }
 }
 
-async fn reset_test_scenario(State(state): State<HttpState>) -> Response {
-    match state.tracer.reset_test_scenario().await {
+async fn reset_test_scenario(
+    State(state): State<HttpState>,
+    Path(fixture): Path<String>,
+) -> Response {
+    match state.tracer.reset_test_scenario(&fixture).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => test_scenario_error_response(&error),
     }
@@ -652,18 +655,21 @@ fn test_scenario_error_response(error: &TestScenarioResetError) -> Response {
         TestScenarioResetError::Unavailable => {
             (StatusCode::NOT_IMPLEMENTED, "reset-unavailable", false)
         }
+        TestScenarioResetError::UnknownFixture(_) => {
+            (StatusCode::NOT_FOUND, "fixture-not-found", false)
+        }
         TestScenarioResetError::Failed(_) => {
             (StatusCode::SERVICE_UNAVAILABLE, "reset-failed", true)
         }
     };
-    let mut response = (
-        status,
-        Json(ErrorBody {
-            code,
-            message: error.to_string(),
-        }),
-    )
-        .into_response();
+    let message = match error {
+        TestScenarioResetError::Unavailable => "test scenario reset is not configured".to_owned(),
+        TestScenarioResetError::UnknownFixture(name) => {
+            format!("test fixture `{name}` is not registered")
+        }
+        TestScenarioResetError::Failed(_) => "the test scenario reset failed".to_owned(),
+    };
+    let mut response = (status, Json(ErrorBody { code, message })).into_response();
     if retry_after {
         response
             .headers_mut()
@@ -697,9 +703,6 @@ fn test_run_error_response(error: &TestRunError) -> Response {
         TestRunError::Submission(error) => return private_no_store(error_response(error)),
         TestRunError::Correlation(error) => {
             return private_no_store(correlation_error_response(error));
-        }
-        TestRunError::FixtureMismatch { .. } | TestRunError::SetupRejected { .. } => {
-            (StatusCode::CONFLICT, "test-setup-failed", false)
         }
         TestRunError::CommandFailed(_) | TestRunError::CorrelationClosed => {
             (StatusCode::SERVICE_UNAVAILABLE, "test-run-failed", true)

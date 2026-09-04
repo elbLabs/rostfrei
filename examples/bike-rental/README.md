@@ -72,15 +72,16 @@ durable command, domain-event, or integration-event consumer stops.
 The example uses one canonical application with two disjoint traffic scopes:
 
 - `bike-rental.test.>` is recreated and deterministically seeded on startup and
-  by `POST /test-scenario/reset`;
+  by `POST /test-scenario/reset/{fixture}`;
 - normal `bike-rental` subjects such as `bike-rental.command.>` persist across
   restarts and are never affected by test reset.
 
 Each scope has separate command, command-response, integration-event,
 quarantine, and authoritative domain-event streams, plus separate durables.
-Test resources use the `BIKE_RENTAL__TEST` stream prefix. Test reset stops its
-workers, recreates that complete topology, reseeds it, and restarts the workers
-without touching normal Dispatch resources.
+Test resources use the `BIKE_RENTAL__TEST` stream prefix. Test reset requires an
+explicit fixture name, stops its workers, recreates that complete topology,
+writes the fixture's declared domain-event streams, and only then restarts the
+workers without touching normal Dispatch resources.
 A failed reset leaves Test, Simulate, instances, and dynamic inputs unavailable
 until a later reset succeeds rather than exposing partially rebuilt state.
 
@@ -94,10 +95,12 @@ The API advertises all command fields, runtime choices, instances, mode actions,
 and reset links through `GET /catalog` and its linked resources. Clients can
 follow these links without embedding bike-rental values.
 
-Behavioral tests are YAML files in `tests/tracer`. They name the deterministic
-`demo-fleet` fixture, run setup and subject commands through the isolated test
-NATS pipeline, and assert the command outcome plus correlated domain or
-integration events. The filesystem remains the source of truth:
+Behavioral tests are YAML files in `tests/tracer`. They select either the
+`available-fleet` or two-event `rented-fleet` declarative fixture, execute only
+the subject command through the isolated test NATS pipeline, and assert its
+outcome plus correlated domain or integration events. Fixtures are compiled
+backend definitions; the exact unredacted definitions exposed by discovery are
+materialized during reset, with no setup commands or store-content scraping.
 
 ```sh
 curl --header 'authorization: Bearer local-development-token' \

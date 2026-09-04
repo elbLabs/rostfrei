@@ -15,7 +15,9 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bike_rental::{
-    demo::{demo_stream, seed_demo},
+    demo::{
+        available_fleet_fixture, demo_stream, materialize_fixture, rented_fleet_fixture, seed_demo,
+    },
     domain_model,
     rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
     tracer::{self, RentBicycleInputOptions, ReturnBicycleInputOptions},
@@ -33,8 +35,8 @@ use rostfrei_messaging_core::CorrelationId;
 use rostfrei_tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandReceipt, CommandRejection,
     CommandTransport, CommandTransportError, CommandTransportErrorKind, CommandTransportObserver,
-    ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, TestRepository,
-    TestScenarioReset, TestScenarioResetError, Tracer,
+    ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, MaterializedTestFixture,
+    TestRepository, TestScenarioReset, TestScenarioResetError, Tracer,
     http::{self, HttpConfig},
 };
 use serde_json::{Value, json};
@@ -60,9 +62,12 @@ impl ResettableStore {
         self.store.read().await.clone()
     }
 
-    async fn reset_and_seed(&self) -> Result<(), TestScenarioResetError> {
+    async fn reset_and_seed(
+        &self,
+        fixture: &MaterializedTestFixture,
+    ) -> Result<(), TestScenarioResetError> {
         *self.store.write().await = InMemoryEventStore::new();
-        seed_demo(self)
+        materialize_fixture(self, fixture)
             .await
             .map_err(|error| TestScenarioResetError::Failed(error.to_string()))
     }
@@ -123,8 +128,8 @@ impl StreamDirectory for ResettableStore {
 
 #[async_trait]
 impl TestScenarioReset for ResettableStore {
-    async fn reset(&self) -> Result<(), TestScenarioResetError> {
-        self.reset_and_seed().await
+    async fn reset(&self, fixture: &MaterializedTestFixture) -> Result<(), TestScenarioResetError> {
+        self.reset_and_seed(fixture).await
     }
 }
 
@@ -280,7 +285,11 @@ fn local_transport_error(
 
 async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
     let test_store = ResettableStore::new();
-    seed_demo(&test_store).await.unwrap();
+    let available_fixture = available_fleet_fixture();
+    let rented_fixture = rented_fleet_fixture();
+    materialize_fixture(&test_store, &available_fixture.materialize().unwrap())
+        .await
+        .unwrap();
     let production_store = InMemoryEventStore::new();
     seed_demo(&production_store).await.unwrap();
     let history: Arc<dyn EventHistory> = Arc::new(test_store.clone());
@@ -302,7 +311,8 @@ async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
         .with_test_transport(test_transport)
         .with_dispatch_transport(production_transport)
         .with_stream_directory(Arc::new(test_store.clone()))
-        .with_test_fixture("demo-fleet", test_reset)
+        .with_test_scenario_reset(test_reset)
+        .with_test_fixtures([available_fixture, rented_fixture])
         .with_test_repository(test_repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder.register_json::<RentBicycle>().unwrap();
@@ -452,8 +462,14 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(response.headers()["cache-control"], "private, no-store");
     let catalog = json_body(response).await;
     assert_eq!(catalog["catalogVersion"], 3);
-    assert_eq!(catalog["testScenario"]["resetHref"], "/test-scenario/reset");
-    assert_eq!(catalog["testScenario"]["fixtures"][0], "demo-fleet");
+    assert_eq!(
+        catalog["testScenario"]["resetHref"],
+        "/test-scenario/reset/{fixture}"
+    );
+    assert_eq!(
+        catalog["testScenario"]["fixtures"],
+        json!(["available-fleet", "rented-fleet"])
+    );
     assert_eq!(catalog["testRepository"]["definitionsHref"], "/tests");
     assert_eq!(catalog["contexts"][0]["id"], "bike-rental");
     assert_eq!(catalog["contexts"][0]["label"], "Bike Rental");
@@ -545,8 +561,42 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         .unwrap();
     assert_eq!(test.status(), StatusCode::OK);
     let test = json_body(test).await;
-    assert_eq!(test["definition"]["given"]["fixture"], "demo-fleet");
+    assert_eq!(test["definition"]["given"]["fixture"], "available-fleet");
     assert_eq!(test["revision"].as_str().unwrap().len(), 64);
+    assert_eq!(test["fixture"]["name"], "available-fleet");
+    assert_eq!(
+        test["fixture"]["streams"][0]["events"][0]["streamVersion"],
+        1
+    );
+
+    let rented = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri("/tests/return-rented-bicycle")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rented.status(), StatusCode::OK);
+    let rented = json_body(rented).await;
+    assert_eq!(rented["fixture"]["name"], "rented-fleet");
+    assert_eq!(
+        rented["fixture"]["streams"][0]["events"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        rented["fixture"]["streams"][0]["events"][1]["eventType"],
+        "bicycle-rented"
+    );
+    assert_eq!(
+        rented["fixture"]["streams"][0]["events"][1]["streamVersion"],
+        2
+    );
 
     let response = app
         .clone()
@@ -1079,7 +1129,7 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/test-scenario/reset")
+                .uri("/test-scenario/reset/available-fleet")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1092,7 +1142,7 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
         .oneshot(
             authorize(Request::builder())
                 .method("POST")
-                .uri("/test-scenario/reset")
+                .uri("/test-scenario/reset/available-fleet")
                 .body(Body::empty())
                 .unwrap(),
         )

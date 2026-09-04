@@ -26,10 +26,11 @@ use rostfrei_tracer::{
     CommandInvocation, CommandPublication, CommandReceipt, CommandRejection, CommandTransport,
     CommandTransportError, CommandTransportErrorKind, CommandTransportObserver, CorrelationError,
     CorrelationEventKind, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
-    IntegrationEventObservation, OperationMode, RuntimeRegistrationError, SimulationRequest,
-    SubmissionError, SubscriptionError, TestDefinition, TestDefinitionCollection,
-    TestDefinitionRevision, TestReportStatus, TestRepository, TestRepositoryError,
-    TestScenarioReset, TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
+    IntegrationEventObservation, MaterializedTestFixture, OperationMode, RuntimeRegistrationError,
+    SimulationRequest, SubmissionError, SubscriptionError, TestDefinition,
+    TestDefinitionCollection, TestDefinitionRevision, TestFixture, TestFixtureEvent,
+    TestFixtureStream, TestReportStatus, TestRepository, TestRepositoryError, TestScenarioReset,
+    TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
     command_execution_fingerprint,
 };
 #[cfg(feature = "http")]
@@ -1835,7 +1836,20 @@ struct NoopReset;
 
 #[async_trait]
 impl TestScenarioReset for NoopReset {
-    async fn reset(&self) -> Result<(), TestScenarioResetError> {
+    async fn reset(
+        &self,
+        _fixture: &MaterializedTestFixture,
+    ) -> Result<(), TestScenarioResetError> {
+        Ok(())
+    }
+}
+
+struct RecordingReset(Arc<Mutex<Vec<MaterializedTestFixture>>>);
+
+#[async_trait]
+impl TestScenarioReset for RecordingReset {
+    async fn reset(&self, fixture: &MaterializedTestFixture) -> Result<(), TestScenarioResetError> {
+        self.0.lock().await.push(fixture.clone());
         Ok(())
     }
 }
@@ -1844,7 +1858,10 @@ struct FailOnceReset(AtomicBool);
 
 #[async_trait]
 impl TestScenarioReset for FailOnceReset {
-    async fn reset(&self) -> Result<(), TestScenarioResetError> {
+    async fn reset(
+        &self,
+        _fixture: &MaterializedTestFixture,
+    ) -> Result<(), TestScenarioResetError> {
         if self.0.swap(true, Ordering::AcqRel) {
             Ok(())
         } else {
@@ -1862,10 +1879,30 @@ struct BlockingReset {
 
 #[async_trait]
 impl TestScenarioReset for BlockingReset {
-    async fn reset(&self) -> Result<(), TestScenarioResetError> {
+    async fn reset(
+        &self,
+        _fixture: &MaterializedTestFixture,
+    ) -> Result<(), TestScenarioResetError> {
         self.entered.notify_one();
         self.release.notified().await;
         Ok(())
+    }
+}
+
+fn test_fixture() -> TestFixture {
+    TestFixture {
+        name: "test-fixture".to_owned(),
+        revision: rostfrei_core::ContentFingerprint::digest("fixture-revision").to_string(),
+        streams: vec![TestFixtureStream {
+            aggregate_type: AGGREGATE_TYPE.to_owned(),
+            aggregate_id: "aggregate-1".to_owned(),
+            events: vec![TestFixtureEvent {
+                event_type: "test-event".to_owned(),
+                schema_version: 1,
+                stream_version: 1,
+                payload: json!({ "sensitive": "fixture-secret" }),
+            }],
+        }],
     }
 }
 
@@ -1877,7 +1914,8 @@ fn resettable_tracer(reset: Arc<dyn TestScenarioReset>) -> Tracer {
         .with_test_event_store(store)
         .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
         .with_dispatch_transport(Arc::new(FakeTransport::accepted("dispatch", false)))
-        .with_test_scenario_reset(reset);
+        .with_test_scenario_reset(reset)
+        .with_test_fixture(test_fixture());
     builder.register_json::<TestCommand>().unwrap();
     builder.build().unwrap()
 }
@@ -1900,7 +1938,7 @@ async fn reset_invalidates_test_identities_even_when_the_runtime_reset_fails() {
             .unwrap();
         terminal_operation(&tracer, &first.operation_id).await;
 
-        let first_reset = tracer.reset_test_scenario().await;
+        let first_reset = tracer.reset_test_scenario("test-fixture").await;
         assert_eq!(
             tracer.operation(&first.operation_id).await,
             Err(SubmissionError::NotFound)
@@ -1927,7 +1965,7 @@ async fn reset_invalidates_test_identities_even_when_the_runtime_reset_fails() {
                 tracer.aggregate_instances(AGGREGATE_TYPE).await,
                 Err(DiscoveryError::TestScenarioUnavailable)
             );
-            tracer.reset_test_scenario().await.unwrap();
+            tracer.reset_test_scenario("test-fixture").await.unwrap();
         }
 
         let second = tracer
@@ -1965,7 +2003,7 @@ async fn test_generation_is_selected_after_an_in_progress_reset() {
     terminal_operation(&tracer, &first.operation_id).await;
 
     let reset_tracer = tracer.clone();
-    let reset = tokio::spawn(async move { reset_tracer.reset_test_scenario().await });
+    let reset = tokio::spawn(async move { reset_tracer.reset_test_scenario("test-fixture").await });
     entered.notified().await;
     let submit_tracer = tracer.clone();
     let submit = tokio::spawn(async move {
@@ -2053,28 +2091,14 @@ impl TestRepository for StaticTestRepository {
     }
 }
 
-fn behavioral_test_yaml(outcome: &str, setup: bool, trace: &str) -> String {
-    let setup = if setup {
-        r"
-  commands:
-    - name: test-command
-      schemaVersion: 1
-      aggregate:
-        type: test-context/test-aggregate
-        id: aggregate-1
-      payload:
-        reject: false
-"
-    } else {
-        ""
-    };
+fn behavioral_test_yaml(outcome: &str, _setup: bool, trace: &str) -> String {
     format!(
         r"schemaVersion: 1
 id: behavioral-test
 name: Behavioral test
 given:
   fixture: test-fixture
-{setup}when:
+when:
   command:
     name: test-command
     schemaVersion: 1
@@ -2101,15 +2125,71 @@ fn behavioral_tracer(
     let mut builder = builder(history)
         .with_test_event_store(store)
         .with_test_transport(transport)
-        .with_test_fixture("test-fixture", Arc::new(NoopReset))
+        .with_test_scenario_reset(Arc::new(NoopReset))
+        .with_test_fixture(test_fixture())
         .with_test_repository(repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder.register_json::<TestCommand>().unwrap();
     builder.build().unwrap()
 }
 
+#[test]
+fn behavioral_registration_rejects_an_unknown_fixture_reference() {
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
+        &behavioral_test_yaml("accepted", false, "")
+            .replace("fixture: test-fixture", "fixture: missing-fixture"),
+    ));
+    let store = Arc::new(InMemoryEventStore::new());
+    let history: Arc<dyn EventHistory> = store.clone();
+    let mut builder = builder(history)
+        .with_test_event_store(store)
+        .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
+        .with_test_scenario_reset(Arc::new(NoopReset))
+        .with_test_fixture(test_fixture())
+        .with_test_repository(repository);
+    builder.register_json::<TestCommand>().unwrap();
+
+    assert!(matches!(
+        builder.build(),
+        Err(RuntimeRegistrationError::UnknownTestFixture { .. })
+    ));
+}
+
 #[tokio::test]
-async fn behavioral_test_runs_setup_and_subject_through_the_test_transport() {
+async fn fixture_payload_redaction_does_not_change_reset_materialization() {
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
+        &behavioral_test_yaml("accepted", false, ""),
+    ));
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let store = Arc::new(InMemoryEventStore::new());
+    let history: Arc<dyn EventHistory> = store.clone();
+    let mut builder = builder(history)
+        .with_test_event_store(store)
+        .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
+        .with_test_scenario_reset(Arc::new(RecordingReset(Arc::clone(&captured))))
+        .with_test_fixture(test_fixture())
+        .with_test_repository(repository);
+    builder.register_json::<TestCommand>().unwrap();
+    let tracer = builder.build().unwrap();
+
+    let preview = tracer.test_definition("behavioral-test").unwrap();
+    assert!(preview.fixture.streams[0].events[0].payload.is_none());
+    let report = tracer.run_test("behavioral-test").await.unwrap();
+    assert!(report.fixture.streams[0].events[0].payload.is_none());
+    let fixtures = captured.lock().await;
+    assert_eq!(fixtures.len(), 1);
+    assert_eq!(
+        fixtures[0].streams[0].events[0].payload,
+        Some(json!({ "sensitive": "fixture-secret" }))
+    );
+    assert_eq!(
+        fixtures[0].streams[0].events[0].event_id,
+        preview.fixture.streams[0].events[0].event_id
+    );
+}
+
+#[tokio::test]
+async fn behavioral_test_runs_only_the_subject_through_the_test_transport() {
     let transport = FakeTransport::accepted("behavioral", false);
     let invocations = Arc::clone(&transport.invocations);
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
@@ -2121,7 +2201,7 @@ async fn behavioral_test_runs_setup_and_subject_through_the_test_transport() {
 
     assert_eq!(report.status, TestReportStatus::Passed);
     assert_eq!(report.revision, "test-revision");
-    assert_eq!(invocations.lock().await.len(), 2);
+    assert_eq!(invocations.lock().await.len(), 1);
 }
 
 #[tokio::test]
@@ -2170,7 +2250,7 @@ async fn behavioral_timeout_cancels_the_command_before_reset() {
     assert_eq!(report.failure.unwrap().code, "deadline-exceeded");
     tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        tracer.reset_test_scenario(),
+        tracer.reset_test_scenario("test-fixture"),
     )
     .await
     .unwrap()
@@ -2265,6 +2345,28 @@ async fn behavioral_tests_are_discoverable_and_runnable_over_http() {
     assert_eq!(list.status(), StatusCode::OK);
     assert_eq!(json_body(list).await["items"][0]["id"], "behavioral-test");
 
+    let detail = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri("/tests/behavioral-test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), StatusCode::OK);
+    let preview = json_body(detail).await;
+    assert_eq!(preview["fixture"]["name"], "test-fixture");
+    assert_eq!(
+        preview["fixture"]["streams"][0]["events"][0]["streamVersion"],
+        1
+    );
+    assert_eq!(
+        preview["fixture"]["streams"][0]["events"][0]["payload"]["sensitive"],
+        "fixture-secret"
+    );
+
     let run = app
         .oneshot(
             authorize(Request::builder())
@@ -2277,5 +2379,7 @@ async fn behavioral_tests_are_discoverable_and_runnable_over_http() {
         .unwrap();
     assert_eq!(run.status(), StatusCode::OK);
     assert_eq!(run.headers()["cache-control"], "private, no-store");
-    assert_eq!(json_body(run).await["status"], "passed");
+    let report = json_body(run).await;
+    assert_eq!(report["status"], "passed");
+    assert_eq!(report["fixture"], preview["fixture"]);
 }
