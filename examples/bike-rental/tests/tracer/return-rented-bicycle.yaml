@@ -2,15 +2,7 @@ schemaVersion: 1
 id: return-rented-bicycle
 name: Return a rented bicycle
 given:
-  fixture: demo-fleet
-  commands:
-    - name: rent-bicycle
-      schemaVersion: 1
-      aggregate:
-        type: bike-rental/rental-fleet
-        id: city-fleet
-      payload:
-        bicycle_id: bike-42
+  fixture: rented-fleet
 when:
   command:
     name: return-bicycle

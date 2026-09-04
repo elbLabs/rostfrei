@@ -24,7 +24,7 @@ use axum::{
 use bike_rental::{
     BicycleRentalStarted, BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
     BikeRentalNatsRuntime,
-    demo::demo_stream,
+    demo::{available_fleet_fixture, demo_stream, rented_fleet_fixture},
     rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
     tracer,
 };
@@ -164,7 +164,8 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
         let mut builder = tracer::builder(history)?
             .with_test_event_store(test_store)
             .with_test_transport(test_runtime.transport())
-            .with_test_fixture("demo-fleet", test_reset)
+            .with_test_scenario_reset(test_reset)
+            .with_test_fixtures([available_fleet_fixture(), rented_fleet_fixture()])
             .with_test_repository(test_repository)
             .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
         builder.register_json::<RentBicycle>()?;
@@ -286,7 +287,10 @@ async fn run_isolation_test(
         "Dispatch command unexpectedly used the test subject scope",
     )?;
     ensure(
-        production_runtime.reset().await.is_err(),
+        production_runtime
+            .reset(&available_fleet_fixture().materialize()?)
+            .await
+            .is_err(),
         "normal Dispatch resources accepted a destructive test reset",
     )?;
     let test_observer = Arc::new(RecordingObserver::default());
@@ -366,7 +370,9 @@ async fn run_isolation_test(
             .await?,
         "pre-reset fixture stream was already absent",
     )?;
-    test_runtime.reset().await?;
+    test_runtime
+        .reset(&available_fleet_fixture().materialize()?)
+        .await?;
     ensure(
         test_runtime.store().load(&demo_stream()).await?.len() == 1,
         "Test reset did not restore deterministic seed history",

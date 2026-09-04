@@ -4,12 +4,12 @@
 )]
 
 use bike_rental::{
-    demo::{demo_stream, seed_demo},
+    demo::{demo_stream, materialize_fixture, rented_fleet_fixture, seed_demo},
     rental_fleet::{
         self, BicycleAdded, BicycleAvailability, BicycleCondition, BicycleId, BicycleNotRented,
         BicycleRented, BicycleReturned, BicycleStatus, BicycleUnavailable, FleetId,
         ImportedBicycle, RentBicycle, RentalFleetActions, RentalFleetAggregate,
-        RentalFleetImported,
+        RentalFleetImported, ReturnBicycle,
     },
 };
 use rostfrei::{
@@ -164,4 +164,43 @@ async fn rejects_renting_the_same_bicycle_twice_when_commands_are_executed() {
         }
     }
     assert_eq!(store.load(&demo_stream()).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn rented_fixture_rehydrates_the_two_event_return_state() {
+    let store = InMemoryEventStore::new();
+    let fixture = rented_fleet_fixture().materialize().unwrap();
+    materialize_fixture(&store, &fixture).await.unwrap();
+
+    let history = store.load(&demo_stream()).await.unwrap();
+    assert_eq!(history.len(), 2);
+    for (recorded, preview) in history.iter().zip(&fixture.streams[0].events) {
+        assert_eq!(recorded.event_id().as_str(), preview.event_id);
+        assert_eq!(recorded.stream_version().value(), preview.stream_version);
+    }
+    assert_eq!(history[0].event_type(), "rental-fleet-imported");
+    assert_eq!(history[1].event_type(), "bicycle-rented");
+    assert!(history.iter().all(|event| event.correlation_id().is_none()));
+    assert!(history.iter().all(|event| event.causation_id().is_none()));
+
+    let outcome = Executor::new(store.clone())
+        .execute::<RentalFleetAggregate, _>(
+            ExecutionMetadata::new(
+                demo_stream(),
+                OperationId::new("return-fixture-bike").unwrap(),
+                ContentFingerprint::digest("return-fixture-bike"),
+            ),
+            &ReturnBicycle {
+                bicycle_id: BicycleId::new("bike-42").unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        CommandOutcome::Accepted(CommandReceipt::Appended(_))
+    ));
+    let history = store.load(&demo_stream()).await.unwrap();
+    assert_eq!(history.len(), 3);
+    assert_eq!(history[2].event_type(), "bicycle-returned");
 }

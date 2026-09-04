@@ -2,7 +2,7 @@ schemaVersion: 1
 id: reject-unavailable-bicycle
 name: Reject a maintenance-required bicycle
 given:
-  fixture: demo-fleet
+  fixture: available-fleet
 when:
   command:
     name: rent-bicycle

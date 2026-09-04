@@ -27,7 +27,8 @@ use rostfrei_nats::{
 use rostfrei_tracer::{
     CommandBusTransport, CommandInvocation, CommandTransport, CommandTransportError,
     CommandTransportObserver, CorrelationError, CorrelationObserver, DomainEventObservation,
-    IntegrationEventObservation, TestScenarioReset, TestScenarioResetError,
+    FIXTURE_OPERATION_ID_PREFIX, IntegrationEventObservation, MaterializedTestFixture,
+    TestScenarioReset, TestScenarioResetError,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,7 +39,7 @@ use tokio::{
 };
 
 use crate::{
-    demo::{SeedError, seed_demo},
+    demo::{SeedError, materialize_fixture, seed_demo},
     rental_fleet::{
         AddBicycle, BicycleId, BicycleRented, FleetId, RentBicycle, RentalFleetAggregate,
         ReturnBicycle,
@@ -478,6 +479,14 @@ impl DomainEventHandler<BicycleRented> for BicycleRentedIntegrationMapper {
         &self,
         event: &CommittedDomainEvent<'_, BicycleRented>,
     ) -> Result<(), DomainEventHandlerError> {
+        if event
+            .recorded()
+            .operation_id()
+            .as_str()
+            .starts_with(FIXTURE_OPERATION_ID_PREFIX)
+        {
+            return Ok(());
+        }
         let committed = CommittedEventContext::new(event.recorded())
             .map_err(|error| classify_integration_event_error(&error))?;
         self.bus
@@ -905,7 +914,19 @@ impl BikeRentalNatsRuntime {
         Ok(())
     }
 
-    async fn reset_scope(&self) -> Result<(), BikeRentalNatsError> {
+    async fn materialize_fixture(
+        &self,
+        fixture: &MaterializedTestFixture,
+    ) -> Result<(), BikeRentalNatsError> {
+        materialize_fixture(&self.store, fixture)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn reset_scope(
+        &self,
+        fixture: &MaterializedTestFixture,
+    ) -> Result<(), BikeRentalNatsError> {
         if self.config.context().traffic_scope() != TrafficScope::Test {
             return Err(BikeRentalNatsError::ResetRequiresTestScope);
         }
@@ -913,7 +934,7 @@ impl BikeRentalNatsRuntime {
         self.stop_workers_in_scope().await;
         self.delete_resources().await?;
         self.config.provision(&self.connection).await?;
-        self.seed_demo().await?;
+        self.materialize_fixture(fixture).await?;
         self.start_workers_in_scope().await
     }
 }
@@ -996,8 +1017,8 @@ async fn observe_integration_message(
 
 #[async_trait]
 impl TestScenarioReset for BikeRentalNatsRuntime {
-    async fn reset(&self) -> Result<(), TestScenarioResetError> {
-        self.reset_scope()
+    async fn reset(&self, fixture: &MaterializedTestFixture) -> Result<(), TestScenarioResetError> {
+        self.reset_scope(fixture)
             .await
             .map_err(|error| TestScenarioResetError::Failed(error.to_string()))
     }

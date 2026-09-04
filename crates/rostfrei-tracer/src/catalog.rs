@@ -109,7 +109,7 @@ pub fn build_catalog(
     test_enabled: bool,
     dispatch_enabled: bool,
     reset_enabled: bool,
-    test_fixture: Option<&str>,
+    test_fixtures: Vec<String>,
     test_repository_enabled: bool,
 ) -> TracerCatalog {
     let mut contexts = BTreeMap::<String, ContextBuilder>::new();
@@ -223,8 +223,8 @@ pub fn build_catalog(
             })
             .collect(),
         test_scenario: reset_enabled.then(|| CatalogTestScenario {
-            reset_href: "/test-scenario/reset".to_owned(),
-            fixtures: test_fixture.into_iter().map(str::to_owned).collect(),
+            reset_href: "/test-scenario/reset/{fixture}".to_owned(),
+            fixtures: test_fixtures,
         }),
         test_repository: test_repository_enabled.then(|| CatalogTestRepository {
             definitions_href: "/tests".to_owned(),

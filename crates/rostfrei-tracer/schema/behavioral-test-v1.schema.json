@@ -98,13 +98,6 @@
       "properties": {
         "fixture": {
           "$ref": "#/$defs/nonEmptyString"
-        },
-        "commands": {
-          "description": "Ordered setup commands. Each setup command must be accepted before the subject command runs.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/command"
-          }
         }
       },
       "additionalProperties": false

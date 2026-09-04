@@ -1,7 +1,9 @@
 use std::{env, path::PathBuf, sync::Arc};
 
 use bike_rental::{
-    APPLICATION_NAME, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime, domain_model,
+    APPLICATION_NAME, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
+    demo::{available_fleet_fixture, rented_fleet_fixture},
+    domain_model,
     rental_fleet::{AddBicycle, RentBicycle, ReturnBicycle},
     tracer::{self, RentBicycleInputOptions, ReturnBicycleInputOptions},
 };
@@ -33,7 +35,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?,
     );
-    test_runtime.reset().await?;
+    let available_fixture = available_fleet_fixture();
+    let rented_fixture = rented_fleet_fixture();
+    test_runtime
+        .reset(&available_fixture.materialize()?)
+        .await?;
 
     let dispatch_runtime = Arc::new(
         BikeRentalNatsRuntime::provision_with_resource_limits(
@@ -58,7 +64,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_stream_directory(test_store)
         .with_test_transport(test_runtime.transport())
         .with_dispatch_transport(dispatch_runtime.transport())
-        .with_test_fixture("demo-fleet", test_reset)
+        .with_test_scenario_reset(test_reset)
+        .with_test_fixtures([available_fixture, rented_fixture])
         .with_test_repository(test_repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder.register_json::<RentBicycle>()?;

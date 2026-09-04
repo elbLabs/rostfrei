@@ -48,6 +48,12 @@ pub enum RuntimeRegistrationError {
     ResetWithoutTestTransport,
     #[error("a test repository requires a named test fixture")]
     TestRepositoryWithoutFixture,
+    #[error("test fixture `{name}` is invalid: {message}")]
+    InvalidTestFixture { name: String, message: String },
+    #[error("test fixture `{0}` is registered more than once")]
+    DuplicateTestFixture(String),
+    #[error("test `{test_id}` references unknown fixture `{fixture}`")]
+    UnknownTestFixture { test_id: String, fixture: String },
     #[error("test definition `{id}` is invalid: {message}")]
     InvalidTestDefinition { id: String, message: String },
 }

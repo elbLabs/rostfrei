@@ -13,11 +13,15 @@ pub mod transport;
 pub mod http;
 
 pub use behavioral::{
-    FilesystemTestRepository, TestAggregate, TestCommand, TestDefinition, TestDefinitionCollection,
-    TestDefinitionRevision, TestDefinitionSummary, TestExpectationResult, TestGiven, TestOutcome,
-    TestRejection, TestReport, TestReportFailure, TestReportStatus, TestRepository,
-    TestRepositoryError, TestThen, TestTimeout, TestTimeoutParseError, TestTrace, TestWhen,
-    TraceExpectation, outcome_matches, payload_matches_subset, trace_expectation_matches,
+    FIXTURE_OPERATION_ID_PREFIX, FilesystemTestRepository, MAX_EXPOSED_FIXTURE_PAYLOAD_BYTES,
+    MAX_FIXTURE_EVENTS, MAX_FIXTURE_PAYLOAD_BYTES, MAX_FIXTURE_STREAMS, MaterializedFixtureEvent,
+    MaterializedFixtureStream, MaterializedTestFixture, ResolvedTestDefinition, TestAggregate,
+    TestCommand, TestDefinition, TestDefinitionCollection, TestDefinitionRevision,
+    TestDefinitionSummary, TestExpectationResult, TestFixture, TestFixtureError, TestFixtureEvent,
+    TestFixtureStream, TestGiven, TestOutcome, TestRejection, TestReport, TestReportFailure,
+    TestReportStatus, TestRepository, TestRepositoryError, TestThen, TestTimeout,
+    TestTimeoutParseError, TestTrace, TestWhen, TraceExpectation, outcome_matches,
+    payload_matches_subset, trace_expectation_matches,
 };
 pub use catalog::{
     AggregateInstanceCollection, AggregateInstanceSummary, CatalogAggregate, CatalogCommand,

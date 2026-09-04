@@ -8,7 +8,10 @@ use std::{
     time::Duration,
 };
 
-use rostfrei_core::ContentFingerprint;
+use rostfrei_core::{
+    AggregateId, AggregateType, ContentFingerprint, ExecutionMetadata, MAX_BATCH_PAYLOAD_LEN,
+    MAX_EVENT_PAYLOAD_LEN, MAX_EVENT_TYPE_LEN, MAX_EVENTS_PER_BATCH, OperationId, StreamId,
+};
 use serde::{
     Deserialize, Serialize,
     de::{self, Deserializer},
@@ -21,7 +24,6 @@ use crate::{CorrelationCommandOutcome, CorrelationEvent, CorrelationEventKind};
 
 const TEST_DEFINITION_SCHEMA_VERSION: u32 = 1;
 const MAX_TEST_TIMEOUT_MILLIS: u64 = 60_000;
-const MAX_TEST_SETUP_COMMANDS: usize = 32;
 const MAX_TEST_DEFINITIONS: usize = 256;
 const MAX_TEST_DEFINITION_BYTES: usize = 1024 * 1024;
 const MAX_TEST_REPOSITORY_BYTES: usize = 8 * 1024 * 1024;
@@ -51,21 +53,246 @@ impl TestDefinition {
 pub struct TestGiven {
     #[serde(deserialize_with = "deserialize_nonempty")]
     pub fixture: String,
-    #[serde(default, deserialize_with = "deserialize_setup_commands")]
-    pub commands: Vec<TestCommand>,
 }
 
-fn deserialize_setup_commands<'de, D>(deserializer: D) -> Result<Vec<TestCommand>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let commands = Vec::<TestCommand>::deserialize(deserializer)?;
-    if commands.len() > MAX_TEST_SETUP_COMMANDS {
-        return Err(de::Error::custom(format!(
-            "setup contains more than {MAX_TEST_SETUP_COMMANDS} commands"
-        )));
+pub const FIXTURE_OPERATION_ID_PREFIX: &str = "fixture-";
+pub const MAX_FIXTURE_STREAMS: usize = 32;
+pub const MAX_FIXTURE_EVENTS: usize = 256;
+pub const MAX_FIXTURE_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_EXPOSED_FIXTURE_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TestFixture {
+    pub name: String,
+    pub revision: String,
+    pub streams: Vec<TestFixtureStream>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TestFixtureStream {
+    pub aggregate_type: String,
+    pub aggregate_id: String,
+    pub events: Vec<TestFixtureEvent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TestFixtureEvent {
+    pub event_type: String,
+    pub schema_version: u32,
+    pub stream_version: u64,
+    pub payload: Value,
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum TestFixtureError {
+    #[error("fixture name and revision must not be empty")]
+    EmptyIdentity,
+    #[error("fixture must contain between 1 and {MAX_FIXTURE_STREAMS} streams")]
+    InvalidStreamCount,
+    #[error("fixture contains duplicate stream `{aggregate_type}/{aggregate_id}`")]
+    DuplicateStream {
+        aggregate_type: String,
+        aggregate_id: String,
+    },
+    #[error("fixture stream identities and event types must not be empty")]
+    EmptyStreamIdentity,
+    #[error("fixture must contain between 1 and {MAX_FIXTURE_EVENTS} events")]
+    InvalidEventCount,
+    #[error("fixture event schema versions must be greater than zero")]
+    InvalidSchemaVersion,
+    #[error("fixture stream versions must be contiguous and start at 1")]
+    InvalidStreamVersion,
+    #[error("fixture event payload is not valid JSON: {0}")]
+    InvalidPayload(String),
+    #[error("fixture payloads exceed {MAX_FIXTURE_PAYLOAD_BYTES} bytes")]
+    PayloadTooLarge,
+}
+
+impl TestFixture {
+    pub fn validate(&self) -> Result<(), TestFixtureError> {
+        if self.name.trim().is_empty() || ContentFingerprint::from_hex(&self.revision).is_err() {
+            return Err(TestFixtureError::EmptyIdentity);
+        }
+        if self.streams.is_empty() || self.streams.len() > MAX_FIXTURE_STREAMS {
+            return Err(TestFixtureError::InvalidStreamCount);
+        }
+        let mut streams = std::collections::BTreeSet::new();
+        let mut event_count = 0_usize;
+        let mut payload_bytes = 0_usize;
+        for stream in &self.streams {
+            if stream.aggregate_type.trim().is_empty() || stream.aggregate_id.trim().is_empty() {
+                return Err(TestFixtureError::EmptyStreamIdentity);
+            }
+            if !streams.insert((&stream.aggregate_type, &stream.aggregate_id)) {
+                return Err(TestFixtureError::DuplicateStream {
+                    aggregate_type: stream.aggregate_type.clone(),
+                    aggregate_id: stream.aggregate_id.clone(),
+                });
+            }
+            if stream.events.is_empty() || stream.events.len() > MAX_EVENTS_PER_BATCH {
+                return Err(TestFixtureError::InvalidEventCount);
+            }
+            let mut stream_payload_bytes = 0_usize;
+            event_count = event_count
+                .checked_add(stream.events.len())
+                .filter(|count| *count <= MAX_FIXTURE_EVENTS)
+                .ok_or(TestFixtureError::InvalidEventCount)?;
+            for (index, event) in stream.events.iter().enumerate() {
+                if event.event_type.is_empty()
+                    || event.event_type.len() > MAX_EVENT_TYPE_LEN
+                    || event.event_type.trim() != event.event_type
+                    || event.event_type.chars().any(char::is_control)
+                {
+                    return Err(TestFixtureError::EmptyStreamIdentity);
+                }
+                if event.schema_version == 0 {
+                    return Err(TestFixtureError::InvalidSchemaVersion);
+                }
+                let expected_version = u64::try_from(index)
+                    .ok()
+                    .and_then(|index| index.checked_add(1))
+                    .ok_or(TestFixtureError::InvalidStreamVersion)?;
+                if event.stream_version != expected_version {
+                    return Err(TestFixtureError::InvalidStreamVersion);
+                }
+                let bytes = serde_json::to_vec(&event.payload)
+                    .map_err(|error| TestFixtureError::InvalidPayload(error.to_string()))?;
+                if bytes.len() > MAX_EVENT_PAYLOAD_LEN {
+                    return Err(TestFixtureError::PayloadTooLarge);
+                }
+                stream_payload_bytes = stream_payload_bytes
+                    .checked_add(bytes.len())
+                    .filter(|bytes| *bytes <= MAX_BATCH_PAYLOAD_LEN)
+                    .ok_or(TestFixtureError::PayloadTooLarge)?;
+                payload_bytes = payload_bytes
+                    .checked_add(bytes.len())
+                    .filter(|bytes| *bytes <= MAX_FIXTURE_PAYLOAD_BYTES)
+                    .ok_or(TestFixtureError::PayloadTooLarge)?;
+            }
+        }
+        Ok(())
     }
-    Ok(commands)
+
+    pub fn materialize(&self) -> Result<MaterializedTestFixture, TestFixtureError> {
+        self.validate()?;
+        Ok(MaterializedTestFixture {
+            name: self.name.clone(),
+            revision: self.revision.clone(),
+            streams: self
+                .streams
+                .iter()
+                .map(|stream| materialize_stream(self, stream))
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaterializedTestFixture {
+    pub name: String,
+    pub revision: String,
+    pub streams: Vec<MaterializedFixtureStream>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaterializedFixtureStream {
+    pub aggregate_type: String,
+    pub aggregate_id: String,
+    #[serde(skip_serializing)]
+    pub operation_id: String,
+    #[serde(skip_serializing)]
+    pub commit_id: String,
+    #[serde(skip_serializing)]
+    pub operation_fingerprint: String,
+    pub events: Vec<MaterializedFixtureEvent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaterializedFixtureEvent {
+    pub event_id: String,
+    pub event_type: String,
+    pub schema_version: u32,
+    pub stream_version: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<Value>,
+}
+
+fn fixture_identity(parts: &[&str]) -> String {
+    let mut framed = Vec::new();
+    framed.extend_from_slice(b"rostfrei:test-fixture:v1");
+    for part in parts {
+        let length = u64::try_from(part.len()).unwrap_or(u64::MAX);
+        framed.extend_from_slice(&length.to_be_bytes());
+        framed.extend_from_slice(part.as_bytes());
+    }
+    ContentFingerprint::digest(framed).to_string()
+}
+
+fn materialize_stream(
+    fixture: &TestFixture,
+    stream: &TestFixtureStream,
+) -> Result<MaterializedFixtureStream, TestFixtureError> {
+    let operation_id = format!(
+        "{FIXTURE_OPERATION_ID_PREFIX}{}",
+        fixture_identity(&[
+            "operation",
+            &fixture.name,
+            &fixture.revision,
+            &stream.aggregate_type,
+            &stream.aggregate_id,
+        ])
+    );
+    let fingerprint_document = stream
+        .events
+        .iter()
+        .map(|event| {
+            serde_json::json!({
+                "eventType": event.event_type,
+                "schemaVersion": event.schema_version,
+                "payload": event.payload,
+            })
+        })
+        .collect::<Vec<_>>();
+    let operation_fingerprint = ContentFingerprint::digest(
+        serde_json::to_vec(&fingerprint_document)
+            .map_err(|error| TestFixtureError::InvalidPayload(error.to_string()))?,
+    );
+    let metadata = ExecutionMetadata::new(
+        StreamId::new(
+            AggregateType::new(&stream.aggregate_type)
+                .map_err(|_| TestFixtureError::EmptyStreamIdentity)?,
+            AggregateId::new(&stream.aggregate_id)
+                .map_err(|_| TestFixtureError::EmptyStreamIdentity)?,
+        ),
+        OperationId::new(&operation_id).map_err(|_| TestFixtureError::EmptyStreamIdentity)?,
+        operation_fingerprint,
+    );
+    let events = stream
+        .events
+        .iter()
+        .enumerate()
+        .map(|(index, event)| {
+            let ordinal = u32::try_from(index).map_err(|_| TestFixtureError::InvalidEventCount)?;
+            Ok(MaterializedFixtureEvent {
+                event_id: metadata.event_id(ordinal).to_string(),
+                event_type: event.event_type.clone(),
+                schema_version: event.schema_version,
+                stream_version: event.stream_version,
+                payload: Some(event.payload.clone()),
+            })
+        })
+        .collect::<Result<Vec<_>, TestFixtureError>>()?;
+    Ok(MaterializedFixtureStream {
+        aggregate_type: stream.aggregate_type.clone(),
+        aggregate_id: stream.aggregate_id.clone(),
+        operation_id,
+        commit_id: metadata.commit_id().to_string(),
+        operation_fingerprint: operation_fingerprint.to_string(),
+        events,
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -310,6 +537,14 @@ pub struct TestDefinitionRevision {
     pub definition: TestDefinition,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedTestDefinition {
+    pub revision: String,
+    pub definition: TestDefinition,
+    pub fixture: MaterializedTestFixture,
+}
+
 impl TestDefinitionRevision {
     pub fn summary(&self) -> TestDefinitionSummary {
         TestDefinitionSummary {
@@ -355,6 +590,7 @@ pub struct TestReport {
     pub run_id: String,
     pub test_id: String,
     pub revision: String,
+    pub fixture: MaterializedTestFixture,
     pub status: TestReportStatus,
     pub operation_id: String,
     pub correlation_id: String,
@@ -692,7 +928,6 @@ then:
     #[test]
     fn parses_and_serializes_three_document_styles() {
         let minimal = TestDefinition::from_yaml(MINIMAL_ACCEPTED).expect("minimal definition");
-        assert!(minimal.given.commands.is_empty());
         assert!(minimal.then.trace.contains.is_empty());
         assert!(minimal.then.outcome.is_accepted());
 
@@ -720,31 +955,16 @@ then:
     }
 
     #[test]
-    fn parses_setup_commands_and_canonicalizes_timeout() {
-        let definition = TestDefinition::from_yaml(MINIMAL_ACCEPTED.replace(
+    fn setup_commands_are_not_part_of_the_contract() {
+        let definition = MINIMAL_ACCEPTED.replace(
             "  fixture: available-bike",
-            "  fixture: available-bike\n  commands:\n    - name: register-bike\n      schemaVersion: 1\n      aggregate:\n        type: rental/bicycle\n        id: bicycle-1\n      payload: {}",
-        ))
-        .expect("definition with setup command");
-        assert_eq!(definition.given.commands.len(), 1);
+            "  fixture: available-bike\n  commands: []",
+        );
+        assert!(TestDefinition::from_yaml(definition).is_err());
 
         let timeout: TestTimeout = "1000ms".parse().expect("timeout");
         assert_eq!(timeout.as_duration(), Duration::from_secs(1));
         assert_eq!(serde_yaml::to_string(&timeout).unwrap(), "1s\n");
-    }
-
-    #[test]
-    fn rejects_more_than_thirty_two_setup_commands() {
-        let command = "    - name: register-bike\n      schemaVersion: 1\n      aggregate:\n        type: rental/bicycle\n        id: bicycle-1\n      payload: {}\n";
-        let commands = (0..=MAX_TEST_SETUP_COMMANDS)
-            .map(|_| command)
-            .collect::<String>();
-        let yaml = MINIMAL_ACCEPTED.replace(
-            "  fixture: available-bike",
-            &format!("  fixture: available-bike\n  commands:\n{commands}"),
-        );
-
-        assert!(TestDefinition::from_yaml(yaml).is_err());
     }
 
     #[test]
@@ -993,5 +1213,79 @@ then:
                 }
             }))
         ));
+    }
+    fn fixture_with_streams(streams: Vec<TestFixtureStream>) -> TestFixture {
+        TestFixture {
+            name: "fleet".to_owned(),
+            revision: ContentFingerprint::digest("fleet-v1").to_string(),
+            streams,
+        }
+    }
+
+    fn fixture_stream(aggregate_id: &str, versions: &[u64]) -> TestFixtureStream {
+        TestFixtureStream {
+            aggregate_type: "rental/fleet".to_owned(),
+            aggregate_id: aggregate_id.to_owned(),
+            events: versions
+                .iter()
+                .map(|version| TestFixtureEvent {
+                    event_type: "fleet-imported".to_owned(),
+                    schema_version: 1,
+                    stream_version: *version,
+                    payload: json!({ "aggregate": aggregate_id, "version": version }),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn fixture_materialization_is_deterministic_and_stream_local() {
+        let fixture = fixture_with_streams(vec![
+            fixture_stream("north", &[1, 2]),
+            fixture_stream("south", &[1]),
+        ]);
+        let first = fixture.materialize().unwrap();
+        let second = fixture.materialize().unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(first.streams[0].events[0].stream_version, 1);
+        assert_eq!(first.streams[0].events[1].stream_version, 2);
+        assert_eq!(first.streams[1].events[0].stream_version, 1);
+        assert_ne!(
+            first.streams[0].events[0].event_id,
+            first.streams[1].events[0].event_id
+        );
+    }
+
+    #[test]
+    fn fixture_validation_rejects_duplicates_invalid_versions_and_limits() {
+        let duplicate = fixture_stream("north", &[1]);
+        assert!(matches!(
+            fixture_with_streams(vec![duplicate.clone(), duplicate]).validate(),
+            Err(TestFixtureError::DuplicateStream { .. })
+        ));
+        assert_eq!(
+            fixture_with_streams(vec![fixture_stream("north", &[2])]).validate(),
+            Err(TestFixtureError::InvalidStreamVersion)
+        );
+        let too_many_streams = (0..=MAX_FIXTURE_STREAMS)
+            .map(|index| fixture_stream(&format!("fleet-{index}"), &[1]))
+            .collect();
+        assert_eq!(
+            fixture_with_streams(too_many_streams).validate(),
+            Err(TestFixtureError::InvalidStreamCount)
+        );
+        let too_many_events =
+            (1..=u64::try_from(MAX_EVENTS_PER_BATCH + 1).unwrap()).collect::<Vec<_>>();
+        assert_eq!(
+            fixture_with_streams(vec![fixture_stream("north", &too_many_events)]).validate(),
+            Err(TestFixtureError::InvalidEventCount)
+        );
+        let mut oversized = fixture_stream("north", &[1]);
+        oversized.events[0].payload = json!({ "value": "x".repeat(MAX_EVENT_PAYLOAD_LEN) });
+        assert_eq!(
+            fixture_with_streams(vec![oversized]).validate(),
+            Err(TestFixtureError::PayloadTooLarge)
+        );
     }
 }

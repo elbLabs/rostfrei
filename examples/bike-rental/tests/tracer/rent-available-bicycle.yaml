@@ -2,7 +2,7 @@ schemaVersion: 1
 id: rent-available-bicycle
 name: Rent an available bicycle
 given:
-  fixture: demo-fleet
+  fixture: available-fleet
 when:
   command:
     name: rent-bicycle

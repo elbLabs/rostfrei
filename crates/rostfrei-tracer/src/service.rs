@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -26,8 +26,9 @@ use crate::{
     OperationResult, OperationSnapshot, OperationSubscription, PredictedDomainEvent,
     RuntimeRegistrationError, SubscriptionError,
     behavioral::{
+        MAX_EXPOSED_FIXTURE_PAYLOAD_BYTES, MaterializedTestFixture, ResolvedTestDefinition,
         TestCommand, TestDefinitionCollection, TestDefinitionRevision, TestExpectationResult,
-        TestOutcome, TestReport, TestReportFailure, TestReportStatus, TestRepository,
+        TestFixture, TestOutcome, TestReport, TestReportFailure, TestReportStatus, TestRepository,
         TestRepositoryError, TraceExpectation,
     },
     catalog::{
@@ -59,13 +60,17 @@ pub struct SimulationRequest {
 
 #[async_trait]
 pub trait TestScenarioReset: Send + Sync {
-    async fn reset(&self) -> Result<(), TestScenarioResetError>;
+    /// Recreates isolated Test infrastructure, materializes exactly `fixture`, and starts
+    /// workers only after all fixture streams have been written.
+    async fn reset(&self, fixture: &MaterializedTestFixture) -> Result<(), TestScenarioResetError>;
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum TestScenarioResetError {
     #[error("test scenario reset is not configured")]
     Unavailable,
+    #[error("test fixture `{0}` is not registered")]
+    UnknownFixture(String),
     #[error("test scenario reset failed: {0}")]
     Failed(String),
 }
@@ -76,16 +81,6 @@ pub enum TestRunError {
     Repository(#[from] TestRepositoryError),
     #[error(transparent)]
     Reset(#[from] TestScenarioResetError),
-    #[error(
-        "test definition `{test_id}` references fixture `{actual}`, but Tracer provides `{expected}`"
-    )]
-    FixtureMismatch {
-        test_id: String,
-        expected: String,
-        actual: String,
-    },
-    #[error("test setup command {index} was rejected")]
-    SetupRejected { index: usize },
     #[error("test command failed: {0}")]
     CommandFailed(String),
     #[error("test correlation closed before evaluation completed")]
@@ -217,7 +212,7 @@ pub struct TracerBuilder {
     test_transport: Option<Arc<dyn CommandTransport>>,
     dispatch_transport: Option<Arc<dyn CommandTransport>>,
     test_scenario_reset: Option<Arc<dyn TestScenarioReset>>,
-    test_fixture: Option<String>,
+    test_fixtures: Vec<TestFixture>,
     test_repository: Option<Arc<dyn TestRepository>>,
     bindings: RuntimeBindings,
     domain_model: Option<Value>,
@@ -235,7 +230,7 @@ impl TracerBuilder {
             test_transport: None,
             dispatch_transport: None,
             test_scenario_reset: None,
-            test_fixture: None,
+            test_fixtures: Vec::new(),
             test_repository: None,
             bindings: RuntimeBindings::new(registry),
             domain_model: None,
@@ -287,13 +282,14 @@ impl TracerBuilder {
     }
 
     #[must_use]
-    pub fn with_test_fixture(
-        mut self,
-        name: impl Into<String>,
-        reset: Arc<dyn TestScenarioReset>,
-    ) -> Self {
-        self.test_fixture = Some(name.into());
-        self.test_scenario_reset = Some(reset);
+    pub fn with_test_fixture(mut self, fixture: TestFixture) -> Self {
+        self.test_fixtures.push(fixture);
+        self
+    }
+
+    #[must_use]
+    pub fn with_test_fixtures(mut self, fixtures: impl IntoIterator<Item = TestFixture>) -> Self {
+        self.test_fixtures.extend(fixtures);
         self
     }
 
@@ -363,19 +359,55 @@ impl TracerBuilder {
         if self.test_scenario_reset.is_some() && self.test_transport.is_none() {
             return Err(RuntimeRegistrationError::ResetWithoutTestTransport);
         }
-        if self.test_repository.is_some()
-            && self
-                .test_fixture
-                .as_deref()
-                .is_none_or(|fixture| fixture.trim().is_empty())
-        {
+        if self.test_repository.is_some() && self.test_fixtures.is_empty() {
             return Err(RuntimeRegistrationError::TestRepositoryWithoutFixture);
         }
-        if let (Some(repository), Some(fixture)) =
-            (self.test_repository.as_ref(), self.test_fixture.as_deref())
-        {
-            validate_test_repository(repository.as_ref(), fixture, &self.bindings.simulators)?;
+        let mut test_fixtures = BTreeMap::new();
+        for fixture in self.test_fixtures {
+            fixture
+                .validate()
+                .map_err(|error| RuntimeRegistrationError::InvalidTestFixture {
+                    name: fixture.name.clone(),
+                    message: error.to_string(),
+                })?;
+            for stream in &fixture.streams {
+                if !self
+                    .bindings
+                    .registry
+                    .aggregates()
+                    .any(|aggregate| aggregate == stream.aggregate_type)
+                {
+                    return Err(RuntimeRegistrationError::InvalidTestFixture {
+                        name: fixture.name.clone(),
+                        message: format!(
+                            "aggregate type `{}` is not in the domain registry",
+                            stream.aggregate_type
+                        ),
+                    });
+                }
+            }
+            let materialized = fixture.materialize().map_err(|error| {
+                RuntimeRegistrationError::InvalidTestFixture {
+                    name: fixture.name.clone(),
+                    message: error.to_string(),
+                }
+            })?;
+            if test_fixtures
+                .insert(materialized.name.clone(), materialized)
+                .is_some()
+            {
+                return Err(RuntimeRegistrationError::DuplicateTestFixture(fixture.name));
+            }
         }
+        let test_definitions = if let Some(repository) = self.test_repository.as_ref() {
+            validate_test_repository(
+                repository.as_ref(),
+                &test_fixtures,
+                &self.bindings.simulators,
+            )?
+        } else {
+            BTreeMap::new()
+        };
         let test_enabled = self.test_event_store.is_some() && self.test_transport.is_some();
         let catalog = build_catalog(
             &self.bindings.registry,
@@ -383,7 +415,7 @@ impl TracerBuilder {
             test_enabled,
             self.dispatch_transport.is_some(),
             self.test_scenario_reset.is_some(),
-            self.test_fixture.as_deref(),
+            test_fixtures.keys().cloned().collect(),
             self.test_repository.is_some(),
         );
         let maximum_concurrent_operations = self
@@ -398,8 +430,8 @@ impl TracerBuilder {
                 test_transport: self.test_transport,
                 dispatch_transport: self.dispatch_transport,
                 test_scenario_reset: self.test_scenario_reset,
-                test_fixture: self.test_fixture,
-                test_repository: self.test_repository,
+                test_fixtures,
+                test_definitions,
                 test_scenario_gate: Arc::new(RwLock::new(())),
                 test_run_gate: Mutex::new(()),
                 simulators: self.bindings.simulators,
@@ -424,9 +456,10 @@ impl TracerBuilder {
 
 fn validate_test_repository(
     repository: &dyn TestRepository,
-    fixture: &str,
+    fixtures: &BTreeMap<String, MaterializedTestFixture>,
     simulators: &HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
-) -> Result<(), RuntimeRegistrationError> {
+) -> Result<BTreeMap<String, TestDefinitionRevision>, RuntimeRegistrationError> {
+    let mut definitions = BTreeMap::new();
     for summary in repository.list().items {
         let revision = repository.get(&summary.id).map_err(|error| {
             RuntimeRegistrationError::InvalidTestDefinition {
@@ -435,44 +468,45 @@ fn validate_test_repository(
             }
         })?;
         let definition = &revision.definition;
-        if definition.given.fixture != fixture {
-            return Err(RuntimeRegistrationError::InvalidTestDefinition {
-                id: definition.id.clone(),
-                message: format!(
-                    "fixture `{}` is unavailable; configured fixture is `{fixture}`",
-                    definition.given.fixture
-                ),
+        if !fixtures.contains_key(&definition.given.fixture) {
+            return Err(RuntimeRegistrationError::UnknownTestFixture {
+                test_id: definition.id.clone(),
+                fixture: definition.given.fixture.clone(),
             });
         }
-        for command in definition
-            .given
-            .commands
-            .iter()
-            .chain(std::iter::once(&definition.when.command))
-        {
-            let key = CommandKey::new(
-                &command.aggregate.aggregate_type,
-                &command.name,
-                command.schema_version,
-            );
-            let simulator = simulators.get(&key).ok_or_else(|| {
-                RuntimeRegistrationError::InvalidTestDefinition {
-                    id: definition.id.clone(),
-                    message: format!(
-                        "unknown command `{}` version {} for aggregate `{}`",
-                        command.name, command.schema_version, command.aggregate.aggregate_type
-                    ),
-                }
-            })?;
-            if let Err(message) = simulator.validate_payload(&command.payload) {
-                return Err(RuntimeRegistrationError::InvalidTestDefinition {
-                    id: definition.id.clone(),
-                    message: format!("invalid payload for command `{}`: {message}", command.name),
-                });
+        let command = &definition.when.command;
+        let key = CommandKey::new(
+            &command.aggregate.aggregate_type,
+            &command.name,
+            command.schema_version,
+        );
+        let simulator = simulators.get(&key).ok_or_else(|| {
+            RuntimeRegistrationError::InvalidTestDefinition {
+                id: definition.id.clone(),
+                message: format!(
+                    "unknown command `{}` version {} for aggregate `{}`",
+                    command.name, command.schema_version, command.aggregate.aggregate_type,
+                ),
             }
+        })?;
+        if let Err(message) = simulator.validate_payload(&command.payload) {
+            return Err(RuntimeRegistrationError::InvalidTestDefinition {
+                id: definition.id.clone(),
+                message: format!("invalid payload for command `{}`: {message}", command.name),
+            });
+        }
+        let definition_id = definition.id.clone();
+        if definitions
+            .insert(definition_id.clone(), revision)
+            .is_some()
+        {
+            return Err(RuntimeRegistrationError::InvalidTestDefinition {
+                id: definition_id,
+                message: "duplicate test definition".to_owned(),
+            });
         }
     }
-    Ok(())
+    Ok(definitions)
 }
 
 struct TracerInner {
@@ -481,8 +515,8 @@ struct TracerInner {
     test_transport: Option<Arc<dyn CommandTransport>>,
     dispatch_transport: Option<Arc<dyn CommandTransport>>,
     test_scenario_reset: Option<Arc<dyn TestScenarioReset>>,
-    test_fixture: Option<String>,
-    test_repository: Option<Arc<dyn TestRepository>>,
+    test_fixtures: BTreeMap<String, MaterializedTestFixture>,
+    test_definitions: BTreeMap<String, TestDefinitionRevision>,
     test_scenario_gate: Arc<RwLock<()>>,
     test_run_gate: Mutex<()>,
     simulators: HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
@@ -605,59 +639,79 @@ impl Tracer {
     }
 
     pub fn test_definitions(&self) -> Result<TestDefinitionCollection, TestRepositoryError> {
-        self.inner
-            .test_repository
-            .as_ref()
-            .map(|repository| repository.list())
-            .ok_or(TestRepositoryError::Unavailable)
+        if self.inner.test_definitions.is_empty() {
+            return Err(TestRepositoryError::Unavailable);
+        }
+        Ok(TestDefinitionCollection {
+            items: self
+                .inner
+                .test_definitions
+                .values()
+                .map(TestDefinitionRevision::summary)
+                .collect(),
+        })
     }
 
     pub fn test_definition(
         &self,
         test_id: &str,
-    ) -> Result<TestDefinitionRevision, TestRepositoryError> {
-        self.inner
-            .test_repository
-            .as_ref()
-            .ok_or(TestRepositoryError::Unavailable)?
+    ) -> Result<ResolvedTestDefinition, TestRepositoryError> {
+        let revision = self
+            .inner
+            .test_definitions
             .get(test_id)
+            .ok_or_else(|| TestRepositoryError::NotFound(test_id.to_owned()))?;
+        let fixture = self
+            .inner
+            .test_fixtures
+            .get(&revision.definition.given.fixture)
+            .ok_or_else(|| TestRepositoryError::NotFound(test_id.to_owned()))?;
+        Ok(ResolvedTestDefinition {
+            revision: revision.revision.clone(),
+            definition: revision.definition.clone(),
+            fixture: self.exposed_fixture(fixture),
+        })
+    }
+
+    fn exposed_fixture(&self, fixture: &MaterializedTestFixture) -> MaterializedTestFixture {
+        let mut fixture = fixture.clone();
+        let mut exposed_bytes = 0_usize;
+        for event in fixture
+            .streams
+            .iter_mut()
+            .flat_map(|stream| &mut stream.events)
+        {
+            event.payload = event.payload.take().and_then(|payload| {
+                let payload = self
+                    .inner
+                    .trace_payload_policy
+                    .observed_event_payload(payload)?;
+                let bytes = serde_json::to_vec(&payload).ok()?.len();
+                exposed_bytes = exposed_bytes.checked_add(bytes)?;
+                (exposed_bytes <= MAX_EXPOSED_FIXTURE_PAYLOAD_BYTES).then_some(payload)
+            });
+        }
+        fixture
     }
 
     pub async fn run_test(&self, test_id: &str) -> Result<TestReport, TestRunError> {
-        let revision = self.test_definition(test_id)?;
+        let revision = self
+            .inner
+            .test_definitions
+            .get(test_id)
+            .cloned()
+            .ok_or_else(|| TestRepositoryError::NotFound(test_id.to_owned()))?;
         let fixture = self
             .inner
-            .test_fixture
-            .as_ref()
-            .ok_or(TestRepositoryError::Unavailable)?;
-        if revision.definition.given.fixture != *fixture {
-            return Err(TestRunError::FixtureMismatch {
-                test_id: test_id.to_owned(),
-                expected: fixture.clone(),
-                actual: revision.definition.given.fixture.clone(),
-            });
-        }
+            .test_fixtures
+            .get(&revision.definition.given.fixture)
+            .cloned()
+            .ok_or_else(|| TestRepositoryError::NotFound(test_id.to_owned()))?;
 
+        let _test_run = self.inner.test_run_gate.lock().await;
+        self.reset_test_scenario_unlocked(&fixture).await?;
         let sequence = self.inner.test_run_sequence.fetch_add(1, Ordering::Relaxed);
         let run_id = format!("test-run-{sequence}");
-        let _test_run = self.inner.test_run_gate.lock().await;
-        self.reset_test_scenario_unlocked().await?;
-
-        for (index, command) in revision.definition.given.commands.iter().enumerate() {
-            let evaluation = self
-                .evaluate_test_command(
-                    command,
-                    &TestOutcome::Accepted,
-                    &[],
-                    revision.definition.then.within.as_duration(),
-                    &format!("{run_id}-setup-{index}"),
-                )
-                .await?;
-            if evaluation.failure.is_some() {
-                return Err(TestRunError::SetupRejected { index });
-            }
-        }
-
         let evaluation = self
             .evaluate_test_command(
                 &revision.definition.when.command,
@@ -676,6 +730,7 @@ impl Tracer {
             run_id,
             test_id: revision.definition.id,
             revision: revision.revision,
+            fixture: self.exposed_fixture(&fixture),
             status,
             operation_id: evaluation.operation_id,
             correlation_id: evaluation.correlation_id,
@@ -885,12 +940,24 @@ impl Tracer {
             .map_err(|error| CommandInputError::Runtime(error.to_string()))
     }
 
-    pub async fn reset_test_scenario(&self) -> Result<(), TestScenarioResetError> {
+    pub async fn reset_test_scenario(
+        &self,
+        fixture_name: &str,
+    ) -> Result<(), TestScenarioResetError> {
+        let fixture = self
+            .inner
+            .test_fixtures
+            .get(fixture_name)
+            .cloned()
+            .ok_or_else(|| TestScenarioResetError::UnknownFixture(fixture_name.to_owned()))?;
         let _test_run = self.inner.test_run_gate.lock().await;
-        self.reset_test_scenario_unlocked().await
+        self.reset_test_scenario_unlocked(&fixture).await
     }
 
-    async fn reset_test_scenario_unlocked(&self) -> Result<(), TestScenarioResetError> {
+    async fn reset_test_scenario_unlocked(
+        &self,
+        fixture: &MaterializedTestFixture,
+    ) -> Result<(), TestScenarioResetError> {
         let reset = self
             .inner
             .test_scenario_reset
@@ -909,7 +976,7 @@ impl Tracer {
             .await
             .retain_dispatch_operations();
         self.inner.correlations.retain_dispatch_correlations();
-        let result = reset.reset().await;
+        let result = reset.reset(fixture).await;
         if result.is_ok() {
             self.inner
                 .test_scenario_healthy
