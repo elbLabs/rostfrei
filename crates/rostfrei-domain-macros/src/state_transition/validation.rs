@@ -16,6 +16,25 @@ pub fn validate(transition_set: &TransitionSet) -> syn::Result<()> {
             ));
             return Err(error);
         }
+
+        validate_unique_sources(transition)?;
+    }
+    Ok(())
+}
+
+fn validate_unique_sources(transition: &super::ir::Transition) -> syn::Result<()> {
+    let mut sources = HashMap::new();
+    for edge in &transition.edges {
+        let source = edge.from.to_string();
+        if let Some(previous) = sources.insert(source, edge) {
+            let mut error =
+                syn::Error::new_spanned(&edge.from, "duplicate source state for state transition");
+            error.combine(syn::Error::new_spanned(
+                &previous.from,
+                "the first edge from this state is declared here",
+            ));
+            return Err(error);
+        }
     }
     Ok(())
 }

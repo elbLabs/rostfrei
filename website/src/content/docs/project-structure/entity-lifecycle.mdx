@@ -4,7 +4,8 @@ An entity lifecycle keeps the entity's authoritative stored state and legal stat
 
 - Put the state enum in `lifecycle.rs` and the transition enum in `transition.rs`.
 - Give every state a stable ID and label.
-- Declare exactly one initial state and one source/target edge per transition.
+- Declare exactly one initial state and one or more source/target edges per transition.
+- Keep every `(transition, source state)` pair unambiguous.
 - Keep state-changing actions in separate capability directories.
 
 Path: `src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs`
@@ -22,6 +23,8 @@ pub enum BicycleStatus {
     Available,
     #[state(id = "rented", label = "Rented")]
     Rented,
+    #[state(id = "retired", label = "Retired")]
+    Retired,
 }
 ```
 
@@ -35,9 +38,20 @@ use rostfrei::StateTransition;
 #[derive(StateTransition)]
 #[transition(state = BicycleStatus)]
 pub enum BicycleRentalTransition {
-    #[edge(id = "rent", label = "Rent", from = Available, to = Rented)]
+    #[transition(id = "rent", label = "Rent")]
+    #[edge(from = Available, to = Rented)]
     Rent,
-    #[edge(id = "return", label = "Return", from = Rented, to = Available)]
+    #[transition(id = "return", label = "Return")]
+    #[edge(from = Rented, to = Available)]
     Return,
+    #[transition(id = "retire", label = "Retire")]
+    #[edge(from = Available, to = Retired)]
+    #[edge(from = Rented, to = Retired)]
+    Retire,
 }
 ```
+
+Transition metadata belongs to the logical trigger. Repeat `#[edge]` when the
+same trigger is legal from more than one source state. `Retire` above works
+from both `Available` and `Rented`. Duplicate source states on one transition
+are rejected at compile time.

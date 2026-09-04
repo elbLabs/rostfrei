@@ -5,8 +5,9 @@ compiled domain metadata without depending on a production application:
 
 - `RentalFleetAggregate` owns the fleet and its bicycles;
 - `RentBicycle`, `ReturnBicycle`, and `AddBicycle` are public aggregate commands;
+- `RetireBicycleAction` demonstrates one logical transition from either available or rented;
 - `RentalEligibilityDecision` composes bicycle condition policy with the rental lifecycle;
-- bicycle-added, rented, and returned events describe successful domain transitions;
+- bicycle-added, rented, returned, and retired events describe successful domain transitions;
 - fleet import is a privileged snapshot-restoration boundary that accepts existing lifecycle
   states but validates aggregate invariants before replacement;
 - unavailable and not-rented errors describe command rejections;

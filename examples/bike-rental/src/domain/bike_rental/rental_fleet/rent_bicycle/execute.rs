@@ -22,7 +22,7 @@ impl RentBicycleAction for AggregateInstance<RentalFleetAggregate> {
                     fleet_id: root.fleet_id.clone(),
                     bicycle_id: input,
                 },
-                RentalEligibilityOutcome::AlreadyRented
+                RentalEligibilityOutcome::UnavailableStatus
                 | RentalEligibilityOutcome::MaintenanceRequired => {
                     return Err(BicycleUnavailable { bicycle_id: input });
                 }

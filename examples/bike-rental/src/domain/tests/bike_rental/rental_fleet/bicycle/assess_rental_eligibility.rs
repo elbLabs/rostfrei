@@ -12,7 +12,11 @@ fn returns_first_class_outcomes() {
     );
     assert_eq!(
         bicycle(BicycleStatus::Rented, BicycleCondition::Serviceable).assess_rental_eligibility(),
-        RentalEligibilityOutcome::AlreadyRented
+        RentalEligibilityOutcome::UnavailableStatus
+    );
+    assert_eq!(
+        bicycle(BicycleStatus::Retired, BicycleCondition::Serviceable).assess_rental_eligibility(),
+        RentalEligibilityOutcome::UnavailableStatus
     );
     assert_eq!(
         bicycle(

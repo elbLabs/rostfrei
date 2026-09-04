@@ -33,6 +33,13 @@ fn declares_rental_status_metadata_and_initial_state() {
                     },
                     label: "Rented",
                 },
+                EntityLifecycleStateDescriptor {
+                    id: EntityLifecycleStateId {
+                        lifecycle: LIFECYCLE,
+                        local: "retired",
+                    },
+                    label: "Retired",
+                },
             ],
         }
     );

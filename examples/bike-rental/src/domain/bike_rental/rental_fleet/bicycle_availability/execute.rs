@@ -11,7 +11,7 @@ impl BicycleAvailabilityQuery for RentalFleet {
             .find(|bicycle| bicycle.bicycle_id() == input)
             .map(|bicycle| match bicycle.assess_rental_eligibility() {
                 RentalEligibilityOutcome::Eligible => BicycleAvailability::Available,
-                RentalEligibilityOutcome::AlreadyRented
+                RentalEligibilityOutcome::UnavailableStatus
                 | RentalEligibilityOutcome::MaintenanceRequired => BicycleAvailability::Unavailable,
             })
     }

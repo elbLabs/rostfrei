@@ -2,11 +2,12 @@ use super::{
     EntityLifecycleDescriptor, EntityLifecycleId, EntityLifecycleStateDescriptor,
     EntityLifecycleStateId, EntityLifecycleTransitionId, EntityLifecycleType,
     InvalidStateTransition, LifecycleState, StateChange, StateTransition,
-    StateTransitionDescriptor,
+    StateTransitionDescriptor, StateTransitionEdge,
 };
 
 const LIFECYCLE_ID: EntityLifecycleId = EntityLifecycleId("rental-status");
 const AVAILABLE_ID: EntityLifecycleStateId = state_id("available");
+const RESERVED_ID: EntityLifecycleStateId = state_id("reserved");
 const RENTED_ID: EntityLifecycleStateId = state_id("rented");
 const RENT_ID: EntityLifecycleTransitionId = EntityLifecycleTransitionId {
     lifecycle: LIFECYCLE_ID,
@@ -16,6 +17,7 @@ const RENT_ID: EntityLifecycleTransitionId = EntityLifecycleTransitionId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RentalStatus {
     Available,
+    Reserved,
     Rented,
 }
 
@@ -28,6 +30,10 @@ impl EntityLifecycleType for RentalStatus {
             EntityLifecycleStateDescriptor {
                 id: AVAILABLE_ID,
                 label: "Available",
+            },
+            EntityLifecycleStateDescriptor {
+                id: RESERVED_ID,
+                label: "Reserved",
             },
             EntityLifecycleStateDescriptor {
                 id: RENTED_ID,
@@ -43,6 +49,7 @@ impl LifecycleState for RentalStatus {
     fn state_id(self) -> EntityLifecycleStateId {
         match self {
             Self::Available => AVAILABLE_ID,
+            Self::Reserved => RESERVED_ID,
             Self::Rented => RENTED_ID,
         }
     }
@@ -55,8 +62,16 @@ enum RentalTransition {
 static RENT_DESCRIPTOR: StateTransitionDescriptor<RentalStatus> = StateTransitionDescriptor {
     id: RENT_ID,
     label: "Rent",
-    from: RentalStatus::Available,
-    to: RentalStatus::Rented,
+    edges: &[
+        StateTransitionEdge {
+            from: RentalStatus::Available,
+            to: RentalStatus::Rented,
+        },
+        StateTransitionEdge {
+            from: RentalStatus::Reserved,
+            to: RentalStatus::Rented,
+        },
+    ],
 };
 
 impl StateTransition for RentalTransition {
@@ -77,6 +92,13 @@ fn evaluates_a_valid_transition() {
         RentalStatus::Available.evaluate(&RentalTransition::Rent),
         Ok(StateChange::new(
             RentalStatus::Available,
+            RentalStatus::Rented,
+        )),
+    );
+    assert_eq!(
+        RentalStatus::Reserved.evaluate(&RentalTransition::Rent),
+        Ok(StateChange::new(
+            RentalStatus::Reserved,
             RentalStatus::Rented,
         )),
     );

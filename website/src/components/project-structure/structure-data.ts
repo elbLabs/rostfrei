@@ -73,8 +73,13 @@ const rentalStatus = directory(
       "src/domain/bike_rental/rental_fleet/bicycle/rental_status/transition.rs",
       {
         role: "State transition declaration",
-        summary: "Declares the legal source and target edge for each trigger.",
-        allowed: ["One StateTransition enum", "Edge metadata", "Imports"],
+        summary:
+          "Declares each logical trigger and its deterministic source/target edges.",
+        allowed: [
+          "One StateTransition enum",
+          "Transition and edge metadata",
+          "Imports",
+        ],
         guarantee:
           "Transition topology is explicit and can be evaluated without side effects.",
       }

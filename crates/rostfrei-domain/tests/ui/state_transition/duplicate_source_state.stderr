@@ -1,0 +1,11 @@
+error: duplicate source state for state transition
+ --> tests/ui/state_transition/duplicate_source_state.rs:8:19
+  |
+8 |     #[edge(from = Draft, to = Done)]
+  |                   ^^^^^
+
+error: the first edge from this state is declared here
+ --> tests/ui/state_transition/duplicate_source_state.rs:7:19
+  |
+7 |     #[edge(from = Draft, to = Active)]
+  |                   ^^^^^

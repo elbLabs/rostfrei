@@ -8,10 +8,10 @@ use bike_rental::{
     rental_fleet::{
         self, AddBicycleAction as _, BicycleAdded, BicycleAvailability,
         BicycleAvailabilityQuery as _, BicycleCondition, BicycleId, BicycleNotRented,
-        BicycleRented, BicycleReturned, BicycleStatus, BicycleUnavailable, FleetId,
+        BicycleRented, BicycleRetired, BicycleReturned, BicycleStatus, BicycleUnavailable, FleetId,
         ImportRentalFleetAction as _, ImportRentalFleetInput, ImportedBicycle, RentBicycle,
         RentBicycleAction as _, RentalFleetAggregate, RentalFleetImported,
-        ReturnBicycleAction as _,
+        RetireBicycleAction as _, ReturnBicycleAction as _,
     },
 };
 use rostfrei::{
@@ -162,6 +162,31 @@ fn imports_a_consistent_fleet() {
     assert_eq!(event.bicycles, vec![imported_bicycle]);
     assert_eq!(fleet.state().bicycles().len(), 1);
     assert_eq!(fleet.state().bicycles()[0].status(), BicycleStatus::Rented);
+}
+
+#[test]
+fn retires_available_and_rented_bicycles_through_one_logical_transition() {
+    for status in [BicycleStatus::Available, BicycleStatus::Rented] {
+        let mut fleet = fleet(status, BicycleCondition::Serviceable);
+        let bicycle_id = BicycleId::new("bike-42").unwrap();
+
+        fleet.retire_bicycle(bicycle_id.clone()).unwrap();
+
+        let event = EventVariant::<BicycleRetired>::event(&fleet.uncommitted_events()[0]).unwrap();
+        assert_eq!(event.bicycle_id, bicycle_id);
+        assert_eq!(fleet.state().bicycles()[0].status(), BicycleStatus::Retired);
+    }
+}
+
+#[test]
+fn rejects_retiring_an_already_retired_bicycle() {
+    let mut fleet = fleet(BicycleStatus::Retired, BicycleCondition::Serviceable);
+    let bicycle_id = BicycleId::new("bike-42").unwrap();
+
+    let error = fleet.retire_bicycle(bicycle_id.clone()).unwrap_err();
+
+    assert_eq!(error.bicycle_id, bicycle_id);
+    assert!(fleet.uncommitted_events().is_empty());
 }
 
 #[tokio::test]

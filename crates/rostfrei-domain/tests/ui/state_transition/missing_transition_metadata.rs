@@ -2,7 +2,8 @@ use domain::StateTransition;
 
 #[derive(StateTransition)]
 enum WorkflowTransition {
-    #[edge(id = "start", label = "Start", from = Draft, to = Active)]
+    #[transition(id = "start", label = "Start")]
+    #[edge(from = Draft, to = Active)]
     Start,
 }
 

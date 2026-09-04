@@ -35,18 +35,34 @@ pub enum BicycleStatus {
 ```
 
 A separate fieldless enum names the requested changes. It derives
-`StateTransition` and declares one edge per variant:
+`StateTransition`. Each variant declares stable metadata for one logical
+transition and one or more unambiguous source/target edges:
 
 ```rust
 #[derive(StateTransition)]
 #[transition(state = BicycleStatus)]
 pub enum BicycleRentalTransition {
-    #[edge(id = "rent", label = "Rent", from = Available, to = Rented)]
+    #[transition(id = "rent", label = "Rent")]
+    #[edge(from = Available, to = Rented)]
     Rent,
-    #[edge(id = "return", label = "Return", from = Rented, to = Available)]
+    #[transition(id = "return", label = "Return")]
+    #[edge(from = Rented, to = Available)]
     Return,
 }
 ```
+
+One logical transition may be legal from multiple states without duplicating
+its identity:
+
+```rust
+#[transition(id = "cancel", label = "Cancel")]
+#[edge(from = Draft, to = Cancelled)]
+#[edge(from = Submitted, to = Cancelled)]
+Cancel,
+```
+
+The derive rejects duplicate source states within a variant, so a given
+`(transition, current state)` pair has at most one target.
 
 `LifecycleState::evaluate` is pure. It returns a `StateChange` for a legal edge
 and `InvalidStateTransition` otherwise. The traits are the runtime contract;
@@ -56,12 +72,14 @@ descriptors. Applications may implement the traits manually.
 Lifecycle evaluation owns transition topology only. Context-sensitive rules,
 such as customer eligibility or an asset's condition, remain ordinary domain
 decisions and invariants. Events remain facts, and infallible event application
-does not become a fallible transition API.
+does not become a fallible transition API. An event applier assigns the fixed
+state asserted by its event rather than selecting an arbitrary edge from a
+logical transition.
 
 The first version intentionally supports one active state, one initial state,
-and one source/target edge per transition variant. It does not implement
-guards, side effects, final or hierarchical states, parallel regions, history,
-or SCXML execution semantics.
+and deterministic source/target edges. It does not implement guards,
+side effects, final or hierarchical states, parallel regions, history, or
+SCXML execution semantics.
 
 The typed domain structure stores the state declaration in `lifecycle.rs` and
 the transition declaration in the sibling `transition.rs`. The lifecycle
@@ -73,7 +91,9 @@ not a second directory role.
 Lifecycle declarations now require `#[lifecycle(initial = ...)]` and their
 state enums must satisfy `Copy + Eq`. Code can discover the initial state,
 resolve stable state and transition IDs, evaluate transitions, and inspect
-transition descriptors.
+logical transition descriptors and their edges. `StateTransition::DESCRIPTORS`
+contains one descriptor per enum variant rather than duplicating a logical
+transition for each source state.
 
 This is a breaking source change for existing lifecycle declarations and
 `EntityLifecycleDescriptor` struct literals because the descriptor now

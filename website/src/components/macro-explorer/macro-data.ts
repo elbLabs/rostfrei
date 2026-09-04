@@ -329,8 +329,8 @@ impl JsonErrorPayload for BicycleUnavailable { /* … */ }`,
 pub enum RentalEligibilityOutcome {
     #[outcome(id = "eligible", label = "Eligible")]
     Eligible,
-    #[outcome(id = "already-rented", label = "Already rented")]
-    AlreadyRented,
+    #[outcome(id = "unavailable-status", label = "Unavailable status")]
+    UnavailableStatus,
     #[outcome(
         id = "maintenance-required",
         label = "Maintenance required"
@@ -367,6 +367,8 @@ pub enum BicycleStatus {
     Available,
     #[state(id = "rented", label = "Rented")]
     Rented,
+    #[state(id = "retired", label = "Retired")]
+    Retired,
 }`,
     generated: `impl EntityLifecycleType for BicycleStatus {
     const DESCRIPTOR: EntityLifecycleDescriptor =
@@ -374,7 +376,7 @@ pub enum BicycleStatus {
             id: EntityLifecycleId("rental-status"),
             label: "Bicycle rental status",
             initial: /* available state ID */,
-            states: &[/* available, rented */],
+            states: &[/* available, rented, retired */],
         };
 }
 
@@ -386,30 +388,36 @@ impl LifecycleState for BicycleStatus {
   {
     name: "StateTransition",
     family: "derive",
-    headline: "Declare one legal edge per trigger.",
+    headline: "Declare legal edges for each trigger.",
     description:
-      "A transition enum links stable trigger metadata to source and target lifecycle states.",
+      "A transition enum links stable trigger metadata to one or more source and target lifecycle state pairs.",
     points: [
       "Fieldless enum",
-      "Typed source and target",
+      "One or more typed edges",
       "Pure rejection for illegal state",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/rental_status/transition.rs",
     authored: `#[derive(StateTransition)]
 #[transition(state = BicycleStatus)]
 pub enum BicycleRentalTransition {
-    #[edge(id = "rent", label = "Rent", from = Available, to = Rented)]
+    #[transition(id = "rent", label = "Rent")]
+    #[edge(from = Available, to = Rented)]
     Rent,
-    #[edge(id = "return", label = "Return", from = Rented, to = Available)]
+    #[transition(id = "return", label = "Return")]
+    #[edge(from = Rented, to = Available)]
     Return,
+    #[transition(id = "retire", label = "Retire")]
+    #[edge(from = Available, to = Retired)]
+    #[edge(from = Rented, to = Retired)]
+    Retire,
 }`,
     generated: `impl StateTransition for BicycleRentalTransition {
     type State = BicycleStatus;
     const DESCRIPTORS: &'static [StateTransitionDescriptor<Self::State>] =
-        &[/* rent and return edges */];
+        &[/* rent, return, and retire logical transitions with edges */];
 
     fn descriptor(&self) -> &'static StateTransitionDescriptor<Self::State> {
-        /* one descriptor per variant */
+        /* one logical descriptor per variant */
     }
 }`,
   },

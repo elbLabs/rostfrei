@@ -10,6 +10,10 @@ pub struct Transition {
     pub name: Ident,
     pub id: LitStr,
     pub label: LitStr,
+    pub edges: Vec<Edge>,
+}
+
+pub struct Edge {
     pub from: Ident,
     pub to: Ident,
 }

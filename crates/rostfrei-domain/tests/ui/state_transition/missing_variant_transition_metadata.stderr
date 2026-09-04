@@ -1,0 +1,5 @@
+error: StateTransition variants require exactly one transition attribute
+ --> tests/ui/state_transition/missing_variant_transition_metadata.rs:7:5
+  |
+7 |     Start,
+  |     ^^^^^
