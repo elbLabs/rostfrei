@@ -1,63 +1,72 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use rostfrei_structure::{CheckOptions, check_workspace};
+use clap::{Args, Parser, Subcommand};
+use rostfrei_structure::{CheckOptions, check_workspace, create_project};
 
-const USAGE: &str = "Usage: cargo rostfrei check [--workspace] [--manifest-path <PATH>]";
+#[derive(Debug, Parser)]
+#[command(name = "cargo", bin_name = "cargo")]
+enum CargoCli {
+    #[command(name = "rostfrei")]
+    Rostfrei(RostfreiArgs),
+}
+
+#[derive(Args, Debug)]
+#[command(author, version, about = "Rostfrei project tools")]
+struct RostfreiArgs {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Checks that configured packages follow the Rostfrei domain structure.
+    Check(CheckArgs),
+    /// Creates a new Rostfrei project.
+    New(NewArgs),
+}
+
+#[derive(Args, Debug)]
+struct CheckArgs {
+    /// Checks all configured workspace packages.
+    #[arg(long = "workspace")]
+    workspace: bool,
+    /// Path to the Cargo manifest to check.
+    #[arg(long)]
+    manifest_path: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+struct NewArgs {
+    /// Directory to create. Its name is used as the package and context name.
+    path: PathBuf,
+}
 
 fn main() -> ExitCode {
-    match run(std::env::args().skip(1).collect()) {
-        Ok(success) => {
-            if success {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
-            }
-        }
+    let CargoCli::Rostfrei(arguments) = CargoCli::parse();
+    match run(arguments.command) {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
         Err(error) => {
-            eprintln!("error: {error}\n\n{USAGE}");
+            eprintln!("error: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn run(arguments: Vec<String>) -> Result<bool, String> {
-    let mut arguments = arguments.into_iter().peekable();
-    if arguments
-        .peek()
-        .is_some_and(|argument| argument == "rostfrei")
-    {
-        arguments.next();
+fn run(command: Command) -> Result<bool, String> {
+    match command {
+        Command::Check(arguments) => run_check(arguments),
+        Command::New(arguments) => run_new(arguments),
     }
-    let Some(command) = arguments.next() else {
-        return Err("missing command".to_owned());
-    };
-    if command == "--help" || command == "-h" {
-        println!("{USAGE}");
-        return Ok(true);
-    }
-    if command != "check" {
-        return Err(format!("unknown command `{command}`"));
-    }
+}
 
-    let mut options = CheckOptions::default();
-    while let Some(argument) = arguments.next() {
-        match argument.as_str() {
-            "--workspace" => {}
-            "--manifest-path" => {
-                let path = arguments
-                    .next()
-                    .ok_or_else(|| "--manifest-path requires a path".to_owned())?;
-                options.manifest_path = Some(PathBuf::from(path));
-            }
-            "--help" | "-h" => {
-                println!("{USAGE}");
-                return Ok(true);
-            }
-            _ => return Err(format!("unknown argument `{argument}`")),
-        }
-    }
-
+fn run_check(arguments: CheckArgs) -> Result<bool, String> {
+    let CheckArgs {
+        workspace: _,
+        manifest_path,
+    } = arguments;
+    let options = CheckOptions { manifest_path };
     let report = check_workspace(&options).map_err(|error| error.to_string())?;
     for package_diagnostic in &report.diagnostics {
         eprintln!(
@@ -80,4 +89,67 @@ fn run(arguments: Vec<String>) -> Result<bool, String> {
         );
     }
     Ok(report.is_success())
+}
+
+fn run_new(arguments: NewArgs) -> Result<bool, String> {
+    let project = create_project(arguments.path).map_err(|error| error.to_string())?;
+    println!(
+        "Created Rostfrei project `{}` at {}",
+        project.package_name,
+        project.destination.display()
+    );
+    println!("\nNext steps:");
+    println!("  cd {}", project.destination.display());
+    println!("  docker compose up -d");
+    println!("  cargo run");
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+
+    use super::{CargoCli, Command};
+
+    #[test]
+    fn clap_definition_is_valid() {
+        CargoCli::command().debug_assert();
+    }
+
+    #[test]
+    fn parses_the_cargo_check_subcommand() {
+        let parsed = CargoCli::try_parse_from([
+            "cargo",
+            "rostfrei",
+            "check",
+            "--workspace",
+            "--manifest-path",
+            "project/Cargo.toml",
+        ]);
+        assert!(parsed.is_ok(), "check command did not parse: {parsed:?}");
+        let Ok(CargoCli::Rostfrei(arguments)) = parsed else {
+            return;
+        };
+        let Command::Check(check) = arguments.command else {
+            panic!("expected check command");
+        };
+        assert!(check.workspace);
+        assert_eq!(
+            check.manifest_path.as_deref(),
+            Some(std::path::Path::new("project/Cargo.toml"))
+        );
+    }
+
+    #[test]
+    fn parses_the_cargo_new_subcommand() {
+        let parsed = CargoCli::try_parse_from(["cargo", "rostfrei", "new", "bike-rental"]);
+        assert!(parsed.is_ok(), "new command did not parse: {parsed:?}");
+        let Ok(CargoCli::Rostfrei(arguments)) = parsed else {
+            return;
+        };
+        let Command::New(new) = arguments.command else {
+            panic!("expected new command");
+        };
+        assert_eq!(new.path, std::path::Path::new("bike-rental"));
+    }
 }

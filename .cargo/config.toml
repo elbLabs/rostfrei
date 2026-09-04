@@ -1,2 +1,2 @@
 [alias]
-rostfrei = "run --locked -p rostfrei-structure --bin cargo-rostfrei -- rostfrei"
+rostfrei-dev = "run --locked -p rostfrei-structure --bin cargo-rostfrei -- rostfrei"

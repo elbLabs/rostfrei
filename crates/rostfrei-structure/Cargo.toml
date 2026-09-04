@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+include = ["src/**", "templates/**", "Cargo.toml"]
 
 [lib]
 name = "rostfrei_structure"
@@ -16,7 +17,14 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+clap.workspace = true
+heck.workspace = true
 proc-macro2 = { workspace = true, features = ["span-locations"] }
 serde.workspace = true
 serde_json.workspace = true
 syn = { workspace = true, features = ["visit"] }
+tempfile.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+toml = "1.1"
