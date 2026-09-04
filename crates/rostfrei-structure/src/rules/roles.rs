@@ -219,6 +219,7 @@ fn role_kind(file_name: &str) -> Option<PrimaryKind> {
         "query.rs" => Some(PrimaryKind::Query),
         "contract.rs" => Some(PrimaryKind::Invariant),
         "lifecycle.rs" => Some(PrimaryKind::Lifecycle),
+        "transition.rs" => Some(PrimaryKind::StateTransition),
         _ => None,
     }
 }

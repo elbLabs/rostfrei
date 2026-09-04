@@ -34,6 +34,8 @@ export const docsRegistry = {
     import("@/content/docs/domain-macros/decision-outcome.mdx"),
   "domain-macros/entity-lifecycle": () =>
     import("@/content/docs/domain-macros/entity-lifecycle.mdx"),
+  "domain-macros/state-transition": () =>
+    import("@/content/docs/domain-macros/state-transition.mdx"),
   "domain-macros/domain-action": () =>
     import("@/content/docs/domain-macros/domain-action.mdx"),
   "domain-macros/domain-query": () =>

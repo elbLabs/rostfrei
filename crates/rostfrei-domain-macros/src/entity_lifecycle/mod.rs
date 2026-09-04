@@ -4,6 +4,7 @@ mod collection;
 mod expand;
 mod input;
 mod ir;
+mod lifecycle_attribute;
 mod state_attribute;
 mod validation;
 

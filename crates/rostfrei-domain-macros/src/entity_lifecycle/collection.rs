@@ -9,6 +9,7 @@ pub fn collect(data: &DataEnum) -> syn::Result<Vec<State>> {
 fn collect_state(variant: &Variant) -> syn::Result<State> {
     let attribute = super::state_attribute::parse(variant)?;
     Ok(State {
+        name: variant.ident.clone(),
         id: attribute.id,
         label: attribute.label,
     })

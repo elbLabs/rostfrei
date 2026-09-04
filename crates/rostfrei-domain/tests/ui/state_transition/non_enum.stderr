@@ -1,0 +1,5 @@
+error: StateTransition only supports non-generic fieldless enums
+ --> tests/ui/state_transition/non_enum.rs:5:8
+  |
+5 | struct WorkflowTransition;
+  |        ^^^^^^^^^^^^^^^^^^

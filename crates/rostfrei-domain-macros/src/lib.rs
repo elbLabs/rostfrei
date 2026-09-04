@@ -48,6 +48,7 @@ mod field;
 mod helper;
 mod invariant;
 mod query;
+mod state_transition;
 mod value_object;
 
 #[proc_macro_attribute]
@@ -192,9 +193,16 @@ pub fn derive_entity(input: TokenStream) -> TokenStream {
         .into()
 }
 
-#[proc_macro_derive(EntityLifecycle, attributes(domain, rostfrei, state))]
+#[proc_macro_derive(EntityLifecycle, attributes(domain, rostfrei, lifecycle, state))]
 pub fn derive_entity_lifecycle(input: TokenStream) -> TokenStream {
     entity_lifecycle::expand(parse_macro_input!(input as DeriveInput))
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+#[proc_macro_derive(StateTransition, attributes(transition, edge))]
+pub fn derive_state_transition(input: TokenStream) -> TokenStream {
+    state_transition::expand(parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

@@ -51,6 +51,25 @@ pub(super) fn check(
     }
 
     check_aggregate_event_sets(&roles, facts, diagnostics);
+    check_state_transition_companions(&roles, facts, diagnostics);
+}
+
+fn check_state_transition_companions(
+    roles: &BTreeMap<PathBuf, DirectoryRole>,
+    facts: &BTreeMap<PathBuf, SourceFileFacts>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for (directory, role) in roles {
+        let transition = directory.join("transition.rs");
+        if *role != DirectoryRole::Lifecycle && facts.contains_key(&transition) {
+            diagnostics.push(Diagnostic::new(
+                DiagnosticCode::InvalidStructure,
+                transition,
+                1,
+                "`transition.rs` must be a companion in a lifecycle directory",
+            ));
+        }
+    }
 }
 
 fn check_aggregate_event_sets(

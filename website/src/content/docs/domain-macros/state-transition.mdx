@@ -1,0 +1,13 @@
+# `StateTransition`
+
+Name the legal edges of one entity lifecycle. Each fieldless variant describes one transition from a source state to a target state and receives stable metadata.
+
+- One lifecycle state type
+- One source and target per variant
+- Pure evaluation with an explicit rejection
+
+**Placement:** [Entity lifecycle](/docs/project-structure/entity-lifecycle) — `transition.rs`.
+
+<MacroExample name="StateTransition" />
+
+The generated implementation returns `StateChange` only when the current state matches the edge's source. Use decisions and invariants for rules that require additional domain facts.

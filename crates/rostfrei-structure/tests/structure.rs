@@ -59,8 +59,8 @@ fn entity_definition_accessor_replaces_identity_and_value_object_field_tags() {
 fn semantic_value_objects_and_plain_dto_companions_are_valid() {
     let domain_root = fixture_domain("valid_domain");
     let diagnostics = check_domain_root(&domain_root);
-    let status =
-        fs::read_to_string(domain_root.join("bike_rental/rental_fleet/bicycle/status/value.rs"))
+    let fleet_name =
+        fs::read_to_string(domain_root.join("bike_rental/rental_fleet/fleet_name/value.rs"))
             .expect("semantic value object fixture");
     let input =
         fs::read_to_string(domain_root.join("bike_rental/rental_fleet/rent_bicycle/input.rs"))
@@ -71,9 +71,9 @@ fn semantic_value_objects_and_plain_dto_companions_are_valid() {
     .expect("query output DTO fixture");
 
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
-    assert!(status.contains("#[domain(id = \"bicycle-status\", label = \"Bicycle status\")]"));
-    assert!(!status.contains("owner ="));
-    assert!(!status.contains("actions ="));
+    assert!(fleet_name.contains("#[domain(id = \"fleet-name\", label = \"Fleet name\")]"));
+    assert!(!fleet_name.contains("owner ="));
+    assert!(!fleet_name.contains("actions ="));
     assert!(!input.contains("ValueObject"));
     assert!(!output.contains("ValueObject"));
 }
@@ -571,6 +571,11 @@ fn invalid_structures_emit_the_expected_diagnostic() {
             "hierarchy_lifecycle_under_aggregate",
             DiagnosticCode::InvalidStructure,
             "bike_rental/rental_fleet/rental_status/lifecycle.rs",
+        ),
+        (
+            "hierarchy_lifecycle_under_aggregate",
+            DiagnosticCode::InvalidStructure,
+            "bike_rental/rental_fleet/transition.rs",
         ),
         (
             "hierarchy_missing_anchor",

@@ -100,10 +100,10 @@ const rentalStatus = directory(
   "src/domain/bike_rental/rental_fleet/bicycle/rental_status",
   {
     role: "Entity lifecycle",
-    summary: "Keeps the ordered state vocabulary beside Bicycle.",
-    allowed: ["lifecycle.rs", "mod.rs"],
+    summary: "Keeps executable state topology beside Bicycle.",
+    allowed: ["lifecycle.rs", "transition.rs", "mod.rs"],
     guarantee:
-      "Lifecycle state IDs and labels remain stable without mixing transition behavior into the Entity file.",
+      "Lifecycle state and transition IDs remain stable without mixing business policy into the Entity file.",
   },
   [
     file(
@@ -113,10 +113,22 @@ const rentalStatus = directory(
       {
         role: "Lifecycle declaration",
         summary:
-          "Declares the owner-independent lifecycle and its ordered states.",
+          "Declares the owner-independent lifecycle, initial state, and state metadata.",
         allowed: ["One EntityLifecycle enum", "State metadata", "Imports"],
         guarantee:
-          "The state vocabulary is reviewable as one closed semantic declaration.",
+          "The authoritative stored state and its initial value are reviewable together.",
+      }
+    ),
+    file(
+      "transition",
+      "transition.rs",
+      "src/domain/bike_rental/rental_fleet/bicycle/rental_status/transition.rs",
+      {
+        role: "State transition declaration",
+        summary: "Declares the legal source and target edge for each trigger.",
+        allowed: ["One StateTransition enum", "Edge metadata", "Imports"],
+        guarantee:
+          "Transition topology is explicit and can be evaluated without side effects.",
       }
     ),
   ]

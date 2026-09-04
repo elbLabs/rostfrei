@@ -2,6 +2,7 @@ use domain::EntityLifecycle;
 
 #[derive(EntityLifecycle)]
 #[domain(id = "workflow", label = "Workflow")]
+#[lifecycle(initial = Draft)]
 enum Workflow {}
 
 fn main() {}

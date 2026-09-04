@@ -55,6 +55,10 @@ export const docsNavigation = [
             title: "EntityLifecycle",
             slug: "domain-macros/entity-lifecycle",
           },
+          {
+            title: "StateTransition",
+            slug: "domain-macros/state-transition",
+          },
           { title: "domain_model!", slug: "domain-macros/domain-model" },
         ],
       },

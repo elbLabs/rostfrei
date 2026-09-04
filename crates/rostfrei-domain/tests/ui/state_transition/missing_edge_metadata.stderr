@@ -1,0 +1,5 @@
+error: StateTransition variants require exactly one edge attribute
+ --> tests/ui/state_transition/missing_edge_metadata.rs:6:5
+  |
+6 |     Start,
+  |     ^^^^^

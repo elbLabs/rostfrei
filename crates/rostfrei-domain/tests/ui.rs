@@ -68,6 +68,19 @@ fn checks_entity_lifecycle_contracts() {
     cases.compile_fail("tests/ui/entity_lifecycle/duplicate_state_metadata.rs");
     cases.compile_fail("tests/ui/entity_lifecycle/duplicate_state_id.rs");
     cases.compile_fail("tests/ui/entity_lifecycle/blank_state_label.rs");
+    cases.compile_fail("tests/ui/entity_lifecycle/missing_lifecycle_metadata.rs");
+    cases.compile_fail("tests/ui/entity_lifecycle/duplicate_lifecycle_metadata.rs");
+    cases.compile_fail("tests/ui/entity_lifecycle/unknown_initial_state.rs");
+}
+
+#[test]
+fn checks_state_transition_contracts() {
+    let cases = trybuild::TestCases::new();
+    cases.pass("tests/ui/state_transition/supported.rs");
+    cases.compile_fail("tests/ui/state_transition/non_enum.rs");
+    cases.compile_fail("tests/ui/state_transition/missing_transition_metadata.rs");
+    cases.compile_fail("tests/ui/state_transition/missing_edge_metadata.rs");
+    cases.compile_fail("tests/ui/state_transition/duplicate_transition_id.rs");
 }
 
 #[test]

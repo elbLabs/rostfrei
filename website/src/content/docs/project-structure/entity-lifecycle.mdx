@@ -1,9 +1,10 @@
 # Entity lifecycle
 
-An entity lifecycle keeps the entity’s ordered state vocabulary in one closed declaration. It describes meaningful states and stable metadata without mixing transition behavior into the entity or lifecycle file.
+An entity lifecycle keeps the entity's authoritative stored state and legal state changes together. Evaluation is pure: it checks topology while actions, decisions, and events retain business policy and side effects.
 
-- Put the lifecycle enum in `lifecycle.rs`.
+- Put the state enum in `lifecycle.rs` and the transition enum in `transition.rs`.
 - Give every state a stable ID and label.
+- Declare exactly one initial state and one source/target edge per transition.
 - Keep state-changing actions in separate capability directories.
 
 Path: `src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs`
@@ -13,9 +14,10 @@ Path: `src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs`
 ```rust
 use rostfrei::EntityLifecycle;
 
-#[derive(EntityLifecycle)]
+#[derive(EntityLifecycle, Clone, Copy, Eq, PartialEq)]
 #[domain(id = "rental-status", label = "Bicycle rental status")]
-pub enum BicycleRentalLifecycle {
+#[lifecycle(initial = Available)]
+pub enum BicycleStatus {
     #[state(id = "available", label = "Available")]
     Available,
     #[state(id = "rented", label = "Rented")]
@@ -24,3 +26,18 @@ pub enum BicycleRentalLifecycle {
 ```
 
 </ProjectStructureExample>
+
+Path: `src/domain/bike_rental/rental_fleet/bicycle/rental_status/transition.rs`
+
+```rust
+use rostfrei::StateTransition;
+
+#[derive(StateTransition)]
+#[transition(state = BicycleStatus)]
+pub enum BicycleRentalTransition {
+    #[edge(id = "rent", label = "Rent", from = Available, to = Rented)]
+    Rent,
+    #[edge(id = "return", label = "Return", from = Rented, to = Available)]
+    Return,
+}
+```

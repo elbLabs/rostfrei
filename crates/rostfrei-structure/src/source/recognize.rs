@@ -37,6 +37,7 @@ fn derive_primaries(attribute: &Attribute) -> Vec<PrimaryKind> {
             "DomainError" => Some(PrimaryKind::Rejection),
             "DecisionOutcome" => Some(PrimaryKind::DecisionOutcome),
             "EntityLifecycle" => Some(PrimaryKind::Lifecycle),
+            "StateTransition" => Some(PrimaryKind::StateTransition),
             _ => None,
         })
         .collect()
@@ -63,6 +64,7 @@ pub(super) fn known_final_segment(path: &Path) -> Option<&str> {
         "DomainError",
         "DecisionOutcome",
         "EntityLifecycle",
+        "StateTransition",
     ];
     final_segment_from(path, NAMES)
 }
