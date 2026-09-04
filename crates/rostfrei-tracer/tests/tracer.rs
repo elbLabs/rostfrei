@@ -26,7 +26,7 @@ use rostfrei_tracer::{
     CommandInvocation, CommandPublication, CommandReceipt, CommandRejection, CommandTransport,
     CommandTransportError, CommandTransportErrorKind, CommandTransportObserver, CorrelationError,
     CorrelationEventKind, DiscoveryError, ExposeTracePayloadsForLocalDevelopment, Fixture,
-    IntegrationEventObservation, MessageSeriesCaptureError, OperationMode,
+    IntegrationEventObservation, MessageSeriesCaptureError, OperationMode, OperationResult,
     RuntimeRegistrationError, SimulationRequest, SubmissionError, SubscriptionError,
     TestDefinition, TestDefinitionCollection, TestDefinitionRevision, TestReportStatus,
     TestRepository, TestRepositoryError, TestScenarioReset, TestScenarioResetError,
@@ -1790,6 +1790,81 @@ async fn conflicting_duplicate_message_identity_is_grouped() {
     );
 }
 
+#[test]
+fn accepted_results_serialize_predictions_only_for_simulation() {
+    let simulation = serde_json::to_value(OperationResult::Accepted {
+        base_stream_version: Some(0),
+        predicted_events: Vec::new(),
+        appended: Some(false),
+        published: false,
+        command_message_id: None,
+        response_message_id: None,
+        duplicate: None,
+    })
+    .unwrap();
+    assert_eq!(simulation.get("predictedEvents"), Some(&json!([])));
+
+    let transported = serde_json::to_value(OperationResult::Accepted {
+        base_stream_version: None,
+        predicted_events: Vec::new(),
+        appended: None,
+        published: true,
+        command_message_id: Some("command-1".to_owned()),
+        response_message_id: Some("response-1".to_owned()),
+        duplicate: Some(false),
+    })
+    .unwrap();
+    assert!(transported.get("predictedEvents").is_none());
+}
+
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    reason = "serialized operation fixtures use required fields and terminal trace events"
+)]
+fn assert_transported_operation(operation: &Value, trace: &str, prefix: &str, duplicate: bool) {
+    assert_eq!(operation["result"]["decision"], "accepted");
+    assert!(operation["result"].get("predictedEvents").is_none());
+    assert_eq!(operation["result"]["published"], true);
+    assert_eq!(operation["events"]["kind"], "observed");
+    assert_eq!(
+        operation["events"]["href"],
+        operation["correlationEventsHref"]
+    );
+    assert_eq!(
+        operation["operationEventsHref"],
+        format!(
+            "/operations/{}/events",
+            operation["operationId"].as_str().unwrap()
+        )
+    );
+    assert_eq!(
+        operation["correlationEventsHref"],
+        format!(
+            "/correlations/{}/events",
+            operation["correlationId"].as_str().unwrap()
+        )
+    );
+    assert_eq!(
+        operation["result"]["commandMessageId"],
+        format!("{prefix}-command")
+    );
+    assert_eq!(
+        operation["result"]["responseMessageId"],
+        format!("{prefix}-response")
+    );
+    assert_eq!(operation["result"]["duplicate"], duplicate);
+    assert!(operation["result"].get("baseStreamVersion").is_none());
+    assert!(operation["result"].get("appended").is_none());
+    assert!(trace.contains("command-published"));
+    assert!(trace.contains("command-responded"));
+    assert!(trace.contains("command-accepted"));
+    assert!(!trace.contains("history-replayed"));
+    assert!(!trace.contains("domain-event-predicted"));
+    assert!(!trace.contains("domain-events-persisted"));
+    assert!(trace.find("command-published").unwrap() < trace.find("command-responded").unwrap());
+}
+
 #[tokio::test]
 async fn test_and_dispatch_select_separate_transports_with_shared_remote_semantics() {
     let test_transport = FakeTransport::accepted("test", false);
@@ -1842,29 +1917,7 @@ async fn test_and_dispatch_select_separate_transports_with_shared_remote_semanti
         (&test_result, &test_trace, "test", false),
         (&dispatch_result, &dispatch_trace, "dispatch", true),
     ] {
-        assert_eq!(operation["result"]["decision"], "accepted");
-        assert_eq!(operation["result"]["predictedEvents"], json!([]));
-        assert_eq!(operation["result"]["published"], true);
-        assert_eq!(
-            operation["result"]["commandMessageId"],
-            format!("{prefix}-command")
-        );
-        assert_eq!(
-            operation["result"]["responseMessageId"],
-            format!("{prefix}-response")
-        );
-        assert_eq!(operation["result"]["duplicate"], duplicate);
-        assert!(operation["result"].get("baseStreamVersion").is_none());
-        assert!(operation["result"].get("appended").is_none());
-        assert!(trace.contains("command-published"));
-        assert!(trace.contains("command-responded"));
-        assert!(trace.contains("command-accepted"));
-        assert!(!trace.contains("history-replayed"));
-        assert!(!trace.contains("domain-event-predicted"));
-        assert!(!trace.contains("domain-events-persisted"));
-        assert!(
-            trace.find("command-published").unwrap() < trace.find("command-responded").unwrap()
-        );
+        assert_transported_operation(operation, trace, prefix, duplicate);
     }
 
     let test_invocations = test_invocations.lock().await;

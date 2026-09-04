@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::{Mutex, watch};
@@ -61,41 +61,126 @@ pub struct PredictedDomainEvent {
     pub payload: Option<Value>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OperationResult {
+    Accepted {
+        base_stream_version: Option<u64>,
+        predicted_events: Vec<PredictedDomainEvent>,
+        appended: Option<bool>,
+        published: bool,
+        command_message_id: Option<String>,
+        response_message_id: Option<String>,
+        duplicate: Option<bool>,
+    },
+    Rejected {
+        base_stream_version: Option<u64>,
+        rejection: Value,
+        appended: Option<bool>,
+        published: bool,
+        command_message_id: Option<String>,
+        response_message_id: Option<String>,
+        duplicate: Option<bool>,
+    },
+}
+
+#[derive(Serialize)]
 #[serde(
     tag = "decision",
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-pub enum OperationResult {
+enum SerializedOperationResult<'a> {
     Accepted {
         #[serde(skip_serializing_if = "Option::is_none")]
         base_stream_version: Option<u64>,
-        predicted_events: Vec<PredictedDomainEvent>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        predicted_events: Option<&'a [PredictedDomainEvent]>,
         #[serde(skip_serializing_if = "Option::is_none")]
         appended: Option<bool>,
         published: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
-        command_message_id: Option<String>,
+        command_message_id: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        response_message_id: Option<String>,
+        response_message_id: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         duplicate: Option<bool>,
     },
     Rejected {
         #[serde(skip_serializing_if = "Option::is_none")]
         base_stream_version: Option<u64>,
-        rejection: Value,
+        rejection: &'a Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         appended: Option<bool>,
         published: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
-        command_message_id: Option<String>,
+        command_message_id: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        response_message_id: Option<String>,
+        response_message_id: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         duplicate: Option<bool>,
     },
+}
+
+impl Serialize for OperationResult {
+    fn serialize<SerializerType>(
+        &self,
+        serializer: SerializerType,
+    ) -> Result<SerializerType::Ok, SerializerType::Error>
+    where
+        SerializerType: Serializer,
+    {
+        let result = match self {
+            Self::Accepted {
+                base_stream_version,
+                predicted_events,
+                appended,
+                published,
+                command_message_id,
+                response_message_id,
+                duplicate,
+            } => SerializedOperationResult::Accepted {
+                base_stream_version: *base_stream_version,
+                predicted_events: (!*published).then_some(predicted_events.as_slice()),
+                appended: *appended,
+                published: *published,
+                command_message_id: command_message_id.as_deref(),
+                response_message_id: response_message_id.as_deref(),
+                duplicate: *duplicate,
+            },
+            Self::Rejected {
+                base_stream_version,
+                rejection,
+                appended,
+                published,
+                command_message_id,
+                response_message_id,
+                duplicate,
+            } => SerializedOperationResult::Rejected {
+                base_stream_version: *base_stream_version,
+                rejection,
+                appended: *appended,
+                published: *published,
+                command_message_id: command_message_id.as_deref(),
+                response_message_id: response_message_id.as_deref(),
+                duplicate: *duplicate,
+            },
+        };
+        result.serialize(serializer)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OperationEventEvidenceKind {
+    Predicted,
+    Observed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationEventEvidence {
+    pub kind: OperationEventEvidenceKind,
+    pub href: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -103,7 +188,10 @@ pub enum OperationResult {
 pub struct OperationSnapshot {
     pub operation_id: String,
     pub correlation_id: String,
+    pub operation_events_href: String,
+    pub correlation_events_href: String,
     pub message_series_href: String,
+    pub events: OperationEventEvidence,
     pub mode: OperationMode,
     pub status: OperationStatus,
     pub command: String,
@@ -244,10 +332,27 @@ impl OperationRecord {
             state: Mutex::new(OperationState {
                 fingerprint: operation.fingerprint,
                 snapshot: OperationSnapshot {
+                    operation_events_href: format!("/operations/{}/events", operation.operation_id),
+                    correlation_events_href: format!(
+                        "/correlations/{}/events",
+                        operation.correlation_id
+                    ),
                     message_series_href: format!(
                         "/operations/{}/message-series",
                         operation.operation_id
                     ),
+                    events: OperationEventEvidence {
+                        kind: if operation.mode == OperationMode::Simulate {
+                            OperationEventEvidenceKind::Predicted
+                        } else {
+                            OperationEventEvidenceKind::Observed
+                        },
+                        href: if operation.mode == OperationMode::Simulate {
+                            format!("/operations/{}/events", operation.operation_id)
+                        } else {
+                            format!("/correlations/{}/events", operation.correlation_id)
+                        },
+                    },
                     operation_id: operation.operation_id,
                     correlation_id: operation.correlation_id,
                     mode: operation.mode,
