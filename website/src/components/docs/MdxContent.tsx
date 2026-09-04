@@ -15,7 +15,7 @@ export function MdxContent({ component: Content, className }: MdxContentProps) {
     <MDXProvider components={mdxComponents}>
       <article
         className={cn(
-          "max-w-3xl min-w-0 pb-20 [&>*:first-child]:mt-0",
+          "docs-article max-w-full min-w-0 pb-8 [&>*:first-child]:mt-0",
           className
         )}
       >

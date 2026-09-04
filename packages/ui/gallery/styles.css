@@ -1,0 +1,64 @@
+@import "tailwindcss";
+@import "@rostfrei/ui/styles.css";
+@source "../src";
+
+.gallery-shell {
+  width: min(1000px, calc(100% - 32px));
+  margin: 24px auto;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--primary);
+  background: var(--card);
+}
+.section-kicker {
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.page-title {
+  font-size: 32px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+.text-link {
+  color: var(--link);
+}
+.text-link:hover {
+  text-decoration: underline;
+}
+.gallery-section {
+  padding-block: 24px;
+  border-top: 1px solid var(--border);
+}
+.gallery-section > h2 {
+  margin-bottom: 6px;
+  font-size: 19px;
+  font-weight: 600;
+}
+.gallery-section > p {
+  margin-bottom: 18px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.gallery-example {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+@media (max-width: 640px) {
+  .gallery-shell {
+    width: calc(100% - 16px);
+    margin: 8px auto;
+    padding: 16px;
+  }
+  .gallery-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

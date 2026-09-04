@@ -4,10 +4,10 @@
   height: min(680px, calc(100dvh - 90px));
   z-index: 80;
   visibility: hidden;
-  background: #222c39;
-  border: 1px solid #526174;
-  border-radius: 10px;
-  box-shadow: 0 16px 60px #0006;
+  background: var(--card);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--foreground) 12%, transparent);
   overflow: hidden;
 }
 .studio-floating-panel-open {
@@ -34,7 +34,7 @@
   font-weight: 600;
 }
 .studio-panel-grip {
-  color: #9cacc0;
+  color: var(--muted-foreground);
 }
 .is-dragging-panel,
 .is-dragging-panel * {
@@ -56,25 +56,25 @@
   gap: 11px;
   padding: 11px;
   border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #1b2430;
+  border-radius: var(--radius);
+  background: var(--muted);
 }
 .command-payload-heading {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #bdcbdc;
+  color: var(--foreground);
   font-size: 12px;
 }
 .command-payload-fields > p,
 .command-empty {
-  color: #acbdd0;
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.6;
 }
 .command-payload-fields > small,
 .command-field small {
-  color: #acbdd0;
+  color: var(--muted-foreground);
   font-size: 11px;
 }
 .command-mode-row {
@@ -82,10 +82,10 @@
   flex-direction: column;
   gap: 8px;
   padding: 9px;
-  border: 1px solid #3f566a;
-  border-radius: 7px;
-  color: #bdcbdc;
-  background: #28394a;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted-foreground);
+  background: var(--muted);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -94,20 +94,20 @@
   grid-template-columns: 1fr 1fr;
   gap: 4px;
   padding: 3px;
-  border-radius: 5px;
-  background: #18232f;
+  border-radius: var(--radius);
+  background: var(--card);
 }
 .command-mode-option {
   height: 30px;
   border: 1px solid transparent;
-  border-radius: 4px;
-  color: #bac9db;
+  border-radius: var(--radius);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 .command-mode-option[aria-pressed="true"] {
-  background: #344f62;
-  border-color: #56788e;
-  color: #edf7fc;
+  background: var(--accent);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 .command-mode-option:disabled {
   opacity: 0.45;
@@ -119,7 +119,7 @@
   gap: 6px;
 }
 .command-field > span {
-  color: #c1cfe0;
+  color: var(--foreground);
   font-size: 11px;
   font-weight: 500;
 }
@@ -127,10 +127,10 @@
 .command-field input,
 .command-field textarea {
   width: 100%;
-  border: 1px solid #47566a;
-  border-radius: 5px;
-  color: #edf2f8;
-  background: #18212d;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  color: var(--foreground);
+  background: var(--card);
   font-family: var(--font-mono);
   font-size: 12px;
 }
@@ -138,6 +138,9 @@
 .command-field input {
   height: 34px;
   padding: 0 9px;
+}
+.command-field select {
+  padding-right: 32px;
 }
 .command-field textarea {
   min-height: 90px;
@@ -148,15 +151,15 @@
 .command-field select:focus,
 .command-field input:focus,
 .command-field textarea:focus {
-  outline: 2px solid #9bd3e8;
+  outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
 .command-field :disabled {
   opacity: 0.55;
 }
 .command-field option {
-  background: #18212d;
-  color: #edf2f8;
+  background: var(--card);
+  color: var(--foreground);
 }
 .command-custom-aggregate,
 .command-idempotency-field {
@@ -179,19 +182,19 @@
 }
 .command-form-error,
 .command-input-error {
-  color: #f2a7b0 !important;
+  color: var(--destructive) !important;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 .command-submit {
   width: 100%;
-  background: #b9e4f3;
-  color: #162733;
-  border: 1px solid #b9e4f3;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: 1px solid var(--primary);
   box-shadow: none;
 }
 .command-submit:hover {
-  background: #d0eef9;
+  background: color-mix(in srgb, var(--primary) 88%, var(--foreground));
 }
 .command-empty {
   margin-top: 12px;
@@ -214,16 +217,16 @@
   margin-top: 10px;
   border: 1px solid var(--border);
   background: var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   overflow: hidden;
 }
 .command-result-meta > div {
   min-width: 0;
   padding: 9px;
-  background: #1b2430;
+  background: var(--muted);
 }
 .command-result-meta dt {
-  color: #a6b8ce;
+  color: var(--muted-foreground);
   font-size: 10px;
 }
 .command-result-meta dd {
@@ -237,9 +240,9 @@
   margin-top: 8px;
   padding: 9px;
   overflow: auto;
-  background: #18212d;
+  background: var(--muted);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 11px;
@@ -247,7 +250,7 @@
 }
 .command-result-note {
   margin-top: 8px;
-  color: #a6b8ce;
+  color: var(--muted-foreground);
   font-size: 11px;
   line-height: 1.6;
 }

@@ -165,6 +165,9 @@ export async function capturePage(
     const popup = inspector?.checkVisibility() ? inspector : null
     return {
       title: document.title,
+      theme: document.documentElement.classList.contains("dark")
+        ? "dark"
+        : "light",
       viewport: { width: innerWidth, height: innerHeight },
       documentSize: {
         width: document.documentElement.scrollWidth,

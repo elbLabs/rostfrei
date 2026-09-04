@@ -55,9 +55,8 @@ Start with Preview to understand a decision, then use Test to observe the transp
 With the local Tracer running, open a second terminal at the repository root. Install Node.js 24 and pnpm, then start Studio:
 
 ```sh
-cd studio
 pnpm install --frozen-lockfile
-pnpm dev
+pnpm --dir studio dev
 ```
 
 Open the local URL printed by Vite. Studio proxies its API requests to the local Tracer. If you configured a different target or control token, use the [Studio connection instructions](https://github.com/elbLabs/rostfrei/tree/main/studio#tracer-connection).

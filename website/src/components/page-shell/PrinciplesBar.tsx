@@ -2,7 +2,7 @@ import { Braces, History, Workflow } from "lucide-react"
 
 export function PrinciplesBar() {
   return (
-    <div className="grid gap-4 border-y border-border/70 py-5 text-sm text-muted-foreground md:grid-cols-3">
+    <div className="grid gap-3 border-t border-border py-4 text-xs text-muted-foreground lg:grid-cols-3">
       <div className="flex items-center gap-3">
         <Braces aria-hidden="true" className="size-4 shrink-0 text-primary" />
         Business rules in ordinary Rust

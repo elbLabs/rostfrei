@@ -5,11 +5,10 @@ import {
   GettingStartedSection,
   HeroSection,
   PrinciplesBar,
-  SiteFooter,
-  SiteHeader,
   StorySection,
 } from "@/components/page-shell"
 import { ProjectStructureSection } from "@/components/project-structure/ProjectStructureSection"
+import { SiteLayout } from "@/components/page-shell/SiteLayout"
 
 export const Route = createFileRoute("/")({
   component: LandingPage,
@@ -17,20 +16,13 @@ export const Route = createFileRoute("/")({
 
 function LandingPage() {
   return (
-    <div className="flex min-h-svh flex-col overflow-hidden">
-      <SiteHeader />
-      <main
-        id="top"
-        className="mx-auto w-full max-w-295 min-w-0 flex-1 overflow-hidden px-5 sm:px-8"
-      >
-        <HeroSection />
-        <PrinciplesBar />
-        <StorySection />
-        <ProjectStructureSection />
-        <MacroExplorerSection />
-        <GettingStartedSection />
-      </main>
-      <SiteFooter />
-    </div>
+    <SiteLayout>
+      <HeroSection />
+      <PrinciplesBar />
+      <StorySection />
+      <ProjectStructureSection />
+      <MacroExplorerSection />
+      <GettingStartedSection />
+    </SiteLayout>
   )
 }

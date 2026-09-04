@@ -39,10 +39,10 @@ function TreeBranch({
               onClick={() => onSelect(node)}
               aria-expanded={isDirectory ? isExpanded : undefined}
               aria-pressed={isSelected}
-              className={`group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left font-mono text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#f2a65a] ${
+              className={`group flex w-full min-w-max items-center gap-2 py-1.5 pr-2 text-left font-mono text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
                 isSelected
-                  ? "bg-[#f2a65a]/12 text-[#ffd5a1]"
-                  : "text-[#b8b0a4] hover:bg-white/5 hover:text-[#f4eee5]"
+                  ? "bg-accent text-primary"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
               }`}
               style={{ paddingLeft: `${depth * 18 + 8}px` }}
             >
@@ -55,7 +55,7 @@ function TreeBranch({
               <Icon
                 aria-hidden="true"
                 className={`size-4 shrink-0 ${
-                  isSelected ? "text-[#f2a65a]" : "text-[#777064]"
+                  isSelected ? "text-primary" : "text-muted-foreground"
                 }`}
               />
               <span className="truncate">{node.name}</span>

@@ -23,6 +23,7 @@ const { values } = parseArgs({
   options: {
     scene: { type: "string" },
     viewport: { type: "string" },
+    theme: { type: "string" },
     out: { type: "string" },
     url: { type: "string" },
     headed: { type: "boolean" },
@@ -33,7 +34,8 @@ const { values } = parseArgs({
 
 if (values.help || values.list) {
   console.log(`Usage: pnpm inspect:ui [--scene NAME|all] [--viewport WIDTHxHEIGHT]
-                       [--out DIRECTORY] [--headed] [--url STUDIO_URL]
+                       [--theme light|dark|system] [--out DIRECTORY]
+                       [--headed] [--url STUDIO_URL]
 
 Scenarios (default: overview):
 ${Object.entries(scenarios)
@@ -50,6 +52,8 @@ Named scenarios mock every API fetch. Only live uses the connected Tracer.`)
 }
 
 async function main() {
+  if (values.theme && !["light", "dark", "system"].includes(values.theme))
+    throw new Error("--theme must be light, dark, or system")
   const scene = values.scene ?? (values.url ? "live" : "overview")
   if (scene !== "all" && scene !== "live" && !Object.hasOwn(scenarios, scene)) {
     throw new Error(
@@ -135,6 +139,11 @@ async function main() {
           ? { width: 390, height: 844, deviceScaleFactor: 1 }
           : desktopViewport)
       await page.setViewport(dimensions)
+      if (values.theme) {
+        await page.evaluateOnNewDocument((theme) => {
+          localStorage.setItem("rostfrei-theme", theme)
+        }, values.theme)
+      }
       page.setDefaultTimeout(10_000)
       const diagnostics = observePage(page)
       const directory = path.resolve(

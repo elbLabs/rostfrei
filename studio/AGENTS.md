@@ -1,7 +1,8 @@
 # Working on Tracer Studio
 
 Run commands from `studio/` (or use `pnpm --dir studio ...` from the repo root).
-Install dependencies with `pnpm install --frozen-lockfile` when needed.
+Install workspace dependencies from the repository root with
+`pnpm install --frozen-lockfile` when needed.
 
 ## Frontend feedback loop
 
@@ -14,7 +15,8 @@ Install dependencies with `pnpm install --frozen-lockfile` when needed.
    `--out artifacts/after`. Inspect the resulting image, including panel overlap,
    popup clipping, text wrapping, contrast, and graph visibility.
 5. For responsive changes, also use `--scene narrow` or specify
-   `--viewport 390x844` on the affected scene.
+    `--viewport 390x844` on the affected scene.
+   Capture both `--theme light` and `--theme dark` when changing presentation.
 
 Screenshots are available through Puppeteer even when the session has no
 dedicated browser tool. Use the existing inspector instead of assuming source
@@ -69,8 +71,10 @@ with synthetic responses; real command behavior is verified through Tracer.
   and behavioral definitions. Runtime demo fallback is intentionally absent.
 - `src/index.css`: Studio layout and visual styling.
 
-Follow the current charcoal palette, readable cards, compact controls, and distinct
-command/domain-event/integration-event colors unless the task changes the design.
+Use the shared Reference ’15 palette, system typography, square panels, compact
+controls, and theme-aware command/domain-event/integration-event colors from
+`@rostfrei/ui`. Import its primitives and theme provider rather than duplicating
+them locally. Studio CSS owns application layout and graph presentation.
 Prefer accessible control names and existing `data-graph-node`/`data-graph-edge`
 attributes for automation. Preserve the distinction between causation, fixture
 stream order, and fixture context when changing graph presentation.

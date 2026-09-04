@@ -1,5 +1,7 @@
 import { useEffect, useEffectEvent, useState } from "react"
 import { Pause, Play, Radio, X } from "lucide-react"
+import { Input } from "@rostfrei/ui/components/input"
+import { NativeSelect } from "@rostfrei/ui/components/native-select"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -207,7 +209,7 @@ export function ObservationPanel({
         <p>Follow events from your running application.</p>
         <label>
           Traffic scope
-          <select
+          <NativeSelect
             aria-label="Observation scope"
             value={effectiveScope ?? ""}
             disabled={!capability}
@@ -229,7 +231,7 @@ export function ObservationPanel({
                 {entry.scope === "test" ? "Test" : "Production"}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </label>
         <div className="flex items-center justify-between gap-2">
           <Badge
@@ -255,7 +257,7 @@ export function ObservationPanel({
             {paused ? "Resume" : "Pause"}
           </Button>
         </div>
-        <input
+        <Input
           aria-label="Filter observed flows"
           placeholder="Filter name or correlation…"
           value={filter}
@@ -330,7 +332,7 @@ export function ObservationPanel({
         {snapshot &&
           (snapshot.evictedFlows !== "0" ||
             snapshot.discardedMessages !== "0") && (
-            <span className="text-amber-200">
+            <span className="text-warning">
               {snapshot.evictedFlows} evicted · {snapshot.discardedMessages}{" "}
               messages omitted
             </span>

@@ -5,6 +5,7 @@ import {
   startStudioServer,
   launchStudioBrowser,
   closeStudioBrowser,
+  settlePage,
 } from "./browser.mjs"
 import { checkCommandRefresh } from "./command-refresh.mjs"
 import { checkCommandExecution } from "./command-execution.mjs"
@@ -43,6 +44,7 @@ let page
 
 try {
   browser = await launchStudioBrowser()
+  await checkThemeBoot(browser, url)
   await browser
     .defaultBrowserContext()
     .overridePermissions(url, ["clipboard-read", "clipboard-sanitized-write"])
@@ -139,6 +141,7 @@ try {
   )
   assert.equal(await page.$(".connection-notice"), null)
   console.log("Verified read-only reconnect; checking execution and layouts")
+  await checkThemes(page)
   assert.equal(
     await page.$eval('[data-layout="canvas"]', (button) =>
       button.getAttribute("aria-pressed")
@@ -772,6 +775,162 @@ try {
   console.log("Closing UI server")
   await server.close()
   console.log("UI resources closed")
+}
+
+async function checkThemeBoot(browser, url) {
+  const context = await browser.createBrowserContext()
+  try {
+    const bootPage = await context.newPage()
+    await bootPage.emulateMediaFeatures([
+      { name: "prefers-color-scheme", value: "light" },
+    ])
+    await bootPage.evaluateOnNewDocument(() =>
+      localStorage.setItem("rostfrei-theme", "dark")
+    )
+    await bootPage.setRequestInterception(true)
+    bootPage.on("request", (request) => {
+      // The first-paint theme must not depend on React or any module loading.
+      if (request.resourceType() === "script") {
+        void request.respond({
+          status: 200,
+          contentType: "text/javascript",
+          body: "",
+        })
+      } else {
+        void request.continue()
+      }
+    })
+    await bootPage.goto(url, { waitUntil: "domcontentloaded" })
+    assert.equal(
+      await bootPage.$eval("html", (root) => root.className),
+      "dark",
+      "stored dark theme must apply before the app loads"
+    )
+    assert.equal(await bootPage.$(".studio-shell"), null)
+  } finally {
+    await context.close()
+  }
+}
+
+async function checkThemes(page) {
+  await settlePage(page)
+  const graphTransform = await page.$eval(
+    ".react-flow__viewport",
+    (element) => element.style.transform
+  )
+  const chooseTheme = async (label) => {
+    await page.click(".studio-theme-toggle")
+    await page.locator(`::-p-aria(${label})`).click()
+  }
+  const assertTheme = async (theme) => {
+    await page.waitForSelector(`html.${theme} .react-flow.${theme}`)
+    await settlePage(page)
+    const colors = await page.evaluate(() => ({
+      background: getComputedStyle(document.body).backgroundColor,
+      canvas: getComputedStyle(document.querySelector(".message-flow"))
+        .backgroundColor,
+      foreground: getComputedStyle(document.body).color,
+      node: getComputedStyle(document.querySelector(".message-card-name"))
+        .color,
+    }))
+    assert.equal(
+      colors.canvas,
+      colors.background,
+      `${theme} canvas must inherit the app theme`
+    )
+    assert.equal(
+      colors.node,
+      colors.foreground,
+      `${theme} nodes must inherit the app theme`
+    )
+  }
+
+  await chooseTheme("Dark")
+  await assertTheme("dark")
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("rostfrei-theme")),
+    "dark"
+  )
+  await chooseTheme("Light")
+  await assertTheme("light")
+  assert.equal(
+    await page.$eval(
+      ".react-flow__viewport",
+      (element) => element.style.transform
+    ),
+    graphTransform,
+    "theme changes must preserve graph viewport state"
+  )
+  await page.reload({ waitUntil: "networkidle0" })
+  await ready(page)
+  await assertTheme("light")
+  assert.equal(
+    await page.$eval(".studio-theme-toggle", (button) =>
+      button.getAttribute("aria-label")
+    ),
+    "Theme: Light"
+  )
+  await chooseTheme("System")
+  for (const value of ["dark", "light"]) {
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value }])
+    await assertTheme(value)
+  }
+
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })
+  await settlePage(page)
+  assert.equal(
+    await page.$$eval(".studio-topbar button", (buttons) =>
+      buttons.every((button) => {
+        const rect = button.getBoundingClientRect()
+        return rect.left >= 0 && rect.right <= innerWidth
+      })
+    ),
+    true,
+    "every mobile header control must remain visible"
+  )
+  await page.click(".command-panel-trigger")
+  await page.waitForSelector('#studio-command-panel[aria-hidden="false"]')
+  // Panel focus raises its inline layer; even a long session must not cover a portal.
+  await page.$eval("#studio-command-panel", (panel) => {
+    panel.style.zIndex = "10000"
+  })
+  await page.click(".studio-theme-toggle")
+  await page.waitForSelector('[role="menu"]')
+  assert.equal(
+    await page.$eval('[role="menu"]', (menu) => {
+      const rect = menu.getBoundingClientRect()
+      return (
+        rect.left >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight
+      )
+    }),
+    true,
+    "mobile theme picker must stay within the viewport"
+  )
+  assert.ok(
+    await page.$$eval('[role="menuitemradio"]', (items) =>
+      items.every((item) => {
+        const rect = item.getBoundingClientRect()
+        return item.contains(
+          document.elementFromPoint(
+            rect.x + rect.width / 2,
+            rect.y + rect.height / 2
+          )
+        )
+      })
+    ),
+    "mobile theme choices must be above the open command panel"
+  )
+  await page.locator("::-p-aria(Dark)").click()
+  await page.waitForSelector("html.dark")
+  await page.click(".command-panel-trigger")
+  await page.waitForSelector('#studio-command-panel[aria-hidden="true"]')
+  await chooseTheme("System")
+  await page.keyboard.press("Escape")
+  await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 })
+  await settlePage(page)
+  console.log(
+    "Verified shared light/dark/system themes, persistence, graph colors, and mobile picker"
+  )
 }
 
 async function handleRequest(request) {

@@ -1,0 +1,17 @@
+{
+  "name": "rostfrei-frontend",
+  "private": true,
+  "packageManager": "pnpm@10.10.0",
+  "engines": {
+    "node": "^22.13.0 || >=24"
+  },
+  "scripts": {
+    "build": "pnpm --filter @rostfrei/ui typecheck && pnpm --filter website build && pnpm --filter rostfrei-tracer-studio build",
+    "lint": "pnpm -r lint",
+    "dev:website": "pnpm --filter website dev",
+    "dev:studio": "pnpm --filter rostfrei-tracer-studio dev",
+    "dev:ui": "pnpm --filter @rostfrei/ui dev",
+    "test:studio": "pnpm --filter rostfrei-tracer-studio test:ui",
+    "test:website": "node scripts/check_website_ui.mjs"
+  }
+}

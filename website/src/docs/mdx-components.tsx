@@ -16,7 +16,7 @@ function mdxLink({
   ...props
 }: AnchorHTMLAttributes<HTMLAnchorElement>) {
   const linkClassName = cn(
-    "font-medium text-primary underline decoration-primary/35 underline-offset-4 transition-colors hover:decoration-primary",
+    "font-medium text-link underline decoration-link/35 underline-offset-4 transition-colors hover:decoration-link",
     className
   )
 
@@ -72,7 +72,10 @@ function mdxLink({
 
 function mdxTable({ className, ...props }: ComponentPropsWithoutRef<"table">) {
   return (
-    <div className="my-6 overflow-x-auto rounded-lg border border-border">
+    <div
+      className="my-5 max-w-full overflow-x-auto border border-border"
+      tabIndex={0}
+    >
       <table
         className={cn("w-full border-collapse text-left text-sm", className)}
         {...props}
@@ -107,7 +110,7 @@ export const mdxComponents = {
   h1: ({ className, ...props }) => (
     <h1
       className={cn(
-        "scroll-mt-24 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl",
+        "scroll-mt-6 text-[32px] leading-tight font-semibold tracking-tight text-foreground",
         className
       )}
       {...props}
@@ -116,7 +119,7 @@ export const mdxComponents = {
   h2: ({ className, ...props }) => (
     <h2
       className={cn(
-        "mt-12 scroll-mt-24 border-b border-border/70 pb-3 text-2xl font-semibold tracking-tight text-foreground",
+        "mt-8 scroll-mt-6 border-b border-border pb-2 text-xl font-semibold tracking-tight text-foreground",
         className
       )}
       {...props}
@@ -125,7 +128,7 @@ export const mdxComponents = {
   h3: ({ className, ...props }) => (
     <h3
       className={cn(
-        "mt-8 scroll-mt-24 text-xl font-semibold tracking-tight text-foreground",
+        "mt-6 scroll-mt-6 text-lg font-semibold tracking-tight text-foreground",
         className
       )}
       {...props}
@@ -148,7 +151,7 @@ export const mdxComponents = {
   ),
   p: ({ className, ...props }) => (
     <p
-      className={cn("mt-5 leading-7 text-muted-foreground", className)}
+      className={cn("mt-4 leading-7 text-muted-foreground", className)}
       {...props}
     />
   ),

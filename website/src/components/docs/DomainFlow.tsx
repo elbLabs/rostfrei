@@ -10,6 +10,7 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react"
+import { useTheme } from "@rostfrei/ui/theme"
 
 type DomainNodeData = {
   kind: "command" | "policy" | "decision" | "event" | "rejection"
@@ -24,13 +25,13 @@ type DomainNode = Node<DomainNodeData, "domain">
 const handleStyle = {
   width: 9,
   height: 9,
-  border: "2px solid #100e0a",
-  background: "#ff6b4a",
+  border: "2px solid var(--card)",
+  background: "var(--primary)",
 }
 
 function DomainNodeCard({ data }: NodeProps<DomainNode>) {
   return (
-    <div className="w-48 rounded-lg border border-border bg-card px-4 py-3 text-left shadow-lg shadow-black/20">
+    <div className="w-48 border border-border bg-card px-4 py-3 text-left">
       {data.input ? (
         <Handle
           type="target"
@@ -40,7 +41,19 @@ function DomainNodeCard({ data }: NodeProps<DomainNode>) {
         />
       ) : null}
 
-      <p className="font-mono text-[9px] tracking-[0.14em] text-primary uppercase">
+      <p
+        className="font-mono text-[9px] tracking-[0.14em] uppercase"
+        style={{
+          color:
+            data.kind === "command"
+              ? "var(--command)"
+              : data.kind === "event"
+                ? "var(--domain-event)"
+                : data.kind === "rejection"
+                  ? "var(--destructive)"
+                  : "var(--muted-foreground)",
+        }}
+      >
         {data.kind === "event" ? "domain event" : data.kind}
       </p>
       <p className="mt-1 text-sm font-semibold text-card-foreground">
@@ -72,7 +85,11 @@ function DomainNodeCard({ data }: NodeProps<DomainNode>) {
             id="rejected"
             type="source"
             position={Position.Right}
-            style={{ ...handleStyle, top: "70%", background: "#a99f8d" }}
+            style={{
+              ...handleStyle,
+              top: "70%",
+              background: "var(--destructive)",
+            }}
             isConnectable={false}
           />
         </>
@@ -182,8 +199,9 @@ const initialEdges: Edge[] = [
 ]
 
 export function DomainFlow() {
+  const { resolvedTheme } = useTheme()
   return (
-    <div className="my-8 overflow-hidden rounded-xl border border-border bg-[#0d0b08] shadow-lg shadow-black/10">
+    <div className="my-6 overflow-hidden border border-border bg-muted">
       <div className="border-b border-border/70 px-4 py-3">
         <p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
           Rental decision
@@ -192,7 +210,12 @@ export function DomainFlow() {
       <div className="h-96 w-full sm:h-105">
         <ReactFlow<DomainNode>
           aria-label="A rental action evaluates eligibility, then raises a domain event or returns a rejection"
-          colorMode="dark"
+          colorMode={resolvedTheme}
+          defaultEdgeOptions={{
+            style: { stroke: "var(--muted-foreground)" },
+            labelStyle: { fill: "var(--foreground)" },
+            labelBgStyle: { fill: "var(--card)" },
+          }}
           defaultEdges={initialEdges}
           defaultNodes={initialNodes}
           edgesFocusable={false}
@@ -208,7 +231,7 @@ export function DomainFlow() {
           zoomOnScroll={false}
         >
           <Background
-            color="#332a1f"
+            color="var(--border)"
             gap={18}
             size={1}
             variant={BackgroundVariant.Dots}

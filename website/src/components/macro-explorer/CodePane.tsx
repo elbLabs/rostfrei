@@ -1,8 +1,9 @@
 import { useState } from "react"
 import { Check, Copy } from "lucide-react"
-import { Highlight, themes } from "prism-react-renderer"
+import { Highlight } from "prism-react-renderer"
 
 import { Button } from "@/components/ui/button"
+import { codeTheme } from "@/lib/code-theme"
 
 export function CodePane({ code, label }: { code: string; label: string }) {
   const [copied, setCopied] = useState(false)
@@ -19,13 +20,16 @@ export function CodePane({ code, label }: { code: string; label: string }) {
 
   return (
     <div className="min-w-0">
-      <div className="flex items-center justify-between border-b border-white/8 px-4 py-2.5">
-        <span className="font-mono text-[10px] tracking-[0.12em] text-stone-500 uppercase">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+        <span
+          className="min-w-0 truncate font-mono text-[10px] text-muted-foreground"
+          title={label}
+        >
           {label}
         </span>
         <Button
           aria-label={`Copy ${label}`}
-          className="text-stone-500 hover:bg-white/5 hover:text-stone-200"
+          className="shrink-0 text-muted-foreground hover:text-foreground"
           onClick={copyCode}
           size="xs"
           variant="ghost"
@@ -34,11 +38,11 @@ export function CodePane({ code, label }: { code: string; label: string }) {
           <span aria-live="polite">{copied ? "Copied" : "Copy"}</span>
         </Button>
       </div>
-      <Highlight code={code} language="rust" theme={themes.gruvboxMaterialDark}>
+      <Highlight code={code} language="rust" theme={codeTheme}>
         {({ className, getLineProps, getTokenProps, style, tokens }) => (
           <pre
             aria-label={`${label} Rust source code`}
-            className={`${className} h-117.5 max-w-full overflow-auto p-4 font-mono text-[12px] leading-6 sm:p-6 sm:text-[13px]`}
+            className={`${className} h-96 max-w-full overflow-auto p-3 font-mono text-[11px] leading-6`}
             style={{ ...style, backgroundColor: "transparent" }}
             tabIndex={0}
           >
@@ -51,15 +55,12 @@ export function CodePane({ code, label }: { code: string; label: string }) {
                 >
                   <span
                     aria-hidden="true"
-                    className="mr-4 inline-block w-5 text-right text-stone-700 select-none"
+                    className="mr-4 inline-block w-5 text-right text-muted-foreground select-none"
                   >
                     {lineIndex + 1}
                   </span>
                   {line.map((token, tokenIndex) => (
-                    <span
-                      {...getTokenProps({ token })}
-                      key={tokenIndex}
-                    />
+                    <span {...getTokenProps({ token })} key={tokenIndex} />
                   ))}
                   {"\n"}
                 </span>

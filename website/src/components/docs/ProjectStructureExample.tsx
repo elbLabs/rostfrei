@@ -57,8 +57,8 @@ export function ProjectStructureExample({
   const rows = buildTreeRows(example.files)
 
   return (
-    <div className="my-6 overflow-hidden rounded-xl border border-border bg-[#100e0a] shadow-lg shadow-black/10 lg:grid lg:grid-cols-[13rem_minmax(0,1fr)]">
-      <aside className="border-b border-border bg-[#14110d] lg:border-r lg:border-b-0">
+    <div className="my-6 min-w-0 overflow-hidden border border-border bg-card xl:grid xl:grid-cols-[13rem_minmax(0,1fr)]">
+      <aside className="min-w-0 border-b border-border bg-muted xl:border-r xl:border-b-0">
         <div className="flex h-10 items-center gap-2 border-b border-border px-3 font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase">
           <FolderOpen className="size-3.5" aria-hidden="true" />
           {example.root}

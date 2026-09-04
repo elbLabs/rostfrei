@@ -73,11 +73,30 @@ python3 scripts/test_nats.py -- cargo test --locked -p rostfrei-nats --test doma
 
 ### Frontends and CI
 
+The frontends use one pnpm workspace and root `pnpm-lock.yaml`. Install with
+`pnpm install --frozen-lockfile` from the repository root. The internal
+[`@rostfrei/ui`](../packages/ui/README.md) package supplies Reference ’15 tokens,
+shadcn/Radix controls, theme selection, and duck branding to both apps. Its source
+is consumed by Vite directly; it does not require a separate publish/build step.
+
+```sh
+pnpm lint
+pnpm build
+pnpm test:website
+pnpm test:studio
+```
+
 See [website development](../website/README.md) and
-[Studio development](../studio/README.md). The **Tests** workflow runs Rust checks,
-the standalone starter acceptance check, and Studio lint/build, mocked-API browser
-tests, and visual inspection. Screenshots, layout state, and browser diagnostics
-are uploaded as artifacts. Browser fixtures do not exercise a live Tracer backend.
+[Studio development](../studio/README.md). Run `pnpm dev:ui` for the local gallery
+in `packages/ui/gallery`, which shows shared components and their interactive states. The **Tests**
+workflow runs Rust checks, the standalone starter acceptance check, shared UI
+lint/typechecking, website lint, a deployment-base build and browser checks, and Studio
+lint/build, mocked-API browser tests, and visual inspection. Screenshots, layout
+state, and browser diagnostics are uploaded as artifacts. Browser fixtures do
+not exercise a live Tracer backend. Both browser checks use Chrome; set
+`CHROME_BIN` if it is not installed in a standard location. Website captures go
+to `artifacts/website/`. Set `VITE_BASE_PATH` to the same value for the website
+build and its browser check when verifying a non-root deployment.
 
 ## Benchmarks
 

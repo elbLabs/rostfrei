@@ -2,6 +2,7 @@ import { useEffect } from "react"
 import { useLocation } from "@tanstack/react-router"
 
 import { metadataForPath, pageHeadTags } from "@/site"
+import { withoutBasePath } from "@/lib/base-path"
 
 export function PageMetadata() {
   const pathname = useLocation({ select: (location) => location.pathname })
@@ -12,7 +13,7 @@ export function PageMetadata() {
       .forEach((tag) => tag.remove())
 
     for (const { tag, attrs, children } of pageHeadTags(
-      metadataForPath(pathname)
+      metadataForPath(withoutBasePath(pathname))
     )) {
       const element = document.createElement(tag)
       for (const [name, value] of Object.entries(attrs)) {

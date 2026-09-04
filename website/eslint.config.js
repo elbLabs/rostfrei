@@ -31,4 +31,11 @@ export default defineConfig([
       "react-refresh/only-export-components": "off",
     },
   },
+  {
+    files: [
+      "src/components/ui/{button,input,tabs,tooltip,separator,sheet,collapsible,skeleton}.tsx",
+      "src/components/theme-provider.tsx",
+    ],
+    rules: { "react-refresh/only-export-components": "off" },
+  },
 ])
