@@ -49,6 +49,17 @@ jobs:
             exit 1
           fi
 
+      - name: Install the repository Rust toolchain
+        run: rustup show active-toolchain
+      - name: Install the matching Rust CLI for kit qualification
+        run: |
+          cargo install --locked --path crates/rostfrei-structure --debug --root "$RUNNER_TEMP/skills-cli"
+          echo "ROSTFREI_CLI=$RUNNER_TEMP/skills-cli/bin/cargo-rostfrei" >> "$GITHUB_ENV"
+      - name: Qualify the installable Agent Skills kit
+        run: python3 scripts/check_agent_skills.py
+      - name: Build release-matched Agent Skills archive and checksum
+        run: python3 scripts/package_agent_skills.py --require-clean --output "$RUNNER_TEMP/agent-skills"
+
       - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,4 +80,6 @@ jobs:
             options+=(--prerelease)
           fi
 
-          gh release create "$RELEASE_TAG" "${options[@]}"
+          gh release create "$RELEASE_TAG" "${options[@]}" \
+            "$RUNNER_TEMP/agent-skills/rostfrei-agent-skills-${RELEASE_TAG#v}.tar.gz" \
+            "$RUNNER_TEMP/agent-skills/rostfrei-agent-skills-${RELEASE_TAG#v}.tar.gz.sha256"

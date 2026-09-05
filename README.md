@@ -71,6 +71,9 @@ The epoch selects split authority for both isolated Test and Normal scopes;
 omitting it retains legacy/read-only semantics. See the
 [host configuration](docs/nats-application-host.md).
 
+For matched host, CLI and Skills artifacts, follow the
+[local candidate qualification recipe](docs/release-01-kit.md).
+
 Domain events form private aggregate history. Integration events are separately
 versioned public contracts published after commit. NATS JetStream adapters
 provide durable command delivery, integration-event messaging, and event storage.
@@ -136,6 +139,20 @@ Install macro support once at the root of each crate declaring domain types:
 ```rust
 rostfrei::install_macro_support!();
 ```
+
+## Agent Skills
+
+- **`rostfrei-develop-feature`** guides Given/When/Then and test-first development
+  through the application's real NATS-backed behavior suite.
+- **`rostfrei-tracer`** discovers runtime capabilities and explains tests,
+  recorded operations, observations and quarantine.
+
+Install the CLI separately from the library, then explicitly install skills
+matched to the application's locked dependency. The published `v0.0.5-alpha`
+starter predates skills support and reports that skills were not installed.
+
+The [Agent Skills guide](docs/agent-skills-install.md) covers setup, managed updates,
+application test execution and optional kits. It also serves as the kit's README.
 
 ## Development
 

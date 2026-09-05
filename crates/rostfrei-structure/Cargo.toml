@@ -4,7 +4,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-include = ["src/**", "templates/**", "Cargo.toml"]
+include = ["src/**", "templates/**", "build.rs", "Cargo.toml",
+    "resources/develop.md", "resources/execution.md", "resources/worked-example.md",
+    "resources/add-first-bicycle.json", "resources/tracer.md", "resources/runtime.md",
+    "resources/behavioral-test-v2.schema.json", "resources/observed-message-series-v2.schema.json", "resources/LICENSE"]
 
 [lib]
 name = "rostfrei_structure"
@@ -22,9 +25,16 @@ heck.workspace = true
 proc-macro2 = { workspace = true, features = ["span-locations"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "rustls-tls"] }
+jsonschema = { version = "0.33.0", default-features = false }
 syn = { workspace = true, features = ["visit"] }
 tempfile.workspace = true
 thiserror.workspace = true
+
+[build-dependencies]
+serde_json.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 toml = "1.1"

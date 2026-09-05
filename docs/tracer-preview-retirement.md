@@ -104,7 +104,7 @@ are retained under `/tmp/rostfrei-harmony-4wflut29/handler-qualification/`.
   Normal dispatch survived all Test resets (`studio-live-inputs.log`).
 
 Matched package/installed/source/standalone-client qualification is recorded in
-#106's `docs/agent-skills-harmony.md`; its capability driver explicitly checks the
+[#106's archived evidence](https://github.com/elbLabs/rostfrei/blob/62f604e428ff7c8d713e798e7d82c50fd8102179/docs/agent-skills-harmony.md); its capability driver explicitly checks the
 new relation when available and reports unavailable on older hosts. CI and exact
 final heads are attached to both PRs. This does not complete independent agent
 trials, human feedback or final release rehearsal/attachment verification.
@@ -170,4 +170,4 @@ locally. Before/after artifacts are retained under
 accepted flow and mobile details were visually inspected. These are explicitly
 mocked presentation evidence, not proof of live execution or independent-agent
 competence. The combined live qualification and final CI are tracked on the PRs
-and in #106's `docs/agent-skills-harmony.md`.
+and in [#106's archived evidence](https://github.com/elbLabs/rostfrei/blob/62f604e428ff7c8d713e798e7d82c50fd8102179/docs/agent-skills-harmony.md).

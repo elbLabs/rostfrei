@@ -17,4 +17,6 @@ jobs:
         with:
           python-version: '3.12'
       - run: python3 scripts/versions.py check
-      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      # Source/CLI tests run in the Rust and Agent Skills jobs, where their native
+      # build prerequisites are installed. This job owns version-tool regressions.
+      - run: python3 -m unittest discover -s scripts -p 'test_versions.py'
