@@ -31,7 +31,7 @@ instructions predate bounded-context commands; code and advertised links govern.
 | --- | --- |
 | Single registration, injected dependency, discovery, fixture, actual NATS execution | Standalone counter's `standalone_host_discovers_and_executes_behavior_through_real_nats`; runnable `src/main.rs` qualified separately |
 | Repeated Given state, receipts reset, committed message/correlation/causation identities | Standalone repeated suite execution and persisted history assertions; bike-rental `nats_runtime_integration` |
-| Preview is read-only; enabled HTTP/observer cleanup, including an open SSE response | Standalone HTTP test |
+| Retired simulation returns 404 without changing state; enabled HTTP/observer cleanup, including an open SSE response | Standalone HTTP test |
 | Disabled command runtime and failed-reset recovery, preserving Normal state | `disabled_commands_work_and_failed_test_reset_fails_closed_without_touching_normal` |
 | Active submissions exclude reset | `reset_waits_for_active_submissions`, with a deliberately blocked handler |
 | Worker startup failure, unexpected exit, observer startup rollback | Standalone lifecycle tests with deleted broker resources |

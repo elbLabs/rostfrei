@@ -110,7 +110,7 @@ export function Gallery() {
   const [details, setDetails] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
 
-  function preview() {
+  function runExample() {
     if (!fleet.trim()) {
       setInvalid(true)
       setMessage("Enter a fleet ID before running the local example.")
@@ -119,7 +119,7 @@ export function Gallery() {
     setInvalid(false)
     setRuns((count) => count + 1)
     setMessage(
-      `Preview ${runs + 1} accepted for ${fleet}. This gallery runs locally.`
+      `Example ${runs + 1} accepted for ${fleet}. This gallery runs locally.`
     )
   }
 
@@ -239,8 +239,8 @@ export function Gallery() {
             ))}
             <Button
               size="icon"
-              aria-label="Run local preview"
-              onClick={preview}
+              aria-label="Run local example"
+              onClick={runExample}
             >
               <Play aria-hidden="true" />
             </Button>
@@ -281,7 +281,7 @@ export function Gallery() {
           <form
             onSubmit={(event) => {
               event.preventDefault()
-              preview()
+              runExample()
             }}
             noValidate
           >
@@ -340,7 +340,7 @@ export function Gallery() {
                   id="gallery-notes"
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
-                  placeholder="Add context for this preview…"
+                  placeholder="Add context for this example…"
                   rows={3}
                 />
               </div>
@@ -367,7 +367,7 @@ export function Gallery() {
             </div>
             <Button type="submit" className="mt-4">
               <Play aria-hidden="true" />
-              Run local preview
+              Run local example
             </Button>
           </form>
         </section>
@@ -404,7 +404,7 @@ export function Gallery() {
         >
           <h2 id="panels-title">Panels, tables & tabs</h2>
           <p>
-            Compact working surfaces with meaningful headings. The preview
+            Compact working surfaces with meaningful headings. The example
             result reflects the form above.
           </p>
           <Panel>
@@ -416,7 +416,7 @@ export function Gallery() {
             </PanelHeader>
             <PanelContent>
               <Tabs defaultValue="result">
-                <TabsList variant="line" aria-label="Preview details">
+                <TabsList variant="line" aria-label="Example details">
                   <TabsTrigger value="result">Result</TabsTrigger>
                   <TabsTrigger value="payload">Payload</TabsTrigger>
                   <TabsTrigger value="loading">Loading</TabsTrigger>
@@ -425,7 +425,7 @@ export function Gallery() {
                   <Table>
                     <TableCaption>
                       Illustrative local flow · {runs}{" "}
-                      {runs === 1 ? "preview" : "previews"} run
+                      {runs === 1 ? "example" : "examples"} run
                     </TableCaption>
                     <TableHeader>
                       <TableRow>
@@ -471,7 +471,7 @@ export function Gallery() {
                   <CodeExample>
                     <code className="language-json">
                       {JSON.stringify(
-                        { fleet_id: fleet, notes, previews: runs },
+                        { fleet_id: fleet, notes, runs },
                         null,
                         2
                       )}
@@ -502,8 +502,10 @@ export function Gallery() {
               About this example
             </CollapsibleTrigger>
             <CollapsibleContent className="border-t border-border p-3 text-xs leading-6 text-muted-foreground">
-              These rows illustrate message kinds. A real Preview evaluates a
-              decision without appending events or publishing the command.{" "}
+              These rows illustrate message kinds; this gallery makes no runtime
+              requests. In Tracer, Isolated Test publishes through the Test bus.
+              Simulate handler runs the real handler and returns uncommitted
+              proposals; injected dependencies are not automatically sandboxed.{" "}
               <a
                 href="https://elblabs.github.io/rostfrei/docs/getting-started"
                 className="text-link underline"
@@ -558,7 +560,7 @@ export function Gallery() {
                   <DialogTitle>Reset this local example?</DialogTitle>
                   <DialogDescription>
                     Restore the initial fleet, clear notes, and reset the
-                    preview count.
+                    example count.
                   </DialogDescription>
                 </DialogHeader>
                 <DialogFooter>
@@ -571,7 +573,7 @@ export function Gallery() {
                       setNotes("")
                       setRuns(0)
                       setInvalid(false)
-                      setMessage("Example reset. Ready for another preview.")
+                      setMessage("Example reset. Ready for another run.")
                       setDialogOpen(false)
                     }}
                   >
@@ -586,7 +588,7 @@ export function Gallery() {
               </SheetTrigger>
               <SheetContent className="overflow-y-auto">
                 <SheetHeader>
-                  <SheetTitle>Local preview inspector</SheetTitle>
+                  <SheetTitle>Local example inspector</SheetTitle>
                   <SheetDescription>
                     Current gallery form values.
                   </SheetDescription>
@@ -596,7 +598,7 @@ export function Gallery() {
                   <CodeExample>
                     <code className="language-json">
                       {JSON.stringify(
-                        { fleet_id: fleet, notes, previews: runs },
+                        { fleet_id: fleet, notes, runs },
                         null,
                         2
                       )}
@@ -655,7 +657,7 @@ export function Gallery() {
             </PanelContent>
           </Panel>
           <CodeExample>
-            <code className="language-tsx">{`import { Button } from "@rostfrei/ui/components/button"\nimport { Brand, DuckMascot } from "@rostfrei/ui/brand"\nimport { ThemeProvider } from "@rostfrei/ui/theme"\n\n<ThemeProvider defaultTheme="system" storageKey="rostfrei-theme">\n  <Button>Run preview</Button>\n  <DuckMascot />\n</ThemeProvider>`}</code>
+            <code className="language-tsx">{`import { Button } from "@rostfrei/ui/components/button"\nimport { Brand, DuckMascot } from "@rostfrei/ui/brand"\nimport { ThemeProvider } from "@rostfrei/ui/theme"\n\n<ThemeProvider defaultTheme="system" storageKey="rostfrei-theme">\n  <Button>Run local example</Button>\n  <DuckMascot />\n</ThemeProvider>`}</code>
           </CodeExample>
         </section>
       </TooltipProvider>

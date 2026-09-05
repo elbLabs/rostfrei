@@ -141,7 +141,6 @@ runs independently of Tracer.
 
 | Action | State | Authorization |
 | --- | --- | --- |
-| Preview (`simulate`) | Reads test history; appends nothing. | Control token |
 | Test (`test`) | Publishes a command and appends to isolated test history. | Control token |
 | Production dispatch (`dispatch`) | Uses the same pipeline against normal application state. | Dispatch token |
 
@@ -178,7 +177,7 @@ The application has two traffic scopes:
 `POST /test-scenario/reset` restores the `demo-fleet` fixture.
 `POST /test-scenario/reset/{fixtureId}` selects another registered fixture.
 Reset stops test workers, recreates test resources, replays the fixture's domain
-events, and restarts the workers. A failed reset leaves Test, Preview, test
+events, and restarts the workers. A failed reset leaves Test, test
 instances, and dynamic inputs unavailable until a reset succeeds.
 
 The `demo-fleet` fixture builds `city-fleet` from two ordered `bicycle-added`
@@ -186,8 +185,8 @@ events. There is no legacy event decoder; incompatible demo histories require a
 fresh `ROSTFREI_APPLICATION` namespace or deletion of disposable NATS streams.
 
 For example, renting `bike-42` once succeeds. A second rental with a new
-idempotency key is rejected with `BICYCLE_UNAVAILABLE`. Preview then reports the
-same rejection without changing history. Reset restores the initial state.
+idempotency key is rejected with `BICYCLE_UNAVAILABLE`. Inspect that recorded
+outcome without submitting again. Reset restores the initial state.
 
 ### Submission and observation
 
@@ -210,7 +209,12 @@ Operation resources advertise the observation links:
 - `messageSeriesHref`: finite capture of messages and command outcomes; accepts
   bounded `within` and `settleFor` windows.
 
-Preview returns predicted events. Test and dispatch return observed evidence.
+Test and dispatch return observed evidence. Legacy Preview submission is retired.
+For explicit rule diagnostics, follow `simulateHandlerHrefTemplate` and POST the
+same command envelope. **Simulate handler** returns decision, starting versions
+and proposed/uncommitted domain events using the registered handler over Test
+history. It returns no operation or observed trace, and injected dependencies
+are not automatically sandboxed. See [the exact interface](../../docs/tracer-preview-retirement.md).
 An unsettled capture may be partial. Exact causal edges require a message's
 `causationId` to match another message's `messageId`; timestamps and array order
 do not establish causality. `grouped` fidelity means the capture cannot establish
@@ -251,12 +255,12 @@ Example requests:
 
 ```text
 List the available behavioral tests and summarize their intent.
-Preview renting bike-42 from city-fleet and show the causal Mermaid flow.
+Rent bike-42 from city-fleet in the agreed isolated Test scope and explain the observed flow.
 Run rent-available-bicycle and explain the observed result.
 ```
 
-The skill asks for confirmation before Test publication, reset, or a behavioral
-test run. Production dispatch requires separately confirmed production inputs
+The skill establishes the isolated execution/reset scope, reusing an already
+agreed TDD scope. Production dispatch requires separately confirmed production inputs
 and the dispatch token. Test-state discoveries are not production inputs.
 
 ## Configuration

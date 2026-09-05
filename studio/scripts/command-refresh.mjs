@@ -35,7 +35,6 @@ export async function checkCommandRefresh(browser, url) {
                 ],
                 payloadTemplate: { fleet_id: null, note: "", attempt: 0 },
                 testInputsHrefTemplate: `${base}/inputs`,
-                simulateHrefTemplate: `${base}/simulate`,
                 testHrefTemplate: `${base}/test`,
               },
             ],

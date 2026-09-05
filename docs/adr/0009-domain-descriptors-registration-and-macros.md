@@ -40,7 +40,7 @@ reflection.
 
 ADR 0013 subsequently absorbed the richer compiled domain model into rostfrei.
 Model-backed commands now retain their structural domain descriptor when
-registered through `rostfrei-domain-runtime`. Tracer can deserialize and simulate
+registered through `rostfrei-domain-runtime`. Tracer can deserialize and validate
 explicitly bound commands, while Test and Dispatch use an explicitly configured
 protocol-neutral command transport. The runtime still does not discover handlers
 or modules automatically or choose an environment on the application's behalf.

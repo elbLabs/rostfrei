@@ -324,11 +324,20 @@ async fn production_inspection_has_its_own_discovery_and_cannot_execute_commands
         get(&app, "/quarantine/test/record", "inspect").await.0,
         StatusCode::FORBIDDEN
     );
-    for path in [
-        "/test-scenario/reset",
-        "/contexts/orders/commands/place/dispatch",
-        "/contexts/orders/commands/place/test",
-        "/contexts/orders/commands/place/simulate",
+    for (path, expected) in [
+        ("/test-scenario/reset", StatusCode::FORBIDDEN),
+        (
+            "/contexts/orders/commands/place/dispatch",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "/contexts/orders/commands/place/test",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "/contexts/orders/commands/place/simulate",
+            StatusCode::NOT_FOUND,
+        ),
     ] {
         let response = app
             .clone()
@@ -342,7 +351,7 @@ async fn production_inspection_has_its_own_discovery_and_cannot_execute_commands
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.status(), expected, "{path}");
     }
     assert_eq!(test.calls.load(Ordering::Relaxed), 0);
     assert_eq!(production.calls.load(Ordering::Relaxed), 1);

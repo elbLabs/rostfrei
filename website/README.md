@@ -11,7 +11,7 @@ to understand and review an agent-assisted codebase. Support that promise with
 specific capabilities: checked ownership, typed contracts, a compiled domain
 model, event history, and inspectable command flows. Explain how developers and
 coding agents use those capabilities, and keep claims tied to what the framework
-actually exposes. Keep domain events, integration events, Preview, and Test
+actually exposes. Keep domain events, integration events, observation, and Test
 distinct, and describe the current alpha status explicitly.
 
 - Landing-page content lives in `src/components/page-shell`.

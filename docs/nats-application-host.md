@@ -2,8 +2,8 @@
 
 Enable `rostfrei-tracer`'s `nats-host` feature. `ApplicationBindings` is the
 executable composition: register aggregate fixture codecs, command instances and
-rejection mappers once. Those same handler instances supply catalog metadata,
-read-only Preview and `CommandProcessor` execution. Dependencies stay in your
+rejection mappers once. Those same registrations supply catalog metadata,
+payload decoding and `CommandProcessor` execution. Dependencies stay in your
 handlers. Integration mappings and handlers remain application-owned; the host
 supplies their buses, durable consumers and fixture-event suppression.
 
@@ -129,7 +129,7 @@ an application name alone is not authority selection.
 
 `ApplicationBindings::new()` assembles default JSON aggregate codecs.
 `with_event_codecs(Arc<AggregateCodecs>)` installs one frozen custom registry for
-fixture validation, real execution, private-event dispatch and Preview simulation.
+fixture validation, real execution, private-event dispatch and `simulate_handler`.
 Register/replace codecs before sharing it and include fixture aggregate codecs.
 Registering descriptors afterward does not mutate shared codec configuration.
 
@@ -190,11 +190,18 @@ uses it automatically. History reads do not themselves verify authority health.
 - Framework observers validate event identity, correlation and causation against
   delivery headers and envelopes. Integration events use the registered typed
   codecs, including provenance-derived identity checks. Evidence uses actual
-  committed events; Preview does not append.
+  committed events; retired simulation requests return 404 without publication.
 - Production Dispatch/inspection is attached only with an explicitly supplied
   Normal `NatsRuntime` through `TracerConfig::with_dispatch_runtime`. The host
   supervises that runtime too. Test reset cannot select Normal resources.
 - Shutdown retains broker data. Reset is the explicit destructive operation.
+
+Handler simulation remains diagnostic-only: no operation, durable outcome, command
+publication or synthetic MessageSeries. Preview remains unavailable. The known
+direct-runtime-reset diagnostic-health boundary is still deferred: Tracer-mediated
+reset gates diagnostics, but a direct failed `NatsRuntime::reset` does not update
+Tracer's separate diagnostic health flag. Current readable history is not proof of
+an intact writable authority. See [diagnostic limitations](tracer-preview-retirement.md).
 
 ### Submission admission during teardown
 

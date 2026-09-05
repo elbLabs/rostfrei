@@ -52,6 +52,441 @@ const OTHER_COMMAND_NAME: &str = "other-test-command";
 const API_TOKEN: &str = "integration-test-capability";
 #[cfg(feature = "http")]
 const SIMULATION_PATH: &str = "/contexts/test-context/commands/test-command/simulate";
+const TEST_PATH: &str = "/contexts/test-context/commands/test-command/test";
+const HANDLER_PATH: &str = "/contexts/test-context/commands/test-command/simulate-handler";
+
+struct DiagnosticHandler {
+    calls: Arc<Mutex<Vec<rostfrei_core::OperationId>>>,
+    injected: String,
+}
+
+struct WaitingDiagnosticHandler(Arc<tokio::sync::Notify>);
+
+#[async_trait]
+impl CommandHandler<TestCommand> for WaitingDiagnosticHandler {
+    type Rejection = TestRejection;
+    async fn handle(
+        &self,
+        command: &TestCommand,
+        execution: &mut CommandExecution<'_>,
+    ) -> Result<CommandDecision<TestRejection>, CommandExecutionError> {
+        if command.padding.as_deref() == Some("wait") {
+            self.0.notify_one();
+            std::future::pending::<()>().await;
+        }
+        TestCommandHandler.handle(command, execution).await
+    }
+}
+
+#[tokio::test]
+async fn handler_cancellation_releases_reset_gate_and_independent_capacity() {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let reset = Arc::new(RecordingReset::default());
+    let store = Arc::new(InMemoryEventStore::new());
+    let mut registry = DomainRegistry::new();
+    registry.register_aggregate::<TestAggregate>().unwrap();
+    registry
+        .register_command::<TestCommand, WaitingDiagnosticHandler>()
+        .unwrap();
+    let mut configured = TracerBuilder::new(store.clone(), registry)
+        .with_test_event_store(store)
+        .with_maximum_concurrent_operations(1)
+        .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
+        .with_test_scenario_reset(reset.clone())
+        .with_default_test_fixture(empty_fixture("default"));
+    configured
+        .register_json::<TestCommand, _>(WaitingDiagnosticHandler(entered.clone()))
+        .unwrap();
+    let tracer = configured.build().unwrap();
+    let task_tracer = tracer.clone();
+    let task = tokio::spawn(async move {
+        task_tracer
+            .simulate_handler(
+                "test-context",
+                COMMAND_NAME,
+                SimulationRequest {
+                    schema_version: 1,
+                    payload: json!({"reject":false,"padding":"wait"}),
+                },
+            )
+            .await
+    });
+    entered.notified().await;
+    assert!(matches!(
+        tracer
+            .simulate_handler("test-context", COMMAND_NAME, simulation_request(false))
+            .await,
+        Err(rostfrei_tracer::HandlerSimulationError::Submission(
+            SubmissionError::ConcurrencyExhausted
+        ))
+    ));
+    let test = tracer
+        .submit_test(
+            "test-context",
+            COMMAND_NAME,
+            simulation_request(false),
+            Some("independent"),
+        )
+        .await
+        .unwrap();
+    terminal_operation(&tracer, &test.operation_id).await;
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            tracer.reset_test_scenario()
+        )
+        .await
+        .is_err()
+    );
+    assert!(reset.fixture_ids.lock().await.is_empty());
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        tracer.reset_test_scenario(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(reset.fixture_ids.lock().await.len(), 1);
+    tracer
+        .simulate_handler("test-context", COMMAND_NAME, simulation_request(false))
+        .await
+        .unwrap();
+}
+
+#[async_trait]
+impl CommandHandler<TestCommand> for DiagnosticHandler {
+    type Rejection = TestRejection;
+    async fn handle(
+        &self,
+        command: &TestCommand,
+        execution: &mut CommandExecution<'_>,
+    ) -> Result<CommandDecision<TestRejection>, CommandExecutionError> {
+        self.calls
+            .lock()
+            .await
+            .push(execution.metadata().operation_id().clone());
+        let mut aggregate = execution.load::<TestAggregate>("aggregate-1").await?;
+        if command.padding.as_deref() != Some("noop") {
+            aggregate.aggregate_mut().raise(TestEvent {
+                sensitive: self.injected.clone(),
+            });
+        }
+        if command.reject {
+            Ok(CommandDecision::Rejected(TestRejection))
+        } else {
+            Ok(CommandDecision::Accepted)
+        }
+    }
+}
+
+#[cfg(feature = "http")]
+#[allow(clippy::unwrap_used, reason = "test request construction must succeed")]
+async fn handler_request(
+    app: &axum::Router,
+    token: &str,
+    payload: Value,
+) -> axum::response::Response {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(HANDLER_PATH)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"schemaVersion":1,"payload":payload}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one seeded diagnostic scenario checks all non-publication invariants"
+)]
+async fn simulate_handler_returns_uncommitted_decisions_without_operations_or_receipts() {
+    use rostfrei_core::{
+        CommandExecutionMetadata, CommandExecutor, ContentFingerprint, EventStore, OperationId,
+    };
+    let store = Arc::new(InMemoryEventStore::new());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let handler = DiagnosticHandler {
+        calls: calls.clone(),
+        injected: "private injected dependency".into(),
+    };
+    let context = rostfrei_messaging_core::BoundedContextName::new("test-context").unwrap();
+    CommandExecutor::new(store.clone())
+        .execute(
+            &handler,
+            CommandExecutionMetadata::new(
+                OperationId::new("seed").unwrap(),
+                ContentFingerprint::digest("seed"),
+            )
+            .with_bounded_context(context.clone()),
+            &TestCommand {
+                reject: false,
+                panic: None,
+                padding: None,
+                secondary_aggregate_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let mut bindings = rostfrei_tracer::ApplicationBindings::new();
+    bindings.register_aggregate::<TestAggregate>().unwrap();
+    bindings
+        .register_command::<TestCommand, _>(
+            handler,
+            rostfrei::JsonDomainRejectionMapper::new(
+                rostfrei::CommandRejectionClassification::Conflict,
+            ),
+        )
+        .unwrap();
+    let transport = Arc::new(FakeTransport::accepted("unused", false));
+    let tracer = bindings
+        .tracer_builder(store.clone())
+        .with_test_event_store(store.clone())
+        .with_test_transport(transport.clone())
+        .with_dispatch_transport(transport.clone())
+        .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment))
+        .build()
+        .unwrap();
+    let version =
+        serde_json::to_value(tracer.catalog()).unwrap()["contexts"][0]["commands"][0]["versions"]
+            [0]
+        .clone();
+    assert_eq!(version["simulateHandlerHrefTemplate"], HANDLER_PATH);
+    assert!(version.get("simulateHrefTemplate").is_none());
+    let app = http::router(
+        tracer.clone(),
+        HttpConfig::new(API_TOKEN)
+            .unwrap()
+            .with_inspection_token("inspect")
+            .unwrap()
+            .with_dispatch_token("dispatch")
+            .unwrap(),
+    );
+    let stream = StreamId::new(
+        rostfrei_core::AggregateType::new(AGGREGATE_TYPE).unwrap(),
+        rostfrei_core::AggregateId::new("aggregate-1").unwrap(),
+    );
+    let before = store.load(&stream).await.unwrap();
+    for (reject, padding, events) in [(false, None, 1), (true, None, 0), (false, Some("noop"), 0)] {
+        let response =
+            handler_request(&app, API_TOKEN, json!({"reject":reject,"padding":padding})).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("location").is_none());
+        let result = json_body(response).await;
+        assert_eq!(result["kind"], "handlerSimulation");
+        assert_eq!(result["committed"], false);
+        assert_eq!(
+            result["outcome"]["decision"],
+            if reject { "rejected" } else { "accepted" }
+        );
+        assert_eq!(result["streams"][0]["baseStreamVersion"], 1);
+        assert_eq!(result["streams"][0]["aggregateId"], "aggregate-1");
+        assert_eq!(result["proposedEvents"].as_array().unwrap().len(), events);
+        if events == 1 {
+            assert_eq!(
+                result["proposedEvents"][0]["payload"]["sensitive"],
+                "private injected dependency"
+            );
+            assert_eq!(result["proposedEvents"][0]["proposedStreamVersion"], 2);
+        }
+        for field in [
+            "operationId",
+            "correlationId",
+            "messageSeries",
+            "capture",
+            "commandMessageId",
+            "responseMessageId",
+            "receipt",
+        ] {
+            assert!(result.get(field).is_none(), "{field}");
+        }
+    }
+    for (token, status) in [
+        ("inspect", StatusCode::FORBIDDEN),
+        ("dispatch", StatusCode::UNAUTHORIZED),
+    ] {
+        assert_eq!(
+            handler_request(&app, token, json!({"reject":false}))
+                .await
+                .status(),
+            status
+        );
+    }
+    assert_eq!(
+        calls.lock().await.len(),
+        4,
+        "same injected instance: seed and three simulations only"
+    );
+    for id in calls.lock().await.iter().skip(1) {
+        assert!(
+            store
+                .load_transaction_receipt_in_context(&context, id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            tracer.operation(id.as_str()).await,
+            Err(SubmissionError::NotFound)
+        ));
+        assert!(matches!(
+            tracer.subscribe_correlation(id.as_str(), 0).await,
+            Err(CorrelationError::NotFound)
+        ));
+    }
+    assert_eq!(store.load(&stream).await.unwrap(), before);
+    assert!(transport.invocations.lock().await.is_empty());
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn simulate_handler_redacts_and_rejects_invalid_payloads_without_publication() {
+    let tracer = tracer(1024);
+    let app = http::router(tracer, HttpConfig::new(API_TOKEN).unwrap());
+    let response = handler_request(&app, API_TOKEN, json!({"reject":false})).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let result = json_body(response).await;
+    assert_eq!(result["kind"], "handlerSimulation");
+    assert!(result["proposedEvents"][0].get("payload").is_none());
+    let result = json_body(handler_request(&app, API_TOKEN, json!({"reject":true})).await).await;
+    assert_eq!(result["outcome"]["rejection"], json!({"redacted":true}));
+    let response =
+        handler_request(&app, API_TOKEN, json!({"reject":"private invalid value"})).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let error = json_body(response).await;
+    assert_eq!(error["code"], "invalid-command-payload");
+    assert!(!error.to_string().contains("private invalid value"));
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn simulate_handler_bounds_results_and_returns_typed_failures() {
+    let mut fixture_builder = builder(Arc::new(InMemoryEventStore::new()))
+        .with_trace_payload_policy(Arc::new(OversizedTracePayloads));
+    fixture_builder
+        .register_json::<TestCommand, _>(TestCommandHandler)
+        .unwrap();
+    let app = http::router(
+        fixture_builder.build().unwrap(),
+        HttpConfig::new(API_TOKEN).unwrap(),
+    );
+    let response = handler_request(&app, API_TOKEN, json!({"reject":false})).await;
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        json_body(response).await["code"],
+        "handler-result-too-large"
+    );
+    for (kind, code) in [
+        (EventStoreErrorKind::CorruptHistory, "corrupt-history"),
+        (EventStoreErrorKind::Unavailable, "history-unavailable"),
+    ] {
+        let mut builder = builder(Arc::new(FailedHistory(kind)));
+        builder
+            .register_json::<TestCommand, _>(TestCommandHandler)
+            .unwrap();
+        let app = http::router(
+            builder.build().unwrap(),
+            HttpConfig::new(API_TOKEN).unwrap(),
+        );
+        let response = handler_request(&app, API_TOKEN, json!({"reject":false})).await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let error = json_body(response).await;
+        assert_eq!(error["code"], code);
+        assert_eq!(error["message"], "operation failure details are redacted");
+    }
+    let tracer = tracer(4);
+    let app = http::router(tracer.clone(), HttpConfig::new(API_TOKEN).unwrap());
+    let response = handler_request(&app, API_TOKEN, json!({"reject":false,"panic":true})).await;
+    assert_eq!(
+        json_body(response).await["code"],
+        "handler-simulation-failed"
+    );
+    assert_eq!(
+        handler_request(&app, API_TOKEN, json!({"reject":false}))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert!(matches!(
+        tracer
+            .simulate_handler(
+                "test-context",
+                COMMAND_NAME,
+                SimulationRequest {
+                    schema_version: 999,
+                    payload: json!({"reject":false})
+                }
+            )
+            .await,
+        Err(rostfrei_tracer::HandlerSimulationError::Submission(
+            SubmissionError::UnknownCommand { .. }
+        ))
+    ));
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn discovery_advertises_real_execution_without_preview() {
+    let transport = Arc::new(FakeTransport::accepted("discovery", false));
+    let tracer = transported_tracer(Some(transport.clone()), None, false);
+    let catalog = serde_json::to_value(tracer.catalog()).unwrap();
+    let version = &catalog["contexts"][0]["commands"][0]["versions"][0];
+    assert!(version.get("testHrefTemplate").is_some());
+    assert!(
+        version.get("simulateHrefTemplate").is_none(),
+        "Preview is retired from discovery"
+    );
+    assert!(transport.invocations.lock().await.is_empty());
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn retired_preview_requests_never_execute_or_fall_back_to_publication() {
+    let test = Arc::new(FakeTransport::accepted("test", false));
+    let dispatch = Arc::new(FakeTransport::accepted("dispatch", false));
+    let tracer = transported_tracer(Some(test.clone()), Some(dispatch.clone()), false);
+    let app = http::router(tracer.clone(), HttpConfig::new(API_TOKEN).unwrap());
+    let response = app
+        .oneshot(
+            authorize(Request::builder().method("POST").uri(SIMULATION_PATH))
+                .header("content-type", "application/json")
+                .header("idempotency-key", "retired")
+                .body(Body::from(
+                    r#"{"schemaVersion":1,"payload":{"reject":false}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(matches!(
+        tracer
+            .submit_simulation(
+                "test-context",
+                COMMAND_NAME,
+                simulation_request(false),
+                Some("retired")
+            )
+            .await,
+        Err(SubmissionError::ModeUnavailable("simulate"))
+    ));
+    assert!(test.invocations.lock().await.is_empty());
+    assert!(dispatch.invocations.lock().await.is_empty());
+    assert!(matches!(
+        tracer.operation("retired").await,
+        Err(SubmissionError::NotFound)
+    ));
+}
 
 #[derive(domain::BoundedContext)]
 #[domain(id = "test-context", label = "Test context")]
@@ -261,8 +696,11 @@ fn builder(history: Arc<dyn EventHistory>) -> TracerBuilder {
 
 #[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
 fn tracer(maximum_operations: usize) -> Tracer {
-    let mut builder =
-        builder(Arc::new(InMemoryEventStore::new())).with_maximum_operations(maximum_operations);
+    let store = Arc::new(InMemoryEventStore::new());
+    let mut builder = builder(store.clone())
+        .with_test_event_store(store)
+        .with_test_transport(Arc::new(FixtureTransport))
+        .with_maximum_operations(maximum_operations);
     builder
         .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
@@ -270,9 +708,13 @@ fn tracer(maximum_operations: usize) -> Tracer {
 }
 
 #[allow(clippy::unwrap_used, reason = "test submissions must succeed")]
-async fn submit(tracer: &Tracer, operation_id: &str, payload: Value) {
+async fn submit(
+    tracer: &Tracer,
+    operation_id: &str,
+    payload: Value,
+) -> rostfrei_tracer::OperationSnapshot {
     tracer
-        .submit_simulation(
+        .submit_test(
             "test-context",
             COMMAND_NAME,
             SimulationRequest {
@@ -282,7 +724,7 @@ async fn submit(tracer: &Tracer, operation_id: &str, payload: Value) {
             Some(operation_id),
         )
         .await
-        .unwrap();
+        .unwrap()
 }
 
 async fn terminal_operation(tracer: &Tracer, operation_id: &str) -> Value {
@@ -338,7 +780,7 @@ async fn http_requires_a_bearer_capability_and_reports_invalid_input() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(SIMULATION_PATH)
+                .uri(TEST_PATH)
                 .header("content-type", "application/json")
                 .body(Body::from("{"))
                 .unwrap(),
@@ -352,7 +794,7 @@ async fn http_requires_a_bearer_capability_and_reports_invalid_input() {
         .oneshot(
             authorize(Request::builder())
                 .method("POST")
-                .uri(SIMULATION_PATH)
+                .uri(TEST_PATH)
                 .header("content-type", "application/json")
                 .body(Body::from("{"))
                 .unwrap(),
@@ -368,7 +810,7 @@ async fn http_requires_a_bearer_capability_and_reports_invalid_input() {
         .oneshot(
             authorize(Request::builder())
                 .method("POST")
-                .uri(SIMULATION_PATH)
+                .uri(TEST_PATH)
                 .header("content-type", "application/json")
                 .header("idempotency-key", "cache-control-operation")
                 .body(Body::from(
@@ -385,7 +827,7 @@ async fn http_requires_a_bearer_capability_and_reports_invalid_input() {
         .oneshot(
             authorize(Request::builder())
                 .method("POST")
-                .uri(SIMULATION_PATH)
+                .uri(TEST_PATH)
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
@@ -475,25 +917,22 @@ async fn http_catalog_omits_dispatch_without_a_dispatch_capability() {
 async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
     let tracer = tracer(1);
 
-    submit(&tracer, "redacted-accepted", json!({ "reject": false })).await;
+    let accepted_submission =
+        submit(&tracer, "redacted-accepted", json!({ "reject": false })).await;
     let (accepted, accepted_trace) =
-        terminal_operation_with_trace(&tracer, "redacted-accepted").await;
-    assert!(
-        accepted["result"]["predictedEvents"][0]
-            .get("payload")
-            .is_none()
-    );
+        terminal_operation_with_trace(&tracer, &accepted_submission.operation_id).await;
+    assert!(accepted["result"].get("predictedEvents").is_none());
     assert!(!accepted_trace.contains("accepted outcome details"));
 
-    submit(&tracer, "redacted-rejected", json!({ "reject": true })).await;
+    let rejected_submission = submit(&tracer, "redacted-rejected", json!({ "reject": true })).await;
     assert_eq!(
-        tracer.operation("redacted-accepted").await,
+        tracer.operation(&accepted_submission.operation_id).await,
         Err(SubmissionError::NotFound)
     );
     assert!(matches!(
         tracer
             .operation_message_series(
-                "redacted-accepted",
+                &accepted_submission.operation_id,
                 "1s".parse().unwrap(),
                 "1ms".parse().unwrap(),
             )
@@ -503,17 +942,18 @@ async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
         ))
     ));
     let (rejected, rejected_trace) =
-        terminal_operation_with_trace(&tracer, "redacted-rejected").await;
+        terminal_operation_with_trace(&tracer, &rejected_submission.operation_id).await;
     assert_eq!(rejected["result"]["rejection"], json!({ "redacted": true }));
     assert!(!rejected_trace.contains("TEST_REJECTION"));
 
-    submit(
+    let failed_submission = submit(
         &tracer,
         "redacted-failure",
         json!({ "reject": "not-a-boolean" }),
     )
     .await;
-    let (failure, failure_trace) = terminal_operation_with_trace(&tracer, "redacted-failure").await;
+    let (failure, failure_trace) =
+        terminal_operation_with_trace(&tracer, &failed_submission.operation_id).await;
     assert_eq!(failure["failure"]["code"], "invalid-command-payload");
     assert_eq!(
         failure["failure"]["message"],
@@ -523,35 +963,29 @@ async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
 }
 
 #[tokio::test]
-#[allow(
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    reason = "serialized operation fixtures use required predicted event fields"
-)]
-async fn simulation_preserves_stream_identity_for_all_participant_events() {
+async fn publication_does_not_invent_domain_events_or_participants() {
     let tracer = tracer(1024);
-
-    submit(
-        &tracer,
-        "multi-participant-simulation",
-        json!({
-            "reject": false,
-            "secondary_aggregate_id": "secondary-1"
-        }),
-    )
-    .await;
-    let operation = terminal_operation(&tracer, "multi-participant-simulation").await;
-    let events = operation["result"]["predictedEvents"]
-        .as_array()
-        .expect("accepted simulation exposes predicted events");
-
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0]["aggregateType"], AGGREGATE_TYPE);
-    assert_eq!(events[0]["aggregateId"], "aggregate-1");
-    assert_eq!(events[0]["predictedStreamVersion"], 1);
-    assert_eq!(events[1]["aggregateType"], OTHER_AGGREGATE_TYPE);
-    assert_eq!(events[1]["aggregateId"], "secondary-1");
-    assert_eq!(events[1]["predictedStreamVersion"], 1);
+    let submitted = submit(&tracer, "no-predictions", json!({ "reject": false })).await;
+    let operation = terminal_operation(&tracer, &submitted.operation_id).await;
+    assert!(operation["result"].get("predictedEvents").is_none());
+    assert!(operation["result"].get("appended").is_none());
+    let capture = tracer
+        .operation_message_series(
+            &submitted.operation_id,
+            "1s".parse().unwrap(),
+            "1ms".parse().unwrap(),
+        )
+        .await
+        .unwrap();
+    let capture = serde_json::to_value(capture).unwrap();
+    assert_eq!(capture["capture"]["fidelity"], "exact");
+    assert_eq!(
+        capture["messageSeries"]["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -561,10 +995,10 @@ async fn simulation_preserves_stream_identity_for_all_participant_events() {
 )]
 async fn active_correlation_subscribers_prevent_terminal_eviction() {
     let tracer = tracer(1);
-    submit(&tracer, "retained-correlation", json!({ "reject": false })).await;
-    terminal_operation(&tracer, "retained-correlation").await;
+    let retained = submit(&tracer, "retained-correlation", json!({ "reject": false })).await;
+    terminal_operation(&tracer, &retained.operation_id).await;
     let mut correlation = tracer
-        .subscribe_correlation("retained-correlation", 0)
+        .subscribe_correlation(&retained.correlation_id, 0)
         .await
         .unwrap();
     while let Some(event) = correlation.next().await {
@@ -575,7 +1009,7 @@ async fn active_correlation_subscribers_prevent_terminal_eviction() {
     tokio::task::yield_now().await;
 
     let blocked = tracer
-        .submit_simulation(
+        .submit_test(
             "test-context",
             COMMAND_NAME,
             SimulationRequest {
@@ -586,12 +1020,12 @@ async fn active_correlation_subscribers_prevent_terminal_eviction() {
         )
         .await;
     assert_eq!(blocked, Err(SubmissionError::CapacityExhausted));
-    assert!(tracer.operation("retained-correlation").await.is_ok());
+    assert!(tracer.operation(&retained.operation_id).await.is_ok());
 
     drop(correlation);
     submit(&tracer, "replacement-operation", json!({ "reject": false })).await;
     assert_eq!(
-        tracer.operation("retained-correlation").await,
+        tracer.operation(&retained.operation_id).await,
         Err(SubmissionError::NotFound)
     );
 }
@@ -608,7 +1042,8 @@ impl TracePayloadPolicy for OversizedTracePayloads {
     }
 
     fn rejection(&self, rejection: Value) -> Value {
-        rejection
+        let _ = rejection;
+        json!({ "value": "x".repeat(128 * 1024) })
     }
 
     fn failure_message(&self, message: String) -> String {
@@ -618,26 +1053,24 @@ impl TracePayloadPolicy for OversizedTracePayloads {
 
 #[tokio::test]
 async fn exposed_operation_payloads_are_bounded_across_retained_operations() {
-    let mut builder = builder(Arc::new(InMemoryEventStore::new()))
+    let store = Arc::new(InMemoryEventStore::new());
+    let mut builder = builder(store.clone())
+        .with_test_event_store(store)
+        .with_test_transport(Arc::new(FixtureTransport))
         .with_trace_payload_policy(Arc::new(OversizedTracePayloads));
     builder
         .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     let tracer = builder.build().unwrap();
 
-    submit(
+    let submitted = submit(
         &tracer,
         "bounded-operation-payload",
-        json!({ "reject": false }),
+        json!({ "reject": true }),
     )
     .await;
-    let (operation, trace) =
-        terminal_operation_with_trace(&tracer, "bounded-operation-payload").await;
-    assert!(
-        operation["result"]["predictedEvents"][0]
-            .get("payload")
-            .is_none()
-    );
+    let (operation, trace) = terminal_operation_with_trace(&tracer, &submitted.operation_id).await;
+    assert_eq!(operation["result"]["rejection"], json!({ "omitted": true }));
     assert!(!trace.contains(&"x".repeat(128 * 1024)));
 }
 
@@ -652,7 +1085,10 @@ async fn runtime_bindings_scope_commands_to_the_bounded_context() {
     registry
         .register_command::<OtherTestCommand, OtherTestCommandHandler>()
         .unwrap();
-    let mut builder = TracerBuilder::new(Arc::new(InMemoryEventStore::new()), registry);
+    let store = Arc::new(InMemoryEventStore::new());
+    let mut builder = TracerBuilder::new(store.clone(), registry)
+        .with_test_event_store(store)
+        .with_test_transport(Arc::new(FixtureTransport));
     builder
         .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
@@ -665,8 +1101,8 @@ async fn runtime_bindings_scope_commands_to_the_bounded_context() {
         (COMMAND_NAME, "first-context-command"),
         (OTHER_COMMAND_NAME, "second-context-command"),
     ] {
-        tracer
-            .submit_simulation(
+        let submitted = tracer
+            .submit_test(
                 "test-context",
                 command,
                 SimulationRequest {
@@ -677,7 +1113,7 @@ async fn runtime_bindings_scope_commands_to_the_bounded_context() {
             )
             .await
             .unwrap();
-        terminal_operation(&tracer, operation_id).await;
+        terminal_operation(&tracer, &submitted.operation_id).await;
     }
 }
 
@@ -738,7 +1174,7 @@ fn excessive_concurrency_configuration_does_not_panic() {
 }
 
 #[tokio::test]
-async fn generated_operation_ids_are_distinct_and_valid() {
+async fn test_operation_ids_are_distinct_and_scoped() {
     let tracer = tracer(4);
     let request = || SimulationRequest {
         schema_version: 1,
@@ -746,30 +1182,34 @@ async fn generated_operation_ids_are_distinct_and_valid() {
     };
 
     let first = tracer
-        .submit_simulation("test-context", COMMAND_NAME, request(), None)
+        .submit_test("test-context", COMMAND_NAME, request(), Some("first"))
         .await
         .unwrap();
     let second = tracer
-        .submit_simulation("test-context", COMMAND_NAME, request(), None)
+        .submit_test("test-context", COMMAND_NAME, request(), Some("second"))
         .await
         .unwrap();
 
     assert_ne!(first.operation_id, second.operation_id);
-    assert!(first.operation_id.starts_with("simulation-"));
-    assert!(second.operation_id.starts_with("simulation-"));
+    assert!(first.operation_id.starts_with("test:"));
+    assert!(second.operation_id.starts_with("test:"));
 }
 
-struct BlockingHistory {
+struct BlockingTransport {
     entered: Arc<Notify>,
     release: Arc<Notify>,
 }
 
 #[async_trait]
-impl EventHistory for BlockingHistory {
-    async fn load(&self, _stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+impl CommandTransport for BlockingTransport {
+    async fn invoke(
+        &self,
+        invocation: CommandInvocation,
+        observer: Arc<dyn CommandTransportObserver>,
+    ) -> Result<CommandReceipt, CommandTransportError> {
         self.entered.notify_one();
         self.release.notified().await;
-        Ok(Vec::new())
+        FixtureTransport.invoke(invocation, observer).await
     }
 }
 
@@ -780,11 +1220,14 @@ fn blocking_tracer(
 ) -> (Tracer, Arc<Notify>, Arc<Notify>) {
     let entered = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
-    let history: Arc<dyn EventHistory> = Arc::new(BlockingHistory {
+    let transport = Arc::new(BlockingTransport {
         entered: Arc::clone(&entered),
         release: Arc::clone(&release),
     });
-    let mut builder = builder(history)
+    let store = Arc::new(InMemoryEventStore::new());
+    let mut builder = builder(store.clone())
+        .with_test_event_store(store)
+        .with_test_transport(transport)
         .with_maximum_operations(maximum_operations)
         .with_maximum_concurrent_simulations(maximum_concurrent_simulations);
     builder
@@ -803,8 +1246,8 @@ fn simulation_request(reject: bool) -> SimulationRequest {
 #[tokio::test]
 async fn concurrent_admission_is_bounded_before_operation_capacity() {
     let (tracer, entered, release) = blocking_tracer(4, 1);
-    tracer
-        .submit_simulation(
+    let submitted = tracer
+        .submit_test(
             "test-context",
             COMMAND_NAME,
             simulation_request(false),
@@ -815,7 +1258,7 @@ async fn concurrent_admission_is_bounded_before_operation_capacity() {
     entered.notified().await;
 
     let repeated = tracer
-        .submit_simulation(
+        .submit_test(
             "test-context",
             COMMAND_NAME,
             simulation_request(false),
@@ -823,10 +1266,10 @@ async fn concurrent_admission_is_bounded_before_operation_capacity() {
         )
         .await
         .unwrap();
-    assert_eq!(repeated.operation_id, "running-operation");
+    assert_eq!(repeated.operation_id, submitted.operation_id);
     assert_eq!(
         tracer
-            .submit_simulation(
+            .submit_test(
                 "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
@@ -837,19 +1280,22 @@ async fn concurrent_admission_is_bounded_before_operation_capacity() {
     );
 
     release.notify_one();
-    let _ = terminal_operation(&tracer, "running-operation").await;
+    let _ = terminal_operation(&tracer, &submitted.operation_id).await;
 }
 
 #[tokio::test]
 #[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
-async fn simulation_admission_does_not_exhaust_dispatch_capacity() {
+async fn test_admission_does_not_exhaust_dispatch_capacity() {
     let entered = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
-    let history: Arc<dyn EventHistory> = Arc::new(BlockingHistory {
+    let transport = Arc::new(BlockingTransport {
         entered: Arc::clone(&entered),
         release: Arc::clone(&release),
     });
-    let mut builder = builder(history)
+    let store = Arc::new(InMemoryEventStore::new());
+    let mut builder = builder(store.clone())
+        .with_test_event_store(store)
+        .with_test_transport(transport)
         .with_dispatch_transport(Arc::new(FakeTransport::accepted(
             "dispatch-reserved",
             false,
@@ -861,12 +1307,12 @@ async fn simulation_admission_does_not_exhaust_dispatch_capacity() {
         .unwrap();
     let tracer = builder.build().unwrap();
 
-    tracer
-        .submit_simulation(
+    let submitted = tracer
+        .submit_test(
             "test-context",
             COMMAND_NAME,
             simulation_request(false),
-            Some("blocking-simulation"),
+            Some("blocking-test"),
         )
         .await
         .unwrap();
@@ -884,14 +1330,14 @@ async fn simulation_admission_does_not_exhaust_dispatch_capacity() {
     terminal_operation(&tracer, &dispatch.operation_id).await;
 
     release.notify_one();
-    let _ = terminal_operation(&tracer, "blocking-simulation").await;
+    let _ = terminal_operation(&tracer, &submitted.operation_id).await;
 }
 
 #[tokio::test]
 async fn operation_capacity_rejects_work_when_no_terminal_record_can_be_evicted() {
     let (tracer, entered, release) = blocking_tracer(1, 1);
-    tracer
-        .submit_simulation(
+    let submitted = tracer
+        .submit_test(
             "test-context",
             COMMAND_NAME,
             simulation_request(false),
@@ -903,7 +1349,7 @@ async fn operation_capacity_rejects_work_when_no_terminal_record_can_be_evicted(
 
     assert_eq!(
         tracer
-            .submit_simulation(
+            .submit_test(
                 "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
@@ -914,7 +1360,7 @@ async fn operation_capacity_rejects_work_when_no_terminal_record_can_be_evicted(
     );
 
     release.notify_one();
-    let _ = terminal_operation(&tracer, "capacity-running").await;
+    let _ = terminal_operation(&tracer, &submitted.operation_id).await;
 }
 
 struct FailedHistory(EventStoreErrorKind);
@@ -927,69 +1373,69 @@ impl EventHistory for FailedHistory {
 }
 
 #[tokio::test]
-async fn corrupt_history_and_infrastructure_failures_have_distinct_codes() {
-    for (kind, expected_code) in [
-        (EventStoreErrorKind::CorruptHistory, "corrupt-history"),
-        (EventStoreErrorKind::Unavailable, "history-unavailable"),
+async fn retired_simulation_never_reads_handler_history() {
+    for kind in [
+        EventStoreErrorKind::CorruptHistory,
+        EventStoreErrorKind::Unavailable,
     ] {
         let mut builder = builder(Arc::new(FailedHistory(kind)));
         builder
             .register_json::<TestCommand, _>(TestCommandHandler)
             .unwrap();
         let tracer = builder.build().unwrap();
-        submit(
-            &tracer,
-            &format!("failed-history-{expected_code}"),
-            json!({ "reject": false }),
-        )
-        .await;
-        let operation =
-            terminal_operation(&tracer, &format!("failed-history-{expected_code}")).await;
-        assert_eq!(operation["failure"]["code"], expected_code);
+        assert_eq!(
+            tracer
+                .submit_simulation(
+                    "test-context",
+                    COMMAND_NAME,
+                    simulation_request(false),
+                    Some("failed-history")
+                )
+                .await,
+            Err(SubmissionError::ModeUnavailable("simulate"))
+        );
     }
 }
 
 #[tokio::test]
-async fn command_handler_panics_become_one_terminal_failure_and_release_admission() {
-    let mut builder =
-        builder(Arc::new(InMemoryEventStore::new())).with_maximum_concurrent_simulations(1);
-    builder
-        .register_json::<TestCommand, _>(TestCommandHandler)
-        .unwrap();
-    let tracer = builder.build().unwrap();
-    submit(
+async fn transport_panics_become_one_terminal_failure_and_release_admission() {
+    let tracer = tracer(4);
+    let submitted = submit(
         &tracer,
         "panicking-operation",
         json!({ "reject": false, "panic": true }),
     )
     .await;
 
-    let operation = terminal_operation(&tracer, "panicking-operation").await;
+    let operation = terminal_operation(&tracer, &submitted.operation_id).await;
     assert_eq!(operation["status"], "failed");
     assert_eq!(operation["failure"]["code"], "operation-panicked");
     assert_eq!(operation["latestEventId"], 3);
 
-    submit(
+    let second = submit(
         &tracer,
         "panicking-operation-2",
         json!({ "reject": false, "panic": true }),
     )
     .await;
-    let second = terminal_operation(&tracer, "panicking-operation-2").await;
+    let second = terminal_operation(&tracer, &second.operation_id).await;
     assert_eq!(second["failure"]["code"], "operation-panicked");
 }
 
 #[tokio::test]
 async fn future_and_terminal_operation_cursors_are_explicit() {
     let tracer = tracer(4);
-    submit(&tracer, "cursor-operation", json!({ "reject": false })).await;
-    let operation = terminal_operation(&tracer, "cursor-operation").await;
+    let submitted = submit(&tracer, "cursor-operation", json!({ "reject": false })).await;
+    let operation = terminal_operation(&tracer, &submitted.operation_id).await;
     let latest = operation["latestEventId"].as_u64().unwrap();
 
-    let terminal = tracer.subscribe("cursor-operation", latest).await.unwrap();
+    let terminal = tracer
+        .subscribe(&submitted.operation_id, latest)
+        .await
+        .unwrap();
     assert!(terminal.is_complete().await);
     assert!(matches!(
-        tracer.subscribe("cursor-operation", latest + 1).await,
+        tracer.subscribe(&submitted.operation_id, latest + 1).await,
         Err(SubmissionError::InvalidCursor(
             SubscriptionError::FutureCursor { latest: actual }
         )) if actual == latest
@@ -1000,8 +1446,8 @@ async fn future_and_terminal_operation_cursors_are_explicit() {
 #[tokio::test]
 async fn http_reports_future_sse_cursors_with_a_stable_code() {
     let tracer = tracer(4);
-    submit(&tracer, "http-cursor-operation", json!({ "reject": false })).await;
-    let operation = terminal_operation(&tracer, "http-cursor-operation").await;
+    let submitted = submit(&tracer, "http-cursor-operation", json!({ "reject": false })).await;
+    let operation = terminal_operation(&tracer, &submitted.operation_id).await;
     let latest = operation["latestEventId"].as_u64().unwrap();
     let app = http::router(tracer, HttpConfig::new(API_TOKEN).unwrap());
 
@@ -1009,7 +1455,7 @@ async fn http_reports_future_sse_cursors_with_a_stable_code() {
         .clone()
         .oneshot(
             authorize(Request::builder())
-                .uri("/operations/http-cursor-operation/events")
+                .uri(&submitted.operation_events_href)
                 .header("last-event-id", (latest + 1).to_string())
                 .body(Body::empty())
                 .unwrap(),
@@ -1022,7 +1468,7 @@ async fn http_reports_future_sse_cursors_with_a_stable_code() {
     let terminal = app
         .oneshot(
             authorize(Request::builder())
-                .uri("/operations/http-cursor-operation/events")
+                .uri(&submitted.operation_events_href)
                 .header("last-event-id", latest.to_string())
                 .body(Body::empty())
                 .unwrap(),
@@ -1038,6 +1484,39 @@ struct FakeTransport {
     invocations: Arc<Mutex<Vec<CommandInvocation>>>,
     publication: Option<CommandPublication>,
     result: Result<CommandReceipt, CommandTransportError>,
+}
+
+// Transport-level fixture for admission, redaction and capture protocol tests.
+// Real persistence and worker causality are covered by the NATS host tests.
+struct FixtureTransport;
+
+#[async_trait]
+impl CommandTransport for FixtureTransport {
+    async fn invoke(
+        &self,
+        invocation: CommandInvocation,
+        observer: Arc<dyn CommandTransportObserver>,
+    ) -> Result<CommandReceipt, CommandTransportError> {
+        assert_ne!(
+            invocation.payload()["panic"],
+            true,
+            "transport panic fixture"
+        );
+        let transport = if invocation.payload()["reject"] == true {
+            FakeTransport::rejected(
+                invocation.correlation_id(),
+                CommandRejection::new(
+                    "conflict",
+                    "TEST_REJECTION",
+                    "private rejection",
+                    Some(json!({"private": true})),
+                ),
+            )
+        } else {
+            FakeTransport::accepted(invocation.correlation_id(), false)
+        };
+        transport.invoke(invocation, observer).await
+    }
 }
 
 impl FakeTransport {
@@ -1173,7 +1652,7 @@ fn transported_tracer(
 async fn correlation_feed_contains_command_domain_integration_and_result_events() {
     let tracer = tracer(4);
     let queued = tracer
-        .submit_simulation(
+        .submit_test(
             "test-context",
             COMMAND_NAME,
             SimulationRequest {
@@ -1186,7 +1665,19 @@ async fn correlation_feed_contains_command_domain_integration_and_result_events(
         .unwrap();
     terminal_operation(&tracer, &queued.operation_id).await;
     tracer
-        .correlation_observer(OperationMode::Simulate)
+        .correlation_observer(OperationMode::Test)
+        .observe_domain_event(
+            &queued.correlation_id,
+            rostfrei_tracer::DomainEventObservation::new("domain-1", "test-event", 1)
+                .with_causation_id(format!("{}-command", queued.correlation_id))
+                .with_aggregate(AGGREGATE_TYPE, "aggregate-1")
+                .with_stream_version(1)
+                .with_payload(json!({"private": true})),
+        )
+        .await
+        .unwrap();
+    tracer
+        .correlation_observer(OperationMode::Test)
         .observe_integration_event(
             &queued.correlation_id,
             IntegrationEventObservation::new(
@@ -1205,11 +1696,19 @@ async fn correlation_feed_contains_command_domain_integration_and_result_events(
         .await
         .unwrap();
     let command = subscription.next().await.unwrap();
-    let domain_event = subscription.next().await.unwrap();
+    let publication = subscription.next().await.unwrap();
     let result = subscription.next().await.unwrap();
+    let domain_event = subscription.next().await.unwrap();
     let integration_event = subscription.next().await.unwrap();
 
     assert!(matches!(command.kind, CorrelationEventKind::Command { .. }));
+    assert!(matches!(
+        publication.kind,
+        CorrelationEventKind::Command {
+            message_id: Some(_),
+            ..
+        }
+    ));
     assert!(matches!(
         domain_event.kind,
         CorrelationEventKind::DomainEvent {
@@ -1237,9 +1736,9 @@ async fn correlation_feed_contains_command_domain_integration_and_result_events(
     ));
     assert_eq!(
         tracer
-            .correlation_observer(OperationMode::Simulate)
+            .correlation_observer(OperationMode::Test)
             .observe_integration_event(
-                "unknown-correlation",
+                "test:unknown-correlation",
                 IntegrationEventObservation::new(
                     "ignored-1",
                     "ignored",
@@ -1254,9 +1753,9 @@ async fn correlation_feed_contains_command_domain_integration_and_result_events(
 
 #[tokio::test]
 async fn correlation_observer_exposes_payloads_only_when_configured() {
-    let tracer = transported_tracer(None, None, true);
+    let tracer = transported_tracer(Some(Arc::new(FixtureTransport)), None, true);
     let queued = tracer
-        .submit_simulation(
+        .submit_test(
             "test-context",
             COMMAND_NAME,
             SimulationRequest {
@@ -1269,7 +1768,7 @@ async fn correlation_observer_exposes_payloads_only_when_configured() {
         .unwrap();
     terminal_operation(&tracer, &queued.operation_id).await;
     tracer
-        .correlation_observer(OperationMode::Simulate)
+        .correlation_observer(OperationMode::Test)
         .observe_integration_event(
             &queued.correlation_id,
             IntegrationEventObservation::new(
@@ -1283,7 +1782,7 @@ async fn correlation_observer_exposes_payloads_only_when_configured() {
         .await
         .unwrap();
     tracer
-        .correlation_observer(OperationMode::Simulate)
+        .correlation_observer(OperationMode::Test)
         .observe_integration_event(
             &queued.correlation_id,
             IntegrationEventObservation::new(
@@ -1496,17 +1995,6 @@ async fn operation_message_series_uses_mode_capabilities_and_reports_fidelity() 
         .await
         .unwrap();
     terminal_operation(&tracer, &dispatch.operation_id).await;
-    let preview = tracer
-        .submit_simulation(
-            "test-context",
-            COMMAND_NAME,
-            simulation_request(false),
-            Some("message-series-preview"),
-        )
-        .await
-        .unwrap();
-    terminal_operation(&tracer, &preview.operation_id).await;
-
     assert_eq!(
         test.message_series_href,
         format!("/operations/{}/message-series", test.operation_id)
@@ -1621,33 +2109,6 @@ async fn operation_message_series_uses_mode_capabilities_and_reports_fidelity() 
         "exact"
     );
 
-    let grouped = app
-        .clone()
-        .oneshot(
-            authorize(Request::builder())
-                .uri(format!(
-                    "{}?within=1s&settleFor=1ms",
-                    preview.message_series_href
-                ))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(grouped.status(), StatusCode::OK);
-    let grouped = json_body(grouped).await;
-    assert_eq!(grouped["capture"]["fidelity"], "grouped");
-    assert!(
-        grouped["capture"]["note"]
-            .as_str()
-            .unwrap()
-            .contains("synthetic")
-    );
-    assert_eq!(
-        grouped["messageSeries"]["commandOutcomes"][0]["outcome"]["status"],
-        "accepted"
-    );
-
     let followed = app
         .clone()
         .oneshot(
@@ -1666,7 +2127,7 @@ async fn operation_message_series_uses_mode_capabilities_and_reports_fidelity() 
             authorize(Request::builder())
                 .uri(format!(
                     "{}?within=61s&settleFor=1ms",
-                    preview.message_series_href
+                    test.message_series_href
                 ))
                 .body(Body::empty())
                 .unwrap(),
@@ -1685,7 +2146,7 @@ async fn operation_message_series_uses_mode_capabilities_and_reports_fidelity() 
 async fn operation_message_series_waits_for_terminal_status_and_correlation_idle() {
     let (tracer, entered, release) = blocking_tracer(2, 1);
     let operation = tracer
-        .submit_simulation(
+        .submit_test(
             "test-context",
             COMMAND_NAME,
             simulation_request(false),
@@ -1716,7 +2177,7 @@ async fn operation_message_series_waits_for_terminal_status_and_correlation_idle
     terminal_operation(&tracer, &operation.operation_id).await;
     tokio::time::sleep(std::time::Duration::from_millis(40)).await;
     tracer
-        .correlation_observer(OperationMode::Simulate)
+        .correlation_observer(OperationMode::Test)
         .observe_integration_event(
             &operation.correlation_id,
             IntegrationEventObservation::new(
@@ -1753,7 +2214,7 @@ async fn operation_message_series_waits_for_terminal_status_and_correlation_idle
 async fn operation_message_series_timeout_is_unsettled_and_does_not_cancel_execution() {
     let (tracer, entered, release) = blocking_tracer(2, 1);
     let operation = tracer
-        .submit_simulation(
+        .submit_test(
             "test-context",
             COMMAND_NAME,
             simulation_request(false),
@@ -1797,10 +2258,10 @@ async fn operation_message_series_timeout_is_unsettled_and_does_not_cancel_execu
 #[allow(clippy::unwrap_used, reason = "test capture setup must succeed")]
 async fn active_message_series_capture_prevents_terminal_eviction() {
     let tracer = tracer(1);
-    submit(&tracer, "captured-operation", json!({ "reject": false })).await;
-    terminal_operation(&tracer, "captured-operation").await;
+    let submitted = submit(&tracer, "captured-operation", json!({ "reject": false })).await;
+    terminal_operation(&tracer, &submitted.operation_id).await;
     let mut capture = Box::pin(tracer.operation_message_series(
-        "captured-operation",
+        &submitted.operation_id,
         "1s".parse().unwrap(),
         "200ms".parse().unwrap(),
     ));
@@ -1810,7 +2271,7 @@ async fn active_message_series_capture_prevents_terminal_eviction() {
     ));
 
     let blocked = tracer
-        .submit_simulation(
+        .submit_test(
             "test-context",
             COMMAND_NAME,
             simulation_request(false),
@@ -2202,16 +2663,16 @@ async fn transported_commands_require_an_idempotency_key() {
         assert_eq!(result, Err(SubmissionError::IdempotencyKeyRequired));
     }
 
-    assert!(
+    assert_eq!(
         tracer
             .submit_simulation(
                 "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
-                None,
+                None
             )
-            .await
-            .is_ok()
+            .await,
+        Err(SubmissionError::ModeUnavailable("simulate"))
     );
 }
 
@@ -2233,7 +2694,7 @@ async fn simulations_cannot_occupy_transported_operation_namespaces() {
                     Some(operation_id),
                 )
                 .await,
-            Err(SubmissionError::InvalidOperationId(_))
+            Err(SubmissionError::ModeUnavailable("simulate"))
         ));
     }
 }
@@ -2545,6 +3006,14 @@ async fn reset_invalidates_test_identities_even_when_the_runtime_reset_fails() {
         ));
 
         if first_reset.is_err() {
+            assert!(matches!(
+                tracer
+                    .simulate_handler("test-context", COMMAND_NAME, simulation_request(false))
+                    .await,
+                Err(rostfrei_tracer::HandlerSimulationError::Submission(
+                    SubmissionError::TestScenarioUnavailable
+                ))
+            ));
             assert_eq!(
                 tracer
                     .submit_test(

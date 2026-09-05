@@ -11,6 +11,8 @@ export async function checkCommandExecution(browser, url) {
     errors = [],
     captures = []
   let testCount = 0
+  let simulationCount = 0
+  const simulations = []
   const version = {
     schemaVersion: 2,
     contentType: "application/json",
@@ -25,8 +27,8 @@ export async function checkCommandExecution(browser, url) {
       attempt: 0,
     },
     testInputsHrefTemplate: `${base}/inputs`,
-    simulateHrefTemplate: `${base}/simulate`,
     testHrefTemplate: `${base}/test`,
+    simulateHandlerHrefTemplate: `${base}/simulate-handler`,
   }
   const catalog = {
     catalogVersion: 1,
@@ -38,8 +40,8 @@ export async function checkCommandExecution(browser, url) {
         commands: [
           { id: "rent-bicycle", label: "Rent bicycle", versions: [version] },
           {
-            id: "preview-only",
-            label: "Preview only",
+            id: "metadata-only",
+            label: "Metadata only",
             versions: [{ ...version, testHrefTemplate: undefined }],
           },
         ],
@@ -104,7 +106,7 @@ export async function checkCommandExecution(browser, url) {
           observationOrder: 1,
           payload: { bicycle_id: "bike-42" },
         },
-        ...(mode === "simulate"
+        ...(mode === "test"
           ? [
               {
                 kind: "command",
@@ -171,6 +173,50 @@ export async function checkCommandExecution(browser, url) {
         return
       }
       if (request.method() === "POST") {
+        if (pathname === `${base}/simulate-handler`) {
+          simulations.push(request.postData())
+          simulationCount += 1
+          void respond(
+            simulationCount === 3
+              ? operation("test", "completed")
+              : {
+                  kind: "handlerSimulation",
+                  committed: false,
+                  context: "bike-rental",
+                  command: "rent-bicycle",
+                  schemaVersion: 2,
+                  outcome:
+                    simulationCount === 2
+                      ? {
+                          decision: "rejected",
+                          rejection: { code: "BICYCLE_UNAVAILABLE" },
+                        }
+                      : { decision: "accepted" },
+                  streams: [
+                    {
+                      aggregateType: "bike-rental/rental-fleet",
+                      aggregateId: "city-fleet",
+                      baseStreamVersion: 2,
+                      readGuard: false,
+                    },
+                  ],
+                  proposedEvents:
+                    simulationCount === 2
+                      ? []
+                      : [
+                          {
+                            aggregateType: "bike-rental/rental-fleet",
+                            aggregateId: "city-fleet",
+                            eventType: "bicycle-rented",
+                            schemaVersion: 1,
+                            proposedStreamVersion: 3,
+                            payload: { bicycle_id: "bike-42" },
+                          },
+                        ],
+                }
+          )
+          return
+        }
         requests.push({
           path: pathname,
           body: request.postData(),
@@ -179,12 +225,6 @@ export async function checkCommandExecution(browser, url) {
             request.headers().authorization?.startsWith("Bearer ")
           ),
         })
-        if (pathname === `${base}/simulate`) {
-          void respond(operation("simulate", "queued"), 202, {
-            location: "/op/simulate",
-          })
-          return
-        }
         if (pathname === `${base}/test`) {
           testCount += 1
           void (testCount === 1
@@ -219,13 +259,26 @@ export async function checkCommandExecution(browser, url) {
       "a catalog without a test repository must still support commands"
     )
     await page.click('button[aria-controls="studio-command-panel"]')
-    const choice = 'select[aria-label="Command and schema"]'
-    await page.select(choice, "bike-rental/preview-only@2")
     assert.equal(
-      await page.$eval(
-        '[data-command-mode="test"]',
-        (button) => button.disabled
+      await page.$('[data-command-mode="preview"]'),
+      null,
+      "Studio must not offer the retired Preview execution mode"
+    )
+    const choice = 'select[aria-label="Command and schema"]'
+    await page.select(choice, "bike-rental/metadata-only@2")
+    assert.equal(
+      await page.$eval('[data-command-mode="test"]', (button) =>
+        button.getAttribute("aria-pressed")
       ),
+      "true",
+      "Test stays selected even when unavailable"
+    )
+    assert.ok(
+      await page.$('[data-command-mode="simulate-handler"]'),
+      "Handler simulation is an explicit choice"
+    )
+    assert.equal(
+      await page.$eval(".command-submit", (button) => button.disabled),
       true
     )
     await page.select(choice, "bike-rental/rent-bicycle@2")
@@ -235,19 +288,65 @@ export async function checkCommandExecution(browser, url) {
           "city-fleet" &&
         !document.querySelector('input[aria-label="Payload Fleet"]').disabled
     )
-    assert.equal(
-      await page.$eval('[data-command-mode="test"]', (button) =>
-        button.getAttribute("aria-pressed")
-      ),
-      "true",
-      "Test preference survives Preview-only commands"
-    )
     const requestId = await page.$eval(
       'input[aria-label="Payload Request id"]',
       (input) => input.value
     )
     assert.match(requestId, /^[0-9a-f-]{36}$/i)
     const expectedBody = `{"schemaVersion":2,"payload":{"fleet_id":"city-fleet","bicycle_id":"bike-42","request_id":"${requestId}","legacy_id":42,"attempt":9007199254740993}}`
+    const graphBefore = await page.$$eval("[data-graph-node]", (nodes) =>
+      nodes.map((node) => node.dataset.nodeId)
+    )
+    await page.click('[data-command-mode="simulate-handler"]')
+    assert.equal(await page.$('input[aria-label="Idempotency key"]'), null)
+    await page.click(".command-submit")
+    await page.waitForSelector("[data-handler-simulation-result]")
+    assert.match(
+      await page.$eval(
+        "[data-handler-simulation-result]",
+        (element) => element.textContent
+      ),
+      /Uncommitted.*no acceptance receipt.*Starting stream versions.*v2.*bicycle-rented/s
+    )
+    assert.deepEqual(simulations, [expectedBody])
+    assert.deepEqual(captures, [])
+    assert.deepEqual(
+      await page.$$eval("[data-graph-node]", (nodes) =>
+        nodes.map((node) => node.dataset.nodeId)
+      ),
+      graphBefore
+    )
+    await page.click(".command-submit")
+    await page.waitForFunction(() =>
+      document
+        .querySelector("[data-handler-simulation-result]")
+        ?.textContent.includes("BICYCLE_UNAVAILABLE")
+    )
+    assert.match(
+      await page.$eval(
+        "[data-handler-simulation-result]",
+        (element) => element.textContent
+      ),
+      /No domain events proposed/
+    )
+    await page.click(".command-submit")
+    await page.waitForFunction(() =>
+      document
+        .querySelector(".command-form-error")
+        ?.textContent.includes("distinct uncommitted")
+    )
+    assert.equal(
+      await page.$("[data-handler-simulation-result]"),
+      null,
+      "operation-shaped responses cannot be rendered as simulation"
+    )
+    assert.deepEqual(captures, [])
+    assert.deepEqual(
+      requests,
+      [],
+      "handler diagnostics never fall back to Test"
+    )
+    await page.click('[data-command-mode="test"]')
     const panel = await page.$("#studio-command-panel")
     const before = await panel.boundingBox()
     const handle = await page.$("#studio-command-panel .studio-panel-header")
@@ -263,40 +362,6 @@ export async function checkCommandExecution(browser, url) {
       Math.abs(after.x - before.x) > 20 && Math.abs(after.y - before.y) > 20,
       "command panel remains draggable"
     )
-    await page.click('[data-command-mode="preview"]')
-    await page.click('#studio-command-panel button[type="submit"]')
-    await page.waitForSelector(
-      '[data-node-id="ui-simulate-root"][data-status="accepted"]'
-    )
-    assert.deepEqual(requests[0], {
-      path: `${base}/simulate`,
-      body: expectedBody,
-      key: undefined,
-      authorized: true,
-    })
-    assert.match(
-      await page.$eval(".flow-heading", (element) => element.textContent),
-      /Preview flow/
-    )
-    assert.equal(
-      await page.$eval(
-        '[data-node-id="downstream-command"]',
-        (node) => node.dataset.status
-      ),
-      "idle"
-    )
-    assert.equal(
-      await page.$$eval(
-        '[data-target-id="unlinked-message"]',
-        (edges) => edges.length
-      ),
-      0
-    )
-    assert.equal(
-      await page.$$eval("[data-graph-edge]", (edges) => edges.length),
-      2
-    )
-
     const subjects = await page.evaluate(async () => {
       const { operationGraph } = await import("/src/lib/graph.ts")
       const operation = {
@@ -346,7 +411,6 @@ export async function checkCommandExecution(browser, url) {
       )
     )
 
-    await page.click('[data-command-mode="test"]')
     const keySelector = 'input[aria-label="Idempotency key"]'
     const key = await page.$eval(keySelector, (input) => input.value)
     const setKey = (value) =>
@@ -370,7 +434,7 @@ export async function checkCommandExecution(browser, url) {
     await page.waitForSelector(
       '[data-node-id="ui-test-root"][data-status="accepted"]'
     )
-    assert.deepEqual(requests[1], {
+    assert.deepEqual(requests[0], {
       path: `${base}/test`,
       body: expectedBody,
       key,
@@ -383,10 +447,25 @@ export async function checkCommandExecution(browser, url) {
       ),
       "false"
     )
-    assert.deepEqual(captures, [
-      "/capture/simulate?within=10s&settleFor=500ms",
-      "/capture/test?within=10s&settleFor=500ms",
-    ])
+    assert.deepEqual(captures, ["/capture/test?within=10s&settleFor=500ms"])
+    assert.equal(
+      await page.$eval(
+        '[data-node-id="downstream-command"]',
+        (node) => node.dataset.status
+      ),
+      "idle"
+    )
+    assert.equal(
+      await page.$$eval(
+        '[data-target-id="unlinked-message"]',
+        (edges) => edges.length
+      ),
+      0
+    )
+    assert.equal(
+      await page.$$eval("[data-graph-edge]", (edges) => edges.length),
+      2
+    )
     await page.click('button[aria-controls="studio-command-panel"]')
     await page.waitForFunction(
       (previous) =>
@@ -406,7 +485,7 @@ export async function checkCommandExecution(browser, url) {
         ?.textContent.includes("may have reached the bus")
     )
     assert.equal(await page.$eval(keySelector, (input) => input.value), nextKey)
-    assert.equal(requests[2].body, expectedBody)
+    assert.equal(requests[1].body, expectedBody)
     assert.equal(
       testCount,
       2,

@@ -69,7 +69,7 @@ Production inspection uses its own credential, configured with
 `HttpConfig::with_inspection_token`. It must differ from both Control and Dispatch
 tokens. Fetch `/catalog` with that credential and follow
 `quarantine.production.listHref`. The inspection catalog contains no Test,
-Preview, reset, or command-dispatch links. A Control catalog advertises only Test
+reset or command-dispatch links. A Control catalog advertises only Test
 quarantine. Dispatch credentials do not authorize quarantine inspection.
 
 ```text

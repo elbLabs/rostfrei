@@ -49,7 +49,7 @@ pub fn command_bindings() -> Result<ApplicationBindings, ApplicationBindingError
     Ok(bindings)
 }
 
-// Low-level test fixtures deliberately replace Preview handlers. The runnable
+// Low-level test fixtures deliberately replace registered handlers. The runnable
 // application uses `bindings()` directly and never repeats registrations.
 pub fn builder(history: Arc<dyn EventHistory>) -> Result<TracerBuilder, ApplicationBindingError> {
     Ok(TracerBuilder::new(

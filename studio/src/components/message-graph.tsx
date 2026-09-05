@@ -214,7 +214,7 @@ export function MessageGraph({
         : view === "unavailable"
           ? "Incomplete execution"
           : view === "predicted"
-            ? "Preview flow"
+            ? "Historical simulation (uncommitted)"
             : "Observed flow"
   const dismissInspector = () => {
     setDetailsOpen(false)

@@ -3,6 +3,7 @@ mod bindings;
 mod catalog;
 mod command_bus;
 mod correlation;
+mod handler_simulation;
 mod input;
 mod message_series;
 mod observation;
@@ -45,6 +46,10 @@ pub use correlation::{
     CorrelationObserver, CorrelationSubscription, DomainEventObservation,
     IntegrationEventObservation,
 };
+pub use handler_simulation::{
+    HandlerDecision, HandlerSimulationError, HandlerSimulationKind, HandlerSimulationResult,
+    ProposedDomainEvent,
+};
 pub use input::{CommandInputDocument, CommandInputField, CommandInputOption, CommandInputOptions};
 pub use message_series::{
     ExpectedCommandFields, ExpectedMessageKind, ExpectedMessageNode, MessageGraphDefinition,
@@ -76,7 +81,7 @@ pub use rostfrei_fixtures::{
 };
 pub use runtime::RuntimeRegistrationError;
 pub use service::{
-    CommandInputError, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
+    CommandInputError, CommandRequest, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
     MAX_COMMAND_PAYLOAD_LEN, MessageSeriesCapture, MessageSeriesCaptureError,
     MessageSeriesFidelity, OperationMessageSeries, RedactTracePayloads, SimulationRequest,
     SubmissionError, TestDefinitionValidationError, TestRunError, TestScenarioReset,

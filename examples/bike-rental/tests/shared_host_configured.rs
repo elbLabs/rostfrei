@@ -14,8 +14,8 @@ use rostfrei::{
 use rostfrei_core::JsonEventCodec;
 use rostfrei_nats::{NatsConnectionConfig, ServicePrincipalContext, connect};
 use rostfrei_tracer::{
-    ApplicationBindings, ExposeTracePayloadsForLocalDevelopment, NatsExecutionProfile, NatsRuntime,
-    NatsRuntimeConfig, SimulationRequest, TestScenarioReset,
+    ApplicationBindings, CommandRequest, ExposeTracePayloadsForLocalDevelopment,
+    NatsExecutionProfile, NatsRuntime, NatsRuntimeConfig, TestScenarioReset,
 };
 use serde_json::{Value, json};
 use std::{
@@ -122,8 +122,8 @@ async fn submit(runtime: &NatsRuntime, id: &str, bicycle: &str) -> TestResult<Va
         tracer.operation(&queued.operation_id).await?,
     )?)
 }
-fn request(bicycle: &str) -> SimulationRequest {
-    SimulationRequest {
+fn request(bicycle: &str) -> CommandRequest {
+    CommandRequest {
         schema_version: <RentBicycle as rostfrei::Command>::SCHEMA_VERSION,
         payload: json!({"fleet_id":"city-fleet", "bicycle_id":bicycle}),
     }
@@ -223,6 +223,18 @@ async fn configured_service_rebuilds_and_recreated_tracer_replays_truthfully_the
             3,
             "rejected and no-event winners append no domain events"
         );
+        let reads = codecs_used.load(Ordering::SeqCst);
+        let diagnostic = runtime
+            .tracer_builder()
+            .build()?
+            .simulate_handler("bike-rental", "rent-bicycle", request("bike-99"))
+            .await?;
+        assert!(!diagnostic.committed);
+        assert!(
+            codecs_used.load(Ordering::SeqCst) > reads,
+            "diagnostic must use shared codecs"
+        );
+        assert_eq!(runtime.store().load(&demo_stream()).await?, history);
         policy.revoked.store(true, Ordering::SeqCst);
         let mut responses = connection
             .jetstream()
@@ -269,8 +281,8 @@ async fn configured_service_rebuilds_and_recreated_tracer_replays_truthfully_the
         );
         assert_eq!(
             calls.load(Ordering::SeqCst),
-            before + 3,
-            "replay, denial and expiry never reevaluate"
+            before + 4,
+            "only diagnostic adds one handler call"
         );
     }
     runtime.stop_workers().await;

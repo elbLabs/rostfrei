@@ -40,15 +40,14 @@ For the full flow, you need Docker with Compose and the NATS-backed example. Fol
 
 The example starts Tracer at `http://127.0.0.1:1309` by default. It creates separate normal and isolated Test resources for the same application and seeds a demonstration fleet.
 
-There are three distinct ways to exercise a command:
+There are two distinct ways to execute a command:
 
 | Mode | What it does |
 | --- | --- |
-| **Preview** | Evaluates a decision against isolated Test history without appending events or publishing the command. |
 | **Test** | Publishes through the isolated command pipeline. It can append events and trigger Test-scoped integrations. |
 | **Production dispatch** | Publishes to the normal application pipeline using a separately authorized capability. |
 
-Start with Preview to understand a decision, then use Test to observe the transported flow. [Subjects and streams](/docs/messaging/subjects) explains the routing and storage behind these modes.
+Use Test to execute a command and inspect its actual outcome and message flow. [Subjects and streams](/docs/messaging/subjects) explains the routing and storage behind these capabilities.
 
 ## 4. Explore the flow in Tracer Studio
 
@@ -61,7 +60,7 @@ pnpm --dir studio dev
 
 Open the local URL printed by Vite. Studio proxies its API requests to the local Tracer. If you configured a different target or control token, use the [Studio connection instructions](https://github.com/elbLabs/rostfrei/tree/main/studio#tracer-connection).
 
-Choose `RentBicycle` and an isolated Test instance. Preview the decision, then use Test to inspect the committed domain event and subsequent integration event. The seeded example includes a serviceable bicycle and one that requires maintenance, so you can explore both acceptance and rejection.
+Choose `RentBicycle` and an isolated Test instance. Execute Test and inspect the committed domain event and subsequent integration event. The seeded example includes a serviceable bicycle and one that requires maintenance, so you can explore both acceptance and rejection.
 
 Studio requires a running Tracer backend. If it cannot connect, check the target URL and token in the connection instructions above.
 
@@ -71,7 +70,7 @@ The compiled model and predictable source structure give an agent concrete place
 
 > Explain how `RentBicycle` works. Identify its bounded context, find the rental eligibility rule and its implementation, and describe the accepted and rejected outcomes. Cite the source files you used.
 
-Compare that explanation with the contracts and behavior you explored above. For a connected workflow, the [example's agent workflow](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental#agent-workflow) shows how to discover commands and inspect their outcomes through Tracer. Use Preview to explore a decision; Test publication changes isolated Test state.
+Compare that explanation with the contracts and behavior you explored above. For a connected workflow, the [example's agent workflow](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental#agent-workflow) shows how to discover commands and inspect their outcomes through Tracer. Test publication changes isolated Test state; read-only observation explains recorded activity without submitting again.
 
 ## Keep exploring
 
