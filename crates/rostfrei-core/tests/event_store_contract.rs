@@ -5,6 +5,9 @@ mod contract;
 #[path = "../../rostfrei-testing/src/command_acceptance_contract.rs"]
 mod command_acceptance_contract;
 
+#[path = "../../rostfrei-testing/src/completed_outcome_contract.rs"]
+mod completed_outcome_contract;
+
 use rostfrei_core::InMemoryEventStore;
 
 #[tokio::test]

@@ -15,6 +15,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         env::var("ROSTFREI_APPLICATION").unwrap_or_else(|_| APPLICATION_NAME.to_owned());
     let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
     let config = BikeRentalNatsConfig::new_with_resource_limits(&application, resource_limits)?;
+    let config = match env::var("ROSTFREI_COMPLETED_OUTCOME_EPOCH") {
+        Ok(epoch) => config.with_fresh_completed_outcome_epoch(&epoch)?,
+        Err(_) => config,
+    };
     let connection = connect(
         &NatsConnectionConfig::new(format!("{application}-provision"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),

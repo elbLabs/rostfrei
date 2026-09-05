@@ -34,6 +34,7 @@ async fn compare_readiness() -> BenchResult {
     let app = ApplicationName::new(format!("audit-bench-{}-{unique}", std::process::id()))?;
     let config =
         NatsEventStoreConfig::for_bounded_context(&app.test_bounded_context(model::CONTEXT)?)?
+            .with_fresh_split_outcome_epoch("isolated-history-benchmark")?
             .with_storage_limits(64 * 1024 * 1024, 512 * 1024)?;
     let result: BenchResult = async {
         provision_event_store(connection.jetstream(), &config).await?;

@@ -30,7 +30,8 @@ impl Fixture {
         let config = BikeRentalNatsConfig::new_with_resource_limits(
             &application,
             BikeRentalNatsResourceLimits::from_env()?,
-        )?;
+        )?
+        .with_fresh_completed_outcome_epoch("isolated-subscription-fixture")?;
         let connection = connect(
             &NatsConnectionConfig::new(&application, nats_url()?)
                 .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -84,12 +85,7 @@ impl Fixture {
     }
 
     async fn reprovision(&self) -> Result<BikeRentalNatsRuntime, BikeRentalNatsError> {
-        BikeRentalNatsRuntime::provision_with_resource_limits(
-            self.connection.clone(),
-            self.config.application().as_str(),
-            self.config.resource_limits(),
-        )
-        .await
+        BikeRentalNatsRuntime::provision_config(self.connection.clone(), self.config.clone()).await
     }
 
     async fn cleanup(&self) -> TestResult {

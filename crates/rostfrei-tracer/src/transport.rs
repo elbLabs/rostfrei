@@ -224,6 +224,8 @@ pub enum CommandTransportErrorKind {
     InvalidConfiguration,
     #[error("command transport response is invalid")]
     InvalidResponse,
+    #[error("command execution is blocked")]
+    ExecutionFailed,
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -231,6 +233,7 @@ pub enum CommandTransportErrorKind {
 pub struct CommandTransportError {
     kind: CommandTransportErrorKind,
     message: String,
+    execution_failure: Option<rostfrei_messaging_core::ExecutionFailure>,
 }
 
 impl CommandTransportError {
@@ -238,6 +241,7 @@ impl CommandTransportError {
         Self {
             kind,
             message: message.into(),
+            execution_failure: None,
         }
     }
 
@@ -247,6 +251,22 @@ impl CommandTransportError {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    pub fn execution_failed(failure: rostfrei_messaging_core::ExecutionFailure) -> Self {
+        Self {
+            kind: if failure.is_retryable() {
+                CommandTransportErrorKind::Unavailable
+            } else {
+                CommandTransportErrorKind::ExecutionFailed
+            },
+            message: "Technical command execution failure".to_owned(),
+            execution_failure: Some(failure),
+        }
+    }
+
+    pub const fn execution_failure(&self) -> Option<rostfrei_messaging_core::ExecutionFailure> {
+        self.execution_failure
     }
 }
 

@@ -116,6 +116,7 @@ impl NewEvent {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventBatch {
+    actor: Option<crate::ActorRef>,
     commit_id: CommitId,
     operation_id: OperationId,
     operation_fingerprint: ContentFingerprint,
@@ -125,6 +126,16 @@ pub struct EventBatch {
 }
 
 impl EventBatch {
+    #[must_use]
+    pub fn with_actor(mut self, actor: crate::ActorRef) -> Self {
+        self.actor = Some(actor);
+        self
+    }
+
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     pub fn new(
         commit_id: CommitId,
         operation_id: OperationId,
@@ -154,6 +165,7 @@ impl EventBatch {
         }
         Ok(Self {
             commit_id,
+            actor: None,
             operation_id,
             operation_fingerprint,
             events,
@@ -205,6 +217,7 @@ impl EventBatch {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordedEvent {
+    actor: Option<crate::ActorRef>,
     stream_id: StreamId,
     stream_version: StreamVersion,
     event_id: EventId,
@@ -221,6 +234,16 @@ pub struct RecordedEvent {
 }
 
 impl RecordedEvent {
+    #[must_use]
+    pub fn with_actor(mut self, actor: crate::ActorRef) -> Self {
+        self.actor = Some(actor);
+        self
+    }
+
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         stream_id: StreamId,
@@ -284,6 +307,7 @@ impl RecordedEvent {
         }
         Ok(Self {
             stream_id,
+            actor: None,
             stream_version,
             event_id,
             commit_id,
@@ -382,6 +406,7 @@ impl RecordedEvent {
             commit_event_count,
             correlation_id: batch.correlation_id.clone(),
             causation_id: batch.causation_id.clone(),
+            actor: batch.actor.clone(),
             event_type: event.event_type,
             schema_version: event.schema_version,
             payload: event.payload,

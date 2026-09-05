@@ -1,4 +1,3 @@
-use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
@@ -8,47 +7,18 @@ use thiserror::Error;
 
 use crate::identity::{derive_commit_id, derive_event_id};
 use crate::{
-    Aggregate, AggregateId, AggregateInstance, AggregateType, AppendSession,
-    CommandExecutionMetadata, Event, EventBatch, EventCodec, EventCodecError, EventHistory,
-    EventStore, EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion,
-    JsonEventCodec, NewEvent, RecordedEvent, StreamId, StreamVersion, TransactionAppendOutcome,
-    TransactionParticipant, TransactionReceipt,
+    Aggregate, AggregateCodecs, AggregateId, AggregateInstance, AggregateType,
+    CommandCommitSession, CommandExecutionMetadata, Event, EventBatch, EventCodec, EventCodecError,
+    EventHistory, EventStoreError, EventStoreErrorKind, EventTransaction, ExecutionStore,
+    ExpectedVersion, NewEvent, RecordedEvent, StreamId, StreamVersion, TransactionParticipant,
+    TransactionReceipt,
 };
-
-const DEFAULT_MAX_CONFLICT_RETRIES: usize = 3;
-
-#[derive(Clone, Default)]
-pub struct AggregateCodecs {
-    codecs: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
-}
-
-impl AggregateCodecs {
-    pub fn register<A, C>(&mut self, codec: C)
-    where
-        A: Aggregate + 'static,
-        C: EventCodec<A> + 'static,
-    {
-        let codec: Arc<dyn EventCodec<A>> = Arc::new(codec);
-        self.codecs.insert(TypeId::of::<A>(), Arc::new(codec));
-    }
-
-    fn resolve<A>(&self) -> Arc<dyn EventCodec<A>>
-    where
-        A: Aggregate + 'static,
-        A::Event: Event,
-    {
-        self.codecs
-            .get(&TypeId::of::<A>())
-            .and_then(|codec| codec.downcast_ref::<Arc<dyn EventCodec<A>>>())
-            .cloned()
-            .unwrap_or_else(|| Arc::new(JsonEventCodec))
-    }
-}
 
 pub struct CommandExecutor<S> {
     store: S,
     codecs: Arc<AggregateCodecs>,
-    maximum_conflict_retries: usize,
+    shared_codecs: bool,
+    conflict_retry_policy: Arc<dyn crate::ConflictRetryPolicy>,
 }
 
 impl<S> CommandExecutor<S> {
@@ -56,32 +26,48 @@ impl<S> CommandExecutor<S> {
         Self {
             store,
             codecs: Arc::new(AggregateCodecs::default()),
-            maximum_conflict_retries: DEFAULT_MAX_CONFLICT_RETRIES,
+            shared_codecs: false,
+            conflict_retry_policy: Arc::new(crate::BoundedConflictRetries::default()),
         }
     }
 
-    pub const fn with_codecs(store: S, codecs: Arc<AggregateCodecs>) -> Self {
+    pub fn with_codecs(store: S, codecs: Arc<AggregateCodecs>) -> Self {
         Self {
             store,
             codecs,
-            maximum_conflict_retries: DEFAULT_MAX_CONFLICT_RETRIES,
+            shared_codecs: true,
+            conflict_retry_policy: Arc::new(crate::BoundedConflictRetries::default()),
         }
     }
 
     /// Overrides the event codec used to load and persist one aggregate type.
-    #[must_use]
-    pub fn with_codec<A, C>(mut self, codec: C) -> Self
+    /// Standalone executors allow explicit replacement. Once `with_codecs` selects
+    /// a shared effective registry, local overrides are rejected, even if uniquely owned.
+    pub fn with_codec<A, C>(mut self, codec: C) -> Result<Self, crate::CodecRegistrationError>
     where
         A: Aggregate + 'static,
         C: EventCodec<A> + 'static,
     {
-        Arc::make_mut(&mut self.codecs).register::<A, C>(codec);
-        self
+        if self.shared_codecs {
+            return Err(crate::CodecRegistrationError::SharedConfiguration);
+        }
+        Arc::make_mut(&mut self.codecs).replace::<A, C>(codec)?;
+        Ok(self)
     }
 
     #[must_use]
-    pub const fn with_max_conflict_retries(mut self, maximum_conflict_retries: usize) -> Self {
-        self.maximum_conflict_retries = maximum_conflict_retries;
+    pub fn with_max_conflict_retries(self, maximum_conflict_retries: usize) -> Self {
+        self.with_conflict_retry_policy(Arc::new(crate::BoundedConflictRetries::new(
+            maximum_conflict_retries,
+        )))
+    }
+
+    #[must_use]
+    pub fn with_conflict_retry_policy(
+        mut self,
+        policy: Arc<dyn crate::ConflictRetryPolicy>,
+    ) -> Self {
+        self.conflict_retry_policy = policy;
         self
     }
 
@@ -197,7 +183,7 @@ struct CollectedParticipant {
 /// Per-attempt access to all aggregates participating in a command.
 ///
 /// Each aggregate type uses its codec registered on [`CommandExecutor`], falling back to
-/// [`JsonEventCodec`] when no override exists.
+/// [`crate::JsonEventCodec`] when no override exists.
 pub struct CommandExecution<'a> {
     history: &'a dyn EventHistory,
     metadata: &'a CommandExecutionMetadata,
@@ -247,7 +233,7 @@ impl<'a> CommandExecution<'a> {
         }
         let history = self.history.load(&stream_id).await?;
         validate_history(&stream_id, &history)?;
-        let codec = self.codecs.resolve::<A>();
+        let codec = self.codecs.resolve::<A>()?;
         let events = history
             .iter()
             .map(|event| codec.decode(event))
@@ -310,10 +296,18 @@ impl<'a> CommandExecution<'a> {
             .collect()
     }
 
-    fn finish_rejected(self) -> Result<(), CommandExecutionError> {
+    fn finish_rejected(self) -> Result<Vec<CollectedParticipant>, CommandExecutionError> {
         self.participants
             .into_iter()
-            .try_for_each(|participant| participant.discard_events())
+            .map(|participant| {
+                participant.discard_events()?;
+                Ok(CollectedParticipant {
+                    stream_id: participant.stream_id,
+                    base_version: participant.base_version,
+                    events: Vec::new(),
+                })
+            })
+            .collect()
     }
 
     fn rejected_simulation_participants(
@@ -451,9 +445,69 @@ impl CommandReceipt {
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum CommandExecutionError {
     #[error(transparent)]
+    OutcomeRecovery(#[from] crate::OutcomeRecoveryError),
+    #[error("rejected outcome persistence failed: {0}")]
+    RejectedOutcomePersistence(EventStoreError),
+    #[error("rejection mapping failed: {0}")]
+    RejectionMapping(String),
+    #[error(transparent)]
     Store(#[from] EventStoreError),
     #[error(transparent)]
     Codec(#[from] EventCodecError),
+}
+
+impl CommandExecutionError {
+    /// Technical classification for diagnostics. Request/identity failures and deliberate
+    /// expiry remain separate; callers must inspect the typed outcome-recovery error.
+    pub const fn execution_failure(&self) -> Option<rostfrei_messaging_core::ExecutionFailure> {
+        use crate::EventCodecErrorKind;
+        use rostfrei_messaging_core::{CodecFailureKind, ExecutionFailure, StoreFailureKind};
+        Some(match self {
+            Self::OutcomeRecovery(error) => ExecutionFailure::Store(match error {
+                crate::OutcomeRecoveryError::Unavailable {
+                    reason: crate::DetailUnavailableReason::BackendUnavailable,
+                }
+                | crate::OutcomeRecoveryError::Archived { .. } => StoreFailureKind::Unavailable,
+                crate::OutcomeRecoveryError::Expired => return None,
+                crate::OutcomeRecoveryError::IntegrityMismatch
+                | crate::OutcomeRecoveryError::Unavailable {
+                    reason: crate::DetailUnavailableReason::MissingDetails,
+                } => StoreFailureKind::CorruptHistory,
+            }),
+            Self::RejectionMapping(_) => ExecutionFailure::Processor(
+                rostfrei_messaging_core::ProcessorFailureKind::InvalidConfiguration,
+            ),
+            Self::Store(error) | Self::RejectedOutcomePersistence(error) => {
+                ExecutionFailure::Store(match error.kind() {
+                    EventStoreErrorKind::CorruptHistory => StoreFailureKind::CorruptHistory,
+                    EventStoreErrorKind::CapacityExhausted => StoreFailureKind::CapacityExhausted,
+                    EventStoreErrorKind::ConfigurationMismatch
+                    | EventStoreErrorKind::DetailForbidden => {
+                        StoreFailureKind::ConfigurationMismatch
+                    }
+                    EventStoreErrorKind::Conflict => StoreFailureKind::Conflict,
+                    EventStoreErrorKind::Unavailable
+                    | EventStoreErrorKind::CompletedDetailsUnavailable => {
+                        StoreFailureKind::Unavailable
+                    }
+                    EventStoreErrorKind::InvalidRequest
+                    | EventStoreErrorKind::IdentityConflict
+                    | EventStoreErrorKind::CompletedDetailsExpired => {
+                        return None;
+                    }
+                })
+            }
+            Self::Codec(error) => ExecutionFailure::Codec(match error.kind() {
+                EventCodecErrorKind::UnknownEventType => CodecFailureKind::UnknownEventType,
+                EventCodecErrorKind::UnsupportedSchemaVersion => {
+                    CodecFailureKind::UnsupportedSchemaVersion
+                }
+                EventCodecErrorKind::MalformedPayload => CodecFailureKind::MalformedPayload,
+                EventCodecErrorKind::InvalidEnvelope => CodecFailureKind::InvalidEnvelope,
+                EventCodecErrorKind::EncodingFailed => CodecFailureKind::EncodingFailed,
+            }),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -505,6 +559,10 @@ impl<Rejection> SimulationOutcome<Rejection> {
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum SimulationError {
     #[error(transparent)]
+    OutcomeRecovery(#[from] crate::OutcomeRecoveryError),
+    #[error("rejection mapping failed: {0}")]
+    RejectionMapping(String),
+    #[error(transparent)]
     Store(#[from] EventStoreError),
     #[error(transparent)]
     Codec(#[from] EventCodecError),
@@ -513,7 +571,10 @@ pub enum SimulationError {
 impl From<CommandExecutionError> for SimulationError {
     fn from(error: CommandExecutionError) -> Self {
         match error {
-            CommandExecutionError::Store(error) => Self::Store(error),
+            CommandExecutionError::OutcomeRecovery(error) => Self::OutcomeRecovery(error),
+            CommandExecutionError::RejectionMapping(message) => Self::RejectionMapping(message),
+            CommandExecutionError::Store(error)
+            | CommandExecutionError::RejectedOutcomePersistence(error) => Self::Store(error),
             CommandExecutionError::Codec(error) => Self::Codec(error),
         }
     }
@@ -557,7 +618,7 @@ where
         validate_aggregate_type::<A>(stream_id)?;
         let history = self.store.load(stream_id).await?;
         validate_history(stream_id, &history)?;
-        let codec = self.codecs.resolve::<A>();
+        let codec = self.codecs.resolve::<A>()?;
         let events = history
             .iter()
             .map(|event| codec.decode(event))
@@ -577,6 +638,7 @@ where
         Command: Sync,
     {
         let metadata = metadata
+            .with_default_outcome_evidence::<Command>()
             .normalized()
             .map_err(|error| invalid_request(error.to_string()))?;
         let mut execution =
@@ -599,8 +661,18 @@ where
 
 impl<S> CommandExecutor<S>
 where
-    S: EventStore,
+    S: ExecutionStore,
 {
+    pub async fn reconcile_with_rejection_codec<R>(
+        &self,
+        metadata: CommandExecutionMetadata,
+        codec: &dyn crate::RejectionCodec<R>,
+    ) -> Result<Option<CommandOutcome<R>>, CommandExecutionError> {
+        let metadata = metadata
+            .normalized()
+            .map_err(|error| invalid_request(error.to_string()))?;
+        reconcile_completed(&self.store, &metadata, codec).await
+    }
     /// Executes a command and atomically persists its accepted events.
     ///
     /// Before receipt lookup or handler invocation, an omitted correlation ID defaults to
@@ -619,46 +691,120 @@ where
         Handler: CommandHandler<Command>,
         Command: Sync,
     {
+        self.execute_with_rejection_codec(
+            handler,
+            metadata,
+            command,
+            &crate::completed_outcome::UnconfiguredRejectionCodec,
+        )
+        .await
+    }
+
+    /// Executes against the shared durable authority using an explicit rejection codec.
+    /// The compatibility `execute` entry point fails closed if a rejection needs a codec.
+    pub async fn execute_with_rejection_codec<Handler, Command>(
+        &self,
+        handler: &Handler,
+        metadata: CommandExecutionMetadata,
+        command: &Command,
+        codec: &dyn crate::RejectionCodec<Handler::Rejection>,
+    ) -> CommandResult<Handler::Rejection>
+    where
+        Handler: CommandHandler<Command>,
+        Command: Sync,
+    {
         let metadata = metadata
+            .with_default_outcome_evidence::<Command>()
             .normalized()
             .map_err(|error| invalid_request(error.to_string()))?;
-        let mut remaining_conflict_retries = self.maximum_conflict_retries;
+        let completed = self
+            .execute_completed_with_rejection_codec(handler, metadata.clone(), command, codec)
+            .await?;
+        completed_replay(
+            &metadata,
+            completed.outcome(),
+            codec,
+            completed.is_exact_replay(),
+        )
+    }
+
+    /// Executes through the same guarded loop, preserving the authoritative marker,
+    /// availability and commit/replay origin for processing services.
+    pub async fn execute_completed_with_rejection_codec<Handler, Command>(
+        &self,
+        handler: &Handler,
+        metadata: CommandExecutionMetadata,
+        command: &Command,
+        codec: &dyn crate::RejectionCodec<Handler::Rejection>,
+    ) -> Result<crate::CompletedCommit, CommandExecutionError>
+    where
+        Handler: CommandHandler<Command>,
+        Command: Sync,
+    {
+        let metadata = metadata
+            .with_default_outcome_evidence::<Command>()
+            .normalized()
+            .map_err(|error| invalid_request(error.to_string()))?;
+        if let Some(evidence) = metadata.outcome_evidence() {
+            evidence.validate()?;
+        }
+        let mut evaluations = 0_usize;
         loop {
-            if let Some(receipt) = reconcile_existing(&self.store, &metadata).await? {
-                return Ok(CommandOutcome::Accepted(receipt));
+            if let Some(outcome) = lookup_completed(&self.store, &metadata).await? {
+                return Ok(crate::CompletedCommit::ExactReplay(outcome));
             }
 
-            let session = self.store.append_session().await?;
+            let session = self.store.begin_command().await?;
+            evaluations = evaluations.saturating_add(1);
             let mut execution =
                 CommandExecution::with_codecs(session.as_ref(), &metadata, self.codecs.as_ref());
-            match handler.handle(command, &mut execution).await? {
+            let (participants, rejection) = match handler.handle(command, &mut execution).await? {
                 CommandDecision::Rejected(rejection) => {
-                    execution.finish_rejected()?;
-                    if let Some(receipt) = reconcile_existing(&self.store, &metadata).await? {
-                        return Ok(CommandOutcome::Accepted(receipt));
-                    }
-                    return Ok(CommandOutcome::Rejected(rejection));
+                    // Finalize tracking and consume the original guarded session before
+                    // reconciling a winner. A concurrent decision cannot excuse invalid
+                    // handles or an observed loss of this attempt's authority incarnation.
+                    let participants = execution.finish_rejected()?;
+                    let encoded = codec.encode(&rejection)?;
+                    encoded.validate()?;
+                    // A codec must be able to replay its own output before it becomes authority.
+                    drop(codec.decode(&encoded)?);
+                    (participants, Some(encoded))
                 }
-                CommandDecision::Accepted => {}
-            }
+                CommandDecision::Accepted => (execution.finish()?, None),
+            };
 
-            let participants = execution.finish()?;
-            match append_transaction(session, &metadata, participants).await? {
-                PersistenceAttempt::Completed(receipt) => {
-                    return Ok(CommandOutcome::Accepted(receipt));
+            match append_transaction(session, &metadata, participants, rejection).await? {
+                PersistenceAttempt::Completed(outcome) => {
+                    let key = crate::OutcomeKey::new(
+                        self.store.authority().clone(),
+                        required_bounded_context(&metadata)?.clone(),
+                        metadata.operation_id().clone(),
+                    );
+                    outcome
+                        .outcome()
+                        .validate_for(&key, &metadata)
+                        .map_err(EventStoreError::in_outcome_recovery)?;
+                    return Ok(*outcome);
                 }
                 PersistenceAttempt::Conflict(error) => {
                     // A simultaneous execution can decide differently against newer state.
                     // The winning acceptance is authoritative if the command evidence matches.
-                    if let Some(receipt) = reconcile_existing(&self.store, &metadata).await? {
-                        return Ok(CommandOutcome::Accepted(receipt));
+                    if let Some(outcome) = lookup_completed(&self.store, &metadata).await? {
+                        return Ok(crate::CompletedCommit::ExactReplay(outcome));
                     }
-                    if error.kind() != EventStoreErrorKind::Conflict
-                        || remaining_conflict_retries == 0
-                    {
+                    if error.kind() != EventStoreErrorKind::Conflict {
                         return Err(error.into());
                     }
-                    remaining_conflict_retries = remaining_conflict_retries.saturating_sub(1);
+                    match self
+                        .conflict_retry_policy
+                        .after_conflict(crate::ConflictRetry::new(evaluations, error.clone()))
+                    {
+                        crate::ConflictRetryDecision::Stop => return Err(error.into()),
+                        crate::ConflictRetryDecision::RetryNow => {}
+                        crate::ConflictRetryDecision::RetryAfter(delay) => {
+                            tokio::time::sleep(delay).await;
+                        }
+                    }
                 }
             }
         }
@@ -666,14 +812,15 @@ where
 }
 
 enum PersistenceAttempt {
-    Completed(CommandReceipt),
+    Completed(Box<crate::CompletedCommit>),
     Conflict(EventStoreError),
 }
 
 async fn append_transaction(
-    session: Box<dyn AppendSession + '_>,
+    session: Box<dyn CommandCommitSession + '_>,
     metadata: &CommandExecutionMetadata,
     participants: Vec<CollectedParticipant>,
+    rejection: Option<crate::EncodedRejection>,
 ) -> Result<PersistenceAttempt, CommandExecutionError> {
     let participants = participants
         .into_iter()
@@ -699,18 +846,19 @@ async fn append_transaction(
     if let Some(causation_id) = metadata.causation_id() {
         transaction = transaction.with_causation_id(causation_id.clone());
     }
-    match session.append_transaction(transaction).await {
-        Ok(TransactionAppendOutcome::Appended(receipt)) => {
-            let events = receipt.events();
-            Ok(PersistenceAttempt::Completed(if events.is_empty() {
-                CommandReceipt::AcceptedNoEvents
-            } else {
-                CommandReceipt::Appended(events)
-            }))
-        }
-        Ok(TransactionAppendOutcome::ExactReplay(receipt)) => Ok(PersistenceAttempt::Completed(
-            CommandReceipt::ExactReplay(receipt.events()),
-        )),
+    if let Some(scope) = metadata.security_scope() {
+        transaction = transaction.with_security_scope(scope.clone());
+    }
+    if let Some(actor) = metadata.actor() {
+        transaction = transaction.with_actor(actor.clone());
+    }
+    let is_rejected = rejection.is_some();
+    transaction = transaction.with_completion(crate::CommandCompletion::new(
+        metadata.outcome_evidence().cloned(),
+        rejection,
+    ));
+    match session.commit_outcome(transaction).await {
+        Ok(outcome) => Ok(PersistenceAttempt::Completed(Box::new(outcome))),
         Err(error)
             if matches!(
                 error.kind(),
@@ -719,48 +867,104 @@ async fn append_transaction(
         {
             Ok(PersistenceAttempt::Conflict(error))
         }
+        Err(error) if error.origin() == crate::EventStoreErrorOrigin::OutcomeRecovery => {
+            Err(error.into())
+        }
+        Err(error) if is_rejected => Err(CommandExecutionError::RejectedOutcomePersistence(error)),
         Err(error) => Err(error.into()),
     }
 }
 
-async fn reconcile_existing<S: EventStore>(
+async fn reconcile_completed<S: ExecutionStore, R>(
     store: &S,
     metadata: &CommandExecutionMetadata,
-) -> Result<Option<CommandReceipt>, CommandExecutionError> {
-    store
-        .load_transaction_receipt_in_context(
-            required_bounded_context(metadata)?,
-            metadata.operation_id(),
-        )
+    codec: &dyn crate::RejectionCodec<R>,
+) -> Result<Option<CommandOutcome<R>>, CommandExecutionError> {
+    lookup_completed(store, metadata)
         .await?
-        .map(|receipt| transaction_replay(metadata, &receipt))
+        .map(|outcome| completed_replay(metadata, &outcome, codec, true))
         .transpose()
+}
+
+async fn lookup_completed<S: ExecutionStore>(
+    store: &S,
+    metadata: &CommandExecutionMetadata,
+) -> Result<Option<crate::CompletedOutcome>, CommandExecutionError> {
+    let key = crate::OutcomeKey::new(
+        store.authority().clone(),
+        required_bounded_context(metadata)?.clone(),
+        metadata.operation_id().clone(),
+    );
+    match store
+        .lookup_outcome(&key)
+        .await
+        .map_err(EventStoreError::in_outcome_recovery)?
+    {
+        crate::OutcomeLookup::Missing => Ok(None),
+        crate::OutcomeLookup::Completed(outcome) => {
+            outcome
+                .validate_for(&key, metadata)
+                .map_err(EventStoreError::in_outcome_recovery)?;
+            Ok(Some(outcome))
+        }
+    }
+}
+
+fn completed_replay<R>(
+    metadata: &CommandExecutionMetadata,
+    outcome: &crate::CompletedOutcome,
+    codec: &dyn crate::RejectionCodec<R>,
+    replay: bool,
+) -> CommandResult<R> {
+    outcome.marker().validate_identity(metadata)?;
+    let inline = outcome.to_inline()?;
+    let record = inline.record();
+    let receipt = transaction_replay(metadata, record)?;
+    if let Some(completion) = record.completion() {
+        completion.validate()?;
+        if completion.rejection.is_some() && !record.events().is_empty() {
+            return Err(EventCodecError::new(
+                crate::EventCodecErrorKind::InvalidEnvelope,
+                "rejected record contains domain events",
+            )
+            .into());
+        }
+        let same_evidence = match (completion.evidence.as_ref(), metadata.outcome_evidence()) {
+            (Some(recorded), Some(requested)) => recorded.same_identity(requested),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same_evidence {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::IdentityConflict,
+                "completed command evidence differs",
+            )
+            .into());
+        }
+    }
+    if let Some(rejection) = inline.rejection() {
+        return Ok(CommandOutcome::Rejected(codec.decode(rejection)?));
+    }
+    Ok(CommandOutcome::Accepted(if replay {
+        receipt
+    } else if record.events().is_empty() {
+        CommandReceipt::AcceptedNoEvents
+    } else {
+        CommandReceipt::Appended(record.events())
+    }))
 }
 
 fn transaction_replay(
     metadata: &CommandExecutionMetadata,
     receipt: &TransactionReceipt,
 ) -> Result<CommandReceipt, CommandExecutionError> {
-    let identities_are_valid = receipt.streams().iter().all(|stream| {
-        let commit_id = derive_commit_id(stream.stream_id(), receipt.operation_id());
-        stream.events().iter().enumerate().all(|(ordinal, event)| {
-            u32::try_from(ordinal).is_ok_and(|ordinal| {
-                event.stream_id() == stream.stream_id()
-                    && event.commit_id() == &commit_id
-                    && event.event_id() == &derive_event_id(&commit_id, ordinal)
-                    && event.operation_id() == receipt.operation_id()
-                    && event.operation_fingerprint() == receipt.operation_fingerprint()
-                    && event.correlation_id() == receipt.correlation_id()
-                    && event.causation_id() == receipt.causation_id()
-            })
-        })
-    });
+    receipt.validate_integrity()?;
     if receipt.bounded_context() == metadata.bounded_context()
         && receipt.operation_id() == metadata.operation_id()
         && receipt.operation_fingerprint() == metadata.operation_fingerprint()
         && receipt.correlation_id() == metadata.correlation_id()
         && receipt.causation_id() == metadata.causation_id()
-        && identities_are_valid
+        && receipt.actor() == metadata.actor()
     {
         return Ok(CommandReceipt::ExactReplay(receipt.events()));
     }
@@ -842,6 +1046,9 @@ fn prepare_batch_for_stream(
     }
     if let Some(causation_id) = metadata.causation_id() {
         batch = batch.with_causation_id(causation_id.clone());
+    }
+    if let Some(actor) = metadata.actor() {
+        batch = batch.with_actor(actor.clone());
     }
     Ok(Some(batch))
 }
@@ -935,7 +1142,11 @@ fn validate_history(
             Some((event.commit_id(), next_ordinal, event_count))
         };
 
-        let operation_identity = (event.commit_id(), event.operation_fingerprint());
+        let operation_identity = (
+            event.commit_id(),
+            event.operation_fingerprint(),
+            event.actor(),
+        );
         if let Some(previous) = operations.insert(event.operation_id(), operation_identity)
             && previous != operation_identity
         {
@@ -961,11 +1172,88 @@ fn invalid_request(message: impl Into<String>) -> EventStoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CompletedCommit, EventStore, OutcomeKey, OutcomeLookup, OutcomeReader};
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crate::{AppendOutcome, ContentFingerprint, InMemoryEventStore, OperationId};
+    use crate::{ContentFingerprint, InMemoryEventStore, OperationId};
+
+    #[test]
+    fn all_execution_source_kinds_have_explicit_lossless_technical_policy() {
+        use rostfrei_messaging_core::{CodecFailureKind, ExecutionFailure, StoreFailureKind};
+        for (source, expected) in [
+            (
+                EventStoreErrorKind::CorruptHistory,
+                StoreFailureKind::CorruptHistory,
+            ),
+            (
+                EventStoreErrorKind::CapacityExhausted,
+                StoreFailureKind::CapacityExhausted,
+            ),
+            (
+                EventStoreErrorKind::ConfigurationMismatch,
+                StoreFailureKind::ConfigurationMismatch,
+            ),
+            (EventStoreErrorKind::Conflict, StoreFailureKind::Conflict),
+            (
+                EventStoreErrorKind::Unavailable,
+                StoreFailureKind::Unavailable,
+            ),
+        ] {
+            let error = CommandExecutionError::Store(EventStoreError::new(source, "not parsed"));
+            assert_eq!(
+                error.execution_failure(),
+                Some(ExecutionFailure::Store(expected))
+            );
+            assert_eq!(
+                error.execution_failure().unwrap().is_retryable(),
+                matches!(
+                    source,
+                    EventStoreErrorKind::Conflict | EventStoreErrorKind::Unavailable
+                )
+            );
+        }
+        for source in [
+            EventStoreErrorKind::InvalidRequest,
+            EventStoreErrorKind::IdentityConflict,
+        ] {
+            assert_eq!(
+                CommandExecutionError::Store(EventStoreError::new(source, "not parsed"))
+                    .execution_failure(),
+                None
+            );
+        }
+        for (source, expected) in [
+            (
+                crate::EventCodecErrorKind::UnknownEventType,
+                CodecFailureKind::UnknownEventType,
+            ),
+            (
+                crate::EventCodecErrorKind::UnsupportedSchemaVersion,
+                CodecFailureKind::UnsupportedSchemaVersion,
+            ),
+            (
+                crate::EventCodecErrorKind::MalformedPayload,
+                CodecFailureKind::MalformedPayload,
+            ),
+            (
+                crate::EventCodecErrorKind::InvalidEnvelope,
+                CodecFailureKind::InvalidEnvelope,
+            ),
+            (
+                crate::EventCodecErrorKind::EncodingFailed,
+                CodecFailureKind::EncodingFailed,
+            ),
+        ] {
+            let error = CommandExecutionError::Codec(EventCodecError::new(source, "not parsed"));
+            assert_eq!(
+                error.execution_failure(),
+                Some(ExecutionFailure::Codec(expected))
+            );
+            assert!(!error.execution_failure().unwrap().is_retryable());
+        }
+    }
 
     struct TestAggregate;
 
@@ -1019,7 +1307,24 @@ mod tests {
     fn executor_configuration_preserves_store_and_retry_limit() {
         let executor = CommandExecutor::new(()).with_max_conflict_retries(4);
         assert_eq!(*executor.store(), ());
-        assert_eq!(executor.maximum_conflict_retries, 4);
+        assert_eq!(
+            executor
+                .conflict_retry_policy
+                .after_conflict(crate::ConflictRetry::new(
+                    4,
+                    EventStoreError::new(EventStoreErrorKind::Conflict, "test")
+                )),
+            crate::ConflictRetryDecision::RetryNow
+        );
+        assert_eq!(
+            executor
+                .conflict_retry_policy
+                .after_conflict(crate::ConflictRetry::new(
+                    5,
+                    EventStoreError::new(EventStoreErrorKind::Conflict, "test")
+                )),
+            crate::ConflictRetryDecision::Stop
+        );
     }
 
     #[tokio::test]
@@ -1303,6 +1608,7 @@ mod tests {
                 metadata.with_correlation_id(CorrelationId::new("earlier-operation").unwrap()),
             ),
         ] {
+            let expected = expected.with_default_outcome_evidence::<CommandExecutionMetadata>();
             let store = InMemoryEventStore::new();
             let executor = CommandExecutor::new(store.clone());
             let outcome = executor
@@ -1702,71 +2008,37 @@ mod tests {
     }
 
     #[async_trait]
-    impl AppendSession for ConflictOnceSession<'_> {
-        async fn append(
-            self: Box<Self>,
-            stream_id: &StreamId,
-            expected_version: ExpectedVersion,
-            batch: EventBatch,
-        ) -> Result<AppendOutcome, EventStoreError> {
-            self.store.append(stream_id, expected_version, batch).await
-        }
-
-        async fn append_transaction(
+    impl CommandCommitSession for ConflictOnceSession<'_> {
+        async fn commit_outcome(
             self: Box<Self>,
             transaction: EventTransaction,
-        ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        ) -> Result<CompletedCommit, EventStoreError> {
             assert_eq!(self.loads.load(Ordering::Relaxed), 2);
             assert_eq!(self.session_id, self.store.attempts.load(Ordering::Relaxed));
-            self.store.append_transaction(transaction).await
+            self.store.commit_outcome(transaction).await
         }
     }
 
     #[async_trait]
-    impl EventStore for ConflictOnceStore {
-        async fn append_session(&self) -> Result<Box<dyn AppendSession + '_>, EventStoreError> {
-            Ok(Box::new(ConflictOnceSession {
-                store: self,
-                session_id: self.sessions.fetch_add(1, Ordering::Relaxed),
-                loads: AtomicUsize::new(0),
-            }))
-        }
-
-        async fn append(
+    impl OutcomeReader for ConflictOnceStore {
+        async fn lookup_outcome(
             &self,
-            stream_id: &StreamId,
-            expected_version: ExpectedVersion,
-            batch: EventBatch,
-        ) -> Result<AppendOutcome, EventStoreError> {
-            self.inner.append(stream_id, expected_version, batch).await
+            key: &OutcomeKey,
+        ) -> Result<OutcomeLookup<crate::EncodedOutcomeDetails>, EventStoreError> {
+            self.inner.lookup_outcome(key).await
         }
+    }
 
-        async fn load_transaction_receipt(
-            &self,
-            operation_id: &OperationId,
-        ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-            self.inner.load_transaction_receipt(operation_id).await
-        }
-
-        async fn load_transaction_receipt_in_context(
-            &self,
-            bounded_context: &rostfrei_messaging_core::BoundedContextName,
-            operation_id: &OperationId,
-        ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-            self.inner
-                .load_transaction_receipt_in_context(bounded_context, operation_id)
-                .await
-        }
-
-        async fn append_transaction(
+    impl ConflictOnceStore {
+        async fn commit_outcome(
             &self,
             transaction: EventTransaction,
-        ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        ) -> Result<CompletedCommit, EventStoreError> {
             assert_eq!(
                 transaction
                     .correlation_id()
                     .map(rostfrei_messaging_core::CorrelationId::as_str),
-                Some(transaction.operation_id().as_str()),
+                Some(transaction.operation_id().as_str())
             );
             assert_eq!(transaction.causation_id(), None);
             if self.attempts.fetch_add(1, Ordering::Relaxed) == 0 {
@@ -1775,7 +2047,27 @@ mod tests {
                     "injected transaction conflict",
                 ));
             }
-            self.inner.append_transaction(transaction).await
+            self.inner
+                .begin_command()
+                .await?
+                .commit_outcome(transaction)
+                .await
+        }
+    }
+
+    #[async_trait]
+    impl ExecutionStore for ConflictOnceStore {
+        fn authority(&self) -> &crate::CommandAuthority {
+            self.inner.authority()
+        }
+        async fn begin_command(
+            &self,
+        ) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError> {
+            Ok(Box::new(ConflictOnceSession {
+                store: self,
+                session_id: self.sessions.fetch_add(1, Ordering::Relaxed),
+                loads: AtomicUsize::new(0),
+            }))
         }
     }
 
@@ -1784,7 +2076,7 @@ mod tests {
         let attempts = Arc::new(AtomicUsize::new(0));
         let sessions = Arc::new(AtomicUsize::new(0));
         let session_loads = Arc::new(AtomicUsize::new(0));
-        let store: Arc<dyn EventStore> = Arc::new(ConflictOnceStore {
+        let store: Arc<dyn ExecutionStore> = Arc::new(ConflictOnceStore {
             inner: InMemoryEventStore::new(),
             failure_kind: EventStoreErrorKind::Conflict,
             attempts: Arc::clone(&attempts),
@@ -1823,48 +2115,52 @@ mod tests {
     }
 
     #[async_trait]
-    impl EventStore for ReceiptAfterDecisionStore {
-        async fn append(
+    impl OutcomeReader for ReceiptAfterDecisionStore {
+        async fn lookup_outcome(
             &self,
-            stream_id: &StreamId,
-            expected_version: ExpectedVersion,
-            batch: EventBatch,
-        ) -> Result<AppendOutcome, EventStoreError> {
-            self.inner.append(stream_id, expected_version, batch).await
-        }
-
-        async fn load_transaction_receipt(
-            &self,
-            operation_id: &OperationId,
-        ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+            key: &OutcomeKey,
+        ) -> Result<OutcomeLookup<crate::EncodedOutcomeDetails>, EventStoreError> {
             if self.receipt_lookups.fetch_add(1, Ordering::Relaxed) == 0 {
-                return Ok(None);
+                return Ok(OutcomeLookup::Missing);
             }
-            self.inner.load_transaction_receipt(operation_id).await
+            self.inner.lookup_outcome(key).await
         }
+    }
 
-        async fn load_transaction_receipt_in_context(
-            &self,
-            bounded_context: &rostfrei_messaging_core::BoundedContextName,
-            operation_id: &OperationId,
-        ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-            if self.receipt_lookups.fetch_add(1, Ordering::Relaxed) == 0 {
-                return Ok(None);
-            }
-            self.inner
-                .load_transaction_receipt_in_context(bounded_context, operation_id)
-                .await
+    #[async_trait]
+    impl ExecutionStore for ReceiptAfterDecisionStore {
+        fn authority(&self) -> &crate::CommandAuthority {
+            self.inner.authority()
         }
-
-        async fn append_transaction(
+        async fn begin_command(
             &self,
-            transaction: EventTransaction,
-        ) -> Result<TransactionAppendOutcome, EventStoreError> {
-            self.inner.append_transaction(transaction).await
+        ) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError> {
+            self.inner.begin_command().await
         }
     }
 
     struct RejectingHandler;
+
+    struct TestRejectionCodec;
+    impl crate::RejectionCodec<&'static str> for TestRejectionCodec {
+        fn encode(&self, value: &&'static str) -> Result<crate::EncodedRejection, EventCodecError> {
+            Ok(crate::EncodedRejection {
+                codec_id: "test.static-rejection".to_owned(),
+                codec_version: 1,
+                bytes: value.as_bytes().to_vec(),
+            })
+        }
+        fn decode(&self, value: &crate::EncodedRejection) -> Result<&'static str, EventCodecError> {
+            if value.bytes == b"rejected" {
+                Ok("rejected")
+            } else {
+                Err(EventCodecError::new(
+                    crate::EventCodecErrorKind::MalformedPayload,
+                    "unexpected test rejection",
+                ))
+            }
+        }
+    }
 
     #[async_trait]
     impl CommandHandler<()> for RejectingHandler {
@@ -1887,7 +2183,7 @@ mod tests {
         let stream_id = stream_id_for::<TestAggregate>("rejected").unwrap();
 
         let outcome = CommandExecutor::new(store.clone())
-            .execute(&RejectingHandler, metadata(), &())
+            .execute_with_rejection_codec(&RejectingHandler, metadata(), &(), &TestRejectionCodec)
             .await
             .unwrap();
 
@@ -1895,13 +2191,26 @@ mod tests {
         assert!(store.load(&stream_id).await.unwrap().is_empty());
         assert!(
             store
-                .load_transaction_receipt_in_context(
+                .load_completed_outcome_in_context(
                     metadata().bounded_context().unwrap(),
                     metadata().operation_id()
                 )
                 .await
                 .unwrap()
-                .is_none()
+                .unwrap()
+                .rejection()
+                .is_some()
+        );
+        assert_eq!(
+            store
+                .load_transaction_receipt_in_context(
+                    metadata().bounded_context().unwrap(),
+                    metadata().operation_id()
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            EventStoreErrorKind::IdentityConflict
         );
     }
 
@@ -2016,6 +2325,110 @@ mod tests {
             SimulationError::Store(error)
                 if error.kind() == EventStoreErrorKind::InvalidRequest
         ));
+    }
+
+    async fn assert_rejected_tracking_before_concurrent_winner<Handler>(
+        handler: &Handler,
+        aggregate: &str,
+        accepted: bool,
+    ) where
+        Handler: CommandHandler<(), Rejection = &'static str>,
+    {
+        let inner = InMemoryEventStore::new();
+        let executor = CommandExecutor::new(inner.clone());
+        if accepted {
+            executor
+                .execute(&EmptyHandler, metadata(), &())
+                .await
+                .unwrap();
+        } else {
+            executor
+                .execute_with_rejection_codec(
+                    &RejectingHandler,
+                    metadata(),
+                    &(),
+                    &TestRejectionCodec,
+                )
+                .await
+                .unwrap();
+        }
+        let before = inner
+            .load_completed_outcome_in_context(
+                metadata().bounded_context().unwrap(),
+                metadata().operation_id(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let store = Arc::new(ReceiptAfterDecisionStore {
+            inner: inner.clone(),
+            receipt_lookups: AtomicUsize::new(0),
+        });
+        let error = CommandExecutor::new(store.clone())
+            .execute_with_rejection_codec(handler, metadata(), &(), &TestRejectionCodec)
+            .await
+            .expect_err("a concurrent winner must not hide invalid rejected tracking");
+        assert!(matches!(error, CommandExecutionError::Store(error)
+            if error.kind() == EventStoreErrorKind::InvalidRequest));
+        assert_eq!(store.receipt_lookups.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            inner
+                .load_completed_outcome_in_context(
+                    metadata().bounded_context().unwrap(),
+                    metadata().operation_id()
+                )
+                .await
+                .unwrap()
+                .unwrap(),
+            before
+        );
+        assert!(
+            inner
+                .load(&stream_id_for::<TestAggregate>(aggregate).unwrap())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn accepted_winner_cannot_bypass_rejected_forgotten_tracking() {
+        assert_rejected_tracking_before_concurrent_winner(
+            &RejectedForgottenHandler,
+            "rejected-forgotten",
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn rejected_winner_cannot_bypass_rejected_forgotten_tracking() {
+        assert_rejected_tracking_before_concurrent_winner(
+            &RejectedForgottenHandler,
+            "rejected-forgotten",
+            false,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn accepted_winner_cannot_bypass_rejected_replaced_tracking() {
+        assert_rejected_tracking_before_concurrent_winner(
+            &RejectedReplacingHandler,
+            "rejected-replaced",
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn rejected_winner_cannot_bypass_rejected_replaced_tracking() {
+        assert_rejected_tracking_before_concurrent_winner(
+            &RejectedReplacingHandler,
+            "rejected-replaced",
+            false,
+        )
+        .await;
     }
 
     struct OtherContextAggregate;

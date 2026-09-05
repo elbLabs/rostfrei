@@ -58,6 +58,12 @@ impl EventByteLimit {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NatsEventStoreConfig {
+    completed_outcome_epoch: Option<String>,
+    split_outcomes: bool,
+    explicit_detail_expiry: bool,
+    read_only_outcomes: bool,
+    legacy_security_scope: Option<rostfrei_core::SecurityScope>,
+    outcome_state_stream_name: String,
     application: ApplicationName,
     traffic_scope: TrafficScope,
     bounded_context: BoundedContextName,
@@ -85,6 +91,12 @@ impl NatsEventStoreConfig {
             context.name().as_str()
         );
         let config = Self {
+            completed_outcome_epoch: None,
+            split_outcomes: false,
+            explicit_detail_expiry: false,
+            read_only_outcomes: false,
+            legacy_security_scope: None,
+            outcome_state_stream_name: String::new(),
             application: context.application().clone(),
             traffic_scope: context.traffic_scope(),
             bounded_context: context.name().clone(),
@@ -139,6 +151,115 @@ impl NatsEventStoreConfig {
 
     pub fn stream_name(&self) -> &str {
         &self.stream_name
+    }
+
+    /// Operator assertion: this is a NEW isolated authority namespace, with old writers
+    /// excluded by broker credentials/ACLs. Never use to activate an existing legacy store.
+    /// Provisioning durably binds this epoch at stream creation. The default legacy
+    /// profile permits ordinary event writes but blocks unknown command outcomes.
+    pub fn with_fresh_completed_outcome_epoch(
+        mut self,
+        epoch: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
+        let epoch = epoch.into();
+        if epoch.is_empty()
+            || epoch.len() > 128
+            || !epoch
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(invalid("invalid completed outcome identity epoch"));
+        }
+        self.completed_outcome_epoch = Some(epoch);
+        Ok(self)
+    }
+
+    pub fn completed_outcome_epoch(&self) -> Option<&str> {
+        self.completed_outcome_epoch.as_deref()
+    }
+
+    /// Explicit fenced cutover. Derives disjoint journal and state subjects; original
+    /// identities stay unchanged and old outcomes must be routed to their old authority.
+    pub fn with_fresh_split_outcome_epoch(
+        self,
+        epoch: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
+        if self.split_outcomes {
+            return Err(invalid("split authority already selected"));
+        }
+        let mut config = self.with_fresh_completed_outcome_epoch(epoch)?;
+        let epoch = config
+            .completed_outcome_epoch
+            .as_deref()
+            .ok_or_else(|| invalid("missing epoch"))?;
+        let token = digest_parts(&[epoch.as_bytes()]);
+        config.stream_name = format!("{}__SPLIT_{}", config.stream_name, token);
+        config.subject_prefix = format!("{}.split.{token}", config.subject_prefix);
+        config.outcome_state_stream_name = format!("{}_STATE", config.stream_name);
+        config.split_outcomes = true;
+        config.validate()?;
+        if !valid_stream_name(&config.outcome_state_stream_name) {
+            return Err(invalid("state stream name is too long"));
+        }
+        Ok(config)
+    }
+
+    pub fn with_explicit_detail_expiry(mut self, enabled: bool) -> Result<Self, EventStoreError> {
+        if enabled && !self.split_outcomes {
+            return Err(invalid("inline outcomes do not support expiry"));
+        }
+        self.explicit_detail_expiry = enabled;
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn with_legacy_security_scope(mut self, scope: rostfrei_core::SecurityScope) -> Self {
+        self.legacy_security_scope = Some(scope);
+        self
+    }
+    pub(crate) const fn legacy_security_scope(&self) -> Option<&rostfrei_core::SecurityScope> {
+        self.legacy_security_scope.as_ref()
+    }
+    pub(crate) const fn split_outcomes(&self) -> bool {
+        self.split_outcomes
+    }
+    pub(crate) const fn explicit_detail_expiry(&self) -> bool {
+        self.explicit_detail_expiry
+    }
+    /// Connect a replay-only handle: all persistence mutations are refused, including
+    /// legacy event appends, append sessions, completed/import writes and detail expiry.
+    /// History and known-outcome reads remain available. Provisioning helpers are
+    /// separate explicit operations; this setting grants no provisioning authority.
+    #[must_use]
+    pub const fn with_read_only_outcomes(mut self) -> Self {
+        self.read_only_outcomes = true;
+        self
+    }
+    pub(crate) const fn read_only_outcomes(&self) -> bool {
+        self.read_only_outcomes
+    }
+    pub fn outcome_state_stream_name(&self) -> &str {
+        &self.outcome_state_stream_name
+    }
+    pub(crate) fn outcome_state_subject(&self, manifest: &[u8]) -> String {
+        format!(
+            "{}.outcome.{}",
+            self.subject_prefix,
+            digest_parts(&[manifest])
+        )
+    }
+
+    pub(crate) fn outcome_state_config(&self) -> Config {
+        let mut config = self.stream_config();
+        config.name.clone_from(&self.outcome_state_stream_name);
+        config.subjects = vec![format!("{}.outcome.*", self.subject_prefix)];
+        config.max_messages_per_subject = 1;
+        config.discard_new_per_subject = false;
+        config.allow_atomic_publish = false;
+        config
+            .metadata
+            .insert("rostfrei.outcome-state.version".to_owned(), "1".to_owned());
+        config
     }
 
     pub fn subject_prefix(&self) -> &str {
@@ -239,6 +360,22 @@ impl NatsEventStoreConfig {
             deny_purge: true,
             allow_rollup: false,
             allow_atomic_publish: true,
+            metadata: self
+                .completed_outcome_epoch
+                .as_ref()
+                .map(|epoch| {
+                    std::collections::HashMap::from([
+                        (
+                            "rostfrei.completed-outcomes.epoch".to_owned(),
+                            epoch.clone(),
+                        ),
+                        (
+                            "rostfrei.completed-outcomes.version".to_owned(),
+                            if self.split_outcomes { "2" } else { "1" }.to_owned(),
+                        ),
+                    ])
+                })
+                .unwrap_or_default(),
             ..Default::default()
         }
     }

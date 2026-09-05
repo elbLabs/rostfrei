@@ -6,6 +6,7 @@ mod application;
 mod broker_order;
 #[path = "read_model/runtime_faults.rs"]
 mod faults;
+mod native_connection_support;
 #[path = "../examples/read_model/source.rs"]
 mod source;
 
@@ -117,8 +118,9 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> TestResult<Self> {
-        let js =
-            jetstream::new(async_nats::connect(rostfrei_testing::integration::nats_url()?).await?);
+        let js = jetstream::new(
+            native_connection_support::client(rostfrei_testing::integration::nats_url()?).await?,
+        );
         let app = ApplicationName::new(format!(
             "read-runtime-{}-{}",
             std::process::id(),

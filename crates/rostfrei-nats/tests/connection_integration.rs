@@ -57,13 +57,21 @@ impl Server {
     async fn start(&mut self) {
         let binary =
             std::env::var_os("ROSTFREI_NATS_SERVER").unwrap_or_else(|| "nats-server".into());
+        let log_path = self.directory.path().join(format!(
+            "broker-{}.log",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("fixture clock")
+                .as_nanos()
+        ));
+        let log = std::fs::File::create(log_path).expect("owned broker log");
         self.child = Some(
             Command::new(binary)
                 .current_dir(self.directory.path())
                 .arg("-c")
                 .arg(self.directory.path().join("nats.conf"))
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stdout(Stdio::from(log.try_clone().expect("clone broker log")))
+                .stderr(Stdio::from(log))
                 .spawn()
                 .expect("start nats-server (set ROSTFREI_NATS_SERVER)"),
         );
@@ -93,8 +101,16 @@ impl Server {
 
     fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
+            use std::io::Write as _;
+            let pid = child.id();
             let _ = child.kill();
-            child.wait().expect("reap server process");
+            let status = child.wait().expect("reap server process");
+            let mut log = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.directory.path().join("owned-cleanup.txt"))
+                .expect("owned cleanup log");
+            writeln!(log, "owned pid={pid} wait={status}").expect("record owned cleanup");
         }
     }
 }
@@ -102,7 +118,30 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.stop();
+        if let Some(evidence) = std::env::var_os("ROSTFREI_CONTRACT_EVIDENCE_DIR") {
+            let destination = std::path::PathBuf::from(evidence).join(format!(
+                "native-auth-{}-{}",
+                std::process::id(),
+                self.port
+            ));
+            retain_fixture(self.directory.path(), &destination)
+                .expect("retain owned native authentication evidence");
+        }
     }
+}
+
+fn retain_fixture(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            retain_fixture(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
 
 async fn wait_for_health(connection: &NatsConnection, health: ConnectionHealth) {

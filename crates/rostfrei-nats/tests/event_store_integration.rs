@@ -1,13 +1,22 @@
 #[path = "event_store/append_sessions.rs"]
 mod append_sessions;
 #[path = "../src/event_store.rs"]
+#[allow(
+    dead_code,
+    reason = "source-import fixture exercises private journal invariants; public lifecycle methods are tested by separate targets"
+)]
 mod event_store;
 #[path = "../src/event_store_config.rs"]
+#[allow(
+    dead_code,
+    reason = "source-import fixture; public lifecycle configuration is covered by separate targets"
+)]
 mod event_store_config;
 #[path = "../src/hex.rs"]
 mod hex;
 #[path = "event_store/history_reads.rs"]
 mod history_reads;
+mod native_connection_support;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
 
@@ -30,6 +39,9 @@ use rostfrei_core::{
     derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
+// The source-importing store fixture uses the real retained-response reader for
+// its additive legacy-maintenance API; atomic store assertions remain unchanged.
+use rostfrei_nats::{MessagingTopology, NatsCommandResponseReader};
 use rostfrei_testing::event_store_contract;
 use sha2::{Digest, Sha256};
 use tokio::sync::Barrier;
@@ -65,12 +77,71 @@ fn check(condition: bool, context: &'static str) -> TestResult<()> {
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test]
+async fn legacy_import_refuses_missing_actual_retained_response() -> TestResult<()> {
+    let (js, store) = directory_fixture("missing-legacy-response").await?;
+    let scope = store.config().application().bounded_context_in_scope(
+        store.config().traffic_scope(),
+        store.config().bounded_context().as_str(),
+    )?;
+    let messaging = rostfrei_nats::ApplicationMessagingConfig::new_in_scope(
+        scope.application(),
+        scope.traffic_scope(),
+    )?
+    .with_max_bytes(64 * 1024 * 1024)?;
+    rostfrei_nats::provision_application_messaging(&js, &messaging).await?;
+    let memory = Arc::new(rostfrei_core::InMemoryEventStore::new());
+    let processor = Arc::new(rostfrei::CommandProcessor::new(
+        scope.name().clone(),
+        memory,
+    ));
+    let bus = rostfrei::CommandBus::new(
+        scope,
+        Arc::new(rostfrei::InMemoryMessagingAdapter::new(processor.clone())),
+    );
+    let command = bus.encode_dynamic(rostfrei::DynamicCommandRequest::new(
+        OperationId::new("missing-response-operation")?,
+        "unregistered",
+        1,
+        serde_json::json!({}),
+    )?)?;
+    let response = processor.process(&command).await?;
+    let store = NatsEventStore::connect(
+        js.clone(),
+        store
+            .config()
+            .clone()
+            .with_puback_timeout(std::time::Duration::from_millis(100))?,
+    )
+    .await?;
+    let result = store
+        .import_legacy_rejected_outcome(&command, &response, messaging.topology())
+        .await;
+    check(
+        matches!(result, Err(error) if error.kind() == EventStoreErrorKind::Unavailable),
+        "missing original retained response was imported",
+    )?;
+    check(
+        store
+            .load_transaction_receipt_in_context(
+                store.config().bounded_context(),
+                &OperationId::new("missing-response-operation")?,
+            )
+            .await?
+            .is_none(),
+        "missing-evidence import created authority",
+    )?;
+    js.delete_stream(store.config().stream_name()).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn nats_store_persists_command_acceptance() -> TestResult<()> {
     let context = connect_context(&rostfrei_testing::integration::nats_url()?).await?;
     let (unique_context, stream_name) = unique_names("command-acceptance")?;
     let bounded_context =
         ApplicationName::new(unique_context.name().as_str())?.bounded_context("acceptance")?;
     let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
+        .with_fresh_split_outcome_epoch("isolated-acceptance-fixture")?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     provision_event_store(&context, &config).await?;
     let store = NatsEventStore::connect(context.clone(), config.clone()).await?;
@@ -724,7 +795,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     concurrent_transaction_identity_race(&store)
         .await
         .expect("transaction identity race");
-    unavailable_reconciliation_policy(&store, &url, &config)
+    Box::pin(unavailable_reconciliation_policy(&store, &url, &config))
         .await
         .expect("unavailable transaction reconciliation policy");
     forged_receipt_cannot_bind_a_direct_commit(&store, &context, &config)
@@ -2870,7 +2941,7 @@ async fn capacity_observations(
 }
 
 async fn connect_context(url: &str) -> TestResult<async_nats::jetstream::Context> {
-    let client = async_nats::connect(url).await?;
+    let client = native_connection_support::client(url).await?;
     Ok(async_nats::jetstream::new(client))
 }
 

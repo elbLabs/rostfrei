@@ -103,12 +103,17 @@ where
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommittedEventContext {
+    actor: Option<crate::ActorRef>,
     source_event_id: EventId,
     correlation_id: CorrelationId,
     occurred_at: Option<MessageTimestamp>,
 }
 
 impl CommittedEventContext {
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     pub fn new(recorded: &RecordedEvent) -> Result<Self, IntegrationEventBusError> {
         let correlation_id = recorded.correlation_id().cloned().ok_or_else(|| {
             IntegrationEventBusError::new(
@@ -118,6 +123,7 @@ impl CommittedEventContext {
         })?;
         Ok(Self {
             source_event_id: recorded.event_id().clone(),
+            actor: recorded.actor().cloned(),
             correlation_id,
             occurred_at: None,
         })
@@ -284,7 +290,7 @@ impl IntegrationEventBus {
             None => current_timestamp()?,
         };
         let correlation_id = committed.correlation_id;
-        let envelope = IntegrationEventEnvelope::new(
+        let mut envelope = IntegrationEventEnvelope::new(
             EnvelopeContext::new(
                 message_id.clone(),
                 schema_version,
@@ -295,6 +301,11 @@ impl IntegrationEventBus {
             event,
         )
         .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))?;
+        if let Some(actor) = committed.actor {
+            envelope = envelope
+                .with_actor(actor)
+                .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))?;
+        }
         let payload = canonical_serialize(&envelope)
             .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))?;
         let message = OutboundMessage::new(address, message_id, payload)
@@ -447,6 +458,7 @@ mod tests {
     fn declared_producer_context_is_checked_before_publication() {
         let application = rostfrei_messaging_core::ApplicationName::new("app").unwrap();
         let committed = CommittedEventContext {
+            actor: None,
             source_event_id: EventId::new("source-event").unwrap(),
             correlation_id: CorrelationId::new("correlation").unwrap(),
             occurred_at: Some(MessageTimestamp::from_unix_milliseconds(1).unwrap()),

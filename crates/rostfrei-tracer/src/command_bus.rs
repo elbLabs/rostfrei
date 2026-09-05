@@ -91,6 +91,9 @@ impl CommandTransport for CommandBusTransport {
         let command_message_id = response.command_message_id().as_str().to_owned();
         let response_message_id = response.message_id().as_str().to_owned();
         match response.into_outcome() {
+            CommandResponseOutcome::ExecutionFailed(failure) => Err(command_bus_error(
+                &rostfrei::CommandBusError::execution_failed(failure),
+            )),
             CommandResponseOutcome::Accepted => Ok(CommandReceipt::accepted(
                 command_message_id,
                 response_message_id,
@@ -123,6 +126,9 @@ impl CommandTransport for CommandBusTransport {
 }
 
 fn command_bus_error(error: &rostfrei::CommandBusError) -> CommandTransportError {
+    if let Some(failure) = error.execution_failure() {
+        return CommandTransportError::execution_failed(failure);
+    }
     let kind = match error.kind() {
         CommandBusErrorKind::Encoding
         | CommandBusErrorKind::PayloadTooLarge
@@ -133,6 +139,7 @@ fn command_bus_error(error: &rostfrei::CommandBusError) -> CommandTransportError
             CommandTransportErrorKind::InvalidConfiguration
         }
         CommandBusErrorKind::InvalidResponse => CommandTransportErrorKind::InvalidResponse,
+        CommandBusErrorKind::ExecutionFailed => CommandTransportErrorKind::ExecutionFailed,
         _ => CommandTransportErrorKind::Unavailable,
     };
     CommandTransportError::new(kind, error.to_string())

@@ -351,7 +351,7 @@ async fn rejects_renting_the_same_bicycle_twice_when_commands_are_executed() {
     };
 
     let outcome = CommandExecutor::new(store.clone())
-        .execute(
+        .execute_with_rejection_codec(
             &RentBicycleHandler,
             CommandExecutionMetadata::new(
                 OperationId::new("rent-bike-42-once").unwrap(),
@@ -359,6 +359,7 @@ async fn rejects_renting_the_same_bicycle_twice_when_commands_are_executed() {
             )
             .with_bounded_context(rostfrei::BoundedContextName::new("bike-rental").unwrap()),
             &command,
+            &rostfrei::JsonRejectionCodec::new("bike-rental.bicycle-unavailable", 1),
         )
         .await
         .unwrap();
@@ -368,7 +369,7 @@ async fn rejects_renting_the_same_bicycle_twice_when_commands_are_executed() {
     ));
 
     let outcome = CommandExecutor::new(store.clone())
-        .execute(
+        .execute_with_rejection_codec(
             &RentBicycleHandler,
             CommandExecutionMetadata::new(
                 OperationId::new("rent-bike-42-twice").unwrap(),
@@ -376,6 +377,7 @@ async fn rejects_renting_the_same_bicycle_twice_when_commands_are_executed() {
             )
             .with_bounded_context(rostfrei::BoundedContextName::new("bike-rental").unwrap()),
             &command,
+            &rostfrei::JsonRejectionCodec::new("bike-rental.bicycle-unavailable", 1),
         )
         .await
         .unwrap();

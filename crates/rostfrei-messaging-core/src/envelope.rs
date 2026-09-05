@@ -1,8 +1,8 @@
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::{
-    CausationId, CorrelationId, MessageBuildError, MessageId, MessageTimestamp, OperationId,
-    SchemaVersion,
+    ActorRef, CausationId, CorrelationId, MessageBuildError, MessageId, MessageTimestamp,
+    OperationId, SchemaVersion,
 };
 
 pub const MAX_ENVELOPE_BYTES: usize = 1024 * 1024;
@@ -68,6 +68,10 @@ pub struct CommandEnvelope<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     causation_id: Option<CausationId>,
     payload: T,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata_version: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor: Option<ActorRef>,
 }
 
 impl<T> CommandEnvelope<T>
@@ -88,6 +92,8 @@ where
             correlation_id: context.correlation_id,
             causation_id: context.causation_id,
             payload,
+            metadata_version: None,
+            actor: None,
         };
         envelope.validate()?;
         Ok(envelope)
@@ -96,9 +102,20 @@ where
     pub fn validate(&self) -> Result<(), MessageBuildError> {
         validate_serialized_size(self)
     }
+
+    /// Attach an original attribution claim, rechecking the complete envelope size.
+    pub fn with_actor(mut self, actor: ActorRef) -> Result<Self, MessageBuildError> {
+        self.metadata_version = Some(2);
+        self.actor = Some(actor);
+        self.validate()?;
+        Ok(self)
+    }
 }
 
 impl<T> CommandEnvelope<T> {
+    pub const fn actor(&self) -> Option<&ActorRef> {
+        self.actor.as_ref()
+    }
     pub const fn message_id(&self) -> &MessageId {
         &self.message_id
     }
@@ -141,6 +158,10 @@ struct CommandEnvelopeWire<T> {
     correlation_id: CorrelationId,
     causation_id: Option<CausationId>,
     payload: T,
+    #[serde(default, deserialize_with = "present")]
+    metadata_version: Option<u16>,
+    #[serde(default, deserialize_with = "present")]
+    actor: Option<ActorRef>,
 }
 
 impl<'de, T> Deserialize<'de> for CommandEnvelope<T>
@@ -152,7 +173,8 @@ where
         D: Deserializer<'de>,
     {
         let wire = CommandEnvelopeWire::deserialize(deserializer)?;
-        Self::new(
+        let actor = checked_actor(wire.metadata_version, wire.actor).map_err(D::Error::custom)?;
+        let envelope = Self::new(
             EnvelopeContext::new(
                 wire.message_id,
                 wire.schema_version,
@@ -163,7 +185,11 @@ where
             wire.created_at,
             wire.payload,
         )
-        .map_err(D::Error::custom)
+        .map_err(D::Error::custom)?;
+        match actor {
+            Some(actor) => envelope.with_actor(actor).map_err(D::Error::custom),
+            None => Ok(envelope),
+        }
     }
 }
 
@@ -176,6 +202,10 @@ pub struct IntegrationEventEnvelope<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     causation_id: Option<CausationId>,
     payload: T,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata_version: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor: Option<ActorRef>,
 }
 
 impl<T> IntegrationEventEnvelope<T>
@@ -194,6 +224,8 @@ where
             correlation_id: context.correlation_id,
             causation_id: context.causation_id,
             payload,
+            metadata_version: None,
+            actor: None,
         };
         envelope.validate()?;
         Ok(envelope)
@@ -202,9 +234,20 @@ where
     pub fn validate(&self) -> Result<(), MessageBuildError> {
         validate_serialized_size(self)
     }
+
+    /// Retain original attribution across integration routes; this does not authenticate it.
+    pub fn with_actor(mut self, actor: ActorRef) -> Result<Self, MessageBuildError> {
+        self.metadata_version = Some(2);
+        self.actor = Some(actor);
+        self.validate()?;
+        Ok(self)
+    }
 }
 
 impl<T> IntegrationEventEnvelope<T> {
+    pub const fn actor(&self) -> Option<&ActorRef> {
+        self.actor.as_ref()
+    }
     pub const fn message_id(&self) -> &MessageId {
         &self.message_id
     }
@@ -242,6 +285,10 @@ struct IntegrationEventEnvelopeWire<T> {
     correlation_id: CorrelationId,
     causation_id: Option<CausationId>,
     payload: T,
+    #[serde(default, deserialize_with = "present")]
+    metadata_version: Option<u16>,
+    #[serde(default, deserialize_with = "present")]
+    actor: Option<ActorRef>,
 }
 
 impl<'de, T> Deserialize<'de> for IntegrationEventEnvelope<T>
@@ -253,7 +300,8 @@ where
         D: Deserializer<'de>,
     {
         let wire = IntegrationEventEnvelopeWire::deserialize(deserializer)?;
-        Self::new(
+        let actor = checked_actor(wire.metadata_version, wire.actor).map_err(D::Error::custom)?;
+        let envelope = Self::new(
             EnvelopeContext::new(
                 wire.message_id,
                 wire.schema_version,
@@ -263,7 +311,29 @@ where
             wire.occurred_at,
             wire.payload,
         )
-        .map_err(D::Error::custom)
+        .map_err(D::Error::custom)?;
+        match actor {
+            Some(actor) => envelope.with_actor(actor).map_err(D::Error::custom),
+            None => Ok(envelope),
+        }
+    }
+}
+
+// Default handles absence; a present null must not be confused with legacy absence.
+fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
+}
+
+fn checked_actor(
+    version: Option<u16>,
+    actor: Option<ActorRef>,
+) -> Result<Option<ActorRef>, &'static str> {
+    match (version, actor) {
+        (None | Some(1), None) => Ok(None),
+        (Some(2), Some(actor)) => Ok(Some(actor)),
+        _ => Err("unsupported or inconsistent envelope actor metadata"),
     }
 }
 

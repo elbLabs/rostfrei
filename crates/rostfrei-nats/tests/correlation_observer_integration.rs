@@ -1,3 +1,5 @@
+mod native_connection_support;
+
 use std::{
     collections::BTreeSet,
     error::Error,
@@ -52,7 +54,7 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
     let transaction_subject = format!("{}.domain.test.transaction.receipt", application.as_str());
     let domain_subject_filter = format!("{}.domain.test.aggregate.*", application.as_str());
     let integration_subject = format!("{}.integration.test-event", application.as_str());
-    let client = async_nats::connect(nats_url).await?;
+    let client = native_connection_support::client(nats_url).await?;
     let context = jetstream::new(client.clone());
     let domain_config = stream_config(
         &domain_stream,

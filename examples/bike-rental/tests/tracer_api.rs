@@ -84,6 +84,22 @@ impl EventHistory for ResettableStore {
 
 #[async_trait]
 impl EventStore for ResettableStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &rostfrei::BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei::InlineCompletedOutcome>, EventStoreError> {
+        self.snapshot()
+            .await
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei::CompletedAppendOutcome, EventStoreError> {
+        self.snapshot().await.commit_outcome(transaction).await
+    }
     async fn append(
         &self,
         stream_id: &StreamId,
@@ -147,6 +163,25 @@ struct LocalCommandTransport<Store> {
     store: Store,
 }
 
+// Reset selects a new authority. Pin one real coordinated backend per invocation;
+// never advertise a stable authority over a concurrently replaceable store.
+#[async_trait]
+trait ExecutionSnapshot: EventStore {
+    async fn execution_snapshot(&self) -> Arc<dyn rostfrei::ExecutionStore>;
+}
+#[async_trait]
+impl ExecutionSnapshot for ResettableStore {
+    async fn execution_snapshot(&self) -> Arc<dyn rostfrei::ExecutionStore> {
+        Arc::new(self.snapshot().await)
+    }
+}
+#[async_trait]
+impl ExecutionSnapshot for InMemoryEventStore {
+    async fn execution_snapshot(&self) -> Arc<dyn rostfrei::ExecutionStore> {
+        Arc::new(self.clone())
+    }
+}
+
 impl<Store> LocalCommandTransport<Store> {
     const fn new(store: Store) -> Self {
         Self { store }
@@ -156,7 +191,7 @@ impl<Store> LocalCommandTransport<Store> {
 #[async_trait]
 impl<Store> CommandTransport for LocalCommandTransport<Store>
 where
-    Store: EventStore + Clone + Send + Sync + 'static,
+    Store: ExecutionSnapshot + Clone + Send + Sync + 'static,
 {
     async fn invoke(
         &self,
@@ -192,13 +227,19 @@ where
             })?,
         )
         .with_correlation_id(correlation_id);
+        let backend = self.store.execution_snapshot().await;
         let outcome = match (invocation.command(), invocation.schema_version()) {
             (RentBicycle::LOCAL_ID, RentBicycle::SCHEMA_VERSION) => {
                 let command = RentBicycle::decode_json(invocation.payload()).map_err(|error| {
                     local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                 })?;
-                match CommandExecutor::new(self.store.clone())
-                    .execute(&RentBicycleHandler, metadata, &command)
+                match CommandExecutor::new(backend.clone())
+                    .execute_with_rejection_codec(
+                        &RentBicycleHandler,
+                        metadata,
+                        &command,
+                        &rostfrei::JsonRejectionCodec::new("bike-rental.bicycle-unavailable", 1),
+                    )
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
@@ -213,8 +254,13 @@ where
                     ReturnBicycle::decode_json(invocation.payload()).map_err(|error| {
                         local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                     })?;
-                match CommandExecutor::new(self.store.clone())
-                    .execute(&ReturnBicycleHandler, metadata, &command)
+                match CommandExecutor::new(backend.clone())
+                    .execute_with_rejection_codec(
+                        &ReturnBicycleHandler,
+                        metadata,
+                        &command,
+                        &rostfrei::JsonRejectionCodec::new("bike-rental.bicycle-not-rented", 1),
+                    )
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
@@ -228,8 +274,16 @@ where
                 let command = AddBicycle::decode_json(invocation.payload()).map_err(|error| {
                     local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                 })?;
-                match CommandExecutor::new(self.store.clone())
-                    .execute(&AddBicycleHandler, metadata, &command)
+                match CommandExecutor::new(backend.clone())
+                    .execute_with_rejection_codec(
+                        &AddBicycleHandler,
+                        metadata,
+                        &command,
+                        &rostfrei::JsonRejectionCodec::new(
+                            "bike-rental.bicycle-already-in-fleet",
+                            1,
+                        ),
+                    )
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
@@ -244,8 +298,16 @@ where
                     TransferBicycle::decode_json(invocation.payload()).map_err(|error| {
                         local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                     })?;
-                match CommandExecutor::new(self.store.clone())
-                    .execute(&TransferBicycleHandler, metadata, &command)
+                match CommandExecutor::new(backend.clone())
+                    .execute_with_rejection_codec(
+                        &TransferBicycleHandler,
+                        metadata,
+                        &command,
+                        &rostfrei::JsonRejectionCodec::new(
+                            "bike-rental.bicycle-transfer-rejected",
+                            1,
+                        ),
+                    )
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
@@ -7,12 +7,15 @@ use sha2::{Digest, Sha256};
 use crate::{
     ApplicationErrorCode, CommandAddress, CommandResponseAddress, CommandResponseReadError,
     CommandResponseReadErrorKind, ContractError, ContractErrorKind, CorrelationId,
-    MessageBuildError, MessageId, OperationId, SchemaVersion, envelope::validate_serialized_size,
+    ExecutionFailure, MessageBuildError, MessageId, OperationId, SchemaVersion,
+    envelope::validate_serialized_size,
 };
 
 pub const MAX_COMMAND_REJECTION_MESSAGE_BYTES: usize = 1024;
 pub const MAX_COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_hours(24);
 pub const COMMAND_RESPONSE_SCHEMA_VERSION: u32 = 1;
+/// Version 1 accepted/rejected responses remain byte-compatible. Only technical responses use v2.
+pub const TECHNICAL_RESPONSE_SCHEMA_VERSION: u32 = 2;
 const RESPONSE_ADDRESS_HASH_DOMAIN: &[u8] = b"rostfrei.command-response-address.v1";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -96,6 +99,9 @@ impl<'de> Deserialize<'de> for CommandRejection {
 pub enum CommandResponseOutcome {
     Accepted,
     Rejected(CommandRejection),
+    /// Diagnostic only: neither proof of completion nor proof that nothing committed.
+    /// Reconcile uncertainty with the same operation and canonical evidence, never a fresh ID.
+    ExecutionFailed(ExecutionFailure),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -110,6 +116,26 @@ pub struct CommandResponse {
 }
 
 impl CommandResponse {
+    pub fn execution_failed(
+        message_id: MessageId,
+        command_message_id: MessageId,
+        command_address: CommandAddress,
+        operation_id: OperationId,
+        correlation_id: CorrelationId,
+        failure: ExecutionFailure,
+    ) -> Result<Self, MessageBuildError> {
+        Self::new(
+            message_id,
+            command_message_id,
+            command_address,
+            operation_id,
+            SchemaVersion::new(TECHNICAL_RESPONSE_SCHEMA_VERSION)
+                .map_err(|_| MessageBuildError::serialization())?,
+            correlation_id,
+            CommandResponseOutcome::ExecutionFailed(failure),
+        )
+    }
+
     pub fn accepted(
         message_id: MessageId,
         command_message_id: MessageId,
@@ -156,7 +182,11 @@ impl CommandResponse {
         correlation_id: CorrelationId,
         outcome: CommandResponseOutcome,
     ) -> Result<Self, MessageBuildError> {
-        if schema_version.get() != COMMAND_RESPONSE_SCHEMA_VERSION {
+        let expected_version = match outcome {
+            CommandResponseOutcome::ExecutionFailed(_) => TECHNICAL_RESPONSE_SCHEMA_VERSION,
+            _ => COMMAND_RESPONSE_SCHEMA_VERSION,
+        };
+        if schema_version.get() != expected_version {
             return Err(MessageBuildError::serialization());
         }
         let response = Self {
@@ -217,7 +247,54 @@ struct CommandResponseWire {
     operation_id: OperationId,
     schema_version: SchemaVersion,
     correlation_id: CorrelationId,
+    outcome: CommandResponseOutcomeWire,
+    #[serde(flatten)]
+    extensions: ResponseExtensions,
+}
+
+#[derive(Deserialize)]
+struct CommandResponseOutcomeWire {
+    // Serde's flattened map representation retains entries (including duplicate keys),
+    // unlike serde_json::Value. The existing typed enum and ExecutionFailure visitors
+    // therefore still reject duplicate known fields, even when content precedes its tag.
+    #[serde(flatten)]
     outcome: CommandResponseOutcome,
+    #[serde(flatten)]
+    extensions: ResponseExtensions,
+}
+
+// Only presence matters for conditional v2 strictness. Known fields have already been
+// consumed by typed visitors; skip unknown values without storing or normalizing them.
+struct ResponseExtensions {
+    present: bool,
+}
+
+impl<'de> Deserialize<'de> for ResponseExtensions {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ExtensionsVisitor;
+        impl<'de> serde::de::Visitor<'de> for ExtensionsVisitor {
+            type Value = ResponseExtensions;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("response extension fields")
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> Result<Self::Value, M::Error> {
+                let mut present = false;
+                while map
+                    .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+                    .is_some()
+                {
+                    present = true;
+                }
+                Ok(ResponseExtensions { present })
+            }
+        }
+        deserializer.deserialize_map(ExtensionsVisitor)
+    }
 }
 
 impl<'de> Deserialize<'de> for CommandResponse {
@@ -225,7 +302,14 @@ impl<'de> Deserialize<'de> for CommandResponse {
     where
         D: Deserializer<'de>,
     {
+        // Decode known fields directly, preserving typed duplicate-field checks at every
+        // protocol layer. Only unknown extensions may be ignored for legacy schema 1.
         let wire = CommandResponseWire::deserialize(deserializer)?;
+        if wire.schema_version.get() == TECHNICAL_RESPONSE_SCHEMA_VERSION
+            && (wire.extensions.present || wire.outcome.extensions.present)
+        {
+            return Err(D::Error::custom("unknown technical response field"));
+        }
         Self::new(
             wire.message_id,
             wire.command_message_id,
@@ -233,7 +317,7 @@ impl<'de> Deserialize<'de> for CommandResponse {
             wire.operation_id,
             wire.schema_version,
             wire.correlation_id,
-            wire.outcome,
+            wire.outcome.outcome,
         )
         .map_err(D::Error::custom)
     }
@@ -275,8 +359,10 @@ pub fn derive_command_response_address(
 #[async_trait]
 /// Reads a durably stored response without consuming it.
 ///
-/// Repeated reads for the same identity must return the same response while the
-/// transport's documented response-retention window remains open.
+/// Completed accepted/rejected responses for an identity are immutable while the
+/// transport's documented response-retention window remains open. Technical diagnostics
+/// are execution snapshots, not completed outcomes: a later diagnostic or completed
+/// response may supersede them. Readers return the latest durable snapshot.
 pub trait CommandResponseReader: Send + Sync {
     /// Looks up one exact retained response without waiting for its publication.
     async fn find_command_response(
@@ -350,6 +436,67 @@ mod tests {
             outcome,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn technical_v2_is_typed_and_v1_business_responses_remain_compatible() {
+        use crate::{CodecFailureKind, ExecutionRecovery, ProcessorFailureKind, StoreFailureKind};
+        let accepted = response(CommandResponseOutcome::Accepted);
+        let legacy = serde_json::to_value(&accepted).unwrap();
+        assert_eq!(legacy.get("schema_version"), Some(&serde_json::json!(1)));
+        assert_eq!(
+            legacy.get("outcome"),
+            Some(&serde_json::json!({"status":"accepted"}))
+        );
+        assert_eq!(
+            serde_json::from_value::<CommandResponse>(legacy.clone()).unwrap(),
+            accepted
+        );
+        for failure in [
+            ExecutionFailure::Store(StoreFailureKind::CorruptHistory),
+            ExecutionFailure::Store(StoreFailureKind::CapacityExhausted),
+            ExecutionFailure::Store(StoreFailureKind::ConfigurationMismatch),
+            ExecutionFailure::Store(StoreFailureKind::Conflict),
+            ExecutionFailure::Store(StoreFailureKind::Unavailable),
+            ExecutionFailure::Codec(CodecFailureKind::UnknownEventType),
+            ExecutionFailure::Codec(CodecFailureKind::UnsupportedSchemaVersion),
+            ExecutionFailure::Codec(CodecFailureKind::MalformedPayload),
+            ExecutionFailure::Codec(CodecFailureKind::InvalidEnvelope),
+            ExecutionFailure::Codec(CodecFailureKind::EncodingFailed),
+            ExecutionFailure::Processor(ProcessorFailureKind::InvalidConfiguration),
+        ] {
+            let technical = CommandResponse::execution_failed(
+                accepted.message_id().clone(),
+                accepted.command_message_id().clone(),
+                accepted.command_address().clone(),
+                accepted.operation_id().clone(),
+                accepted.correlation_id().clone(),
+                failure,
+            )
+            .unwrap();
+            assert_eq!(
+                technical.schema_version().get(),
+                TECHNICAL_RESPONSE_SCHEMA_VERSION
+            );
+            let mut wire = serde_json::to_value(&technical).unwrap();
+            assert_eq!(
+                serde_json::from_value::<CommandResponse>(wire.clone()).unwrap(),
+                technical
+            );
+            assert_eq!(
+                failure.is_retryable(),
+                matches!(failure.recovery(), ExecutionRecovery::Retry)
+            );
+            *wire.get_mut("schema_version").unwrap() = serde_json::json!(1);
+            assert!(serde_json::from_value::<CommandResponse>(wire).is_err());
+        }
+        let mut invalid_business = legacy;
+        *invalid_business.get_mut("schema_version").unwrap() = serde_json::json!(2);
+        assert!(serde_json::from_value::<CommandResponse>(invalid_business).is_err());
+        let mut unknown = serde_json::to_value(&accepted).unwrap();
+        *unknown.get_mut("schema_version").unwrap() = serde_json::json!(2);
+        *unknown.get_mut("outcome").unwrap() = serde_json::json!({"status":"execution_failed", "value":{"source":"store", "kind":"future_unknown"}});
+        assert!(serde_json::from_value::<CommandResponse>(unknown).is_err());
     }
 
     #[test]

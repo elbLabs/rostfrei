@@ -6,16 +6,17 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei::{
-    CommandBusError, CommandBusErrorKind, CommandBusObserver, CommandBusReceipt,
-    CommandMessageAdapter, CommandProcessor, CommandPublication, EncodedCommand,
+    AuthorizationError, CommandBusError, CommandBusErrorKind, CommandBusObserver,
+    CommandBusReceipt, CommandMessageAdapter, CommandProcessingService, CommandProcessor,
+    CommandProcessorError, CommandPublication, CompletionOrigin, EncodedCommand,
     EncodedIntegrationMessage, IntegrationEventBusError, IntegrationEventBusErrorKind,
-    IntegrationMessageAdapter,
+    IntegrationMessageAdapter, OutcomeLookup, ProcessedCommand, TrustedCommandContext,
 };
 use rostfrei_messaging_core::{
-    CommandAddress, CommandPublisher, CommandResponse, CommandResponsePublisher,
-    CommandResponseReadErrorKind, CommandResponseReader, DeliveryDisposition,
-    IntegrationEventPublisher, MessageDelivery, MessageHandler, OutboundMessage, PublishError,
-    PublishErrorKind, PublishReceipt, QuarantineReason, RetryDelay,
+    CommandAddress, CommandPublisher, CommandResponse, CommandResponseOutcome,
+    CommandResponsePublisher, CommandResponseReadErrorKind, CommandResponseReader,
+    DeliveryDisposition, IntegrationEventPublisher, MessageDelivery, MessageHandler,
+    OutboundMessage, PublishError, PublishErrorKind, PublishReceipt, QuarantineReason, RetryDelay,
 };
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
@@ -27,28 +28,44 @@ const RESPONSE_READ_SLICE: Duration = Duration::from_secs(1);
 const RESPONSE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(100);
 const DELIVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
 
+/// Default time budget for reading a durable command response.
+///
+/// This is not an end-to-end dispatch deadline or a command cancellation deadline.
+pub const DEFAULT_COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// NATS transport with a finite, configurable command-response wait.
+///
+/// A timeout leaves the command's completion unknown to this caller; the original
+/// command may still finish and must retain its identity during recovery.
 #[derive(Clone)]
 pub struct NatsMessagingAdapter {
+    outcome_service: Option<(Arc<dyn CommandProcessingService>, TrustedCommandContext)>,
+    replay_publication: bool,
     command_publisher: Arc<dyn CommandPublisher>,
     response_publisher: Arc<dyn CommandResponsePublisher>,
     integration_publisher: Arc<dyn IntegrationEventPublisher>,
     response_reader: Arc<dyn CommandResponseReader>,
-    response_timeout: Option<Duration>,
+    response_timeout: Duration,
+    native_response_publisher: Option<Arc<NatsPublisher>>,
 }
 
 impl NatsMessagingAdapter {
     pub fn new(publisher: NatsPublisher, response_reader: NatsCommandResponseReader) -> Self {
         let publisher = Arc::new(publisher);
+        let native_response_publisher = Some(Arc::clone(&publisher));
         let command_publisher: Arc<dyn CommandPublisher> = publisher.clone();
         let response_publisher: Arc<dyn CommandResponsePublisher> = publisher.clone();
         let integration_publisher: Arc<dyn IntegrationEventPublisher> = publisher;
         let response_reader: Arc<dyn CommandResponseReader> = Arc::new(response_reader);
         Self {
+            outcome_service: None,
+            replay_publication: false,
             command_publisher,
             response_publisher,
             integration_publisher,
             response_reader,
-            response_timeout: None,
+            response_timeout: DEFAULT_COMMAND_RESPONSE_TIMEOUT,
+            native_response_publisher,
         }
     }
 
@@ -60,26 +77,97 @@ impl NatsMessagingAdapter {
         response_reader: Arc<dyn CommandResponseReader>,
     ) -> Self {
         Self {
+            outcome_service: None,
+            replay_publication: false,
             command_publisher,
             response_publisher,
             integration_publisher,
             response_reader,
-            response_timeout: None,
+            response_timeout: DEFAULT_COMMAND_RESPONSE_TIMEOUT,
+            native_response_publisher: None,
         }
     }
 
+    /// Override the response-wait budget (default: 30 seconds).
+    ///
+    /// The budget starts when response reading begins, after publication, its
+    /// observer and any replay admission. It does not bound authorization or
+    /// publication, cancel the durable command,
+    /// publish a rejection, or authorize automatic redrive. Use a host deadline
+    /// for the entire request and preserve the original identity when reconciling.
     #[must_use]
     pub const fn with_response_timeout(mut self, response_timeout: Duration) -> Self {
-        self.response_timeout = Some(response_timeout);
+        self.response_timeout = response_timeout;
+        self
+    }
+
+    /// Requires actual command publication even when authorized admission finds a winner.
+    ///
+    /// With [`Self::with_outcome_service`], current authorization and outcome-detail
+    /// lifecycle checks still precede publication. The original command is published
+    /// through the normal bounded retry path; the observer and receipt use its actual
+    /// broker acknowledgement's duplicate flag. After the awaited publication callback,
+    /// current authority is consulted again, independently of the raw response's lifetime.
+    /// If no winner is available, response reading and subsequent authoritative admission
+    /// proceed normally. Native workers reconcile completed commands without reevaluating
+    /// their handlers.
+    ///
+    /// By default, authorized completed replay returns without publication or an observer
+    /// callback. This option does not itself configure an outcome service or caller.
+    #[must_use]
+    pub const fn with_replay_publication(mut self) -> Self {
+        self.replay_publication = true;
         self
     }
 
     pub fn command_handler(&self, processor: Arc<CommandProcessor>) -> NatsCommandHandler {
-        NatsCommandHandler::new(
+        let mut handler = NatsCommandHandler::new(
             processor,
             Arc::clone(&self.response_publisher),
             Arc::clone(&self.response_reader),
-        )
+        );
+        handler
+            .native_response_publisher
+            .clone_from(&self.native_response_publisher);
+        handler
+    }
+
+    /// Authorized caller admission. The trusted context is supplied by the application,
+    /// never derived from transport metadata. Each invocation consults current authority.
+    #[must_use]
+    pub fn with_outcome_service(
+        mut self,
+        service: Arc<dyn CommandProcessingService>,
+        caller: TrustedCommandContext,
+    ) -> Self {
+        self.outcome_service = Some((service, caller));
+        self
+    }
+
+    pub fn command_handler_with_resolver(
+        &self,
+        service: Arc<dyn CommandProcessingService>,
+        resolver: Arc<dyn TrustedCommandContextResolver>,
+    ) -> NatsCommandHandler {
+        NatsCommandHandler {
+            processor: HandlerProcessor::Authorized { service, resolver },
+            response_publisher: self.response_publisher.clone(),
+            response_reader: self.response_reader.clone(),
+            execution_gates: CommandExecutionGates::default(),
+            native_response_publisher: self.native_response_publisher.clone(),
+        }
+    }
+
+    async fn authorized_response(
+        &self,
+        command: &EncodedCommand,
+    ) -> Result<Option<CommandResponse>, CommandBusError> {
+        let Some((service, caller)) = &self.outcome_service else {
+            return Ok(None);
+        };
+        authorized_lookup(service.as_ref(), caller, command)
+            .await
+            .map_err(|e| CommandBusError::from_processor(&e))
     }
 
     async fn publish_command(
@@ -151,10 +239,7 @@ impl NatsMessagingAdapter {
         &self,
         command: &EncodedCommand,
     ) -> Result<CommandResponse, CommandBusError> {
-        let Some(timeout) = self.response_timeout else {
-            return self.read_response(command).await;
-        };
-        tokio::time::timeout(timeout, self.read_response(command))
+        tokio::time::timeout(self.response_timeout, self.read_response(command))
             .await
             .map_err(|_| {
                 CommandBusError::new(
@@ -172,6 +257,14 @@ impl CommandMessageAdapter for NatsMessagingAdapter {
         command: EncodedCommand,
         observer: Arc<dyn CommandBusObserver>,
     ) -> Result<CommandBusReceipt, CommandBusError> {
+        command
+            .validate()
+            .map_err(|e| CommandBusError::from_processor(&e))?;
+        if let Some(winner) = self.authorized_response(&command).await?
+            && !self.replay_publication
+        {
+            return Ok(CommandBusReceipt::new(true, winner));
+        }
         let publication = self.publish_command(&command).await?;
         observer
             .published(CommandPublication::new(
@@ -179,10 +272,34 @@ impl CommandMessageAdapter for NatsMessagingAdapter {
                 publication.duplicate(),
             ))
             .await;
+        // A duplicate PubAck may enqueue no delivery to recreate an expired response.
+        // Admit current authority before depending on that transport projection.
+        if self.replay_publication
+            && let Some(winner) = self.authorized_response(&command).await?
+        {
+            return Ok(CommandBusReceipt::new(publication.duplicate(), winner));
+        }
         let response = self.read_response_with_timeout(&command).await?;
+        if self.outcome_service.is_some() {
+            if let Some(winner) = self.authorized_response(&command).await? {
+                return Ok(CommandBusReceipt::new(publication.duplicate(), winner));
+            }
+            if !matches!(
+                response.outcome(),
+                CommandResponseOutcome::ExecutionFailed(_)
+            ) {
+                return Err(CommandBusError::new(
+                    CommandBusErrorKind::CompletedDetailsBlocked,
+                    "transport result has no authorized authoritative winner",
+                ));
+            }
+        }
         command.validate_response(&response).map_err(|error| {
             CommandBusError::new(CommandBusErrorKind::InvalidResponse, error.to_string())
         })?;
+        if let CommandResponseOutcome::ExecutionFailed(failure) = response.outcome() {
+            return Err(CommandBusError::execution_failed(*failure));
+        }
         Ok(CommandBusReceipt::new(publication.duplicate(), response))
     }
 }
@@ -218,10 +335,57 @@ impl IntegrationMessageAdapter for NatsMessagingAdapter {
 }
 
 pub struct NatsCommandHandler {
-    processor: Arc<CommandProcessor>,
+    processor: HandlerProcessor,
     response_publisher: Arc<dyn CommandResponsePublisher>,
     response_reader: Arc<dyn CommandResponseReader>,
     execution_gates: CommandExecutionGates,
+    native_response_publisher: Option<Arc<NatsPublisher>>,
+}
+
+#[async_trait]
+pub trait TrustedCommandContextResolver: Send + Sync {
+    async fn resolve(
+        &self,
+        delivery: &MessageDelivery<CommandAddress>,
+    ) -> Result<TrustedCommandContext, AuthorizationError>;
+}
+
+/// Explicit service-principal profile for already trusted infrastructure deliveries.
+///
+/// Producers on this boundary are trusted to assert original actor attribution.
+/// This resolver does not authenticate the actor or prove that a named person acted;
+/// a resolver/authorizer with application evidence must enforce any such restriction.
+pub struct ServicePrincipalContext(pub TrustedCommandContext);
+#[async_trait]
+impl TrustedCommandContextResolver for ServicePrincipalContext {
+    async fn resolve(
+        &self,
+        _: &MessageDelivery<CommandAddress>,
+    ) -> Result<TrustedCommandContext, AuthorizationError> {
+        Ok(self.0.clone())
+    }
+}
+enum HandlerProcessor {
+    Trusted(Arc<CommandProcessor>),
+    Authorized {
+        service: Arc<dyn CommandProcessingService>,
+        resolver: Arc<dyn TrustedCommandContextResolver>,
+    },
+}
+
+async fn authorized_lookup(
+    service: &dyn CommandProcessingService,
+    caller: &TrustedCommandContext,
+    command: &EncodedCommand,
+) -> Result<Option<CommandResponse>, CommandProcessorError> {
+    match service.lookup(caller, command).await.into_result()? {
+        OutcomeLookup::Missing => Ok(None),
+        OutcomeLookup::Completed(outcome) => Ok(Some(
+            ProcessedCommand::new(CompletionOrigin::Replayed, outcome)
+                .admit(caller, command)?
+                .clone(),
+        )),
+    }
 }
 
 impl NatsCommandHandler {
@@ -231,10 +395,47 @@ impl NatsCommandHandler {
         response_reader: Arc<dyn CommandResponseReader>,
     ) -> Self {
         Self {
-            processor,
+            processor: HandlerProcessor::Trusted(processor),
             response_publisher,
             response_reader,
             execution_gates: CommandExecutionGates::default(),
+            native_response_publisher: None,
+        }
+    }
+
+    async fn reconcile_completed(
+        &self,
+        caller: Option<&TrustedCommandContext>,
+        command: &EncodedCommand,
+    ) -> Result<Option<CommandResponse>, CommandProcessorError> {
+        match (&self.processor, caller) {
+            (HandlerProcessor::Trusted(processor), _) => {
+                processor.reconcile_completed(command).await
+            }
+            (HandlerProcessor::Authorized { service, .. }, Some(caller)) => {
+                authorized_lookup(service.as_ref(), caller, command).await
+            }
+            _ => Err(CommandProcessorError::authorization(
+                AuthorizationError::InvalidConfiguration,
+            )),
+        }
+    }
+    async fn process(
+        &self,
+        caller: Option<&TrustedCommandContext>,
+        command: &EncodedCommand,
+    ) -> Result<CommandResponse, CommandProcessorError> {
+        match (&self.processor, caller) {
+            (HandlerProcessor::Trusted(processor), _) => processor.process(command).await,
+            (HandlerProcessor::Authorized { service, .. }, Some(caller)) => Ok(service
+                .process(caller, command)
+                .await
+                .into_result()?
+                .admit(caller, command)?
+                .clone()),
+            _ => Err(CommandProcessorError::authorization(
+                AuthorizationError::InvalidConfiguration,
+            )),
         }
     }
 
@@ -285,13 +486,32 @@ impl NatsCommandHandler {
             .map_err(|_| PublishError::new(PublishErrorKind::InvalidConfiguration))?;
         let message = OutboundMessage::json(address, response.message_id().clone(), response)
             .map_err(|_| PublishError::new(PublishErrorKind::InvalidConfiguration))?;
+        // A single processing attempt retains one CAS token/payload across uncertain retries.
+        // Only a later source re-delivery/re-evaluation may prepare a fresh transition.
+        let prepared = match &self.native_response_publisher {
+            Some(publisher) => Some(
+                publisher
+                    .prepare_command_response(message.clone(), publisher.publish_timeout())
+                    .await
+                    .map_err(|error| crate::publish::core_publish_error(&error))?,
+            ),
+            None => None,
+        };
         let mut attempts_remaining = MAXIMUM_PUBLISH_ATTEMPTS;
         loop {
-            match self
-                .response_publisher
-                .publish_command_response(message.clone())
-                .await
-            {
+            let result = match (&self.native_response_publisher, &prepared) {
+                (Some(publisher), Some(prepared)) => publisher
+                    .publish_prepared_command_response(prepared, publisher.publish_timeout())
+                    .await
+                    .map(|ack| PublishReceipt::new(ack.duplicate()))
+                    .map_err(|error| crate::publish::core_publish_error(&error)),
+                _ => {
+                    self.response_publisher
+                        .publish_command_response(message.clone())
+                        .await
+                }
+            };
+            match result {
                 Ok(receipt) => return Ok(receipt),
                 Err(error)
                     if attempts_remaining > 1
@@ -326,9 +546,62 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
         {
             return quarantine("invalid command correlation identity");
         }
+        if command.validate().is_err() {
+            return quarantine("invalid original command evidence");
+        }
+        let caller = match &self.processor {
+            HandlerProcessor::Trusted(_) => None,
+            HandlerProcessor::Authorized { resolver, .. } => {
+                match resolver.resolve(&delivery).await {
+                    Ok(caller) => Some(caller),
+                    Err(AuthorizationError::Unavailable) => return retry(),
+                    Err(_) => {
+                        return quarantine("trusted command context resolution refused delivery");
+                    }
+                }
+            }
+        };
         let _execution = self.execution_gates.acquire(command.message_id()).await;
         match self.reconcile_response(&command).await {
-            Ok(Some(_)) => return DeliveryDisposition::Acknowledge,
+            Ok(Some(response)) => match response.outcome() {
+                CommandResponseOutcome::ExecutionFailed(failure) if failure.is_retryable() => {}
+                CommandResponseOutcome::ExecutionFailed(_) => {
+                    // A diagnostic never overrides an already durable completion. This
+                    // lookup cannot invoke a handler; without a winner the existing blocked
+                    // repair/redrive policy is unchanged. Keep the old record for audit.
+                    let authoritative = match self
+                        .reconcile_completed(caller.as_ref(), &command)
+                        .await
+                    {
+                        Ok(Some(response)) => response,
+                        Ok(None) => {
+                            return quarantine(
+                                "technical command execution is blocked; repair and redrive required",
+                            );
+                        }
+                        Err(error) if error.is_retryable() => return retry(),
+                        Err(_) => return quarantine("shared outcome reconciliation is blocked"),
+                    };
+                    return match self.publish_response(&command, &authoritative).await {
+                        Ok(_) => DeliveryDisposition::Acknowledge,
+                        Err(_) => retry(),
+                    };
+                }
+                _ => {
+                    // A retained business response is a projection, never an independent
+                    // authority. Legacy-only responses require explicit evidence-bound import.
+                    return match self.reconcile_completed(caller.as_ref(), &command).await {
+                        Ok(Some(authoritative)) if authoritative == response => {
+                            DeliveryDisposition::Acknowledge
+                        }
+                        Ok(Some(_) | None) => quarantine(
+                            "retained business response lacks matching shared authority; migration required",
+                        ),
+                        Err(error) if error.is_retryable() => retry(),
+                        Err(_) => quarantine("shared outcome reconciliation is blocked"),
+                    };
+                }
+            },
             Ok(None) => {}
             Err(ReconciliationError::Unavailable) => return retry(),
             Err(ReconciliationError::Invalid) => {
@@ -336,10 +609,26 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
             }
         }
 
-        let response = match self.processor.process(&command).await {
+        let response = match self.process(caller.as_ref(), &command).await {
             Ok(response) => response,
-            Err(error) if error.is_retryable() => return retry(),
-            Err(_) => return quarantine("command processing failed permanently"),
+            Err(error) => {
+                // Notify the remote caller before asking the existing native consumer to
+                // durably quarantine the source. A missing response sink selects retry here;
+                // the consumer's finite delivery budget can separately quarantine exhaustion.
+                match error.technical_response(&command) {
+                    Ok(Some(response)) => {
+                        if self.publish_response(&command, &response).await.is_err() {
+                            return retry();
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => return retry(),
+                }
+                if error.is_retryable() {
+                    return retry();
+                }
+                return quarantine("command processing failed permanently");
+            }
         };
         match self.publish_response(&command, &response).await {
             Ok(_) => DeliveryDisposition::Acknowledge,
@@ -427,7 +716,7 @@ mod tests {
 
     use async_trait::async_trait;
     use rostfrei::{
-        CommandBus, DynamicCommandRequest, EventStore, InMemoryEventStore,
+        CommandBus, DynamicCommandRequest, ExecutionStore, InMemoryEventStore,
         InMemoryMessagingAdapter, OperationId,
     };
     use rostfrei_messaging_core::{
@@ -584,6 +873,33 @@ mod tests {
     }
 
     struct NoopCommandObserver;
+
+    struct DelayedCommandObserver;
+
+    #[async_trait]
+    impl CommandBusObserver for DelayedCommandObserver {
+        async fn published(&self, _publication: CommandPublication) {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    }
+
+    struct WaitingResponseReader;
+
+    #[async_trait]
+    impl CommandResponseReader for WaitingResponseReader {
+        async fn read_command_response(
+            &self,
+            _address: &CommandResponseAddress,
+            _operation_id: &rostfrei_messaging_core::OperationId,
+            _command_message_id: &MessageId,
+            read_timeout: Duration,
+        ) -> Result<CommandResponse, CommandResponseReadError> {
+            tokio::time::sleep(read_timeout).await;
+            Err(CommandResponseReadError::new(
+                CommandResponseReadErrorKind::Timeout,
+            ))
+        }
+    }
 
     #[async_trait]
     impl CommandBusObserver for NoopCommandObserver {
@@ -760,7 +1076,7 @@ mod tests {
     }
 
     fn empty_processor() -> Arc<CommandProcessor> {
-        let store: Arc<dyn EventStore> = Arc::new(InMemoryEventStore::new());
+        let store: Arc<dyn ExecutionStore> = Arc::new(InMemoryEventStore::new());
         let context = rostfrei_messaging_core::BoundedContextName::new("ledger")
             .expect("test command processor context must be valid");
         Arc::new(CommandProcessor::new(context, store))
@@ -816,7 +1132,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn response_timeout_starts_after_command_publication() -> TestResult {
+    async fn response_timeout_starts_after_command_publication_and_observer() -> TestResult {
         let reader = Arc::new(AcceptedAfterTimeoutReader {
             command_address: context()?.command_address("credit-account")?,
             attempts: AtomicUsize::new(0),
@@ -835,13 +1151,42 @@ mod tests {
         let command = encoded_command(Arc::clone(&adapter))?;
 
         let receipt = adapter
-            .dispatch(command, Arc::new(NoopCommandObserver))
+            .dispatch(command, Arc::new(DelayedCommandObserver))
             .await?;
 
         assert!(matches!(
             receipt.response().outcome(),
             rostfrei::CommandResponseOutcome::Accepted
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn response_wait_expiry_does_not_restart_command_publication() -> TestResult {
+        let publisher = Arc::new(FlakyCommandPublisher::default());
+        let adapter = Arc::new(
+            NatsMessagingAdapter::with_components(
+                publisher.clone(),
+                Arc::new(NoopResponsePublisher),
+                Arc::new(NoopIntegrationPublisher),
+                Arc::new(WaitingResponseReader),
+            )
+            .with_response_timeout(Duration::from_millis(20)),
+        );
+        let command = encoded_command(Arc::clone(&adapter))?;
+        let id = command.message_id().clone();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            adapter.dispatch(command, Arc::new(NoopCommandObserver)),
+        )
+        .await?;
+        let Err(error) = result else {
+            return Err("missing response unexpectedly completed dispatch".into());
+        };
+        assert_eq!(error.kind(), CommandBusErrorKind::Timeout);
+        assert!(error.execution_failure().is_none());
+        assert_eq!(publisher.attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(*publisher.message_ids.lock().await, vec![id.clone(), id]);
         Ok(())
     }
 

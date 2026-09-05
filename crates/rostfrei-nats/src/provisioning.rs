@@ -6,7 +6,8 @@ use async_nats::jetstream::{
     stream::{self, DiscardPolicy, RetentionPolicy, StorageType},
 };
 use rostfrei_messaging_core::{
-    ApplicationName, ConsumerConfig, MAX_MESSAGE_PAYLOAD_BYTES, PublishableAddress, TrafficScope,
+    ApplicationName, ConsumerConfig, MAX_CONCURRENCY, MAX_MESSAGE_PAYLOAD_BYTES,
+    PublishableAddress, TrafficScope,
 };
 
 use crate::{
@@ -450,7 +451,11 @@ where
     A: PublishableAddress,
 {
     let max_ack_pending =
-        i64::try_from(config.concurrency()).map_err(|_| NatsError::Configuration)?;
+        i64::try_from(config.shared_pending_limit()).map_err(|_| NatsError::Configuration)?;
+    // Broker policy must not depend on any one worker's local parallelism.
+    // Each worker still requests batches bounded by its own concurrency.
+    let max_batch = i64::try_from(config.shared_pending_limit().min(MAX_CONCURRENCY))
+        .map_err(|_| NatsError::Configuration)?;
     Ok(consumer::pull::Config {
         durable_name: Some(config.durable_name().as_str().to_owned()),
         name: Some(config.durable_name().as_str().to_owned()),
@@ -462,7 +467,7 @@ where
         max_deliver: -1,
         filter_subject: config.address().as_str().to_owned(),
         max_ack_pending,
-        max_batch: max_ack_pending,
+        max_batch,
         ..Default::default()
     })
 }
@@ -635,6 +640,38 @@ mod tests {
         let durable = durable_consumer_config(&config).unwrap();
 
         assert_eq!(durable.ack_wait, Duration::from_secs(45));
+        assert_eq!(durable.max_ack_pending, 1);
+        assert_eq!(durable.max_batch, 1);
+    }
+
+    #[test]
+    fn shared_budget_keeps_pull_requests_bounded_and_rejects_unrepresentable_limits() {
+        let context = ApplicationName::new("acme")
+            .unwrap()
+            .bounded_context("orders")
+            .unwrap();
+        let config = ConsumerConfig::new(
+            context.consumer_name("commands", 1).unwrap(),
+            context.durable_name("commands", 1).unwrap(),
+            context.command_address("place").unwrap(),
+            Duration::from_secs(45),
+            Duration::from_secs(30),
+            16,
+            5,
+        )
+        .unwrap()
+        .with_shared_pending_limit(8192)
+        .unwrap();
+        let durable = durable_consumer_config(&config).unwrap();
+        assert_eq!(durable.max_ack_pending, 8192);
+        assert_eq!(durable.max_batch, i64::try_from(MAX_CONCURRENCY).unwrap());
+        if i64::try_from(usize::MAX).is_err() {
+            assert_eq!(
+                durable_consumer_config(&config.with_shared_pending_limit(usize::MAX).unwrap())
+                    .unwrap_err(),
+                NatsError::Configuration,
+            );
+        }
     }
 
     #[test]

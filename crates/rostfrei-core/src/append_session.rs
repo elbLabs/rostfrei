@@ -7,6 +7,11 @@ use crate::{
 
 #[async_trait]
 pub trait AppendSession: EventHistory {
+    /// Consumes one guarded attempt, accepted or rejected, in the same atomic namespace.
+    async fn commit_outcome(
+        self: Box<Self>,
+        transaction: EventTransaction,
+    ) -> Result<crate::CompletedAppendOutcome, EventStoreError>;
     async fn append(
         self: Box<Self>,
         stream_id: &StreamId,
@@ -35,6 +40,12 @@ impl<S: EventStore + ?Sized> EventHistory for ForwardingAppendSession<'_, S> {
 
 #[async_trait]
 impl<S: EventStore + ?Sized> AppendSession for ForwardingAppendSession<'_, S> {
+    async fn commit_outcome(
+        self: Box<Self>,
+        transaction: EventTransaction,
+    ) -> Result<crate::CompletedAppendOutcome, EventStoreError> {
+        self.store.commit_outcome(transaction).await
+    }
     async fn append(
         self: Box<Self>,
         stream_id: &StreamId,

@@ -193,6 +193,7 @@ where
     ack_wait: Duration,
     processing_timeout: Duration,
     concurrency: usize,
+    shared_pending_limit: usize,
     maximum_delivery_attempts: u32,
 }
 
@@ -200,6 +201,11 @@ impl<A> ConsumerConfig<A>
 where
     A: PublishableAddress,
 {
+    /// Configure one worker. `concurrency` limits handlers in each `run` invocation.
+    ///
+    /// The shared unacknowledged-message limit initially equals `concurrency`,
+    /// preserving existing durable configuration. Use [`Self::with_shared_pending_limit`]
+    /// to give multiple workers capacity on the same durable.
     pub fn new(
         name: ConsumerName,
         durable_name: DurableName,
@@ -263,8 +269,47 @@ where
             ack_wait,
             processing_timeout,
             concurrency,
+            shared_pending_limit: concurrency,
             maximum_delivery_attempts,
         })
+    }
+
+    /// Set the unacknowledged-message budget shared by all workers on this durable.
+    ///
+    /// The limit must cover this worker's concurrency. All workers sharing the
+    /// durable must agree on this limit, but may use different local concurrency.
+    /// Adapters may impose additional representational or server-side limits.
+    /// Account for prefetched messages as well as active handlers when sizing it;
+    /// this is a shared ceiling, not a reservation or fairness guarantee per worker.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use rostfrei_messaging_core::{ApplicationName, ConsumerConfig};
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let context = ApplicationName::new("shop")?.bounded_context("orders")?;
+    /// let config = ConsumerConfig::new(
+    ///     context.consumer_name("commands", 1)?,
+    ///     context.durable_name("commands", 1)?,
+    ///     context.command_address("place")?,
+    ///     Duration::from_secs(45),
+    ///     Duration::from_secs(30),
+    ///     16, // Per-worker handlers (one worker per pod in this example).
+    ///     5,
+    /// )?.with_shared_pending_limit(128)?;
+    /// assert_eq!(config.concurrency(), 16);
+    /// assert_eq!(config.shared_pending_limit(), 128);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_shared_pending_limit(mut self, limit: usize) -> Result<Self, ContractError> {
+        if limit < self.concurrency {
+            return Err(ContractError::new(
+                ContractErrorKind::OutOfRange,
+                "shared pending limit must cover worker concurrency",
+            ));
+        }
+        self.shared_pending_limit = limit;
+        Ok(self)
     }
 
     pub const fn name(&self) -> &ConsumerName {
@@ -287,8 +332,14 @@ where
         self.processing_timeout
     }
 
+    /// Maximum concurrent handlers in one worker's `run` invocation.
     pub const fn concurrency(&self) -> usize {
         self.concurrency
+    }
+
+    /// Maximum unacknowledged messages across workers sharing this durable.
+    pub const fn shared_pending_limit(&self) -> usize {
+        self.shared_pending_limit
     }
 
     pub const fn maximum_delivery_attempts(&self) -> u32 {
@@ -759,6 +810,35 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn shared_pending_budget_covers_local_concurrency() {
+        let config = ConsumerConfig::new(
+            ConsumerName::new("acme", "orders", "fulfillment", 1).unwrap(),
+            DurableName::new("acme", "orders", "fulfillment", 1).unwrap(),
+            CommandAddress::new("acme", "orders", "place-order").unwrap(),
+            Duration::from_secs(45),
+            Duration::from_secs(30),
+            16,
+            5,
+        )
+        .unwrap();
+        assert_eq!(config.shared_pending_limit(), 16);
+        for invalid in [0, 15] {
+            assert_eq!(
+                config
+                    .clone()
+                    .with_shared_pending_limit(invalid)
+                    .unwrap_err()
+                    .kind(),
+                ContractErrorKind::OutOfRange,
+            );
+        }
+        let scaled = config.with_shared_pending_limit(128).unwrap();
+        assert_eq!(scaled.concurrency(), 16);
+        assert_eq!(scaled.shared_pending_limit(), 128);
+        assert!(scaled.with_shared_pending_limit(16).is_ok());
     }
 
     #[test]

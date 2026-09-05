@@ -420,6 +420,36 @@ async fn direct_actions_simulate_execute_and_replay_the_same_events() {
     );
 }
 
+struct RuntimeTestRejectionCodec;
+impl rostfrei::RejectionCodec<&'static str> for RuntimeTestRejectionCodec {
+    fn encode(
+        &self,
+        rejection: &&'static str,
+    ) -> Result<rostfrei::EncodedRejection, rostfrei::EventCodecError> {
+        rostfrei::RejectionCodec::<String>::encode(
+            &rostfrei::JsonRejectionCodec::new("runtime.test-rejection", 1),
+            &(*rejection).to_owned(),
+        )
+    }
+    fn decode(
+        &self,
+        rejection: &rostfrei::EncodedRejection,
+    ) -> Result<&'static str, rostfrei::EventCodecError> {
+        let value: String = rostfrei::RejectionCodec::decode(
+            &rostfrei::JsonRejectionCodec::new("runtime.test-rejection", 1),
+            rejection,
+        )?;
+        if value == "deliberate rejection" {
+            Ok("deliberate rejection")
+        } else {
+            Err(rostfrei::EventCodecError::new(
+                rostfrei::EventCodecErrorKind::MalformedPayload,
+                "unknown runtime test rejection",
+            ))
+        }
+    }
+}
+
 #[tokio::test]
 async fn command_rejection_discards_events_raised_by_an_action() {
     let stream = stream("rejected-account").expect("valid rejected account stream fixture");
@@ -427,13 +457,14 @@ async fn command_rejection_discards_events_raised_by_an_action() {
     let executor = CommandExecutor::new(store.clone());
 
     let outcome = executor
-        .execute(
+        .execute_with_rejection_codec(
             &AccountCommandHandler,
             metadata("rejected-deposit").expect("valid rejected deposit metadata fixture"),
             &DepositThenReject {
                 account_id: "rejected-account",
                 amount: 9,
             },
+            &RuntimeTestRejectionCodec,
         )
         .await
         .expect("domain rejection");
@@ -549,7 +580,7 @@ async fn replay_error(
         .await;
     match result {
         Err(CommandExecutionError::Codec(error)) => Ok(error.kind()),
-        Err(CommandExecutionError::Store(error)) => Err(TestError::UnexpectedFailure {
+        Err(error) => Err(TestError::UnexpectedFailure {
             context: "replay invalid history",
             message: error.to_string(),
         }),

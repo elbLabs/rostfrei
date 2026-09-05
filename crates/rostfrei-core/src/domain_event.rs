@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::{
-    Aggregate, AggregateType, Event, EventCodec, EventCodecErrorKind, EventVariant, JsonEventCodec,
-    MAX_EVENT_TYPE_LEN, RecordedEvent,
+    Aggregate, AggregateCodecs, AggregateType, Event, EventCodec, EventCodecErrorKind,
+    EventVariant, MAX_EVENT_TYPE_LEN, RecordedEvent,
 };
 
 pub struct CommittedDomainEvent<'a, E> {
@@ -76,6 +76,8 @@ pub trait DomainEventHandler<E>: Send + Sync {
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum DomainEventRegistrationError {
+    #[error("explicit per-handler codecs cannot override a shared aggregate registry")]
+    SharedCodecOverride,
     #[error("registered aggregate type is invalid")]
     InvalidAggregateType,
     #[error("registered domain event type is invalid")]
@@ -105,7 +107,7 @@ trait ErasedDomainEventHandler: Send + Sync {
     ) -> Result<DomainEventDispatchOutcome, DomainEventHandlerError>;
 }
 
-struct TypedDomainEventHandler<A, E, C, H>
+struct TypedDomainEventHandler<A, E, C: ?Sized, H>
 where
     A: Aggregate,
 {
@@ -120,7 +122,7 @@ where
     A: Aggregate + Send + Sync + 'static,
     A::Event: EventVariant<E> + Send + Sync + 'static,
     E: Send + Sync + 'static,
-    C: EventCodec<A> + 'static,
+    C: EventCodec<A> + ?Sized + 'static,
     H: DomainEventHandler<E> + 'static,
 {
     async fn handle(
@@ -156,6 +158,8 @@ where
 
 #[derive(Default)]
 pub struct DomainEventDispatcher {
+    codecs: Arc<AggregateCodecs>,
+    shared_codecs: bool,
     handlers: HashMap<RegistrationKey, Arc<dyn ErasedDomainEventHandler>>,
     aggregate_registrations: HashMap<String, (TypeId, TypeId)>,
 }
@@ -163,6 +167,14 @@ pub struct DomainEventDispatcher {
 impl DomainEventDispatcher {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_codecs(codecs: Arc<AggregateCodecs>) -> Self {
+        Self {
+            codecs,
+            shared_codecs: true,
+            ..Self::default()
+        }
     }
 
     pub fn register<A, E, H>(
@@ -176,11 +188,19 @@ impl DomainEventDispatcher {
         E: Send + Sync + 'static,
         H: DomainEventHandler<E> + 'static,
     {
-        self.register_with_codec::<A, E, JsonEventCodec, H>(
-            event_type,
-            Arc::new(JsonEventCodec),
-            handler,
-        )
+        if !self.shared_codecs {
+            return self.register_resolved::<A, E, crate::JsonEventCodec, H>(
+                event_type,
+                Arc::new(crate::JsonEventCodec),
+                handler,
+            );
+        }
+        let codec = self.codecs.resolve::<A>().map_err(|_| {
+            DomainEventRegistrationError::AggregateConflict {
+                aggregate_type: A::aggregate_type().into_owned(),
+            }
+        })?;
+        self.register_resolved::<A, E, dyn EventCodec<A>, H>(event_type, codec, handler)
     }
 
     pub fn register_with_codec<A, E, C, H>(
@@ -193,7 +213,26 @@ impl DomainEventDispatcher {
         A: Aggregate + Send + Sync + 'static,
         A::Event: EventVariant<E> + Send + Sync + 'static,
         E: Send + Sync + 'static,
-        C: EventCodec<A> + 'static,
+        C: EventCodec<A> + ?Sized + 'static,
+        H: DomainEventHandler<E> + 'static,
+    {
+        if self.shared_codecs {
+            return Err(DomainEventRegistrationError::SharedCodecOverride);
+        }
+        self.register_resolved::<A, E, C, H>(event_type, codec, handler)
+    }
+
+    fn register_resolved<A, E, C, H>(
+        &mut self,
+        event_type: impl Into<String>,
+        codec: Arc<C>,
+        handler: Arc<H>,
+    ) -> Result<(), DomainEventRegistrationError>
+    where
+        A: Aggregate + Send + Sync + 'static,
+        A::Event: EventVariant<E> + Send + Sync + 'static,
+        E: Send + Sync + 'static,
+        C: EventCodec<A> + ?Sized + 'static,
         H: DomainEventHandler<E> + 'static,
     {
         let aggregate_type = A::aggregate_type();
