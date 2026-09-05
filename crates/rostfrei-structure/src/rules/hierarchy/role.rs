@@ -17,7 +17,7 @@ const CONTEXT_CHILDREN: &[DirectoryRole] = &[
     DirectoryRole::DomainService,
     DirectoryRole::ValueObject,
 ];
-const DOMAIN_SERVICE_CHILDREN: &[DirectoryRole] = &[DirectoryRole::Action];
+const DOMAIN_SERVICE_CHILDREN: &[DirectoryRole] = &[DirectoryRole::Action, DirectoryRole::Policy];
 const AGGREGATE_CHILDREN: &[DirectoryRole] = &[
     DirectoryRole::Entity,
     DirectoryRole::Action,
