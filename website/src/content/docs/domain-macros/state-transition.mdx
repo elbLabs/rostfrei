@@ -1,12 +1,12 @@
 # `StateTransition`
 
-Name the legal transitions of one entity lifecycle. Each fieldless variant receives stable metadata for one logical transition and declares one or more source/target edges.
+Name the legal transitions of one lifecycle. Each fieldless variant receives stable metadata for one logical transition and declares one or more source/target edges.
 
 - One lifecycle state type
 - One or more deterministic edges per variant
 - Pure evaluation with an explicit rejection
 
-**Placement:** [Entity lifecycle](/docs/project-structure/entity-lifecycle) — `transition.rs`.
+**Placement:** [Lifecycle](/docs/project-structure/entity-lifecycle) — `transition.rs` beside `lifecycle.rs`.
 
 <MacroExample name="StateTransition" />
 

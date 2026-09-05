@@ -4,7 +4,7 @@ An aggregate directory owns its declaration, root state, event set, identity, in
 
 - Put the declaration in `aggregate.rs`.
 - Implement `AggregateDefinition` beside the marker type.
-- Keep actions, queries, decisions, and invariants in child directories.
+- Keep actions, queries, decisions, invariants, and an optional root lifecycle in child directories.
 
 Path: `src/domain/bike_rental/rental_fleet/aggregate.rs`
 

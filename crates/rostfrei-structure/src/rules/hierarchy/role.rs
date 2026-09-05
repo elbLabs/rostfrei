@@ -24,6 +24,7 @@ const AGGREGATE_CHILDREN: &[DirectoryRole] = &[
     DirectoryRole::Decision,
     DirectoryRole::Query,
     DirectoryRole::Invariant,
+    DirectoryRole::Lifecycle,
     DirectoryRole::ValueObject,
 ];
 const ENTITY_CHILDREN: &[DirectoryRole] = &[
