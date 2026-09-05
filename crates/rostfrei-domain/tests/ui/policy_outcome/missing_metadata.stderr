@@ -1,0 +1,5 @@
+error: PolicyOutcome variants require exactly one outcome attribute
+ --> tests/ui/policy_outcome/missing_metadata.rs:5:5
+  |
+5 |     Missing,
+  |     ^^^^^^^

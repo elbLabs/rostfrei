@@ -4,6 +4,11 @@
 
 Accepted.
 
+The reusable-rule vocabulary in this historical decision is superseded by
+[ADR 0036](0036-domain-policy-vocabulary.md): `domain_decision`,
+`DecisionOutcome`, and `decision.rs` become `domain_policy`, `PolicyOutcome`,
+and `policy.rs`.
+
 ## Context
 
 Decision groups and plural invariant contracts retained generated markers,

@@ -18,7 +18,7 @@ pub use aggregate::RentalFleetAggregate;
 pub(in crate::domain) use bicycle::assess_rental_eligibility;
 pub use bicycle::{
     Bicycle, BicycleCondition, BicycleId, BicycleRentalTransition, BicycleStatus,
-    ChooseRegistrationNumberFormat, NormalizeRegistrationNumber, RegistrationNumber,
+    ChooseRegistrationNumberFormatPolicy, NormalizeRegistrationNumber, RegistrationNumber,
     RegistrationNumberFormat, RegistrationNumberValidity,
 };
 pub use bicycle_availability::{BicycleAvailability, BicycleAvailabilityQuery};

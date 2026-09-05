@@ -21,7 +21,7 @@ standalone Cargo packages.
 nested entity and capability objects, aggregate-root and nested-entity
 lifecycle objects, invariants, and a sibling `tests` tree that mirrors the
 production domain. It also demonstrates context-, aggregate-, and entity-owned
-Value Object modules plus a behaviorful Value Object with action, decision,
+Value Object modules plus a behaviorful Value Object with action, policy,
 and invariant capabilities.
 
 The integration tests contain the exact expected diagnostic path for every

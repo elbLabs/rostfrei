@@ -9,7 +9,7 @@ pub use condition::BicycleCondition;
 pub use entity::Bicycle;
 pub use identity::BicycleId;
 pub use registration_number::{
-    ChooseRegistrationNumberFormat, NormalizeRegistrationNumber, RegistrationNumber,
+    ChooseRegistrationNumberFormatPolicy, NormalizeRegistrationNumber, RegistrationNumber,
     RegistrationNumberFormat, RegistrationNumberValidity,
 };
 pub use rental_status::{BicycleRentalTransition, BicycleStatus};

@@ -1,0 +1,5 @@
+error: PolicyOutcome only supports non-generic enums
+ --> tests/ui/policy_outcome/invalid_target.rs:4:8
+  |
+4 | struct NotAnEnum;
+  |        ^^^^^^^^^

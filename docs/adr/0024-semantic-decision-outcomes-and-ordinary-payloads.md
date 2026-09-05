@@ -4,6 +4,10 @@
 
 Accepted; declaration and projection mechanics superseded by ADR 0032.
 
+The reusable-rule vocabulary in this historical decision is superseded by
+[ADR 0036](0036-domain-policy-vocabulary.md): Decision and `DecisionOutcome`
+are now Domain Policy and `PolicyOutcome` respectively.
+
 ## Context
 
 [ADR 0015](0015-decision-policies-groups-and-outcomes.md) introduced typed

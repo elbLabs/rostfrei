@@ -38,7 +38,7 @@ export const projectStructureExamples = {
       "value.rs",
       "normalize/action.rs",
       "normalize/execute.rs",
-      "choose_format/decision.rs",
+      "choose_format/policy.rs",
       "choose_format/outcome.rs",
       "choose_format/evaluate.rs",
       "validity/contract.rs",
@@ -70,20 +70,20 @@ export const projectStructureExamples = {
     activeFile: "query.rs",
     files: ["mod.rs", "query.rs", "execute.rs", "output.rs"],
   },
-  "aggregate-decision": {
+  "aggregate-policy": {
     root: "plan_fleet_capacity",
-    activeFile: "decision.rs",
-    files: ["mod.rs", "decision.rs", "outcome.rs", "evaluate.rs"],
+    activeFile: "policy.rs",
+    files: ["mod.rs", "policy.rs", "outcome.rs", "evaluate.rs"],
   },
-  "entity-decision": {
+  "entity-policy": {
     root: "assess_rental_eligibility",
-    activeFile: "decision.rs",
-    files: ["mod.rs", "decision.rs", "outcome.rs", "evaluate.rs"],
+    activeFile: "policy.rs",
+    files: ["mod.rs", "policy.rs", "outcome.rs", "evaluate.rs"],
   },
-  "value-object-decision": {
+  "value-object-policy": {
     root: "choose_format",
-    activeFile: "decision.rs",
-    files: ["mod.rs", "decision.rs", "outcome.rs", "evaluate.rs"],
+    activeFile: "policy.rs",
+    files: ["mod.rs", "policy.rs", "outcome.rs", "evaluate.rs"],
   },
   "aggregate-invariant": {
     root: "fleet_consistency",

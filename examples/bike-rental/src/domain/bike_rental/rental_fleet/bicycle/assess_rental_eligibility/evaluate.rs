@@ -1,9 +1,9 @@
 use rostfrei::LifecycleState;
 
-use super::{RentalEligibilityDecision, RentalEligibilityOutcome};
+use super::{RentalEligibilityOutcome, RentalEligibilityPolicy};
 use crate::domain::rental_fleet::{Bicycle, BicycleCondition, BicycleRentalTransition};
 
-impl RentalEligibilityDecision for Bicycle {
+impl RentalEligibilityPolicy for Bicycle {
     fn assess_rental_eligibility(&self) -> RentalEligibilityOutcome {
         if self
             .status()

@@ -144,15 +144,15 @@ fn is_domain_test_attribute(attribute: &Attribute) -> bool {
     matches!(
         name.to_string().as_str(),
         "action_test"
-            | "decision_test"
+            | "policy_test"
             | "invariant_test"
             | "lifecycle_test"
             | "domain_action_test"
-            | "domain_decision_test"
+            | "domain_policy_test"
             | "domain_invariant_test"
             | "domain_lifecycle_test"
             | "domain_test_action"
-            | "domain_test_decision"
+            | "domain_test_policy"
             | "domain_test_invariant"
             | "domain_test_lifecycle"
     )

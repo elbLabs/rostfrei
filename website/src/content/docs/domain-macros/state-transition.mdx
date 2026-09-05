@@ -10,4 +10,4 @@ Name the legal transitions of one lifecycle. Each fieldless variant receives sta
 
 <MacroExample name="StateTransition" />
 
-The generated implementation returns `StateChange` only when the current state matches one of the transition's edge sources. Duplicate source states within one variant are rejected, so a `(transition, current state)` pair has at most one target. Use decisions and invariants for rules that require additional domain facts.
+The generated implementation returns `StateChange` only when the current state matches one of the transition's edge sources. Duplicate source states within one variant are rejected, so a `(transition, current state)` pair has at most one target. Use policies and invariants for rules that require additional domain facts.
