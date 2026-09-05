@@ -7,7 +7,7 @@ use super::DomainTestKind;
 
 pub(super) enum DomainTestSubjectInput {
     Action(Expr),
-    Decision(Expr),
+    Policy(Expr),
     Invariant(Expr),
     Lifecycle(TypePath),
 }
@@ -16,7 +16,7 @@ impl DomainTestSubjectInput {
     pub(super) fn parse(kind: DomainTestKind, args: TokenStream) -> syn::Result<Self> {
         match kind {
             DomainTestKind::Action => parse_action(args).map(Self::Action),
-            DomainTestKind::Decision => parse_descriptor(kind, args).map(Self::Decision),
+            DomainTestKind::Policy => parse_descriptor(kind, args).map(Self::Policy),
             DomainTestKind::Invariant => parse_descriptor(kind, args).map(Self::Invariant),
             DomainTestKind::Lifecycle => parse_type(args, "lifecycle").map(Self::Lifecycle),
         }
@@ -29,8 +29,8 @@ impl DomainTestSubjectInput {
                     (#descriptor).id
                 )
             },
-            Self::Decision(descriptor) => quote_spanned! {descriptor.span()=>
-                #domain_path::DomainTestSubject::Decision((#descriptor).id)
+            Self::Policy(descriptor) => quote_spanned! {descriptor.span()=>
+                #domain_path::DomainTestSubject::Policy((#descriptor).id)
             },
             Self::Invariant(descriptor) => quote_spanned! {descriptor.span()=>
                 #domain_path::DomainTestSubject::Invariant((#descriptor).id)
@@ -106,12 +106,12 @@ mod tests {
     }
 
     #[test]
-    fn decision_and_invariant_subjects_accept_descriptor_expressions() {
+    fn policy_and_invariant_subjects_accept_descriptor_expressions() {
         for (kind, descriptor, variant) in [
             (
-                DomainTestKind::Decision,
-                quote!(<Fleet as RentalEligibilityDecision>::DESCRIPTOR),
-                "Decision",
+                DomainTestKind::Policy,
+                quote!(<Fleet as RentalEligibilityPolicy>::DESCRIPTOR),
+                "Policy",
             ),
             (
                 DomainTestKind::Invariant,

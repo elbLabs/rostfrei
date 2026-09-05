@@ -110,7 +110,7 @@ fn value_objects_are_modules_with_owned_behavior_and_mirrored_tests() {
         "normalize/execute.rs",
         "validity/contract.rs",
         "validity/evaluate.rs",
-        "choose_format/decision.rs",
+        "choose_format/policy.rs",
         "choose_format/outcome.rs",
         "choose_format/evaluate.rs",
     ] {
@@ -162,8 +162,8 @@ fn invalid_value_object_module_and_behavior_conventions_are_typed() {
         ),
         (
             DiagnosticCode::InvalidStructure,
-            "bike_rental/rental_fleet/registration_number/qualified_decision/evaluate.rs",
-            "`QualifiedDecision` must be implemented for `RegistrationNumber` using direct unqualified, unaliased type names",
+            "bike_rental/rental_fleet/registration_number/qualified_policy/evaluate.rs",
+            "`QualifiedPolicy` must be implemented for `RegistrationNumber` using direct unqualified, unaliased type names",
         ),
         (
             DiagnosticCode::InvalidCardinality,
@@ -309,7 +309,7 @@ fn invalid_query_owner_contracts_emit_typed_diagnostics() {
 }
 
 #[test]
-fn decision_and_invariant_implementations_match_enclosing_owners() {
+fn policy_and_invariant_implementations_match_enclosing_owners() {
     let domain_root = fixture_domain("valid_domain");
     let diagnostics = check_domain_root(&domain_root);
 
@@ -330,18 +330,18 @@ fn invalid_evaluation_owner_contracts_emit_typed_diagnostics() {
     let cases = [
         (
             DiagnosticCode::InvalidStructure,
-            "bike_rental/rental_fleet/missing_decision/evaluate.rs",
-            "decision directory requires `evaluate.rs`",
+            "bike_rental/rental_fleet/missing_policy/evaluate.rs",
+            "policy directory requires `evaluate.rs`",
         ),
         (
             DiagnosticCode::InvalidCardinality,
-            "bike_rental/rental_fleet/wrong_decision_trait/evaluate.rs",
-            "`evaluate.rs` must contain exactly one `WrongDecisionTrait` implementation; found 0",
+            "bike_rental/rental_fleet/wrong_policy_trait/evaluate.rs",
+            "`evaluate.rs` must contain exactly one `WrongPolicyTrait` implementation; found 0",
         ),
         (
             DiagnosticCode::InvalidStructure,
-            "bike_rental/rental_fleet/wrong_aggregate_decision/evaluate.rs",
-            "`WrongAggregateDecision` must be implemented for `RentalFleetAggregate`; found `OtherAggregate`",
+            "bike_rental/rental_fleet/wrong_aggregate_policy/evaluate.rs",
+            "`WrongAggregatePolicy` must be implemented for `RentalFleetAggregate`; found `OtherAggregate`",
         ),
         (
             DiagnosticCode::InvalidStructure,
@@ -355,8 +355,8 @@ fn invalid_evaluation_owner_contracts_emit_typed_diagnostics() {
         ),
         (
             DiagnosticCode::InvalidStructure,
-            "bike_rental/rental_fleet/qualified_decision_trait/evaluate.rs",
-            "decision trait implementation must use direct unqualified, unaliased trait name `QualifiedDecisionTrait`",
+            "bike_rental/rental_fleet/qualified_policy_trait/evaluate.rs",
+            "policy trait implementation must use direct unqualified, unaliased trait name `QualifiedPolicyTrait`",
         ),
         (
             DiagnosticCode::InvalidStructure,
@@ -365,8 +365,8 @@ fn invalid_evaluation_owner_contracts_emit_typed_diagnostics() {
         ),
         (
             DiagnosticCode::InvalidStructure,
-            "bike_rental/rental_fleet/alias_decision_trait/evaluate.rs",
-            "decision trait implementation must use direct unqualified, unaliased trait name `AliasDecisionTrait`",
+            "bike_rental/rental_fleet/alias_policy_trait/evaluate.rs",
+            "policy trait implementation must use direct unqualified, unaliased trait name `AliasPolicyTrait`",
         ),
         (
             DiagnosticCode::InvalidStructure,
@@ -375,8 +375,8 @@ fn invalid_evaluation_owner_contracts_emit_typed_diagnostics() {
         ),
         (
             DiagnosticCode::InvalidStructure,
-            "bike_rental/rental_fleet/glob_decision/evaluate.rs",
-            "glob imports are not supported in decision `evaluate.rs`",
+            "bike_rental/rental_fleet/glob_policy/evaluate.rs",
+            "glob imports are not supported in policy `evaluate.rs`",
         ),
     ];
 

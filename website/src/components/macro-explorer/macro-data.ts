@@ -314,7 +314,7 @@ pub struct BicycleUnavailable {
 impl JsonErrorPayload for BicycleUnavailable { /* … */ }`,
   },
   {
-    name: "DecisionOutcome",
+    name: "PolicyOutcome",
     family: "derive",
     headline: "Keep outcomes closed and exhaustive.",
     description:
@@ -325,7 +325,7 @@ impl JsonErrorPayload for BicycleUnavailable { /* … */ }`,
       "Arbitrary Rust payloads",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/outcome.rs",
-    authored: `#[derive(DecisionOutcome, Clone, Copy, Debug)]
+    authored: `#[derive(PolicyOutcome, Clone, Copy, Debug)]
 pub enum RentalEligibilityOutcome {
     #[outcome(id = "eligible", label = "Eligible")]
     Eligible,
@@ -337,9 +337,9 @@ pub enum RentalEligibilityOutcome {
     )]
     MaintenanceRequired,
 }`,
-    generated: `impl DecisionOutcomeType for RentalEligibilityOutcome {
-    const OUTCOMES: &[DecisionOutcomeDescriptor] = &[
-        DecisionOutcomeDescriptor {
+    generated: `impl PolicyOutcomeType for RentalEligibilityOutcome {
+    const OUTCOMES: &[PolicyOutcomeDescriptor] = &[
+        PolicyOutcomeDescriptor {
             local_id: "eligible",
             label: "Eligible",
         },
@@ -485,30 +485,30 @@ pub trait BicycleAvailabilityQuery {
 }`,
   },
   {
-    name: "domain_decision",
+    name: "domain_policy",
     family: "behavior",
     headline: "Make policy explicit and reusable.",
     description:
-      "A decision is a singular trait with arbitrary Rust inputs and a closed outcome vocabulary when the domain needs one.",
+      "A policy is a singular trait with arbitrary Rust inputs and a closed outcome vocabulary when the domain needs one.",
     points: [
       "Aggregate or entity implementation",
       "No owner metadata",
       "No projection group",
     ],
-    file: "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/decision.rs",
-    authored: `#[domain_decision(
+    file: "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/policy.rs",
+    authored: `#[domain_policy(
     id = "assess-rental-eligibility",
     label = "Assess rental eligibility"
 )]
-pub trait RentalEligibilityDecision {
+pub trait RentalEligibilityPolicy {
     fn assess_rental_eligibility(&self) -> RentalEligibilityOutcome;
 }`,
-    generated: `pub trait RentalEligibilityDecision {
+    generated: `pub trait RentalEligibilityPolicy {
     fn assess_rental_eligibility(&self) -> RentalEligibilityOutcome;
 
     const LOCAL_ID: &str = "assess-rental-eligibility";
     const LABEL: &str = "Assess rental eligibility";
-    const DESCRIPTOR: DecisionDescriptor = /* … */;
+    const DESCRIPTOR: PolicyDescriptor = /* … */;
 }`,
   },
   {
@@ -547,7 +547,7 @@ pub trait FleetConsistency {
     family: "test",
     headline: "Attach evidence to its subject.",
     description:
-      "Action, query-independent decision, invariant, and lifecycle tests remain normal Rust tests with discoverable subject metadata.",
+      "Action, policy, invariant, and lifecycle tests remain normal Rust tests with discoverable subject metadata.",
     points: [
       "Authored body stays unchanged",
       "Typed descriptor expression",

@@ -1,6 +1,8 @@
-use super::{super::RegistrationNumber, ChooseRegistrationNumberFormat, RegistrationNumberFormat};
+use super::{
+    super::RegistrationNumber, ChooseRegistrationNumberFormatPolicy, RegistrationNumberFormat,
+};
 
-impl ChooseRegistrationNumberFormat for RegistrationNumber {
+impl ChooseRegistrationNumberFormatPolicy for RegistrationNumber {
     fn choose_format(&self) -> RegistrationNumberFormat {
         if self.as_str().contains('-') {
             RegistrationNumberFormat::Segmented

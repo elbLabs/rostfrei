@@ -20,19 +20,19 @@ fn checks_minimal_domain_query() {
 }
 
 #[test]
-fn checks_minimal_domain_decision() {
+fn checks_minimal_domain_policy() {
     let cases = trybuild::TestCases::new();
-    cases.pass("tests/ui/domain_decision/supported.rs");
-    cases.compile_fail("tests/ui/domain_decision/invalid_metadata.rs");
-    cases.compile_fail("tests/ui/domain_decision/invalid_target.rs");
+    cases.pass("tests/ui/domain_policy/supported.rs");
+    cases.compile_fail("tests/ui/domain_policy/invalid_metadata.rs");
+    cases.compile_fail("tests/ui/domain_policy/invalid_target.rs");
 }
 
 #[test]
-fn checks_decision_outcomes() {
+fn checks_policy_outcomes() {
     let cases = trybuild::TestCases::new();
-    cases.compile_fail("tests/ui/decision_outcome/duplicate_id.rs");
-    cases.compile_fail("tests/ui/decision_outcome/invalid_target.rs");
-    cases.compile_fail("tests/ui/decision_outcome/missing_metadata.rs");
+    cases.compile_fail("tests/ui/policy_outcome/duplicate_id.rs");
+    cases.compile_fail("tests/ui/policy_outcome/invalid_target.rs");
+    cases.compile_fail("tests/ui/policy_outcome/missing_metadata.rs");
 }
 
 #[test]
