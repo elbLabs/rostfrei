@@ -37,13 +37,17 @@ ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
   ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES=524288 \
   ROSTFREI_API_TOKEN=local-development-token \
   ROSTFREI_DISPATCH_TOKEN=local-dispatch-token \
-  cargo run --locked -p bike-rental
+  cargo run --locked -p bike-rental -- --tracer
 ```
 
 Tracer listens at `http://127.0.0.1:1309`. Startup provisions local resources,
 verifies the NATS topology, and seeds `city-fleet` with serviceable `bike-42` and
 maintenance-required `bike-99`. Normal state persists across restarts; isolated
-test state is recreated at startup.
+test state is recreated at startup when `--tracer` is enabled.
+
+Omit `--tracer` to start the same Normal command runtime without HTTP tokens,
+endpoints or correlation observers. Both modes reuse one executable binding
+definition. See the [shared host API and measured reduction](../../docs/nats-application-host.md).
 
 Use [Tracer Studio](../../studio/README.md) to inspect and run behavioral tests.
 
@@ -91,6 +95,11 @@ it, and a separate durable consumer handles it.
 
 For the routing details, see [subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
 or the [offline HTML guide](../../docs/subjects.html).
+
+This development entry point explicitly provisions its NATS topology. The shared
+host also offers a verify/connect-only startup for operator-provisioned resources.
+It supervises command, domain-event, integration-event, observer and HTTP tasks,
+and shuts down the owned group if any exits unexpectedly.
 
 ### Stable command subscription identities
 

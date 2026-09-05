@@ -8,6 +8,7 @@ license.workspace = true
 [features]
 default = []
 http = ["dep:axum", "dep:futures-util"]
+nats-host = ["http", "dep:rostfrei-nats"]
 
 [dependencies]
 async-trait.workspace = true
@@ -18,6 +19,7 @@ rostfrei-core.workspace = true
 rostfrei-domain.workspace = true
 rostfrei-fixtures.workspace = true
 rostfrei-messaging-core.workspace = true
+rostfrei-nats = { workspace = true, optional = true }
 rostfrei-registry.workspace = true
 rostfrei.workspace = true
 schemars.workspace = true

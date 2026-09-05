@@ -66,13 +66,15 @@ jobs:
           echo "ROSTFREI_NATS_SERVER=$RUNNER_TEMP/nats-server-v2.12.15-linux-amd64/nats-server" >> "$GITHUB_ENV"
       - name: Test the workspace with an authenticated disposable broker and native restart fixtures
         run: python3 scripts/test_nats.py --contracts
+      - name: Qualify the standalone automatic Tracer host with a disposable broker
+        run: python3 scripts/test_nats.py -- python3 scripts/check_tracer_host.py
       - name: Test native authentication and TLS lifecycle
         run: cargo test --locked -p rostfrei-nats --test connection_integration -- --include-ignored --test-threads=1
 
   studio:
     name: Studio browser tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: studio
@@ -93,6 +95,9 @@ jobs:
         run: |
           pnpm --filter @rostfrei/ui lint
           pnpm --filter @rostfrei/ui typecheck
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: studio-live-host
       - run: pnpm lint
       - run: pnpm build
       - name: Test interactions without a live API fallback
@@ -100,6 +105,8 @@ jobs:
           VITE_TRACER_API_URL: https://untrusted.invalid
           VITE_TRACER_TOKEN: ci-fixture-token
         run: pnpm test:ui
+      - name: Run the application-linked host suite through real HTTP and Studio
+        run: python3 ../scripts/test_nats.py -- python3 scripts/check_bike_rental_host.py --studio
       - name: Inspect desktop and mobile layouts
         run: |
           pnpm inspect:ui --scene all --theme light

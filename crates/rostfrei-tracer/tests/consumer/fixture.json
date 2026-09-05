@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"five","revision":"1","messages":[{"kind":"domain-event","messageId":"initial-five","correlationId":"fixture-five","name":"incremented","schemaVersion":1,"aggregate":{"type":"counter/counter","id":"one"},"streamVersion":1,"payload":{"value":5}}]}

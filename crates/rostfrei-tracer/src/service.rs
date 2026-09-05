@@ -333,6 +333,11 @@ pub struct TracerBuilder {
 }
 
 impl TracerBuilder {
+    pub(crate) fn with_bindings(mut self, bindings: RuntimeBindings) -> Self {
+        self.bindings = bindings;
+        self
+    }
+
     pub fn new(history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
         Self {
             event_codecs: Arc::new(rostfrei_core::AggregateCodecs::default()),
@@ -3126,7 +3131,7 @@ fn transport_failure(error: &CommandTransportError) -> (&'static str, String) {
         CommandTransportErrorKind::Unavailable => "command-transport-unavailable",
         CommandTransportErrorKind::InvalidConfiguration => "command-transport-misconfigured",
         CommandTransportErrorKind::InvalidResponse => "invalid-command-transport-response",
-        CommandTransportErrorKind::ExecutionFailed => "command-execution-blocked",
+        CommandTransportErrorKind::ExecutionFailed => "command-execution-failed",
     };
     (code, error.message().to_owned())
 }

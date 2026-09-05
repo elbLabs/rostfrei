@@ -1,4 +1,5 @@
 mod behavioral;
+mod bindings;
 mod catalog;
 mod command_bus;
 mod correlation;
@@ -10,6 +11,15 @@ mod quarantine;
 mod runtime;
 mod service;
 pub mod transport;
+
+#[cfg(feature = "nats-host")]
+mod nats_host;
+pub use bindings::{ApplicationBindingError, ApplicationBindings};
+#[cfg(feature = "nats-host")]
+pub use nats_host::{
+    NatsApplication, NatsApplicationBuilder, NatsExecutionProfile, NatsHostError, NatsRuntime,
+    NatsRuntimeConfig, TracerConfig,
+};
 
 #[cfg(feature = "http")]
 pub mod http;

@@ -14,13 +14,13 @@ axum.workspace = true
 rostfrei.workspace = true
 rostfrei-core.workspace = true
 rostfrei-fixtures.workspace = true
-rostfrei-tracer = { workspace = true, features = ["http"] }
+rostfrei-tracer = { workspace = true, features = ["nats-host"] }
 rostfrei-messaging-core.workspace = true
 rostfrei-nats.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 tracing.workspace = true
 uuid.workspace = true
 
