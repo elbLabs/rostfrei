@@ -12,6 +12,7 @@ mod retire_bicycle;
 mod return_bicycle;
 mod root;
 mod stream;
+mod transfer_bicycle;
 
 pub use add_bicycle::{AddBicycle, AddBicycleAction, BicycleAdded};
 pub use aggregate::RentalFleetAggregate;
@@ -33,3 +34,7 @@ pub use retire_bicycle::{BicycleCannotBeRetired, BicycleRetired, RetireBicycleAc
 pub use return_bicycle::{BicycleNotRented, BicycleReturned, ReturnBicycle, ReturnBicycleAction};
 pub use root::RentalFleet;
 pub use stream::stream_id;
+pub use transfer_bicycle::{
+    BicycleTransfer, BicycleTransferRejected, BicycleTransferRejectionReason, BicycleTransferredIn,
+    BicycleTransferredOut, TransferBicycle,
+};

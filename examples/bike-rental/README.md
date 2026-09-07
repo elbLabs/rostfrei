@@ -7,7 +7,8 @@ compiled domain metadata without depending on a production application:
 - `RentBicycle`, `ReturnBicycle`, and `AddBicycle` are public aggregate commands;
 - `RetireBicycleAction` demonstrates one logical transition from either available or rented;
 - `RentalEligibilityPolicy` composes bicycle condition policy with the rental lifecycle;
-- bicycle-added, rented, returned, and retired events describe successful domain transitions;
+- bicycle-added, rented, returned, retired, and transferred events describe successful domain
+  transitions;
 - fleet import is a privileged snapshot-restoration boundary that accepts existing lifecycle
   states but validates aggregate invariants before replacement;
 - unavailable and not-rented errors describe command rejections;
@@ -15,6 +16,51 @@ compiled domain metadata without depending on a production application:
 - `RegistrationNumber` is an isolated demonstration of Value Object-local actions, invariants,
   and policies; and
 - `BicycleAvailabilityQuery` exposes a read-only availability query.
+
+## Command involving two aggregates
+
+`TransferBicycle` demonstrates a command involving two instances of
+`RentalFleetAggregate`. The source fleet comes from `ExecutionMetadata` and the destination fleet
+from `to_fleet_id` in the payload:
+
+```rust
+let command = TransferBicycle {
+    bicycle_id: BicycleId::new("bike-42").unwrap(),
+    to_fleet_id: FleetId::new("harbor-fleet").unwrap(),
+};
+
+let outcome = TransferBicycleHandler::new(store)
+    .handle(source_execution_metadata, &command)
+    .await?;
+```
+
+The application handler loads both aggregate streams and delegates the business decision to the
+`BicycleTransfer` domain service. The service validates both aggregates before changing either of
+them, then raises one event on each instance:
+
+- `BicycleTransferredOut` belongs to the source stream;
+- `BicycleTransferredIn` belongs to the destination stream.
+
+Each `AggregateInstance` keeps its own uncommitted events. The application handler encodes those
+two collections as separate `EventBatch` values and commits them together using one
+`EventTransaction`. Both expected stream versions are checked and both batches are appended
+atomically. The resulting `TransactionReceipt` exposes committed events grouped by stream through
+`streams()` or flattened through `events()`.
+
+This orchestration deliberately lives above Rostfrei's aggregate-bound `CommandHandler<C>` trait,
+which receives exactly one `AggregateInstance<Self>`. It is invoked directly rather than registered
+with the current `CommandProcessor`; consequently, the real NATS coverage proves the atomic
+`NatsEventStore` transaction but does not pass through NATS command transport. See
+`src/application/mod.rs` for the application flow and `tests/transfer.rs` for In-Memory and real
+NATS coverage.
+
+Run the real NATS transfer test against NATS Server 2.12.1 or newer:
+
+```sh
+ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
+  cargo test --locked -p bike-rental --test transfer \
+  handler_atomically_transfers_with_real_nats -- --ignored --exact
+```
 
 Print the compiled domain model:
 
