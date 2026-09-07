@@ -54,8 +54,8 @@ pub use integration_event::{
 pub use integration_event_bus::{
     CommittedEventContext, EncodedIntegrationMessage, IntegrationEvent, IntegrationEventBus,
     IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationEventDispatcherExt,
-    IntegrationEventMapper, IntegrationEventPublication, IntegrationEventPublisher,
-    IntegrationMessageAdapter, integration_message_id,
+    IntegrationEventMapper, IntegrationEventPublication, IntegrationMessageAdapter,
+    integration_message_id,
 };
 pub use query_bus::{
     DynamicQueryRequest, EncodedQuery, InMemoryQueryAdapter, QueryBindingRegistrationError,
@@ -66,12 +66,11 @@ pub use rostfrei_core::{
     Aggregate, AggregateId as StreamAggregateId, AggregateInstance,
     AggregateType as StreamAggregateType, AppendOutcome, CommandExecutionError, CommandHandler,
     CommandOutcome, CommandReceipt, CommandResult, CommittedDomainEvent, ContentFingerprint,
-    DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, DomainEventRegistrationError, EventBatch, EventCodec,
-    EventCodecError, EventCodecErrorKind, EventHistory, EventId, EventStore, EventStoreError,
-    EventStoreErrorKind, EventTransaction, EventVariant, ExecutionMetadata, Executor,
-    ExpectedVersion, InMemoryEventStore, MAX_TRANSACTION_ITEMS, NewEvent, OperationId,
-    RecordedEvent, SimulationDecision, SimulationError, SimulationOutcome, StreamId, StreamVersion,
+    DomainEventDispatcher, DomainEventRegistrationError, EventBatch, EventCodec, EventCodecError,
+    EventCodecErrorKind, EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind,
+    EventTransaction, EventVariant, ExecutionMetadata, Executor, ExpectedVersion,
+    InMemoryEventStore, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent,
+    SimulationDecision, SimulationError, SimulationOutcome, StreamId, StreamVersion,
     TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
 };
 pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};

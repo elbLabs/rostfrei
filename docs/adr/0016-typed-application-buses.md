@@ -52,7 +52,10 @@ code implements `IntegrationEventMapper` for each private event it publishes.
 `register_integration_event` derives the private event registration from its
 compiled definition. The source event identity defines the integration message
 identity and causation, so retries are stable. Aggregate handlers never publish
-integration events before commit.
+integration events before commit. Fixture transaction suppression is owned by
+the durable-consumer infrastructure, so application mappers remain pure typed
+transformations and never inspect fixture provenance or implement
+`DomainEventHandler`.
 
 A consuming bounded context implements `IntegrationCommandMapper` to map an
 incoming public event to exactly one typed `IntegrationCommand<C>`. The mapped

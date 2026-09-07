@@ -6,11 +6,14 @@ use std::{
 use async_trait::async_trait;
 use rostfrei::{
     Aggregate as RuntimeAggregate, AggregateInstance, Apply, CommandExecutionError, CommandHandler,
-    CommandOutcome, CommittedDomainEvent, ContentFingerprint, DomainEventDispatchOutcome,
-    DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind,
-    EventStore, EventVariant, ExecutionMetadata, Executor, ExpectedVersion, InMemoryEventStore,
-    Initialize, NewEvent, OperationId, RecordedEvent, StreamAggregateId, StreamId,
+    CommandOutcome, CommittedDomainEvent, ContentFingerprint, DomainEventDispatcher, EventBatch,
+    EventCodec, EventCodecError, EventCodecErrorKind, EventStore, EventVariant, ExecutionMetadata,
+    Executor, ExpectedVersion, InMemoryEventStore, Initialize, NewEvent, OperationId,
+    RecordedEvent, StreamAggregateId, StreamId,
+};
+use rostfrei_core::{
+    DomainEventDispatchOutcome, DomainEventHandler, DomainEventHandlerError,
+    DomainEventHandlerErrorKind,
 };
 use serde::{Deserialize, Serialize};
 

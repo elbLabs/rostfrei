@@ -10,10 +10,15 @@ use futures_util::TryStreamExt;
 use rostfrei_core::{
     DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandlerError,
     DomainEventHandlerErrorKind, EventStore, EventStoreErrorKind, MAX_EVENTS_PER_BATCH,
+    RecordedEvent,
 };
+use rostfrei_fixtures::FixtureEventSet;
 use rostfrei_messaging_core::{ConsumerName, DurableName, MAX_PROCESSING_TIMEOUT, RetryDelay};
 use thiserror::Error;
-use tokio::{sync::watch, time::timeout};
+use tokio::{
+    sync::{RwLock, watch},
+    time::timeout,
+};
 
 use crate::{
     event_store::{DecodedEvent, NatsEventStore, decode_consumed_event},
@@ -127,6 +132,7 @@ pub struct NatsDomainEventConsumer {
     event_store: NatsEventStore,
     config: NatsDomainEventConsumerConfig,
     dispatcher: Arc<DomainEventDispatcher>,
+    fixture_events: Option<Arc<RwLock<FixtureEventSet>>>,
 }
 
 impl NatsDomainEventConsumer {
@@ -135,6 +141,37 @@ impl NatsDomainEventConsumer {
         event_store: NatsEventStoreConfig,
         config: NatsDomainEventConsumerConfig,
         dispatcher: Arc<DomainEventDispatcher>,
+    ) -> Result<Self, DomainEventConsumerError> {
+        Self::connect_inner(context, event_store, config, dispatcher, None).await
+    }
+
+    /// Connects a consumer that acknowledges exact fixture-generated direct
+    /// appends without dispatching them. The fixture set must be updated while
+    /// holding its write lock across fixture persistence so delivery cannot
+    /// observe partially registered fixture state.
+    pub async fn connect_with_fixture_events(
+        context: jetstream::Context,
+        event_store: NatsEventStoreConfig,
+        config: NatsDomainEventConsumerConfig,
+        dispatcher: Arc<DomainEventDispatcher>,
+        fixture_events: Arc<RwLock<FixtureEventSet>>,
+    ) -> Result<Self, DomainEventConsumerError> {
+        Self::connect_inner(
+            context,
+            event_store,
+            config,
+            dispatcher,
+            Some(fixture_events),
+        )
+        .await
+    }
+
+    async fn connect_inner(
+        context: jetstream::Context,
+        event_store: NatsEventStoreConfig,
+        config: NatsDomainEventConsumerConfig,
+        dispatcher: Arc<DomainEventDispatcher>,
+        fixture_events: Option<Arc<RwLock<FixtureEventSet>>>,
     ) -> Result<Self, DomainEventConsumerError> {
         let event_store = NatsEventStore::connect(context.clone(), event_store)
             .await
@@ -162,6 +199,7 @@ impl NatsDomainEventConsumer {
             event_store,
             config,
             dispatcher,
+            fixture_events,
         })
     }
 
@@ -286,12 +324,12 @@ impl NatsDomainEventConsumer {
                     commit.push(next.event);
                 }
             }
-            validate_complete_transaction(&commit)?;
-            self.validate_transaction_receipt(&commit).await?;
+            let transaction = BufferedEventTransaction::try_new(commit)?;
+            self.validate_transaction_receipt(&transaction).await?;
 
             match timeout(
                 self.config.processing_timeout(),
-                self.handle_commit(&commit),
+                self.handle_transaction(&transaction),
             )
             .await
             {
@@ -416,12 +454,12 @@ impl NatsDomainEventConsumer {
 
     async fn validate_transaction_receipt(
         &self,
-        commit: &[BufferedDomainEvent],
+        transaction: &BufferedEventTransaction,
     ) -> Result<(), DomainEventConsumerError> {
-        let first = commit
+        let first = transaction
             .first()
             .ok_or_else(|| invalid_committed_event("committed transaction is empty"))?;
-        if commit
+        if transaction
             .iter()
             .any(|event| event.decoded.is_transactional != first.decoded.is_transactional)
         {
@@ -452,10 +490,10 @@ impl NatsDomainEventConsumer {
                 invalid_committed_event("committed transactional events have no durable receipt")
             })?;
         let receipt_events = receipt.events();
-        if receipt_events.len() != commit.len()
+        if receipt_events.len() != transaction.len()
             || receipt_events
                 .iter()
-                .zip(commit)
+                .zip(transaction.iter())
                 .any(|(receipt_event, buffered)| receipt_event != &buffered.decoded.recorded)
         {
             return Err(invalid_committed_event(
@@ -465,16 +503,67 @@ impl NatsDomainEventConsumer {
         Ok(())
     }
 
-    async fn handle_commit(
+    async fn handle_transaction(
         &self,
-        commit: &[BufferedDomainEvent],
+        transaction: &BufferedEventTransaction,
     ) -> Result<(), DomainEventHandlerError> {
-        for event in commit {
+        if let Some(fixture_events) = &self.fixture_events
+            && !transaction.is_transactional()
+        {
+            let fixture_events = fixture_events.read().await;
+            let fixture_event_count = transaction
+                .recorded_events()
+                .filter(|event| fixture_events.contains(event))
+                .count();
+            if fixture_event_count == transaction.len() {
+                return Ok(());
+            }
+            if fixture_event_count != 0 {
+                return Err(DomainEventHandlerError::new(
+                    DomainEventHandlerErrorKind::InvalidCommittedEvent,
+                    "committed event transaction mixes fixture and application events",
+                ));
+            }
+        }
+
+        for event in transaction.iter() {
             match self.dispatcher.dispatch(&event.decoded.recorded).await? {
                 DomainEventDispatchOutcome::Handled | DomainEventDispatchOutcome::Ignored => {}
             }
         }
         Ok(())
+    }
+}
+
+struct BufferedEventTransaction {
+    events: Vec<BufferedDomainEvent>,
+}
+
+impl BufferedEventTransaction {
+    fn try_new(events: Vec<BufferedDomainEvent>) -> Result<Self, DomainEventConsumerError> {
+        validate_complete_transaction(&events)?;
+        Ok(Self { events })
+    }
+
+    fn first(&self) -> Option<&BufferedDomainEvent> {
+        self.events.first()
+    }
+
+    const fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    fn is_transactional(&self) -> bool {
+        self.first()
+            .is_some_and(|event| event.decoded.is_transactional)
+    }
+
+    fn iter(&self) -> impl ExactSizeIterator<Item = &BufferedDomainEvent> {
+        self.events.iter()
+    }
+
+    fn recorded_events(&self) -> impl ExactSizeIterator<Item = &RecordedEvent> {
+        self.events.iter().map(|event| &event.decoded.recorded)
     }
 }
 
