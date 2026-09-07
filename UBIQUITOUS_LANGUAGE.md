@@ -13,6 +13,7 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | **Aggregate state** | The transient state produced by replaying an aggregate stream to a selected version. | Stored row, source record |
 | **Command** | A request for one aggregate to make a business decision. | Event, message, action |
 | **Decision** | The deterministic outcome of handling a command: a rejection or an ordered set of new domain events. | Side effect, transaction |
+| **Domain policy** | A reusable, pure interpretation of domain facts that returns a business outcome without recording events or changing state. | Decision, rule service |
 | **Rejection** | An expected business outcome that declines a command and appends no domain events. | Error, exception, failure |
 | **Domain event** | A private, meaningful fact that occurred in one aggregate and forms part of its authoritative history. | Message, notification, integration event |
 | **Query** | A request to read state that never appends to an aggregate stream. | Read command, lookup command |
@@ -72,6 +73,7 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 - Every business message address identifies one **application** and one **bounded context**.
 - Normal and test **traffic scopes** preserve the same **application** identity while using disjoint subjects and JetStream resources.
 - A **command** asks one **aggregate** to make a **decision**.
+- A **decision** may consult one or more **domain policies**, but a policy does not itself accept or reject a command or record domain events.
 - A **rejection** produces no **commit**.
 - An accepted **operation** that produces domain events creates exactly one **commit**.
 - A **commit** contains one or more ordered **domain events**.
@@ -94,6 +96,12 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 > **Domain expert:** "No. `ApproveInvoice` is a **command** asking the invoice
 > **aggregate** to make a **decision**. If accepted, the decision records an
 > `InvoiceApproved` **domain event** in one **commit**."
+>
+> **Developer:** "What do we call a reusable eligibility rule used by that
+> decision and by a query?"
+>
+> **Domain expert:** "That is a **domain policy**. It interprets domain facts
+> without making the command decision or changing state."
 >
 > **Developer:** "How do we know the invoice's state after that commit?"
 >
@@ -127,6 +135,9 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 - **Operation** and **command** are not synonyms. The command is the requested
   decision; the operation supplies the stable execution identity used for exact
   retry.
+- **Decision** and **domain policy** are not synonyms. A decision is the
+  command-scoped result; a policy is a reusable, pure interpretation that a
+  decision, action, or query may consult.
 - **Rejection** is not an infrastructure failure. A rejection is an expected
   business outcome; storage, codec, and broker failures remain errors.
 - **Aggregate state** is reconstructed state, not a NATS KV value or the

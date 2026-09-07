@@ -1,6 +1,6 @@
 # Lifecycle
 
-An aggregate root or nested Entity lifecycle keeps its owner's authoritative stored state and legal state changes together. Evaluation is pure: it checks topology while actions, decisions, and events retain business policy and side effects.
+An aggregate root or nested Entity lifecycle keeps its owner's authoritative stored state and legal state changes together. Evaluation is pure: it checks topology while actions, policies, and events retain business policy and side effects.
 
 - Put the lifecycle directory directly beneath its owning aggregate or nested Entity directory.
 - Put the state enum in `lifecycle.rs` and the transition enum in `transition.rs`.

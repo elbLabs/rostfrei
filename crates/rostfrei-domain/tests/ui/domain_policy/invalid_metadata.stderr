@@ -1,0 +1,5 @@
+error: missing label
+ --> tests/ui/domain_policy/invalid_metadata.rs:3:17
+  |
+3 | #[domain_policy(id = "missing-label")]
+  |                 ^^^^^^^^^^^^^^^^^^^^

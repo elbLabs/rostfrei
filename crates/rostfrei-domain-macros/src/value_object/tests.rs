@@ -49,8 +49,8 @@ fn generates_only_the_semantic_value_object_contract() {
     .to_string();
 
     assert!(output.contains("impl :: domain :: ValueObject for Money"));
-    assert!(!output.contains("DecisionInputType"));
-    assert!(!output.contains("DecisionOutcomeValueType"));
+    assert!(!output.contains("PolicyInputType"));
+    assert!(!output.contains("PolicyOutcomeValueType"));
     assert!(!output.contains("DomainErrorOwnerType"));
     assert!(!output.contains("ActionInputType"));
     assert!(!output.contains("QueryInputType"));

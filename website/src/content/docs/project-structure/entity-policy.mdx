@@ -1,0 +1,49 @@
+# Entity policy
+
+An entity policy keeps pure business interpretation next to the Entity whose facts it evaluates. Its contract, exhaustive outcomes, and evaluator remain separate from state mutation and persistence.
+
+- Declare the trait in `policy.rs`.
+- Define exhaustive outcomes in `outcome.rs`.
+- Implement the policy directly for the Entity in `evaluate.rs`.
+- Compose lifecycle evaluation with other policy instead of duplicating transition topology.
+
+Path: `src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility`
+
+<ProjectStructureExample name="entity-policy">
+
+```rust
+use rostfrei::{LifecycleState, domain_policy};
+
+use super::RentalEligibilityOutcome;
+use crate::domain::rental_fleet::{
+    Bicycle, BicycleCondition, BicycleRentalTransition,
+};
+
+#[domain_policy(
+    id = "assess-rental-eligibility",
+    label = "Assess rental eligibility"
+)]
+pub(in crate::domain) trait RentalEligibilityPolicy {
+    fn assess_rental_eligibility(&self) -> RentalEligibilityOutcome;
+}
+
+impl RentalEligibilityPolicy for Bicycle {
+    fn assess_rental_eligibility(&self) -> RentalEligibilityOutcome {
+        if self
+            .status()
+            .evaluate(&BicycleRentalTransition::Rent)
+            .is_err()
+        {
+            return RentalEligibilityOutcome::UnavailableStatus;
+        }
+
+        if self.condition() == BicycleCondition::MaintenanceRequired {
+            return RentalEligibilityOutcome::MaintenanceRequired;
+        }
+
+        RentalEligibilityOutcome::Eligible
+    }
+}
+```
+
+</ProjectStructureExample>

@@ -3,7 +3,7 @@ use rostfrei::AggregateInstance;
 use super::{BicycleRented, BicycleUnavailable, RentBicycleAction};
 use crate::domain::bike_rental::rental_fleet::{
     BicycleId, RentalFleetAggregate,
-    assess_rental_eligibility::{RentalEligibilityDecision as _, RentalEligibilityOutcome},
+    assess_rental_eligibility::{RentalEligibilityOutcome, RentalEligibilityPolicy as _},
 };
 
 impl RentBicycleAction for AggregateInstance<RentalFleetAggregate> {

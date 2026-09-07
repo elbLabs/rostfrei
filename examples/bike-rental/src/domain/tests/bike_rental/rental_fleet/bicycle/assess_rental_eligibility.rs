@@ -1,9 +1,9 @@
 use crate::domain::rental_fleet::{
     Bicycle, BicycleCondition, BicycleId, BicycleStatus,
-    assess_rental_eligibility::{RentalEligibilityDecision, RentalEligibilityOutcome},
+    assess_rental_eligibility::{RentalEligibilityOutcome, RentalEligibilityPolicy},
 };
 
-#[rostfrei::domain_decision_test(<Bicycle as RentalEligibilityDecision>::DESCRIPTOR)]
+#[rostfrei::domain_policy_test(<Bicycle as RentalEligibilityPolicy>::DESCRIPTOR)]
 fn returns_first_class_outcomes() {
     assert_eq!(
         bicycle(BicycleStatus::Available, BicycleCondition::Serviceable)

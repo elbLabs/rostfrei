@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use serde_json::json;
 
-use crate::{ActionId, DecisionId, EntityLifecycleId, InvariantId};
+use crate::{ActionId, EntityLifecycleId, InvariantId, PolicyId};
 
 use super::{DomainTestDescriptor, DomainTestSubject, emitter, projection};
 
@@ -17,9 +17,9 @@ fn projects_global_subject_ids_consistently() {
             }),
         ),
         (
-            DomainTestSubject::Decision(DecisionId("can-submit")),
+            DomainTestSubject::Policy(PolicyId("can-submit")),
             json!({
-                "kind": "decision",
+                "kind": "policy",
                 "id": "can-submit",
             }),
         ),
@@ -43,7 +43,7 @@ fn projects_global_subject_ids_consistently() {
         assert_eq!(
             projection::project(descriptor(subject)),
             json!({
-                "schemaVersion": 1,
+                "schemaVersion": 2,
                 "package": "sales-domain",
                 "target": "order-tests",
                 "test": "accepts-valid-order",
@@ -81,7 +81,7 @@ fn writer_emits_one_frame_and_surfaces_io_errors() {
     emitter::write_metadata(&mut output, descriptor).unwrap();
 
     let expected = format!(
-        "\nROSTFREI_DOMAIN_TEST_METADATA_V1\t{}\n",
+        "\nROSTFREI_DOMAIN_TEST_METADATA_V2\t{}\n",
         projection::compact(descriptor)
     );
     assert_eq!(output, expected.as_bytes());

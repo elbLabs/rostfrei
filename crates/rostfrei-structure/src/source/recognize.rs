@@ -9,7 +9,7 @@ pub(super) fn attribute_primaries(attribute: &Attribute) -> Vec<PrimaryKind> {
     };
     match name {
         "domain_action" => vec![PrimaryKind::Action],
-        "domain_decision" => vec![PrimaryKind::Decision],
+        "domain_policy" => vec![PrimaryKind::Policy],
         "domain_query" => vec![PrimaryKind::Query],
         "domain_invariant" => vec![PrimaryKind::Invariant],
         "derive" => derive_primaries(attribute),
@@ -35,7 +35,7 @@ fn derive_primaries(attribute: &Attribute) -> Vec<PrimaryKind> {
             "Command" => Some(PrimaryKind::Command),
             "DomainEvent" => Some(PrimaryKind::Event),
             "DomainError" => Some(PrimaryKind::Rejection),
-            "DecisionOutcome" => Some(PrimaryKind::DecisionOutcome),
+            "PolicyOutcome" => Some(PrimaryKind::PolicyOutcome),
             "EntityLifecycle" => Some(PrimaryKind::Lifecycle),
             "StateTransition" => Some(PrimaryKind::StateTransition),
             _ => None,
@@ -48,7 +48,7 @@ pub(super) fn known_final_segment(path: &Path) -> Option<&str> {
         "domain_model",
         "include",
         "domain_action",
-        "domain_decision",
+        "domain_policy",
         "domain_query",
         "domain_invariant",
         "derive",
@@ -62,7 +62,7 @@ pub(super) fn known_final_segment(path: &Path) -> Option<&str> {
         "Command",
         "DomainEvent",
         "DomainError",
-        "DecisionOutcome",
+        "PolicyOutcome",
         "EntityLifecycle",
         "StateTransition",
     ];
@@ -72,7 +72,7 @@ pub(super) fn known_final_segment(path: &Path) -> Option<&str> {
 pub(super) fn is_domain_test(path: &Path) -> bool {
     const TEST_NAMES: &[&str] = &[
         "domain_action_test",
-        "domain_decision_test",
+        "domain_policy_test",
         "domain_invariant_test",
         "domain_lifecycle_test",
     ];
