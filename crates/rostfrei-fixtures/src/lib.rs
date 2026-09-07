@@ -15,9 +15,9 @@ use std::{
 
 use rostfrei_core::{
     Aggregate, AggregateId, AggregateType, ContentFingerprint, EnvelopeError, Event, EventBatch,
-    EventCodec, EventCodecError, EventStore, EventStoreError, ExecutionMetadata, ExpectedVersion,
-    IdentityError, JsonEventCodec, MAX_EVENT_PAYLOAD_LEN, MAX_EVENT_TYPE_LEN, NewEvent,
-    OperationId, RecordedEvent, StreamId, StreamVersion,
+    EventCodec, EventCodecError, EventId, EventStore, EventStoreError, ExecutionMetadata,
+    ExpectedVersion, IdentityError, JsonEventCodec, MAX_EVENT_PAYLOAD_LEN, MAX_EVENT_TYPE_LEN,
+    NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
 };
 use rostfrei_messaging_core::{
     CausationId, ContractError, CorrelationId, MessageId, MessageSeries, MessageSeriesNode,
@@ -671,32 +671,39 @@ pub struct FixtureApplyReport {
 /// Exact persisted event envelopes derived from trusted fixture documents.
 #[derive(Clone, Debug, Default)]
 pub struct FixtureEventSet {
-    events: Vec<RecordedEvent>,
+    events: HashMap<EventId, Vec<RecordedEvent>>,
 }
 
 impl FixtureEventSet {
     pub fn new(fixtures: &[Fixture]) -> Result<Self, FixtureApplyError> {
-        let mut events = Vec::new();
+        let mut fixture_events = Self::default();
         for fixture in fixtures {
             fixture.validate()?;
-            events.extend(
-                build_plan(fixture)?
-                    .into_iter()
-                    .map(|planned| planned.recorded),
-            );
+            for planned in build_plan(fixture)? {
+                fixture_events.insert(planned.recorded);
+            }
         }
-        Ok(Self { events })
+        Ok(fixture_events)
     }
 
     pub fn contains(&self, event: &RecordedEvent) -> bool {
-        self.events.contains(event)
+        self.events
+            .get(event.event_id())
+            .is_some_and(|candidates| candidates.contains(event))
     }
 
     pub fn extend(&mut self, other: Self) {
-        for event in other.events {
-            if !self.events.contains(&event) {
-                self.events.push(event);
+        for events in other.events.into_values() {
+            for event in events {
+                self.insert(event);
             }
+        }
+    }
+
+    fn insert(&mut self, event: RecordedEvent) {
+        let candidates = self.events.entry(event.event_id().clone()).or_default();
+        if !candidates.contains(&event) {
+            candidates.push(event);
         }
     }
 }

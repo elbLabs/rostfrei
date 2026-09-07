@@ -3,11 +3,9 @@ use std::{env, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use rostfrei::{
     Command, CommandBindingRegistrationError, CommandBus, CommandMessageAdapter, CommandProcessor,
-    CommittedDomainEvent, CommittedEventContext, DomainEvent, DomainEventDispatcher,
-    DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind,
-    DomainEventRegistrationError, EncodedIntegrationMessage, EventStore, EventStoreError,
-    InfallibleCommandRejectionMapper, IntegrationEvent, IntegrationEventBus,
-    IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationEventMapper,
+    CommittedDomainEvent, DomainEventDispatcher, DomainEventRegistrationError,
+    EncodedIntegrationMessage, EventStore, EventStoreError, InfallibleCommandRejectionMapper,
+    IntegrationEvent, IntegrationEventBus, IntegrationEventDispatcherExt, IntegrationEventMapper,
     IntegrationMessageAdapter, JsonDomainRejectionMapper,
 };
 use rostfrei_fixtures::{Fixture, FixtureApplyReport, FixtureEventSet};
@@ -462,41 +460,7 @@ impl IntegrationEvent for BicycleRentalStarted {
     const SCHEMA_VERSION: u32 = BICYCLE_RENTAL_STARTED_SCHEMA_VERSION;
 }
 
-pub struct BicycleRentedIntegrationMapper {
-    bus: IntegrationEventBus,
-    fixture_events: Arc<RwLock<FixtureEventSet>>,
-}
-
-impl BicycleRentedIntegrationMapper {
-    pub const fn new(
-        bus: IntegrationEventBus,
-        fixture_events: Arc<RwLock<FixtureEventSet>>,
-    ) -> Self {
-        Self {
-            bus,
-            fixture_events,
-        }
-    }
-}
-
-#[async_trait]
-impl DomainEventHandler<BicycleRented> for BicycleRentedIntegrationMapper {
-    async fn handle(
-        &self,
-        event: &CommittedDomainEvent<'_, BicycleRented>,
-    ) -> Result<(), DomainEventHandlerError> {
-        if self.fixture_events.read().await.contains(event.recorded()) {
-            return Ok(());
-        }
-        let committed = CommittedEventContext::new(event.recorded())
-            .map_err(|error| classify_integration_event_error(&error))?;
-        self.bus
-            .publish(committed, self.map(event))
-            .await
-            .map(|_| ())
-            .map_err(|error| classify_integration_event_error(&error))
-    }
-}
+pub struct BicycleRentedIntegrationMapper;
 
 impl IntegrationEventMapper<BicycleRented> for BicycleRentedIntegrationMapper {
     type Output = BicycleRentalStarted;
@@ -541,19 +505,6 @@ impl MessageHandler<IntegrationEventAddress> for BicycleRentalStartedHandler {
         );
         DeliveryDisposition::Acknowledge
     }
-}
-
-fn classify_integration_event_error(error: &IntegrationEventBusError) -> DomainEventHandlerError {
-    let kind = match error.kind() {
-        IntegrationEventBusErrorKind::InvalidContext => {
-            DomainEventHandlerErrorKind::InvalidCommittedEvent
-        }
-        IntegrationEventBusErrorKind::Timeout | IntegrationEventBusErrorKind::Unavailable => {
-            DomainEventHandlerErrorKind::Retryable
-        }
-        _ => DomainEventHandlerErrorKind::OperatorBlocking,
-    };
-    DomainEventHandlerError::new(kind, error.to_string())
 }
 
 struct ScopedCommandTransport {
@@ -743,6 +694,8 @@ impl BikeRentalNatsRuntime {
         let new_fixture_events =
             FixtureEventSet::new(std::slice::from_ref(fixture)).map_err(DemoFixtureError::from)?;
         let mut fixture_events = self.fixture_events.write().await;
+        // Fixture application is not globally atomic. Register the validated plan
+        // first so a persisted prefix remains side-effect free if a later append fails.
         fixture_events.extend(new_fixture_events);
         let result = apply_message_series_fixture(&self.store, fixture)
             .await
@@ -831,18 +784,16 @@ impl BikeRentalNatsRuntime {
         let integration_bus =
             IntegrationEventBus::new(self.config.context.clone(), integration_adapter);
         let mut dispatcher = DomainEventDispatcher::new();
-        dispatcher.register::<RentalFleetAggregate, BicycleRented, _>(
-            BicycleRented::LOCAL_ID,
-            Arc::new(BicycleRentedIntegrationMapper::new(
-                integration_bus,
-                Arc::clone(&self.fixture_events),
-            )),
+        dispatcher.register_integration_event::<RentalFleetAggregate, BicycleRented, _>(
+            integration_bus,
+            BicycleRentedIntegrationMapper,
         )?;
-        let domain_consumer = NatsDomainEventConsumer::connect(
+        let domain_consumer = NatsDomainEventConsumer::connect_with_fixture_events(
             self.connection.jetstream().clone(),
             self.config.event_store.clone(),
             self.config.domain_event_consumer.clone(),
             Arc::new(dispatcher),
+            Arc::clone(&self.fixture_events),
         )
         .await?;
 
@@ -959,6 +910,7 @@ impl BikeRentalNatsRuntime {
         }
         let _scope = Arc::clone(&self.scope_gate).write_owned().await;
         self.stop_workers_in_scope().await;
+        *self.fixture_events.write().await = FixtureEventSet::default();
         self.delete_resources().await?;
         self.config.provision(&self.connection).await?;
         self.apply_fixture(fixture).await?;
