@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Domain structure checks, scaffolding, and agent tooling for Rostfrei"
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
 include = ["src/**", "templates/**", "build.rs", "Cargo.toml",
     "resources/develop.md", "resources/execution.md", "resources/worked-example.md",
     "resources/add-first-bicycle.json", "resources/tracer.md", "resources/runtime.md",

@@ -4,6 +4,11 @@ version.workspace = true
 edition = "2024"
 rust-version.workspace = true
 license.workspace = true
+description = "Procedural macros for Rostfrei domain declarations"
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
 
 [lib]
 proc-macro = true

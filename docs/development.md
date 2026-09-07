@@ -128,7 +128,7 @@ python3 scripts/versions.py check
 To prepare a version:
 
 ```sh
-python3 scripts/versions.py bump 0.0.6-alpha
+python3 scripts/versions.py bump 0.1.1
 ```
 
 The script updates the root manifest and both Cargo lockfiles, including the
@@ -141,14 +141,49 @@ The **Prepare GitHub release** workflow runs from `main` with a tag matching the
 shared version, including the `v` prefix. Validate it locally with:
 
 ```sh
-python3 scripts/versions.py check --tag v0.0.6-alpha
+python3 scripts/versions.py check --tag v0.1.1
 ```
 
 The workflow creates a draft GitHub release; it does not publish crates.
 
+### crates.io publication
+
+From 0.1.1, all 14 public library/tooling packages have registry metadata. The
+benchmark and bike-rental packages are explicitly `publish = false`. Freeze one
+clean commit for the Git tag, Skills kit, CLI and registry packages; dependency-aware
+Skills setup checks the published package's `.cargo_vcs_info.json` revision.
+
+With the repository's pinned Cargo version, qualify the complete package graph:
+
+```sh
+cargo publish --dry-run --locked --workspace \
+  --exclude rostfrei-benchmarks --exclude bike-rental --all-features
+```
+
+Cargo packages the selected crates into a temporary registry, verifies their
+extracted contents and determines dependency order. Inspect package metadata and
+archive contents, retain checksums/provenance, and require exact-source CI and
+matching Skills qualification before uploading. Authenticate locally with
+`cargo login`, then publish that same clean source:
+
+```sh
+cargo publish --locked --workspace \
+  --exclude rostfrei-benchmarks --exclude bike-rental --all-features
+```
+
+If publication stops partway through, inspect crates.io/index state and archive
+checksums before continuing with only the unpublished packages. Do not assume a
+failed upload means the server rejected it. After publication, check every version
+and checksum and build an external application using registry-only dependencies.
+Install the registry CLI and qualify its dependency-aware Skills setup as well.
+
+Registry consumers use `rostfrei = "0.1.1"` and matching adapters, and install the
+CLI with `cargo install --locked --version 0.1.1 rostfrei-structure`. The GitHub
+workflow remains a separate publication step for the matching kit and checksum.
+
 ## Starter dependency contract
 
-While crates are unpublished, `cargo rostfrei new` pins `rostfrei` and
+`cargo rostfrei new` pins `rostfrei` and
 `rostfrei-nats` to the same full Git commit from an available release. The
 starter currently targets `v0.0.5-alpha`
 (`c9f5516ddc324265916b60e1eb7300dad9acac9d`). This pin is independent of the
