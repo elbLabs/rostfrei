@@ -7,8 +7,8 @@ use rostfrei::{
     DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind,
     DomainEventRegistrationError, EncodedIntegrationMessage, EventStore, EventStoreError,
     InfallibleCommandRejectionMapper, IntegrationEvent, IntegrationEventBus,
-    IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationMessageAdapter,
-    JsonDomainRejectionMapper,
+    IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationEventMapper,
+    IntegrationMessageAdapter, JsonDomainRejectionMapper,
 };
 use rostfrei_fixtures::{Fixture, FixtureApplyReport, FixtureEventSet};
 use rostfrei_messaging_core::{
@@ -491,17 +491,22 @@ impl DomainEventHandler<BicycleRented> for BicycleRentedIntegrationMapper {
         let committed = CommittedEventContext::new(event.recorded())
             .map_err(|error| classify_integration_event_error(&error))?;
         self.bus
-            .publish(
-                committed,
-                BicycleRentalStarted {
-                    source_event_id: event.recorded().event_id().as_str().to_owned(),
-                    fleet_id: event.event().fleet_id.clone(),
-                    bicycle_id: event.event().bicycle_id.clone(),
-                },
-            )
+            .publish(committed, self.map(event))
             .await
             .map(|_| ())
             .map_err(|error| classify_integration_event_error(&error))
+    }
+}
+
+impl IntegrationEventMapper<BicycleRented> for BicycleRentedIntegrationMapper {
+    type Output = BicycleRentalStarted;
+
+    fn map(&self, event: &CommittedDomainEvent<'_, BicycleRented>) -> Self::Output {
+        BicycleRentalStarted {
+            source_event_id: event.recorded().event_id().as_str().to_owned(),
+            fleet_id: event.event().fleet_id.clone(),
+            bicycle_id: event.event().bicycle_id.clone(),
+        }
     }
 }
 

@@ -4,7 +4,12 @@ use std::{
 };
 
 use async_trait::async_trait;
-use rostfrei_core::{EventId, RecordedEvent};
+use domain::DomainEvent;
+use rostfrei_core::{
+    Aggregate, CommittedDomainEvent, DomainEventDispatcher, DomainEventHandler,
+    DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError, Event,
+    EventId, EventVariant, RecordedEvent,
+};
 use rostfrei_messaging_core::{
     BoundedContext, CausationId, ContractError, CorrelationId, EnvelopeContext,
     IntegrationEventAddress, IntegrationEventEnvelope, MessageId, MessageTimestamp,
@@ -18,6 +23,78 @@ use crate::command_bus::{canonical_serialize, framed_fingerprint};
 pub trait IntegrationEvent: Serialize + DeserializeOwned + Send + Sync + Sized + 'static {
     const EVENT_NAME: &'static str;
     const SCHEMA_VERSION: u32;
+}
+
+/// Maps a private committed domain event to its public integration event.
+pub trait IntegrationEventMapper<D>: Send + Sync {
+    type Output: IntegrationEvent;
+
+    fn map(&self, event: &CommittedDomainEvent<'_, D>) -> Self::Output;
+}
+
+/// Publishes the integration event produced by an application mapper.
+pub struct IntegrationEventPublisher<M> {
+    bus: IntegrationEventBus,
+    mapper: M,
+}
+
+impl<M> IntegrationEventPublisher<M> {
+    pub const fn new(bus: IntegrationEventBus, mapper: M) -> Self {
+        Self { bus, mapper }
+    }
+}
+
+/// Adds typed domain-to-integration mappings without exposing dispatcher plumbing.
+pub trait IntegrationEventDispatcherExt {
+    fn register_integration_event<A, D, M>(
+        &mut self,
+        bus: IntegrationEventBus,
+        mapper: M,
+    ) -> Result<(), DomainEventRegistrationError>
+    where
+        A: Aggregate + Send + Sync + 'static,
+        A::Event: Event + EventVariant<D> + Send + Sync + 'static,
+        D: DomainEvent + Send + Sync,
+        M: IntegrationEventMapper<D> + 'static;
+}
+
+impl IntegrationEventDispatcherExt for DomainEventDispatcher {
+    fn register_integration_event<A, D, M>(
+        &mut self,
+        bus: IntegrationEventBus,
+        mapper: M,
+    ) -> Result<(), DomainEventRegistrationError>
+    where
+        A: Aggregate + Send + Sync + 'static,
+        A::Event: Event + EventVariant<D> + Send + Sync + 'static,
+        D: DomainEvent + Send + Sync,
+        M: IntegrationEventMapper<D> + 'static,
+    {
+        self.register::<A, D, _>(
+            D::LOCAL_ID,
+            Arc::new(IntegrationEventPublisher::new(bus, mapper)),
+        )
+    }
+}
+
+#[async_trait]
+impl<D, M> DomainEventHandler<D> for IntegrationEventPublisher<M>
+where
+    D: Send + Sync,
+    M: IntegrationEventMapper<D>,
+{
+    async fn handle(
+        &self,
+        event: &CommittedDomainEvent<'_, D>,
+    ) -> Result<(), DomainEventHandlerError> {
+        let committed = CommittedEventContext::new(event.recorded())
+            .map_err(|error| classify_publication_error(&error))?;
+        self.bus
+            .publish(committed, self.mapper.map(event))
+            .await
+            .map(|_| ())
+            .map_err(|error| classify_publication_error(&error))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -285,6 +362,19 @@ impl IntegrationEventBusError {
     pub fn message(&self) -> &str {
         &self.message
     }
+}
+
+fn classify_publication_error(error: &IntegrationEventBusError) -> DomainEventHandlerError {
+    let kind = match error.kind() {
+        IntegrationEventBusErrorKind::InvalidContext => {
+            DomainEventHandlerErrorKind::InvalidCommittedEvent
+        }
+        IntegrationEventBusErrorKind::Timeout | IntegrationEventBusErrorKind::Unavailable => {
+            DomainEventHandlerErrorKind::Retryable
+        }
+        _ => DomainEventHandlerErrorKind::OperatorBlocking,
+    };
+    DomainEventHandlerError::new(kind, error.to_string())
 }
 
 pub fn integration_message_id(
