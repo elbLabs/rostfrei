@@ -6,7 +6,9 @@ use serde_json::Value;
 pub trait CommandInputOptions<A, C>: Send + Sync
 where
     A: Aggregate + CommandHandler<C>,
-    C: CommandDefinition<A>,
+    A::State: Send,
+    A::Event: Send,
+    C: CommandDefinition<A> + Sync,
 {
     fn fields(&self, state: &A::State) -> Vec<CommandInputField>;
 }

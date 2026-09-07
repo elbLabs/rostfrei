@@ -4,7 +4,7 @@ use bike_rental::{
     APPLICATION_NAME, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
     demo::{demo_fixture, has_legacy_demo_seed, rented_demo_fixture},
     domain_model,
-    rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
+    rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle, TransferBicycle},
     tracer::{self, RentBicycleInputOptions, ReturnBicycleInputOptions},
 };
 use rostfrei::EventHistory;
@@ -76,6 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     builder.register_json::<RentalFleetAggregate, RentBicycle>()?;
     builder.register_json::<RentalFleetAggregate, ReturnBicycle>()?;
     builder.register_json::<RentalFleetAggregate, AddBicycle>()?;
+    builder.register_json::<RentalFleetAggregate, TransferBicycle>()?;
     builder
         .register_input_options::<RentalFleetAggregate, RentBicycle, _>(RentBicycleInputOptions)?;
     builder.register_input_options::<RentalFleetAggregate, ReturnBicycle, _>(

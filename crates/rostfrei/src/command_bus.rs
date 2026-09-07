@@ -479,6 +479,8 @@ impl CommandBus {
     ) -> Result<CommandBusReceipt, CommandBusError>
     where
         A: Aggregate + CommandHandler<C>,
+        A::State: Send,
+        A::Event: Send,
         C: CommandDefinition<A> + JsonCommandPayload,
     {
         self.dispatch_observed::<A, C>(request, Arc::new(IgnoreCommandPublications))
@@ -492,6 +494,8 @@ impl CommandBus {
     ) -> Result<CommandBusReceipt, CommandBusError>
     where
         A: Aggregate + CommandHandler<C>,
+        A::State: Send,
+        A::Event: Send,
         C: CommandDefinition<A> + JsonCommandPayload,
     {
         let encoded = self.encode::<A, C>(request)?;
@@ -504,6 +508,8 @@ impl CommandBus {
     ) -> Result<EncodedCommand, CommandBusError>
     where
         A: Aggregate + CommandHandler<C>,
+        A::State: Send,
+        A::Event: Send,
         C: CommandDefinition<A> + JsonCommandPayload,
     {
         let payload = request

@@ -27,7 +27,7 @@ use bike_rental::{
     demo::{demo_fixture, demo_stream, rented_demo_fixture},
     rental_fleet::{
         AddBicycle, BicycleRented, BicycleReturned, RentBicycle, RentalFleetAggregate,
-        ReturnBicycle,
+        ReturnBicycle, TransferBicycle,
     },
     tracer,
 };
@@ -204,6 +204,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
         builder.register_json::<RentalFleetAggregate, RentBicycle>()?;
         builder.register_json::<RentalFleetAggregate, ReturnBicycle>()?;
         builder.register_json::<RentalFleetAggregate, AddBicycle>()?;
+        builder.register_json::<RentalFleetAggregate, TransferBicycle>()?;
         let tracer = builder.build()?;
         let correlation_worker = test_runtime
             .start_correlation_observer(tracer.correlation_observer(OperationMode::Test))

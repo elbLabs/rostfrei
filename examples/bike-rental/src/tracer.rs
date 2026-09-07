@@ -5,7 +5,7 @@ use rostfrei_tracer::{CommandInputField, CommandInputOption, CommandInputOptions
 
 use crate::rental_fleet::{
     AddBicycle, BicycleCondition, BicycleStatus, RentBicycle, RentalFleet, RentalFleetAggregate,
-    ReturnBicycle,
+    ReturnBicycle, TransferBicycle,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -58,5 +58,6 @@ pub fn builder(history: Arc<dyn EventHistory>) -> Result<TracerBuilder, Registra
     registry.register_command::<RentalFleetAggregate, RentBicycle>()?;
     registry.register_command::<RentalFleetAggregate, ReturnBicycle>()?;
     registry.register_command::<RentalFleetAggregate, AddBicycle>()?;
+    registry.register_command::<RentalFleetAggregate, TransferBicycle>()?;
     Ok(TracerBuilder::new(history, registry))
 }

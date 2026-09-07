@@ -11,6 +11,8 @@ const DIRECT_QUERY_REGISTRATION: &str = "<direct query registration>";
 pub trait CommandDefinition<A>: domain::Command + Sized + Send + Sync + 'static
 where
     A: Aggregate + CommandHandler<Self>,
+    A::State: Send,
+    A::Event: Send,
 {
     fn descriptor() -> CommandDescriptor {
         CommandDescriptor {
@@ -27,6 +29,8 @@ where
 impl<A, C> CommandDefinition<A> for C
 where
     A: Aggregate + CommandHandler<C>,
+    A::State: Send,
+    A::Event: Send,
     C: domain::Command + Sized + Send + Sync + 'static,
 {
 }
@@ -199,6 +203,8 @@ impl DomainRegistry {
     pub fn register_command<A, C>(&mut self) -> Result<(), RegistrationError>
     where
         A: Aggregate + CommandHandler<C>,
+        A::State: Send,
+        A::Event: Send,
         C: CommandDefinition<A>,
     {
         let command = <C as CommandDefinition<A>>::descriptor();

@@ -8,14 +8,15 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateInstance, AggregateType, AppendOutcome, CommandExecutionError,
-    CommandHandler, CommandOutcome, CommandReceipt, CommandResult, CommittedDomainEvent,
-    ContentFingerprint, DomainEventDispatchOutcome, DomainEventHandler, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, DomainEventRegistrationError, EnvelopeError, EventBatch,
-    EventCodec, EventCodecError, EventCodecErrorKind, EventHistory, EventStore, EventStoreError,
-    EventStoreErrorKind, EventTransaction, ExecutionMetadata, Executor, ExpectedVersion,
-    InMemoryEventStore, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent,
-    SimulationDecision, StreamId, StreamVersion, TransactionParticipant,
+    Aggregate, AggregateId, AggregateInstance, AggregateType, AppendOutcome, CommandContext,
+    CommandDecision, CommandExecutionError, CommandHandler, CommandOutcome, CommandReceipt,
+    CommandResult, CommittedDomainEvent, ContentFingerprint, DomainEventDispatchOutcome,
+    DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind,
+    DomainEventRegistrationError, EnvelopeError, EventBatch, EventCodec, EventCodecError,
+    EventCodecErrorKind, EventHistory, EventStore, EventStoreError, EventStoreErrorKind,
+    EventTransaction, ExecutionMetadata, Executor, ExpectedVersion, InMemoryEventStore,
+    MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent, SimulationDecision, StreamId,
+    StreamVersion, TransactionParticipant,
 };
 use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_messaging_core::{CausationId, CorrelationId};
@@ -140,20 +141,22 @@ enum AccountRejection {
     Deliberate,
 }
 
+#[async_trait]
 impl CommandHandler<AccountCommand> for Account {
     type Rejection = AccountRejection;
 
-    fn handle(
+    async fn handle(
         command: &AccountCommand,
         aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        _context: &mut CommandContext<'_>,
+    ) -> Result<CommandDecision<Self::Rejection>, CommandExecutionError> {
         match command {
             AccountCommand::Import {
                 opening_balance,
                 provenance,
             } => {
                 if aggregate.state().imported {
-                    return Err(AccountRejection::AlreadyImported);
+                    return Ok(CommandDecision::Rejected(AccountRejection::AlreadyImported));
                 }
                 aggregate.raise(AccountEvent::AccountStateImported {
                     opening_balance: *opening_balance,
@@ -174,11 +177,11 @@ impl CommandHandler<AccountCommand> for Account {
             }
             AccountCommand::RecordThenReject => {
                 aggregate.raise(AccountEvent::Credited { amount: 100 });
-                return Err(AccountRejection::Deliberate);
+                return Ok(CommandDecision::Rejected(AccountRejection::Deliberate));
             }
             AccountCommand::NoOp => {}
         }
-        Ok(())
+        Ok(CommandDecision::Accepted)
     }
 }
 
@@ -361,17 +364,19 @@ struct DepositMoney {
     amount: i64,
 }
 
+#[async_trait]
 impl CommandHandler<DepositMoney> for AutomaticAccountDefinition {
     type Rejection = ();
 
-    fn handle(
+    async fn handle(
         command: &DepositMoney,
         aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        _context: &mut CommandContext<'_>,
+    ) -> Result<CommandDecision<Self::Rejection>, CommandExecutionError> {
         aggregate.raise(MoneyDeposited {
             amount: command.amount,
         });
-        Ok(())
+        Ok(CommandDecision::Accepted)
     }
 }
 
@@ -815,15 +820,16 @@ fn recorded_account_event(
     .map_err(|error| fixture_error("recorded account event", error))
 }
 
-#[test]
-fn given_when_then_exposes_live_state_and_replay_equivalence() {
+#[tokio::test]
+async fn given_when_then_exposes_live_state_and_replay_equivalence() {
     let mut history = vec![AccountEvent::AccountStateImported {
         opening_balance: 10,
         provenance: provenance(),
     }];
     let stream = stream("given-account").expect("valid given account stream fixture");
     let then = given::<Account, _>(&stream, history.clone())
-        .when(&AccountCommand::CreditThenObserve { amount: 5 });
+        .when(&AccountCommand::CreditThenObserve { amount: 5 })
+        .await;
 
     assert!(then.is_accepted());
     assert_eq!(
@@ -837,7 +843,7 @@ fn given_when_then_exposes_live_state_and_replay_equivalence() {
     assert_eq!(then.state().last_observed_balance, Some(15));
 
     let (live_state, new_events, decision) = then.into_parts();
-    assert_eq!(decision, Ok(()));
+    assert_eq!(decision, Ok(CommandDecision::Accepted));
     history.extend(new_events);
     let replayed = given::<Account, _>(&stream, history);
     assert_eq!(replayed.state(), &live_state);

@@ -1,10 +1,14 @@
 #![allow(dead_code)]
 
+use async_trait::async_trait;
 use domain::{
     Aggregate as DomainAggregate, AggregateDefinition, AggregateEvents, AggregateType,
     BoundedContext, Command, DomainEvent, DomainIdentity, Entity, JsonCommandPayload,
 };
-use rostfrei_core::{Aggregate as RuntimeAggregate, AggregateInstance, CommandHandler};
+use rostfrei_core::{
+    Aggregate as RuntimeAggregate, AggregateInstance, CommandContext, CommandDecision,
+    CommandHandler, CommandHandlingResult,
+};
 use rostfrei_domain_runtime::{Apply, Initialize};
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::{Deserialize, Serialize};
@@ -104,14 +108,19 @@ impl CatalogRuntimeActions for AggregateInstance<CatalogAggregate> {
     }
 }
 
+#[async_trait]
 impl CommandHandler<OpenCatalog> for CatalogAggregate {
     type Rejection = std::convert::Infallible;
 
-    fn handle(
+    async fn handle(
         command: &OpenCatalog,
         aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.open_catalog(command)
+        _context: &mut CommandContext<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        match aggregate.open_catalog(command) {
+            Ok(()) => Ok(CommandDecision::Accepted),
+            Err(rejection) => match rejection {},
+        }
     }
 }
 

@@ -1,4 +1,8 @@
-use rostfrei::{AggregateInstance, Apply, CommandHandler, Initialize};
+use async_trait::async_trait;
+use rostfrei::{
+    AggregateInstance, Apply, CommandContext, CommandDecision, CommandHandler,
+    CommandHandlingResult, Initialize,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(rostfrei::BoundedContext)]
@@ -92,16 +96,18 @@ impl Apply<MoneyDeposited> for Account {
 
 struct Deposit(i64);
 
+#[async_trait]
 impl CommandHandler<Deposit> for AccountAggregate {
     type Rejection = ();
 
-    fn handle(
+    async fn handle(
         command: &Deposit,
         aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        _context: &mut CommandContext<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
         use aggregate_actions::DepositAction as _;
         aggregate.deposit(command.0);
-        Ok(())
+        Ok(CommandDecision::Accepted)
     }
 }
 

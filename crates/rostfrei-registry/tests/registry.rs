@@ -1,5 +1,9 @@
+use async_trait::async_trait;
 use domain::{Command, CommandDescriptor as ModeledCommandDescriptor};
-use rostfrei_core::{Aggregate, AggregateInstance, CommandHandler, StreamId};
+use rostfrei_core::{
+    Aggregate, AggregateInstance, CommandContext, CommandDecision, CommandHandler,
+    CommandHandlingResult, StreamId,
+};
 use rostfrei_registry::{CommandDefinition, DomainRegistry, RegistrationError};
 
 struct FirstAggregate;
@@ -64,14 +68,16 @@ command!(
 
 macro_rules! handler {
     ($aggregate:ty, $command:ty, $rejection:ty) => {
+        #[async_trait]
         impl CommandHandler<$command> for $aggregate {
             type Rejection = $rejection;
 
-            fn handle(
+            async fn handle(
                 _command: &$command,
                 _aggregate: &mut AggregateInstance<Self>,
-            ) -> Result<(), Self::Rejection> {
-                Ok(())
+                _context: &mut CommandContext<'_>,
+            ) -> CommandHandlingResult<Self::Rejection> {
+                Ok(CommandDecision::Accepted)
             }
         }
     };

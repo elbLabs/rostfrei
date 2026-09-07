@@ -95,15 +95,6 @@ impl<A: Aggregate> AggregateInstance<A> {
     }
 }
 
-pub trait CommandHandler<Command>: Aggregate {
-    type Rejection;
-
-    fn handle(
-        command: &Command,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection>;
-}
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum EventCodecErrorKind {

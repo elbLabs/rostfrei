@@ -17,7 +17,7 @@ use crate::{
 
 /// Maps one incoming integration event to one command for a target aggregate.
 pub trait IntegrationCommandMapper<E>: Send + Sync {
-    type Aggregate: Aggregate + CommandHandler<Self::Command>;
+    type Aggregate: Aggregate<State: Send, Event: Send> + CommandHandler<Self::Command>;
     type Command: CommandDefinition<Self::Aggregate> + JsonCommandPayload + Send + Sync;
     type Error;
 

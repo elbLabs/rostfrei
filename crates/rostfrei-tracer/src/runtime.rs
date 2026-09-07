@@ -140,7 +140,9 @@ pub trait ErasedCommandInputOptions: Send + Sync {
 struct TypedCommandInputOptions<A, C, Provider>
 where
     A: Aggregate + rostfrei_core::CommandHandler<C>,
-    C: CommandDefinition<A>,
+    A::State: Send,
+    A::Event: Send,
+    C: CommandDefinition<A> + Sync,
 {
     provider: Provider,
     marker: std::marker::PhantomData<fn() -> (A, C)>,
@@ -150,7 +152,7 @@ where
 impl<A, C, Provider> ErasedCommandInputOptions for TypedCommandInputOptions<A, C, Provider>
 where
     A: Aggregate + rostfrei_core::CommandHandler<C>,
-    C: CommandDefinition<A>,
+    C: CommandDefinition<A> + Sync,
     A::State: Send,
     A::Event: Event + Send,
     Provider: CommandInputOptions<A, C> + 'static,
@@ -170,7 +172,9 @@ where
 struct TypedCommandSimulator<A, C>
 where
     A: Aggregate + rostfrei_core::CommandHandler<C>,
-    C: CommandDefinition<A>,
+    A::State: Send,
+    A::Event: Send,
+    C: CommandDefinition<A> + Sync,
 {
     descriptor: CommandDescriptor,
     marker: std::marker::PhantomData<fn() -> (A, C)>,
@@ -180,7 +184,7 @@ where
 impl<A, C> ErasedCommandSimulator for TypedCommandSimulator<A, C>
 where
     A: Aggregate + rostfrei_core::CommandHandler<C>,
-    C: CommandDefinition<A> + JsonCommandPayload,
+    C: CommandDefinition<A> + JsonCommandPayload + Sync,
     A::State: Send,
     A::Event: Event + Send,
     <A as rostfrei_core::CommandHandler<C>>::Rejection: JsonErrorPayload,
@@ -206,14 +210,26 @@ where
         let outcome = Executor::new(history)
             .simulate::<A, C>(metadata, &command)
             .await?;
-        let (base_version, decision) = outcome.into_parts();
+        let (base_version, decision, participants) = outcome.into_full_parts();
         match decision {
-            SimulationDecision::Accepted(events) => Ok(RuntimeDecision::Accepted {
+            SimulationDecision::Accepted(_) => Ok(RuntimeDecision::Accepted {
                 base_stream_version: base_version.value(),
-                events: events
+                events: participants
                     .iter()
-                    .enumerate()
-                    .map(|(ordinal, event)| predicted_event(base_version.value(), ordinal, event))
+                    .flat_map(|participant| {
+                        participant
+                            .events()
+                            .iter()
+                            .enumerate()
+                            .map(|(ordinal, event)| {
+                                predicted_event(
+                                    participant.stream_id(),
+                                    participant.base_version().value(),
+                                    ordinal,
+                                    event,
+                                )
+                            })
+                    })
                     .collect::<Result<_, _>>()?,
             }),
             SimulationDecision::Rejected(rejection) => Ok(RuntimeDecision::Rejected {
@@ -227,6 +243,7 @@ where
 }
 
 fn predicted_event(
+    stream_id: &StreamId,
     base_version: u64,
     ordinal: usize,
     event: &NewEvent,
@@ -239,6 +256,8 @@ fn predicted_event(
     let payload = serde_json::from_slice(event.payload())
         .map_err(|error| RuntimeSimulationError::InvalidEventPayload(error.to_string()))?;
     Ok(PredictedDomainEvent {
+        aggregate_type: stream_id.aggregate_type().as_str().to_owned(),
+        aggregate_id: stream_id.aggregate_id().as_str().to_owned(),
         ordinal,
         predicted_stream_version,
         event_type: event.event_type().to_owned(),
@@ -265,7 +284,7 @@ impl RuntimeBindings {
     pub fn register_json<A, C>(&mut self) -> Result<(), RuntimeRegistrationError>
     where
         A: Aggregate + rostfrei_core::CommandHandler<C> + 'static,
-        C: CommandDefinition<A> + JsonCommandPayload,
+        C: CommandDefinition<A> + JsonCommandPayload + Sync,
         A::State: Send,
         A::Event: Event + Send,
         <A as rostfrei_core::CommandHandler<C>>::Rejection: JsonErrorPayload,
@@ -312,7 +331,7 @@ impl RuntimeBindings {
     ) -> Result<(), RuntimeRegistrationError>
     where
         A: Aggregate + rostfrei_core::CommandHandler<C> + 'static,
-        C: CommandDefinition<A>,
+        C: CommandDefinition<A> + Sync,
         A::State: Send,
         A::Event: Event + Send,
         Provider: CommandInputOptions<A, C> + 'static,

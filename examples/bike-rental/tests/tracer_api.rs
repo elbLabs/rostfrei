@@ -17,7 +17,7 @@ use axum::{
 use bike_rental::{
     demo::{apply_fixture, demo_fixture, demo_stream, rented_demo_fixture},
     domain_model,
-    rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle},
+    rental_fleet::{AddBicycle, RentBicycle, RentalFleetAggregate, ReturnBicycle, TransferBicycle},
     tracer::{self, RentBicycleInputOptions, ReturnBicycleInputOptions},
 };
 use http_body_util::BodyExt as _;
@@ -321,6 +321,9 @@ async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
         .register_json::<RentalFleetAggregate, AddBicycle>()
         .unwrap();
     builder
+        .register_json::<RentalFleetAggregate, TransferBicycle>()
+        .unwrap();
+    builder
         .register_input_options::<RentalFleetAggregate, RentBicycle, _>(RentBicycleInputOptions)
         .unwrap();
     builder
@@ -581,7 +584,12 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
             .iter()
             .map(|command| command["id"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        vec!["add-bicycle", "rent-bicycle", "return-bicycle"]
+        vec![
+            "add-bicycle",
+            "rent-bicycle",
+            "return-bicycle",
+            "transfer-bicycle"
+        ]
     );
     let add_command = commands
         .iter()
@@ -621,6 +629,26 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         "/contexts/bike-rental/aggregates/rental-fleet/{aggregateId}/commands/rent-bicycle/schemas/1/inputs"
     );
     assert!(command["versions"][0].get("inputsHrefTemplate").is_none());
+    let transfer_command = commands
+        .iter()
+        .find(|command| command["id"] == "transfer-bicycle")
+        .unwrap();
+    assert_eq!(transfer_command["label"], "Transfer bicycle");
+    assert_eq!(
+        transfer_command["versions"][0]["fields"],
+        json!([
+            { "name": "bicycle_id", "value": { "kind": "opaque" } },
+            { "name": "to_fleet_id", "value": { "kind": "opaque" } }
+        ])
+    );
+    assert_eq!(
+        transfer_command["versions"][0]["payloadTemplate"],
+        json!({ "bicycle_id": null, "to_fleet_id": null })
+    );
+    assert_eq!(
+        transfer_command["versions"][0]["simulateHrefTemplate"],
+        "/contexts/bike-rental/aggregates/rental-fleet/{aggregateId}/commands/transfer-bicycle/simulate"
+    );
 
     let tests = app
         .clone()

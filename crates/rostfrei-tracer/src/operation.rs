@@ -53,6 +53,8 @@ pub enum CompletedDecision {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PredictedDomainEvent {
+    pub aggregate_type: String,
+    pub aggregate_id: String,
     pub ordinal: u32,
     pub predicted_stream_version: u64,
     pub event_type: String,

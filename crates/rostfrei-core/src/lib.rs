@@ -7,8 +7,8 @@ mod memory;
 mod store;
 
 pub use aggregate::{
-    Aggregate, AggregateInstance, CommandHandler, Event, EventCodec, EventCodecError,
-    EventCodecErrorKind, EventVariant, JsonEventCodec,
+    Aggregate, AggregateInstance, Event, EventCodec, EventCodecError, EventCodecErrorKind,
+    EventVariant, JsonEventCodec,
 };
 pub use domain_event::{
     CommittedDomainEvent, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
@@ -19,7 +19,8 @@ pub use envelope::{
     MAX_EVENT_TYPE_LEN, MAX_EVENTS_PER_BATCH, NewEvent, RecordedEvent, StreamVersion,
 };
 pub use executor::{
-    CommandExecutionError, CommandOutcome, CommandReceipt, CommandResult, Executor,
+    CommandContext, CommandDecision, CommandExecutionError, CommandHandler, CommandHandlingResult,
+    CommandOutcome, CommandReceipt, CommandResult, Executor, LoadedAggregate, SimulatedParticipant,
     SimulationDecision, SimulationError, SimulationOutcome,
 };
 pub use identity::{

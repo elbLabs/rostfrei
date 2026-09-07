@@ -1,4 +1,3 @@
-pub mod application;
 mod bike_rental_nats;
 pub mod demo;
 mod domain;

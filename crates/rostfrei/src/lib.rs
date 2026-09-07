@@ -64,14 +64,17 @@ pub use query_bus::{
 };
 pub use rostfrei_core::{
     Aggregate, AggregateId as StreamAggregateId, AggregateInstance,
-    AggregateType as StreamAggregateType, AppendOutcome, CommandExecutionError, CommandHandler,
-    CommandOutcome, CommandReceipt, CommandResult, CommittedDomainEvent, ContentFingerprint,
-    DomainEventDispatcher, DomainEventRegistrationError, EventBatch, EventCodec, EventCodecError,
-    EventCodecErrorKind, EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind,
-    EventTransaction, EventVariant, ExecutionMetadata, Executor, ExpectedVersion,
-    InMemoryEventStore, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent,
-    SimulationDecision, SimulationError, SimulationOutcome, StreamId, StreamVersion,
-    TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
+    AggregateType as StreamAggregateType, AppendOutcome, CommandContext, CommandDecision,
+    CommandExecutionError, CommandHandler, CommandHandlingResult, CommandOutcome, CommandReceipt,
+    CommandResult, CommittedDomainEvent, ContentFingerprint, DomainEventDispatchOutcome,
+    DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
+    DomainEventHandlerErrorKind, DomainEventRegistrationError, EventBatch, EventCodec,
+    EventCodecError, EventCodecErrorKind, EventHistory, EventId, EventStore, EventStoreError,
+    EventStoreErrorKind, EventTransaction, EventVariant, ExecutionMetadata, Executor,
+    ExpectedVersion, InMemoryEventStore, LoadedAggregate, MAX_TRANSACTION_ITEMS, NewEvent,
+    OperationId, RecordedEvent, SimulatedParticipant, SimulationDecision, SimulationError,
+    SimulationOutcome, StreamId, StreamVersion, TransactionAppendOutcome, TransactionParticipant,
+    TransactionReceipt, TransactionStreamReceipt,
 };
 pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};
 pub use rostfrei_macros::QueryDefinition;

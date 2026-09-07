@@ -5,15 +5,13 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei::{
-    Aggregate as RuntimeAggregate, AggregateInstance, Apply, CommandExecutionError, CommandHandler,
-    CommandOutcome, CommittedDomainEvent, ContentFingerprint, DomainEventDispatcher, EventBatch,
+    Aggregate as RuntimeAggregate, AggregateInstance, Apply, CommandContext, CommandDecision,
+    CommandExecutionError, CommandHandler, CommandHandlingResult, CommandOutcome,
+    CommittedDomainEvent, ContentFingerprint, DomainEventDispatchOutcome, DomainEventDispatcher,
+    DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind, EventBatch,
     EventCodec, EventCodecError, EventCodecErrorKind, EventStore, EventVariant, ExecutionMetadata,
     Executor, ExpectedVersion, InMemoryEventStore, Initialize, NewEvent, OperationId,
     RecordedEvent, StreamAggregateId, StreamId,
-};
-use rostfrei_core::{
-    DomainEventDispatchOutcome, DomainEventHandler, DomainEventHandlerError,
-    DomainEventHandlerErrorKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -187,19 +185,23 @@ struct DepositAndObserve {
     amount: i64,
 }
 
+#[async_trait]
 impl CommandHandler<DepositAndObserve> for AccountAggregate {
     type Rejection = &'static str;
 
-    fn handle(
+    async fn handle(
         command: &DepositAndObserve,
         aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        _context: &mut CommandContext<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
         if aggregate.state().id.0 != command.account_id {
-            return Err("stream identity was not used to initialize the aggregate");
+            return Ok(CommandDecision::Rejected(
+                "stream identity was not used to initialize the aggregate",
+            ));
         }
         aggregate.deposit(command.amount);
         aggregate.observe_balance();
-        Ok(())
+        Ok(CommandDecision::Accepted)
     }
 }
 
@@ -207,15 +209,17 @@ struct DepositThenReject {
     amount: i64,
 }
 
+#[async_trait]
 impl CommandHandler<DepositThenReject> for AccountAggregate {
     type Rejection = &'static str;
 
-    fn handle(
+    async fn handle(
         command: &DepositThenReject,
         aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        _context: &mut CommandContext<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
         aggregate.deposit(command.amount);
-        Err("deliberate rejection")
+        Ok(CommandDecision::Rejected("deliberate rejection"))
     }
 }
 

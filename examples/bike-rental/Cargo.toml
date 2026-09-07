@@ -11,7 +11,6 @@ async-trait.workspace = true
 base64.workspace = true
 axum.workspace = true
 rostfrei = { path = "../../crates/rostfrei" }
-rostfrei-core = { path = "../../crates/rostfrei-core" }
 rostfrei-fixtures = { path = "../../crates/rostfrei-fixtures" }
 rostfrei-tracer = { path = "../../crates/rostfrei-tracer", features = ["http"] }
 rostfrei-messaging-core = { path = "../../crates/rostfrei-messaging-core" }
@@ -24,6 +23,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+rostfrei-core = { path = "../../crates/rostfrei-core" }
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
 

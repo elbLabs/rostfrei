@@ -1,6 +1,7 @@
 mod apply;
 mod command;
 mod event;
+mod handler;
 mod rejection;
 mod service;
 

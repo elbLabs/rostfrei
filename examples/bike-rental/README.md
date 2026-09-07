@@ -19,47 +19,56 @@ compiled domain metadata without depending on a production application:
 
 ## Command involving two aggregates
 
-`TransferBicycle` demonstrates a command involving two instances of
-`RentalFleetAggregate`. The source fleet comes from `ExecutionMetadata` and the destination fleet
-from `to_fleet_id` in the payload:
+`TransferBicycle` demonstrates the normal `CommandHandler<C>` API with two instances of
+`RentalFleetAggregate`. The executor supplies the source fleet as the explicit primary aggregate.
+The handler loads the destination named by `to_fleet_id` through `CommandContext`, delegates the
+business decision, and includes the destination when accepted:
 
 ```rust
-let command = TransferBicycle {
-    bicycle_id: BicycleId::new("bike-42").unwrap(),
-    to_fleet_id: FleetId::new("harbor-fleet").unwrap(),
-};
+#[async_trait]
+impl CommandHandler<TransferBicycle> for RentalFleetAggregate {
+    type Rejection = BicycleTransferRejected;
 
-let outcome = TransferBicycleHandler::new(store)
-    .handle(source_execution_metadata, &command)
-    .await?;
+    async fn handle(
+        command: &TransferBicycle,
+        source: &mut AggregateInstance<Self>,
+        context: &mut CommandContext<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        if let Err(rejection) = BicycleTransfer::validate_route(source, command) {
+            return Ok(CommandDecision::Rejected(rejection));
+        }
+
+        let mut destination = context
+            .load::<RentalFleetAggregate>(command.to_fleet_id.as_str())
+            .await?;
+
+        match BicycleTransfer::transfer(source, destination.aggregate_mut(), command) {
+            Ok(()) => {
+                context.include(destination)?;
+                Ok(CommandDecision::Accepted)
+            }
+            Err(rejection) => Ok(CommandDecision::Rejected(rejection)),
+        }
+    }
+}
 ```
 
-The application handler loads both aggregate streams and delegates the business decision to the
-`BicycleTransfer` domain service. The service validates both aggregates before changing either of
-them, then raises one event on each instance:
+`BicycleTransfer` remains responsible for the domain behavior: it validates both aggregates before
+changing either one and raises `BicycleTransferredOut` on the source and `BicycleTransferredIn` on
+the destination. The handler itself raises no events. `Executor` commits both participants in one
+atomic event-store transaction with both expected stream versions, and retries the complete command
+attempt after a conflict.
 
-- `BicycleTransferredOut` belongs to the source stream;
-- `BicycleTransferredIn` belongs to the destination stream.
+`TransferBicycle` is registered through the same `CommandProcessor`, NATS worker, and Tracer paths as
+the single-aggregate commands. `tests/transfer.rs` covers in-memory execution and simulation, direct
+execution against `NatsEventStore`, and a separate end-to-end command transport path from
+`CommandBus` through the NATS worker and `CommandProcessor` to both aggregate streams.
 
-Each `AggregateInstance` keeps its own uncommitted events. The application handler encodes those
-two collections as separate `EventBatch` values and commits them together using one
-`EventTransaction`. Both expected stream versions are checked and both batches are appended
-atomically. The resulting `TransactionReceipt` exposes committed events grouped by stream through
-`streams()` or flattened through `events()`.
-
-This orchestration deliberately lives above Rostfrei's aggregate-bound `CommandHandler<C>` trait,
-which receives exactly one `AggregateInstance<Self>`. It is invoked directly rather than registered
-with the current `CommandProcessor`; consequently, the real NATS coverage proves the atomic
-`NatsEventStore` transaction but does not pass through NATS command transport. See
-`src/application/mod.rs` for the application flow and `tests/transfer.rs` for In-Memory and real
-NATS coverage.
-
-Run the real NATS transfer test against NATS Server 2.12.1 or newer:
+Run the ignored real-NATS transfer tests against NATS Server 2.12.1 or newer:
 
 ```sh
 ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
-  cargo test --locked -p bike-rental --test transfer \
-  handler_atomically_transfers_with_real_nats -- --ignored --exact
+  cargo test --locked -p bike-rental --test transfer -- --ignored --test-threads=1
 ```
 
 Print the compiled domain model:

@@ -17,8 +17,9 @@ use axum::{
 #[cfg(feature = "http")]
 use http_body_util::BodyExt as _;
 use rostfrei_core::{
-    AggregateInstance, CommandHandler, EventHistory, EventStoreError, EventStoreErrorKind,
-    InMemoryEventStore, RecordedEvent, StreamId,
+    AggregateInstance, CommandContext, CommandDecision, CommandExecutionError, CommandHandler,
+    EventHistory, EventStoreError, EventStoreErrorKind, InMemoryEventStore, RecordedEvent,
+    StreamId,
 };
 use rostfrei_messaging_core::MessageSeries;
 use rostfrei_registry::DomainRegistry;
@@ -113,6 +114,7 @@ struct TestCommand {
     reject: bool,
     panic: Option<bool>,
     padding: Option<String>,
+    secondary_aggregate_id: Option<String>,
 }
 
 #[derive(domain::DomainError)]
@@ -124,6 +126,7 @@ struct TestCommand {
 )]
 struct TestRejection;
 
+#[async_trait]
 impl CommandHandler<TestCommand> for TestAggregate {
     type Rejection = TestRejection;
 
@@ -131,21 +134,31 @@ impl CommandHandler<TestCommand> for TestAggregate {
         clippy::panic_in_result_fn,
         reason = "the panic path is the behavior exercised by operation panic tests"
     )]
-    fn handle(
+    async fn handle(
         command: &TestCommand,
         aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        context: &mut CommandContext<'_>,
+    ) -> Result<CommandDecision<Self::Rejection>, CommandExecutionError> {
         assert!(
             command.panic != Some(true),
             "deliberate command handler panic"
         );
         if command.reject {
-            return Err(TestRejection);
+            return Ok(CommandDecision::Rejected(TestRejection));
         }
         aggregate.raise(TestEvent {
             sensitive: "accepted outcome details".to_owned(),
         });
-        Ok(())
+        if let Some(secondary_aggregate_id) = &command.secondary_aggregate_id {
+            let mut secondary = context
+                .load::<OtherTestAggregate>(secondary_aggregate_id)
+                .await?;
+            secondary.aggregate_mut().raise(TestEvent {
+                sensitive: "secondary accepted outcome details".to_owned(),
+            });
+            context.include(secondary)?;
+        }
+        Ok(CommandDecision::Accepted)
     }
 }
 
@@ -195,20 +208,22 @@ struct OtherTestCommand {
     reject: bool,
 }
 
+#[async_trait]
 impl CommandHandler<OtherTestCommand> for OtherTestAggregate {
     type Rejection = TestRejection;
 
-    fn handle(
+    async fn handle(
         command: &OtherTestCommand,
         aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        _context: &mut CommandContext<'_>,
+    ) -> Result<CommandDecision<Self::Rejection>, CommandExecutionError> {
         if command.reject {
-            return Err(TestRejection);
+            return Ok(CommandDecision::Rejected(TestRejection));
         }
         aggregate.raise(TestEvent {
             sensitive: "other accepted outcome details".to_owned(),
         });
-        Ok(())
+        Ok(CommandDecision::Accepted)
     }
 }
 
@@ -446,6 +461,38 @@ async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
         "operation failure details are redacted"
     );
     assert!(!failure_trace.contains("reject must be a boolean"));
+}
+
+#[tokio::test]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "serialized operation fixtures use required predicted event fields"
+)]
+async fn simulation_preserves_stream_identity_for_all_participant_events() {
+    let tracer = tracer(1024);
+
+    submit(
+        &tracer,
+        "multi-participant-simulation",
+        json!({
+            "reject": false,
+            "secondary_aggregate_id": "secondary-1"
+        }),
+    )
+    .await;
+    let operation = terminal_operation(&tracer, "multi-participant-simulation").await;
+    let events = operation["result"]["predictedEvents"]
+        .as_array()
+        .expect("accepted simulation exposes predicted events");
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["aggregateType"], AGGREGATE_TYPE);
+    assert_eq!(events[0]["aggregateId"], "aggregate-1");
+    assert_eq!(events[0]["predictedStreamVersion"], 1);
+    assert_eq!(events[1]["aggregateType"], OTHER_AGGREGATE_TYPE);
+    assert_eq!(events[1]["aggregateId"], "secondary-1");
+    assert_eq!(events[1]["predictedStreamVersion"], 1);
 }
 
 #[tokio::test]

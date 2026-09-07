@@ -18,22 +18,29 @@ impl DomainServiceDefinition for BicycleTransfer {
 }
 
 impl BicycleTransfer {
+    pub fn validate_route(
+        source: &AggregateInstance<RentalFleetAggregate>,
+        command: &TransferBicycle,
+    ) -> Result<(), BicycleTransferRejected> {
+        if source.state().fleet_id() == &command.to_fleet_id {
+            return Err(Self::rejection(
+                source,
+                command,
+                BicycleTransferRejectionReason::SameFleet,
+            ));
+        }
+        Ok(())
+    }
+
     pub fn transfer(
         source: &mut AggregateInstance<RentalFleetAggregate>,
         destination: &mut AggregateInstance<RentalFleetAggregate>,
         command: &TransferBicycle,
     ) -> Result<(), BicycleTransferRejected> {
+        Self::validate_route(source, command)?;
         let from_fleet_id = source.state().fleet_id().clone();
-        let rejection = |reason| BicycleTransferRejected {
-            bicycle_id: command.bicycle_id.clone(),
-            from_fleet_id: from_fleet_id.clone(),
-            to_fleet_id: command.to_fleet_id.clone(),
-            reason,
-        };
+        let rejection = |reason| Self::rejection(source, command, reason);
 
-        if from_fleet_id == command.to_fleet_id {
-            return Err(rejection(BicycleTransferRejectionReason::SameFleet));
-        }
         if destination.state().fleet_id() != &command.to_fleet_id {
             return Err(rejection(
                 BicycleTransferRejectionReason::DestinationFleetMismatch,
@@ -79,5 +86,18 @@ impl BicycleTransfer {
         source.raise(transferred_out);
         destination.raise(transferred_in);
         Ok(())
+    }
+
+    fn rejection(
+        source: &AggregateInstance<RentalFleetAggregate>,
+        command: &TransferBicycle,
+        reason: BicycleTransferRejectionReason,
+    ) -> BicycleTransferRejected {
+        BicycleTransferRejected {
+            bicycle_id: command.bicycle_id.clone(),
+            from_fleet_id: source.state().fleet_id().clone(),
+            to_fleet_id: command.to_fleet_id.clone(),
+            reason,
+        }
     }
 }

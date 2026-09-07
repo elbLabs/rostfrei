@@ -2,10 +2,12 @@
 
 use std::{convert::Infallible, error::Error, sync::Arc, time::Duration};
 
+use async_trait::async_trait;
 use rostfrei::{
-    Aggregate, AggregateInstance, Apply, BoundedContext, Command, CommandBus, CommandHandler,
-    CommandMessageAdapter, CommandProcessor, CommandRequest, CommittedDomainEvent, DomainEvent,
-    DomainEventDispatcher, Entity, EventStore, InMemoryEventStore, InMemoryMessagingAdapter,
+    Aggregate, AggregateInstance, Apply, BoundedContext, Command, CommandBus, CommandContext,
+    CommandDecision, CommandHandler, CommandHandlingResult, CommandMessageAdapter,
+    CommandProcessor, CommandRequest, CommittedDomainEvent, DomainEvent, DomainEventDispatcher,
+    Entity, EventStore, InMemoryEventStore, InMemoryMessagingAdapter,
     InfallibleCommandRejectionMapper, Initialize, IntegrationCommand, IntegrationCommandMapper,
     IntegrationEvent, IntegrationEventBus, IntegrationEventCommandHandler,
     IntegrationEventDispatcherExt, IntegrationEventMapper, IntegrationMessageAdapter, OperationId,
@@ -101,31 +103,35 @@ struct CreditAccount {
 #[domain(id = "observe-balance", label = "Observe balance")]
 struct ObserveBalance;
 
+#[async_trait]
 impl CommandHandler<CreditAccount> for AccountAggregate {
     type Rejection = Infallible;
 
-    fn handle(
+    async fn handle(
         command: &CreditAccount,
         aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        _context: &mut CommandContext<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
         aggregate.raise(AccountCredited {
             amount: command.amount,
         });
-        Ok(())
+        Ok(CommandDecision::Accepted)
     }
 }
 
+#[async_trait]
 impl CommandHandler<ObserveBalance> for AccountAggregate {
     type Rejection = Infallible;
 
-    fn handle(
+    async fn handle(
         _command: &ObserveBalance,
         aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        _context: &mut CommandContext<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
         aggregate.raise(BalanceObserved {
             balance: aggregate.state().balance,
         });
-        Ok(())
+        Ok(CommandDecision::Accepted)
     }
 }
 

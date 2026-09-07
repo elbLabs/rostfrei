@@ -9,15 +9,15 @@ use super::{
 };
 use crate::{
     demo::{apply_demo_fixture, demo_stream},
-    rental_fleet::{BicycleId, BicycleRented, RentBicycle, RentalFleetAggregate},
+    rental_fleet::{BicycleId, BicycleRented, RentBicycle, RentalFleetAggregate, TransferBicycle},
 };
 use rostfrei::{
-    CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest, DomainEventDispatcher,
-    DynamicCommandRequest, EventStore, InMemoryEventStore, InMemoryMessagingAdapter,
-    IntegrationEventBus, IntegrationEventDispatcherExt, IntegrationMessageAdapter,
-    JsonDomainRejectionMapper, OperationId,
+    Command, CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest,
+    DomainEventDispatchOutcome, DomainEventDispatcher, DynamicCommandRequest, EventStore,
+    InMemoryEventStore, InMemoryMessagingAdapter, IntegrationEventBus,
+    IntegrationEventDispatcherExt, IntegrationMessageAdapter, JsonDomainRejectionMapper,
+    OperationId,
 };
-use rostfrei_core::DomainEventDispatchOutcome;
 use rostfrei_messaging_core::{
     CallerMetadata, CausationId, CommandRejectionClassification, CommandResponseOutcome,
     CorrelationId, DeliveryDisposition, DeliveryInfo, MessageDelivery, MessageHandler, MessageId,
@@ -54,6 +54,10 @@ fn command_bus(
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one configuration test keeps normal and test route derivation assertions together"
+)]
 fn nats_configuration_derives_normal_and_test_resources_from_one_application() -> TestResult {
     let config = BikeRentalNatsConfig::new(APPLICATION_NAME)?;
     let test = BikeRentalNatsConfig::new_test(APPLICATION_NAME)?;
@@ -64,6 +68,29 @@ fn nats_configuration_derives_normal_and_test_resources_from_one_application() -
             .address()
             .as_str(),
         "bike-rental.command.bike-rental.rent-bicycle"
+    );
+    assert_eq!(config.command_routes().len(), 4);
+    assert_eq!(
+        config
+            .command_route(BikeRentalCommand::TransferBicycle)
+            .address()
+            .as_str(),
+        "bike-rental.command.bike-rental.transfer-bicycle"
+    );
+    assert_eq!(
+        config
+            .command_route(BikeRentalCommand::TransferBicycle)
+            .consumer()
+            .durable_name()
+            .as_str(),
+        "bike-rental--bike-rental--transfer-bicycle--v1"
+    );
+    assert_eq!(
+        config
+            .command_route(BikeRentalCommand::TransferBicycle)
+            .command()
+            .command_name(),
+        TransferBicycle::LOCAL_ID
     );
     assert_eq!(
         config.messaging().topology().command_stream().as_str(),
@@ -103,6 +130,12 @@ fn nats_configuration_derives_normal_and_test_resources_from_one_application() -
             .address()
             .as_str(),
         "bike-rental.test.command.bike-rental.rent-bicycle"
+    );
+    assert_eq!(
+        test.command_route(BikeRentalCommand::TransferBicycle)
+            .address()
+            .as_str(),
+        "bike-rental.test.command.bike-rental.transfer-bicycle"
     );
     assert_eq!(
         test.messaging().topology().command_stream().as_str(),

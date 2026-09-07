@@ -39,7 +39,7 @@ use crate::{
     demo::{DemoFixtureError, apply_fixture as apply_message_series_fixture},
     rental_fleet::{
         AddBicycle, BicycleId, BicycleRented, FleetId, RentBicycle, RentalFleetAggregate,
-        ReturnBicycle,
+        ReturnBicycle, TransferBicycle,
     },
 };
 
@@ -178,6 +178,7 @@ pub enum BikeRentalCommand {
     RentBicycle,
     ReturnBicycle,
     AddBicycle,
+    TransferBicycle,
 }
 
 impl BikeRentalCommand {
@@ -186,6 +187,7 @@ impl BikeRentalCommand {
             Self::RentBicycle => RentBicycle::LOCAL_ID,
             Self::ReturnBicycle => ReturnBicycle::LOCAL_ID,
             Self::AddBicycle => AddBicycle::LOCAL_ID,
+            Self::TransferBicycle => TransferBicycle::LOCAL_ID,
         }
     }
 
@@ -194,6 +196,7 @@ impl BikeRentalCommand {
             Self::RentBicycle => RentBicycle::SCHEMA_VERSION,
             Self::ReturnBicycle => ReturnBicycle::SCHEMA_VERSION,
             Self::AddBicycle => AddBicycle::SCHEMA_VERSION,
+            Self::TransferBicycle => TransferBicycle::SCHEMA_VERSION,
         }
     }
 }
@@ -243,7 +246,7 @@ pub struct BikeRentalNatsConfig {
     messaging: ApplicationMessagingConfig,
     event_store: NatsEventStoreConfig,
     domain_event_consumer: NatsDomainEventConsumerConfig,
-    command_routes: [BikeRentalCommandRoute; 3],
+    command_routes: [BikeRentalCommandRoute; 4],
     integration_event_route: BikeRentalIntegrationEventRoute,
 }
 
@@ -303,6 +306,7 @@ impl BikeRentalNatsConfig {
             command_route(&context, BikeRentalCommand::RentBicycle)?,
             command_route(&context, BikeRentalCommand::ReturnBicycle)?,
             command_route(&context, BikeRentalCommand::AddBicycle)?,
+            command_route(&context, BikeRentalCommand::TransferBicycle)?,
         ];
         let integration_event_route = integration_event_route(&context)?;
         Ok(Self {
@@ -341,16 +345,17 @@ impl BikeRentalNatsConfig {
         &self.domain_event_consumer
     }
 
-    pub const fn command_routes(&self) -> &[BikeRentalCommandRoute; 3] {
+    pub const fn command_routes(&self) -> &[BikeRentalCommandRoute; 4] {
         &self.command_routes
     }
 
     pub const fn command_route(&self, command: BikeRentalCommand) -> &BikeRentalCommandRoute {
-        let [rent, returned, added] = &self.command_routes;
+        let [rent, returned, added, transferred] = &self.command_routes;
         match command {
             BikeRentalCommand::RentBicycle => rent,
             BikeRentalCommand::ReturnBicycle => returned,
             BikeRentalCommand::AddBicycle => added,
+            BikeRentalCommand::TransferBicycle => transferred,
         }
     }
 
@@ -734,6 +739,9 @@ impl BikeRentalNatsRuntime {
             JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
         )?;
         processor.register::<RentalFleetAggregate, AddBicycle>(InfallibleCommandRejectionMapper)?;
+        processor.register::<RentalFleetAggregate, TransferBicycle>(
+            JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
+        )?;
         Ok(Arc::new(processor))
     }
 

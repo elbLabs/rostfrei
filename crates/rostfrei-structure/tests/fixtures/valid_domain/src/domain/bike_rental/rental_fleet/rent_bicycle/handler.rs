@@ -1,10 +1,15 @@
+#[async_trait]
 impl CommandHandler<RentBicycle> for RentalFleetAggregate {
     type Rejection = BicycleUnavailable;
 
-    fn handle(
-        instance: &mut AggregateInstance<Self>,
-        command: RentBicycle,
-    ) -> Result<(), Self::Rejection> {
-        instance.rent_bicycle(command.bicycle_id)
+    async fn handle(
+        command: &RentBicycle,
+        primary: &mut AggregateInstance<Self>,
+        _context: &mut CommandContext<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        match primary.rent_bicycle(command.bicycle_id) {
+            Ok(()) => Ok(CommandDecision::Accepted),
+            Err(rejection) => Ok(CommandDecision::Rejected(rejection)),
+        }
     }
 }

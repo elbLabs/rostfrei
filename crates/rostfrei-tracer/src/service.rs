@@ -466,7 +466,7 @@ impl TracerBuilder {
     pub fn register_json<A, C>(&mut self) -> Result<&mut Self, RuntimeRegistrationError>
     where
         A: Aggregate + CommandHandler<C> + 'static,
-        C: CommandDefinition<A> + domain::JsonCommandPayload,
+        C: CommandDefinition<A> + domain::JsonCommandPayload + Sync,
         A::State: Send,
         A::Event: Event + Send,
         <A as CommandHandler<C>>::Rejection: domain::JsonErrorPayload,
@@ -481,7 +481,7 @@ impl TracerBuilder {
     ) -> Result<&mut Self, RuntimeRegistrationError>
     where
         A: Aggregate + CommandHandler<C> + 'static,
-        C: CommandDefinition<A>,
+        C: CommandDefinition<A> + Sync,
         A::State: Send,
         A::Event: Event + Send,
         Provider: CommandInputOptions<A, C> + 'static,
@@ -2247,8 +2247,8 @@ impl Tracer {
                 );
                 for event in &events {
                     let message_id = ContentFingerprint::digest(format!(
-                        "{correlation_id}:predicted-domain-event:{}",
-                        event.ordinal
+                        "{correlation_id}:predicted-domain-event:{}:{}:{}",
+                        event.aggregate_type, event.aggregate_id, event.ordinal
                     ))
                     .to_hex();
                     let mut observation = DomainEventObservation::new(
@@ -2257,10 +2257,7 @@ impl Tracer {
                         event.schema_version,
                     )
                     .with_causation_id(&simulated_command_id)
-                    .with_aggregate(
-                        simulation_aggregate.aggregate_type.clone(),
-                        simulation_aggregate.id.clone(),
-                    )
+                    .with_aggregate(event.aggregate_type.clone(), event.aggregate_id.clone())
                     .with_stream_version(event.predicted_stream_version);
                     if let Some(payload) = event.payload.clone() {
                         observation = observation.with_payload(payload);

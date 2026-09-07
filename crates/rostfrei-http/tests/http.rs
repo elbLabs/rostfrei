@@ -11,11 +11,12 @@ use axum::{
 use http_body_util::BodyExt as _;
 use rostfrei::{
     Aggregate, AggregateInstance, ApplicationErrorCode, ApplicationName, Command, CommandBus,
-    CommandBusError, CommandBusErrorKind, CommandBusObserver, CommandBusReceipt, CommandHandler,
-    CommandMessageAdapter, CommandPublication, DomainRegistry, EncodedCommand,
-    InMemoryQueryAdapter, MessageId, QueryDefinition, QueryErrorClassification, QueryErrorPayload,
-    QueryHandler, QueryHandlerRequest, QueryMessageAdapter, QueryOptions, QueryProcessor, StreamId,
-    TraceContext, command_response_message_id,
+    CommandBusError, CommandBusErrorKind, CommandBusObserver, CommandBusReceipt, CommandContext,
+    CommandDecision, CommandHandler, CommandHandlingResult, CommandMessageAdapter,
+    CommandPublication, DomainRegistry, EncodedCommand, InMemoryQueryAdapter, MessageId,
+    QueryDefinition, QueryErrorClassification, QueryErrorPayload, QueryHandler,
+    QueryHandlerRequest, QueryMessageAdapter, QueryOptions, QueryProcessor, StreamId, TraceContext,
+    command_response_message_id,
 };
 use rostfrei_http::{HttpApiConfig, HttpApiConfigError, router};
 use serde::{Deserialize, Serialize};
@@ -41,14 +42,16 @@ impl Aggregate for ProductAggregate {
 #[domain(id = "update-product", label = "Update product")]
 struct UpdateProduct;
 
+#[async_trait]
 impl CommandHandler<UpdateProduct> for ProductAggregate {
     type Rejection = Infallible;
 
-    fn handle(
+    async fn handle(
         _command: &UpdateProduct,
         _aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        Ok(())
+        _context: &mut CommandContext<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        Ok(CommandDecision::Accepted)
     }
 }
 
