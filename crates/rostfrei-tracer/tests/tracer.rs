@@ -2377,7 +2377,8 @@ fn resettable_tracer(reset: Arc<dyn TestScenarioReset>) -> Tracer {
         .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
         .with_dispatch_transport(Arc::new(FakeTransport::accepted("dispatch", false)))
         .with_test_scenario_reset(reset)
-        .with_default_test_fixture(empty_fixture("default-fixture"));
+        .with_default_test_fixture(empty_fixture("default-fixture"))
+        .with_test_fixture(empty_fixture("other-fixture"));
     builder
         .register_json::<TestAggregate, TestCommand>()
         .unwrap();
@@ -2394,6 +2395,27 @@ async fn standalone_reset_applies_the_default_fixture() {
     assert_eq!(
         reset.fixture_ids.lock().await.as_slice(),
         ["default-fixture"]
+    );
+}
+
+#[tokio::test]
+async fn standalone_reset_applies_an_explicit_fixture() {
+    let reset = Arc::new(RecordingReset::default());
+    let tracer = resettable_tracer(reset.clone());
+
+    tracer
+        .reset_test_scenario_with_fixture("other-fixture")
+        .await
+        .unwrap();
+
+    assert_eq!(reset.fixture_ids.lock().await.as_slice(), ["other-fixture"]);
+    assert_eq!(
+        tracer
+            .reset_test_scenario_with_fixture("missing-fixture")
+            .await,
+        Err(TestScenarioResetError::UnknownFixture(
+            "missing-fixture".to_owned()
+        ))
     );
 }
 

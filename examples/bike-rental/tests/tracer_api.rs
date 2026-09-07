@@ -488,6 +488,10 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(catalog["catalogVersion"], 1);
     assert_eq!(catalog["testScenario"]["resetHref"], "/test-scenario/reset");
     assert_eq!(
+        catalog["testScenario"]["fixtureResetHrefTemplate"],
+        "/test-scenario/reset/{fixtureId}"
+    );
+    assert_eq!(
         catalog["testScenario"]["fixtures"],
         json!(["demo-fleet", "rented-demo-fleet"])
     );
@@ -1295,6 +1299,37 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
         .await
         .unwrap();
     assert_eq!(unauthorized_reset.status(), StatusCode::UNAUTHORIZED);
+
+    let missing_fixture = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri("/test-scenario/reset/missing-fixture")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing_fixture.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        json_body(missing_fixture).await["code"],
+        "fixture-not-found"
+    );
+
+    let named_reset = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri("/test-scenario/reset/rented-demo-fleet")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(named_reset.status(), StatusCode::NO_CONTENT);
+    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 2);
 
     let reset = app
         .clone()

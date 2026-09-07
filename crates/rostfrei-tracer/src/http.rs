@@ -119,6 +119,10 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
             get(get_test_fixture),
         )
         .route("/test-scenario/reset", post(reset_test_scenario))
+        .route(
+            "/test-scenario/reset/{fixture_id}",
+            post(reset_test_scenario_with_fixture),
+        )
         .layer(middleware::from_fn_with_state(
             config.clone(),
             authorize_control_request,
@@ -452,6 +456,20 @@ async fn submit_command(
 
 async fn reset_test_scenario(State(state): State<HttpState>) -> Response {
     match state.tracer.reset_test_scenario().await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => test_scenario_error_response(&error),
+    }
+}
+
+async fn reset_test_scenario_with_fixture(
+    State(state): State<HttpState>,
+    Path(fixture_id): Path<String>,
+) -> Response {
+    match state
+        .tracer
+        .reset_test_scenario_with_fixture(&fixture_id)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => test_scenario_error_response(&error),
     }
@@ -901,6 +919,9 @@ fn test_scenario_error_response(error: &TestScenarioResetError) -> Response {
     let (status, code, retry_after) = match error {
         TestScenarioResetError::Unavailable => {
             (StatusCode::NOT_IMPLEMENTED, "reset-unavailable", false)
+        }
+        TestScenarioResetError::UnknownFixture(_) => {
+            (StatusCode::NOT_FOUND, "fixture-not-found", false)
         }
         TestScenarioResetError::Failed(_) => {
             (StatusCode::SERVICE_UNAVAILABLE, "reset-failed", true)

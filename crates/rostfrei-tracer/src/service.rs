@@ -116,6 +116,8 @@ pub trait TestScenarioReset: Send + Sync {
 pub enum TestScenarioResetError {
     #[error("test scenario reset is not configured")]
     Unavailable,
+    #[error("test fixture `{0}` is not registered")]
+    UnknownFixture(String),
     #[error("test scenario reset failed: {0}")]
     Failed(String),
 }
@@ -1373,6 +1375,19 @@ impl Tracer {
             .inner
             .default_test_fixture()
             .ok_or(TestScenarioResetError::Unavailable)?;
+        self.reset_test_scenario_unlocked(fixture).await
+    }
+
+    pub async fn reset_test_scenario_with_fixture(
+        &self,
+        fixture_id: &str,
+    ) -> Result<(), TestScenarioResetError> {
+        let _test_run = self.inner.test_run_gate.lock().await;
+        let fixture = self
+            .inner
+            .test_fixtures
+            .get(fixture_id)
+            .ok_or_else(|| TestScenarioResetError::UnknownFixture(fixture_id.to_owned()))?;
         self.reset_test_scenario_unlocked(fixture).await
     }
 
