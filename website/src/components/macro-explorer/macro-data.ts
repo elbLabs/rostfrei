@@ -203,13 +203,13 @@ pub enum BicycleCondition {
   {
     name: "DomainService",
     family: "derive",
-    headline: "Put cross-entity behavior in context.",
+    headline: "Put cross-object behavior in context.",
     description:
-      "The derive names the service; DomainServiceDefinition supplies the only required relationship.",
+      "The derive names a stateless service marker; DomainServiceDefinition binds it to one bounded context.",
     points: [
       "Non-generic unit struct",
       "Context relationship is explicit",
-      "No implicit actions",
+      "Focused Actions and Policies stay ordinary traits",
     ],
     file: "src/domain/<context>/<service>/service.rs",
     authored: `#[derive(DomainService)]

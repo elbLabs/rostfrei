@@ -48,7 +48,14 @@ export const projectStructureExamples = {
   "domain-service": {
     root: "fleet_planning",
     activeFile: "service.rs",
-    files: ["mod.rs", "service.rs"],
+    files: [
+      "mod.rs",
+      "service.rs",
+      "rebalance_fleet/action.rs",
+      "rebalance_fleet/execute.rs",
+      "assess_demand/policy.rs",
+      "assess_demand/evaluate.rs",
+    ],
   },
   "aggregate-action": {
     root: "rent_bicycle",

@@ -222,7 +222,23 @@ fn action_implementations_match_aggregate_entity_and_service_owners() {
     for path in [
         "bike_rental/rental_fleet/rent_bicycle/execute.rs",
         "bike_rental/rental_fleet/bicycle/mark_rented/execute.rs",
-        "bike_rental/fleet_planning/assess_demand/execute.rs",
+        "bike_rental/fleet_planning/rebalance_fleet/execute.rs",
+    ] {
+        assert!(domain_root.join(path).is_file(), "missing fixture {path}");
+    }
+}
+
+#[test]
+fn domain_services_may_own_actions_and_policies() {
+    let domain_root = fixture_domain("valid_domain");
+    let diagnostics = check_domain_root(&domain_root);
+
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+    for path in [
+        "bike_rental/fleet_planning/rebalance_fleet/action.rs",
+        "bike_rental/fleet_planning/rebalance_fleet/execute.rs",
+        "bike_rental/fleet_planning/assess_demand/policy.rs",
+        "bike_rental/fleet_planning/assess_demand/evaluate.rs",
     ] {
         assert!(domain_root.join(path).is_file(), "missing fixture {path}");
     }
@@ -342,6 +358,11 @@ fn invalid_evaluation_owner_contracts_emit_typed_diagnostics() {
             DiagnosticCode::InvalidStructure,
             "bike_rental/rental_fleet/wrong_aggregate_policy/evaluate.rs",
             "`WrongAggregatePolicy` must be implemented for `RentalFleetAggregate`; found `OtherAggregate`",
+        ),
+        (
+            DiagnosticCode::InvalidStructure,
+            "bike_rental/fleet_planning/wrong_service_policy/evaluate.rs",
+            "`WrongServicePolicy` must be implemented for `FleetPlanning`; found `OtherService`",
         ),
         (
             DiagnosticCode::InvalidStructure,
@@ -585,6 +606,11 @@ fn invalid_structures_emit_the_expected_diagnostic() {
             "hierarchy_entity_under_action",
             DiagnosticCode::InvalidStructure,
             "bike_rental/rental_fleet/rent_bicycle/bicycle/entity.rs",
+        ),
+        (
+            "hierarchy_policy_under_action",
+            DiagnosticCode::InvalidStructure,
+            "bike_rental/fleet_planning/rebalance_fleet/scheduling/policy.rs",
         ),
         (
             "hierarchy_transition_under_aggregate",

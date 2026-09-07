@@ -4,6 +4,10 @@
 
 Accepted.
 
+The service-owned capability boundary is clarified below. A demonstrated
+domain service may contain singular Actions and Domain Policies. The original
+decision text is retained as a historical record.
+
 ## Context
 
 `DomainService` previously combined semantic identity, bounded-context
@@ -54,3 +58,24 @@ deterministically.
 extensions and action owner kinds altogether. The service definition and
 filesystem location remain, while a nested service action is a singular
 owner-independent trait whose conceptual owner is inferred from nesting.
+
+## Later clarification: service-owned capabilities
+
+A domain service is the stateless domain owner for behavior that does not
+naturally belong to one Aggregate, Entity, or Value Object. Its focused child
+directories may contain:
+
+- an Action that coordinates domain behavior over domain objects supplied by
+  the caller; and
+- a Domain Policy that purely interprets supplied domain facts and returns a
+  business outcome.
+
+Both remain ordinary singular traits whose conceptual owner is inferred from
+their nesting beneath `service.rs`. The service derive still attaches no
+behavior implicitly.
+
+The service does not load or persist Aggregates, open transactions, access
+repositories, publish messages, or call infrastructure. Application and
+runtime code supply the participating domain objects and remain responsible
+for execution and persistence boundaries. This keeps cross-object domain
+orchestration distinct from infrastructure orchestration.
