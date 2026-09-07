@@ -8,8 +8,8 @@ runtime tools used by developers and coding agents. Macros describe the model;
 `cargo rostfrei check` validates its structure. Domain behavior stays independent
 of persistence and messaging adapters.
 
-**Status: alpha.** APIs are evolving. Use the runnable example to evaluate the
-framework.
+**Status: 0.1.** APIs are evolving. Use the runnable example to evaluate the
+framework. See the [0.1 migration guide](docs/migration-0.1.md) when upgrading.
 
 ## Start here
 

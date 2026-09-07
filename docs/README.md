@@ -9,11 +9,16 @@
 - [Agent Skills setup and use](agent-skills-install.md)
 - [Project terminology](../UBIQUITOUS_LANGUAGE.md)
 - [Release changes](../CHANGELOG.md)
+- [Migrating to 0.1](migration-0.1.md)
 - [Development and releases](development.md)
 
 ## Runtime and operations
 
 - [NATS authentication, event history, and command metadata](runtime.md)
+- [Completed-outcome cutover](completed-outcome-cutover.md)
+- [Application-linked NATS host](nats-application-host.md)
+- [Worker concurrency and shared capacity](consumer-concurrency.md)
+- [Command-response timeouts](command-response-timeout.md)
 - [Subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
   ([offline HTML guide](subjects.html))
 - [Event-driven read models](read-model-runtime.md) and [typed storage](read-models.md)
