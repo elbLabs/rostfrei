@@ -27,16 +27,15 @@ explicitly mounts a router with a shared `DomainRegistry`, `CommandBus`, and
 `QueryBus`. The router exposes only metadata registered in that registry:
 
 ```text
-GET  /contexts/{context}/queries/{query}/schemas/{schema_version}
+POST /contexts/{context}/queries/{query}/schemas/{schema_version}
 POST /contexts/{context}/aggregates/{aggregate}/{aggregate_id}/commands/{command}/schemas/{schema_version}
 ```
 
-GET query parameters form the query request JSON object. Parameter values that
-are valid JSON literals are decoded as that JSON value; other values remain
-strings. Therefore numbers, booleans, arrays, and objects have one uniform
-representation, while a numeric-looking string must be sent as a quoted JSON
-string. Repeated parameter names are rejected rather than normalized. Query
-success returns the raw JSON result with `200 OK`.
+POST query bodies contain the raw query JSON payload and require
+`Content-Type: application/json`. The decoded JSON value is passed unchanged to
+the dynamic query request and query bus, so structured and nested inputs retain
+their exact JSON representation. Query success returns the raw JSON result with
+`200 OK`.
 
 POST command bodies contain the raw command JSON payload. `Idempotency-Key` is
 mandatory and becomes the command operation ID. Because `CommandBus` waits for
@@ -68,7 +67,9 @@ route whose deployment omitted its processor binding receives the normal
 framework unknown-query or unknown-command outcome rather than silently
 selecting a handler or infrastructure environment.
 
-The generic GET representation intentionally favors a stable dynamic contract
-over framework-specific typed extractors. Applications needing resource-shaped
-URLs, repeated query parameters, custom caching, or alternate status semantics
-should place a purpose-built HTTP adapter in front of the same buses.
+Queries remain safe and idempotent by application contract even though POST is
+used to carry their JSON payload; query handlers must not mutate application
+state. The generic POST representation favors a stable, lossless dynamic
+contract over framework-specific typed extractors. Applications needing
+resource-shaped URLs, custom caching, or alternate status semantics should
+place a purpose-built HTTP adapter in front of the same buses.

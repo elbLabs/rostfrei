@@ -13,7 +13,7 @@ Cargo package:
 - `rostfrei`: application facade for the compiled domain model, typed command,
   query, and integration-event buses, event-sourcing runtime, registry, and
   public macros.
-- `rostfrei-http`: explicitly mounted standard HTTP GET query and POST command
+- `rostfrei-http`: explicitly mounted standard HTTP POST query and command
   routes backed by the shared runtime registry and application buses.
 - `rostfrei-tracer`: explicitly registered read-only simulation,
   isolated test execution, separately authorized production dispatch, bounded
@@ -86,6 +86,25 @@ store.
 The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual architecture
 decisions are recorded in [`docs/adr`](docs/adr).
+
+## Standard HTTP API
+
+Registered queries accept their JSON payload directly in a POST request:
+
+```sh
+curl --request POST \
+  --header 'content-type: application/json' \
+  --data '{"product_id":"product-1","filters":{"available":true}}' \
+  http://127.0.0.1:3000/contexts/catalog/queries/find-product/schemas/1
+```
+
+Although POST carries the query payload, registered queries remain safe and
+idempotent by application contract: query handlers must not mutate application
+state. POST is used so structured and nested query input has one lossless JSON
+representation. Query responses use `Cache-Control: private, no-store`.
+
+Commands continue to use their existing POST route, JSON body, and mandatory
+`Idempotency-Key` header.
 
 ## Macro setup
 

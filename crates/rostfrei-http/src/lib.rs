@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, RawQuery, State, rejection::JsonRejection},
+    extract::{DefaultBodyLimit, Path, State, rejection::JsonRejection},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::post,
 };
 use rostfrei::{
     CommandBus, CommandBusError, CommandBusErrorKind, CommandRejection,
@@ -16,7 +16,7 @@ use rostfrei::{
     TraceContext,
 };
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use thiserror::Error;
 
 pub const DEFAULT_MAXIMUM_COMMAND_PAYLOAD_BYTES: usize = 1024 * 1024;
@@ -147,7 +147,7 @@ pub fn router(
     Router::new()
         .route(
             "/contexts/{context}/queries/{query}/schemas/{schema_version}",
-            get(submit_query),
+            post(submit_query),
         )
         .route(
             "/contexts/{context}/aggregates/{aggregate}/{aggregate_id}/commands/{command}/schemas/{schema_version}",
@@ -168,8 +168,19 @@ async fn submit_query(
     State(state): State<HttpState>,
     Path((context, query, schema_version)): Path<(String, String, u32)>,
     headers: HeaderMap,
-    RawQuery(raw_query): RawQuery,
+    payload: Result<Json<Value>, JsonRejection>,
 ) -> Response {
+    let Json(payload) = match payload {
+        Ok(payload) => payload,
+        Err(rejection) => {
+            let code = if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                "rostfrei.http.payload-too-large"
+            } else {
+                "rostfrei.http.invalid-json"
+            };
+            return error_response(rejection.status(), code, rejection.body_text());
+        }
+    };
     if context != state.query_bus.context().name().as_str()
         || state
             .registry
@@ -180,10 +191,6 @@ async fn submit_query(
     }
     let trace_context = match trace_context(&headers) {
         Ok(trace_context) => trace_context,
-        Err(error) => return error.into_response(),
-    };
-    let payload = match query_parameters(raw_query.as_deref()) {
-        Ok(payload) => payload,
         Err(error) => return error.into_response(),
     };
     let request = match DynamicQueryRequest::new(query, schema_version, payload) {
@@ -277,76 +284,6 @@ async fn submit_command(
         ),
         Err(error) => command_bus_error(&error),
     }
-}
-
-fn query_parameter_value(value: &str) -> Value {
-    serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_owned()))
-}
-
-fn query_parameters(raw_query: Option<&str>) -> Result<Value, HttpRequestError> {
-    let mut parameters = Map::new();
-    for pair in raw_query
-        .unwrap_or_default()
-        .split('&')
-        .filter(|pair| !pair.is_empty())
-    {
-        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let name = decode_query_component(name)?;
-        let value = decode_query_component(value)?;
-        if name.is_empty() {
-            return Err(HttpRequestError::new(
-                "rostfrei.http.invalid-query-parameter",
-                "query parameter names must not be empty",
-            ));
-        }
-        if parameters
-            .insert(name, query_parameter_value(&value))
-            .is_some()
-        {
-            return Err(HttpRequestError::new(
-                "rostfrei.http.duplicate-query-parameter",
-                "query parameters must occur at most once",
-            ));
-        }
-    }
-    Ok(Value::Object(parameters))
-}
-
-fn decode_query_component(value: &str) -> Result<String, HttpRequestError> {
-    let mut decoded = Vec::with_capacity(value.len());
-    let mut bytes = value.bytes();
-    while let Some(byte) = bytes.next() {
-        match byte {
-            b'+' => decoded.push(b' '),
-            b'%' => {
-                let Some(high) = bytes.next().and_then(decode_hex_digit) else {
-                    return Err(invalid_query_encoding());
-                };
-                let Some(low) = bytes.next().and_then(decode_hex_digit) else {
-                    return Err(invalid_query_encoding());
-                };
-                let Some(byte) = high.checked_mul(16).and_then(|high| high.checked_add(low)) else {
-                    return Err(invalid_query_encoding());
-                };
-                decoded.push(byte);
-            }
-            byte => decoded.push(byte),
-        }
-    }
-    String::from_utf8(decoded).map_err(|_| invalid_query_encoding())
-}
-
-fn decode_hex_digit(byte: u8) -> Option<u8> {
-    char::from(byte)
-        .to_digit(16)
-        .and_then(|digit| u8::try_from(digit).ok())
-}
-
-fn invalid_query_encoding() -> HttpRequestError {
-    HttpRequestError::new(
-        "rostfrei.http.invalid-query-encoding",
-        "query parameters must use valid percent-encoded UTF-8",
-    )
 }
 
 fn idempotency_key(headers: &HeaderMap) -> Result<OperationId, HttpRequestError> {

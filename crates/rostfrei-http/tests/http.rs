@@ -62,12 +62,14 @@ impl CommandHandler<UpdateProduct> for ProductAggregate {
 struct FindProduct {
     product_id: String,
     limit: u32,
+    criteria: Value,
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct ProductView {
     product_id: String,
     limit: u32,
+    criteria: Value,
     traced: bool,
 }
 
@@ -79,20 +81,31 @@ impl QueryHandler<FindProduct, ProductView> for FindProductHandler {
         &self,
         request: QueryHandlerRequest<FindProduct>,
     ) -> Result<ProductView, QueryErrorPayload> {
-        if request.payload().product_id == "private" {
-            let Ok(code) = ApplicationErrorCode::new("catalog.authentication-required") else {
+        let classification = match request.payload().product_id.as_str() {
+            "invalid" => Some(QueryErrorClassification::InvalidRequest),
+            "private" => Some(QueryErrorClassification::Unauthorized),
+            "forbidden" => Some(QueryErrorClassification::Forbidden),
+            "missing" => Some(QueryErrorClassification::NotFound),
+            "conflict" => Some(QueryErrorClassification::Conflict),
+            "rate-limited" => Some(QueryErrorClassification::RateLimited),
+            "unavailable" => Some(QueryErrorClassification::Unavailable),
+            "timeout" => Some(QueryErrorClassification::Timeout),
+            "internal" => Some(QueryErrorClassification::Internal),
+            _ => None,
+        };
+        if let Some(classification) = classification {
+            let Ok(code) = ApplicationErrorCode::new("catalog.query-error") else {
                 return Err(QueryErrorPayload::internal_error());
             };
-            return Err(QueryErrorPayload::new(
-                QueryErrorClassification::Unauthorized,
-                code,
-                "Authentication is required.",
-            )
-            .unwrap_or_else(|_| QueryErrorPayload::internal_error()));
+            return Err(
+                QueryErrorPayload::new(classification, code, "The query failed.")
+                    .unwrap_or_else(|_| QueryErrorPayload::internal_error()),
+            );
         }
         Ok(ProductView {
             product_id: request.payload().product_id.clone(),
             limit: request.payload().limit,
+            criteria: request.payload().criteria.clone(),
             traced: request.trace_context().is_some_and(|trace| {
                 trace.trace_parent() == "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
             }),
@@ -156,18 +169,25 @@ async fn response_json(response: axum::response::Response) -> TestResult<Value> 
 }
 
 #[tokio::test]
-async fn registered_query_is_available_through_standard_get() -> TestResult {
+async fn registered_query_is_available_through_standard_post() -> TestResult {
     let response = app()?
         .oneshot(
             Request::builder()
-                .uri(
-                    "/contexts/catalog/queries/find-product/schemas/1?product_id=product-1&limit=2",
-                )
+                .method("POST")
+                .uri("/contexts/catalog/queries/find-product/schemas/1")
+                .header(header::CONTENT_TYPE, "application/json")
                 .header(
                     "traceparent",
                     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
                 )
-                .body(Body::empty())?,
+                .body(Body::from(
+                    json!({
+                        "product_id": "product-1",
+                        "limit": 2,
+                        "criteria": null
+                    })
+                    .to_string(),
+                ))?,
         )
         .await?;
 
@@ -178,8 +198,99 @@ async fn registered_query_is_available_through_standard_get() -> TestResult {
     );
     assert_eq!(
         response_json(response).await?,
-        json!({ "product_id": "product-1", "limit": 2, "traced": true })
+        json!({
+            "product_id": "product-1",
+            "limit": 2,
+            "criteria": null,
+            "traced": true
+        })
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn query_preserves_structured_and_nested_json_payloads() -> TestResult {
+    let criteria = json!({
+        "categories": ["bicycles", "accessories"],
+        "availability": {
+            "warehouses": [1, 3],
+            "include_backorder": false
+        },
+        "minimum_rating": 4.5
+    });
+    let response = app()?
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/contexts/catalog/queries/find-product/schemas/1")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "product_id": "product-2",
+                        "limit": 10,
+                        "criteria": criteria
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_json(response).await?["criteria"], criteria);
+    Ok(())
+}
+
+#[tokio::test]
+async fn invalid_query_json_returns_structured_http_error() -> TestResult {
+    let response = app()?
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/contexts/catalog/queries/find-product/schemas/1")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"product_id":"product-1""#))?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response_json(response).await?["code"],
+        "rostfrei.http.invalid-json"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn query_requires_application_json_content_type() -> TestResult {
+    for content_type in [None, Some("text/plain")] {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/contexts/catalog/queries/find-product/schemas/1");
+        if let Some(content_type) = content_type {
+            request = request.header(header::CONTENT_TYPE, content_type);
+        }
+        let response = app()?.oneshot(request.body(Body::from("{}"))?).await?;
+
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(
+            response_json(response).await?["code"],
+            "rostfrei.http.invalid-json"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_is_not_accepted_for_query_routes() -> TestResult {
+    let response = app()?
+        .oneshot(
+            Request::builder()
+                .uri("/contexts/catalog/queries/find-product/schemas/1")
+                .body(Body::empty())?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     Ok(())
 }
 
@@ -215,8 +326,10 @@ async fn unregistered_routes_and_missing_idempotency_are_rejected() -> TestResul
     let unknown = app()?
         .oneshot(
             Request::builder()
+                .method("POST")
                 .uri("/contexts/catalog/queries/unknown/schemas/1")
-                .body(Body::empty())?,
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))?,
         )
         .await?;
     assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
@@ -237,26 +350,6 @@ async fn unregistered_routes_and_missing_idempotency_are_rejected() -> TestResul
         encoded_aggregate_separator.status(),
         StatusCode::BAD_REQUEST
     );
-
-    let duplicate_parameter = app()?
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/contexts/catalog/queries/find-product/schemas/1?product_id=product-1&product_id=product-2&limit=1",
-                )
-                .body(Body::empty())?,
-        )
-        .await?;
-    assert_eq!(duplicate_parameter.status(), StatusCode::BAD_REQUEST);
-
-    let malformed_encoding = app()?
-        .oneshot(
-            Request::builder()
-                .uri("/contexts/catalog/queries/find-product/schemas/1?product_id=%FF&limit=1")
-                .body(Body::empty())?,
-        )
-        .await?;
-    assert_eq!(malformed_encoding.status(), StatusCode::BAD_REQUEST);
 
     let missing_key = app()?
         .oneshot(
@@ -288,8 +381,12 @@ async fn unauthorized_outcomes_include_the_configured_challenge() -> TestResult 
     let response = app_with_config(config)?
         .oneshot(
             Request::builder()
-                .uri("/contexts/catalog/queries/find-product/schemas/1?product_id=private&limit=1")
-                .body(Body::empty())?,
+                .method("POST")
+                .uri("/contexts/catalog/queries/find-product/schemas/1")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"product_id":"private","limit":1,"criteria":null}"#,
+                ))?,
         )
         .await?;
 
@@ -299,6 +396,81 @@ async fn unauthorized_outcomes_include_the_configured_challenge() -> TestResult 
         Some(&header::HeaderValue::from_static(
             "Bearer realm=\"catalog\""
         ))
+    );
+    assert_eq!(
+        response_json(response).await?,
+        json!({
+            "error": {
+                "classification": "unauthorized",
+                "code": "catalog.query-error",
+                "message": "The query failed."
+            }
+        })
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn query_application_error_mappings_are_unchanged() -> TestResult {
+    for (product_id, status, classification) in [
+        ("invalid", StatusCode::BAD_REQUEST, "invalid_request"),
+        ("forbidden", StatusCode::FORBIDDEN, "forbidden"),
+        ("missing", StatusCode::NOT_FOUND, "not_found"),
+        ("conflict", StatusCode::CONFLICT, "conflict"),
+        (
+            "rate-limited",
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+        ),
+        (
+            "unavailable",
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+        ),
+        ("timeout", StatusCode::GATEWAY_TIMEOUT, "timeout"),
+        ("internal", StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+    ] {
+        let response = app()?
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/contexts/catalog/queries/find-product/schemas/1")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "product_id": product_id,
+                            "limit": 1,
+                            "criteria": null
+                        })
+                        .to_string(),
+                    ))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), status);
+        let body = response_json(response).await?;
+        assert_eq!(body["error"]["classification"], classification);
+        assert_eq!(body["error"]["code"], "catalog.query-error");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn configured_query_body_limit_returns_payload_too_large() -> TestResult {
+    let response = app_with_config(HttpApiConfig::new(QueryOptions::default(), 1)?)?
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/contexts/catalog/queries/find-product/schemas/1")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        response_json(response).await?["code"],
+        "rostfrei.http.payload-too-large"
     );
     Ok(())
 }

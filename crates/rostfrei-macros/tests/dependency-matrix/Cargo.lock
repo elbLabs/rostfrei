@@ -216,7 +216,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rostfrei"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "rostfrei-core",
@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "rostfrei-messaging-core",
@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rostfrei-domain-macros",
  "serde",
@@ -256,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-domain-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-domain-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rostfrei-core",
  "rostfrei-domain",
@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -283,7 +283,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-messaging-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-registry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rostfrei-core",
  "rostfrei-domain",
