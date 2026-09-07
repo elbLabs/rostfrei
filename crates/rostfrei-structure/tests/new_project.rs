@@ -41,7 +41,10 @@ fn new_project_contains_the_complete_runnable_scaffold() {
     let manifest = read(&destination.join("Cargo.toml"));
     assert!(manifest.starts_with("[workspace]\nresolver = \"3\""));
     assert!(manifest.contains("name = \"bike-rental\""));
-    assert!(manifest.contains("rostfrei-nats = \"0.1.0\""));
+    assert!(manifest.contains(&format!(
+        "rostfrei-nats = \"{}\"",
+        env!("CARGO_PKG_VERSION")
+    )));
     assert!(manifest.contains("[lints.clippy]"));
     assert!(manifest.contains("arithmetic_side_effects = \"deny\""));
 
@@ -135,7 +138,18 @@ fn cargo_new_command_generates_a_project() {
         "new command failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(stdout.contains("Created Rostfrei project `customer-support`"));
-    assert!(destination.join("Cargo.toml").is_file());
+
+    let manifest_path = destination.join("Cargo.toml");
+    assert!(manifest_path.is_file());
+    let manifest: toml::Value = toml::from_str(&read(&manifest_path))
+        .unwrap_or_else(|error| panic!("generated Cargo.toml must parse: {error}"));
+    assert_eq!(
+        manifest
+            .get("package")
+            .and_then(|package| package.get("name"))
+            .and_then(toml::Value::as_str),
+        Some("customer-support")
+    );
     assert!(
         destination
             .join("src/domain/customer_support/context.rs")
