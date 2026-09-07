@@ -172,7 +172,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bike-rental"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "async-trait",
  "axum",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "async-trait",
  "rostfrei-core",
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-core"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "async-trait",
  "rostfrei-messaging-core",
@@ -1040,7 +1040,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-domain"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "rostfrei-domain-macros",
  "serde",
@@ -1050,7 +1050,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-domain-macros"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1059,7 +1059,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-domain-runtime"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "rostfrei-core",
  "rostfrei-domain",
@@ -1069,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-fixtures"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "async-trait",
  "rostfrei-core",
@@ -1082,7 +1082,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-http"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "async-trait",
  "axum",
@@ -1097,7 +1097,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-macros"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-messaging-core"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "async-trait",
  "serde",
@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-nats"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-registry"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "rostfrei-core",
  "rostfrei-domain",
@@ -1149,7 +1149,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-structure"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "clap",
  "heck",
@@ -1164,7 +1164,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-testing"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "async-trait",
  "rostfrei-core",
@@ -1178,7 +1178,7 @@ dependencies = [
 
 [[package]]
 name = "rostfrei-tracer"
-version = "0.2.0"
+version = "0.0.3-alpha"
 dependencies = [
  "async-trait",
  "axum",
