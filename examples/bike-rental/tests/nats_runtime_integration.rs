@@ -26,17 +26,17 @@ use bike_rental::{
     BikeRentalNatsRuntime,
     demo::{demo_fixture, demo_stream, rented_demo_fixture},
     rental_fleet::{
-        AddBicycle, BicycleRented, BicycleReturned, RentBicycle, RentalFleetAggregate,
-        ReturnBicycle,
+        AddBicycle, AddBicycleHandler, BicycleRented, BicycleReturned, RentBicycle,
+        RentBicycleHandler, RentalFleetAggregate, ReturnBicycle, ReturnBicycleHandler,
+        TransferBicycle, TransferBicycleHandler,
     },
     tracer,
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
     Aggregate, Command, CommandBus, CommandMessageAdapter, DomainEvent, EventHistory,
-    IntegrationCommand, IntegrationCommandMapper, IntegrationEventCommandHandler, OperationId,
-    RecordedEvent, StreamAggregateId, command_message_id, command_response_message_id,
-    integration_message_id,
+    IntegrationCommandMapper, IntegrationEventCommandHandler, OperationId, RecordedEvent,
+    command_message_id, command_response_message_id, integration_message_id,
 };
 use rostfrei_messaging_core::{
     CausationId, CommandResponse, CommandResponseOutcome, ConsumerConfig, CorrelationId,
@@ -93,22 +93,14 @@ impl CommandTransportObserver for RecordingObserver {
 struct ReturnBicycleAfterRental;
 
 impl IntegrationCommandMapper<BicycleRentalStarted> for ReturnBicycleAfterRental {
-    type Aggregate = RentalFleetAggregate;
     type Command = ReturnBicycle;
     type Error = &'static str;
 
-    fn map(
-        &self,
-        event: &BicycleRentalStarted,
-    ) -> Result<IntegrationCommand<Self::Command>, Self::Error> {
-        let fleet_id =
-            StreamAggregateId::new(event.fleet_id().as_str()).map_err(|_| "invalid fleet ID")?;
-        Ok(IntegrationCommand::new(
-            fleet_id,
-            ReturnBicycle {
-                bicycle_id: event.bicycle_id().clone(),
-            },
-        ))
+    fn map(&self, event: &BicycleRentalStarted) -> Result<Self::Command, Self::Error> {
+        Ok(ReturnBicycle {
+            fleet_id: event.fleet_id().clone(),
+            bicycle_id: event.bicycle_id().clone(),
+        })
     }
 }
 
@@ -201,9 +193,10 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             .with_test_fixture(rented_demo_fixture()?)
             .with_test_repository(test_repository)
             .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
-        builder.register_json::<RentalFleetAggregate, RentBicycle>()?;
-        builder.register_json::<RentalFleetAggregate, ReturnBicycle>()?;
-        builder.register_json::<RentalFleetAggregate, AddBicycle>()?;
+        builder.register_json::<RentBicycle, _>(RentBicycleHandler)?;
+        builder.register_json::<ReturnBicycle, _>(ReturnBicycleHandler)?;
+        builder.register_json::<AddBicycle, _>(AddBicycleHandler)?;
+        builder.register_json::<TransferBicycle, _>(TransferBicycleHandler)?;
         let tracer = builder.build()?;
         let correlation_worker = test_runtime
             .start_correlation_observer(tracer.correlation_observer(OperationMode::Test))
@@ -274,8 +267,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
 
             let operation_id = required_json_str(&report, "/operationId")?;
             let correlation_id = required_json_str(&report, "/correlationId")?;
+            let command_context = "bike-rental";
             let aggregate_type = RentalFleetAggregate::aggregate_type().into_owned();
-            let command_payload = json!({"bicycle_id": "bike-42"});
+            let command_payload = json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"});
             let expected_command_message_id = command_message_id(
                 test_runtime
                     .config()
@@ -283,8 +277,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                     .address(),
                 &MessagingOperationId::new(operation_id)?,
                 command_execution_fingerprint(
-                    &aggregate_type,
-                    "city-fleet",
+                    command_context,
                     RentBicycle::LOCAL_ID,
                     RentBicycle::SCHEMA_VERSION,
                     &command_payload,
@@ -314,8 +307,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                     && report["operation"]["status"] == "completed"
                     && report["operation"]["command"] == RentBicycle::LOCAL_ID
                     && report["operation"]["schemaVersion"] == RentBicycle::SCHEMA_VERSION
-                    && report["operation"]["aggregateType"] == aggregate_type
-                    && report["operation"]["aggregateId"] == "city-fleet",
+                    && report["operation"]["context"] == command_context,
                 "inline report operation snapshot is not the executed Test command",
             )?;
             ensure(
@@ -378,9 +370,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                     && command.name() == RentBicycle::LOCAL_ID
                     && command.schema_version() == RentBicycle::SCHEMA_VERSION
                     && command.payload() == Some(&command_payload)
-                    && command.aggregate().is_some_and(|aggregate| {
-                        aggregate.aggregate_type == aggregate_type && aggregate.id == "city-fleet"
-                    }),
+                    && command.context() == Some(command_context),
                 "observed root command identity or content is invalid",
             )?;
 
@@ -681,7 +671,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
                     "command-reaction-correlation",
                     RentBicycle::LOCAL_ID,
                     RentBicycle::SCHEMA_VERSION,
-                    json!({"bicycle_id": "bike-42"}),
+                    json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"}),
                 )?,
                 Arc::new(RecordingObserver::default()),
             )
@@ -874,7 +864,7 @@ async fn run_isolation_test(
                 "test-rent-correlation",
                 RentBicycle::LOCAL_ID,
                 RentBicycle::SCHEMA_VERSION,
-                json!({"bicycle_id": "bike-42"}),
+                json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"}),
             )?,
             test_observer.clone(),
         )
@@ -920,7 +910,7 @@ async fn run_isolation_test(
                 "production-add-correlation",
                 AddBicycle::LOCAL_ID,
                 AddBicycle::SCHEMA_VERSION,
-                json!({}),
+                json!({"fleet_id": "city-fleet"}),
             )?,
             Arc::new(RecordingObserver::default()),
         )
@@ -980,7 +970,7 @@ async fn run_isolation_test(
                 "test-rent-after-reset-correlation",
                 RentBicycle::LOCAL_ID,
                 RentBicycle::SCHEMA_VERSION,
-                json!({"bicycle_id": "bike-42"}),
+                json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"}),
             )?,
             Arc::new(RecordingObserver::default()),
         )
@@ -1008,7 +998,7 @@ async fn run_isolation_test(
                 "production-rent-after-test-reset-correlation",
                 RentBicycle::LOCAL_ID,
                 RentBicycle::SCHEMA_VERSION,
-                json!({"bicycle_id": "bike-42"}),
+                json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"}),
             )?,
             Arc::new(RecordingObserver::default()),
         )
@@ -1045,21 +1035,13 @@ fn invocation(
     schema_version: u32,
     payload: Value,
 ) -> TestResult<CommandInvocation> {
-    let aggregate_type = RentalFleetAggregate::aggregate_type().into_owned();
-    let aggregate_id = StreamAggregateId::new("city-fleet")?;
-    let fingerprint = command_execution_fingerprint(
-        &aggregate_type,
-        aggregate_id.as_str(),
-        command,
-        schema_version,
-        &payload,
-    );
+    let context = "bike-rental";
+    let fingerprint = command_execution_fingerprint(context, command, schema_version, &payload);
     Ok(CommandInvocation::new(
         OperationId::new(operation_id)?,
         correlation_id,
         fingerprint,
-        aggregate_type,
-        aggregate_id,
+        context,
         command,
         schema_version,
         payload,

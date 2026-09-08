@@ -1,6 +1,9 @@
 use rostfrei::AggregateEvents;
 
-use super::{BicycleAdded, BicycleRented, BicycleRetired, BicycleReturned, RentalFleetImported};
+use super::{
+    BicycleAdded, BicycleRented, BicycleRetired, BicycleReturned, BicycleTransferredIn,
+    BicycleTransferredOut, RentalFleetImported,
+};
 
 #[derive(AggregateEvents)]
 pub enum RentalFleetEvent {
@@ -9,4 +12,6 @@ pub enum RentalFleetEvent {
     BicycleRented(BicycleRented),
     BicycleReturned(BicycleReturned),
     BicycleRetired(BicycleRetired),
+    BicycleTransferredOut(BicycleTransferredOut),
+    BicycleTransferredIn(BicycleTransferredIn),
 }

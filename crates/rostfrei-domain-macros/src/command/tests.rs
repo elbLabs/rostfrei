@@ -3,18 +3,22 @@ use syn::DeriveInput;
 #[test]
 fn defaults_schema_version_to_one() {
     let input: DeriveInput = syn::parse_quote! {
-        #[domain(id = "create", label = "Create")]
+        #[domain(context = TestContext, id = "create", label = "Create")]
         struct Create;
     };
     let attributes = super::attributes::Attributes::parse(&input.attrs).expect("attributes");
 
+    assert_eq!(
+        attributes.context.segments.last().unwrap().ident,
+        "TestContext"
+    );
     assert_eq!(attributes.schema_version.base10_parse::<u32>().unwrap(), 1);
 }
 
 #[test]
 fn accepts_an_explicit_non_default_schema_version() {
     let input: DeriveInput = syn::parse_quote! {
-        #[domain(id = "create", label = "Create", schema_version = 2)]
+        #[domain(context = TestContext, id = "create", label = "Create", schema_version = 2)]
         struct Create;
     };
     let attributes = super::attributes::Attributes::parse(&input.attrs).expect("attributes");
@@ -31,7 +35,7 @@ fn rejects_removed_command_relationship_and_codegen_flags() {
         quote::quote!(runtime),
     ] {
         let input = syn::parse2::<DeriveInput>(quote::quote! {
-            #[domain(id = "create", label = "Create", #removed)]
+            #[domain(context = TestContext, id = "create", label = "Create", #removed)]
             struct Create;
         })
         .expect("derive input");
@@ -42,7 +46,7 @@ fn rejects_removed_command_relationship_and_codegen_flags() {
 #[test]
 fn always_generates_semantic_metadata_and_exact_json_codec() {
     let input: DeriveInput = syn::parse_quote! {
-        #[domain(id = "create", label = "Create")]
+        #[domain(context = TestContext, id = "create", label = "Create")]
         struct Create { name: String, optional: Option<u64> }
     };
     let syntax_fields = super::input::extract(&input).expect("command shape");
@@ -58,7 +62,23 @@ fn always_generates_semantic_metadata_and_exact_json_codec() {
     .to_string();
 
     assert!(output.contains("impl :: domain :: Command for Create"));
+    assert!(output.contains("type Context = TestContext"));
     assert!(output.contains("impl :: domain :: JsonCommandPayload for Create"));
     assert!(!output.contains("CommandDefinition"));
     assert!(!output.contains("type Owner"));
+}
+
+#[test]
+fn requires_one_bounded_context() {
+    let missing: DeriveInput = syn::parse_quote! {
+        #[domain(id = "create", label = "Create")]
+        struct Create;
+    };
+    assert!(super::attributes::Attributes::parse(&missing.attrs).is_err());
+
+    let duplicate: DeriveInput = syn::parse_quote! {
+        #[domain(context = First, context = Second, id = "create", label = "Create")]
+        struct Create;
+    };
+    assert!(super::attributes::Attributes::parse(&duplicate.attrs).is_err());
 }

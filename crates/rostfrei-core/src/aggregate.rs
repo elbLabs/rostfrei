@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 use thiserror::Error;
 
@@ -8,6 +8,7 @@ pub trait Aggregate: Sized {
     type State;
     type Event;
 
+    const BOUNDED_CONTEXT: &'static str;
     const AGGREGATE_TYPE: &'static str;
 
     fn aggregate_type() -> Cow<'static, str> {
@@ -45,10 +46,16 @@ impl<E> EventVariant<E> for E {
     }
 }
 
+type EventStartObserver = Box<dyn Fn(usize) + Send + Sync>;
+type EventObserver<E> = Box<dyn Fn(usize, &E) + Send + Sync>;
+
 pub struct AggregateInstance<A: Aggregate> {
     stream_id: StreamId,
     state: A::State,
     uncommitted_events: Vec<A::Event>,
+    event_start_observer: Option<EventStartObserver>,
+    event_observer: Option<EventObserver<A::Event>>,
+    event_observer_token: Option<Arc<()>>,
 }
 
 impl<A: Aggregate> AggregateInstance<A> {
@@ -58,6 +65,9 @@ impl<A: Aggregate> AggregateInstance<A> {
             stream_id,
             state,
             uncommitted_events: Vec::new(),
+            event_start_observer: None,
+            event_observer: None,
+            event_observer_token: None,
         }
     }
 
@@ -67,6 +77,23 @@ impl<A: Aggregate> AggregateInstance<A> {
             A::apply(&mut aggregate.state, &event);
         }
         aggregate
+    }
+
+    pub(crate) fn observe_raised_events(
+        &mut self,
+        token: Arc<()>,
+        start_observer: impl Fn(usize) + Send + Sync + 'static,
+        observer: impl Fn(usize, &A::Event) + Send + Sync + 'static,
+    ) {
+        self.event_start_observer = Some(Box::new(start_observer));
+        self.event_observer = Some(Box::new(observer));
+        self.event_observer_token = Some(token);
+    }
+
+    pub(crate) fn is_observed_by(&self, token: &Arc<()>) -> bool {
+        self.event_observer_token
+            .as_ref()
+            .is_some_and(|candidate| Arc::ptr_eq(candidate, token))
     }
 
     pub const fn stream_id(&self) -> &StreamId {
@@ -82,8 +109,17 @@ impl<A: Aggregate> AggregateInstance<A> {
         E: Into<A::Event>,
     {
         let event = event.into();
+        let ordinal = self.uncommitted_events.len();
+        if let Some(observer) = &self.event_start_observer {
+            observer(ordinal);
+        }
         A::apply(&mut self.state, &event);
         self.uncommitted_events.push(event);
+        if let (Some(observer), Some(event)) =
+            (&self.event_observer, self.uncommitted_events.last())
+        {
+            observer(ordinal, event);
+        }
     }
 
     pub fn uncommitted_events(&self) -> &[A::Event] {
@@ -93,15 +129,6 @@ impl<A: Aggregate> AggregateInstance<A> {
     pub fn into_parts(self) -> (StreamId, A::State, Vec<A::Event>) {
         (self.stream_id, self.state, self.uncommitted_events)
     }
-}
-
-pub trait CommandHandler<Command>: Aggregate {
-    type Rejection;
-
-    fn handle(
-        command: &Command,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection>;
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

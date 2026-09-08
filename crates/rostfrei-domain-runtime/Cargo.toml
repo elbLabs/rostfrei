@@ -11,6 +11,7 @@ rostfrei-domain = { path = "../rostfrei-domain" }
 rostfrei-registry = { path = "../rostfrei-registry" }
 
 [dev-dependencies]
+async-trait.workspace = true
 serde.workspace = true
 
 [lints]

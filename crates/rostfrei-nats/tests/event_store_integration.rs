@@ -20,9 +20,9 @@ use event_store_config::{
 };
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventStore,
-    EventStoreError, EventStoreErrorKind, EventTransaction, ExecutionMetadata, ExpectedVersion,
-    MAX_EVENTS_PER_BATCH, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent, StreamId,
-    StreamVersion, TransactionAppendOutcome, TransactionParticipant,
+    EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion, MAX_EVENTS_PER_BATCH,
+    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
+    TransactionAppendOutcome, TransactionParticipant, derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
 use rostfrei_testing::event_store_contract;
@@ -76,6 +76,9 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     transaction_history_remains_readable_after_lower_limit_provisioning(&context)
         .await
         .expect("transaction history migration coverage");
+    primary_scoped_transaction_history_remains_readable(&context)
+        .await
+        .expect("primary-scoped transaction subject migration coverage");
     legacy_event_store_policy_is_upgraded(&context)
         .await
         .expect("legacy stream policy migration coverage");
@@ -602,6 +605,13 @@ async fn transaction_history_remains_readable_after_lower_limit_provisioning(
     let operation_id = OperationId::new(operation)?;
     let fingerprint = ContentFingerprint::digest(operation);
     let mut participants = Vec::with_capacity(READ_ONLY_PARTICIPANTS + 1);
+    for ordinal in 0..READ_ONLY_PARTICIPANTS {
+        participants.push(TransactionParticipant::new(
+            stream(&format!("transaction-limit-observed-{ordinal}"))?,
+            ExpectedVersion::NoStream,
+            None,
+        ));
+    }
     participants.push(TransactionParticipant::new(
         primary.clone(),
         ExpectedVersion::NoStream,
@@ -612,13 +622,6 @@ async fn transaction_history_remains_readable_after_lower_limit_provisioning(
             vec![9; 8 * 1024],
         )?),
     ));
-    for ordinal in 0..READ_ONLY_PARTICIPANTS {
-        participants.push(TransactionParticipant::new(
-            stream(&format!("transaction-limit-observed-{ordinal}"))?,
-            ExpectedVersion::NoStream,
-            None,
-        ));
-    }
     historical_store
         .append_transaction(EventTransaction::new(
             operation_id.clone(),
@@ -635,7 +638,7 @@ async fn transaction_history_remains_readable_after_lower_limit_provisioning(
         ))
         .await?;
     let receipt = stream_info
-        .get_last_raw_message_by_subject(&current.transaction_subject(&primary, operation))
+        .get_last_raw_message_by_subject(&current.transaction_subject(operation))
         .await?;
     check(
         event.payload.len() > current.max_event_bytes(),
@@ -660,7 +663,7 @@ async fn transaction_history_remains_readable_after_lower_limit_provisioning(
     )?;
     let current_store = NatsEventStore::connect(context.clone(), current).await?;
     let loaded = current_store
-        .load_transaction_receipt(&primary, &operation_id)
+        .load_transaction_receipt(&operation_id)
         .await?
         .ok_or_else(|| "historical transaction receipt was not found".to_owned())?;
     check(
@@ -670,6 +673,255 @@ async fn transaction_history_remains_readable_after_lower_limit_provisioning(
     check(
         loaded.events().len() == 1 && current_store.load(&primary).await?.len() == 1,
         "historical schema-4 event was not materialized",
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+async fn primary_scoped_transaction_history_remains_readable(
+    context: &async_nats::jetstream::Context,
+) -> TestResult<()> {
+    let (bounded_context, stream_name) = unique_names("primary-subject-migration")?;
+    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?;
+    provision_event_store(context, &config).await?;
+    let store = NatsEventStore::connect(context.clone(), config.clone()).await?;
+
+    let legacy_primary = stream("legacy-primary-subject-writer")?;
+    let legacy_observed = stream("legacy-primary-subject-observed")?;
+    let legacy_operation = "legacy-primary-subject-operation";
+    let legacy_batch = batch(
+        &legacy_primary,
+        legacy_operation,
+        legacy_operation,
+        &[b"legacy"],
+    )?;
+    let legacy_receipt = ForgedReceiptContent {
+        event_store_stream: config.stream_name(),
+        application: config.application().as_str(),
+        bounded_context: config.bounded_context().as_str(),
+        operation_id: legacy_operation,
+        operation_fingerprint: legacy_batch.operation_fingerprint().to_hex(),
+        correlation_id: None,
+        causation_id: None,
+        participants: vec![
+            ForgedReceiptParticipant {
+                stream: ForgedStreamIdentity {
+                    aggregate_type: legacy_primary.aggregate_type().as_str(),
+                    aggregate_id: legacy_primary.aggregate_id().as_str(),
+                },
+                base_stream_version: 0,
+                commit_id: Some(legacy_batch.commit_id().as_str()),
+                event_count: 1,
+            },
+            ForgedReceiptParticipant {
+                stream: ForgedStreamIdentity {
+                    aggregate_type: legacy_observed.aggregate_type().as_str(),
+                    aggregate_id: legacy_observed.aggregate_id().as_str(),
+                },
+                base_stream_version: 0,
+                commit_id: None,
+                event_count: 0,
+            },
+        ],
+    };
+    let legacy_guard = serde_json::to_vec(&serde_json::json!({
+        "operationId": legacy_operation,
+        "guardedStream": {
+            "aggregateType": legacy_observed.aggregate_type().as_str(),
+            "aggregateId": legacy_observed.aggregate_id().as_str(),
+        }
+    }))?;
+    publish_raw_atomic_batch(
+        context,
+        &config,
+        "legacy-primary-subject-batch",
+        vec![
+            RawAtomicMessage {
+                subject: config.aggregate_subject(
+                    legacy_primary.aggregate_type().as_str(),
+                    legacy_primary.aggregate_id().as_str(),
+                ),
+                payload: forged_transaction_event_payload(&config, &legacy_primary, &legacy_batch)?,
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: None,
+            },
+            RawAtomicMessage {
+                subject: config.legacy_primary_transaction_guard_subject(
+                    &legacy_primary,
+                    legacy_operation,
+                    0,
+                ),
+                payload: legacy_guard,
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: Some(config.aggregate_subject(
+                    legacy_observed.aggregate_type().as_str(),
+                    legacy_observed.aggregate_id().as_str(),
+                )),
+            },
+            RawAtomicMessage {
+                subject: config
+                    .legacy_primary_transaction_subject(&legacy_primary, legacy_operation),
+                payload: forged_receipt_payload(&legacy_receipt)?,
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: None,
+            },
+        ],
+    )
+    .await?;
+
+    let loaded = store.load(&legacy_primary).await?;
+    check(
+        loaded.len() == 1
+            && loaded
+                .first()
+                .is_some_and(|event| event.payload() == b"legacy"),
+        "legacy primary-scoped transaction history was not materialized",
+    )?;
+    check(
+        store
+            .load_transaction_receipt(legacy_batch.operation_id())
+            .await?
+            .is_none(),
+        "operation-only receipt lookup exposed a legacy primary-scoped receipt",
+    )?;
+
+    let mismatched_primary = stream("legacy-layout-mismatch-writer")?;
+    let mismatched_observed = stream("legacy-layout-mismatch-observed")?;
+    let mismatched_operation = "legacy-layout-mismatch-operation";
+    let mismatched_batch = batch(
+        &mismatched_primary,
+        mismatched_operation,
+        mismatched_operation,
+        &[b"mismatched"],
+    )?;
+    let mismatched_receipt = ForgedReceiptContent {
+        event_store_stream: config.stream_name(),
+        application: config.application().as_str(),
+        bounded_context: config.bounded_context().as_str(),
+        operation_id: mismatched_operation,
+        operation_fingerprint: mismatched_batch.operation_fingerprint().to_hex(),
+        correlation_id: None,
+        causation_id: None,
+        participants: vec![
+            ForgedReceiptParticipant {
+                stream: ForgedStreamIdentity {
+                    aggregate_type: mismatched_primary.aggregate_type().as_str(),
+                    aggregate_id: mismatched_primary.aggregate_id().as_str(),
+                },
+                base_stream_version: 0,
+                commit_id: Some(mismatched_batch.commit_id().as_str()),
+                event_count: 1,
+            },
+            ForgedReceiptParticipant {
+                stream: ForgedStreamIdentity {
+                    aggregate_type: mismatched_observed.aggregate_type().as_str(),
+                    aggregate_id: mismatched_observed.aggregate_id().as_str(),
+                },
+                base_stream_version: 0,
+                commit_id: None,
+                event_count: 0,
+            },
+        ],
+    };
+    publish_raw_atomic_batch(
+        context,
+        &config,
+        "legacy-layout-mismatch-batch",
+        vec![
+            RawAtomicMessage {
+                subject: config.aggregate_subject(
+                    mismatched_primary.aggregate_type().as_str(),
+                    mismatched_primary.aggregate_id().as_str(),
+                ),
+                payload: forged_transaction_event_payload(
+                    &config,
+                    &mismatched_primary,
+                    &mismatched_batch,
+                )?,
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: None,
+            },
+            RawAtomicMessage {
+                subject: config.transaction_guard_subject(mismatched_operation, 0),
+                payload: serde_json::to_vec(&serde_json::json!({
+                    "operationId": mismatched_operation,
+                    "guardedStream": {
+                        "aggregateType": mismatched_observed.aggregate_type().as_str(),
+                        "aggregateId": mismatched_observed.aggregate_id().as_str(),
+                    }
+                }))?,
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: Some(config.aggregate_subject(
+                    mismatched_observed.aggregate_type().as_str(),
+                    mismatched_observed.aggregate_id().as_str(),
+                )),
+            },
+            RawAtomicMessage {
+                subject: config
+                    .legacy_primary_transaction_subject(&mismatched_primary, mismatched_operation),
+                payload: forged_receipt_payload(&mismatched_receipt)?,
+                expected_last_subject_sequence: Some(0),
+                expectation_subject: None,
+            },
+        ],
+    )
+    .await?;
+    check(
+        matches!(
+            store.load(&mismatched_primary).await,
+            Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory
+        ),
+        "legacy receipt accepted an operation-scoped guard",
+    )?;
+
+    let current_writer = stream("operation-subject-writer")?;
+    let current_observed = stream("operation-subject-observed")?;
+    let current_operation = "operation-subject-operation";
+    store
+        .append_transaction(EventTransaction::new(
+            OperationId::new(current_operation)?,
+            ContentFingerprint::digest(current_operation),
+            vec![
+                TransactionParticipant::new(
+                    current_writer.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(
+                        &current_writer,
+                        current_operation,
+                        current_operation,
+                        &[b"current"],
+                    )?),
+                ),
+                TransactionParticipant::new(current_observed, ExpectedVersion::NoStream, None),
+            ],
+        ))
+        .await?;
+
+    let stream = context.get_stream(config.stream_name()).await?;
+    stream
+        .get_last_raw_message_by_subject(&config.transaction_subject(current_operation))
+        .await?;
+    stream
+        .get_last_raw_message_by_subject(&config.transaction_guard_subject(current_operation, 0))
+        .await?;
+    check(
+        stream
+            .get_last_raw_message_by_subject(
+                &config.legacy_primary_transaction_subject(&current_writer, current_operation),
+            )
+            .await
+            .is_err(),
+        "new transaction wrote a primary-scoped receipt subject",
+    )?;
+    check(
+        stream
+            .get_last_raw_message_by_subject(&config.legacy_primary_transaction_guard_subject(
+                &current_writer,
+                current_operation,
+                0,
+            ))
+            .await
+            .is_err(),
+        "new transaction wrote a primary-scoped guard subject",
     )
 }
 
@@ -731,6 +983,11 @@ async fn transaction_contract_and_wire_policy(
         fingerprint,
         vec![
             TransactionParticipant::new(
+                observed.clone(),
+                ExpectedVersion::Exact(StreamVersion::new(1)),
+                None,
+            ),
+            TransactionParticipant::new(
                 primary.clone(),
                 ExpectedVersion::NoStream,
                 Some(primary_batch.clone()),
@@ -739,11 +996,6 @@ async fn transaction_contract_and_wire_policy(
                 secondary.clone(),
                 ExpectedVersion::NoStream,
                 Some(batch(&secondary, operation, operation, &[b"credited"])?),
-            ),
-            TransactionParticipant::new(
-                observed.clone(),
-                ExpectedVersion::Exact(StreamVersion::new(1)),
-                None,
             ),
         ],
     );
@@ -763,7 +1015,7 @@ async fn transaction_contract_and_wire_policy(
     let observed_receipt = outcome
         .receipt()
         .streams()
-        .get(2)
+        .first()
         .ok_or_else(|| "transaction receipt has no observed participant".to_owned())?;
     check(
         observed_receipt.events().is_empty(),
@@ -886,7 +1138,7 @@ async fn transaction_contract_and_wire_policy(
     let observed_message = stream_info
         .get_last_raw_message_by_subject(&observed_subject)
         .await?;
-    let guard_subject = config.transaction_guard_subject(&primary, operation, 0);
+    let guard_subject = config.transaction_guard_subject(operation, 0);
     let guard = stream_info
         .get_last_raw_message_by_subject(&guard_subject)
         .await?;
@@ -924,7 +1176,7 @@ async fn transaction_contract_and_wire_policy(
         "read guard has the wrong operation identity",
     )?;
 
-    let receipt_subject = config.transaction_subject(&primary, operation);
+    let receipt_subject = config.transaction_subject(operation);
     let receipt = stream_info
         .get_last_raw_message_by_subject(&receipt_subject)
         .await?;
@@ -998,6 +1250,7 @@ async fn transaction_contract_and_wire_policy(
         operation_id.clone(),
         fingerprint,
         vec![
+            TransactionParticipant::new(observed.clone(), ExpectedVersion::NoStream, None),
             TransactionParticipant::new(
                 primary.clone(),
                 ExpectedVersion::Exact(StreamVersion::ZERO),
@@ -1013,7 +1266,6 @@ async fn transaction_contract_and_wire_policy(
                 ExpectedVersion::Exact(StreamVersion::new(99)),
                 Some(batch(&secondary, operation, operation, &[b"credited"])?),
             ),
-            TransactionParticipant::new(observed.clone(), ExpectedVersion::NoStream, None),
         ],
     );
     check(
@@ -1029,7 +1281,7 @@ async fn transaction_contract_and_wire_policy(
     )?;
     check(
         store
-            .load_transaction_receipt(&primary, &operation_id)
+            .load_transaction_receipt(&operation_id)
             .await?
             .is_some(),
         "transaction receipt lookup returned no receipt",
@@ -1112,7 +1364,7 @@ async fn transaction_contract_and_wire_policy(
     let oversized_operation = "transaction-oversized-before-io";
     context
         .send_publish(
-            config.transaction_subject(&oversized_primary, oversized_operation),
+            config.transaction_subject(oversized_operation),
             PublishMessage::build()
                 .payload(br#"{"corrupt":"receipt"}"#.to_vec().into())
                 .expected_stream(config.stream_name()),
@@ -1152,44 +1404,28 @@ async fn transaction_contract_and_wire_policy(
 }
 
 async fn concurrent_transaction_identity_race(store: &NatsEventStore) -> TestResult<()> {
-    let shared = stream("transaction-identity-race-shared")?;
-    let first_primary = stream("transaction-identity-race-primary-a")?;
-    let second_primary = stream("transaction-identity-race-primary-b")?;
+    let first_writer = stream("transaction-identity-race-writer-a")?;
+    let second_writer = stream("transaction-identity-race-writer-b")?;
     let operation = "transaction-identity-race";
     let operation_id = OperationId::new(operation)?;
     let fingerprint = ContentFingerprint::digest(operation);
-    let shared_batch = batch(&shared, operation, operation, &[b"shared"])?;
     let first = EventTransaction::new(
         operation_id.clone(),
         fingerprint,
-        vec![
-            TransactionParticipant::new(
-                first_primary.clone(),
-                ExpectedVersion::NoStream,
-                Some(batch(&first_primary, operation, operation, &[b"first"])?),
-            ),
-            TransactionParticipant::new(
-                shared.clone(),
-                ExpectedVersion::NoStream,
-                Some(shared_batch.clone()),
-            ),
-        ],
+        vec![TransactionParticipant::new(
+            first_writer.clone(),
+            ExpectedVersion::NoStream,
+            Some(batch(&first_writer, operation, operation, &[b"first"])?),
+        )],
     );
     let second = EventTransaction::new(
         operation_id,
         fingerprint,
-        vec![
-            TransactionParticipant::new(
-                second_primary.clone(),
-                ExpectedVersion::NoStream,
-                Some(batch(&second_primary, operation, operation, &[b"second"])?),
-            ),
-            TransactionParticipant::new(
-                shared.clone(),
-                ExpectedVersion::NoStream,
-                Some(shared_batch),
-            ),
-        ],
+        vec![TransactionParticipant::new(
+            second_writer.clone(),
+            ExpectedVersion::NoStream,
+            Some(batch(&second_writer, operation, operation, &[b"second"])?),
+        )],
     );
 
     let results: [_; 2] = tokio::join!(
@@ -1199,7 +1435,7 @@ async fn concurrent_transaction_identity_race(store: &NatsEventStore) -> TestRes
     .into();
     check(
         results.iter().filter(|result| result.is_ok()).count() == 1,
-        "concurrent transactions with a shared identity did not have one winner",
+        "concurrent operation-scoped transactions did not have one winner",
     )?;
     check(
         results
@@ -1214,9 +1450,11 @@ async fn concurrent_transaction_identity_race(store: &NatsEventStore) -> TestRes
             == 1,
         "the losing transaction did not report an identity conflict",
     )?;
+    let first_committed = !store.load(&first_writer).await?.is_empty();
+    let second_committed = !store.load(&second_writer).await?.is_empty();
     check(
-        store.load(&shared).await?.len() == 1,
-        "the identity race did not append exactly one shared event",
+        first_committed != second_committed,
+        "the operation identity race did not commit exactly one disjoint writer",
     )
 }
 
@@ -1299,6 +1537,11 @@ async fn unavailable_reconciliation_policy(
         ContentFingerprint::digest(read_only_operation),
         vec![
             TransactionParticipant::new(
+                observed,
+                ExpectedVersion::Exact(StreamVersion::new(1)),
+                None,
+            ),
+            TransactionParticipant::new(
                 read_only_primary.clone(),
                 ExpectedVersion::NoStream,
                 Some(batch(
@@ -1307,11 +1550,6 @@ async fn unavailable_reconciliation_policy(
                     read_only_operation,
                     &[b"write"],
                 )?),
-            ),
-            TransactionParticipant::new(
-                observed,
-                ExpectedVersion::Exact(StreamVersion::new(1)),
-                None,
             ),
         ],
     );
@@ -1502,7 +1740,7 @@ async fn forged_receipt_cannot_bind_a_direct_commit(
     let guard_response = context
         .client()
         .send_request(
-            config.transaction_guard_subject(&primary, operation, 0),
+            config.transaction_guard_subject(operation, 0),
             Request::new()
                 .headers(guard_headers)
                 .payload(br"{}".to_vec().into())
@@ -1524,7 +1762,7 @@ async fn forged_receipt_cannot_bind_a_direct_commit(
     let receipt_response = context
         .client()
         .send_request(
-            config.transaction_subject(&primary, operation),
+            config.transaction_subject(operation),
             Request::new()
                 .headers(receipt_headers)
                 .payload(payload.into())
@@ -1537,7 +1775,7 @@ async fn forged_receipt_cannot_bind_a_direct_commit(
     )?;
 
     let loaded = store
-        .load_transaction_receipt(&primary, direct_batch.operation_id())
+        .load_transaction_receipt(direct_batch.operation_id())
         .await;
     check(
         matches!(loaded, Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory),
@@ -1743,7 +1981,7 @@ async fn schema_four_event_with_filler_is_not_loadable(
                 expectation_subject: None,
             },
             RawAtomicMessage {
-                subject: config.transaction_guard_subject(&aggregate, "unrelated-filler", 0),
+                subject: config.transaction_guard_subject("unrelated-filler", 0),
                 payload: br#"{"unrelated":true}"#.to_vec(),
                 expected_last_subject_sequence: None,
                 expectation_subject: None,
@@ -1790,7 +2028,7 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
                 expectation_subject: None,
             },
             RawAtomicMessage {
-                subject: config.transaction_guard_subject(&reused_primary, reused_operation, 99),
+                subject: config.transaction_guard_subject(reused_operation, 99),
                 payload: br"{}".to_vec(),
                 expected_last_subject_sequence: None,
                 expectation_subject: None,
@@ -1822,13 +2060,13 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
         reused_batch_id,
         vec![
             RawAtomicMessage {
-                subject: config.transaction_guard_subject(&reused_primary, reused_operation, 98),
+                subject: config.transaction_guard_subject(reused_operation, 98),
                 payload: br"{}".to_vec(),
                 expected_last_subject_sequence: None,
                 expectation_subject: None,
             },
             RawAtomicMessage {
-                subject: config.transaction_subject(&reused_primary, reused_operation),
+                subject: config.transaction_subject(reused_operation),
                 payload: forged_receipt_payload(&reused_receipt)?,
                 expected_last_subject_sequence: Some(0),
                 expectation_subject: None,
@@ -1837,7 +2075,7 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
     )
     .await?;
     let reused_result = store
-        .load_transaction_receipt(&reused_primary, reused_batch.operation_id())
+        .load_transaction_receipt(reused_batch.operation_id())
         .await;
     check(
         matches!(
@@ -1905,13 +2143,13 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
                 expectation_subject: None,
             },
             RawAtomicMessage {
-                subject: config.transaction_guard_subject(&guard_primary, guard_operation, 0),
+                subject: config.transaction_guard_subject(guard_operation, 0),
                 payload: br"{}".to_vec(),
                 expected_last_subject_sequence: Some(0),
                 expectation_subject: Some(guarded_subject),
             },
             RawAtomicMessage {
-                subject: config.transaction_subject(&guard_primary, guard_operation),
+                subject: config.transaction_subject(guard_operation),
                 payload: forged_receipt_payload(&guard_receipt)?,
                 expected_last_subject_sequence: Some(0),
                 expectation_subject: None,
@@ -1920,7 +2158,7 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
     )
     .await?;
     let guard_result = store
-        .load_transaction_receipt(&guard_primary, guard_batch.operation_id())
+        .load_transaction_receipt(guard_batch.operation_id())
         .await;
     check(
         matches!(
@@ -2013,17 +2251,15 @@ fn batch(
     fingerprint_content: &str,
     payloads: &[&[u8]],
 ) -> TestResult<EventBatch> {
-    let metadata = ExecutionMetadata::new(
-        stream.clone(),
-        OperationId::new(operation_id)?,
-        ContentFingerprint::digest(fingerprint_content),
-    );
+    let operation_id = OperationId::new(operation_id)?;
+    let operation_fingerprint = ContentFingerprint::digest(fingerprint_content);
+    let commit_id = derive_commit_id(stream, &operation_id);
     let events = payloads
         .iter()
         .enumerate()
         .map(|(ordinal, payload)| {
             Ok(NewEvent::new(
-                metadata.event_id(u32::try_from(ordinal)?),
+                derive_event_id(&commit_id, u32::try_from(ordinal)?),
                 "integration-event",
                 1,
                 payload.to_vec(),
@@ -2031,9 +2267,9 @@ fn batch(
         })
         .collect::<TestResult<Vec<_>>>()?;
     Ok(EventBatch::new(
-        metadata.commit_id().clone(),
-        metadata.operation_id().clone(),
-        metadata.operation_fingerprint(),
+        commit_id,
+        operation_id,
+        operation_fingerprint,
         events,
     )?)
 }
@@ -2044,17 +2280,15 @@ fn owned_payload_batch(
     fingerprint_content: &str,
     payload: Vec<u8>,
 ) -> TestResult<EventBatch> {
-    let metadata = ExecutionMetadata::new(
-        stream.clone(),
-        OperationId::new(operation_id)?,
-        ContentFingerprint::digest(fingerprint_content),
-    );
+    let operation_id = OperationId::new(operation_id)?;
+    let operation_fingerprint = ContentFingerprint::digest(fingerprint_content);
+    let commit_id = derive_commit_id(stream, &operation_id);
     Ok(EventBatch::new(
-        metadata.commit_id().clone(),
-        metadata.operation_id().clone(),
-        metadata.operation_fingerprint(),
+        commit_id.clone(),
+        operation_id,
+        operation_fingerprint,
         vec![NewEvent::new(
-            metadata.event_id(0),
+            derive_event_id(&commit_id, 0),
             "integration-event",
             1,
             payload,
@@ -2068,15 +2302,13 @@ fn repeated_batch(
     fingerprint_content: &str,
     event_count: u32,
 ) -> TestResult<EventBatch> {
-    let metadata = ExecutionMetadata::new(
-        stream.clone(),
-        OperationId::new(operation_id)?,
-        ContentFingerprint::digest(fingerprint_content),
-    );
+    let operation_id = OperationId::new(operation_id)?;
+    let operation_fingerprint = ContentFingerprint::digest(fingerprint_content);
+    let commit_id = derive_commit_id(stream, &operation_id);
     let events = (0..event_count)
         .map(|ordinal| {
             Ok(NewEvent::new(
-                metadata.event_id(ordinal),
+                derive_event_id(&commit_id, ordinal),
                 "integration-event",
                 1,
                 vec![u8::try_from(ordinal % 251)?],
@@ -2084,9 +2316,9 @@ fn repeated_batch(
         })
         .collect::<TestResult<Vec<_>>>()?;
     Ok(EventBatch::new(
-        metadata.commit_id().clone(),
-        metadata.operation_id().clone(),
-        metadata.operation_fingerprint(),
+        commit_id,
+        operation_id,
+        operation_fingerprint,
         events,
     )?)
 }

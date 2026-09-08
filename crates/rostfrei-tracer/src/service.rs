@@ -9,8 +9,8 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateType, CommandHandler, ContentFingerprint, Event, EventHistory,
-    EventStore, EventStoreErrorKind, OperationId, SimulationError, StreamDirectory,
+    AggregateType, CommandHandler, ContentFingerprint, EventHistory, EventStore,
+    EventStoreErrorKind, OperationId, SimulationError, StreamDirectory,
 };
 use rostfrei_fixtures::Fixture;
 use rostfrei_messaging_core::{
@@ -30,9 +30,8 @@ use crate::{
     DomainEventObservation, OperationEventKind, OperationMode, OperationResult, OperationSnapshot,
     OperationSubscription, PredictedDomainEvent, RuntimeRegistrationError, SubscriptionError,
     behavioral::{
-        TestAggregate, TestCommand, TestDefinition, TestDefinitionCollection,
-        TestDefinitionRevision, TestReport, TestReportStatus, TestRepository, TestRepositoryError,
-        TestTimeout,
+        TestCommand, TestDefinition, TestDefinitionCollection, TestDefinitionRevision, TestReport,
+        TestReportStatus, TestRepository, TestRepositoryError, TestTimeout,
     },
     catalog::{
         AggregateInstanceCollection, AggregateInstanceSummary, TestFixtureCollection,
@@ -49,7 +48,7 @@ use crate::{
     operation::{NewOperation, OperationCaptureSnapshot, OperationRecord, subscribe},
     runtime::{
         CommandKey, ErasedCommandInputOptions, ErasedCommandSimulator, RuntimeBindings,
-        RuntimeDecision, RuntimeSimulationError, stream_id,
+        RuntimeDecision, RuntimeSimulationError,
     },
     transport::canonical_json_payload,
 };
@@ -147,12 +146,12 @@ pub enum TestDefinitionValidationError {
     #[error("test definition `{test_id}` references unknown fixture `{fixture}`")]
     UnknownFixture { test_id: String, fixture: String },
     #[error(
-        "test definition `{test_id}` references unknown command `{command}` version {schema_version} for aggregate `{aggregate_type}`"
+        "test definition `{test_id}` references unknown command `{command}` version {schema_version} in context `{context}`"
     )]
     UnknownCommand {
         test_id: String,
         path: String,
-        aggregate_type: String,
+        context: String,
         command: String,
         schema_version: u32,
     },
@@ -163,16 +162,6 @@ pub enum TestDefinitionValidationError {
         test_id: String,
         path: String,
         command: String,
-        message: String,
-    },
-    #[error(
-        "test definition `{test_id}` has an invalid aggregate ID `{aggregate_id}` for command `{command}`: {message}"
-    )]
-    InvalidAggregateId {
-        test_id: String,
-        path: String,
-        command: String,
-        aggregate_id: String,
         message: String,
     },
     #[error(
@@ -261,16 +250,12 @@ impl TracePayloadPolicy for ExposeTracePayloadsForLocalDevelopment {
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum SubmissionError {
-    #[error(
-        "unknown command `{command}` version {schema_version} for aggregate `{aggregate_type}`"
-    )]
+    #[error("unknown command `{command}` version {schema_version} in context `{context}`")]
     UnknownCommand {
-        aggregate_type: String,
+        context: String,
         command: String,
         schema_version: u32,
     },
-    #[error("invalid aggregate identity: {0}")]
-    InvalidAggregateId(String),
     #[error("invalid operation identity: {0}")]
     InvalidOperationId(String),
     #[error("command payload exceeds its {maximum}-byte limit")]
@@ -307,16 +292,12 @@ pub enum DiscoveryError {
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum CommandInputError {
-    #[error(
-        "unknown command `{command}` version {schema_version} for aggregate `{aggregate_type}`"
-    )]
+    #[error("unknown command `{command}` version {schema_version} in context `{context}`")]
     UnknownCommand {
-        aggregate_type: String,
+        context: String,
         command: String,
         schema_version: u32,
     },
-    #[error("invalid aggregate identity: {0}")]
-    InvalidAggregateId(String),
     #[error("the test scenario is unavailable until reset succeeds")]
     TestScenarioUnavailable,
     #[error("command input discovery failed: {0}")]
@@ -465,31 +446,29 @@ impl TracerBuilder {
         self
     }
 
-    pub fn register_json<A, C>(&mut self) -> Result<&mut Self, RuntimeRegistrationError>
+    pub fn register_json<C, Handler>(
+        &mut self,
+        handler: Handler,
+    ) -> Result<&mut Self, RuntimeRegistrationError>
     where
-        A: Aggregate + CommandHandler<C> + 'static,
-        C: CommandDefinition<A> + domain::JsonCommandPayload,
-        A::State: Send,
-        A::Event: Event + Send,
-        <A as CommandHandler<C>>::Rejection: domain::JsonErrorPayload,
+        Handler: CommandHandler<C> + 'static,
+        C: CommandDefinition<Handler> + domain::JsonCommandPayload + Sync,
+        Handler::Rejection: domain::JsonErrorPayload,
     {
-        self.bindings.register_json::<A, C>()?;
+        self.bindings.register_json::<C, Handler>(handler)?;
         Ok(self)
     }
 
-    pub fn register_input_options<A, C, Provider>(
+    pub fn register_input_options<C, Provider>(
         &mut self,
         provider: Provider,
     ) -> Result<&mut Self, RuntimeRegistrationError>
     where
-        A: Aggregate + CommandHandler<C> + 'static,
-        C: CommandDefinition<A>,
-        A::State: Send,
-        A::Event: Event + Send,
-        Provider: CommandInputOptions<A, C> + 'static,
+        C: domain::Command + Sync,
+        Provider: CommandInputOptions<C> + 'static,
     {
         self.bindings
-            .register_input_options::<A, C, Provider>(provider)?;
+            .register_input_options::<C, Provider>(provider)?;
         Ok(self)
     }
 
@@ -642,27 +621,14 @@ fn validate_test_command(
     simulators: &HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
     maximum_payload_len: usize,
 ) -> Result<(), TestDefinitionValidationError> {
-    AggregateId::new(&command.aggregate.id).map_err(|error| {
-        TestDefinitionValidationError::InvalidAggregateId {
-            test_id: test_id.to_owned(),
-            path: format!("{path}/aggregate/id"),
-            command: command.name.clone(),
-            aggregate_id: command.aggregate.id.clone(),
-            message: error.to_string(),
-        }
-    })?;
-    let key = CommandKey::new(
-        &command.aggregate.aggregate_type,
-        &command.name,
-        command.schema_version,
-    );
+    let key = CommandKey::new(&command.context, &command.name, command.schema_version);
     let simulator =
         simulators
             .get(&key)
             .ok_or_else(|| TestDefinitionValidationError::UnknownCommand {
                 test_id: test_id.to_owned(),
                 path: format!("{path}/name"),
-                aggregate_type: command.aggregate.aggregate_type.clone(),
+                context: command.context.clone(),
                 command: command.name.clone(),
                 schema_version: command.schema_version,
             })?;
@@ -736,9 +702,9 @@ struct OperationTransportObserver {
     correlations: Arc<CorrelationHub>,
     operation_id: String,
     correlation_id: String,
+    context: String,
     command: String,
     schema_version: u32,
-    aggregate: TestAggregate,
     payload: Value,
     publication: Mutex<Option<CommandPublication>>,
     observation_error: Mutex<Option<CorrelationError>>,
@@ -751,9 +717,9 @@ impl OperationTransportObserver {
         correlations: Arc<CorrelationHub>,
         operation_id: String,
         correlation_id: String,
+        context: String,
         command: String,
         schema_version: u32,
-        aggregate: TestAggregate,
         payload: Value,
     ) -> Self {
         Self {
@@ -761,9 +727,9 @@ impl OperationTransportObserver {
             correlations,
             operation_id,
             correlation_id,
+            context,
             command,
             schema_version,
-            aggregate,
             payload,
             publication: Mutex::new(None),
             observation_error: Mutex::new(None),
@@ -814,9 +780,9 @@ impl CommandTransportObserver for OperationTransportObserver {
                 publication.command_message_id().to_owned(),
                 None,
                 publication.duplicate(),
+                self.context.clone(),
                 self.command.clone(),
                 self.schema_version,
-                self.aggregate.clone(),
                 Some(self.payload.clone()),
             )
             .await
@@ -1021,8 +987,7 @@ impl Tracer {
         let (queued, _correlation_lease) = tokio::time::timeout_at(
             deadline,
             self.submit_test_unlocked_pinned(
-                &command.aggregate.aggregate_type,
-                &command.aggregate.id,
+                &command.context,
                 &command.name,
                 SimulationRequest {
                     schema_version: command.schema_version,
@@ -1335,8 +1300,7 @@ impl Tracer {
 
     pub async fn command_inputs(
         &self,
-        aggregate_type: &str,
-        aggregate_id: &str,
+        context: &str,
         command: &str,
         schema_version: u32,
     ) -> Result<CommandInputDocument, CommandInputError> {
@@ -1346,27 +1310,18 @@ impl Tracer {
         if !self.inner.test_scenario_healthy.load(Ordering::Acquire) {
             return Err(CommandInputError::TestScenarioUnavailable);
         }
-        let key = CommandKey::new(aggregate_type, command, schema_version);
-        let simulator =
-            self.inner
-                .simulators
-                .get(&key)
-                .ok_or_else(|| CommandInputError::UnknownCommand {
-                    aggregate_type: aggregate_type.to_owned(),
-                    command: command.to_owned(),
-                    schema_version,
-                })?;
-        let Some(provider) = self.inner.input_options.get(&key) else {
-            return Ok(CommandInputDocument { fields: Vec::new() });
-        };
-        let aggregate_id = AggregateId::new(aggregate_id)
-            .map_err(|error| CommandInputError::InvalidAggregateId(error.to_string()))?;
-        let stream = stream_id(simulator.descriptor(), aggregate_id)
-            .map_err(|error| CommandInputError::InvalidAggregateId(error.to_string()))?;
-        provider
-            .fields(Arc::clone(&self.inner.history), stream)
-            .await
-            .map_err(|error| CommandInputError::Runtime(error.to_string()))
+        let key = CommandKey::new(context, command, schema_version);
+        if !self.inner.simulators.contains_key(&key) {
+            return Err(CommandInputError::UnknownCommand {
+                context: context.to_owned(),
+                command: command.to_owned(),
+                schema_version,
+            });
+        }
+        Ok(self.inner.input_options.get(&key).map_or_else(
+            || CommandInputDocument { fields: Vec::new() },
+            |provider| provider.fields(),
+        ))
     }
 
     pub async fn reset_test_scenario(&self) -> Result<(), TestScenarioResetError> {
@@ -1424,16 +1379,14 @@ impl Tracer {
 
     pub async fn submit_simulation(
         &self,
-        aggregate_type: &str,
-        aggregate_id: &str,
+        context: &str,
         command: &str,
         request: SimulationRequest,
         idempotency_key: Option<&str>,
     ) -> Result<OperationSnapshot, SubmissionError> {
         self.submit_operation(
             OperationMode::Simulate,
-            aggregate_type,
-            aggregate_id,
+            context,
             command,
             request,
             idempotency_key,
@@ -1443,35 +1396,26 @@ impl Tracer {
 
     pub async fn submit_test(
         &self,
-        aggregate_type: &str,
-        aggregate_id: &str,
+        context: &str,
         command: &str,
         request: SimulationRequest,
         idempotency_key: Option<&str>,
     ) -> Result<OperationSnapshot, SubmissionError> {
         let _test_run = self.inner.test_run_gate.lock().await;
-        self.submit_test_unlocked(
-            aggregate_type,
-            aggregate_id,
-            command,
-            request,
-            idempotency_key,
-        )
-        .await
+        self.submit_test_unlocked(context, command, request, idempotency_key)
+            .await
     }
 
     async fn submit_test_unlocked(
         &self,
-        aggregate_type: &str,
-        aggregate_id: &str,
+        context: &str,
         command: &str,
         request: SimulationRequest,
         idempotency_key: Option<&str>,
     ) -> Result<OperationSnapshot, SubmissionError> {
         self.submit_operation(
             OperationMode::Test,
-            aggregate_type,
-            aggregate_id,
+            context,
             command,
             request,
             idempotency_key,
@@ -1481,8 +1425,7 @@ impl Tracer {
 
     async fn submit_test_unlocked_pinned(
         &self,
-        aggregate_type: &str,
-        aggregate_id: &str,
+        context: &str,
         command: &str,
         request: SimulationRequest,
         idempotency_key: Option<&str>,
@@ -1490,8 +1433,7 @@ impl Tracer {
         let submission = self
             .submit_operation_internal(
                 OperationMode::Test,
-                aggregate_type,
-                aggregate_id,
+                context,
                 command,
                 request,
                 idempotency_key,
@@ -1508,16 +1450,14 @@ impl Tracer {
 
     pub async fn submit_dispatch(
         &self,
-        aggregate_type: &str,
-        aggregate_id: &str,
+        context: &str,
         command: &str,
         request: SimulationRequest,
         idempotency_key: Option<&str>,
     ) -> Result<OperationSnapshot, SubmissionError> {
         self.submit_operation(
             OperationMode::Dispatch,
-            aggregate_type,
-            aggregate_id,
+            context,
             command,
             request,
             idempotency_key,
@@ -1528,23 +1468,14 @@ impl Tracer {
     async fn submit_operation(
         &self,
         mode: OperationMode,
-        aggregate_type: &str,
-        aggregate_id: &str,
+        context: &str,
         command: &str,
         request: SimulationRequest,
         idempotency_key: Option<&str>,
     ) -> Result<OperationSnapshot, SubmissionError> {
-        self.submit_operation_internal(
-            mode,
-            aggregate_type,
-            aggregate_id,
-            command,
-            request,
-            idempotency_key,
-            false,
-        )
-        .await
-        .map(|submission| submission.snapshot)
+        self.submit_operation_internal(mode, context, command, request, idempotency_key, false)
+            .await
+            .map(|submission| submission.snapshot)
     }
 
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -1555,8 +1486,7 @@ impl Tracer {
     async fn submit_operation_internal(
         &self,
         mode: OperationMode,
-        aggregate_type: &str,
-        aggregate_id: &str,
+        context: &str,
         command: &str,
         request: SimulationRequest,
         idempotency_key: Option<&str>,
@@ -1585,16 +1515,14 @@ impl Tracer {
         if mode != OperationMode::Simulate && idempotency_key.is_none() {
             return Err(SubmissionError::IdempotencyKeyRequired);
         }
-        let key = CommandKey::new(aggregate_type, command, request.schema_version);
+        let key = CommandKey::new(context, command, request.schema_version);
         let simulator = self.inner.simulators.get(&key).cloned().ok_or_else(|| {
             SubmissionError::UnknownCommand {
-                aggregate_type: aggregate_type.to_owned(),
+                context: context.to_owned(),
                 command: command.to_owned(),
                 schema_version: request.schema_version,
             }
         })?;
-        let aggregate_id = AggregateId::new(aggregate_id)
-            .map_err(|error| SubmissionError::InvalidAggregateId(error.to_string()))?;
         #[allow(
             clippy::significant_drop_tightening,
             reason = "the spawned operation must retain the scenario guard until completion"
@@ -1631,8 +1559,7 @@ impl Tracer {
                         } else {
                             0
                         },
-                        aggregate_type,
-                        aggregate_id.as_str(),
+                        context,
                         command,
                         value,
                     )?
@@ -1653,15 +1580,13 @@ impl Tracer {
         }
         let operation_fingerprint = request_fingerprint(
             mode,
-            aggregate_type,
-            aggregate_id.as_str(),
+            context,
             command,
             request.schema_version,
             &request_bytes,
         );
         let execution_fingerprint = command_execution_fingerprint(
-            aggregate_type,
-            aggregate_id.as_str(),
+            context,
             command,
             request.schema_version,
             &request.payload,
@@ -1675,8 +1600,7 @@ impl Tracer {
             mode,
             command,
             schema_version: request.schema_version,
-            aggregate_type,
-            aggregate_id: aggregate_id.as_str(),
+            context,
         });
         let queued = record.snapshot().await;
 
@@ -1737,10 +1661,9 @@ impl Tracer {
                 &correlation_id,
                 mode,
                 operation_id.as_str().to_owned(),
+                context.to_owned(),
                 command.to_owned(),
                 request.schema_version,
-                aggregate_type.to_owned(),
-                aggregate_id.as_str().to_owned(),
             ) {
                 operations.records.remove(&operation_key);
                 operations
@@ -1782,7 +1705,7 @@ impl Tracer {
         let result_correlation_id = correlation_id.clone();
         let panic_correlation_id = correlation_id;
         let execution_operation_id = operation_id;
-        let aggregate_type = aggregate_type.to_owned();
+        let context = context.to_owned();
         let command = command.to_owned();
         let execution = tokio::spawn(async move {
             let _permit = permit;
@@ -1793,8 +1716,7 @@ impl Tracer {
                     simulator,
                     mode,
                     transport,
-                    aggregate_type,
-                    aggregate_id,
+                    context,
                     command,
                     request.schema_version,
                     execution_operation_id,
@@ -2038,8 +1960,7 @@ impl Tracer {
         simulator: Arc<dyn ErasedCommandSimulator>,
         mode: OperationMode,
         transport: Option<Arc<dyn CommandTransport>>,
-        aggregate_type: String,
-        aggregate_id: AggregateId,
+        context: String,
         command: String,
         schema_version: u32,
         operation_id: OperationId,
@@ -2066,8 +1987,7 @@ impl Tracer {
                 operation_id,
                 correlation_id.clone(),
                 execution_fingerprint,
-                aggregate_type.clone(),
-                aggregate_id.clone(),
+                context.clone(),
                 command.clone(),
                 schema_version,
                 payload.clone(),
@@ -2077,12 +1997,9 @@ impl Tracer {
                 Arc::clone(&self.inner.correlations),
                 invocation.operation_id().as_str().to_owned(),
                 correlation_id.clone(),
+                context,
                 command,
                 schema_version,
-                TestAggregate {
-                    aggregate_type,
-                    id: aggregate_id.as_str().to_owned(),
-                },
                 payload,
             ));
             match transport.invoke(invocation, observer.clone()).await {
@@ -2195,19 +2112,15 @@ impl Tracer {
 
         let simulated_command_id = synthetic_message_id(&correlation_id, "preview-command");
         let simulated_response_id = synthetic_message_id(&correlation_id, "preview-response");
-        let simulation_aggregate = TestAggregate {
-            aggregate_type: aggregate_type.clone(),
-            id: aggregate_id.as_str().to_owned(),
-        };
         if let Err(error) = self
             .inner
             .correlations
             .observe_simulated_command(
                 &correlation_id,
                 simulated_command_id.clone(),
+                context,
                 command,
                 schema_version,
-                simulation_aggregate.clone(),
                 Some(payload.clone()),
             )
             .await
@@ -2222,26 +2135,9 @@ impl Tracer {
                 .await;
         }
 
-        let stream = match stream_id(simulator.descriptor(), aggregate_id) {
-            Ok(stream) => stream,
-            Err(error) => {
-                record
-                    .fail(
-                        "invalid-runtime",
-                        bounded_failure_message(
-                            self.inner.trace_payload_policy.as_ref(),
-                            error.to_string(),
-                            self.inner.maximum_operation_payload_bytes,
-                        ),
-                    )
-                    .await;
-                return;
-            }
-        };
         match simulator
             .simulate(
                 Arc::clone(&self.inner.history),
-                stream,
                 operation_id,
                 execution_fingerprint,
                 payload,
@@ -2249,7 +2145,7 @@ impl Tracer {
             .await
         {
             Ok(RuntimeDecision::Accepted {
-                base_stream_version,
+                participants,
                 events,
             }) => {
                 let mut events: Vec<PredictedDomainEvent> = events
@@ -2262,8 +2158,8 @@ impl Tracer {
                 );
                 for event in &events {
                     let message_id = ContentFingerprint::digest(format!(
-                        "{correlation_id}:predicted-domain-event:{}",
-                        event.ordinal
+                        "{correlation_id}:predicted-domain-event:{}:{}:{}",
+                        event.aggregate_type, event.aggregate_id, event.ordinal
                     ))
                     .to_hex();
                     let mut observation = DomainEventObservation::new(
@@ -2272,10 +2168,7 @@ impl Tracer {
                         event.schema_version,
                     )
                     .with_causation_id(&simulated_command_id)
-                    .with_aggregate(
-                        simulation_aggregate.aggregate_type.clone(),
-                        simulation_aggregate.id.clone(),
-                    )
+                    .with_aggregate(event.aggregate_type.clone(), event.aggregate_id.clone())
                     .with_stream_version(event.predicted_stream_version);
                     if let Some(payload) = event.payload.clone() {
                         observation = observation.with_payload(payload);
@@ -2294,10 +2187,10 @@ impl Tracer {
                     CommandResponseOutcome::Accepted,
                 )
                 .await;
-                complete_simulation_accepted(&record, base_stream_version, events).await;
+                complete_simulation_accepted(&record, participants, events).await;
             }
             Ok(RuntimeDecision::Rejected {
-                base_stream_version,
+                participants,
                 rejection,
             }) => {
                 let rejection = bounded_rejection(
@@ -2325,7 +2218,7 @@ impl Tracer {
                             .await;
                     }
                 }
-                complete_simulation_rejected(&record, base_stream_version, rejection).await;
+                complete_simulation_rejected(&record, participants, rejection).await;
             }
             Err(error) => {
                 let (code, message) = runtime_failure(error);
@@ -2807,8 +2700,7 @@ fn simulated_rejection_outcome(rejection: Value) -> Result<CommandResponseOutcom
 fn operation_id_from_key(
     mode: OperationMode,
     generation: u64,
-    aggregate_type: &str,
-    aggregate_id: &str,
+    context: &str,
     command: &str,
     idempotency_key: &str,
 ) -> Result<OperationId, SubmissionError> {
@@ -2816,8 +2708,7 @@ fn operation_id_from_key(
         b"rostfrei:tracer-operation:v1".as_slice(),
         mode.as_str().as_bytes(),
         generation.to_be_bytes().as_slice(),
-        aggregate_type.as_bytes(),
-        aggregate_id.as_bytes(),
+        context.as_bytes(),
         command.as_bytes(),
         idempotency_key.as_bytes(),
     ]);
@@ -2827,15 +2718,10 @@ fn operation_id_from_key(
 
 async fn complete_simulation_accepted(
     record: &OperationRecord,
-    base_stream_version: u64,
+    participants: Vec<crate::TouchedStreamParticipant>,
     events: Vec<PredictedDomainEvent>,
 ) {
-    let mut trace = vec![
-        OperationEventKind::HistoryReplayed {
-            base_stream_version,
-        },
-        OperationEventKind::CommandAccepted,
-    ];
+    let mut trace = vec![OperationEventKind::CommandAccepted];
     trace.extend(
         events
             .iter()
@@ -2845,7 +2731,7 @@ async fn complete_simulation_accepted(
     record
         .complete(
             OperationResult::Accepted {
-                base_stream_version: Some(base_stream_version),
+                participants,
                 predicted_events: events,
                 appended: Some(false),
                 published: false,
@@ -2860,13 +2746,13 @@ async fn complete_simulation_accepted(
 
 async fn complete_simulation_rejected(
     record: &OperationRecord,
-    base_stream_version: u64,
+    participants: Vec<crate::TouchedStreamParticipant>,
     rejection: Value,
 ) {
     record
         .complete(
             OperationResult::Rejected {
-                base_stream_version: Some(base_stream_version),
+                participants,
                 rejection: rejection.clone(),
                 appended: Some(false),
                 published: false,
@@ -2874,12 +2760,7 @@ async fn complete_simulation_rejected(
                 response_message_id: None,
                 duplicate: None,
             },
-            vec![
-                OperationEventKind::HistoryReplayed {
-                    base_stream_version,
-                },
-                OperationEventKind::CommandRejected { rejection },
-            ],
+            vec![OperationEventKind::CommandRejected { rejection }],
         )
         .await;
 }
@@ -2931,7 +2812,7 @@ async fn complete_transport(
             record
                 .complete(
                     OperationResult::Accepted {
-                        base_stream_version: None,
+                        participants: Vec::new(),
                         predicted_events: Vec::new(),
                         appended: None,
                         published: true,
@@ -2951,7 +2832,7 @@ async fn complete_transport(
             record
                 .complete(
                     OperationResult::Rejected {
-                        base_stream_version: None,
+                        participants: Vec::new(),
                         rejection: rejection.clone(),
                         appended: None,
                         published: true,
@@ -3033,6 +2914,9 @@ fn transport_failure(error: &CommandTransportError) -> (&'static str, String) {
 fn runtime_failure(error: RuntimeSimulationError) -> (&'static str, String) {
     match error {
         RuntimeSimulationError::InvalidPayload(error) => ("invalid-command-payload", error),
+        RuntimeSimulationError::InvalidBoundedContext(error) => {
+            ("invalid-runtime-configuration", error)
+        }
         RuntimeSimulationError::Simulation(SimulationError::Codec(error)) => {
             ("event-json-failed", error.to_string())
         }
@@ -3059,8 +2943,7 @@ fn runtime_failure(error: RuntimeSimulationError) -> (&'static str, String) {
 
 fn request_fingerprint(
     mode: OperationMode,
-    aggregate_type: &str,
-    aggregate_id: &str,
+    context: &str,
     command: &str,
     schema_version: u32,
     payload: &[u8],
@@ -3069,8 +2952,7 @@ fn request_fingerprint(
     framed_fingerprint(&[
         b"rostfrei:tracer-request:v2".as_slice(),
         mode.as_str().as_bytes(),
-        aggregate_type.as_bytes(),
-        aggregate_id.as_bytes(),
+        context.as_bytes(),
         command.as_bytes(),
         schema_version.as_slice(),
         payload,
@@ -3103,10 +2985,7 @@ mod tests {
                     "key": "subject",
                     "name": "rent-bicycle",
                     "schemaVersion": 1,
-                    "aggregate": {
-                        "type": "rental/bicycle",
-                        "id": "bike-1"
-                    },
+                    "context": "rental",
                     "payload": payload,
                     "outcome": outcome
                 }]
@@ -3119,8 +2998,7 @@ mod tests {
     fn request_fingerprints_use_deterministic_fixed_width_framing() {
         let fingerprint = request_fingerprint(
             OperationMode::Simulate,
-            "bike-rental/rental-fleet",
-            "city-fleet",
+            "bike-rental",
             "rent-bicycle",
             1,
             br#"{"bicycle_id":"bike-42"}"#,
@@ -3128,7 +3006,7 @@ mod tests {
 
         assert_eq!(
             fingerprint.to_hex(),
-            "9300fe8edfdb87c65efd101d49fb3eefeedde2020109cea3b2628464f1af35af"
+            "43f84245ee6216eabd3daa4276a12e54396b8c03b036c26533217b91dd9420f0"
         );
     }
 
@@ -3162,10 +3040,6 @@ mod tests {
 
     #[test]
     fn report_comparison_uses_raw_rejection_before_typed_redaction() {
-        let aggregate = TestAggregate {
-            aggregate_type: "rental/bicycle".to_owned(),
-            id: "bike-1".to_owned(),
-        };
         let payload = json!({
             "metadata": { "payload": { "application": true } },
             "secret": true
@@ -3184,7 +3058,7 @@ mod tests {
                 None,
                 "rent-bicycle",
                 1,
-                aggregate,
+                "rental",
                 Some(payload.clone()),
             )],
             [ObservedCommandOutcome::try_new(
@@ -3260,10 +3134,6 @@ mod tests {
 
     #[test]
     fn observation_conflicts_force_a_failed_comparison() {
-        let aggregate = TestAggregate {
-            aggregate_type: "rental/bicycle".to_owned(),
-            id: "bike-1".to_owned(),
-        };
         let observed = ObservedMessageSeries::try_from_parts(
             [crate::ObservedMessageNode::command(
                 "command-1",
@@ -3271,7 +3141,7 @@ mod tests {
                 None,
                 "rent-bicycle",
                 1,
-                aggregate,
+                "rental",
                 Some(json!({ "bicycleId": "bike-1" })),
             )],
             [ObservedCommandOutcome::try_new(
@@ -3354,8 +3224,7 @@ mod tests {
             mode: OperationMode::Test,
             command: "rent-bicycle",
             schema_version: 1,
-            aggregate_type: "rental/bicycle",
-            aggregate_id: "bike-1",
+            context: "rental",
         });
         record.start().await;
         record

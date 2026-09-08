@@ -428,7 +428,7 @@ mod tests {
     use async_trait::async_trait;
     use rostfrei::{
         CommandBus, DynamicCommandRequest, EventStore, InMemoryEventStore,
-        InMemoryMessagingAdapter, OperationId, StreamAggregateId,
+        InMemoryMessagingAdapter, OperationId,
     };
     use rostfrei_messaging_core::{
         ApplicationName, CallerMetadata, CommandResponseAddress, CommandResponseReadError,
@@ -761,7 +761,9 @@ mod tests {
 
     fn empty_processor() -> Arc<CommandProcessor> {
         let store: Arc<dyn EventStore> = Arc::new(InMemoryEventStore::new());
-        Arc::new(CommandProcessor::new(store))
+        let context = rostfrei_messaging_core::BoundedContextName::new("ledger")
+            .expect("test command processor context must be valid");
+        Arc::new(CommandProcessor::new(context, store))
     }
 
     fn encoded_command(adapter: Arc<NatsMessagingAdapter>) -> TestResult<EncodedCommand> {
@@ -769,8 +771,6 @@ mod tests {
         let bus = CommandBus::new(context()?, erased);
         Ok(bus.encode_dynamic(DynamicCommandRequest::new(
             OperationId::new("nats-command")?,
-            "ledger/account",
-            StreamAggregateId::new("account-1")?,
             "credit-account",
             1,
             serde_json::json!({ "amount": 7 }),
@@ -780,8 +780,6 @@ mod tests {
     fn dynamic_request() -> TestResult<DynamicCommandRequest> {
         Ok(DynamicCommandRequest::new(
             OperationId::new("adapter-parity")?,
-            "ledger/account",
-            StreamAggregateId::new("account-1")?,
             "unknown-command",
             1,
             serde_json::json!({ "amount": 7 }),

@@ -396,7 +396,7 @@ function createDemoReport(definition: TestDefinitionRevision): TestReport {
       : {
           name: "unknown-command",
           schemaVersion: 1,
-          aggregate: { type: "unknown", id: "unknown" },
+          context: "unknown",
           payload: undefined,
         }
   return {
@@ -414,7 +414,7 @@ function createDemoReport(definition: TestDefinitionRevision): TestReport {
           observationOrder: 1,
           name: command.name,
           schemaVersion: command.schemaVersion,
-          aggregate: command.aggregate,
+          context: command.context,
           payload: command.payload,
         },
       ],
@@ -450,10 +450,9 @@ function createDemoReport(definition: TestDefinitionRevision): TestReport {
       },
       mode: "test",
       status: "completed",
+      context: command.context,
       command: command.name,
       schemaVersion: command.schemaVersion,
-      aggregateType: command.aggregate.type,
-      aggregateId: command.aggregate.id,
       latestEventId: 2,
       result: { decision: accepted ? "accepted" : "rejected" },
     },

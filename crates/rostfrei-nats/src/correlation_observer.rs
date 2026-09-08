@@ -65,6 +65,7 @@ pub struct NatsCorrelationObserver {
     client: Client,
     application: ApplicationName,
     traffic_scope: TrafficScope,
+    domain_event_subject_filter: String,
     stream_names: Option<CorrelationStreamNames>,
 }
 
@@ -75,19 +76,30 @@ struct CorrelationStreamNames {
 }
 
 impl NatsCorrelationObserver {
-    pub const fn new(client: Client, application: ApplicationName) -> Self {
-        Self::new_in_scope(client, application, TrafficScope::Normal)
+    pub fn new(
+        client: Client,
+        application: ApplicationName,
+        domain_event_subject_filter: impl Into<String>,
+    ) -> Self {
+        Self::new_in_scope(
+            client,
+            application,
+            TrafficScope::Normal,
+            domain_event_subject_filter,
+        )
     }
 
-    pub const fn new_in_scope(
+    pub fn new_in_scope(
         client: Client,
         application: ApplicationName,
         traffic_scope: TrafficScope,
+        domain_event_subject_filter: impl Into<String>,
     ) -> Self {
         Self {
             client,
             application,
             traffic_scope,
+            domain_event_subject_filter: domain_event_subject_filter.into(),
             stream_names: None,
         }
     }
@@ -112,6 +124,10 @@ impl NatsCorrelationObserver {
             self.traffic_scope,
             CorrelatedMessageFamily::DomainEvent,
         );
+        let domain_subject_filter = self.domain_event_subject_filter.clone();
+        if !aggregate_event_filter_matches_family(&domain_subject_filter, &domain_filter) {
+            return Err(NatsError::Configuration);
+        }
         let integration_filter = family_filter(
             &self.application,
             self.traffic_scope,
@@ -122,7 +138,7 @@ impl NatsCorrelationObserver {
         } else {
             CorrelationStreamNames {
                 domain_events: context
-                    .stream_by_subject(domain_filter.clone())
+                    .stream_by_subject(domain_subject_filter.clone())
                     .await
                     .map_err(|_| NatsError::StreamNotFound)?,
                 integration_events: context
@@ -135,12 +151,14 @@ impl NatsCorrelationObserver {
             &context,
             stream_names.domain_events,
             domain_filter,
+            domain_subject_filter,
             DeliverPolicy::New,
         )
         .await?;
         let integration_events = ObservedStream::subscribe(
             &context,
             stream_names.integration_events,
+            integration_filter.clone(),
             integration_filter,
             DeliverPolicy::New,
         )
@@ -216,6 +234,7 @@ impl NatsCorrelationSubscription {
 struct ObservedStream {
     name: String,
     family_filter: String,
+    subject_filter: String,
     generation: String,
     messages: consumer::pull::Ordered,
 }
@@ -225,6 +244,7 @@ impl ObservedStream {
         context: &jetstream::Context,
         name: String,
         family_filter: String,
+        subject_filter: String,
         deliver_policy: DeliverPolicy,
     ) -> Result<Self, NatsError> {
         let stream = context
@@ -239,6 +259,7 @@ impl ObservedStream {
             .create_consumer(consumer::pull::OrderedConfig {
                 description: Some("rostfrei correlation observer".to_owned()),
                 deliver_policy,
+                filter_subject: subject_filter.clone(),
                 ..Default::default()
             })
             .await
@@ -247,6 +268,7 @@ impl ObservedStream {
         Ok(Self {
             name,
             family_filter,
+            subject_filter,
             generation,
             messages,
         })
@@ -266,6 +288,7 @@ impl ObservedStream {
                 context,
                 self.name.clone(),
                 self.family_filter.clone(),
+                self.subject_filter.clone(),
                 DeliverPolicy::All,
             )
             .await?;
@@ -314,16 +337,35 @@ fn family_matches(
         .is_some_and(|remainder| !remainder.is_empty())
 }
 
-fn stream_subjects_match_family(subjects: &[String], family_filter: &str) -> bool {
+fn filter_matches_family(filter: &str, family_filter: &str) -> bool {
     let Some(prefix) = family_filter.strip_suffix('>') else {
         return false;
     };
+    filter
+        .strip_prefix(prefix)
+        .is_some_and(|remainder| !remainder.is_empty())
+}
+
+fn aggregate_event_filter_matches_family(filter: &str, family_filter: &str) -> bool {
+    let Some(prefix) = family_filter.strip_suffix('>') else {
+        return false;
+    };
+    let Some(remainder) = filter.strip_prefix(prefix) else {
+        return false;
+    };
+    let mut tokens = remainder.split('.');
+    matches!(
+        (tokens.next(), tokens.next(), tokens.next(), tokens.next()),
+        (Some(context), Some("aggregate"), Some(identity), None)
+            if !context.is_empty() && !identity.is_empty() && identity != ">"
+    )
+}
+
+fn stream_subjects_match_family(subjects: &[String], family_filter: &str) -> bool {
     !subjects.is_empty()
-        && subjects.iter().all(|subject| {
-            subject
-                .strip_prefix(prefix)
-                .is_some_and(|remainder| !remainder.is_empty())
-        })
+        && subjects
+            .iter()
+            .all(|subject| filter_matches_family(subject, family_filter))
 }
 
 fn correlated_message(
@@ -397,6 +439,30 @@ mod tests {
         ));
         assert!(!stream_subjects_match_family(
             &["bike-rental.domain.bike-rental.aggregate.*".to_owned()],
+            &filter,
+        ));
+        assert!(filter_matches_family(
+            "bike-rental.test.domain.bike-rental.aggregate.*",
+            &filter,
+        ));
+        assert!(aggregate_event_filter_matches_family(
+            "bike-rental.test.domain.bike-rental.aggregate.*",
+            &filter,
+        ));
+        assert!(!aggregate_event_filter_matches_family(
+            "bike-rental.test.domain.>",
+            &filter,
+        ));
+        assert!(!aggregate_event_filter_matches_family(
+            "bike-rental.test.domain.bike-rental.transaction.*",
+            &filter,
+        ));
+        assert!(!filter_matches_family(
+            "bike-rental.domain.bike-rental.aggregate.*",
+            &filter,
+        ));
+        assert!(!filter_matches_family(
+            "bike-rental.test.integration.>",
             &filter,
         ));
     }

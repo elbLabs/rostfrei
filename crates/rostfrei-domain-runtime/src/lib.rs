@@ -33,7 +33,7 @@ pub trait AggregateRuntime:
 pub mod __private {
     pub use rostfrei_core as core;
     pub use rostfrei_core::{Aggregate, AggregateInstance};
-    pub use rostfrei_registry::{CommandDefinition, CommandDescriptor};
+    pub use rostfrei_registry::CommandDescriptor;
     pub use std::any::type_name;
 
     pub use crate::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};

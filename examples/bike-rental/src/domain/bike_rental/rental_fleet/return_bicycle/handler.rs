@@ -1,15 +1,29 @@
-use rostfrei::{AggregateInstance, CommandHandler};
+use async_trait::async_trait;
+use rostfrei::{CommandDecision, CommandExecution, CommandHandler, CommandHandlingResult};
 
 use super::{BicycleNotRented, ReturnBicycle, ReturnBicycleAction as _};
 use crate::domain::rental_fleet::RentalFleetAggregate;
 
-impl CommandHandler<ReturnBicycle> for RentalFleetAggregate {
+pub struct ReturnBicycleHandler;
+
+#[async_trait]
+impl CommandHandler<ReturnBicycle> for ReturnBicycleHandler {
     type Rejection = BicycleNotRented;
 
-    fn handle(
+    async fn handle(
+        &self,
         command: &ReturnBicycle,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.return_bicycle(command.bicycle_id.clone())
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut fleet = execution
+            .load::<RentalFleetAggregate>(command.fleet_id.as_str())
+            .await?;
+        match fleet
+            .aggregate_mut()
+            .return_bicycle(command.bicycle_id.clone())
+        {
+            Ok(()) => Ok(CommandDecision::Accepted),
+            Err(rejection) => Ok(CommandDecision::Rejected(rejection)),
+        }
     }
 }

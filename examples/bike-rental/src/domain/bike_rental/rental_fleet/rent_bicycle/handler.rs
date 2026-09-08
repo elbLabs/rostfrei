@@ -1,15 +1,29 @@
-use rostfrei::{AggregateInstance, CommandHandler};
+use async_trait::async_trait;
+use rostfrei::{CommandDecision, CommandExecution, CommandHandler, CommandHandlingResult};
 
 use super::{BicycleUnavailable, RentBicycle, RentBicycleAction as _};
 use crate::domain::rental_fleet::RentalFleetAggregate;
 
-impl CommandHandler<RentBicycle> for RentalFleetAggregate {
+pub struct RentBicycleHandler;
+
+#[async_trait]
+impl CommandHandler<RentBicycle> for RentBicycleHandler {
     type Rejection = BicycleUnavailable;
 
-    fn handle(
+    async fn handle(
+        &self,
         command: &RentBicycle,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.rent_bicycle(command.bicycle_id.clone())
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut fleet = execution
+            .load::<RentalFleetAggregate>(command.fleet_id.as_str())
+            .await?;
+        match fleet
+            .aggregate_mut()
+            .rent_bicycle(command.bicycle_id.clone())
+        {
+            Ok(()) => Ok(CommandDecision::Accepted),
+            Err(rejection) => Ok(CommandDecision::Rejected(rejection)),
+        }
     }
 }

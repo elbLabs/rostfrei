@@ -44,7 +44,7 @@ pub use message_series::{
 pub use operation::{
     CompletedDecision, OperationEvent, OperationEventEvidence, OperationEventEvidenceKind,
     OperationEventKind, OperationMode, OperationResult, OperationSnapshot, OperationStatus,
-    OperationSubscription, PredictedDomainEvent, SubscriptionError,
+    OperationSubscription, PredictedDomainEvent, SubscriptionError, TouchedStreamParticipant,
 };
 pub use rostfrei_fixtures::{
     Fixture, FixtureAggregate, FixtureApplyError, FixtureApplyReport,

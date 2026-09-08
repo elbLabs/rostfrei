@@ -6,20 +6,19 @@ use std::{
 };
 
 use async_trait::async_trait;
-use domain::{DomainError, JsonCommandPayload, JsonErrorPayload};
+use domain::{BoundedContextType, DomainError, JsonCommandPayload, JsonErrorPayload};
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateType, CommandExecutionError, CommandHandler, CommandOutcome,
-    ContentFingerprint, Event, EventStore, EventStoreErrorKind, ExecutionMetadata, Executor,
-    IdentityError, OperationId as CoreOperationId, StreamId,
+    Aggregate, AggregateCodecs, CommandExecutionError, CommandExecutionMetadata, CommandExecutor,
+    CommandHandler, CommandOutcome, ContentFingerprint, EventCodec, EventStore,
+    EventStoreErrorKind, OperationId as CoreOperationId,
 };
 use rostfrei_messaging_core::{
-    ApplicationErrorCode, BoundedContext, COMMAND_RESPONSE_SCHEMA_VERSION, CausationId,
-    CommandAddress, CommandEnvelope, CommandRejection, CommandRejectionClassification,
+    ApplicationErrorCode, BoundedContext, BoundedContextName, COMMAND_RESPONSE_SCHEMA_VERSION,
+    CausationId, CommandAddress, CommandEnvelope, CommandRejection, CommandRejectionClassification,
     CommandResponse, CommandResponseOutcome, ContractError, CorrelationId, EnvelopeContext,
     MessageBuildError, MessageBuildErrorKind, MessageId, MessageTimestamp, OperationId,
     OutboundMessage, SchemaVersion, derive_command_response_address,
 };
-use rostfrei_registry::CommandDefinition;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use serde_json::Value;
 use thiserror::Error;
@@ -32,7 +31,6 @@ const OPERATION_CONFLICT_CODE: &str = "rostfrei.operation.identity-conflict";
 #[derive(Clone, Debug)]
 pub struct CommandRequest<C> {
     operation_id: CoreOperationId,
-    aggregate_id: AggregateId,
     command: C,
     correlation_id: Option<CorrelationId>,
     causation_id: Option<CausationId>,
@@ -41,10 +39,9 @@ pub struct CommandRequest<C> {
 }
 
 impl<C> CommandRequest<C> {
-    pub const fn new(operation_id: CoreOperationId, aggregate_id: AggregateId, command: C) -> Self {
+    pub const fn new(operation_id: CoreOperationId, command: C) -> Self {
         Self {
             operation_id,
-            aggregate_id,
             command,
             correlation_id: None,
             causation_id: None,
@@ -80,8 +77,6 @@ impl<C> CommandRequest<C> {
 #[derive(Clone, Debug)]
 pub struct DynamicCommandRequest {
     operation_id: CoreOperationId,
-    aggregate_type: AggregateType,
-    aggregate_id: AggregateId,
     command: String,
     schema_version: u32,
     payload: Value,
@@ -92,17 +87,12 @@ pub struct DynamicCommandRequest {
 }
 
 impl DynamicCommandRequest {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         operation_id: CoreOperationId,
-        aggregate_type: impl Into<String>,
-        aggregate_id: AggregateId,
         command: impl Into<String>,
         schema_version: u32,
         payload: Value,
     ) -> Result<Self, CommandBusError> {
-        let aggregate_type = AggregateType::new(aggregate_type.into())
-            .map_err(|error| CommandBusError::encoding(error.to_string()))?;
         let command = command.into();
         CommandAddress::new("rostfrei", "dynamic-command", &command)
             .map_err(|error| CommandBusError::encoding(error.to_string()))?;
@@ -110,8 +100,6 @@ impl DynamicCommandRequest {
             .map_err(|error| CommandBusError::encoding(error.to_string()))?;
         Ok(Self {
             operation_id,
-            aggregate_type,
-            aggregate_id,
             command,
             schema_version,
             payload,
@@ -142,9 +130,7 @@ impl DynamicCommandRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct RoutedAggregateCommand {
-    aggregate_type: String,
-    aggregate_id: String,
+pub struct RoutedCommand {
     command: String,
     schema_version: u32,
     payload: Value,
@@ -152,39 +138,22 @@ pub struct RoutedAggregateCommand {
     events_caused_by_command: bool,
 }
 
-impl RoutedAggregateCommand {
+impl RoutedCommand {
     pub fn new(
-        aggregate_type: impl Into<String>,
-        aggregate_id: impl Into<String>,
         command: impl Into<String>,
         schema_version: u32,
         payload: Value,
-    ) -> Result<Self, RoutedAggregateCommandError> {
-        let aggregate_type = aggregate_type.into();
-        let aggregate_id = aggregate_id.into();
+    ) -> Result<Self, RoutedCommandError> {
         let command = command.into();
-        AggregateType::new(aggregate_type.clone())
-            .map_err(RoutedAggregateCommandError::AggregateType)?;
-        AggregateId::new(aggregate_id.clone()).map_err(RoutedAggregateCommandError::AggregateId)?;
         CommandAddress::new("rostfrei", "routed-command", &command)
-            .map_err(RoutedAggregateCommandError::CommandName)?;
-        SchemaVersion::new(schema_version).map_err(RoutedAggregateCommandError::SchemaVersion)?;
+            .map_err(RoutedCommandError::CommandName)?;
+        SchemaVersion::new(schema_version).map_err(RoutedCommandError::SchemaVersion)?;
         Ok(Self {
-            aggregate_type,
-            aggregate_id,
             command,
             schema_version,
             payload,
             events_caused_by_command: false,
         })
-    }
-
-    pub fn aggregate_type(&self) -> &str {
-        &self.aggregate_type
-    }
-
-    pub fn aggregate_id(&self) -> &str {
-        &self.aggregate_id
     }
 
     pub fn command(&self) -> &str {
@@ -210,9 +179,7 @@ impl RoutedAggregateCommand {
 }
 
 #[derive(Deserialize)]
-struct RoutedAggregateCommandWire {
-    aggregate_type: String,
-    aggregate_id: String,
+struct RoutedCommandWire {
     command: String,
     schema_version: u32,
     payload: Value,
@@ -220,21 +187,15 @@ struct RoutedAggregateCommandWire {
     events_caused_by_command: bool,
 }
 
-impl<'de> Deserialize<'de> for RoutedAggregateCommand {
+impl<'de> Deserialize<'de> for RoutedCommand {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let wire = RoutedAggregateCommandWire::deserialize(deserializer)?;
-        Self::new(
-            wire.aggregate_type,
-            wire.aggregate_id,
-            wire.command,
-            wire.schema_version,
-            wire.payload,
-        )
-        .map(|command| command.with_events_caused_by_command(wire.events_caused_by_command))
-        .map_err(D::Error::custom)
+        let wire = RoutedCommandWire::deserialize(deserializer)?;
+        Self::new(wire.command, wire.schema_version, wire.payload)
+            .map(|command| command.with_events_caused_by_command(wire.events_caused_by_command))
+            .map_err(D::Error::custom)
     }
 }
 
@@ -247,11 +208,7 @@ const fn is_false(value: &bool) -> bool {
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
-pub enum RoutedAggregateCommandError {
-    #[error("invalid routed aggregate type: {0}")]
-    AggregateType(IdentityError),
-    #[error("invalid routed aggregate ID: {0}")]
-    AggregateId(IdentityError),
+pub enum RoutedCommandError {
     #[error("invalid routed command name: {0}")]
     CommandName(ContractError),
     #[error("invalid routed command schema version: {0}")]
@@ -286,10 +243,11 @@ impl EncodedCommand {
         message_id: MessageId,
         payload: Vec<u8>,
     ) -> Result<Self, CommandProcessorError> {
-        let envelope: CommandEnvelope<RoutedAggregateCommand> = serde_json::from_slice(&payload)
+        let envelope: CommandEnvelope<RoutedCommand> = serde_json::from_slice(&payload)
             .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
-        let fingerprint = routed_command_execution_fingerprint(envelope.payload())
-            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+        let fingerprint =
+            routed_command_execution_fingerprint(address.context(), envelope.payload())
+                .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
         let message = OutboundMessage::new(address, message_id, payload)
             .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
         Ok(Self::new(
@@ -473,48 +431,46 @@ impl CommandBus {
         self.adapter.maximum_payload_len()
     }
 
-    pub async fn dispatch<A, C>(
+    pub async fn dispatch<C>(
         &self,
         request: CommandRequest<C>,
     ) -> Result<CommandBusReceipt, CommandBusError>
     where
-        A: Aggregate + CommandHandler<C>,
-        C: CommandDefinition<A> + JsonCommandPayload,
+        C: JsonCommandPayload,
     {
-        self.dispatch_observed::<A, C>(request, Arc::new(IgnoreCommandPublications))
+        self.dispatch_observed::<C>(request, Arc::new(IgnoreCommandPublications))
             .await
     }
 
-    pub async fn dispatch_observed<A, C>(
+    pub async fn dispatch_observed<C>(
         &self,
         request: CommandRequest<C>,
         observer: Arc<dyn CommandBusObserver>,
     ) -> Result<CommandBusReceipt, CommandBusError>
     where
-        A: Aggregate + CommandHandler<C>,
-        C: CommandDefinition<A> + JsonCommandPayload,
+        C: JsonCommandPayload,
     {
-        let encoded = self.encode::<A, C>(request)?;
+        let encoded = self.encode::<C>(request)?;
         self.adapter.dispatch(encoded, observer).await
     }
 
-    pub fn encode<A, C>(
-        &self,
-        request: CommandRequest<C>,
-    ) -> Result<EncodedCommand, CommandBusError>
+    pub fn encode<C>(&self, request: CommandRequest<C>) -> Result<EncodedCommand, CommandBusError>
     where
-        A: Aggregate + CommandHandler<C>,
-        C: CommandDefinition<A> + JsonCommandPayload,
+        C: JsonCommandPayload,
     {
+        let command_context = <C::Context as BoundedContextType>::DESCRIPTOR.id.0;
+        if command_context != self.context.name().as_str() {
+            return Err(CommandBusError::encoding(format!(
+                "command context `{command_context}` does not match command bus context `{}`",
+                self.context.name().as_str()
+            )));
+        }
         let payload = request
             .command
             .encode_json()
             .map_err(CommandBusError::encoding)?;
         self.encode_dynamic(DynamicCommandRequest {
             operation_id: request.operation_id,
-            aggregate_type: AggregateType::new(A::aggregate_type().into_owned())
-                .map_err(|error| CommandBusError::encoding(error.to_string()))?,
-            aggregate_id: request.aggregate_id,
             command: C::LOCAL_ID.to_owned(),
             schema_version: C::SCHEMA_VERSION,
             payload,
@@ -561,16 +517,11 @@ impl CommandBus {
             Some(created_at) => created_at,
             None => current_timestamp()?,
         };
-        let routed = RoutedAggregateCommand::new(
-            request.aggregate_type.as_str(),
-            request.aggregate_id.as_str(),
-            request.command,
-            request.schema_version,
-            request.payload,
-        )
-        .map_err(|error| CommandBusError::encoding(error.to_string()))?
-        .with_events_caused_by_command(request.events_caused_by_command);
-        let fingerprint = routed_command_execution_fingerprint(&routed)?;
+        let routed = RoutedCommand::new(request.command, request.schema_version, request.payload)
+            .map_err(|error| CommandBusError::encoding(error.to_string()))?
+            .with_events_caused_by_command(request.events_caused_by_command);
+        let fingerprint =
+            routed_command_execution_fingerprint(self.context.name().as_str(), &routed)?;
         let message_id = command_message_id(
             &address,
             &operation_id,
@@ -673,15 +624,15 @@ impl CommandBusError {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct CommandBindingKey {
-    aggregate_type: String,
+    context: String,
     command: String,
     schema_version: u32,
 }
 
 impl CommandBindingKey {
-    fn new(aggregate_type: &str, command: &str, schema_version: u32) -> Self {
+    fn new(context: &str, command: &str, schema_version: u32) -> Self {
         Self {
-            aggregate_type: aggregate_type.to_owned(),
+            context: context.to_owned(),
             command: command.to_owned(),
             schema_version,
         }
@@ -743,34 +694,35 @@ trait ErasedCommandBinding: Send + Sync {
     async fn execute(
         &self,
         store: Arc<dyn EventStore>,
-        metadata: ExecutionMetadata,
+        codecs: Arc<AggregateCodecs>,
+        metadata: CommandExecutionMetadata,
         payload: &Value,
     ) -> Result<CommandResponseOutcome, BindingError>;
 }
 
-struct TypedCommandBinding<A, C, M> {
+struct TypedCommandBinding<C, H, M> {
+    handler: H,
     rejection_mapper: M,
-    marker: std::marker::PhantomData<fn() -> (A, C)>,
+    marker: std::marker::PhantomData<fn() -> C>,
 }
 
 #[async_trait]
-impl<A, C, M> ErasedCommandBinding for TypedCommandBinding<A, C, M>
+impl<C, H, M> ErasedCommandBinding for TypedCommandBinding<C, H, M>
 where
-    A: Aggregate + CommandHandler<C> + 'static,
-    C: CommandDefinition<A> + JsonCommandPayload + Send + Sync,
-    A::State: Send,
-    A::Event: Event + Send,
-    M: CommandRejectionMapper<<A as CommandHandler<C>>::Rejection> + 'static,
+    C: JsonCommandPayload + Send + Sync,
+    H: CommandHandler<C> + 'static,
+    M: CommandRejectionMapper<H::Rejection> + 'static,
 {
     async fn execute(
         &self,
         store: Arc<dyn EventStore>,
-        metadata: ExecutionMetadata,
+        codecs: Arc<AggregateCodecs>,
+        metadata: CommandExecutionMetadata,
         payload: &Value,
     ) -> Result<CommandResponseOutcome, BindingError> {
         let command = C::decode_json(payload).map_err(BindingError::InvalidPayload)?;
-        match Executor::new(store)
-            .execute::<A, C>(metadata, &command)
+        match CommandExecutor::with_codecs(store, codecs)
+            .execute(&self.handler, metadata, &command)
             .await
             .map_err(BindingError::Execution)?
         {
@@ -835,50 +787,76 @@ impl CommandProcessorError {
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum CommandBindingRegistrationError {
     #[error(
-        "command `{command}` version {schema_version} for aggregate `{aggregate_type}` is already bound"
+        "command context `{command_context}` does not match processor context `{processor_context}`"
+    )]
+    ContextMismatch {
+        command_context: &'static str,
+        processor_context: String,
+    },
+    #[error(
+        "command `{command}` version {schema_version} for context `{context}` is already bound"
     )]
     Duplicate {
-        aggregate_type: String,
+        context: &'static str,
         command: &'static str,
         schema_version: u32,
     },
 }
 
 pub struct CommandProcessor {
+    context: BoundedContextName,
     store: Arc<dyn EventStore>,
+    codecs: Arc<AggregateCodecs>,
     bindings: HashMap<CommandBindingKey, Arc<dyn ErasedCommandBinding>>,
 }
 
 impl CommandProcessor {
-    pub fn new(store: Arc<dyn EventStore>) -> Self {
+    pub fn new(context: BoundedContextName, store: Arc<dyn EventStore>) -> Self {
         Self {
+            context,
             store,
+            codecs: Arc::new(AggregateCodecs::default()),
             bindings: HashMap::new(),
         }
     }
 
-    pub fn register<A, C>(
+    pub fn register_codec<A, C>(&mut self, codec: C) -> &mut Self
+    where
+        A: Aggregate + 'static,
+        C: EventCodec<A> + 'static,
+    {
+        Arc::make_mut(&mut self.codecs).register::<A, C>(codec);
+        self
+    }
+
+    pub fn register<C, H>(
         &mut self,
-        rejection_mapper: impl CommandRejectionMapper<<A as CommandHandler<C>>::Rejection> + 'static,
+        handler: H,
+        rejection_mapper: impl CommandRejectionMapper<H::Rejection> + 'static,
     ) -> Result<&mut Self, CommandBindingRegistrationError>
     where
-        A: Aggregate + CommandHandler<C> + 'static,
-        C: CommandDefinition<A> + JsonCommandPayload + Send + Sync,
-        A::State: Send,
-        A::Event: Event + Send,
+        C: JsonCommandPayload + Send + Sync,
+        H: CommandHandler<C> + 'static,
     {
-        let aggregate_type = A::aggregate_type().into_owned();
-        let key = CommandBindingKey::new(&aggregate_type, C::LOCAL_ID, C::SCHEMA_VERSION);
+        let context = <C::Context as BoundedContextType>::DESCRIPTOR.id.0;
+        if context != self.context.as_str() {
+            return Err(CommandBindingRegistrationError::ContextMismatch {
+                command_context: context,
+                processor_context: self.context.as_str().to_owned(),
+            });
+        }
+        let key = CommandBindingKey::new(context, C::LOCAL_ID, C::SCHEMA_VERSION);
         if self.bindings.contains_key(&key) {
             return Err(CommandBindingRegistrationError::Duplicate {
-                aggregate_type,
+                context,
                 command: C::LOCAL_ID,
                 schema_version: C::SCHEMA_VERSION,
             });
         }
         self.bindings.insert(
             key,
-            Arc::new(TypedCommandBinding::<A, C, _> {
+            Arc::new(TypedCommandBinding::<C, H, _> {
+                handler,
                 rejection_mapper,
                 marker: std::marker::PhantomData,
             }),
@@ -890,7 +868,7 @@ impl CommandProcessor {
         &self,
         encoded: &EncodedCommand,
     ) -> Result<CommandResponse, CommandProcessorError> {
-        let (envelope, metadata, key) = validate_command(encoded)?;
+        let (envelope, metadata, key) = validate_command(encoded, &self.context)?;
         let routed = envelope.payload();
         let outcome = match self.bindings.get(&key) {
             None => CommandResponseOutcome::Rejected(framework_rejection(
@@ -898,13 +876,18 @@ impl CommandProcessor {
                 UNKNOWN_COMMAND_CODE,
                 "The command name or schema version is not registered.",
                 Some(serde_json::json!({
-                    "aggregate_type": routed.aggregate_type(),
+                    "context": encoded.address().context(),
                     "command": routed.command(),
                     "schema_version": routed.schema_version(),
                 })),
             )?),
             Some(binding) => match binding
-                .execute(Arc::clone(&self.store), metadata, routed.payload())
+                .execute(
+                    Arc::clone(&self.store),
+                    Arc::clone(&self.codecs),
+                    metadata,
+                    routed.payload(),
+                )
                 .await
             {
                 Ok(outcome) => outcome,
@@ -932,7 +915,7 @@ impl CommandProcessor {
                     CommandResponseOutcome::Rejected(framework_rejection(
                         CommandRejectionClassification::InvalidRequest,
                         INVALID_COMMAND_CODE,
-                        "The command cannot be executed for the requested aggregate.",
+                        "The command cannot be executed for the requested unit of work.",
                         Some(serde_json::json!({ "reason": error.message() })),
                     )?)
                 }
@@ -956,19 +939,26 @@ impl CommandProcessor {
 
 fn validate_command(
     encoded: &EncodedCommand,
+    processor_context: &BoundedContextName,
 ) -> Result<
     (
-        CommandEnvelope<RoutedAggregateCommand>,
-        ExecutionMetadata,
+        CommandEnvelope<RoutedCommand>,
+        CommandExecutionMetadata,
         CommandBindingKey,
     ),
     CommandProcessorError,
 > {
-    let envelope: CommandEnvelope<RoutedAggregateCommand> =
-        serde_json::from_slice(encoded.payload())
-            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+    if encoded.address().context() != processor_context.as_str() {
+        return Err(CommandProcessorError::invalid_message(format!(
+            "command context `{}` does not match processor context `{}`",
+            encoded.address().context(),
+            processor_context.as_str()
+        )));
+    }
+    let envelope: CommandEnvelope<RoutedCommand> = serde_json::from_slice(encoded.payload())
+        .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
     let routed = envelope.payload();
-    let fingerprint = routed_command_execution_fingerprint(routed)
+    let fingerprint = routed_command_execution_fingerprint(encoded.address().context(), routed)
         .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
     let expected_message_id = command_message_id(
         encoded.address(),
@@ -991,15 +981,10 @@ fn validate_command(
         ));
     }
 
-    let stream = StreamId::new(
-        AggregateType::new(routed.aggregate_type())
-            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?,
-        AggregateId::new(routed.aggregate_id())
-            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?,
-    );
     let operation_id = CoreOperationId::new(envelope.operation_id().as_str())
         .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
-    let mut metadata = ExecutionMetadata::new(stream, operation_id, fingerprint)
+    let mut metadata = CommandExecutionMetadata::new(operation_id, fingerprint)
+        .with_bounded_context(processor_context.clone())
         .with_correlation_id(envelope.correlation_id().clone());
     let causation_id = if routed.events_caused_by_command() {
         CausationId::new(encoded.message_id().as_str())
@@ -1014,7 +999,7 @@ fn validate_command(
     metadata = metadata.with_causation_id(causation_id);
 
     let key = CommandBindingKey::new(
-        routed.aggregate_type(),
+        encoded.address().context(),
         routed.command(),
         routed.schema_version(),
     );
@@ -1073,41 +1058,51 @@ fn framework_rejection(
 }
 
 pub fn command_execution_fingerprint(
-    aggregate_type: &str,
-    aggregate_id: &str,
+    bounded_context: &str,
     command: &str,
     schema_version: u32,
     payload: &Value,
 ) -> Result<ContentFingerprint, CommandBusError> {
+    command_execution_fingerprint_with_provenance(
+        bounded_context,
+        command,
+        schema_version,
+        payload,
+        false,
+    )
+}
+
+fn command_execution_fingerprint_with_provenance(
+    bounded_context: &str,
+    command: &str,
+    schema_version: u32,
+    payload: &Value,
+    events_caused_by_command: bool,
+) -> Result<ContentFingerprint, CommandBusError> {
     let schema_version = schema_version.to_be_bytes();
     let payload = canonical_json_bytes(payload)?;
+    let provenance = [u8::from(events_caused_by_command)];
     Ok(framed_fingerprint(&[
-        b"rostfrei:command-execution:v1",
-        aggregate_type.as_bytes(),
-        aggregate_id.as_bytes(),
+        b"rostfrei:command-execution:v2",
+        bounded_context.as_bytes(),
         command.as_bytes(),
         &schema_version,
         &payload,
+        &provenance,
     ]))
 }
 
 fn routed_command_execution_fingerprint(
-    command: &RoutedAggregateCommand,
+    bounded_context: &str,
+    command: &RoutedCommand,
 ) -> Result<ContentFingerprint, CommandBusError> {
-    let fingerprint = command_execution_fingerprint(
-        command.aggregate_type(),
-        command.aggregate_id(),
+    command_execution_fingerprint_with_provenance(
+        bounded_context,
         command.command(),
         command.schema_version(),
         command.payload(),
-    )?;
-    if command.events_caused_by_command() {
-        return Ok(framed_fingerprint(&[
-            b"rostfrei:integration-command-execution:v1",
-            fingerprint.as_bytes(),
-        ]));
-    }
-    Ok(fingerprint)
+        command.events_caused_by_command(),
+    )
 }
 
 pub fn command_message_id(

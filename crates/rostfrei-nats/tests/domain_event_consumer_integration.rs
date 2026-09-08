@@ -23,8 +23,8 @@ use rostfrei::{Aggregate as RuntimeAggregate, Apply, Initialize};
 use rostfrei_core::{
     AggregateId, AggregateType, CommittedDomainEvent, ContentFingerprint, DomainEventDispatcher,
     DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind, EventBatch,
-    EventCodec, EventStore, EventTransaction, ExecutionMetadata, ExpectedVersion, JsonEventCodec,
-    OperationId, StreamId, TransactionParticipant,
+    EventCodec, EventStore, EventTransaction, ExpectedVersion, JsonEventCodec, OperationId,
+    StreamId, TransactionParticipant, derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{ApplicationName, RetryDelay};
 use rostfrei_nats::{
@@ -776,11 +776,9 @@ fn stream(id: &str) -> TestResult<StreamId> {
 }
 
 fn batch(stream: &StreamId, operation: &str, values: &[&str]) -> TestResult<EventBatch> {
-    let metadata = ExecutionMetadata::new(
-        stream.clone(),
-        OperationId::new(operation)?,
-        ContentFingerprint::digest(operation),
-    );
+    let operation_id = OperationId::new(operation)?;
+    let operation_fingerprint = ContentFingerprint::digest(operation);
+    let commit_id = derive_commit_id(stream, &operation_id);
     let events = values
         .iter()
         .enumerate()
@@ -793,14 +791,14 @@ fn batch(stream: &StreamId, operation: &str, values: &[&str]) -> TestResult<Even
             Ok(<JsonEventCodec as EventCodec<TestAggregate>>::encode(
                 &JsonEventCodec,
                 &event,
-                metadata.event_id(ordinal),
+                derive_event_id(&commit_id, ordinal),
             )?)
         })
         .collect::<TestResult<Vec<_>>>()?;
     Ok(EventBatch::new(
-        metadata.commit_id().clone(),
-        metadata.operation_id().clone(),
-        metadata.operation_fingerprint(),
+        commit_id,
+        operation_id,
+        operation_fingerprint,
         events,
     )?)
 }
@@ -1016,7 +1014,7 @@ async fn commit_schema_four_event_without_receipt(
     filler_headers.insert(NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL);
     let committed = client
         .send_request(
-            config.transaction_guard_subject(stream_id, "unrelated-filler", 0),
+            config.transaction_guard_subject("unrelated-filler", 0),
             Request::new()
                 .headers(filler_headers)
                 .payload(br#"{"unrelated":true}"#.to_vec().into())

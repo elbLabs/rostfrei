@@ -480,7 +480,7 @@ fn invalid_action_owner_contracts_emit_typed_diagnostics() {
 }
 
 #[test]
-fn command_roles_use_owner_independent_declarations() {
+fn command_roles_use_bounded_context_declarations_and_application_handlers() {
     let domain_root = fixture_domain("valid_domain");
     let command =
         fs::read_to_string(domain_root.join("bike_rental/rental_fleet/rent_bicycle/command.rs"))
@@ -488,7 +488,16 @@ fn command_roles_use_owner_independent_declarations() {
     let diagnostics = check_domain_root(&domain_root);
 
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
-    assert!(command.contains("#[domain(id = \"rent-bicycle\", label = \"Rent bicycle\")]"));
+    let handler =
+        fs::read_to_string(domain_root.join("bike_rental/rental_fleet/rent_bicycle/handler.rs"))
+            .expect("handler fixture");
+
+    assert!(command.contains(
+        "#[domain(context = BikeRental, id = \"rent-bicycle\", label = \"Rent bicycle\")]"
+    ));
+    assert!(handler.contains("pub struct RentBicycleHandler;"));
+    assert!(handler.contains("impl CommandHandler<RentBicycle> for RentBicycleHandler"));
+    assert!(handler.contains("execution: &mut CommandExecution<'_>"));
     assert!(!command.contains("owner ="));
     assert!(!command.contains("rejection ="));
     assert!(!command.contains("json"));

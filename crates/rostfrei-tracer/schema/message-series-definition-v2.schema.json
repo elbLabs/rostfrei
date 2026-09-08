@@ -1,0 +1,247 @@
+{
+  "$defs": {
+    "AcceptedOutcomeSchema": {
+      "enum": [
+        "accepted"
+      ],
+      "type": "string"
+    },
+    "ExpectedMessageNode": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "context": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "key": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "kind": {
+              "const": "command",
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "outcome": {
+              "$ref": "#/$defs/ExpectedOutcomeSchema"
+            },
+            "parentKey": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NonEmptyStringSchema"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "payload": true,
+            "schemaVersion": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "key",
+            "name",
+            "schemaVersion",
+            "context",
+            "outcome"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "kind": {
+              "const": "domain-event",
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "parentKey": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NonEmptyStringSchema"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "payload": true,
+            "schemaVersion": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "key",
+            "name",
+            "schemaVersion"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "kind": {
+              "const": "integration-event",
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/$defs/NonEmptyStringSchema"
+            },
+            "parentKey": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NonEmptyStringSchema"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "payload": true,
+            "schemaVersion": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "key",
+            "name",
+            "schemaVersion"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ExpectedOutcomeSchema": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AcceptedOutcomeSchema"
+        },
+        {
+          "$ref": "#/$defs/RejectedOutcomeSchema"
+        }
+      ]
+    },
+    "ExpectedRejectionSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "payload": true
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "MessageGraphDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "description": "A causal graph with at most 64 parent-child levels and at most 64 direct children per node. Comparison also has a deterministic work limit for ambiguous assignments.",
+          "items": {
+            "$ref": "#/$defs/ExpectedMessageNode"
+          },
+          "maxItems": 4096,
+          "minItems": 1,
+          "type": "array"
+        },
+        "settleFor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeoutSchema"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "within": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeoutSchema"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "nodes"
+      ],
+      "type": "object"
+    },
+    "NonEmptyStringSchema": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "RejectedOutcomeSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "rejected": {
+          "$ref": "#/$defs/ExpectedRejectionSchema"
+        }
+      },
+      "required": [
+        "rejected"
+      ],
+      "type": "object"
+    },
+    "TimeoutSchema": {
+      "pattern": "^0*(?:(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|60000)ms|(?:[1-9]|[1-5][0-9]|60)s)$",
+      "type": "string"
+    }
+  },
+  "$id": "https://rostfrei.dev/schemas/tracer/message-series-definition-v2.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "An ordered sequence of independently rooted causal message graphs.",
+  "properties": {
+    "graphs": {
+      "items": {
+        "$ref": "#/$defs/MessageGraphDefinition"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "settleFor": {
+      "$ref": "#/$defs/TimeoutSchema"
+    },
+    "within": {
+      "$ref": "#/$defs/TimeoutSchema"
+    }
+  },
+  "required": [
+    "within",
+    "settleFor",
+    "graphs"
+  ],
+  "title": "Rostfrei Tracer Message Series Definition",
+  "type": "object"
+}

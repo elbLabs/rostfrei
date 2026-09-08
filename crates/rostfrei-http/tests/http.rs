@@ -10,12 +10,12 @@ use axum::{
 };
 use http_body_util::BodyExt as _;
 use rostfrei::{
-    Aggregate, AggregateInstance, ApplicationErrorCode, ApplicationName, Command, CommandBus,
-    CommandBusError, CommandBusErrorKind, CommandBusObserver, CommandBusReceipt, CommandHandler,
-    CommandMessageAdapter, CommandPublication, DomainRegistry, EncodedCommand,
-    InMemoryQueryAdapter, MessageId, QueryDefinition, QueryErrorClassification, QueryErrorPayload,
-    QueryHandler, QueryHandlerRequest, QueryMessageAdapter, QueryOptions, QueryProcessor, StreamId,
-    TraceContext, command_response_message_id,
+    ApplicationErrorCode, ApplicationName, Command, CommandBus, CommandBusError,
+    CommandBusErrorKind, CommandBusObserver, CommandBusReceipt, CommandDecision, CommandExecution,
+    CommandHandler, CommandHandlingResult, CommandMessageAdapter, CommandPublication,
+    DomainRegistry, EncodedCommand, InMemoryQueryAdapter, MessageId, QueryDefinition,
+    QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryHandlerRequest,
+    QueryMessageAdapter, QueryOptions, QueryProcessor, TraceContext, command_response_message_id,
 };
 use rostfrei_http::{HttpApiConfig, HttpApiConfigError, router};
 use serde::{Deserialize, Serialize};
@@ -24,31 +24,26 @@ use tower::ServiceExt as _;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
-struct ProductAggregate;
-
-impl Aggregate for ProductAggregate {
-    type State = ();
-    type Event = ();
-
-    const AGGREGATE_TYPE: &'static str = "catalog/product";
-
-    fn initial(_stream_id: &StreamId) -> Self::State {}
-
-    fn apply(_state: &mut Self::State, _event: &Self::Event) {}
-}
-
 #[derive(Command, Debug, Deserialize, Serialize)]
-#[domain(id = "update-product", label = "Update product")]
+#[domain(context = Catalog, id = "update-product", label = "Update product")]
 struct UpdateProduct;
 
-impl CommandHandler<UpdateProduct> for ProductAggregate {
+#[derive(rostfrei::BoundedContext)]
+#[domain(id = "catalog", label = "Catalog")]
+struct Catalog;
+
+struct ProductCommandHandler;
+
+#[async_trait]
+impl CommandHandler<UpdateProduct> for ProductCommandHandler {
     type Rejection = Infallible;
 
-    fn handle(
+    async fn handle(
+        &self,
         _command: &UpdateProduct,
-        _aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        Ok(())
+        _unit_of_work: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        Ok(CommandDecision::Accepted)
     }
 }
 
@@ -158,7 +153,7 @@ fn app_with_config(config: HttpApiConfig) -> TestResult<Router> {
     let query_bus = rostfrei::QueryBus::new(context, query_adapter);
 
     let mut registry = DomainRegistry::new();
-    registry.register_command::<ProductAggregate, UpdateProduct>()?;
+    registry.register_command::<UpdateProduct, ProductCommandHandler>()?;
     registry.register_query::<FindProduct>()?;
     Ok(router(Arc::new(registry), command_bus, query_bus, config))
 }
@@ -300,9 +295,7 @@ async fn registered_command_is_available_through_standard_post() -> TestResult {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(
-                    "/contexts/catalog/aggregates/product/product-1/commands/update-product/schemas/1",
-                )
+                .uri("/contexts/catalog/commands/update-product/schemas/1")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header("idempotency-key", "update-product-1")
                 .body(Body::from(r#"{"name":"Road bicycle"}"#))?,
@@ -334,30 +327,11 @@ async fn unregistered_routes_and_missing_idempotency_are_rejected() -> TestResul
         .await?;
     assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
 
-    let encoded_aggregate_separator = app()?
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(
-                    "/contexts/catalog/aggregates/sales%2Fproduct/product-1/commands/update-product/schemas/1",
-                )
-                .header(header::CONTENT_TYPE, "application/json")
-                .header("idempotency-key", "encoded-context-bypass")
-                .body(Body::from("{}"))?,
-        )
-        .await?;
-    assert_eq!(
-        encoded_aggregate_separator.status(),
-        StatusCode::BAD_REQUEST
-    );
-
     let missing_key = app()?
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(
-                    "/contexts/catalog/aggregates/product/product-1/commands/update-product/schemas/1",
-                )
+                .uri("/contexts/catalog/commands/update-product/schemas/1")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{}"))?,
         )
@@ -481,9 +455,7 @@ async fn configured_command_body_limit_returns_payload_too_large() -> TestResult
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(
-                    "/contexts/catalog/aggregates/product/product-1/commands/update-product/schemas/1",
-                )
+                .uri("/contexts/catalog/commands/update-product/schemas/1")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header("idempotency-key", "update-product-small-limit")
                 .body(Body::from("{}"))?,

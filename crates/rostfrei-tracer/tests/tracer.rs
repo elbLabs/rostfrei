@@ -17,20 +17,21 @@ use axum::{
 #[cfg(feature = "http")]
 use http_body_util::BodyExt as _;
 use rostfrei_core::{
-    AggregateInstance, CommandHandler, EventHistory, EventStoreError, EventStoreErrorKind,
-    InMemoryEventStore, RecordedEvent, StreamId,
+    CommandDecision, CommandExecution, CommandExecutionError, CommandHandler, EventHistory,
+    EventStoreError, EventStoreErrorKind, InMemoryEventStore, RecordedEvent, StreamId,
 };
 use rostfrei_messaging_core::MessageSeries;
 use rostfrei_registry::DomainRegistry;
 use rostfrei_tracer::{
-    CommandInvocation, CommandPublication, CommandReceipt, CommandRejection, CommandTransport,
-    CommandTransportError, CommandTransportErrorKind, CommandTransportObserver, CorrelationError,
-    CorrelationEventKind, DiscoveryError, ExposeTracePayloadsForLocalDevelopment, Fixture,
-    IntegrationEventObservation, MessageSeriesCaptureError, OperationMode, OperationResult,
-    RuntimeRegistrationError, SimulationRequest, SubmissionError, SubscriptionError,
-    TestDefinition, TestDefinitionCollection, TestDefinitionRevision, TestReportStatus,
-    TestRepository, TestRepositoryError, TestScenarioReset, TestScenarioResetError,
-    TracePayloadPolicy, Tracer, TracerBuilder, command_execution_fingerprint,
+    CommandInputOptions, CommandInvocation, CommandPublication, CommandReceipt, CommandRejection,
+    CommandTransport, CommandTransportError, CommandTransportErrorKind, CommandTransportObserver,
+    CorrelationError, CorrelationEventKind, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
+    Fixture, IntegrationEventObservation, MessageSeriesCaptureError, OperationMode,
+    OperationResult, RuntimeRegistrationError, SimulationRequest, SubmissionError,
+    SubscriptionError, TestDefinition, TestDefinitionCollection, TestDefinitionRevision,
+    TestReportStatus, TestRepository, TestRepositoryError, TestScenarioReset,
+    TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
+    command_execution_fingerprint,
 };
 #[cfg(feature = "http")]
 use rostfrei_tracer::{
@@ -46,11 +47,11 @@ use tower::ServiceExt as _;
 const AGGREGATE_TYPE: &str = "test-context/test-aggregate";
 const OTHER_AGGREGATE_TYPE: &str = "test-context/other-aggregate";
 const COMMAND_NAME: &str = "test-command";
+const OTHER_COMMAND_NAME: &str = "other-test-command";
 #[cfg(feature = "http")]
 const API_TOKEN: &str = "integration-test-capability";
 #[cfg(feature = "http")]
-const SIMULATION_PATH: &str =
-    "/contexts/test-context/aggregates/test-aggregate/aggregate-1/commands/test-command/simulate";
+const SIMULATION_PATH: &str = "/contexts/test-context/commands/test-command/simulate";
 
 #[derive(domain::BoundedContext)]
 #[domain(id = "test-context", label = "Test context")]
@@ -108,11 +109,29 @@ impl rostfrei::Apply<TestEvent> for TestRoot {
 }
 
 #[derive(domain::Command)]
-#[domain(id = "test-command", label = "Test command")]
+#[domain(id = "test-command", label = "Test command", context = TestContext)]
 struct TestCommand {
     reject: bool,
     panic: Option<bool>,
     padding: Option<String>,
+    secondary_aggregate_id: Option<String>,
+}
+
+#[derive(domain::Command)]
+#[domain(id = "test-command", label = "Test command", context = TestContext)]
+struct OtherRustTestCommand {
+    reject: bool,
+    panic: Option<bool>,
+    padding: Option<String>,
+    secondary_aggregate_id: Option<String>,
+}
+
+struct EmptyInputOptions;
+
+impl CommandInputOptions<OtherRustTestCommand> for EmptyInputOptions {
+    fn fields(&self) -> Vec<rostfrei_tracer::CommandInputField> {
+        Vec::new()
+    }
 }
 
 #[derive(domain::DomainError)]
@@ -124,28 +143,41 @@ struct TestCommand {
 )]
 struct TestRejection;
 
-impl CommandHandler<TestCommand> for TestAggregate {
+struct TestCommandHandler;
+
+#[async_trait]
+impl CommandHandler<TestCommand> for TestCommandHandler {
     type Rejection = TestRejection;
 
     #[allow(
         clippy::panic_in_result_fn,
         reason = "the panic path is the behavior exercised by operation panic tests"
     )]
-    fn handle(
+    async fn handle(
+        &self,
         command: &TestCommand,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        execution: &mut CommandExecution<'_>,
+    ) -> Result<CommandDecision<Self::Rejection>, CommandExecutionError> {
         assert!(
             command.panic != Some(true),
             "deliberate command handler panic"
         );
         if command.reject {
-            return Err(TestRejection);
+            return Ok(CommandDecision::Rejected(TestRejection));
         }
-        aggregate.raise(TestEvent {
+        let mut aggregate = execution.load::<TestAggregate>("aggregate-1").await?;
+        aggregate.aggregate_mut().raise(TestEvent {
             sensitive: "accepted outcome details".to_owned(),
         });
-        Ok(())
+        if let Some(secondary_aggregate_id) = &command.secondary_aggregate_id {
+            let mut secondary = execution
+                .load::<OtherTestAggregate>(secondary_aggregate_id)
+                .await?;
+            secondary.aggregate_mut().raise(TestEvent {
+                sensitive: "secondary accepted outcome details".to_owned(),
+            });
+        }
+        Ok(CommandDecision::Accepted)
     }
 }
 
@@ -190,33 +222,39 @@ impl rostfrei::Apply<TestEvent> for OtherTestRoot {
 }
 
 #[derive(domain::Command)]
-#[domain(id = "test-command", label = "Test command")]
+#[domain(id = "other-test-command", label = "Other test command", context = TestContext)]
 struct OtherTestCommand {
     reject: bool,
 }
 
-impl CommandHandler<OtherTestCommand> for OtherTestAggregate {
+struct OtherTestCommandHandler;
+
+#[async_trait]
+impl CommandHandler<OtherTestCommand> for OtherTestCommandHandler {
     type Rejection = TestRejection;
 
-    fn handle(
+    async fn handle(
+        &self,
         command: &OtherTestCommand,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        execution: &mut CommandExecution<'_>,
+    ) -> Result<CommandDecision<Self::Rejection>, CommandExecutionError> {
         if command.reject {
-            return Err(TestRejection);
+            return Ok(CommandDecision::Rejected(TestRejection));
         }
-        aggregate.raise(TestEvent {
+        let mut aggregate = execution.load::<OtherTestAggregate>("aggregate-1").await?;
+        aggregate.aggregate_mut().raise(TestEvent {
             sensitive: "other accepted outcome details".to_owned(),
         });
-        Ok(())
+        Ok(CommandDecision::Accepted)
     }
 }
 
 #[allow(clippy::unwrap_used, reason = "test fixture construction must succeed")]
 fn builder(history: Arc<dyn EventHistory>) -> TracerBuilder {
     let mut registry = DomainRegistry::new();
+    registry.register_aggregate::<TestAggregate>().unwrap();
     registry
-        .register_command::<TestAggregate, TestCommand>()
+        .register_command::<TestCommand, TestCommandHandler>()
         .unwrap();
     TracerBuilder::new(history, registry)
 }
@@ -226,7 +264,7 @@ fn tracer(maximum_operations: usize) -> Tracer {
     let mut builder =
         builder(Arc::new(InMemoryEventStore::new())).with_maximum_operations(maximum_operations);
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     builder.build().unwrap()
 }
@@ -235,8 +273,7 @@ fn tracer(maximum_operations: usize) -> Tracer {
 async fn submit(tracer: &Tracer, operation_id: &str, payload: Value) {
     tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             SimulationRequest {
                 schema_version: 1,
@@ -367,6 +404,45 @@ async fn http_requires_a_bearer_capability_and_reports_invalid_input() {
 
 #[cfg(feature = "http")]
 #[tokio::test]
+async fn http_does_not_execute_legacy_schema_or_aggregate_addressed_routes() {
+    let app = http::router(tracer(1024), HttpConfig::new(API_TOKEN).unwrap());
+
+    for (method, path) in [
+        ("GET", "/schemas/behavioral-test-v1"),
+        (
+            "GET",
+            "/contexts/test-context/aggregates/test-aggregate/aggregate-1/commands/test-command/schemas/1/inputs",
+        ),
+        (
+            "POST",
+            "/contexts/test-context/aggregates/test-aggregate/aggregate-1/commands/test-command/simulate",
+        ),
+        (
+            "POST",
+            "/contexts/test-context/aggregates/test-aggregate/aggregate-1/commands/test-command/test",
+        ),
+        (
+            "POST",
+            "/contexts/test-context/aggregates/test-aggregate/aggregate-1/commands/test-command/dispatch",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                authorize(Request::builder())
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+    }
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
 async fn http_catalog_omits_dispatch_without_a_dispatch_capability() {
     let tracer = transported_tracer(
         None,
@@ -374,7 +450,7 @@ async fn http_catalog_omits_dispatch_without_a_dispatch_capability() {
         false,
     );
     assert!(
-        tracer.catalog().contexts[0].aggregates[0].commands[0].versions[0]
+        tracer.catalog().contexts[0].commands[0].versions[0]
             .dispatch_href_template
             .is_some()
     );
@@ -391,9 +467,7 @@ async fn http_catalog_omits_dispatch_without_a_dispatch_capability() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let catalog = json_body(response).await;
-    assert!(catalog["contexts"][0]["aggregates"][0]["commands"][0]["versions"][0]
-        ["dispatchHrefTemplate"]
-        .is_null());
+    assert!(catalog["contexts"][0]["commands"][0]["versions"][0]["dispatchHrefTemplate"].is_null());
 }
 
 #[tokio::test]
@@ -450,6 +524,38 @@ async fn default_policy_redacts_results_and_terminal_operations_are_evicted() {
 
 #[tokio::test]
 #[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "serialized operation fixtures use required predicted event fields"
+)]
+async fn simulation_preserves_stream_identity_for_all_participant_events() {
+    let tracer = tracer(1024);
+
+    submit(
+        &tracer,
+        "multi-participant-simulation",
+        json!({
+            "reject": false,
+            "secondary_aggregate_id": "secondary-1"
+        }),
+    )
+    .await;
+    let operation = terminal_operation(&tracer, "multi-participant-simulation").await;
+    let events = operation["result"]["predictedEvents"]
+        .as_array()
+        .expect("accepted simulation exposes predicted events");
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["aggregateType"], AGGREGATE_TYPE);
+    assert_eq!(events[0]["aggregateId"], "aggregate-1");
+    assert_eq!(events[0]["predictedStreamVersion"], 1);
+    assert_eq!(events[1]["aggregateType"], OTHER_AGGREGATE_TYPE);
+    assert_eq!(events[1]["aggregateId"], "secondary-1");
+    assert_eq!(events[1]["predictedStreamVersion"], 1);
+}
+
+#[tokio::test]
+#[allow(
     clippy::unwrap_used,
     reason = "test operations and subscriptions must succeed"
 )]
@@ -470,8 +576,7 @@ async fn active_correlation_subscribers_prevent_terminal_eviction() {
 
     let blocked = tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             SimulationRequest {
                 schema_version: 1,
@@ -516,7 +621,7 @@ async fn exposed_operation_payloads_are_bounded_across_retained_operations() {
     let mut builder = builder(Arc::new(InMemoryEventStore::new()))
         .with_trace_payload_policy(Arc::new(OversizedTracePayloads));
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     let tracer = builder.build().unwrap();
 
@@ -537,32 +642,33 @@ async fn exposed_operation_payloads_are_bounded_across_retained_operations() {
 }
 
 #[tokio::test]
-async fn runtime_bindings_scope_local_command_names_to_the_aggregate() {
+async fn runtime_bindings_scope_commands_to_the_bounded_context() {
     let mut registry = DomainRegistry::new();
+    registry.register_aggregate::<TestAggregate>().unwrap();
+    registry.register_aggregate::<OtherTestAggregate>().unwrap();
     registry
-        .register_command::<TestAggregate, TestCommand>()
+        .register_command::<TestCommand, TestCommandHandler>()
         .unwrap();
     registry
-        .register_command::<OtherTestAggregate, OtherTestCommand>()
+        .register_command::<OtherTestCommand, OtherTestCommandHandler>()
         .unwrap();
     let mut builder = TracerBuilder::new(Arc::new(InMemoryEventStore::new()), registry);
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     builder
-        .register_json::<OtherTestAggregate, OtherTestCommand>()
+        .register_json::<OtherTestCommand, _>(OtherTestCommandHandler)
         .unwrap();
     let tracer = builder.build().unwrap();
 
-    for (aggregate_type, operation_id) in [
-        (AGGREGATE_TYPE, "first-aggregate-command"),
-        (OTHER_AGGREGATE_TYPE, "second-aggregate-command"),
+    for (command, operation_id) in [
+        (COMMAND_NAME, "first-context-command"),
+        (OTHER_COMMAND_NAME, "second-context-command"),
     ] {
         tracer
             .submit_simulation(
-                aggregate_type,
-                "aggregate-1",
-                COMMAND_NAME,
+                "test-context",
+                command,
                 SimulationRequest {
                     schema_version: 1,
                     payload: json!({ "reject": false }),
@@ -581,8 +687,17 @@ fn runtime_bindings_require_exact_registry_coverage() {
     let mut empty_registry_builder =
         TracerBuilder::new(Arc::clone(&history), DomainRegistry::new());
     assert!(matches!(
-        empty_registry_builder.register_json::<TestAggregate, TestCommand>(),
+        empty_registry_builder.register_json::<TestCommand, _>(TestCommandHandler),
         Err(RuntimeRegistrationError::MissingDescriptor {
+            command: COMMAND_NAME,
+            schema_version: 1,
+        })
+    ));
+
+    let mut wrong_rust_command = builder(Arc::clone(&history));
+    assert!(matches!(
+        wrong_rust_command.register_input_options::<OtherRustTestCommand, _>(EmptyInputOptions),
+        Err(RuntimeRegistrationError::DescriptorMismatch {
             command: COMMAND_NAME,
             schema_version: 1,
         })
@@ -599,10 +714,10 @@ fn runtime_bindings_require_exact_registry_coverage() {
 
     let mut duplicate_binding = builder(history);
     duplicate_binding
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     assert!(matches!(
-        duplicate_binding.register_json::<TestAggregate, TestCommand>(),
+        duplicate_binding.register_json::<TestCommand, _>(TestCommandHandler),
         Err(RuntimeRegistrationError::DuplicateBinding {
             command: COMMAND_NAME,
             schema_version: 1,
@@ -616,7 +731,7 @@ fn excessive_concurrency_configuration_does_not_panic() {
         .with_maximum_operations(usize::MAX)
         .with_maximum_concurrent_simulations(usize::MAX);
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
 
     builder.build().unwrap();
@@ -631,11 +746,11 @@ async fn generated_operation_ids_are_distinct_and_valid() {
     };
 
     let first = tracer
-        .submit_simulation(AGGREGATE_TYPE, "aggregate-1", COMMAND_NAME, request(), None)
+        .submit_simulation("test-context", COMMAND_NAME, request(), None)
         .await
         .unwrap();
     let second = tracer
-        .submit_simulation(AGGREGATE_TYPE, "aggregate-1", COMMAND_NAME, request(), None)
+        .submit_simulation("test-context", COMMAND_NAME, request(), None)
         .await
         .unwrap();
 
@@ -673,7 +788,7 @@ fn blocking_tracer(
         .with_maximum_operations(maximum_operations)
         .with_maximum_concurrent_simulations(maximum_concurrent_simulations);
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     (builder.build().unwrap(), entered, release)
 }
@@ -690,8 +805,7 @@ async fn concurrent_admission_is_bounded_before_operation_capacity() {
     let (tracer, entered, release) = blocking_tracer(4, 1);
     tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("running-operation"),
@@ -702,8 +816,7 @@ async fn concurrent_admission_is_bounded_before_operation_capacity() {
 
     let repeated = tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("running-operation"),
@@ -714,8 +827,7 @@ async fn concurrent_admission_is_bounded_before_operation_capacity() {
     assert_eq!(
         tracer
             .submit_simulation(
-                AGGREGATE_TYPE,
-                "aggregate-2",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 Some("concurrency-rejected"),
@@ -745,14 +857,13 @@ async fn simulation_admission_does_not_exhaust_dispatch_capacity() {
         .with_maximum_operations(4)
         .with_maximum_concurrent_simulations(1);
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     let tracer = builder.build().unwrap();
 
     tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("blocking-simulation"),
@@ -763,8 +874,7 @@ async fn simulation_admission_does_not_exhaust_dispatch_capacity() {
 
     let dispatch = tracer
         .submit_dispatch(
-            AGGREGATE_TYPE,
-            "aggregate-2",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("dispatch-with-reserved-capacity"),
@@ -782,8 +892,7 @@ async fn operation_capacity_rejects_work_when_no_terminal_record_can_be_evicted(
     let (tracer, entered, release) = blocking_tracer(1, 1);
     tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("capacity-running"),
@@ -795,8 +904,7 @@ async fn operation_capacity_rejects_work_when_no_terminal_record_can_be_evicted(
     assert_eq!(
         tracer
             .submit_simulation(
-                AGGREGATE_TYPE,
-                "aggregate-2",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 Some("capacity-rejected"),
@@ -826,7 +934,7 @@ async fn corrupt_history_and_infrastructure_failures_have_distinct_codes() {
     ] {
         let mut builder = builder(Arc::new(FailedHistory(kind)));
         builder
-            .register_json::<TestAggregate, TestCommand>()
+            .register_json::<TestCommand, _>(TestCommandHandler)
             .unwrap();
         let tracer = builder.build().unwrap();
         submit(
@@ -846,7 +954,7 @@ async fn command_handler_panics_become_one_terminal_failure_and_release_admissio
     let mut builder =
         builder(Arc::new(InMemoryEventStore::new())).with_maximum_concurrent_simulations(1);
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     let tracer = builder.build().unwrap();
     submit(
@@ -1056,7 +1164,7 @@ fn transported_tracer(
             .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     }
     tracer_builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     tracer_builder.build().unwrap()
 }
@@ -1066,8 +1174,7 @@ async fn correlation_feed_contains_command_domain_integration_and_result_events(
     let tracer = tracer(4);
     let queued = tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             SimulationRequest {
                 schema_version: 1,
@@ -1150,8 +1257,7 @@ async fn correlation_observer_exposes_payloads_only_when_configured() {
     let tracer = transported_tracer(None, None, true);
     let queued = tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             SimulationRequest {
                 schema_version: 1,
@@ -1221,8 +1327,7 @@ async fn correlation_observers_reject_events_from_another_environment() {
     );
     let queued = tracer
         .submit_test(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("environment-bound-correlation"),
@@ -1277,8 +1382,7 @@ async fn correlation_sse_uses_the_capability_for_its_environment() {
     );
     let queued = tracer
         .submit_dispatch(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             SimulationRequest {
                 schema_version: 1,
@@ -1356,8 +1460,7 @@ async fn operation_message_series_uses_mode_capabilities_and_reports_fidelity() 
     );
     let test = tracer
         .submit_test(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("message-series-test"),
@@ -1385,8 +1488,7 @@ async fn operation_message_series_uses_mode_capabilities_and_reports_fidelity() 
 
     let dispatch = tracer
         .submit_dispatch(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("message-series-dispatch"),
@@ -1396,8 +1498,7 @@ async fn operation_message_series_uses_mode_capabilities_and_reports_fidelity() 
     terminal_operation(&tracer, &dispatch.operation_id).await;
     let preview = tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("message-series-preview"),
@@ -1585,8 +1686,7 @@ async fn operation_message_series_waits_for_terminal_status_and_correlation_idle
     let (tracer, entered, release) = blocking_tracer(2, 1);
     let operation = tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("settled-message-series"),
@@ -1654,8 +1754,7 @@ async fn operation_message_series_timeout_is_unsettled_and_does_not_cancel_execu
     let (tracer, entered, release) = blocking_tracer(2, 1);
     let operation = tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("unsettled-message-series"),
@@ -1712,8 +1811,7 @@ async fn active_message_series_capture_prevents_terminal_eviction() {
 
     let blocked = tracer
         .submit_simulation(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("replacement-after-capture"),
@@ -1740,8 +1838,7 @@ async fn conflicting_duplicate_message_identity_is_grouped() {
     );
     let operation = tracer
         .submit_test(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("duplicate-series"),
@@ -1798,7 +1895,7 @@ async fn conflicting_duplicate_message_identity_is_grouped() {
 #[test]
 fn accepted_results_serialize_predictions_only_for_simulation() {
     let simulation = serde_json::to_value(OperationResult::Accepted {
-        base_stream_version: Some(0),
+        participants: Vec::new(),
         predicted_events: Vec::new(),
         appended: Some(false),
         published: false,
@@ -1810,7 +1907,7 @@ fn accepted_results_serialize_predictions_only_for_simulation() {
     assert_eq!(simulation.get("predictedEvents"), Some(&json!([])));
 
     let transported = serde_json::to_value(OperationResult::Accepted {
-        base_stream_version: None,
+        participants: Vec::new(),
         predicted_events: Vec::new(),
         appended: None,
         published: true,
@@ -1885,8 +1982,7 @@ async fn test_and_dispatch_select_separate_transports_with_shared_remote_semanti
 
     let test = tracer
         .submit_test(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             SimulationRequest {
                 schema_version: 1,
@@ -1898,8 +1994,7 @@ async fn test_and_dispatch_select_separate_transports_with_shared_remote_semanti
         .unwrap();
     let dispatch = tracer
         .submit_dispatch(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             SimulationRequest {
                 schema_version: 1,
@@ -1930,7 +2025,7 @@ async fn test_and_dispatch_select_separate_transports_with_shared_remote_semanti
     assert_eq!(test_invocations.len(), 1);
     assert_eq!(dispatch_invocations.len(), 1);
     let expected_fingerprint =
-        command_execution_fingerprint(AGGREGATE_TYPE, "aggregate-1", COMMAND_NAME, 1, &payload);
+        command_execution_fingerprint("test-context", COMMAND_NAME, 1, &payload);
     assert_eq!(
         test_invocations[0].execution_fingerprint(),
         expected_fingerprint
@@ -1948,7 +2043,7 @@ async fn test_and_dispatch_select_separate_transports_with_shared_remote_semanti
         dispatch.operation_id
     );
 
-    let version = &tracer.catalog().contexts[0].aggregates[0].commands[0].versions[0];
+    let version = &tracer.catalog().contexts[0].commands[0].versions[0];
     assert!(version.test_href_template.is_some());
     assert!(version.dispatch_href_template.is_some());
 }
@@ -1969,8 +2064,7 @@ async fn transported_rejection_has_response_evidence_without_local_append_eviden
 
     let queued = tracer
         .submit_dispatch(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(true),
             Some("rejected-command"),
@@ -2012,8 +2106,7 @@ async fn publication_and_receipt_mismatch_is_indeterminate() {
 
     let queued = tracer
         .submit_dispatch(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("mismatched-receipt"),
@@ -2063,8 +2156,7 @@ async fn command_transport_failures_have_stable_codes() {
         let tracer = transported_tracer(None, Some(Arc::new(FakeTransport::failed(kind))), false);
         let queued = tracer
             .submit_dispatch(
-                AGGREGATE_TYPE,
-                "aggregate-1",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 Some("failed-command"),
@@ -2092,8 +2184,7 @@ async fn transported_commands_require_an_idempotency_key() {
     for result in [
         tracer
             .submit_test(
-                AGGREGATE_TYPE,
-                "aggregate-1",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 None,
@@ -2101,8 +2192,7 @@ async fn transported_commands_require_an_idempotency_key() {
             .await,
         tracer
             .submit_dispatch(
-                AGGREGATE_TYPE,
-                "aggregate-1",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 None,
@@ -2115,8 +2205,7 @@ async fn transported_commands_require_an_idempotency_key() {
     assert!(
         tracer
             .submit_simulation(
-                AGGREGATE_TYPE,
-                "aggregate-1",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 None,
@@ -2138,8 +2227,7 @@ async fn simulations_cannot_occupy_transported_operation_namespaces() {
         assert!(matches!(
             tracer
                 .submit_simulation(
-                    AGGREGATE_TYPE,
-                    "aggregate-1",
+                    "test-context",
                     COMMAND_NAME,
                     simulation_request(false),
                     Some(operation_id),
@@ -2162,8 +2250,7 @@ async fn failures_after_puback_are_indeterminate_and_preserve_publication_eviden
     );
     let queued = tracer
         .submit_dispatch(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("ambiguous-command"),
@@ -2212,8 +2299,7 @@ async fn transport_panics_after_puback_are_indeterminate() {
     let tracer = transported_tracer(None, Some(Arc::new(PanickingTransport)), true);
     let queued = tracer
         .submit_dispatch(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("panicking-transport"),
@@ -2235,8 +2321,7 @@ async fn transported_payload_is_validated_before_publication() {
 
     let queued = tracer
         .submit_dispatch(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             SimulationRequest {
                 schema_version: 1,
@@ -2260,14 +2345,13 @@ async fn unavailable_modes_require_their_complete_configuration() {
     let history: Arc<dyn EventHistory> = store.clone();
     let mut store_only = builder(history).with_test_event_store(store);
     store_only
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     let store_only = store_only.build().unwrap();
     assert_eq!(
         store_only
             .submit_test(
-                AGGREGATE_TYPE,
-                "aggregate-1",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 Some("test-without-transport"),
@@ -2275,7 +2359,7 @@ async fn unavailable_modes_require_their_complete_configuration() {
             .await,
         Err(SubmissionError::ModeUnavailable("test"))
     );
-    let version = &store_only.catalog().contexts[0].aggregates[0].commands[0].versions[0];
+    let version = &store_only.catalog().contexts[0].commands[0].versions[0];
     assert!(version.test_href_template.is_none());
     assert!(version.dispatch_href_template.is_none());
 
@@ -2287,8 +2371,7 @@ async fn unavailable_modes_require_their_complete_configuration() {
     assert_eq!(
         transport_only
             .submit_test(
-                AGGREGATE_TYPE,
-                "aggregate-1",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 Some("test-without-store"),
@@ -2301,8 +2384,7 @@ async fn unavailable_modes_require_their_complete_configuration() {
     assert_eq!(
         no_dispatch
             .submit_dispatch(
-                AGGREGATE_TYPE,
-                "aggregate-1",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 Some("dispatch-without-transport"),
@@ -2380,7 +2462,7 @@ fn resettable_tracer(reset: Arc<dyn TestScenarioReset>) -> Tracer {
         .with_default_test_fixture(empty_fixture("default-fixture"))
         .with_test_fixture(empty_fixture("other-fixture"));
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     builder.build().unwrap()
 }
@@ -2431,8 +2513,7 @@ async fn reset_invalidates_test_identities_even_when_the_runtime_reset_fails() {
     ] {
         let first = tracer
             .submit_test(
-                AGGREGATE_TYPE,
-                "aggregate-1",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 Some("generation-key"),
@@ -2467,8 +2548,7 @@ async fn reset_invalidates_test_identities_even_when_the_runtime_reset_fails() {
             assert_eq!(
                 tracer
                     .submit_test(
-                        AGGREGATE_TYPE,
-                        "aggregate-1",
+                        "test-context",
                         COMMAND_NAME,
                         simulation_request(false),
                         Some("generation-key"),
@@ -2485,8 +2565,7 @@ async fn reset_invalidates_test_identities_even_when_the_runtime_reset_fails() {
 
         let second = tracer
             .submit_test(
-                AGGREGATE_TYPE,
-                "aggregate-1",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 Some("generation-key"),
@@ -2507,8 +2586,7 @@ async fn test_generation_is_selected_after_an_in_progress_reset() {
     }));
     let first = tracer
         .submit_test(
-            AGGREGATE_TYPE,
-            "aggregate-1",
+            "test-context",
             COMMAND_NAME,
             simulation_request(false),
             Some("reset-race-key"),
@@ -2524,8 +2602,7 @@ async fn test_generation_is_selected_after_an_in_progress_reset() {
     let submit = tokio::spawn(async move {
         submit_tracer
             .submit_test(
-                AGGREGATE_TYPE,
-                "aggregate-1",
+                "test-context",
                 COMMAND_NAME,
                 simulation_request(false),
                 Some("reset-race-key"),
@@ -2550,7 +2627,7 @@ fn reset_requires_test_backing_and_test_transport() {
         .with_test_scenario_reset(Arc::clone(&reset))
         .with_default_test_fixture(empty_fixture("default-fixture"));
     missing_store
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     assert!(matches!(
         missing_store.build(),
@@ -2563,7 +2640,7 @@ fn reset_requires_test_backing_and_test_transport() {
         .with_test_scenario_reset(reset)
         .with_default_test_fixture(empty_fixture("default-fixture"));
     missing_transport
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     assert!(matches!(
         missing_transport.build(),
@@ -2580,7 +2657,7 @@ fn fixture_registry_configuration_is_validated_at_build() {
         .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
         .with_test_scenario_reset(Arc::new(NoopReset));
     missing_default
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     assert!(matches!(
         missing_default.build(),
@@ -2597,7 +2674,7 @@ fn fixture_registry_configuration_is_validated_at_build() {
         .with_default_test_fixture(duplicate.clone())
         .with_test_fixture(duplicate);
     duplicate_fixture
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     assert!(matches!(
         duplicate_fixture.build(),
@@ -2617,7 +2694,7 @@ fn catalog_lists_all_registered_fixtures_in_id_order() {
         .with_default_test_fixture(empty_fixture("z-default"))
         .with_test_fixture(empty_fixture("a-additional"));
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     let tracer = builder.build().unwrap();
 
@@ -2671,7 +2748,7 @@ impl TestRepository for StaticTestRepository {
 fn behavioral_test_definition(outcome: &Value) -> Value {
     let reject = outcome != &json!("accepted");
     json!({
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "id": "behavioral-test",
         "name": "Behavioral test",
         "setup": {
@@ -2686,10 +2763,7 @@ fn behavioral_test_definition(outcome: &Value) -> Value {
                     "key": "subject",
                     "name": COMMAND_NAME,
                     "schemaVersion": 1,
-                    "aggregate": {
-                        "type": AGGREGATE_TYPE,
-                        "id": "aggregate-1"
-                    },
+                    "context": "test-context",
                     "payload": { "reject": reject },
                     "outcome": outcome
                 }]
@@ -2723,7 +2797,7 @@ fn behavioral_tracer_with_reset(
         .with_test_repository(repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     builder.build().unwrap()
 }
@@ -2743,7 +2817,7 @@ fn repository_definitions_are_validated_against_the_fixture_registry() {
         .with_default_test_fixture(empty_fixture("default-fixture"))
         .with_test_repository(repository);
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
 
     assert!(matches!(
@@ -2790,7 +2864,7 @@ async fn behavioral_comparison_precedes_default_trace_payload_redaction() {
         .with_test_fixture(empty_fixture("test-fixture"))
         .with_test_repository(repository);
     builder
-        .register_json::<TestAggregate, TestCommand>()
+        .register_json::<TestCommand, _>(TestCommandHandler)
         .unwrap();
     let tracer = builder.build().unwrap();
 
@@ -3067,6 +3141,47 @@ async fn behavioral_observation_failure_terminates_without_waiting_for_within() 
 
 #[cfg(feature = "http")]
 #[tokio::test]
+async fn behavioral_validation_rejects_schema_v1_documents() {
+    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
+        behavioral_test_definition(&json!("accepted")),
+    ));
+    let tracer = behavioral_tracer(
+        Arc::new(FakeTransport::accepted("behavioral-http-v1", false)),
+        repository,
+    );
+    let app = http::router(tracer, HttpConfig::new(API_TOKEN).unwrap());
+    let mut legacy = behavioral_test_definition(&json!("accepted"));
+    legacy["schemaVersion"] = json!(1);
+
+    let response = app
+        .oneshot(
+            authorize(Request::builder())
+                .method("POST")
+                .uri("/tests/validate")
+                .header("content-type", "application/json")
+                .body(Body::from(legacy.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let response = json_body(response).await;
+    assert_eq!(response["code"], "invalid-test-definition");
+    assert_eq!(
+        response["issues"][0]["code"],
+        "invalid-test-definition-document"
+    );
+    assert!(
+        response["issues"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported test definition schema version `1`")
+    );
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
 async fn behavioral_invalid_http_documents_return_structured_client_errors() {
     let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(
         behavioral_test_definition(&json!("accepted")),
@@ -3291,7 +3406,7 @@ async fn behavioral_schema_and_validation_are_hypermedia_driven() {
         .unwrap();
     assert_eq!(catalog.status(), StatusCode::OK);
     let catalog = json_body(catalog).await;
-    assert_eq!(catalog["catalogVersion"], 1);
+    assert_eq!(catalog["catalogVersion"], 2);
     assert_eq!(
         catalog["testScenario"]["fixturesHref"],
         "/test-scenario/fixtures"
@@ -3303,7 +3418,7 @@ async fn behavioral_schema_and_validation_are_hypermedia_driven() {
     assert_eq!(
         catalog["behavioralTest"],
         json!({
-            "schemaHref": "/schemas/behavioral-test-v1",
+            "schemaHref": "/schemas/behavioral-test-v2",
             "validateHref": "/tests/validate",
             "runHref": "/test-runs",
             "definitionsHref": "/tests"
@@ -3347,10 +3462,10 @@ async fn behavioral_schema_and_validation_are_hypermedia_driven() {
         "/contexts/test-context/aggregates/test-aggregate/instances"
     );
     assert!(aggregate.get("instancesHref").is_none());
-    let version = &aggregate["commands"][0]["versions"][0];
+    let version = &catalog["contexts"][0]["commands"][0]["versions"][0];
     assert_eq!(
         version["testInputsHrefTemplate"],
-        "/contexts/test-context/aggregates/test-aggregate/{aggregateId}/commands/test-command/schemas/1/inputs"
+        "/contexts/test-context/commands/test-command/schemas/1/inputs"
     );
     assert!(version.get("inputsHrefTemplate").is_none());
 
@@ -3386,7 +3501,7 @@ async fn behavioral_schema_and_validation_are_hypermedia_driven() {
     let validation = json_body(validation).await;
     assert_eq!(validation["valid"], true);
     assert_eq!(validation["definition"], definition);
-    assert_eq!(validation["schemaHref"], "/schemas/behavioral-test-v1");
+    assert_eq!(validation["schemaHref"], "/schemas/behavioral-test-v2");
     assert_eq!(validation["runHref"], "/test-runs");
 }
 

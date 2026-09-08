@@ -1061,6 +1061,7 @@ dependencies = [
 name = "rostfrei-domain-runtime"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
  "rostfrei-core",
  "rostfrei-domain",
  "rostfrei-registry",
@@ -1142,6 +1143,7 @@ dependencies = [
 name = "rostfrei-registry"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
  "rostfrei-core",
  "rostfrei-domain",
  "rostfrei-messaging-core",

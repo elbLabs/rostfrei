@@ -11,7 +11,7 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | **Aggregate** | A business consistency boundary whose state is reconstructed from its own history and whose command handlers make deterministic decisions. | Entity, record, model |
 | **Aggregate identity** | The pair of aggregate type and aggregate ID that uniquely identifies one aggregate. | Key, record ID |
 | **Aggregate state** | The transient state produced by replaying an aggregate stream to a selected version. | Stored row, source record |
-| **Command** | A request for one aggregate to make a business decision. | Event, message, action |
+| **Command** | A self-contained request for a bounded-context use case to make a business decision. | Event, message, action |
 | **Decision** | The deterministic outcome of handling a command: a rejection or an ordered set of new domain events. | Side effect, transaction |
 | **Domain policy** | A reusable, pure interpretation of domain facts that returns a business outcome without recording events or changing state. | Decision, rule service |
 | **Rejection** | An expected business outcome that declines a command and appends no domain events. | Error, exception, failure |
@@ -34,8 +34,8 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | **Aggregate stream** | The permanent, ordered history of one aggregate identity. | Topic, queue, KV record, JetStream stream |
 | **Stream version** | The one-based position of a domain event in an aggregate stream, with version zero representing no stream. | Revision, broker sequence |
 | **Commit** | The atomic, non-empty ordered set of domain events produced by one accepted operation. | Message batch, transaction record |
-| **Event transaction** | One atomic operation containing ordered commit or read-only participants from multiple aggregate streams in the same event store; its primary participant contributes a commit. | Distributed transaction, message batch |
-| **Operation** | One identified request to execute a command against an aggregate stream, including the stable identity used for exact retry. | Delivery attempt, consumer attempt |
+| **Event transaction** | One atomic operation containing ordered writing or read-only participants from one or more aggregate streams in the same event store; at least one participant writes. | Distributed transaction, message batch |
+| **Operation** | One identified request to execute a bounded-context command, including the stable identity used for exact retry. | Delivery attempt, consumer attempt |
 | **Replay** | Reconstruction of aggregate state by applying its domain events in stream-version order. | Load row, restore snapshot |
 | **EventStore** | The port that loads aggregate streams and atomically appends a commit or supported event transaction at expected versions. | Repository, KV store, message publisher |
 
@@ -44,7 +44,7 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | Term | Definition | Aliases to avoid |
 | --- | --- | --- |
 | **Integration event** | A bounded, independently versioned public contract normally derived from committed private domain events. | Domain event, raw event, notification |
-| **Integration-command mapping** | A consuming bounded context's pure mapping from one integration event to one typed command and target aggregate identity, dispatched under a stable durable identity. | Transport handler, event side effect |
+| **Integration-command mapping** | A consuming bounded context's pure mapping from one integration event to one self-contained typed command, dispatched under a stable durable identity. | Transport handler, event side effect |
 | **Projection** | A read-oriented model derived from committed domain events without becoming aggregate truth. | Aggregate, source of truth |
 | **Domain-event handler** | A post-commit application handler for one or more private domain events. It may perform side effects but never participates in aggregate decisions or changes the originating commit. | Projection handler, reaction, event projector |
 
@@ -73,10 +73,11 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 - One **application** contains one or more **bounded contexts**.
 - Every business message address identifies one **application** and one **bounded context**.
 - Normal and test **traffic scopes** preserve the same **application** identity while using disjoint subjects and JetStream resources.
-- A **command** asks one **aggregate** to make a **decision**.
+- A **command** asks one **bounded context** to execute one use case and may coordinate one or more **aggregates**.
 - A **decision** may consult one or more **domain policies**, but a policy does not itself accept or reject a command or record domain events.
 - A **rejection** produces no **commit**.
-- An accepted **operation** that produces domain events creates exactly one **commit**.
+- An accepted **operation** that produces domain events creates exactly one **event transaction**.
+- Each writing participant in an **event transaction** contributes one **commit**.
 - A **commit** contains one or more ordered **domain events**.
 - An **event transaction** contains one or more **commits** and may guard other participating **aggregate streams** without appending to them.
 - **Replay** reconstructs **aggregate state** at a selected **stream version**.

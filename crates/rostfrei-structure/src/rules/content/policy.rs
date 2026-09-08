@@ -10,6 +10,7 @@ pub(super) enum RolePolicy {
     Declaration(PrimaryKind),
     Contract(PrimaryKind),
     Execute,
+    CommandHandler,
     Implementation(Option<&'static str>),
     Model,
 }
@@ -37,7 +38,7 @@ impl RolePolicy {
             "lifecycle.rs" => Self::Declaration(PrimaryKind::Lifecycle),
             "transition.rs" => Self::Declaration(PrimaryKind::StateTransition),
             "execute.rs" => Self::Execute,
-            "handler.rs" => Self::Implementation(Some("CommandHandler")),
+            "handler.rs" => Self::CommandHandler,
             "apply.rs" => Self::Implementation(Some("Apply")),
             "initialize.rs" => Self::Implementation(Some("Initialize")),
             "evaluate.rs" => Self::Implementation(None),
@@ -89,6 +90,12 @@ impl RolePolicy {
                 (item.kind == TopLevelItemKind::Implementation && item.trait_name.is_some())
                     || (item.kind == TopLevelItemKind::Function && item.is_private)
             }
+            Self::CommandHandler => {
+                item.kind == TopLevelItemKind::Implementation
+                    && item.trait_name.as_deref() == Some("CommandHandler")
+                    || item.kind == TopLevelItemKind::Nominal
+                        && item.name.as_deref() == command_handler_name(file)
+            }
             Self::Implementation(expected) => {
                 item.kind == TopLevelItemKind::Implementation
                     && item.trait_name.is_some()
@@ -97,6 +104,13 @@ impl RolePolicy {
             Self::Model => item.kind == TopLevelItemKind::Function && item.contains_domain_model,
         }
     }
+}
+
+fn command_handler_name(file: &SourceFileFacts) -> Option<&str> {
+    file.top_level_items
+        .iter()
+        .find(|item| item.trait_name.as_deref() == Some("CommandHandler"))
+        .and_then(|item| item.self_type.as_deref())
 }
 
 fn declaration_item(item: &TopLevelItem, file: &SourceFileFacts, expected: PrimaryKind) -> bool {

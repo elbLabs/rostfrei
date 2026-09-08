@@ -33,7 +33,7 @@ export const SAMPLE_DEFINITIONS: Record<string, TestDefinitionRevision> = {
   "rent-available-bicycle": {
     revision: "local-demo",
     definition: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: "rent-available-bicycle",
       name: "Rent an available bicycle",
       setup: { fixture: "demo-fleet" },
@@ -48,10 +48,7 @@ export const SAMPLE_DEFINITIONS: Record<string, TestDefinitionRevision> = {
                 key: "subject",
                 name: "rent-bicycle",
                 schemaVersion: 1,
-                aggregate: {
-                  type: "bike-rental/rental-fleet",
-                  id: "city-fleet",
-                },
+                context: "bike-rental",
                 payload: { bicycle_id: "bike-42" },
                 outcome: "accepted",
               },
@@ -86,7 +83,7 @@ export const SAMPLE_DEFINITIONS: Record<string, TestDefinitionRevision> = {
   "reject-unavailable-bicycle": {
     revision: "local-demo",
     definition: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: "reject-unavailable-bicycle",
       name: "Reject a maintenance-required bicycle",
       setup: { fixture: "demo-fleet" },
@@ -101,10 +98,7 @@ export const SAMPLE_DEFINITIONS: Record<string, TestDefinitionRevision> = {
                 key: "subject",
                 name: "rent-bicycle",
                 schemaVersion: 1,
-                aggregate: {
-                  type: "bike-rental/rental-fleet",
-                  id: "city-fleet",
-                },
+                context: "bike-rental",
                 payload: { bicycle_id: "bike-99" },
                 outcome: {
                   rejected: {
@@ -122,7 +116,7 @@ export const SAMPLE_DEFINITIONS: Record<string, TestDefinitionRevision> = {
   "return-rented-bicycle": {
     revision: "local-demo",
     definition: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: "return-rented-bicycle",
       name: "Return a rented bicycle",
       setup: { fixture: "demo-fleet" },
@@ -137,10 +131,7 @@ export const SAMPLE_DEFINITIONS: Record<string, TestDefinitionRevision> = {
                 key: "subject",
                 name: "return-bicycle",
                 schemaVersion: 1,
-                aggregate: {
-                  type: "bike-rental/rental-fleet",
-                  id: "city-fleet",
-                },
+                context: "bike-rental",
                 payload: { bicycle_id: "bike-42" },
                 outcome: "accepted",
               },
@@ -222,8 +213,7 @@ export const SAMPLE_GRAPH: MessageGraphNode[] = [
     payload: { bicycle_id: "bike-42" },
     response: { status: "accepted", value: null },
     messageId: "cmd_01HZX8B7T7",
-    aggregateType: "bike-rental/rental-fleet",
-    aggregateId: "city-fleet",
+    boundedContext: "bike-rental",
     status: "accepted",
   },
   {
