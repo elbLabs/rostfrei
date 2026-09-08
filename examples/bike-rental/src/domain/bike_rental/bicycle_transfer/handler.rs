@@ -1,8 +1,11 @@
 use async_trait::async_trait;
 use rostfrei::{CommandDecision, CommandExecution, CommandHandler, CommandHandlingResult};
 
-use super::{BicycleTransfer, BicycleTransferRejected, TransferBicycle};
-use crate::domain::rental_fleet::RentalFleetAggregate;
+use super::{BicycleTransferRejected, TransferBicycle};
+use crate::domain::{
+    bicycle_transfer::{BicycleTransfer, BicycleTransferAction as _},
+    rental_fleet::RentalFleetAggregate,
+};
 
 pub struct TransferBicycleHandler;
 
