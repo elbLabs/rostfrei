@@ -19,12 +19,12 @@ use async_nats::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rostfrei_core::{
-    AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint, EventBatch,
-    EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind, EventTransaction,
-    ExpectedVersion, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent, StreamDirectory,
-    StreamId, StreamSummary, StreamVersion, TransactionAppendOutcome, TransactionParticipant,
-    TransactionReceipt, TransactionStreamReceipt, derive_commit_id, derive_event_id,
-    validate_transaction_item_limit,
+    AggregateId, AggregateType, AppendOutcome, AppendSession, CommitId, ContentFingerprint,
+    EventBatch, EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind,
+    EventTransaction, ExpectedVersion, MAX_EVENTS_PER_BATCH, NewEvent, OperationId, RecordedEvent,
+    StreamDirectory, StreamId, StreamSummary, StreamVersion, TransactionAppendOutcome,
+    TransactionParticipant, TransactionReceipt, TransactionStreamReceipt, derive_commit_id,
+    derive_event_id, validate_transaction_item_limit,
 };
 use rostfrei_messaging_core::{BoundedContextName, CausationId, CorrelationId};
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,69 @@ const NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT: &str =
     "Nats-Expected-Last-Subject-Sequence-Subject";
 const CORRELATION_ID_HEADER: &str = "rostfrei-Control-Correlation-Id";
 
+struct NatsAppendSession<'a> {
+    store: &'a NatsEventStore,
+    histories: tokio::sync::Mutex<ValidatedHistories>,
+    incarnation: String,
+}
+
+impl NatsAppendSession<'_> {
+    async fn validate_incarnation(&self) -> Result<(), EventStoreError> {
+        if self.store.stream_incarnation().await? != self.incarnation {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::ConfigurationMismatch,
+                "append session belongs to an event-store stream that was recreated",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl EventHistory for NatsAppendSession<'_> {
+    async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        let mut histories = self.histories.lock().await;
+        let history = self
+            .store
+            .load_validated_history(stream_id, &mut histories)
+            .await?;
+        drop(histories);
+        self.validate_incarnation().await?;
+        Ok(history.events.clone())
+    }
+}
+
+#[async_trait]
+impl AppendSession for NatsAppendSession<'_> {
+    async fn append(
+        self: Box<Self>,
+        stream_id: &StreamId,
+        expected_version: ExpectedVersion,
+        batch: EventBatch,
+    ) -> Result<AppendOutcome, EventStoreError> {
+        let mut histories = self.histories.lock().await;
+        let history = self
+            .store
+            .load_validated_history(stream_id, &mut histories)
+            .await?;
+        drop(histories);
+        self.validate_incarnation().await?;
+        self.store
+            .append_with_history(stream_id, expected_version, batch, history)
+            .await
+    }
+
+    async fn append_transaction(
+        self: Box<Self>,
+        transaction: EventTransaction,
+    ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        self.validate_incarnation().await?;
+        self.store
+            .append_transaction_with_histories(transaction, self.histories.into_inner())
+            .await
+    }
+}
+
 #[derive(Clone)]
 pub struct NatsEventStore {
     context: jetstream::Context,
@@ -61,6 +124,17 @@ struct TransactionReceiptMissHook {
 }
 
 impl NatsEventStore {
+    async fn stream_incarnation(&self) -> Result<String, EventStoreError> {
+        let stream = self
+            .context
+            .get_stream(self.config.stream_name())
+            .await
+            .map_err(|error| {
+                unavailable(format!("failed to inspect append-session stream: {error}"))
+            })?;
+        Ok(stream.cached_info().created.to_string())
+    }
+
     pub async fn connect(
         context: jetstream::Context,
         config: NatsEventStoreConfig,
@@ -222,6 +296,21 @@ impl NatsEventStore {
         }
         let history = Arc::new(self.load_raw_history(stream_id).await?);
         raw_histories.insert(stream_id.clone(), Arc::clone(&history));
+        Ok(history)
+    }
+
+    async fn load_validated_history(
+        &self,
+        stream_id: &StreamId,
+        histories: &mut ValidatedHistories,
+    ) -> Result<Arc<History>, EventStoreError> {
+        if let Some(history) = histories.by_stream.get(stream_id) {
+            return Ok(Arc::clone(history));
+        }
+        let history = self.load_history(stream_id).await?;
+        histories
+            .by_stream
+            .insert(stream_id.clone(), Arc::clone(&history));
         Ok(history)
     }
 
@@ -410,12 +499,21 @@ impl NatsEventStore {
     async fn verify_published_commit(
         &self,
         stream_id: &StreamId,
-        subject: &str,
+        previous: &History,
         sequence: u64,
+        batch_id: &str,
         commit_id: &CommitId,
         expected_events: &RecordedBatch,
     ) -> Result<(), EventStoreError> {
-        let history = self.load_history(stream_id).await?;
+        let history = self
+            .extend_history(
+                stream_id,
+                previous,
+                sequence,
+                batch_id,
+                expected_events.len(),
+            )
+            .await?;
         let stored = history
             .commits
             .iter()
@@ -425,33 +523,73 @@ impl NatsEventStore {
             return Err(corrupt("published commit contains different events"));
         }
 
+        if stored.events.last() != Some(expected_events.last()) {
+            return Err(corrupt("PubAck sequence contains a different final event"));
+        }
+        Ok(())
+    }
+
+    async fn extend_history(
+        &self,
+        stream_id: &StreamId,
+        previous: &History,
+        last_sequence: u64,
+        batch_id: &str,
+        event_count: usize,
+    ) -> Result<Arc<History>, EventStoreError> {
+        let subject = self.config.aggregate_subject(
+            stream_id.aggregate_type().as_str(),
+            stream_id.aggregate_id().as_str(),
+        );
         let stream = self
             .context
             .get_stream(self.config.stream_name())
             .await
-            .map_err(|error| unavailable(format!("failed to verify PubAck stream: {error}")))?;
-        let message = stream
-            .get_first_raw_message_by_subject(subject, sequence)
-            .await
-            .map_err(|error| unavailable(format!("failed to verify published commit: {error}")))?;
-        if message.sequence != sequence || message.subject.as_str() != subject {
+            .map_err(|error| unavailable(format!("failed to verify published history: {error}")))?;
+        let mut builder = HistoryBuilder::from_history(previous);
+        let mut sequence = previous.last_subject_stream_sequence;
+        for _ in 0..event_count {
+            let next_sequence = sequence
+                .checked_add(1)
+                .ok_or_else(|| corrupt("JetStream sequence space overflowed"))?;
+            let message = stream
+                .get_first_raw_message_by_subject(&subject, next_sequence)
+                .await
+                .map_err(|error| match error.kind() {
+                    LastRawMessageErrorKind::NoMessageFound => {
+                        corrupt("published history disappeared while verifying")
+                    }
+                    _ => unavailable(format!("failed to verify published event: {error}")),
+                })?;
+            if message.subject.as_str() != subject
+                || message.sequence < next_sequence
+                || message.sequence > last_sequence
+            {
+                return Err(corrupt(
+                    "published history returned an invalid subject or sequence",
+                ));
+            }
+            let decoded = decode_event(
+                &self.config,
+                &subject,
+                stream_id,
+                Some(previous.last_subject_stream_sequence),
+                message.sequence,
+                &message.headers,
+                message.payload.as_ref(),
+            )?;
+            if decoded.batch_id != batch_id || decoded.event_count != event_count {
+                return Err(corrupt("published event contains different batch metadata"));
+            }
+            sequence = message.sequence;
+            builder.push(decoded)?;
+        }
+        if event_count == 0 || sequence != last_sequence {
             return Err(corrupt(
                 "PubAck sequence did not identify the published commit",
             ));
         }
-        let decoded = decode_event(
-            &self.config,
-            subject,
-            stream_id,
-            None,
-            message.sequence,
-            &message.headers,
-            message.payload.as_ref(),
-        )?;
-        if &decoded.recorded != expected_events.last() {
-            return Err(corrupt("PubAck sequence contains a different final event"));
-        }
-        Ok(())
+        builder.finish(last_sequence).map(Arc::new)
     }
 
     async fn load_transaction_receipt_inner(
@@ -897,11 +1035,15 @@ impl StreamDirectory for NatsEventStore {
 }
 
 #[async_trait]
-#[allow(
-    clippy::too_many_lines,
-    reason = "the NATS event store keeps its related persistence operations in one trait implementation"
-)]
 impl EventStore for NatsEventStore {
+    async fn append_session(&self) -> Result<Box<dyn AppendSession + '_>, EventStoreError> {
+        Ok(Box::new(NatsAppendSession {
+            store: self,
+            histories: tokio::sync::Mutex::new(ValidatedHistories::default()),
+            incarnation: self.stream_incarnation().await?,
+        }))
+    }
+
     async fn append(
         &self,
         stream_id: &StreamId,
@@ -909,6 +1051,50 @@ impl EventStore for NatsEventStore {
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
         let history = self.load_history(stream_id).await?;
+        self.append_with_history(stream_id, expected_version, batch, history)
+            .await
+    }
+
+    async fn load_transaction_receipt(
+        &self,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        self.load_transaction_receipt_inner(operation_id).await
+    }
+
+    async fn load_transaction_receipt_in_context(
+        &self,
+        bounded_context: &BoundedContextName,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        if bounded_context != self.config.bounded_context() {
+            return Err(invalid(format!(
+                "transaction context `{}` does not match event-store context `{}`",
+                bounded_context.as_str(),
+                self.config.bounded_context().as_str()
+            )));
+        }
+        self.load_transaction_receipt_inner(operation_id).await
+    }
+
+    async fn append_transaction(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        self.append_transaction_with_histories(transaction, ValidatedHistories::default())
+            .await
+    }
+}
+
+impl NatsEventStore {
+    #[allow(clippy::too_many_lines)]
+    async fn append_with_history(
+        &self,
+        stream_id: &StreamId,
+        expected_version: ExpectedVersion,
+        batch: EventBatch,
+        history: Arc<History>,
+    ) -> Result<AppendOutcome, EventStoreError> {
         if self
             .load_transaction_receipt_inner(batch.operation_id())
             .await?
@@ -986,6 +1172,21 @@ impl EventStore for NatsEventStore {
             Err(AtomicBatchPublishError::Expectation) => {
                 return self.resolve_expectation_race(stream_id, &batch).await;
             }
+            Err(AtomicBatchPublishError::Store(error))
+                if error.kind() == EventStoreErrorKind::Unavailable =>
+            {
+                return match self.resolve_expectation_race(stream_id, &batch).await {
+                    Err(reconciliation)
+                        if matches!(
+                            reconciliation.kind(),
+                            EventStoreErrorKind::Unavailable | EventStoreErrorKind::Conflict
+                        ) =>
+                    {
+                        Err(error)
+                    }
+                    outcome => outcome,
+                };
+            }
             Err(AtomicBatchPublishError::Store(error)) => return Err(error),
         };
         if ack.stream != self.config.stream_name()
@@ -1000,8 +1201,9 @@ impl EventStore for NatsEventStore {
         }
         self.verify_published_commit(
             stream_id,
-            &subject,
+            &history,
             ack.sequence,
+            &batch_id,
             batch.commit_id(),
             &recorded,
         )
@@ -1009,32 +1211,11 @@ impl EventStore for NatsEventStore {
         Ok(AppendOutcome::Appended(recorded.into_events()))
     }
 
-    async fn load_transaction_receipt(
-        &self,
-        operation_id: &OperationId,
-    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-        self.load_transaction_receipt_inner(operation_id).await
-    }
-
     #[allow(clippy::too_many_lines)]
-    async fn load_transaction_receipt_in_context(
-        &self,
-        bounded_context: &BoundedContextName,
-        operation_id: &OperationId,
-    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-        if bounded_context != self.config.bounded_context() {
-            return Err(invalid(format!(
-                "transaction context `{}` does not match event-store context `{}`",
-                bounded_context.as_str(),
-                self.config.bounded_context().as_str()
-            )));
-        }
-        self.load_transaction_receipt_inner(operation_id).await
-    }
-
-    async fn append_transaction(
+    async fn append_transaction_with_histories(
         &self,
         transaction: EventTransaction,
+        mut histories: ValidatedHistories,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
         if transaction
             .bounded_context()
@@ -1064,7 +1245,9 @@ impl EventStore for NatsEventStore {
 
         let mut staged = Vec::with_capacity(transaction.participants().len());
         for participant in transaction.participants() {
-            let history = self.load_history(participant.stream_id()).await?;
+            let history = self
+                .load_validated_history(participant.stream_id(), &mut histories)
+                .await?;
             if Self::transaction_participant_has_conflicting_identity(&history, participant)? {
                 let receipt = self
                     .load_transaction_receipt_inner(transaction.operation_id())
@@ -1233,10 +1416,59 @@ impl EventStore for NatsEventStore {
                 "atomic transaction PubAck returned incompatible stream, sequence, or batch metadata",
             ));
         }
-        let receipt = self
-            .load_transaction_receipt_inner(transaction.operation_id())
+        let item_count = u64::try_from(transaction_item_count)
+            .map_err(|_| invalid("transaction item count cannot be represented"))?;
+        let batch_start = ack
+            .sequence
+            .checked_sub(item_count)
+            .and_then(|sequence| sequence.checked_add(1))
+            .ok_or_else(|| corrupt("transaction PubAck contains an invalid sequence"))?;
+        let mut histories = histories.by_stream;
+        let mut next_sequence = batch_start;
+        for participant in &staged {
+            if participant.batch.is_none() {
+                continue;
+            }
+            let event_count = u64::try_from(participant.recorded.len())
+                .map_err(|_| invalid("participant event count cannot be represented"))?;
+            next_sequence = next_sequence
+                .checked_add(event_count)
+                .ok_or_else(|| corrupt("transaction sequence space overflowed"))?;
+            let last_sequence = next_sequence
+                .checked_sub(1)
+                .ok_or_else(|| corrupt("transaction contains an invalid participant sequence"))?;
+            let previous = histories
+                .get(&participant.stream_id)
+                .ok_or_else(|| corrupt("staged participant history is missing"))?;
+            let history = self
+                .extend_history(
+                    &participant.stream_id,
+                    previous,
+                    last_sequence,
+                    &batch_id,
+                    participant.recorded.len(),
+                )
+                .await?;
+            histories.insert(participant.stream_id.clone(), history);
+        }
+        let materialized = self
+            .load_transaction_receipt_materialized_with_raw_histories(
+                transaction.operation_id(),
+                true,
+                &mut histories,
+                TransactionSubjectLayout::Operation,
+            )
             .await?
             .ok_or_else(|| corrupt("published transaction receipt is not visible"))?;
+        if materialized.batch_id != batch_id
+            || materialized.batch_start_stream_sequence != batch_start
+            || materialized.transaction_event_count != domain_event_count
+        {
+            return Err(corrupt(
+                "published transaction receipt contains different batch metadata",
+            ));
+        }
+        let receipt = materialized.receipt;
         if !transaction_matches_receipt(&transaction, &receipt) {
             return Err(corrupt(
                 "published transaction receipt contains different content",
@@ -1283,7 +1515,7 @@ pub async fn provision_event_store(
     verify_stream_config(&expected, &provisioned.config)
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct History {
     events: Vec<RecordedEvent>,
     global_stream_sequences: Vec<u64>,
@@ -1292,6 +1524,11 @@ struct History {
 }
 
 type RawHistoryCache = HashMap<StreamId, Arc<History>>;
+
+#[derive(Default)]
+struct ValidatedHistories {
+    by_stream: RawHistoryCache,
+}
 
 #[derive(Clone)]
 struct StoredCommit {
@@ -1876,6 +2113,32 @@ fn decode_event_inner(
 }
 
 impl HistoryBuilder {
+    fn from_history(history: &History) -> Self {
+        Self {
+            history: history.clone(),
+            current_version: history
+                .events
+                .last()
+                .map_or(StreamVersion::ZERO, RecordedEvent::stream_version),
+            operation_ids: history
+                .commits
+                .iter()
+                .map(|commit| commit.batch.operation_id().clone())
+                .collect(),
+            commit_ids: history
+                .commits
+                .iter()
+                .map(|commit| commit.batch.commit_id().clone())
+                .collect(),
+            event_ids: history
+                .events
+                .iter()
+                .map(|event| event.event_id().clone())
+                .collect(),
+            pending: None,
+        }
+    }
+
     fn push(&mut self, stored: DecodedStoredEvent) -> Result<(), EventStoreError> {
         let DecodedStoredEvent {
             decoded,
