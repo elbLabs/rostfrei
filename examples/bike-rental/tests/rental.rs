@@ -9,11 +9,11 @@ use bike_rental::{
         self, AddBicycleAction as _, BicycleAdded, BicycleAvailability,
         BicycleAvailabilityQuery as _, BicycleCondition, BicycleId, BicycleNotRented,
         BicycleRented, BicycleRetired, BicycleReturned, BicycleStatus, BicycleTransfer,
-        BicycleTransferRejected, BicycleTransferRejectionReason, BicycleTransferredIn,
-        BicycleTransferredOut, BicycleUnavailable, FleetId, ImportRentalFleetAction as _,
-        ImportRentalFleetInput, ImportedBicycle, RentBicycle, RentBicycleAction as _,
-        RentBicycleHandler, RentalFleetAggregate, RentalFleetImported, RetireBicycleAction as _,
-        ReturnBicycleAction as _, TransferBicycle,
+        BicycleTransferAction as _, BicycleTransferRejected, BicycleTransferRejectionReason,
+        BicycleTransferredIn, BicycleTransferredOut, BicycleUnavailable, FleetId,
+        ImportRentalFleetAction as _, ImportRentalFleetInput, ImportedBicycle, RentBicycle,
+        RentBicycleAction as _, RentBicycleHandler, RentalFleetAggregate, RentalFleetImported,
+        RetireBicycleAction as _, ReturnBicycleAction as _, TransferBicycle,
     },
 };
 use rostfrei::{
