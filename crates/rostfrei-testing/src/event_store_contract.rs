@@ -1,10 +1,10 @@
 use std::fmt::{self, Display};
 
 use rostfrei_core::{
-    AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventStore,
-    EventStoreError, EventStoreErrorKind, EventTransaction, ExecutionMetadata, ExpectedVersion,
+    AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint, EventBatch,
+    EventStore, EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion,
     MAX_TRANSACTION_ITEMS, NewEvent, OperationId, StreamId, StreamVersion,
-    TransactionAppendOutcome, TransactionParticipant,
+    TransactionAppendOutcome, TransactionParticipant, derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{CausationId, CorrelationId};
 
@@ -119,10 +119,10 @@ where
     Store: EventStore,
 {
     try_multi_stream_transaction_is_atomic_and_ordered(&make_store()).await?;
-    try_transaction_rejects_a_read_only_primary(&make_store()).await?;
-    try_transaction_accepts_a_read_only_participant(&make_store()).await?;
-    try_transaction_identities_are_primary_stream_scoped(&make_store()).await?;
-    try_transaction_rejects_primary_identity_reused_from_a_participant(&make_store()).await?;
+    try_transaction_requires_a_writing_participant(&make_store()).await?;
+    try_transaction_accepts_a_read_only_first_participant(&make_store()).await?;
+    try_transaction_identities_are_store_scoped(&make_store()).await?;
+    try_transaction_rejects_identity_reused_from_a_participant(&make_store()).await?;
     try_direct_append_rejects_a_transaction_secondary_write(&make_store()).await?;
     try_transaction_rejects_a_direct_secondary_write(&make_store()).await?;
     try_multi_stream_conflict_leaves_all_histories_unchanged(&make_store()).await?;
@@ -132,92 +132,66 @@ where
     try_concurrent_transactions_have_one_winner(&make_store()).await
 }
 
-pub async fn transaction_identities_are_primary_stream_scoped<Store: EventStore>(store: &Store) {
-    assert_contract_success(try_transaction_identities_are_primary_stream_scoped(store).await);
+pub async fn transaction_identities_are_store_scoped<Store: EventStore>(store: &Store) {
+    assert_contract_success(try_transaction_identities_are_store_scoped(store).await);
 }
 
-pub async fn try_transaction_identities_are_primary_stream_scoped<Store: EventStore>(
+pub async fn try_transaction_identities_are_store_scoped<Store: EventStore>(
     store: &Store,
 ) -> ContractResult {
-    let legacy_stream = stream("transaction-scope-legacy")?;
-    let first_primary = stream("transaction-scope-primary-a")?;
-    let first_secondary = stream("transaction-scope-secondary-a")?;
-    let second_primary = stream("transaction-scope-primary-b")?;
-    let second_secondary = stream("transaction-scope-secondary-b")?;
+    let first_stream = stream("transaction-scope-a")?;
+    let second_stream = stream("transaction-scope-b")?;
     let operation = "transaction-shared-operation";
     let operation_id = OperationId::new(operation)
-        .map_err(|error| fixture_error("transaction-scoped operation ID", error))?;
+        .map_err(|error| fixture_error("store-scoped transaction operation ID", error))?;
     let fingerprint = ContentFingerprint::digest(operation);
-    let legacy_batch = batch(&legacy_stream, operation, operation, &[b"legacy"])?;
-    let legacy = store
-        .append(
-            &legacy_stream,
+    let first = EventTransaction::new(
+        operation_id.clone(),
+        fingerprint,
+        vec![TransactionParticipant::new(
+            first_stream.clone(),
             ExpectedVersion::NoStream,
-            legacy_batch.clone(),
-        )
+            Some(batch(&first_stream, operation, operation, &[b"first"])?),
+        )],
+    );
+    let appended = store
+        .append_transaction(first.clone())
         .await
-        .map_err(|source| store_error("legacy transaction-scope append", source))?;
+        .map_err(|source| store_error("store-scoped transaction append", source))?;
+    let receipt = store
+        .load_transaction_receipt(&operation_id)
+        .await
+        .map_err(|source| store_error("operation-scoped receipt lookup", source))?
+        .ok_or_else(|| missing("operation-scoped receipt lookup", "transaction receipt"))?;
+    assert_eq!(receipt.events(), appended.receipt().events());
+    let replay = store
+        .append_transaction(first)
+        .await
+        .map_err(|source| store_error("store-scoped transaction replay", source))?;
+    assert!(replay.is_exact_replay());
 
-    for (primary, secondary, primary_payload, secondary_payload) in [
-        (
-            &first_primary,
-            &first_secondary,
-            b"a".as_slice(),
-            b"b".as_slice(),
-        ),
-        (
-            &second_primary,
-            &second_secondary,
-            b"c".as_slice(),
-            b"d".as_slice(),
-        ),
-    ] {
-        store
-            .append_transaction(EventTransaction::new(
-                operation_id.clone(),
-                fingerprint,
-                vec![
-                    TransactionParticipant::new(
-                        primary.clone(),
-                        ExpectedVersion::NoStream,
-                        Some(batch(primary, operation, operation, &[primary_payload])?),
-                    ),
-                    TransactionParticipant::new(
-                        secondary.clone(),
-                        ExpectedVersion::NoStream,
-                        Some(batch(
-                            secondary,
-                            operation,
-                            operation,
-                            &[secondary_payload],
-                        )?),
-                    ),
-                ],
-            ))
-            .await
-            .map_err(|source| store_error("primary-stream-scoped transaction append", source))?;
-    }
-
+    let reused = EventTransaction::new(
+        operation_id,
+        fingerprint,
+        vec![TransactionParticipant::new(
+            second_stream.clone(),
+            ExpectedVersion::NoStream,
+            Some(batch(&second_stream, operation, operation, &[b"second"])?),
+        )],
+    );
+    let Err(error) = store.append_transaction(reused).await else {
+        return Err(ContractTestError::UnexpectedSuccess {
+            context: "transaction operation identity reused for different participants",
+        });
+    };
+    assert_eq!(error.kind(), EventStoreErrorKind::IdentityConflict);
     assert!(
         store
-            .load_transaction_receipt(&first_primary, &operation_id)
+            .load(&second_stream)
             .await
-            .map_err(|source| store_error("first transaction receipt lookup", source))?
-            .is_some()
+            .map_err(|source| store_error("store-scoped identity conflict load", source))?
+            .is_empty()
     );
-    assert!(
-        store
-            .load_transaction_receipt(&legacy_stream, &operation_id)
-            .await
-            .map_err(|source| store_error("legacy transaction receipt lookup", source))?
-            .is_none()
-    );
-    let legacy_replay = store
-        .append(&legacy_stream, ExpectedVersion::NoStream, legacy_batch)
-        .await
-        .map_err(|source| store_error("legacy transaction-scope exact replay", source))?;
-    assert!(legacy_replay.is_exact_replay());
-    assert_eq!(legacy_replay.events(), legacy.events());
     Ok(())
 }
 
@@ -288,22 +262,22 @@ pub async fn try_concurrent_transactions_have_one_winner<Store: EventStore>(
     Ok(())
 }
 
-pub async fn transaction_rejects_a_read_only_primary<Store: EventStore>(store: &Store) {
-    assert_contract_success(try_transaction_rejects_a_read_only_primary(store).await);
+pub async fn transaction_requires_a_writing_participant<Store: EventStore>(store: &Store) {
+    assert_contract_success(try_transaction_requires_a_writing_participant(store).await);
 }
 
-pub async fn try_transaction_rejects_a_read_only_primary<Store: EventStore>(
+pub async fn try_transaction_requires_a_writing_participant<Store: EventStore>(
     store: &Store,
 ) -> ContractResult {
-    let primary = stream("transaction-read-only-primary")?;
-    let operation = "transaction-read-only-primary";
+    let participant = stream("transaction-read-only")?;
+    let operation = "transaction-read-only";
     let result = store
         .append_transaction(EventTransaction::new(
             OperationId::new(operation)
-                .map_err(|error| fixture_error("read-only primary operation ID", error))?,
+                .map_err(|error| fixture_error("read-only transaction operation ID", error))?,
             ContentFingerprint::digest(operation),
             vec![TransactionParticipant::new(
-                primary.clone(),
+                participant.clone(),
                 ExpectedVersion::NoStream,
                 None,
             )],
@@ -311,24 +285,24 @@ pub async fn try_transaction_rejects_a_read_only_primary<Store: EventStore>(
         .await;
     let Err(error) = result else {
         return Err(ContractTestError::UnexpectedSuccess {
-            context: "transaction with a read-only primary participant",
+            context: "transaction without a writing participant",
         });
     };
     assert_eq!(error.kind(), EventStoreErrorKind::InvalidRequest);
     let history = store
-        .load(&primary)
+        .load(&participant)
         .await
-        .map_err(|source| store_error("read-only primary participant load", source))?;
+        .map_err(|source| store_error("read-only participant load", source))?;
     assert!(history.is_empty());
     Ok(())
 }
 
-pub async fn transaction_accepts_a_read_only_participant<Store: EventStore>(store: &Store) {
-    assert_contract_success(try_transaction_accepts_a_read_only_participant(store).await);
+pub async fn transaction_accepts_a_read_only_first_participant<Store: EventStore>(store: &Store) {
+    assert_contract_success(try_transaction_accepts_a_read_only_first_participant(store).await);
 }
 
 #[allow(clippy::too_many_lines)]
-pub async fn try_transaction_accepts_a_read_only_participant<Store: EventStore>(
+pub async fn try_transaction_accepts_a_read_only_first_participant<Store: EventStore>(
     store: &Store,
 ) -> ContractResult {
     let changed_stream = stream("transaction-write-participant")?;
@@ -339,12 +313,12 @@ pub async fn try_transaction_accepts_a_read_only_participant<Store: EventStore>(
             .map_err(|error| fixture_error("read-only transaction operation ID", error))?,
         ContentFingerprint::digest(operation),
         vec![
+            TransactionParticipant::new(observed_stream.clone(), ExpectedVersion::NoStream, None),
             TransactionParticipant::new(
                 changed_stream.clone(),
                 ExpectedVersion::NoStream,
                 Some(batch(&changed_stream, operation, operation, &[b"changed"])?),
             ),
-            TransactionParticipant::new(observed_stream.clone(), ExpectedVersion::NoStream, None),
         ],
     );
     let outcome = store
@@ -352,7 +326,7 @@ pub async fn try_transaction_accepts_a_read_only_participant<Store: EventStore>(
         .await
         .map_err(|source| store_error("read-only participant transaction append", source))?;
     assert_eq!(outcome.receipt().events().len(), 1);
-    let [_, observed_receipt] = outcome.receipt().streams() else {
+    let [observed_receipt, _] = outcome.receipt().streams() else {
         return Err(unexpected_event_count(
             "read-only participant transaction receipts",
             2,
@@ -439,17 +413,15 @@ pub async fn try_transaction_accepts_a_read_only_participant<Store: EventStore>(
     Ok(())
 }
 
-pub async fn transaction_rejects_primary_identity_reused_from_a_participant<Store: EventStore>(
+pub async fn transaction_rejects_identity_reused_from_a_participant<Store: EventStore>(
     store: &Store,
 ) {
     assert_contract_success(
-        try_transaction_rejects_primary_identity_reused_from_a_participant(store).await,
+        try_transaction_rejects_identity_reused_from_a_participant(store).await,
     );
 }
 
-pub async fn try_transaction_rejects_primary_identity_reused_from_a_participant<
-    Store: EventStore,
->(
+pub async fn try_transaction_rejects_identity_reused_from_a_participant<Store: EventStore>(
     store: &Store,
 ) -> ContractResult {
     let original_primary = stream("transaction-reused-participant-original-primary")?;
@@ -1326,7 +1298,7 @@ pub async fn identity_conflicts<Store: EventStore>(store: &Store) {
 pub async fn try_identity_conflicts<Store: EventStore>(store: &Store) -> ContractResult {
     let stream = stream("identity")?;
     let original = batch(&stream, "identity-operation", "original", &[b"original"])?;
-    let metadata = ExecutionMetadata::new(
+    let metadata = BatchMetadata::new(
         stream.clone(),
         OperationId::new("identity-operation")
             .map_err(|error| fixture_error("identity-conflict operation ID", error))?,
@@ -1340,7 +1312,7 @@ pub async fn try_identity_conflicts<Store: EventStore>(store: &Store) -> Contrac
     let changed_event = NewEvent::new(metadata.event_id(0), "contract-event", 1, b"changed")
         .map_err(|error| fixture_error("changed identity-conflict event", error))?;
     let changed = EventBatch::new(
-        metadata.commit_id().clone(),
+        metadata.commit_id(),
         metadata.operation_id().clone(),
         metadata.operation_fingerprint(),
         vec![changed_event],
@@ -1365,7 +1337,7 @@ pub async fn try_identity_conflicts<Store: EventStore>(store: &Store) -> Contrac
         .map_err(|source| store_error("post-identity-conflict load should succeed", source))?;
     assert_eq!(loaded.len(), 1);
 
-    let other_metadata = ExecutionMetadata::new(
+    let other_metadata = BatchMetadata::new(
         stream.clone(),
         OperationId::new("other-identity-operation")
             .map_err(|error| fixture_error("other identity operation ID", error))?,
@@ -1374,7 +1346,7 @@ pub async fn try_identity_conflicts<Store: EventStore>(store: &Store) -> Contrac
     let reused_event = NewEvent::new(metadata.event_id(0), "contract-event", 1, b"original")
         .map_err(|error| fixture_error("reused identity event", error))?;
     let reused_event = EventBatch::new(
-        other_metadata.commit_id().clone(),
+        other_metadata.commit_id(),
         other_metadata.operation_id().clone(),
         other_metadata.operation_fingerprint(),
         vec![reused_event],
@@ -1427,6 +1399,42 @@ pub async fn try_concurrent_append_has_one_winner<Store: EventStore>(
     Ok(())
 }
 
+struct BatchMetadata {
+    stream_id: StreamId,
+    operation_id: OperationId,
+    operation_fingerprint: ContentFingerprint,
+}
+
+impl BatchMetadata {
+    const fn new(
+        stream_id: StreamId,
+        operation_id: OperationId,
+        operation_fingerprint: ContentFingerprint,
+    ) -> Self {
+        Self {
+            stream_id,
+            operation_id,
+            operation_fingerprint,
+        }
+    }
+
+    fn commit_id(&self) -> CommitId {
+        derive_commit_id(&self.stream_id, &self.operation_id)
+    }
+
+    const fn operation_id(&self) -> &OperationId {
+        &self.operation_id
+    }
+
+    const fn operation_fingerprint(&self) -> ContentFingerprint {
+        self.operation_fingerprint
+    }
+
+    fn event_id(&self, ordinal: u32) -> rostfrei_core::EventId {
+        derive_event_id(&self.commit_id(), ordinal)
+    }
+}
+
 fn stream(id: &str) -> ContractResult<StreamId> {
     let aggregate_type = AggregateType::new("ContractAggregate")
         .map_err(|error| fixture_error("contract aggregate type", error))?;
@@ -1443,7 +1451,7 @@ fn batch(
 ) -> ContractResult<EventBatch> {
     let operation_id = OperationId::new(operation_id)
         .map_err(|error| fixture_error("contract operation ID", error))?;
-    let metadata = ExecutionMetadata::new(
+    let metadata = BatchMetadata::new(
         stream.clone(),
         operation_id,
         ContentFingerprint::digest(fingerprint_content),
@@ -1464,7 +1472,7 @@ fn batch(
         })
         .collect::<ContractResult<Vec<_>>>()?;
     EventBatch::new(
-        metadata.commit_id().clone(),
+        metadata.commit_id(),
         metadata.operation_id().clone(),
         metadata.operation_fingerprint(),
         events,
@@ -1519,7 +1527,7 @@ fn batch_with_event_count(
     operation_id: &str,
     event_count: usize,
 ) -> ContractResult<EventBatch> {
-    let metadata = ExecutionMetadata::new(
+    let metadata = BatchMetadata::new(
         stream.clone(),
         OperationId::new(operation_id)
             .map_err(|error| fixture_error("transaction-limit operation ID", error))?,
@@ -1534,7 +1542,7 @@ fn batch_with_event_count(
         })
         .collect::<ContractResult<Vec<_>>>()?;
     EventBatch::new(
-        metadata.commit_id().clone(),
+        metadata.commit_id(),
         metadata.operation_id().clone(),
         metadata.operation_fingerprint(),
         events,

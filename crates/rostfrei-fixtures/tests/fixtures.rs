@@ -7,13 +7,14 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateType, AppendOutcome, ContentFingerprint, Event, EventBatch,
-    EventCodecError, EventCodecErrorKind, EventHistory, EventStore, EventStoreError,
-    ExecutionMetadata, ExpectedVersion, InMemoryEventStore, NewEvent, OperationId, RecordedEvent,
-    StreamId, StreamVersion,
+    Aggregate, AggregateId, AggregateType, AppendOutcome, CommandExecutionMetadata,
+    ContentFingerprint, Event, EventBatch, EventCodecError, EventCodecErrorKind, EventHistory,
+    EventStore, EventStoreError, EventTransaction, ExpectedVersion, InMemoryEventStore, NewEvent,
+    OperationId, RecordedEvent, StreamId, StreamVersion, TransactionAppendOutcome,
+    TransactionReceipt, derive_commit_id, derive_event_id,
 };
 use rostfrei_fixtures::{Fixture, FixtureApplyError, FixtureEventSet, MessageSeriesEngine};
-use rostfrei_messaging_core::CausationId;
+use rostfrei_messaging_core::{BoundedContextName, CausationId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -83,6 +84,7 @@ impl Aggregate for Account {
     type Event = AccountEvent;
     type State = i64;
 
+    const BOUNDED_CONTEXT: &'static str = "fixtures";
     const AGGREGATE_TYPE: &'static str = "account";
 
     fn initial(_stream_id: &StreamId) -> Self::State {
@@ -105,6 +107,7 @@ impl Aggregate for ReplayAccount {
     type Event = AccountEvent;
     type State = i64;
 
+    const BOUNDED_CONTEXT: &'static str = "fixtures";
     const AGGREGATE_TYPE: &'static str = "replay-account";
 
     fn initial(_stream_id: &StreamId) -> Self::State {
@@ -725,23 +728,45 @@ impl EventStore for OrderedEventStore {
         assert_eq!(expected_stream, Some(stream_id.to_string().as_str()));
         self.inner.append(stream_id, expected_version, batch).await
     }
+
+    async fn load_transaction_receipt(
+        &self,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        self.inner.load_transaction_receipt(operation_id).await
+    }
+
+    async fn load_transaction_receipt_in_context(
+        &self,
+        bounded_context: &BoundedContextName,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        self.inner
+            .load_transaction_receipt_in_context(bounded_context, operation_id)
+            .await
+    }
+
+    async fn append_transaction(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        self.inner.append_transaction(transaction).await
+    }
 }
 
 async fn seed_conflicting_event(store: &InMemoryEventStore, stream_id: &StreamId) -> TestResult {
     let fingerprint = ContentFingerprint::digest(b"conflicting-seed");
-    let metadata = ExecutionMetadata::new(
-        stream_id.clone(),
-        OperationId::new("conflicting-seed")?,
-        fingerprint,
-    );
+    let metadata =
+        CommandExecutionMetadata::new(OperationId::new("conflicting-seed")?, fingerprint);
+    let commit_id = derive_commit_id(stream_id, metadata.operation_id());
     let event = NewEvent::new(
-        metadata.event_id(0),
+        derive_event_id(&commit_id, 0),
         "account-opened",
         1,
         serde_json::to_vec(&AmountPayload { amount: 999 })?,
     )?;
     let batch = EventBatch::new(
-        metadata.commit_id().clone(),
+        commit_id,
         metadata.operation_id().clone(),
         fingerprint,
         vec![event],
@@ -754,22 +779,22 @@ async fn seed_conflicting_event(store: &InMemoryEventStore, stream_id: &StreamId
 
 async fn append_business_event(store: &InMemoryEventStore, stream_id: &StreamId) -> TestResult {
     let fingerprint = ContentFingerprint::digest(b"business-credit");
-    let metadata = ExecutionMetadata::new(
-        stream_id.clone(),
+    let metadata = CommandExecutionMetadata::new(
         OperationId::new(format!(
             "fixture:{}",
             ContentFingerprint::digest(b"spoofed-fixture-operation")
         ))?,
         fingerprint,
     );
+    let commit_id = derive_commit_id(stream_id, metadata.operation_id());
     let event = NewEvent::new(
-        metadata.event_id(0),
+        derive_event_id(&commit_id, 0),
         "account-credited",
         1,
         serde_json::to_vec(&AmountPayload { amount: 5 })?,
     )?;
     let batch = EventBatch::new(
-        metadata.commit_id().clone(),
+        commit_id,
         metadata.operation_id().clone(),
         fingerprint,
         vec![event],

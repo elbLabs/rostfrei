@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rostfrei_messaging_core::{CausationId, CorrelationId};
+use rostfrei_messaging_core::{BoundedContextName, CausationId, CorrelationId};
 use thiserror::Error;
 
 use crate::{
@@ -100,6 +100,7 @@ impl TransactionParticipant {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventTransaction {
+    bounded_context: Option<BoundedContextName>,
     operation_id: OperationId,
     operation_fingerprint: ContentFingerprint,
     correlation_id: Option<CorrelationId>,
@@ -114,12 +115,19 @@ impl EventTransaction {
         participants: Vec<TransactionParticipant>,
     ) -> Self {
         Self {
+            bounded_context: None,
             operation_id,
             operation_fingerprint,
             correlation_id: None,
             causation_id: None,
             participants,
         }
+    }
+
+    #[must_use]
+    pub fn with_bounded_context(mut self, bounded_context: BoundedContextName) -> Self {
+        self.bounded_context = Some(bounded_context);
+        self
     }
 
     #[must_use]
@@ -150,14 +158,12 @@ impl EventTransaction {
         self.causation_id.as_ref()
     }
 
-    pub fn participants(&self) -> &[TransactionParticipant] {
-        &self.participants
+    pub const fn bounded_context(&self) -> Option<&BoundedContextName> {
+        self.bounded_context.as_ref()
     }
 
-    pub fn primary_stream_id(&self) -> Option<&StreamId> {
-        self.participants
-            .first()
-            .map(TransactionParticipant::stream_id)
+    pub fn participants(&self) -> &[TransactionParticipant] {
+        &self.participants
     }
 
     pub fn into_participants(self) -> Vec<TransactionParticipant> {
@@ -165,22 +171,16 @@ impl EventTransaction {
     }
 }
 
-/// Validates the transaction's primary participant and durable item limit.
+/// Validates that a transaction writes events and fits within the durable item limit.
 ///
 /// Returns the number of domain events in the transaction.
 pub fn validate_transaction_item_limit(
     transaction: &EventTransaction,
 ) -> Result<usize, EventStoreError> {
-    let primary = transaction.participants().first().ok_or_else(|| {
-        EventStoreError::new(
-            EventStoreErrorKind::InvalidRequest,
-            "an event transaction must contain at least one participant",
-        )
-    })?;
-    if primary.batch().is_none() {
+    if transaction.participants().is_empty() {
         return Err(EventStoreError::new(
             EventStoreErrorKind::InvalidRequest,
-            "an event transaction's primary participant must contain an event batch",
+            "an event transaction must contain at least one participant",
         ));
     }
     let domain_event_count = transaction
@@ -196,6 +196,12 @@ pub fn validate_transaction_item_limit(
                 "transaction event count overflowed",
             )
         })?;
+    if domain_event_count == 0 {
+        return Err(EventStoreError::new(
+            EventStoreErrorKind::InvalidRequest,
+            "an event transaction must contain at least one writing participant",
+        ));
+    }
     let read_guard_count = transaction
         .participants()
         .iter()
@@ -256,6 +262,7 @@ impl TransactionStreamReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransactionReceipt {
+    bounded_context: Option<BoundedContextName>,
     operation_id: OperationId,
     operation_fingerprint: ContentFingerprint,
     correlation_id: Option<CorrelationId>,
@@ -270,12 +277,19 @@ impl TransactionReceipt {
         streams: Vec<TransactionStreamReceipt>,
     ) -> Self {
         Self {
+            bounded_context: None,
             operation_id,
             operation_fingerprint,
             correlation_id: None,
             causation_id: None,
             streams,
         }
+    }
+
+    #[must_use]
+    pub fn with_bounded_context(mut self, bounded_context: BoundedContextName) -> Self {
+        self.bounded_context = Some(bounded_context);
+        self
     }
 
     #[must_use]
@@ -306,14 +320,12 @@ impl TransactionReceipt {
         self.causation_id.as_ref()
     }
 
-    pub fn streams(&self) -> &[TransactionStreamReceipt] {
-        &self.streams
+    pub const fn bounded_context(&self) -> Option<&BoundedContextName> {
+        self.bounded_context.as_ref()
     }
 
-    pub fn primary_stream_id(&self) -> Option<&StreamId> {
-        self.streams
-            .first()
-            .map(TransactionStreamReceipt::stream_id)
+    pub fn streams(&self) -> &[TransactionStreamReceipt] {
+        &self.streams
     }
 
     pub fn events(&self) -> Vec<RecordedEvent> {
@@ -382,21 +394,19 @@ pub trait EventStore: EventHistory {
 
     async fn load_transaction_receipt(
         &self,
-        _primary_stream_id: &StreamId,
-        _operation_id: &OperationId,
-    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-        Ok(None)
-    }
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError>;
+
+    async fn load_transaction_receipt_in_context(
+        &self,
+        bounded_context: &BoundedContextName,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError>;
 
     async fn append_transaction(
         &self,
-        _transaction: EventTransaction,
-    ) -> Result<TransactionAppendOutcome, EventStoreError> {
-        Err(EventStoreError::new(
-            EventStoreErrorKind::ConfigurationMismatch,
-            "event store does not support event transactions",
-        ))
-    }
+        transaction: EventTransaction,
+    ) -> Result<TransactionAppendOutcome, EventStoreError>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -452,11 +462,18 @@ impl<Store: EventStore + ?Sized> EventStore for Arc<Store> {
 
     async fn load_transaction_receipt(
         &self,
-        primary_stream_id: &StreamId,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        self.as_ref().load_transaction_receipt(operation_id).await
+    }
+
+    async fn load_transaction_receipt_in_context(
+        &self,
+        bounded_context: &BoundedContextName,
         operation_id: &OperationId,
     ) -> Result<Option<TransactionReceipt>, EventStoreError> {
         self.as_ref()
-            .load_transaction_receipt(primary_stream_id, operation_id)
+            .load_transaction_receipt_in_context(bounded_context, operation_id)
             .await
     }
 

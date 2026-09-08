@@ -1,4 +1,8 @@
-use rostfrei::{AggregateInstance, Apply, CommandHandler, Initialize};
+use async_trait::async_trait;
+use rostfrei::{
+    AggregateInstance, Apply, CommandDecision, CommandHandler, CommandHandlingResult,
+    CommandExecution, Initialize,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(rostfrei::BoundedContext)]
@@ -90,18 +94,26 @@ impl Apply<MoneyDeposited> for Account {
     }
 }
 
-struct Deposit(i64);
+struct Deposit {
+    account_id: String,
+    amount: i64,
+}
 
-impl CommandHandler<Deposit> for AccountAggregate {
+struct DepositHandler;
+
+#[async_trait]
+impl CommandHandler<Deposit> for DepositHandler {
     type Rejection = ();
 
-    fn handle(
+    async fn handle(
+        &self,
         command: &Deposit,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
         use aggregate_actions::DepositAction as _;
-        aggregate.deposit(command.0);
-        Ok(())
+        let mut account = execution.load::<AccountAggregate>(&command.account_id).await?;
+        account.aggregate_mut().deposit(command.amount);
+        Ok(CommandDecision::Accepted)
     }
 }
 
@@ -114,7 +126,7 @@ fn facade_domain_test_support_items_are_available() {}
 fn facade_executable_aggregate_action_is_the_test_subject() {}
 
 fn main() {
-    let _executor = rostfrei::Executor::new(rostfrei::InMemoryEventStore::new());
+    let _executor = rostfrei::CommandExecutor::new(rostfrei::InMemoryEventStore::new());
     let _reset: fn(&mut Account) = <Account as ResetAccountAction>::reset;
 }
 rostfrei::install_macro_support!();

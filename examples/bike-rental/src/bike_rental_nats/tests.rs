@@ -9,15 +9,18 @@ use super::{
 };
 use crate::{
     demo::{apply_demo_fixture, demo_stream},
-    rental_fleet::{BicycleId, BicycleRented, RentBicycle, RentalFleetAggregate},
+    rental_fleet::{
+        BicycleId, BicycleRented, FleetId, RentBicycle, RentBicycleHandler, RentalFleetAggregate,
+        TransferBicycle,
+    },
 };
 use rostfrei::{
-    CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest, DomainEventDispatcher,
-    DynamicCommandRequest, EventStore, InMemoryEventStore, InMemoryMessagingAdapter,
-    IntegrationEventBus, IntegrationEventDispatcherExt, IntegrationMessageAdapter,
-    JsonDomainRejectionMapper, OperationId,
+    Command, CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest,
+    DomainEventDispatchOutcome, DomainEventDispatcher, DynamicCommandRequest, EventStore,
+    InMemoryEventStore, InMemoryMessagingAdapter, IntegrationEventBus,
+    IntegrationEventDispatcherExt, IntegrationMessageAdapter, JsonDomainRejectionMapper,
+    OperationId,
 };
-use rostfrei_core::DomainEventDispatchOutcome;
 use rostfrei_messaging_core::{
     CallerMetadata, CausationId, CommandRejectionClassification, CommandResponseOutcome,
     CorrelationId, DeliveryDisposition, DeliveryInfo, MessageDelivery, MessageHandler, MessageId,
@@ -28,18 +31,21 @@ type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 fn processor(store: InMemoryEventStore) -> TestResult<CommandProcessor> {
     let store: Arc<dyn EventStore> = Arc::new(store);
-    let mut processor = CommandProcessor::new(store);
-    processor.register::<RentalFleetAggregate, RentBicycle>(JsonDomainRejectionMapper::new(
-        CommandRejectionClassification::Conflict,
-    ))?;
+    let context = rostfrei_messaging_core::BoundedContextName::new("bike-rental")?;
+    let mut processor = CommandProcessor::new(context, store);
+    processor.register::<RentBicycle, _>(
+        RentBicycleHandler,
+        JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
+    )?;
     Ok(processor)
 }
 
 fn request(operation: &str, bicycle: &str) -> TestResult<CommandRequest<RentBicycle>> {
     Ok(CommandRequest::new(
         OperationId::new(operation)?,
-        demo_stream().aggregate_id().clone(),
         RentBicycle {
+            fleet_id: FleetId::new(demo_stream().aggregate_id().as_str())
+                .ok_or("invalid fleet fixture")?,
             bicycle_id: BicycleId::new(bicycle).ok_or("invalid bicycle fixture")?,
         },
     ))
@@ -54,6 +60,10 @@ fn command_bus(
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one configuration test keeps normal and test route derivation assertions together"
+)]
 fn nats_configuration_derives_normal_and_test_resources_from_one_application() -> TestResult {
     let config = BikeRentalNatsConfig::new(APPLICATION_NAME)?;
     let test = BikeRentalNatsConfig::new_test(APPLICATION_NAME)?;
@@ -64,6 +74,29 @@ fn nats_configuration_derives_normal_and_test_resources_from_one_application() -
             .address()
             .as_str(),
         "bike-rental.command.bike-rental.rent-bicycle"
+    );
+    assert_eq!(config.command_routes().len(), 4);
+    assert_eq!(
+        config
+            .command_route(BikeRentalCommand::TransferBicycle)
+            .address()
+            .as_str(),
+        "bike-rental.command.bike-rental.transfer-bicycle"
+    );
+    assert_eq!(
+        config
+            .command_route(BikeRentalCommand::TransferBicycle)
+            .consumer()
+            .durable_name()
+            .as_str(),
+        "bike-rental--bike-rental--transfer-bicycle--v2"
+    );
+    assert_eq!(
+        config
+            .command_route(BikeRentalCommand::TransferBicycle)
+            .command()
+            .command_name(),
+        TransferBicycle::LOCAL_ID
     );
     assert_eq!(
         config.messaging().topology().command_stream().as_str(),
@@ -87,7 +120,7 @@ fn nats_configuration_derives_normal_and_test_resources_from_one_application() -
             .consumer()
             .durable_name()
             .as_str(),
-        "bike-rental--bike-rental--rent-bicycle--v1"
+        "bike-rental--bike-rental--rent-bicycle--v2"
     );
     assert_eq!(
         config
@@ -103,6 +136,12 @@ fn nats_configuration_derives_normal_and_test_resources_from_one_application() -
             .address()
             .as_str(),
         "bike-rental.test.command.bike-rental.rent-bicycle"
+    );
+    assert_eq!(
+        test.command_route(BikeRentalCommand::TransferBicycle)
+            .address()
+            .as_str(),
+        "bike-rental.test.command.bike-rental.transfer-bicycle"
     );
     assert_eq!(
         test.messaging().topology().command_stream().as_str(),
@@ -139,7 +178,7 @@ fn nats_configuration_derives_normal_and_test_resources_from_one_application() -
             .consumer()
             .durable_name()
             .as_str(),
-        "bike-rental--test--bike-rental--rent-bicycle--v1"
+        "bike-rental--test--bike-rental--rent-bicycle--v2"
     );
     Ok(())
 }
@@ -174,7 +213,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
     let causation = CausationId::new("incoming-rental-request")?;
 
     let first = first_bus
-        .dispatch::<RentalFleetAggregate, RentBicycle>(
+        .dispatch::<RentBicycle>(
             request("rent-bike-42", "bike-42")?
                 .with_correlation_id(correlation.clone())
                 .with_causation_id(causation.clone()),
@@ -187,7 +226,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
     ));
 
     let duplicate = first_bus
-        .dispatch::<RentalFleetAggregate, RentBicycle>(
+        .dispatch::<RentBicycle>(
             request("rent-bike-42", "bike-42")?
                 .with_correlation_id(correlation.clone())
                 .with_causation_id(causation.clone()),
@@ -210,7 +249,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
     )?)));
     let replay_bus = command_bus(&config, replay_adapter);
     let replay = replay_bus
-        .dispatch::<RentalFleetAggregate, RentBicycle>(
+        .dispatch::<RentBicycle>(
             request("rent-bike-42", "bike-42")?
                 .with_correlation_id(correlation.clone())
                 .with_causation_id(causation.clone()),
@@ -237,7 +276,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
     )?)));
     let rejected_bus = command_bus(&config, rejected_adapter);
     let rejected = rejected_bus
-        .dispatch::<RentalFleetAggregate, RentBicycle>(request("rent-bike-42-again", "bike-42")?)
+        .dispatch::<RentBicycle>(request("rent-bike-42-again", "bike-42")?)
         .await?;
     let CommandResponseOutcome::Rejected(rejection) = rejected.response().outcome() else {
         return Err("the second rental should be rejected".into());
@@ -251,7 +290,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
     );
 
     let conflict = rejected_bus
-        .dispatch::<RentalFleetAggregate, RentBicycle>(request("rent-bike-42", "bike-99")?)
+        .dispatch::<RentBicycle>(request("rent-bike-42", "bike-99")?)
         .await?;
     let CommandResponseOutcome::Rejected(rejection) = conflict.response().outcome() else {
         return Err("operation identity reuse should be rejected".into());
@@ -271,14 +310,9 @@ async fn dynamic_dispatch_rejects_unknown_commands_and_malformed_payloads() -> T
     apply_demo_fixture(&store).await?;
     let adapter = Arc::new(InMemoryMessagingAdapter::new(Arc::new(processor(store)?)));
     let bus = command_bus(&config, adapter);
-    let aggregate_type = "bike-rental/rental-fleet";
-    let aggregate_id = demo_stream().aggregate_id().clone();
-
     let unknown = bus
         .dispatch_dynamic(DynamicCommandRequest::new(
             OperationId::new("unknown-command")?,
-            aggregate_type,
-            aggregate_id.clone(),
             "missing-command",
             1,
             json!({}),
@@ -292,11 +326,9 @@ async fn dynamic_dispatch_rejects_unknown_commands_and_malformed_payloads() -> T
     let malformed = bus
         .dispatch_dynamic(DynamicCommandRequest::new(
             OperationId::new("malformed-command")?,
-            aggregate_type,
-            aggregate_id,
             "rent-bicycle",
-            1,
-            json!({ "bicycle_id": "" }),
+            RentBicycle::SCHEMA_VERSION,
+            json!({ "fleet_id": "city-fleet", "bicycle_id": "" }),
         )?)
         .await?;
     let CommandResponseOutcome::Rejected(rejection) = malformed.response().outcome() else {
@@ -323,7 +355,7 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
     )?)));
     let bus = command_bus(&config, Arc::clone(&adapter));
     let command = bus
-        .dispatch::<RentalFleetAggregate, RentBicycle>(
+        .dispatch::<RentBicycle>(
             request("integration-rental", "bike-42")?
                 .with_correlation_id(CorrelationId::new("integration-correlation")?),
         )

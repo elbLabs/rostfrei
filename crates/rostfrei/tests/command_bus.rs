@@ -2,12 +2,14 @@
 
 use std::{convert::Infallible, error::Error, sync::Arc};
 
+use async_trait::async_trait;
 use rostfrei::{
-    Aggregate, AggregateInstance, Apply, Command, CommandBus, CommandBusErrorKind, CommandHandler,
+    Aggregate, Apply, Command, CommandBindingRegistrationError, CommandBus, CommandBusErrorKind,
+    CommandDecision, CommandExecution, CommandHandler, CommandHandlingResult,
     CommandMessageAdapter, CommandProcessor, CommandProcessorErrorKind, CommandRequest,
     DomainEvent, DomainIdentity, DynamicCommandRequest, EncodedCommand, Entity, EventStore,
     InMemoryEventStore, InMemoryMessagingAdapter, Initialize, OperationId, StreamAggregateId,
-    StreamId, command_execution_fingerprint,
+    StreamId, command_execution_fingerprint, command_message_id,
 };
 use rostfrei::{BoundedContext, InfallibleCommandRejectionMapper};
 use rostfrei_messaging_core::{
@@ -21,6 +23,10 @@ type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 #[derive(BoundedContext)]
 #[domain(id = "ledger", label = "Ledger")]
 struct Ledger;
+
+#[derive(BoundedContext)]
+#[domain(id = "other-ledger", label = "Other ledger")]
+struct OtherLedger;
 
 #[derive(DomainIdentity)]
 #[allow(dead_code)]
@@ -91,40 +97,75 @@ impl Apply<BalanceObserved> for Account {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Command)]
-#[domain(id = "credit-account", label = "Credit account")]
+#[domain(context = Ledger, id = "credit-account", label = "Credit account")]
 struct CreditAccount {
+    account_id: String,
     amount: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Command)]
-#[domain(id = "observe-balance", label = "Observe balance")]
-struct ObserveBalance;
+#[domain(context = Ledger, id = "observe-balance", label = "Observe balance")]
+struct ObserveBalance {
+    account_id: String,
+}
 
-impl CommandHandler<CreditAccount> for AccountAggregate {
+#[derive(Clone, Debug, Eq, PartialEq, Command)]
+#[domain(context = OtherLedger, id = "foreign-command", label = "Foreign command")]
+struct ForeignCommand;
+
+struct ForeignCommandHandler;
+
+#[async_trait]
+impl CommandHandler<ForeignCommand> for ForeignCommandHandler {
     type Rejection = Infallible;
 
-    fn handle(
-        command: &CreditAccount,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.raise(AccountCredited {
-            amount: command.amount,
-        });
-        Ok(())
+    async fn handle(
+        &self,
+        _command: &ForeignCommand,
+        _execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        Ok(CommandDecision::Accepted)
     }
 }
 
-impl CommandHandler<ObserveBalance> for AccountAggregate {
+struct CreditAccountHandler;
+
+#[async_trait]
+impl CommandHandler<CreditAccount> for CreditAccountHandler {
     type Rejection = Infallible;
 
-    fn handle(
-        _command: &ObserveBalance,
-        aggregate: &mut AggregateInstance<Self>,
-    ) -> Result<(), Self::Rejection> {
-        aggregate.raise(BalanceObserved {
-            balance: aggregate.state().balance,
+    async fn handle(
+        &self,
+        command: &CreditAccount,
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut account = execution
+            .load::<AccountAggregate>(&command.account_id)
+            .await?;
+        account.aggregate_mut().raise(AccountCredited {
+            amount: command.amount,
         });
-        Ok(())
+        Ok(CommandDecision::Accepted)
+    }
+}
+
+struct ObserveBalanceHandler;
+
+#[async_trait]
+impl CommandHandler<ObserveBalance> for ObserveBalanceHandler {
+    type Rejection = Infallible;
+
+    async fn handle(
+        &self,
+        command: &ObserveBalance,
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        let mut account = execution
+            .load::<AccountAggregate>(&command.account_id)
+            .await?;
+        let balance = account.aggregate().state().balance;
+        account.aggregate_mut().raise(BalanceObserved { balance });
+        Ok(CommandDecision::Accepted)
     }
 }
 
@@ -132,20 +173,67 @@ fn context() -> TestResult<rostfrei_messaging_core::BoundedContext> {
     Ok(ApplicationName::new("command-bus-test")?.bounded_context("ledger")?)
 }
 
+#[test]
+fn processor_rejects_commands_registered_for_another_context() -> TestResult {
+    let store: Arc<dyn EventStore> = Arc::new(InMemoryEventStore::new());
+    let mut processor = CommandProcessor::new(context()?.name().clone(), store);
+
+    let result = processor.register::<ForeignCommand, ForeignCommandHandler>(
+        ForeignCommandHandler,
+        InfallibleCommandRejectionMapper,
+    );
+    let Err(error) = result else {
+        panic!("foreign command registration must fail");
+    };
+
+    assert!(matches!(
+        error,
+        CommandBindingRegistrationError::ContextMismatch {
+            command_context: "other-ledger",
+            ..
+        }
+    ));
+    Ok(())
+}
+
 fn registered_processor(store: InMemoryEventStore) -> TestResult<CommandProcessor> {
     let store: Arc<dyn EventStore> = Arc::new(store);
-    let mut processor = CommandProcessor::new(store);
-    processor.register::<AccountAggregate, CreditAccount>(InfallibleCommandRejectionMapper)?;
-    processor.register::<AccountAggregate, ObserveBalance>(InfallibleCommandRejectionMapper)?;
+    let mut processor = CommandProcessor::new(context()?.name().clone(), store);
+    processor.register::<CreditAccount, CreditAccountHandler>(
+        CreditAccountHandler,
+        InfallibleCommandRejectionMapper,
+    )?;
+    processor.register::<ObserveBalance, ObserveBalanceHandler>(
+        ObserveBalanceHandler,
+        InfallibleCommandRejectionMapper,
+    )?;
     Ok(processor)
 }
 
 fn request<C>(operation: &str, command: C) -> TestResult<CommandRequest<C>> {
-    Ok(CommandRequest::new(
-        OperationId::new(operation)?,
-        StreamAggregateId::new("account-1")?,
-        command,
-    ))
+    Ok(CommandRequest::new(OperationId::new(operation)?, command))
+}
+
+#[tokio::test]
+async fn processor_rejects_incoming_commands_for_another_context() -> TestResult {
+    let processor = Arc::new(registered_processor(InMemoryEventStore::new())?);
+    let adapter = Arc::new(InMemoryMessagingAdapter::new(Arc::clone(&processor)));
+    let erased: Arc<dyn CommandMessageAdapter> = adapter;
+    let foreign_context =
+        ApplicationName::new("command-bus-test")?.bounded_context("other-ledger")?;
+    let bus = CommandBus::new(foreign_context, erased);
+    let encoded = bus.encode_dynamic(DynamicCommandRequest::new(
+        OperationId::new("foreign-command")?,
+        "foreign-command",
+        1,
+        json!({}),
+    )?)?;
+
+    let error = processor.process(&encoded).await.unwrap_err();
+
+    assert_eq!(error.kind(), CommandProcessorErrorKind::InvalidMessage);
+    assert!(error.message().contains("does not match processor context"));
+    Ok(())
 }
 
 #[tokio::test]
@@ -157,13 +245,21 @@ async fn registered_command_types_dispatch_without_command_name_branching() -> T
     let bus = CommandBus::new(context()?, erased);
 
     let credit = bus
-        .dispatch::<AccountAggregate, CreditAccount>(request(
+        .dispatch::<CreditAccount>(request(
             "credit-1",
-            CreditAccount { amount: 7 },
+            CreditAccount {
+                account_id: "account-1".to_owned(),
+                amount: 7,
+            },
         )?)
         .await?;
     let observed = bus
-        .dispatch::<AccountAggregate, ObserveBalance>(request("observe-1", ObserveBalance)?)
+        .dispatch::<ObserveBalance>(request(
+            "observe-1",
+            ObserveBalance {
+                account_id: "account-1".to_owned(),
+            },
+        )?)
         .await?;
     assert!(matches!(
         credit.response().outcome(),
@@ -205,35 +301,92 @@ fn encoding_is_canonical_and_identity_is_stable() -> TestResult {
     let timestamp = MessageTimestamp::from_unix_milliseconds(1_000)?;
     let correlation = CorrelationId::new("canonical-correlation")?;
 
-    let first = bus.encode::<AccountAggregate, CreditAccount>(
-        request("canonical-command", CreditAccount { amount: 7 })?
-            .with_correlation_id(correlation.clone())
-            .with_created_at(timestamp),
+    let first = bus.encode::<CreditAccount>(
+        request(
+            "canonical-command",
+            CreditAccount {
+                account_id: "account-1".to_owned(),
+                amount: 7,
+            },
+        )?
+        .with_correlation_id(correlation.clone())
+        .with_created_at(timestamp),
     )?;
-    let second = bus.encode::<AccountAggregate, CreditAccount>(
-        request("canonical-command", CreditAccount { amount: 7 })?
-            .with_correlation_id(correlation)
-            .with_created_at(timestamp),
+    let second = bus.encode::<CreditAccount>(
+        request(
+            "canonical-command",
+            CreditAccount {
+                account_id: "account-1".to_owned(),
+                amount: 7,
+            },
+        )?
+        .with_correlation_id(correlation)
+        .with_created_at(timestamp),
     )?;
     assert_eq!(first, second);
     let wire: serde_json::Value = serde_json::from_slice(first.payload())?;
     assert!(wire.pointer("/payload/events_caused_by_command").is_none());
+    assert!(wire.pointer("/payload/aggregate_type").is_none());
+    assert!(wire.pointer("/payload/aggregate_id").is_none());
 
     let left = command_execution_fingerprint(
-        "ledger/account",
-        "account-1",
+        "ledger",
         "credit-account",
         1,
         &json!({ "z": 1, "a": { "y": 2, "b": 3 } }),
     )?;
     let right = command_execution_fingerprint(
-        "ledger/account",
-        "account-1",
+        "ledger",
         "credit-account",
         1,
         &json!({ "a": { "b": 3, "y": 2 }, "z": 1 }),
     )?;
     assert_eq!(left, right);
+    Ok(())
+}
+
+#[test]
+fn command_provenance_participates_in_execution_and_message_identity() -> TestResult {
+    let processor = Arc::new(registered_processor(InMemoryEventStore::new())?);
+    let adapter = Arc::new(InMemoryMessagingAdapter::new(processor));
+    let erased: Arc<dyn CommandMessageAdapter> = adapter;
+    let bus = CommandBus::new(context()?, erased);
+    let ordinary = bus.encode::<CreditAccount>(request(
+        "provenance-command",
+        CreditAccount {
+            account_id: "account-1".to_owned(),
+            amount: 4,
+        },
+    )?)?;
+
+    let mut integration_wire: serde_json::Value = serde_json::from_slice(ordinary.payload())?;
+    let ordinary_payload = integration_wire
+        .pointer("/payload/payload")
+        .ok_or("command payload is missing")?;
+    assert_eq!(
+        ordinary.fingerprint(),
+        command_execution_fingerprint("ledger", "credit-account", 1, ordinary_payload)?
+    );
+    let routed = integration_wire
+        .get_mut("payload")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("command envelope payload is not an object")?;
+    routed.insert("events_caused_by_command".to_owned(), json!(true));
+    let integration = EncodedCommand::from_delivery(
+        ordinary.address().clone(),
+        ordinary.message_id().clone(),
+        serde_json::to_vec(&integration_wire)?,
+    )?;
+
+    assert_ne!(ordinary.fingerprint(), integration.fingerprint());
+    let integration_message_id = command_message_id(
+        integration.address(),
+        integration.operation_id(),
+        integration.fingerprint(),
+        integration.correlation_id(),
+        None,
+    )?;
+    assert_ne!(ordinary.message_id(), &integration_message_id);
     Ok(())
 }
 
@@ -243,9 +396,12 @@ async fn processor_rejects_tampered_identity_and_bus_bounds_payloads() -> TestRe
     let adapter = Arc::new(InMemoryMessagingAdapter::new(Arc::clone(&processor)));
     let erased: Arc<dyn CommandMessageAdapter> = adapter;
     let bus = CommandBus::new(context()?, erased);
-    let encoded = bus.encode::<AccountAggregate, CreditAccount>(request(
+    let encoded = bus.encode::<CreditAccount>(request(
         "tampered-command",
-        CreditAccount { amount: 4 },
+        CreditAccount {
+            account_id: "account-1".to_owned(),
+            amount: 4,
+        },
     )?)?;
     let tampered = EncodedCommand::from_delivery(
         encoded.address().clone(),
@@ -262,8 +418,6 @@ async fn processor_rejects_tampered_identity_and_bus_bounds_payloads() -> TestRe
     let error = bus
         .dispatch_dynamic(DynamicCommandRequest::new(
             OperationId::new("oversized-command")?,
-            "ledger/account",
-            StreamAggregateId::new("account-1")?,
             "unknown-command",
             1,
             json!({ "content": oversized }),

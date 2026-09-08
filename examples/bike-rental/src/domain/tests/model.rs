@@ -6,10 +6,16 @@ fn composed_domain_model_builds() {
 }
 
 #[test]
-fn omits_unattached_capabilities_and_lifecycle_metadata() {
+fn projects_registered_services_and_omits_unattached_capabilities() {
     let model = crate::domain::model::domain_model().expect("comparison domain model should build");
     assert_eq!(model["actions"], json!([]));
-    assert_eq!(model["domainServices"], json!([]));
+    assert_eq!(
+        model["domainServices"],
+        json!([{
+            "id": { "context": "bike-rental", "local": "bicycle-transfer" },
+            "label": "Bicycle transfer"
+        }])
+    );
     assert_eq!(model["policies"], json!([]));
     assert_eq!(model["invariants"], json!([]));
     assert!(model.get("commands").is_none());
@@ -29,7 +35,11 @@ fn omits_unattached_capabilities_and_lifecycle_metadata() {
         model["valueObjects"],
         json!([
             { "id": "bicycle-condition", "label": "Bicycle condition" },
-            { "id": "registration-number", "label": "Registration number" }
+            { "id": "registration-number", "label": "Registration number" },
+            {
+                "id": "bicycle-transfer-rejection-reason",
+                "label": "Bicycle transfer rejection reason"
+            }
         ])
     );
 
@@ -37,6 +47,11 @@ fn omits_unattached_capabilities_and_lifecycle_metadata() {
     assert_eq!(model["domainErrors"][2]["id"], "invalid-rental-fleet");
     assert_eq!(model["domainErrors"][2]["code"], "INVALID_RENTAL_FLEET");
     assert_eq!(model["domainErrors"][3]["id"], "bicycle-cannot-be-retired");
+    assert_eq!(model["domainErrors"][4]["id"], "bicycle-transfer-rejected");
+    assert_eq!(
+        model["domainErrors"][4]["code"],
+        "BICYCLE_TRANSFER_REJECTED"
+    );
 
     let bicycle = model["entities"]
         .as_array()

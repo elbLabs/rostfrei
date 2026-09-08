@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "return-rented-bicycle",
   "name": "Return a rented bicycle",
   "setup": {
@@ -15,15 +15,13 @@
             "kind": "command",
             "key": "subject",
             "name": "return-bicycle",
-            "schemaVersion": 1,
-            "aggregate": {
-              "type": "bike-rental/rental-fleet",
-              "id": "city-fleet"
-            },
+            "schemaVersion": 2,
             "payload": {
+              "fleet_id": "city-fleet",
               "bicycle_id": "bike-42"
             },
-            "outcome": "accepted"
+            "outcome": "accepted",
+            "context": "bike-rental"
           },
           {
             "kind": "domain-event",

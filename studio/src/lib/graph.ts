@@ -161,9 +161,7 @@ export function expectedGraph(
         name: node.name,
         schemaVersion: node.schemaVersion,
         payload: node.payload,
-        aggregateType:
-          node.kind === "command" ? node.aggregate.type : undefined,
-        aggregateId: node.kind === "command" ? node.aggregate.id : undefined,
+        boundedContext: node.kind === "command" ? node.context : undefined,
         status: "idle",
       }
     }),
@@ -225,8 +223,12 @@ export function reportGraph(
             : undefined,
         messageId: message.messageId,
         causationId: message.causationId,
-        aggregateType: message.aggregate?.type,
-        aggregateId: message.aggregate?.id,
+        boundedContext:
+          message.kind === "command" ? message.context : undefined,
+        aggregateType:
+          message.kind === "domain-event" ? message.aggregate?.type : undefined,
+        aggregateId:
+          message.kind === "domain-event" ? message.aggregate?.id : undefined,
         status:
           message.kind === "command"
             ? commandStatus(outcome, report, isSubject)

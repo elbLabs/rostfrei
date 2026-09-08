@@ -53,6 +53,8 @@ pub enum CompletedDecision {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PredictedDomainEvent {
+    pub aggregate_type: String,
+    pub aggregate_id: String,
     pub ordinal: u32,
     pub predicted_stream_version: u64,
     pub event_type: String,
@@ -61,10 +63,19 @@ pub struct PredictedDomainEvent {
     pub payload: Option<Value>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TouchedStreamParticipant {
+    pub aggregate_type: String,
+    pub aggregate_id: String,
+    pub base_stream_version: u64,
+    pub read_guard: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationResult {
     Accepted {
-        base_stream_version: Option<u64>,
+        participants: Vec<TouchedStreamParticipant>,
         predicted_events: Vec<PredictedDomainEvent>,
         appended: Option<bool>,
         published: bool,
@@ -73,7 +84,7 @@ pub enum OperationResult {
         duplicate: Option<bool>,
     },
     Rejected {
-        base_stream_version: Option<u64>,
+        participants: Vec<TouchedStreamParticipant>,
         rejection: Value,
         appended: Option<bool>,
         published: bool,
@@ -92,7 +103,7 @@ pub enum OperationResult {
 enum SerializedOperationResult<'a> {
     Accepted {
         #[serde(skip_serializing_if = "Option::is_none")]
-        base_stream_version: Option<u64>,
+        participants: Option<&'a [TouchedStreamParticipant]>,
         #[serde(skip_serializing_if = "Option::is_none")]
         predicted_events: Option<&'a [PredictedDomainEvent]>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -107,7 +118,7 @@ enum SerializedOperationResult<'a> {
     },
     Rejected {
         #[serde(skip_serializing_if = "Option::is_none")]
-        base_stream_version: Option<u64>,
+        participants: Option<&'a [TouchedStreamParticipant]>,
         rejection: &'a Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         appended: Option<bool>,
@@ -131,7 +142,7 @@ impl Serialize for OperationResult {
     {
         let result = match self {
             Self::Accepted {
-                base_stream_version,
+                participants,
                 predicted_events,
                 appended,
                 published,
@@ -139,7 +150,7 @@ impl Serialize for OperationResult {
                 response_message_id,
                 duplicate,
             } => SerializedOperationResult::Accepted {
-                base_stream_version: *base_stream_version,
+                participants: (!*published).then_some(participants.as_slice()),
                 predicted_events: (!*published).then_some(predicted_events.as_slice()),
                 appended: *appended,
                 published: *published,
@@ -148,7 +159,7 @@ impl Serialize for OperationResult {
                 duplicate: *duplicate,
             },
             Self::Rejected {
-                base_stream_version,
+                participants,
                 rejection,
                 appended,
                 published,
@@ -156,7 +167,7 @@ impl Serialize for OperationResult {
                 response_message_id,
                 duplicate,
             } => SerializedOperationResult::Rejected {
-                base_stream_version: *base_stream_version,
+                participants: (!*published).then_some(participants.as_slice()),
                 rejection,
                 appended: *appended,
                 published: *published,
@@ -196,8 +207,7 @@ pub struct OperationSnapshot {
     pub status: OperationStatus,
     pub command: String,
     pub schema_version: u32,
-    pub aggregate_type: String,
-    pub aggregate_id: String,
+    pub context: String,
     pub latest_event_id: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<OperationResult>,
@@ -291,8 +301,7 @@ pub struct NewOperation<'a> {
     pub mode: OperationMode,
     pub command: &'a str,
     pub schema_version: u32,
-    pub aggregate_type: &'a str,
-    pub aggregate_id: &'a str,
+    pub context: &'a str,
 }
 
 struct OperationState {
@@ -359,8 +368,7 @@ impl OperationRecord {
                     status: OperationStatus::Queued,
                     command: operation.command.to_owned(),
                     schema_version: operation.schema_version,
-                    aggregate_type: operation.aggregate_type.to_owned(),
-                    aggregate_id: operation.aggregate_id.to_owned(),
+                    context: operation.context.to_owned(),
                     latest_event_id: 1,
                     result: None,
                     failure: None,
@@ -658,8 +666,7 @@ mod tests {
             mode: OperationMode::Test,
             command: "test-command",
             schema_version: 1,
-            aggregate_type: "test-context/test-aggregate",
-            aggregate_id: "aggregate-1",
+            context: "test-context",
         });
 
         record.fail("test-failure", "failed".to_owned()).await;

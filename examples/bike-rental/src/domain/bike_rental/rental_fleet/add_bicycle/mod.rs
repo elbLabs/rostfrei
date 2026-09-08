@@ -8,3 +8,4 @@ mod handler;
 pub use action::AddBicycleAction;
 pub use command::AddBicycle;
 pub use event::BicycleAdded;
+pub use handler::AddBicycleHandler;

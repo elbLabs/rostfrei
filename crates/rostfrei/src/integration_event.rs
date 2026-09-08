@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
 use async_trait::async_trait;
-use rostfrei_core::{Aggregate, AggregateId, CommandHandler, OperationId};
+use rostfrei_core::OperationId;
 use rostfrei_messaging_core::{
     CausationId, DeliveryDisposition, DurableName, IntegrationEventAddress,
     IntegrationEventEnvelope, MessageDelivery, MessageHandler, QuarantineReason, RetryDelay,
 };
-use rostfrei_registry::CommandDefinition;
+
 use thiserror::Error;
 
 use crate::{
@@ -15,41 +15,12 @@ use crate::{
     integration_event_bus::{EncodedIntegrationMessage, IntegrationEvent},
 };
 
-/// Maps one incoming integration event to one command for a target aggregate.
+/// Maps one incoming integration event to one self-contained command.
 pub trait IntegrationCommandMapper<E>: Send + Sync {
-    type Aggregate: Aggregate + CommandHandler<Self::Command>;
-    type Command: CommandDefinition<Self::Aggregate> + JsonCommandPayload + Send + Sync;
+    type Command: JsonCommandPayload + Send + Sync;
     type Error;
 
-    fn map(&self, event: &E) -> Result<IntegrationCommand<Self::Command>, Self::Error>;
-}
-
-/// A typed command and the aggregate instance that should receive it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IntegrationCommand<C> {
-    aggregate_id: AggregateId,
-    command: C,
-}
-
-impl<C> IntegrationCommand<C> {
-    pub const fn new(aggregate_id: AggregateId, command: C) -> Self {
-        Self {
-            aggregate_id,
-            command,
-        }
-    }
-
-    pub const fn aggregate_id(&self) -> &AggregateId {
-        &self.aggregate_id
-    }
-
-    pub const fn command(&self) -> &C {
-        &self.command
-    }
-
-    pub fn into_parts(self) -> (AggregateId, C) {
-        (self.aggregate_id, self.command)
-    }
+    fn map(&self, event: &E) -> Result<Self::Command, Self::Error>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -109,29 +80,22 @@ impl<Mapper> IntegrationEventProcessor<Mapper> {
         Mapper: IntegrationCommandMapper<E>,
         E: Sync,
     {
-        let mapped = self
+        let command = self
             .mapper
             .map(envelope.payload())
             .map_err(IntegrationEventProcessingError::Mapper)?;
-        let (aggregate_id, command) = mapped.into_parts();
-        let aggregate_type = <Mapper::Aggregate as Aggregate>::aggregate_type();
-        let operation_id = integration_operation_id(
-            &self.durable_name,
-            envelope.message_id(),
-            aggregate_type.as_ref(),
-            aggregate_id.as_str(),
-        )
-        .map_err(|error| IntegrationEventProcessingError::MessageIdentity(error.to_string()))?;
+        let operation_id = integration_operation_id(&self.durable_name, envelope.message_id())
+            .map_err(|error| IntegrationEventProcessingError::MessageIdentity(error.to_string()))?;
         let causation_id = CausationId::new(envelope.message_id().as_str())
             .map_err(|error| IntegrationEventProcessingError::MessageIdentity(error.to_string()))?;
-        let request = CommandRequest::new(operation_id, aggregate_id, command)
+        let request = CommandRequest::new(operation_id, command)
             .with_correlation_id(envelope.correlation_id().clone())
             .with_causation_id(causation_id)
             .with_created_at(envelope.occurred_at())
             .with_events_caused_by_command();
         let receipt = self
             .command_bus
-            .dispatch::<Mapper::Aggregate, Mapper::Command>(request)
+            .dispatch::<Mapper::Command>(request)
             .await
             .map_err(IntegrationEventProcessingError::CommandBus)?;
         Ok(CompletedIntegrationCommand { receipt })
@@ -211,15 +175,11 @@ fn quarantine(reason: &'static str) -> DeliveryDisposition {
 fn integration_operation_id(
     durable_name: &DurableName,
     source_message_id: &rostfrei_messaging_core::MessageId,
-    aggregate_type: &str,
-    aggregate_id: &str,
 ) -> Result<OperationId, rostfrei_core::IdentityError> {
     let fingerprint = framed_fingerprint(&[
-        b"rostfrei:integration-operation:v1",
+        b"rostfrei:integration-operation:v2",
         durable_name.as_str().as_bytes(),
         source_message_id.as_str().as_bytes(),
-        aggregate_type.as_bytes(),
-        aggregate_id.as_bytes(),
     ]);
     OperationId::new(format!("integration:{}", fingerprint.to_hex()))
 }

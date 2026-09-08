@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use rostfrei_messaging_core::BoundedContextName;
 use tokio::sync::Mutex;
 
 use crate::identity::{derive_commit_id, derive_event_id};
@@ -38,7 +39,7 @@ struct State {
     operations: HashMap<(StreamId, OperationId), StoredAppend>,
     commits: HashMap<(StreamId, CommitId), OperationId>,
     event_ids: HashSet<(StreamId, EventId)>,
-    transactions: HashMap<(StreamId, OperationId), StoredTransaction>,
+    transactions: HashMap<(Option<BoundedContextName>, OperationId), StoredTransaction>,
     event_count: usize,
 }
 
@@ -243,13 +244,24 @@ impl EventStore for InMemoryEventStore {
 
     async fn load_transaction_receipt(
         &self,
-        primary_stream_id: &StreamId,
         operation_id: &OperationId,
     ) -> Result<Option<TransactionReceipt>, EventStoreError> {
         let state = self.state.lock().await;
         Ok(state
             .transactions
-            .get(&(primary_stream_id.clone(), operation_id.clone()))
+            .get(&(None, operation_id.clone()))
+            .map(|stored| stored.receipt.clone()))
+    }
+
+    async fn load_transaction_receipt_in_context(
+        &self,
+        bounded_context: &BoundedContextName,
+        operation_id: &OperationId,
+    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
+        let state = self.state.lock().await;
+        Ok(state
+            .transactions
+            .get(&(Some(bounded_context.clone()), operation_id.clone()))
             .map(|stored| stored.receipt.clone()))
     }
 
@@ -258,12 +270,11 @@ impl EventStore for InMemoryEventStore {
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
         let total_events = validate_transaction_item_limit(&transaction)?;
-        let primary_stream_id = transaction
-            .primary_stream_id()
-            .ok_or_else(|| invalid("an event transaction must contain at least one participant"))?
-            .clone();
         let mut state = self.state.lock().await;
-        let transaction_key = (primary_stream_id, transaction.operation_id().clone());
+        let transaction_key = (
+            transaction.bounded_context().cloned(),
+            transaction.operation_id().clone(),
+        );
         if let Some(previous) = state.transactions.get(&transaction_key) {
             if transaction_content_matches(&previous.transaction, &transaction) {
                 return Ok(TransactionAppendOutcome::ExactReplay(
@@ -315,6 +326,9 @@ impl EventStore for InMemoryEventStore {
                 })
                 .collect(),
         );
+        if let Some(bounded_context) = transaction.bounded_context() {
+            receipt = receipt.with_bounded_context(bounded_context.clone());
+        }
         if let Some(correlation_id) = transaction.correlation_id() {
             receipt = receipt.with_correlation_id(correlation_id.clone());
         }
@@ -361,7 +375,8 @@ impl EventStore for InMemoryEventStore {
 }
 
 fn transaction_content_matches(first: &EventTransaction, second: &EventTransaction) -> bool {
-    first.operation_id() == second.operation_id()
+    first.bounded_context() == second.bounded_context()
+        && first.operation_id() == second.operation_id()
         && first.operation_fingerprint() == second.operation_fingerprint()
         && first.correlation_id() == second.correlation_id()
         && first.causation_id() == second.causation_id()

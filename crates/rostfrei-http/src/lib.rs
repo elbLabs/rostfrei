@@ -12,8 +12,7 @@ use rostfrei::{
     CommandBus, CommandBusError, CommandBusErrorKind, CommandRejection,
     CommandRejectionClassification, CommandResponseOutcome, DomainRegistry, DynamicCommandRequest,
     DynamicQueryRequest, OperationId, QueryBus, QueryBusError, QueryBusErrorKind,
-    QueryErrorClassification, QueryErrorPayload, QueryOptions, QueryOutcome, StreamAggregateId,
-    TraceContext,
+    QueryErrorClassification, QueryErrorPayload, QueryOptions, QueryOutcome, TraceContext,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -150,7 +149,7 @@ pub fn router(
             post(submit_query),
         )
         .route(
-            "/contexts/{context}/aggregates/{aggregate}/{aggregate_id}/commands/{command}/schemas/{schema_version}",
+            "/contexts/{context}/commands/{command}/schemas/{schema_version}",
             post(submit_command),
         )
         .layer(DefaultBodyLimit::max(maximum_command_payload_bytes))
@@ -217,13 +216,7 @@ async fn submit_query(
 
 async fn submit_command(
     State(state): State<HttpState>,
-    Path((context, aggregate, aggregate_id, command, schema_version)): Path<(
-        String,
-        String,
-        String,
-        String,
-        u32,
-    )>,
+    Path((context, command, schema_version)): Path<(String, String, u32)>,
     headers: HeaderMap,
     payload: Result<Json<Value>, JsonRejection>,
 ) -> Response {
@@ -241,39 +234,18 @@ async fn submit_command(
     if context != state.command_bus.context().name().as_str() {
         return not_found("The command name or schema version is not registered.");
     }
-    if aggregate.contains('/') {
-        return bad_request(
-            "rostfrei.http.invalid-aggregate",
-            "aggregate path segment must not contain a context separator",
-        );
-    }
-    let qualified_aggregate_type = format!("{context}/{aggregate}");
-    let aggregate_type = match state
+    if state
         .registry
-        .command(&qualified_aggregate_type, &command, schema_version)
-        .or_else(|| state.registry.command(&aggregate, &command, schema_version))
+        .command(&context, &command, schema_version)
+        .is_none()
     {
-        Some(descriptor) => descriptor.aggregate_type.clone(),
-        None => return not_found("The command name or schema version is not registered."),
-    };
+        return not_found("The command name or schema version is not registered.");
+    }
     let operation_id = match idempotency_key(&headers) {
         Ok(operation_id) => operation_id,
         Err(error) => return error.into_response(),
     };
-    let aggregate_id = match StreamAggregateId::new(aggregate_id) {
-        Ok(aggregate_id) => aggregate_id,
-        Err(error) => {
-            return bad_request("rostfrei.http.invalid-aggregate-id", error.to_string());
-        }
-    };
-    let request = match DynamicCommandRequest::new(
-        operation_id,
-        aggregate_type,
-        aggregate_id,
-        command,
-        schema_version,
-        payload,
-    ) {
+    let request = match DynamicCommandRequest::new(operation_id, command, schema_version, payload) {
         Ok(request) => request,
         Err(error) => return command_bus_error(&error),
     };

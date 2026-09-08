@@ -18,9 +18,9 @@ const MAXIMUM_EXPECTED_GRAPH_DEPTH: usize = 64;
 const MAXIMUM_EXPECTED_SIBLINGS: usize = 64;
 const MAXIMUM_COMPARISON_STEPS: usize = 100_000;
 const DEFINITION_SCHEMA_ID: &str =
-    "https://rostfrei.dev/schemas/tracer/message-series-definition-v1.schema.json";
+    "https://rostfrei.dev/schemas/tracer/message-series-definition-v2.schema.json";
 const OBSERVATION_SCHEMA_ID: &str =
-    "https://rostfrei.dev/schemas/tracer/observed-message-series-v1.schema.json";
+    "https://rostfrei.dev/schemas/tracer/observed-message-series-v2.schema.json";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -265,7 +265,7 @@ enum ExpectedMessageNodeWire {
         parent_key: Option<String>,
         name: String,
         schema_version: u32,
-        aggregate: TestAggregateWire,
+        context: String,
         #[serde(default, deserialize_with = "deserialize_present_payload")]
         payload: Option<Value>,
         outcome: ExpectedOutcomeWire,
@@ -300,7 +300,7 @@ impl ExpectedMessageNodeWire {
                 parent_key,
                 name,
                 schema_version,
-                aggregate,
+                context,
                 payload,
                 outcome,
             } => ExpectedMessageNode::Command {
@@ -308,7 +308,7 @@ impl ExpectedMessageNodeWire {
                 parent_key,
                 name,
                 schema_version,
-                aggregate: aggregate.into(),
+                context,
                 payload,
                 outcome: outcome.into_outcome(path, issues),
             },
@@ -338,23 +338,6 @@ impl ExpectedMessageNodeWire {
                 schema_version,
                 payload,
             },
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TestAggregateWire {
-    #[serde(rename = "type")]
-    aggregate_type: String,
-    id: String,
-}
-
-impl From<TestAggregateWire> for TestAggregate {
-    fn from(value: TestAggregateWire) -> Self {
-        Self {
-            aggregate_type: value.aggregate_type,
-            id: value.id,
         }
     }
 }
@@ -422,8 +405,8 @@ pub enum ExpectedMessageNode {
         name: String,
         #[schemars(range(min = 1, max = 4_294_967_295_u32))]
         schema_version: u32,
-        #[schemars(with = "AggregateSchema")]
-        aggregate: TestAggregate,
+        #[schemars(with = "NonEmptyStringSchema")]
+        context: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<Value>,
         #[schemars(with = "ExpectedOutcomeSchema")]
@@ -492,7 +475,7 @@ pub struct ExpectedCommandFields<'a> {
     pub parent_key: Option<&'a str>,
     pub name: &'a str,
     pub schema_version: u32,
-    pub aggregate: &'a TestAggregate,
+    pub context: &'a str,
     pub payload: &'a Value,
     pub outcome: &'a TestOutcome,
 }
@@ -503,7 +486,7 @@ impl ExpectedCommandFields<'_> {
         crate::TestCommand {
             name: self.name.to_owned(),
             schema_version: self.schema_version,
-            aggregate: self.aggregate.clone(),
+            context: self.context.to_owned(),
             payload: self.payload.clone(),
         }
     }
@@ -554,18 +537,18 @@ impl ExpectedMessageNode {
         }
     }
 
+    pub const fn context(&self) -> Option<&str> {
+        match self {
+            Self::Command { context, .. } => Some(context.as_str()),
+            Self::DomainEvent { .. } | Self::IntegrationEvent { .. } => None,
+        }
+    }
+
     pub const fn payload(&self) -> Option<&Value> {
         match self {
             Self::Command { payload, .. }
             | Self::DomainEvent { payload, .. }
             | Self::IntegrationEvent { payload, .. } => payload.as_ref(),
-        }
-    }
-
-    pub const fn aggregate(&self) -> Option<&TestAggregate> {
-        match self {
-            Self::Command { aggregate, .. } => Some(aggregate),
-            Self::DomainEvent { .. } | Self::IntegrationEvent { .. } => None,
         }
     }
 
@@ -582,7 +565,7 @@ impl ExpectedMessageNode {
             parent_key,
             name,
             schema_version,
-            aggregate,
+            context,
             payload: Some(payload),
             outcome,
         } = self
@@ -594,7 +577,7 @@ impl ExpectedMessageNode {
             parent_key: parent_key.as_deref(),
             name,
             schema_version: *schema_version,
-            aggregate,
+            context,
             payload,
             outcome,
         })
@@ -708,8 +691,8 @@ pub enum ObservedMessageNode {
         #[serde(deserialize_with = "deserialize_positive_observed_schema_version")]
         #[schemars(range(min = 1, max = 4_294_967_295_u32))]
         schema_version: u32,
-        #[schemars(with = "AggregateSchema")]
-        aggregate: TestAggregate,
+        #[schemars(with = "NonEmptyStringSchema")]
+        context: String,
         #[serde(
             default,
             deserialize_with = "deserialize_present_payload",
@@ -785,7 +768,7 @@ impl ObservedMessageNode {
         causation_id: Option<String>,
         name: impl Into<String>,
         schema_version: u32,
-        aggregate: TestAggregate,
+        context: impl Into<String>,
         payload: Option<Value>,
     ) -> Self {
         Self::Command {
@@ -795,7 +778,7 @@ impl ObservedMessageNode {
             observation_order: 0,
             name: name.into(),
             schema_version,
-            aggregate,
+            context: context.into(),
             payload,
         }
     }
@@ -902,11 +885,17 @@ impl ObservedMessageNode {
         }
     }
 
+    pub const fn context(&self) -> Option<&str> {
+        match self {
+            Self::Command { context, .. } => Some(context.as_str()),
+            Self::DomainEvent { .. } | Self::IntegrationEvent { .. } => None,
+        }
+    }
+
     pub const fn aggregate(&self) -> Option<&TestAggregate> {
         match self {
-            Self::Command { aggregate, .. } => Some(aggregate),
+            Self::Command { .. } | Self::IntegrationEvent { .. } => None,
             Self::DomainEvent { aggregate, .. } => aggregate.as_ref(),
-            Self::IntegrationEvent { .. } => None,
         }
     }
 
@@ -1371,12 +1360,12 @@ fn validate_observed_message(
         ObservedMessageNode::Command {
             name,
             schema_version,
-            aggregate,
+            context,
             ..
         } => {
             validate_observed_name(name)?;
             validate_observed_schema_version(*schema_version)?;
-            validate_observed_aggregate(aggregate)?;
+            validate_observed_name(context)?;
         }
         ObservedMessageNode::DomainEvent {
             name,
@@ -1904,7 +1893,7 @@ impl<'a> CompleteMatchSearch<'a> {
         expected.kind() == observed.kind()
             && expected.name() == observed.name()
             && expected.schema_version() == observed.schema_version()
-            && !aggregate_mismatch(expected, observed)
+            && expected.context() == observed.context()
             && !payload_mismatch(expected, observed)
             && !outcome_mismatch(expected, observed, self.observed)
     }
@@ -2034,7 +2023,7 @@ fn candidate_rank(
         expected.kind() != observed.kind(),
         expected.name() != observed.name(),
         expected.schema_version() != observed.schema_version(),
-        aggregate_mismatch(expected, observed),
+        expected.context() != observed.context(),
         payload_mismatch(expected, observed),
         outcome_mismatch(expected, observed, series),
         candidate_content_key(observed, series),
@@ -2047,19 +2036,13 @@ fn candidate_content_key(observed: &ObservedMessageNode, series: &ObservedMessag
         "kind": observed.kind(),
         "name": observed.name(),
         "schemaVersion": observed.schema_version(),
-        "aggregate": observed.aggregate(),
+        "context": observed.context(),
         "payload": observed.payload(),
         "outcome": series
             .command_outcome(observed.message_id())
             .map(ObservedCommandOutcome::outcome),
     }))
     .unwrap_or_default()
-}
-
-fn aggregate_mismatch(expected: &ExpectedMessageNode, observed: &ObservedMessageNode) -> bool {
-    expected
-        .aggregate()
-        .is_some_and(|aggregate| observed.aggregate() != Some(aggregate))
 }
 
 fn payload_mismatch(expected: &ExpectedMessageNode, observed: &ObservedMessageNode) -> bool {
@@ -2115,7 +2098,7 @@ fn diagnose_unmatched_expected(
         if expected.kind() == candidate.kind()
             && expected.name() == candidate.name()
             && expected.schema_version() == candidate.schema_version()
-            && !aggregate_mismatch(expected, candidate)
+            && expected.context() == candidate.context()
             && !payload_mismatch(expected, candidate)
             && !outcome_mismatch(expected, candidate, observed)
         {
@@ -2202,15 +2185,15 @@ fn diagnose_matched_fields(
         Value::from(observed.schema_version()),
         diagnostics,
     );
-    if aggregate_mismatch(expected, observed) {
-        diagnostics.push(MessageSeriesComparisonDiagnostic::new(
-            "aggregate-mismatch",
-            format!("{base}/aggregate"),
-            "command aggregate identity differs",
-            expected.aggregate().map(json_value),
-            observed.aggregate().map(json_value),
-        ));
-    }
+    push_field_mismatch(
+        expected.context() != observed.context(),
+        "command-context-mismatch",
+        &format!("{base}/context"),
+        "command bounded context differs",
+        expected.context().map_or(Value::Null, Value::from),
+        observed.context().map_or(Value::Null, Value::from),
+        diagnostics,
+    );
     if payload_mismatch(expected, observed) {
         diagnostics.push(MessageSeriesComparisonDiagnostic::new(
             "payload-mismatch",
@@ -2684,21 +2667,14 @@ fn validate_node_fields(
         ));
     }
     if let ExpectedMessageNode::Command {
-        aggregate, outcome, ..
+        context, outcome, ..
     } = node
     {
-        if aggregate.aggregate_type.trim().is_empty() {
+        if context.trim().is_empty() {
             issues.push(MessageSeriesValidationIssue::new(
-                "empty-aggregate-type",
-                format!("{node_path}/aggregate/type"),
-                "aggregate type must not be empty",
-            ));
-        }
-        if aggregate.id.trim().is_empty() {
-            issues.push(MessageSeriesValidationIssue::new(
-                "empty-aggregate-id",
-                format!("{node_path}/aggregate/id"),
-                "aggregate ID must not be empty",
+                "empty-command-context",
+                format!("{node_path}/context"),
+                "command context must not be empty",
             ));
         }
         if outcome
@@ -2983,7 +2959,7 @@ mod tests {
             parent_key: parent_key.map(str::to_owned),
             name: "rent-bicycle".to_owned(),
             schema_version: 1,
-            aggregate: aggregate(),
+            context: "bike-rental".to_owned(),
             payload,
             outcome,
         }
@@ -3006,7 +2982,7 @@ mod tests {
             None,
             "rent-bicycle",
             1,
-            aggregate(),
+            "bike-rental",
             Some(json!({ "bicycle_id": "bike-42" })),
         )
     }
@@ -3147,7 +3123,7 @@ mod tests {
                     "key": "subject",
                     "name": "rent-bicycle",
                     "schemaVersion": 1,
-                    "aggregate": { "type": "bike-rental/rental-fleet", "id": "city-fleet" },
+                    "context": "bike-rental",
                     "payload": null,
                     "outcome": { "rejected": { "code": "BICYCLE_UNAVAILABLE", "payload": null } }
                 }, {
@@ -3217,7 +3193,7 @@ mod tests {
                 None,
                 "rent-bicycle",
                 1,
-                aggregate(),
+                "bike-rental",
                 Some(Value::Null),
             ))
             .unwrap();
@@ -3407,7 +3383,7 @@ mod tests {
                     "key": "root",
                     "name": "rent-bicycle",
                     "schemaVersion": 1,
-                    "aggregate": { "type": "bike-rental/rental-fleet", "id": "city-fleet" },
+                    "context": "bike-rental",
                     "payload": {},
                     "outcome": "accepted"
                 }]
@@ -3434,7 +3410,7 @@ mod tests {
                     "parentKey": "missing",
                     "name": "rent-bicycle",
                     "schemaVersion": 1,
-                    "aggregate": { "type": "bike-rental/rental-fleet", "id": "city-fleet" },
+                    "context": "bike-rental",
                     "payload": {},
                     "outcome": "accepted"
                 }]
@@ -3450,12 +3426,12 @@ mod tests {
         assert_eq!(unresolved.path(), "/graphs/0/nodes/0/parentKey");
 
         let mut empty_contract_values = document.clone();
-        empty_contract_values["graphs"][0]["nodes"][0]["aggregate"]["type"] = json!("");
+        empty_contract_values["graphs"][0]["nodes"][0]["context"] = json!("");
         empty_contract_values["graphs"][0]["nodes"][0]["outcome"] = json!({
             "rejected": { "code": "" }
         });
         let error = MessageSeriesDefinition::from_json_value(empty_contract_values).unwrap_err();
-        assert!(issue_codes(&error).contains(&"empty-aggregate-type"));
+        assert!(issue_codes(&error).contains(&"empty-command-context"));
         assert!(issue_codes(&error).contains(&"empty-rejection-code"));
 
         let mut invalid_outcome = document;
@@ -4258,7 +4234,7 @@ mod tests {
         let codes = diagnostic_codes(&comparison);
         assert_eq!(comparison.status, MessageSeriesComparisonStatus::Failed);
         for code in [
-            "aggregate-mismatch",
+            "command-context-mismatch",
             "command-outcome-mismatch",
             "identity-conflict",
             "kind-mismatch",

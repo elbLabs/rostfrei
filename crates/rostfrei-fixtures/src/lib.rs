@@ -14,10 +14,11 @@ use std::{
 };
 
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateType, ContentFingerprint, EnvelopeError, Event, EventBatch,
-    EventCodec, EventCodecError, EventId, EventStore, EventStoreError, ExecutionMetadata,
-    ExpectedVersion, IdentityError, JsonEventCodec, MAX_EVENT_PAYLOAD_LEN, MAX_EVENT_TYPE_LEN,
-    NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
+    Aggregate, AggregateId, AggregateType, CommandExecutionMetadata, ContentFingerprint,
+    EnvelopeError, Event, EventBatch, EventCodec, EventCodecError, EventId, EventStore,
+    EventStoreError, ExpectedVersion, IdentityError, JsonEventCodec, MAX_EVENT_PAYLOAD_LEN,
+    MAX_EVENT_TYPE_LEN, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
+    derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{
     CausationId, ContractError, CorrelationId, MessageId, MessageSeries, MessageSeriesNode,
@@ -817,12 +818,13 @@ fn build_plan(fixture: &Fixture) -> Result<Vec<PlannedEvent>, FixtureApplyError>
         let stream_id = message.aggregate.stream_id();
         let operation_id = OperationId::new(format!("{FIXTURE_OPERATION_ID_PREFIX}{fingerprint}"))
             .map_err(|source| FixtureApplyError::Identity { source })?;
-        let mut metadata = ExecutionMetadata::new(stream_id.clone(), operation_id, fingerprint)
+        let mut metadata = CommandExecutionMetadata::new(operation_id, fingerprint)
             .with_correlation_id(message.correlation_id.clone());
         if let Some(causation_id) = parent_physical_id {
             metadata = metadata.with_causation_id(causation_id);
         }
-        let event_id = metadata.event_id(0);
+        let commit_id = derive_commit_id(&stream_id, metadata.operation_id());
+        let event_id = derive_event_id(&commit_id, 0);
         let payload = canonical_json_bytes(&message.payload)
             .map_err(|message| FixtureApplyError::Canonicalization { message })?;
         let new_event = NewEvent::new(
@@ -833,7 +835,7 @@ fn build_plan(fixture: &Fixture) -> Result<Vec<PlannedEvent>, FixtureApplyError>
         )
         .map_err(|source| FixtureApplyError::Envelope { source })?;
         let mut batch = EventBatch::new(
-            metadata.commit_id().clone(),
+            commit_id.clone(),
             metadata.operation_id().clone(),
             metadata.operation_fingerprint(),
             vec![new_event],
@@ -844,7 +846,7 @@ fn build_plan(fixture: &Fixture) -> Result<Vec<PlannedEvent>, FixtureApplyError>
             stream_id.clone(),
             StreamVersion::new(message.stream_version),
             event_id.clone(),
-            metadata.commit_id().clone(),
+            commit_id,
             metadata.operation_id().clone(),
             metadata.operation_fingerprint(),
             &message.name,

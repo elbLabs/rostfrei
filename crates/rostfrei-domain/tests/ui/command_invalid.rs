@@ -17,21 +17,25 @@ enum NotAStruct {
 struct MissingMetadata;
 
 #[derive(Command)]
-#[domain(id = "missing-label")]
+#[domain(id = "missing-context", label = "Missing context")]
+struct MissingContext;
+
+#[derive(Command)]
+#[domain(context = Catalog, id = "missing-label")]
 struct MissingLabel;
 
 #[derive(Command)]
-#[domain(id = "bad_id", label = "Bad ID")]
+#[domain(context = Catalog, id = "bad_id", label = "Bad ID")]
 struct InvalidId;
 
 #[derive(Command)]
-#[domain(id = "invalid-owner", label = "Invalid owner", owner = Catalog)]
+#[domain(context = Catalog, id = "invalid-owner", label = "Invalid owner", owner = Catalog)]
 struct UnsupportedOwner;
 
 struct Child;
 
 #[derive(Command)]
-#[domain(id = "contains-entity", label = "Contains entity")]
+#[domain(context = Catalog, id = "contains-entity", label = "Contains entity")]
 struct ContainsEntity {
     #[domain(entity)]
     child: Child,
