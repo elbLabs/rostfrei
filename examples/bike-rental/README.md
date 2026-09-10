@@ -163,6 +163,20 @@ streams and exposes trace payloads for demonstration. Production deployments
 should provision infrastructure separately and use distinct NATS credentials or
 accounts for Test and Dispatch.
 
+## Quarantine inspection
+
+Tracer advertises retained Test quarantine messages through
+`catalog.quarantine.test.listHref`. Set `ROSTFREI_INSPECTION_TOKEN` to enable a
+separate read-only production capability in the combined API. Production
+payloads and metadata are redacted by default.
+
+For inspection independently of application workers, run
+`cargo run --locked -p bike-rental --bin bike-rental-quarantine` with
+`ROSTFREI_NATS_URL` and `ROSTFREI_INSPECTION_TOKEN` configured. It serves the same
+catalog/list/detail contract on `127.0.0.1:1310` without provisioning resources.
+See [quarantine inspection](../../docs/quarantine-inspection.md) for filters,
+permissions, payload policy, and reset semantics.
+
 ## Agent-first Tracer workflow
 
 The repository-local OpenCode skill at
