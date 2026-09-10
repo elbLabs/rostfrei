@@ -1,21 +1,36 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   AlertTriangle,
-  ChevronLeft,
   ChevronRight,
+  FlaskConical,
+  History,
   LoaderCircle,
+  Send,
 } from "lucide-react"
 
+import {
+  CommandPanel,
+  type CommandExecutionRequest,
+} from "@/components/command-panel"
 import { MessageGraph } from "@/components/message-graph"
 import { StudioSidebar } from "@/components/studio-sidebar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { getFixture, getTest, listTests, runTest } from "@/lib/api"
-import { expectedGraph, reportGraph } from "@/lib/graph"
+import {
+  CommandSubmissionIndeterminateError,
+  getCatalog,
+  getFixture,
+  getTest,
+  listTests,
+  submitCommand,
+  runTest,
+} from "@/lib/api"
+import { expectedGraph, operationGraph, reportGraph } from "@/lib/graph"
 import {
   SAMPLE_DEFINITIONS,
   SAMPLE_FIXTURE,
+  SAMPLE_FIXTURES,
   SAMPLE_GRAPH,
   SAMPLE_TESTS,
 } from "@/lib/sample-data"
@@ -27,16 +42,23 @@ import type {
   TestDefinitionRevision,
   TestDefinitionSummary,
   TestReport,
+  TracerCatalog,
+  CommandExecutionResult,
 } from "@/lib/types"
-import { cn } from "@/lib/utils"
 
 const STORED_RUNS_KEY = "rostfrei-tracer-studio-runs-v1"
 const MAXIMUM_STORED_RUNS = 16
 
+function shortcutLabel(key: string): string {
+  return navigator.userAgent.includes("Mac") ? `⌘⇧${key}` : `Ctrl ⇧ ${key}`
+}
+
 function App() {
-  const [sidebarOpen, setSidebarOpen] = useState(
+  const [testsOpen, setTestsOpen] = useState(
     () => window.matchMedia("(min-width: 768px)").matches
   )
+  const [runsOpen, setRunsOpen] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
   const [source, setSource] = useState<"connecting" | "live" | "demo">(
     "connecting"
   )
@@ -53,35 +75,84 @@ function App() {
   const [runs, setRuns] = useState<StoredRun[]>(readStoredRuns)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string>()
+  const [catalog, setCatalog] = useState<TracerCatalog>()
+  const [commandResult, setCommandResult] = useState<CommandExecutionResult>()
+  const [commandError, setCommandError] = useState<string>()
+  const [activeCommandLabel, setActiveCommandLabel] = useState<string>()
+  const [testStateRevision, setTestStateRevision] = useState(0)
+  const viewRevision = useRef(0)
+  const definitionsHref =
+    catalog?.testRepository?.definitionsHref ??
+    catalog?.behavioralTest?.definitionsHref
+  const testsAvailable = source !== "live" || Boolean(definitionsHref)
+
+  useEffect(() => {
+    const togglePanel = (event: KeyboardEvent) => {
+      if (
+        !(event.metaKey || event.ctrlKey) ||
+        !event.shiftKey ||
+        event.altKey
+      ) {
+        return
+      }
+
+      if (event.code === "KeyE" && testsAvailable) {
+        event.preventDefault()
+        setTestsOpen((open) => !open)
+      } else if (event.code === "KeyY") {
+        event.preventDefault()
+        setRunsOpen((open) => !open)
+      } else if (event.code === "KeyK") {
+        event.preventDefault()
+        setCommandOpen((open) => !open)
+      }
+    }
+
+    window.addEventListener("keydown", togglePanel)
+    return () => window.removeEventListener("keydown", togglePanel)
+  }, [testsAvailable])
 
   useEffect(() => {
     let active = true
     const connect = async () => {
+      const connectionRevision = viewRevision.current
+      let availableCatalog: TracerCatalog
       try {
-        const availableTests = await listTests()
+        availableCatalog = await getCatalog()
+      } catch {
+        if (active) setSource("demo")
+        return
+      }
+      if (!active) return
+      setCatalog(availableCatalog)
+      setSource("live")
+      setTests([])
+      setSelectedTestId(undefined)
+      if (viewRevision.current === connectionRevision) setNodes([])
+
+      const href =
+        availableCatalog.testRepository?.definitionsHref ??
+        availableCatalog.behavioralTest?.definitionsHref
+      if (!href) return
+      try {
+        const availableTests = await listTests(href)
         if (!active) return
-        setSource("live")
         setTests(availableTests)
         const selected =
           availableTests.find((test) => test.id === SAMPLE_TESTS[0]?.id) ??
           availableTests[0]
-        if (!selected) {
-          setSelectedTestId(undefined)
-          setNodes([])
-          return
-        }
-        const revision = await getTest(selected.id)
+        if (!selected) return
+        const revision = await getTest(selected.definitionHref)
         const canonicalFixture = await getFixture(
           revision.definition.setup.fixture
         )
-        if (!active) return
+        if (!active || viewRevision.current !== connectionRevision) return
         setSelectedTestId(selected.id)
         setDefinition(revision)
         setFixture(canonicalFixture)
         setNodes(expectedGraph(revision.definition, canonicalFixture))
-      } catch {
-        if (!active) return
-        setSource("demo")
+      } catch (testError) {
+        if (active) setError(`Tests unavailable: ${errorMessage(testError)}`)
       }
     }
     void connect()
@@ -91,37 +162,50 @@ function App() {
   }, [])
 
   const selectTest = async (test: TestDefinitionSummary) => {
+    if (running) return
+    const selectionRevision = ++viewRevision.current
+    setActiveCommandLabel(undefined)
+    setCommandResult(undefined)
+    setCommandError(undefined)
     setSelectedTestId(test.id)
     setSelectedRunId(undefined)
     setError(undefined)
     if (source === "live") {
       try {
-        const revision = await getTest(test.id)
+        const revision = await getTest(test.definitionHref)
         const canonicalFixture = await getFixture(
           revision.definition.setup.fixture
         )
+        if (viewRevision.current !== selectionRevision) return
         setDefinition(revision)
         setFixture(canonicalFixture)
         setNodes(expectedGraph(revision.definition, canonicalFixture))
       } catch (selectionError) {
+        if (viewRevision.current !== selectionRevision) return
         setError(errorMessage(selectionError))
       }
     } else {
       const revision = SAMPLE_DEFINITIONS[test.id]
       if (revision) {
+        const sampleFixture =
+          SAMPLE_FIXTURES[revision.definition.setup.fixture] ?? SAMPLE_FIXTURE
         setDefinition(revision)
-        setFixture(SAMPLE_FIXTURE)
-        setNodes(expectedGraph(revision.definition, SAMPLE_FIXTURE))
+        setFixture(sampleFixture)
+        setNodes(expectedGraph(revision.definition, sampleFixture))
       }
     }
     if (window.matchMedia("(max-width: 767px)").matches) {
-      setSidebarOpen(false)
+      setTestsOpen(false)
     }
   }
 
   const executeSelectedTest = async () => {
     const selected = tests.find((test) => test.id === selectedTestId)
     if (!selected || running) return
+    ++viewRevision.current
+    setActiveCommandLabel(undefined)
+    setCommandResult(undefined)
+    setCommandError(undefined)
     setRunning(true)
     setError(undefined)
     setSelectedRunId(undefined)
@@ -143,7 +227,7 @@ function App() {
         setNodes(observedNodes)
         storeRun(report, selected.name, observedNodes)
       } else {
-        const demoNodes = await runDemo(definition, setNodes)
+        const demoNodes = await runDemo(definition, fixture, setNodes)
         const report = createDemoReport(definition)
         storeRun(report, selected.name, demoNodes)
       }
@@ -157,6 +241,7 @@ function App() {
         }))
       )
     } finally {
+      setTestStateRevision((current) => current + 1)
       setRunning(false)
     }
   }
@@ -184,18 +269,95 @@ function App() {
   }
 
   const selectRun = (run: StoredRun) => {
+    if (running) return
+    ++viewRevision.current
+    setActiveCommandLabel(undefined)
+    setCommandResult(undefined)
+    setCommandError(undefined)
     setSelectedRunId(run.runId)
     setSelectedTestId(run.testId)
     setNodes(run.nodes)
     setError(undefined)
     if (window.matchMedia("(max-width: 767px)").matches) {
-      setSidebarOpen(false)
+      setRunsOpen(false)
     }
   }
 
-  const currentLabel = selectedRunId
-    ? runs.find((run) => run.runId === selectedRunId)?.testName
-    : definition.definition.name
+  const executeCommand = async (request: CommandExecutionRequest) => {
+    if (running) return false
+    ++viewRevision.current
+    setRunning(true)
+    setError(undefined)
+    setCommandError(undefined)
+    setCommandResult(undefined)
+    setSelectedRunId(undefined)
+    setActiveCommandLabel(
+      `${request.commandLabel} · ${request.mode === "test" ? "Test" : "Preview"}`
+    )
+    const pendingNode: MessageGraphNode = {
+      id: `${request.mode}-${crypto.randomUUID()}`,
+      kind: "command",
+      subject: true,
+      name: request.commandId,
+      schemaVersion: request.schemaVersion,
+      boundedContext: request.context,
+      payload: request.payload,
+      status: "running",
+    }
+    setNodes([pendingNode])
+    let rotateIdempotencyKey = false
+
+    try {
+      const execution = await submitCommand(
+        request.mode,
+        request.submitHrefTemplate,
+        request.schemaVersion,
+        request.payloadJson,
+        request.mode === "test" ? request.idempotencyKey : undefined
+      )
+      rotateIdempotencyKey =
+        execution.operation.status === "completed" ||
+        execution.operation.status === "failed"
+      setCommandResult(execution)
+      if (execution.series) {
+        setNodes(operationGraph(execution.operation, execution.series))
+      } else {
+        setNodes([
+          {
+            ...pendingNode,
+            response: execution.operation.result ?? execution.operation.failure,
+            status: operationNodeStatus(execution.operation),
+          },
+        ])
+      }
+    } catch (previewError) {
+      const message = errorMessage(previewError)
+      const indeterminate =
+        previewError instanceof CommandSubmissionIndeterminateError
+      setCommandError(message)
+      setNodes([
+        {
+          ...pendingNode,
+          status: indeterminate ? "indeterminate" : "failed",
+          response: { message },
+        },
+      ])
+    } finally {
+      if (request.mode === "test" && rotateIdempotencyKey) {
+        setTestStateRevision((current) => current + 1)
+      }
+      setRunning(false)
+    }
+    return rotateIdempotencyKey
+  }
+
+  const currentLabel =
+    activeCommandLabel ??
+    (selectedRunId
+      ? runs.find((run) => run.runId === selectedRunId)?.testName
+      : selectedTestId
+        ? definition.definition.name
+        : "Choose a command")
 
   return (
     <TooltipProvider>
@@ -206,66 +368,84 @@ function App() {
             <strong>TRACER STUDIO</strong>
           </div>
 
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className={cn(
-              "sidebar-toggle",
-              sidebarOpen && "sidebar-toggle-open"
-            )}
-            onClick={() => setSidebarOpen((open) => !open)}
-            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-            aria-expanded={sidebarOpen}
-          >
-            {sidebarOpen ? <ChevronLeft /> : <ChevronRight />}
-          </Button>
-
           <div className="ml-auto flex min-w-0 items-center gap-2">
+            <Badge
+              variant={source === "live" ? "live" : "neutral"}
+              data-tracer-source={source}
+            >
+              {source === "live"
+                ? "tracer live"
+                : source === "demo"
+                  ? "demo data"
+                  : "connecting"}
+            </Badge>
             {running && (
               <Badge variant="live">
                 <LoaderCircle className="size-2.5 animate-spin" />
                 observing
               </Badge>
             )}
-            <span className="hidden max-w-[34vw] truncate font-mono text-[9px] text-white/24 sm:block">
+            <span className="hidden max-w-[34vw] truncate font-mono text-[12px] text-white/58 sm:block">
               {currentLabel}
             </span>
           </div>
         </header>
 
         <StudioSidebar
-          open={sidebarOpen}
+          testsOpen={testsOpen && testsAvailable}
+          runsOpen={runsOpen}
           tests={tests}
           selectedTestId={selectedTestId}
           selectedRunId={selectedRunId}
           runs={runs}
           source={source}
           running={running}
-          onClose={() => setSidebarOpen(false)}
+          onCloseTests={() => setTestsOpen(false)}
+          onCloseRuns={() => setRunsOpen(false)}
           onSelectTest={(test) => void selectTest(test)}
           onSelectRun={selectRun}
           onRun={() => void executeSelectedTest()}
         />
 
-        {sidebarOpen && (
+        <CommandPanel
+          open={commandOpen}
+          catalog={catalog}
+          busy={running}
+          result={commandResult}
+          requestError={commandError}
+          testStateRevision={testStateRevision}
+          onClose={() => setCommandOpen(false)}
+          onExecute={executeCommand}
+          onEdit={() => {
+            setCommandResult(undefined)
+            setCommandError(undefined)
+          }}
+          onRefreshTestState={() =>
+            setTestStateRevision((current) => current + 1)
+          }
+        />
+
+        {((testsOpen && testsAvailable) || runsOpen || commandOpen) && (
           <button
             type="button"
             className="sidebar-scrim"
-            onClick={() => setSidebarOpen(false)}
-            aria-label="Close sidebar"
+            onClick={() => {
+              setTestsOpen(false)
+              setRunsOpen(false)
+              setCommandOpen(false)
+            }}
+            aria-label="Close panels"
           />
         )}
 
-        <main
-          className={cn("studio-main", sidebarOpen && "studio-main-shifted")}
-        >
+        <main className="studio-main">
           <div className="graph-atmosphere" />
           <MessageGraph nodes={nodes} running={running} />
 
           <div className="graph-caption" aria-live="polite">
             <span className="graph-caption-dot" />
             <span>{nodes.length} messages</span>
-            <span className="text-white/13">/</span>
+            <span className="text-white/38">/</span>
             <span>
               {nodes.some(
                 (node) => !node.context && node.edgeFidelity === "grouped"
@@ -292,6 +472,67 @@ function App() {
             </div>
           )}
         </main>
+
+        <div
+          className="studio-panel-dock"
+          role="toolbar"
+          aria-label="Studio panels"
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            className="studio-panel-trigger"
+            onClick={() => setCommandOpen((open) => !open)}
+            aria-label={
+              commandOpen ? "Close command panel" : "Open command panel"
+            }
+            aria-controls="studio-command-panel"
+            aria-expanded={commandOpen}
+            aria-keyshortcuts="Meta+Shift+K Control+Shift+K"
+          >
+            <Send />
+            <span>Command</span>
+            <kbd>{shortcutLabel("K")}</kbd>
+          </Button>
+          <span className="studio-dock-divider" aria-hidden="true" />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="studio-panel-trigger"
+            onClick={() => setTestsOpen((open) => !open)}
+            disabled={!testsAvailable}
+            title={
+              testsAvailable ? undefined : "This Tracer has no test repository"
+            }
+            aria-label={
+              testsOpen && testsAvailable
+                ? "Close tests panel"
+                : "Open tests panel"
+            }
+            aria-controls="studio-tests-panel"
+            aria-expanded={testsOpen && testsAvailable}
+            aria-keyshortcuts="Meta+Shift+E Control+Shift+E"
+          >
+            <FlaskConical />
+            <span>Tests</span>
+            <kbd>{shortcutLabel("E")}</kbd>
+          </Button>
+          <span className="studio-dock-divider" aria-hidden="true" />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="studio-panel-trigger"
+            onClick={() => setRunsOpen((open) => !open)}
+            aria-label={runsOpen ? "Close runs panel" : "Open runs panel"}
+            aria-controls="studio-runs-panel"
+            aria-expanded={runsOpen}
+            aria-keyshortcuts="Meta+Shift+Y Control+Shift+Y"
+          >
+            <History />
+            <span>Runs</span>
+            <kbd>{shortcutLabel("Y")}</kbd>
+          </Button>
+        </div>
       </div>
     </TooltipProvider>
   )
@@ -299,12 +540,13 @@ function App() {
 
 async function runDemo(
   definition: TestDefinitionRevision,
+  fixture: Fixture,
   render: (nodes: MessageGraphNode[]) => void
 ): Promise<MessageGraphNode[]> {
   const preview =
     definition.definition.id === "rent-available-bicycle"
       ? SAMPLE_GRAPH
-      : expectedGraph(definition.definition, SAMPLE_FIXTURE)
+      : expectedGraph(definition.definition, fixture)
   const expectedRoot = subjectCommand(definition)
   const rootStatus: MessageGraphNode["status"] =
     expectedRoot?.outcome === "accepted" ? "accepted" : "rejected"
@@ -345,7 +587,9 @@ function createDemoCommandResponse(
   const message =
     outcome.rejected.code === "BICYCLE_UNAVAILABLE"
       ? "The requested bicycle cannot currently be rented."
-      : "The command was rejected."
+      : outcome.rejected.code === "BICYCLE_ALREADY_IN_FLEET"
+        ? "The requested bicycle is already part of this fleet."
+        : "The command was rejected."
   const payload = outcome.rejected.payload
   const details =
     typeof payload === "object" && payload !== null && !Array.isArray(payload)
@@ -459,10 +703,7 @@ function createDemoReport(definition: TestDefinitionRevision): TestReport {
   }
 }
 
-type ExpectedCommandNode = Extract<
-  ExpectedMessageNode,
-  { kind: "command" }
->
+type ExpectedCommandNode = Extract<ExpectedMessageNode, { kind: "command" }>
 
 function subjectCommand(
   revision: TestDefinitionRevision
@@ -488,6 +729,18 @@ function readStoredRuns(): StoredRun[] {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "The Tracer request failed"
+}
+
+function operationNodeStatus(
+  operation: CommandExecutionResult["operation"]
+): MessageGraphNode["status"] {
+  if (operation.status === "failed") return "failed"
+  if (operation.status === "indeterminate") return "indeterminate"
+  if (typeof operation.result === "object" && operation.result !== null) {
+    const decision = Reflect.get(operation.result, "decision")
+    if (decision === "accepted" || decision === "rejected") return decision
+  }
+  return operation.status === "completed" ? "indeterminate" : "running"
 }
 
 export default App
