@@ -282,6 +282,81 @@ fn test_url() -> Option<String> {
     std::env::var(TEST_NATS_URL_ENV).ok()
 }
 
+#[tokio::test]
+async fn durable_consumer_rejects_unsafe_delivery_configuration() -> TestResult<()> {
+    let Some(url) = test_url() else {
+        return Ok(());
+    };
+    let fixture = Fixture::new(url).await?;
+    let factory = fixture
+        .connection
+        .consumer_factory(fixture.topology.clone());
+    for setting in [
+        "headers-only",
+        "memory-storage",
+        "inactive-threshold",
+        "max-batch",
+        "max-bytes",
+        "max-expires",
+        "backoff",
+    ] {
+        let config = ConsumerConfig::new(
+            fixture.context.consumer_name(setting, 1)?,
+            fixture.context.durable_name(setting, 1)?,
+            fixture.command_address(setting)?,
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            4,
+            3,
+        )?;
+        let mut actual = provisioning::durable_consumer_config(&config)?;
+        match setting {
+            "headers-only" => actual.headers_only = true,
+            "memory-storage" => actual.memory_storage = true,
+            "inactive-threshold" => actual.inactive_threshold = Duration::from_secs(60),
+            "max-batch" => actual.max_batch = 1,
+            "max-bytes" => actual.max_bytes = 1,
+            "max-expires" => actual.max_expires = Duration::from_millis(1),
+            "backoff" => actual.backoff = vec![config.ack_wait(), Duration::from_secs(60)],
+            _ => return Err(format!("unknown unsafe configuration setting: {setting}").into()),
+        }
+        fixture
+            .connection
+            .jetstream()
+            .create_consumer_on_stream(actual, fixture.topology.command_stream().as_str())
+            .await?;
+
+        let verification = factory.verify_consumer(&config).await;
+        let consumer = <NatsConsumerFactory as MessageConsumerFactory<CommandAddress>>::create(
+            &factory,
+            config.clone(),
+        )?;
+        let startup = tokio::time::timeout(
+            Duration::from_secs(1),
+            consumer.run(Arc::new(DispositionHandler::new()?)),
+        )
+        .await?;
+        fixture
+            .connection
+            .jetstream()
+            .get_stream(fixture.topology.command_stream().as_str())
+            .await?
+            .delete_consumer(config.durable_name().as_str())
+            .await?;
+        if verification.map_err(rostfrei_messaging_core::ConsumeError::kind)
+            != Err(rostfrei_messaging_core::ConsumeErrorKind::InvalidConfiguration)
+        {
+            return Err(format!("verification did not reject unsafe setting: {setting}").into());
+        }
+        if startup.map_err(rostfrei_messaging_core::ConsumeError::kind)
+            != Err(rostfrei_messaging_core::ConsumeErrorKind::InvalidConfiguration)
+        {
+            return Err(format!("worker startup did not reject unsafe setting: {setting}").into());
+        }
+    }
+    fixture.cleanup().await
+}
+
 fn message_id(prefix: &str) -> TestResult<MessageId> {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     Ok(MessageId::new(format!("{prefix}-{nanos}"))?)
