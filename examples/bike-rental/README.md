@@ -7,12 +7,9 @@ compiled domain metadata without depending on a production application:
 - `RentBicycle`, `ReturnBicycle`, `AddBicycle`, and `TransferBicycle` are self-contained Bike Rental commands;
 - `RetireBicycleAction` demonstrates one logical transition from either available or rented;
 - `RentalEligibilityPolicy` composes bicycle condition policy with the rental lifecycle;
-- bicycle-added, rented, returned, retired, and transferred events describe successful domain
-  transitions;
-- fleet import is a privileged snapshot-restoration boundary that accepts existing lifecycle
-  states but validates aggregate invariants before replacement;
-- unavailable and not-rented errors describe command rejections;
-- `FleetConsistency` rejects imports containing duplicate bicycle identities;
+- bicycle-added, rented, returned, retired, and transferred events describe successful domain transitions;
+- unavailable, not-rented, and already-in-fleet errors describe command rejections;
+- `FleetConsistency` independently demonstrates an aggregate invariant over bicycle identities;
 - `RegistrationNumber` is an isolated demonstration of Value Object-local actions, invariants,
   and policies; and
 - `BicycleAvailabilityQuery` exposes a read-only availability query.
@@ -143,10 +140,10 @@ The example uses one canonical application with two disjoint traffic scopes:
 - normal `bike-rental` subjects such as `bike-rental.command.>` persist across
   restarts and are never affected by test reset.
 
-Upgrades preserve the exact `seed-city-fleet` demo history written by the
-earlier behavioral-test runtime. Fresh namespaces use the canonical
-`demo-fleet` MessageSeries fixture; any other conflicting seed history still
-fails startup.
+The canonical `demo-fleet` fixture builds `city-fleet` through two ordered
+`bicycle-added` events. Because this example intentionally carries no legacy
+event decoder, incompatible demo histories require a fresh
+`ROSTFREI_APPLICATION` namespace or deletion of the disposable NATS streams.
 
 Each scope has separate command, command-response, integration-event,
 quarantine, and authoritative domain-event streams, plus separate durables.
@@ -264,7 +261,7 @@ scalar values and array lengths/order must match exactly. The filesystem remains
 the source of truth, and the skill can list, read, validate, and run both
 persisted and inline JSON definitions through advertised Catalog links.
 
-Run the dispatch-isolation check and all three behavioral definitions against
+Run the dispatch-isolation check and all five behavioral definitions against
 a real NATS Server 2.12.1 or newer. These tests are deliberately ignored during
 normal test runs; the explicit command is:
 
@@ -311,10 +308,11 @@ Reset returns the test stream to the default `demo-fleet` MessageSeries fixture
 and does not touch Dispatch state.
 
 `ReturnBicycle` advertises currently rented bicycles as runtime input choices and
-makes the selected bicycle available again. `AddBicycle` has no user-supplied
-payload. The aggregate assigns the next unused deterministic UUID and adds the
-bicycle as available and serviceable. All three commands use their generated
-JSON payload contracts; Tracer has no command-specific wire codecs.
+makes the selected bicycle available again. `AddBicycle` carries the requested
+business identity and initial condition, rejects an identity already present in
+the fleet, and otherwise adds the bicycle as available. All three commands use
+their generated JSON payload contracts; Tracer has no command-specific wire
+codecs.
 
 Reusing an `Idempotency-Key` returns the retained operation only for the exact
 same request, echoes the same key and resolved operation identity in the new

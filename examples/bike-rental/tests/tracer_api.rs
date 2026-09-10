@@ -15,7 +15,9 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bike_rental::{
-    demo::{apply_fixture, demo_fixture, demo_stream, rented_demo_fixture},
+    demo::{
+        apply_fixture, demo_fixture, demo_stream, no_rental_fleets_fixture, rented_demo_fixture,
+    },
     domain_model,
     rental_fleet::{
         AddBicycle, AddBicycleHandler, RentBicycle, RentBicycleHandler, ReturnBicycle,
@@ -41,7 +43,6 @@ use rostfrei_tracer::{
 };
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
-use uuid::Uuid;
 
 const API_TOKEN: &str = "integration-test-capability";
 const DISPATCH_TOKEN: &str = "integration-dispatch-capability";
@@ -232,7 +233,9 @@ where
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
-                    Ok(rostfrei::CommandOutcome::Rejected(rejection)) => match rejection {},
+                    Ok(rostfrei::CommandOutcome::Rejected(rejection)) => {
+                        CommandOutcome::Rejected(local_rejection(&rejection)?)
+                    }
                     Err(error) => return Err(local_execution_error(error)),
                 }
             }
@@ -332,6 +335,7 @@ async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
         .with_stream_directory(Arc::new(test_store.clone()))
         .with_test_scenario_reset(test_reset)
         .with_default_test_fixture(default_fixture)
+        .with_test_fixture(no_rental_fleets_fixture().unwrap())
         .with_test_fixture(rented_demo_fixture().unwrap())
         .with_test_repository(test_repository)
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
@@ -343,6 +347,9 @@ async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
         .unwrap();
     builder
         .register_json::<AddBicycle, _>(AddBicycleHandler)
+        .unwrap();
+    builder
+        .register_input_options::<AddBicycle, _>(tracer::AddBicycleInputOptions)
         .unwrap();
     builder
         .register_json::<TransferBicycle, _>(TransferBicycleHandler)
@@ -504,7 +511,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["cache-control"], "private, no-store");
     let catalog = json_body(response).await;
-    assert_eq!(catalog["catalogVersion"], 2);
+    assert_eq!(catalog["catalogVersion"], 1);
     assert_eq!(catalog["testScenario"]["resetHref"], "/test-scenario/reset");
     assert_eq!(
         catalog["testScenario"]["fixtureResetHrefTemplate"],
@@ -512,7 +519,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     );
     assert_eq!(
         catalog["testScenario"]["fixtures"],
-        json!(["demo-fleet", "rented-demo-fleet"])
+        json!(["demo-fleet", "no-rental-fleets", "rented-demo-fleet"])
     );
     assert_eq!(
         catalog["testScenario"]["fixturesHref"],
@@ -556,9 +563,11 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
     assert_eq!(response.status(), StatusCode::OK);
     let fixture = json_body(response).await;
     assert_eq!(fixture["id"], "demo-fleet");
-    assert_eq!(fixture["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(fixture["revision"], "2");
+    assert_eq!(fixture["messages"].as_array().unwrap().len(), 2);
     assert_eq!(fixture["messages"][0]["kind"], "domain-event");
-    assert_eq!(fixture["messages"][0]["name"], "rental-fleet-imported");
+    assert_eq!(fixture["messages"][0]["name"], "bicycle-added");
+    assert_eq!(fixture["messages"][1]["name"], "bicycle-added");
     assert!(fixture["messages"][0].get("causationId").is_none());
     let rented_fixture_href = fixtures["items"]
         .as_array()
@@ -579,9 +588,9 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let rented_fixture = json_body(response).await;
-    assert_eq!(rented_fixture["revision"], "2");
+    assert_eq!(rented_fixture["revision"], "3");
     let rented_fixture_events = rented_fixture["messages"].as_array().unwrap();
-    assert_eq!(rented_fixture_events.len(), 2);
+    assert_eq!(rented_fixture_events.len(), 3);
     assert!(
         rented_fixture_events
             .iter()
@@ -617,11 +626,43 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         .unwrap();
     assert_eq!(
         add_command["versions"][0]["fields"],
-        json!([{ "name": "fleet_id", "value": { "kind": "opaque" } }])
+        json!([
+            { "name": "fleet_id", "value": { "kind": "opaque" } },
+            { "name": "bicycle_id", "value": { "kind": "opaque" } },
+            { "name": "condition", "value": { "kind": "opaque" } }
+        ])
     );
     assert_eq!(
         add_command["versions"][0]["payloadTemplate"],
-        json!({ "fleet_id": null })
+        json!({ "fleet_id": null, "bicycle_id": null, "condition": null })
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            authorize(Request::builder())
+                .uri(
+                    add_command["versions"][0]["testInputsHrefTemplate"]
+                        .as_str()
+                        .unwrap(),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await,
+        json!({
+            "fields": [{
+                "name": "condition",
+                "label": "Condition",
+                "options": [
+                    { "value": "serviceable", "label": "Serviceable" },
+                    { "value": "maintenance-required", "label": "Maintenance required" }
+                ]
+            }]
+        })
     );
     let command = commands
         .iter()
@@ -700,15 +741,20 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
             .map(|test| test["id"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
+            "add-first-bicycle",
+            "reject-duplicate-bicycle",
             "reject-unavailable-bicycle",
             "rent-available-bicycle",
             "return-rented-bicycle"
         ]
     );
-    assert_eq!(
-        tests["items"][1]["runHref"],
-        "/tests/rent-available-bicycle/runs"
-    );
+    let rent_test = tests["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|test| test["id"] == "rent-available-bicycle")
+        .unwrap();
+    assert_eq!(rent_test["runHref"], "/tests/rent-available-bicycle/runs");
 
     let test = app
         .clone()
@@ -742,7 +788,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         json!({
             "items": [{
                 "aggregateId": "city-fleet",
-                "streamVersion": 1
+                "streamVersion": 2
             }]
         })
     );
@@ -813,7 +859,7 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
     assert_eq!(completed["result"]["decision"], "accepted");
     assert_eq!(
         completed["result"]["participants"][0]["baseStreamVersion"],
-        1
+        2
     );
     assert_eq!(completed["result"]["appended"], false);
     assert_eq!(completed["result"]["published"], false);
@@ -939,7 +985,7 @@ async fn rejection_and_idempotency_have_explicit_http_outcomes() {
     assert_eq!(completed["result"]["decision"], "rejected");
     assert_eq!(
         completed["result"]["participants"][0]["baseStreamVersion"],
-        1
+        2
     );
     assert_eq!(completed["result"]["appended"], false);
     assert_eq!(completed["result"]["published"], false);
@@ -1099,10 +1145,10 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
         series["messageSeries"]["commandOutcomes"][0]["responseMessageId"],
         first["result"]["responseMessageId"]
     );
-    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 2);
+    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 3);
     assert_eq!(
         production_store.load(&demo_stream()).await.unwrap().len(),
-        1
+        2
     );
 
     let response = app
@@ -1123,7 +1169,7 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
     assert_eq!(second["result"]["decision"], "rejected");
     assert_published_result(&second);
     assert_eq!(second["result"]["rejection"]["code"], "BICYCLE_UNAVAILABLE");
-    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 2);
+    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 3);
 
     let response = app
         .clone()
@@ -1136,9 +1182,9 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
     assert_eq!(simulated["result"]["decision"], "rejected");
     assert_eq!(
         simulated["result"]["participants"][0]["baseStreamVersion"],
-        2
+        3
     );
-    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 2);
+    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 3);
 
     let response = app
         .clone()
@@ -1158,7 +1204,7 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
     let returned = terminal_operation(&app, &return_id, API_TOKEN).await;
     assert_eq!(returned["result"]["decision"], "accepted");
     assert_published_result(&returned);
-    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 3);
+    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 4);
     assert_eq!(
         test_store
             .load(&demo_stream())
@@ -1176,7 +1222,11 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
             "add-bicycle",
             "test",
             "add-bike-77",
-            json!({ "fleet_id": "city-fleet" }),
+            json!({
+                "fleet_id": "city-fleet",
+                "bicycle_id": "bike-77",
+                "condition": "serviceable"
+            }),
             API_TOKEN,
         ))
         .await
@@ -1192,14 +1242,9 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
     let added_event = history.last().unwrap();
     assert_eq!(added_event.event_type(), "bicycle-added");
     let added_payload: Value = serde_json::from_slice(added_event.payload()).unwrap();
-    let generated_bicycle_id = added_payload["bicycle_id"].as_str().unwrap();
-    assert!(Uuid::parse_str(generated_bicycle_id).is_ok());
-    let expected_bicycle_id = Uuid::new_v5(
-        &Uuid::NAMESPACE_URL,
-        b"rostfrei:bike-rental:bicycle:v1:city-fleet:2",
-    );
-    assert_eq!(generated_bicycle_id, expected_bicycle_id.to_string());
-    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 4);
+    assert_eq!(added_payload["bicycle_id"], "bike-77");
+    assert_eq!(added_payload["condition"], "serviceable");
+    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 5);
 
     let response = app
         .clone()
@@ -1207,13 +1252,17 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
             "add-bicycle",
             "test",
             "add-bike-77",
-            json!({ "fleet_id": "city-fleet" }),
+            json!({
+                "fleet_id": "city-fleet",
+                "bicycle_id": "bike-77",
+                "condition": "serviceable"
+            }),
             API_TOKEN,
         ))
         .await
         .unwrap();
     assert_eq!(json_body(response).await["operationId"], add_id);
-    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 4);
+    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 5);
 
     let forbidden = app
         .clone()
@@ -1261,9 +1310,9 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
     assert_published_result(&dispatched);
     assert_eq!(
         production_store.load(&demo_stream()).await.unwrap().len(),
-        2
+        3
     );
-    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 4);
+    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 5);
 
     let unauthorized_reset = app
         .clone()
@@ -1307,7 +1356,7 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
         .await
         .unwrap();
     assert_eq!(named_reset.status(), StatusCode::NO_CONTENT);
-    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 2);
+    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 3);
 
     let reset = app
         .clone()
@@ -1321,10 +1370,10 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
         .await
         .unwrap();
     assert_eq!(reset.status(), StatusCode::NO_CONTENT);
-    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 1);
+    assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 2);
     assert_eq!(
         production_store.load(&demo_stream()).await.unwrap().len(),
-        2
+        3
     );
 
     let cleared_test_operation = app

@@ -261,13 +261,13 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
     ));
 
     let history = store.load(&demo_stream()).await?;
-    assert_eq!(history.len(), 2);
+    assert_eq!(history.len(), 3);
     assert_eq!(
-        history[1].correlation_id().map(CorrelationId::as_str),
+        history[2].correlation_id().map(CorrelationId::as_str),
         Some(correlation.as_str())
     );
     assert_eq!(
-        history[1].causation_id().map(CausationId::as_str),
+        history[2].causation_id().map(CausationId::as_str),
         Some(causation.as_str())
     );
 
@@ -299,7 +299,7 @@ async fn typed_command_bus_preserves_identity_replay_and_rejection_semantics() -
         rejection.code().as_str(),
         "rostfrei.operation.identity-conflict"
     );
-    assert_eq!(store.load(&demo_stream()).await?.len(), 2);
+    assert_eq!(store.load(&demo_stream()).await?.len(), 3);
     Ok(())
 }
 
@@ -361,7 +361,7 @@ async fn post_commit_mapper_publishes_canonical_integration_event_once() -> Test
         )
         .await?;
     let history = store.load(&demo_stream()).await?;
-    let rented = history.get(1).ok_or("rental event was not committed")?;
+    let rented = history.get(2).ok_or("rental event was not committed")?;
 
     let integration_adapter: Arc<dyn IntegrationMessageAdapter> = adapter.clone();
     let integration_bus = IntegrationEventBus::new(config.context().clone(), integration_adapter);

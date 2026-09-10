@@ -24,7 +24,7 @@ use axum::{
 use bike_rental::{
     BicycleRentalStarted, BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
     BikeRentalNatsRuntime,
-    demo::{demo_fixture, demo_stream, rented_demo_fixture},
+    demo::{demo_fixture, demo_stream, no_rental_fleets_fixture, rented_demo_fixture},
     rental_fleet::{
         AddBicycle, AddBicycleHandler, BicycleRented, BicycleReturned, RentBicycle,
         RentBicycleHandler, RentalFleetAggregate, ReturnBicycle, ReturnBicycleHandler,
@@ -190,6 +190,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             .with_test_transport(test_runtime.transport())
             .with_test_scenario_reset(test_reset)
             .with_default_test_fixture(demo_fixture()?)
+            .with_test_fixture(no_rental_fleets_fixture()?)
             .with_test_fixture(rented_demo_fixture()?)
             .with_test_repository(test_repository)
             .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
@@ -222,8 +223,8 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                 io::Error::other("behavioral test discovery returned invalid JSON")
             })?;
             ensure(
-                definitions.len() == 3,
-                "expected exactly three bike-rental behavioral definitions",
+                definitions.len() == 5,
+                "expected exactly five bike-rental behavioral definitions",
             )?;
 
             let canonical_bytes = fs::read(definition_root.join("rent-available-bicycle.json"))?;
@@ -388,26 +389,43 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                 "durable command response is absent or linked to the wrong command",
             )?;
 
-            wait_for_history_len(&test_runtime, 2).await?;
+            wait_for_history_len(&test_runtime, 3).await?;
             let history = test_runtime.store().load(&demo_stream()).await?;
-            let fixture_event = history
-                .first()
-                .ok_or_else(|| io::Error::other("demo fixture domain event is absent"))?;
-            ensure(
-                fixture_event.event_type() == "rental-fleet-imported"
-                    && fixture_event
-                        .operation_id()
-                        .as_str()
-                        .starts_with("fixture:")
-                    && fixture_event.stream_version().value() == 1
-                    && fixture_event
-                        .correlation_id()
-                        .is_some_and(|id| id.as_str() == "fixture:demo-fleet:1")
-                    && fixture_event.causation_id().is_none(),
-                "inline run did not apply the deterministic demo MessageSeries fixture",
-            )?;
+            for (index, bicycle_id, condition, correlation_id) in [
+                (0, "bike-42", "serviceable", "fixture:demo-fleet:2:bike-42"),
+                (
+                    1,
+                    "bike-99",
+                    "maintenance-required",
+                    "fixture:demo-fleet:2:bike-99",
+                ),
+            ] {
+                let fixture_event = history
+                    .get(index)
+                    .ok_or_else(|| io::Error::other("demo fixture domain event is absent"))?;
+                let fixture_payload: Value = serde_json::from_slice(fixture_event.payload())?;
+                ensure(
+                    fixture_event.event_type() == "bicycle-added"
+                        && fixture_event
+                            .operation_id()
+                            .as_str()
+                            .starts_with("fixture:")
+                        && fixture_event.stream_version().value() == index as u64 + 1
+                        && fixture_event
+                            .correlation_id()
+                            .is_some_and(|id| id.as_str() == correlation_id)
+                        && fixture_event.causation_id().is_none()
+                        && fixture_payload
+                            == json!({
+                                "fleet_id": "city-fleet",
+                                "bicycle_id": bicycle_id,
+                                "condition": condition
+                            }),
+                    "inline run did not apply the deterministic demo MessageSeries fixture",
+                )?;
+            }
             let persisted_event = history
-                .get(1)
+                .get(2)
                 .ok_or_else(|| io::Error::other("rental event was not persisted"))?;
             let persisted_payload: Value = serde_json::from_slice(persisted_event.payload())?;
             ensure(
@@ -680,7 +698,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
             matches!(receipt.outcome(), CommandOutcome::Accepted),
             "rental command was not accepted",
         )?;
-        wait_for_history_len(&runtime, 3).await?;
+        wait_for_history_len(&runtime, 4).await?;
         wait_for_consumer_acknowledgement(
             &connection,
             topology.integration_event_stream().as_str(),
@@ -691,16 +709,16 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
 
         let history = runtime.store().load(&demo_stream()).await?;
         ensure(
-            history[1].event_type() == BicycleRented::LOCAL_ID,
+            history[2].event_type() == BicycleRented::LOCAL_ID,
             "integration source event was not BicycleRented",
         )?;
         ensure(
-            history[2].event_type() == BicycleReturned::LOCAL_ID,
+            history[3].event_type() == BicycleReturned::LOCAL_ID,
             "integration reaction did not produce BicycleReturned",
         )?;
         ensure(
-            history[1].correlation_id() == history[2].correlation_id()
-                && history[2]
+            history[2].correlation_id() == history[3].correlation_id()
+                && history[3]
                     .correlation_id()
                     .is_some_and(|id| id.as_str() == "command-reaction-correlation"),
             "integration command mapping did not preserve correlation",
@@ -716,10 +734,10 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
             matches!(
                 generated_response.outcome(),
                 CommandResponseOutcome::Accepted
-            ) && history[2].correlation_id() == Some(generated_response.correlation_id()),
+            ) && history[3].correlation_id() == Some(generated_response.correlation_id()),
             "generated command response was not a correlated acceptance",
         )?;
-        let reaction_causation = history[2]
+        let reaction_causation = history[3]
             .causation_id()
             .ok_or_else(|| io::Error::other("reaction event omitted causation"))?;
         ensure(
@@ -881,10 +899,10 @@ async fn run_isolation_test(
             )],
         "Test publication observation did not match its receipt",
     )?;
-    wait_for_history_len(test_runtime, 2).await?;
+    wait_for_history_len(test_runtime, 3).await?;
     let test_history = test_runtime.store().load(&demo_stream()).await?;
     ensure(
-        test_history[1]
+        test_history[2]
             .correlation_id()
             .is_some_and(|correlation| correlation.as_str() == "test-rent-correlation"),
         "Test event did not preserve command correlation",
@@ -892,13 +910,13 @@ async fn run_isolation_test(
     wait_for_integration_chain(
         connection,
         test_runtime,
-        &test_history[1],
+        &test_history[2],
         test_receipt.command_message_id(),
         1,
     )
     .await?;
     ensure(
-        production_runtime.store().load(&demo_stream()).await?.len() == 1,
+        production_runtime.store().load(&demo_stream()).await?.len() == 2,
         "Test command changed production history",
     )?;
 
@@ -910,7 +928,11 @@ async fn run_isolation_test(
                 "production-add-correlation",
                 AddBicycle::LOCAL_ID,
                 AddBicycle::SCHEMA_VERSION,
-                json!({"fleet_id": "city-fleet"}),
+                json!({
+                    "fleet_id": "city-fleet",
+                    "bicycle_id": "production-bike",
+                    "condition": "serviceable"
+                }),
             )?,
             Arc::new(RecordingObserver::default()),
         )
@@ -919,7 +941,7 @@ async fn run_isolation_test(
         matches!(production_receipt.outcome(), CommandOutcome::Accepted),
         "production command was not accepted",
     )?;
-    wait_for_history_len(production_runtime, 2).await?;
+    wait_for_history_len(production_runtime, 3).await?;
 
     let test_durables_before_reset = durable_creations(connection, test_runtime).await?;
     let production_durables_before_reset =
@@ -940,11 +962,11 @@ async fn run_isolation_test(
     )?;
     test_runtime.reset(&demo_fixture()?).await?;
     ensure(
-        test_runtime.store().load(&demo_stream()).await?.len() == 1,
+        test_runtime.store().load(&demo_stream()).await?.len() == 2,
         "Test reset did not restore the deterministic fixture history",
     )?;
     ensure(
-        production_runtime.store().load(&demo_stream()).await?.len() == 2,
+        production_runtime.store().load(&demo_stream()).await?.len() == 3,
         "Test reset changed production history",
     )?;
     let test_durables_after_reset = durable_creations(connection, test_runtime).await?;
@@ -979,12 +1001,12 @@ async fn run_isolation_test(
         matches!(reset_test_receipt.outcome(), CommandOutcome::Accepted),
         "Test command after reset was not accepted",
     )?;
-    wait_for_history_len(test_runtime, 2).await?;
+    wait_for_history_len(test_runtime, 3).await?;
     let reset_test_history = test_runtime.store().load(&demo_stream()).await?;
     wait_for_integration_chain(
         connection,
         test_runtime,
-        &reset_test_history[1],
+        &reset_test_history[2],
         reset_test_receipt.command_message_id(),
         1,
     )
@@ -1007,12 +1029,12 @@ async fn run_isolation_test(
         matches!(production_rent_receipt.outcome(), CommandOutcome::Accepted),
         "production rental after Test reset was not accepted",
     )?;
-    wait_for_history_len(production_runtime, 3).await?;
+    wait_for_history_len(production_runtime, 4).await?;
     let production_history = production_runtime.store().load(&demo_stream()).await?;
     wait_for_integration_chain(
         connection,
         production_runtime,
-        &production_history[2],
+        &production_history[3],
         production_rent_receipt.command_message_id(),
         1,
     )
@@ -1020,8 +1042,8 @@ async fn run_isolation_test(
     let reprovision = production_runtime.apply_fixture(&demo_fixture()?).await?;
     ensure(
         reprovision.applied_domain_event_count() == 0
-            && reprovision.reused_domain_event_count() == 1
-            && production_runtime.store().load(&demo_stream()).await?.len() == 3,
+            && reprovision.reused_domain_event_count() == 2
+            && production_runtime.store().load(&demo_stream()).await?.len() == 4,
         "production fixture provisioning did not tolerate extended business history",
     )?;
     wait_for_command_stream_empty(connection, test_runtime).await?;
