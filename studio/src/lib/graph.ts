@@ -3,6 +3,8 @@ import type {
   Fixture,
   MessageGraphNode,
   ObservedCommandOutcome,
+  OperationMessageSeries,
+  OperationSnapshot,
   TestDefinition,
   TestReport,
 } from "@/lib/types"
@@ -155,8 +157,7 @@ export function expectedGraph(
         id: idsByKey.get(node.key)!,
         parentId: isRoot ? context.anchorId : expectedParentId,
         edgeFidelity: expectedParentId ? "exact" : undefined,
-        edgeRelationship:
-          isRoot && context.anchorId ? "context" : undefined,
+        edgeRelationship: isRoot && context.anchorId ? "context" : undefined,
         kind: node.kind,
         name: node.name,
         schemaVersion: node.schemaVersion,
@@ -211,8 +212,7 @@ export function reportGraph(
         id: message.messageId,
         parentId: exactParent ? message.causationId : fallbackParent,
         edgeFidelity: exactParent ? "exact" : "grouped",
-        edgeRelationship:
-          isSubject && context.anchorId ? "context" : undefined,
+        edgeRelationship: isSubject && context.anchorId ? "context" : undefined,
         kind: message.kind,
         name: message.name,
         schemaVersion: message.schemaVersion,
@@ -236,6 +236,57 @@ export function reportGraph(
       }
     }),
   ]
+}
+
+export function operationGraph(
+  operation: OperationSnapshot,
+  series: OperationMessageSeries
+): MessageGraphNode[] {
+  const messages = [...series.messageSeries.messages].sort(
+    (left, right) => left.observationOrder - right.observationOrder
+  )
+  const knownIds = new Set(messages.map((message) => message.messageId))
+  const subject = messages.find((message) => message.kind === "command")
+  const outcomes = new Map(
+    series.messageSeries.commandOutcomes.map((outcome) => [
+      outcome.commandMessageId,
+      outcome,
+    ])
+  )
+
+  return messages.map<MessageGraphNode>((message) => {
+    const exactParent = message.causationId
+      ? knownIds.has(message.causationId)
+      : false
+    const isSubject = message.messageId === subject?.messageId
+    const outcome = outcomes.get(message.messageId)
+
+    return {
+      id: message.messageId,
+      parentId: exactParent ? message.causationId : undefined,
+      edgeFidelity: exactParent ? "exact" : "grouped",
+      kind: message.kind,
+      name: message.name,
+      schemaVersion: message.schemaVersion,
+      payload: message.payload,
+      response:
+        message.kind === "command"
+          ? (outcome?.outcome ??
+            (isSubject ? (operation.result ?? operation.failure) : undefined))
+          : undefined,
+      messageId: message.messageId,
+      causationId: message.causationId,
+      boundedContext: message.kind === "command" ? message.context : undefined,
+      aggregateType:
+        message.kind === "domain-event" ? message.aggregate?.type : undefined,
+      aggregateId:
+        message.kind === "domain-event" ? message.aggregate?.id : undefined,
+      status:
+        message.kind === "command"
+          ? operationCommandStatus(outcome, operation, isSubject)
+          : "accepted",
+    }
+  })
 }
 
 function fixtureContext(
@@ -294,13 +345,32 @@ function commandStatus(
   if (outcome?.outcome.status === "accepted") return "accepted"
   if (outcome?.outcome.status === "rejected") return "rejected"
   if (!isSubject) return "accepted"
-  if (
-    report.operation.status === "failed" ||
-    report.operation.status === "indeterminate"
-  ) {
-    return "failed"
-  }
-  return report.operation.status === "completed" ? "accepted" : "running"
+  if (report.operation.status === "failed") return "failed"
+  if (report.operation.status === "indeterminate") return "indeterminate"
+  return report.operation.status === "completed" ? "indeterminate" : "running"
+}
+
+function operationCommandStatus(
+  outcome: ObservedCommandOutcome | undefined,
+  operation: OperationSnapshot,
+  isSubject: boolean
+): MessageGraphNode["status"] {
+  if (outcome?.outcome.status === "accepted") return "accepted"
+  if (outcome?.outcome.status === "rejected") return "rejected"
+  if (!isSubject) return "idle"
+  if (operation.status === "failed") return "failed"
+  if (operation.status === "indeterminate") return "indeterminate"
+  const decision = decisionOf(operation.result)
+  if (decision === "accepted" || decision === "rejected") return decision
+  return operation.status === "completed" ? "indeterminate" : "running"
+}
+
+function decisionOf(result: unknown): "accepted" | "rejected" | undefined {
+  if (typeof result !== "object" || result === null) return undefined
+  const decision = Reflect.get(result, "decision")
+  return decision === "accepted" || decision === "rejected"
+    ? decision
+    : undefined
 }
 
 function commandResponse(
