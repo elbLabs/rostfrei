@@ -1,32 +1,24 @@
 import assert from "node:assert/strict"
-import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
-import { spawn } from "node:child_process"
 
-import puppeteer from "puppeteer-core"
+import {
+  closeStudioBrowser,
+  launchStudioBrowser,
+  startStudioServer,
+} from "./browser.mjs"
 
-const root = fileURLToPath(new URL("..", import.meta.url))
-const port = 4176
-const url = `http://127.0.0.1:${port}`
-const vite = fileURLToPath(
-  new URL("../node_modules/vite/bin/vite.js", import.meta.url)
-)
-const server = spawn(
-  process.execPath,
-  [vite, "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
-  { cwd: root, stdio: "ignore" }
-)
+const smokeControlToken = "ui-smoke-control-token"
+const { server, url } = await startStudioServer({
+  define: {
+    "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api"),
+    "import.meta.env.VITE_TRACER_TOKEN": JSON.stringify(smokeControlToken),
+  },
+})
 
 let browser
 try {
-  await waitForServer(url)
-  browser = await puppeteer.launch({
-    executablePath: chromeExecutable(),
-    headless: true,
-    args: ["--disable-gpu"],
-  })
+  browser = await launchStudioBrowser()
   await browser
     .defaultBrowserContext()
     .overridePermissions(url, ["clipboard-read", "clipboard-sanitized-write"])
@@ -35,6 +27,23 @@ try {
 
   const pageErrors = []
   page.on("pageerror", (error) => pageErrors.push(error.message))
+  const forceDemo = (request) => {
+    const pathname = new URL(request.url()).pathname
+    if (
+      ["fetch", "xhr"].includes(request.resourceType()) &&
+      pathname.startsWith("/api/")
+    ) {
+      void request.respond({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "Use deterministic demo data" }),
+      })
+      return
+    }
+    void request.continue()
+  }
+  await page.setRequestInterception(true)
+  page.on("request", forceDemo)
   await page.goto(url, { waitUntil: "networkidle0" })
   await page.waitForSelector('button[aria-label^="Run "]', { timeout: 10000 })
   await new Promise((resolve) => setTimeout(resolve, 700))
@@ -177,13 +186,286 @@ try {
   assert.ok(payload.rows > 0, "hover payload should render property rows")
   assert.equal(payload.rawJson, false, "hover payload must not use raw JSON")
 
-  await page.setRequestInterception(true)
+  page.off("request", forceDemo)
+  let catalogEnabled = false
+  const previewRequests = []
+  const testRequests = []
+  const testSeriesRequests = []
+  const ambiguousTestRequests = []
+  const unexpectedRequests = []
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/api/tests") {
+    const pathname = new URL(request.url()).pathname
+    if (
+      pathname === "/api/tests" ||
+      (pathname === "/api/catalog" && !catalogEnabled)
+    ) {
       void request.respond({
         status: 503,
         contentType: "application/json",
         body: JSON.stringify({ message: "Use deterministic demo data" }),
+      })
+      return
+    }
+    if (pathname === "/api/catalog") {
+      void request.respond({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          catalogVersion: 1,
+          contexts: [
+            {
+              id: "bike-rental",
+              label: "Bike Rental",
+              aggregates: [
+                {
+                  id: "rental-fleet",
+                  label: "Rental fleet",
+                  aggregateType: "bike-rental/rental-fleet",
+                  testInstancesHref:
+                    "/contexts/bike-rental/aggregates/rental-fleet/instances",
+                },
+              ],
+              commands: [
+                {
+                  id: "rent-bicycle",
+                  label: "Rent bicycle",
+                  versions: [
+                    {
+                      schemaVersion: 2,
+                      contentType: "application/json",
+                      fields: [
+                        { name: "fleet_id", value: { kind: "opaque" } },
+                        {
+                          name: "bicycle_id",
+                          value: { kind: "opaque" },
+                        },
+                        {
+                          name: "request_id",
+                          value: { kind: "opaque" },
+                        },
+                        {
+                          name: "legacy_id",
+                          value: { kind: "opaque" },
+                        },
+                        {
+                          name: "attempt",
+                          value: { kind: "scalar", scalar: "u64" },
+                        },
+                      ],
+                      payloadTemplate: {
+                        fleet_id: null,
+                        bicycle_id: null,
+                        request_id: null,
+                        legacy_id: null,
+                        attempt: 0,
+                      },
+                      testInputsHrefTemplate:
+                        "/contexts/bike-rental/commands/rent-bicycle/schemas/2/inputs",
+                      simulateHrefTemplate:
+                        "/contexts/bike-rental/commands/rent-bicycle/simulate",
+                      testHrefTemplate:
+                        "/contexts/bike-rental/commands/rent-bicycle/test",
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      })
+      return
+    }
+    if (
+      pathname === "/api/contexts/bike-rental/commands/rent-bicycle/test" &&
+      request.method() === "POST"
+    ) {
+      testRequests.push({
+        body: request.postData(),
+        idempotencyKey: request.headers()["idempotency-key"],
+        authorized:
+          request.headers().authorization === `Bearer ${smokeControlToken}`,
+      })
+      if (testRequests.length > 1) {
+        void request.respond({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ message: "Upstream response unavailable" }),
+        })
+        return
+      }
+      void request.respond({
+        status: 202,
+        contentType: "application/json",
+        headers: { location: "/operation-results/confirmed-test" },
+        body: JSON.stringify(operationSnapshot("queued", "test")),
+      })
+      return
+    }
+    if (pathname === "/api/ambiguous/city-fleet/test") {
+      ambiguousTestRequests.push({
+        body: request.postData(),
+        idempotencyKey: request.headers()["idempotency-key"],
+      })
+      void request.respond({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify(operationSnapshot("queued", "test")),
+      })
+      return
+    }
+    if (
+      pathname === "/api/contexts/bike-rental/aggregates/rental-fleet/instances"
+    ) {
+      void request.respond({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [{ aggregateId: "city-fleet", streamVersion: 1 }],
+        }),
+      })
+      return
+    }
+    if (
+      pathname ===
+      "/api/contexts/bike-rental/commands/rent-bicycle/schemas/2/inputs"
+    ) {
+      void request.respond({
+        status: 200,
+        contentType: "application/json",
+        body: `{"fields":[{"name":"fleet_id","label":"Fleet","options":[{"value":"city-fleet","label":"city-fleet"}]},{"name":"bicycle_id","label":"Bicycle","options":[{"value":"bike-42","label":"bike-42","description":"Available and serviceable"}]},{"name":"legacy_id","label":"Legacy identity","options":[{"value":42,"label":"42"}]},{"name":"attempt","label":"Attempt","options":[{"value":9007199254740993,"label":"9007199254740993"}]}]}`,
+      })
+      return
+    }
+    if (
+      pathname === "/api/contexts/bike-rental/commands/rent-bicycle/simulate" &&
+      request.method() === "POST"
+    ) {
+      previewRequests.push({
+        body: request.postData(),
+        idempotencyKey: request.headers()["idempotency-key"],
+        authorized:
+          request.headers().authorization === `Bearer ${smokeControlToken}`,
+      })
+      void request.respond({
+        status: 202,
+        contentType: "application/json",
+        headers: { location: "/operations/studio-preview" },
+        body: JSON.stringify(operationSnapshot("queued")),
+      })
+      return
+    }
+    if (pathname === "/api/operations/studio-preview") {
+      void request.respond({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(operationSnapshot("completed")),
+      })
+      return
+    }
+    if (pathname === "/api/operations/studio-preview/message-series") {
+      void request.respond({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          operationId: "studio-preview",
+          correlationId: "studio-correlation",
+          mode: "simulate",
+          messageSeries: {
+            messages: [
+              {
+                kind: "command",
+                messageId: "studio-command",
+                correlationId: "studio-correlation",
+                observationOrder: 0,
+                name: "rent-bicycle",
+                schemaVersion: 2,
+                context: "bike-rental",
+                payload: { fleet_id: "city-fleet", bicycle_id: "bike-42" },
+              },
+              {
+                kind: "domain-event",
+                messageId: "studio-event",
+                correlationId: "studio-correlation",
+                causationId: "studio-command",
+                observationOrder: 1,
+                name: "bicycle-rented",
+                schemaVersion: 1,
+                aggregate: {
+                  type: "bike-rental/rental-fleet",
+                  id: "city-fleet",
+                },
+                payload: { bicycle_id: "bike-42" },
+              },
+              {
+                kind: "command",
+                messageId: "studio-downstream-command",
+                correlationId: "studio-correlation",
+                causationId: "studio-event",
+                observationOrder: 2,
+                name: "record-rental-audit",
+                schemaVersion: 2,
+                aggregate: {
+                  type: "bike-rental/rental-audit",
+                  id: "city-fleet",
+                },
+                payload: { fleet_id: "city-fleet", bicycle_id: "bike-42" },
+              },
+              {
+                kind: "integration-event",
+                messageId: "studio-unlinked-event",
+                correlationId: "studio-correlation",
+                observationOrder: 3,
+                name: "rental-observation-incomplete",
+                schemaVersion: 1,
+                payload: { bicycle_id: "bike-42" },
+              },
+            ],
+            commandOutcomes: [
+              {
+                responseMessageId: "studio-response",
+                commandMessageId: "studio-command",
+                correlationId: "studio-correlation",
+                observationOrder: 4,
+                outcome: { status: "accepted", value: null },
+              },
+            ],
+          },
+          capture: {
+            settled: true,
+            settledFor: "500ms",
+            fidelity: "grouped",
+            note: "Preview messages use synthetic identities and are grouped with the operation; only explicit causation links are causal",
+          },
+        }),
+      })
+      return
+    }
+    if (pathname === "/api/operation-results/confirmed-test") {
+      void request.respond({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...operationSnapshot("completed", "test"),
+          messageSeriesHref: "/captures/confirmed-test-series",
+        }),
+      })
+      return
+    }
+    if (pathname === "/api/captures/confirmed-test-series") {
+      testSeriesRequests.push(new URL(request.url()).search)
+      void request.respond({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(testMessageSeries()),
+      })
+      return
+    }
+    if (["fetch", "xhr"].includes(request.resourceType())) {
+      unexpectedRequests.push(`${request.method()} ${pathname}`)
+      void request.respond({
+        status: 501,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "Missing UI smoke fixture" }),
       })
       return
     }
@@ -197,8 +479,8 @@ try {
   )
   await page.waitForFunction(
     () =>
-      document.querySelectorAll("[data-graph-node]").length === 7 &&
-      document.querySelectorAll("[data-graph-edge]").length === 6
+      document.querySelectorAll("[data-graph-node]").length === 5 &&
+      document.querySelectorAll("[data-graph-edge]").length === 4
   )
   await page.evaluate(() => {
     window.__layoutSnapshots = []
@@ -242,14 +524,14 @@ try {
   )
   await page.waitForFunction(
     () =>
-      document.querySelectorAll("[data-graph-node]").length === 7 &&
-      document.querySelectorAll("[data-graph-edge]").length === 6
+      document.querySelectorAll("[data-graph-node]").length === 5 &&
+      document.querySelectorAll("[data-graph-edge]").length === 4
   )
   await page.waitForFunction(() => {
     const snapshots = window.__layoutSnapshots
     return (
-      snapshots.some((snapshot) => Object.keys(snapshot).length === 2) &&
-      Object.keys(snapshots.at(-1) ?? {}).length === 7
+      snapshots.some((snapshot) => Object.keys(snapshot).length === 3) &&
+      Object.keys(snapshots.at(-1) ?? {}).length === 5
     )
   })
   const layoutSnapshots = await page.evaluate(() => {
@@ -261,22 +543,20 @@ try {
     .filter((count, index, counts) => count !== counts[index - 1])
   assert.deepEqual(
     branchCounts,
-    [7, 2, 3, 4, 5, 6, 7],
-    "the branching demo should append one stable node at a time"
+    [5, 3, 4, 5],
+    "the canonical demo should append one stable node at a time"
   )
   const expectedPositions = {
-    "fixture-event-0-demo-fleet-imported": { x: 0, y: 0 },
-    "command-rent": { x: 280, y: 0 },
-    "event-rented": { x: 560, y: 0 },
-    "event-audit": { x: 560, y: 140 },
-    "integration-started": { x: 840, y: 0 },
-    "integration-availability": { x: 840, y: 140 },
-    "integration-audit": { x: 840, y: 280 },
+    "fixture-event-0-demo-bike-42-added": { x: 0, y: 0 },
+    "fixture-event-0-demo-bike-99-added": { x: 280, y: 0 },
+    "command-rent": { x: 560, y: 0 },
+    "event-rented": { x: 840, y: 0 },
+    "integration-started": { x: 1120, y: 0 },
   }
 
   const fixturePresentation = await page.evaluate(() => {
     const fixture = document.querySelector(
-      '[data-node-id="fixture-event-0-demo-fleet-imported"]'
+      '[data-node-id="fixture-event-0-demo-bike-99-added"]'
     )
     const event = document.querySelector('[data-node-id="event-rented"]')
     const eventNodeBounds = event
@@ -337,12 +617,12 @@ try {
           .querySelector('[data-node-id="command-rent"] .message-node')
           .getBoundingClientRect()
         const contextStart = endpoint(
-          "fixture-event-0-demo-fleet-imported",
+          "fixture-event-0-demo-bike-99-added",
           "command-rent",
           false
         )
         const contextEnd = endpoint(
-          "fixture-event-0-demo-fleet-imported",
+          "fixture-event-0-demo-bike-99-added",
           "command-rent",
           true
         )
@@ -385,12 +665,12 @@ try {
   )
   assert.equal(
     fixturePresentation.fixtureName,
-    "rental-fleet-imported",
+    "bicycle-added",
     "fixture context should use the canonical fixture domain event"
   )
   assert.equal(
     fixturePresentation.fixtureStreamVersion,
-    "1",
+    "2",
     "fixture context should retain the recorded stream version"
   )
   assert.ok(
@@ -415,7 +695,7 @@ try {
                 kind: "command",
                 key: "subject",
                 name: "subject-command",
-                schemaVersion: 1,
+                schemaVersion: 2,
                 context: "context",
                 payload: {},
                 outcome: "accepted",
@@ -491,24 +771,92 @@ try {
       command: "subject-command",
       schemaVersion: 1,
       latestEventId: 2,
-      result: { decision: "accepted" },
+      result: {
+        decision: "accepted",
+        commandMessageId: "subject-command-message",
+      },
     }
-    const completed = reportGraph(
-      {
-        runId: "fixture-topology-run",
-        testId: definition.id,
-        revision: "fixture-topology-revision",
+    const report = {
+      runId: "fixture-topology-run",
+      testId: definition.id,
+      revision: "fixture-topology-revision",
+      status: "passed",
+      expected: definition.expected,
+      observed: {
+        messages: [
+          {
+            kind: "command",
+            messageId: "subject-command-message",
+            correlationId: "fixture-topology-correlation",
+            observationOrder: 1,
+            name: "subject-command",
+            schemaVersion: 2,
+            context: "context",
+            payload: {},
+          },
+        ],
+        commandOutcomes: [commandOutcome],
+      },
+      comparison: {
         status: "passed",
-        expected: definition.expected,
+        matches: [
+          {
+            expectedKey: "subject",
+            observedMessageId: "subject-command-message",
+          },
+        ],
+        diagnostics: [],
+      },
+      commandOutcome,
+      operationId: operation.operationId,
+      correlationId: operation.correlationId,
+      operationHref: "/operations/fixture-topology-operation",
+      operationEventsHref: operation.operationEventsHref,
+      correlationEventsHref: operation.correlationEventsHref,
+      operation,
+    }
+    const completed = reportGraph(report, fixture)
+    const partial = reportGraph(
+      {
+        ...report,
         observed: {
           messages: [
             {
               kind: "command",
-              messageId: "subject-command-message",
+              messageId: "other-command-message",
               correlationId: "fixture-topology-correlation",
               observationOrder: 1,
-              name: "subject-command",
+              name: "other-command",
               schemaVersion: 1,
+              context: "context",
+              payload: {},
+            },
+          ],
+          commandOutcomes: [],
+        },
+        comparison: { status: "failed", matches: [], diagnostics: [] },
+      },
+      fixture
+    )
+    const completedCommand = completed.find(
+      (node) => node.id === "subject-command-message"
+    )
+    const partialCommand = partial.find(
+      (node) => node.id === "other-command-message"
+    )
+    const conflicting = reportGraph(
+      {
+        ...report,
+        observed: {
+          messages: [
+            ...report.observed.messages,
+            {
+              kind: "command",
+              messageId: "other-command-message",
+              correlationId: "fixture-topology-correlation",
+              observationOrder: 0,
+              name: "subject-command",
+              schemaVersion: 2,
               context: "context",
               payload: {},
             },
@@ -516,27 +864,17 @@ try {
           commandOutcomes: [commandOutcome],
         },
         comparison: {
-          status: "passed",
+          status: "failed",
           matches: [
             {
               expectedKey: "subject",
-              observedMessageId: "subject-command-message",
+              observedMessageId: "other-command-message",
             },
           ],
           diagnostics: [],
         },
-        commandOutcome,
-        operationId: operation.operationId,
-        correlationId: operation.correlationId,
-        operationHref: "/operations/fixture-topology-operation",
-        operationEventsHref: operation.operationEventsHref,
-        correlationEventsHref: operation.correlationEventsHref,
-        operation,
       },
       fixture
-    )
-    const completedCommand = completed.find(
-      (node) => node.id === "subject-command-message"
     )
     return {
       fixtureNames: layout.nodes
@@ -553,6 +891,16 @@ try {
         responseStatus: completedCommand?.response?.status,
         parentId: completedCommand?.parentId,
       },
+      partialCommand: {
+        status: partialCommand?.status,
+        subject: partialCommand?.subject,
+        hasResponse: partialCommand?.response !== undefined,
+      },
+      conflictingSubjects: Object.fromEntries(
+        conflicting
+          .filter((node) => node.kind === "command")
+          .map((node) => [node.id, node.subject])
+      ),
     }
   })
   assert.deepEqual(
@@ -578,6 +926,19 @@ try {
       parentId: "fixture-event-0-fixture-two",
     },
     "completed rendering should use the current report outcome and operation contracts"
+  )
+  assert.deepEqual(
+    fixtureTopology.partialCommand,
+    { status: "idle", subject: false, hasResponse: false },
+    "a partial report must not attribute a missing subject's result to another command"
+  )
+  assert.deepEqual(
+    fixtureTopology.conflictingSubjects,
+    {
+      "other-command-message": false,
+      "subject-command-message": true,
+    },
+    "the operation command identity should outrank a conflicting comparison match"
   )
   assert.equal(
     fixturePresentation.commandIncomingEdges,
@@ -665,14 +1026,76 @@ try {
       })
   })
 
-  await page.$eval('button[aria-label="Collapse sidebar"]', (button) =>
-    button.click()
+  const testsPanelBeforeDrag = await page.$eval(
+    "#studio-tests-panel",
+    (panel) => {
+      const bounds = panel.getBoundingClientRect()
+      return { x: bounds.x, y: bounds.y }
+    }
   )
-  await page.waitForSelector('button[aria-label="Expand sidebar"]')
-  await page.$eval('button[aria-label="Expand sidebar"]', (button) =>
-    button.click()
+  const testsPanelHeader = await page.$(
+    "#studio-tests-panel .studio-panel-header"
   )
-  await page.waitForSelector('button[aria-label="Collapse sidebar"]')
+  const testsPanelHeaderBounds = await testsPanelHeader.boundingBox()
+  assert.ok(
+    testsPanelHeaderBounds,
+    "the Tests panel header should be draggable"
+  )
+  await page.mouse.move(
+    testsPanelHeaderBounds.x + testsPanelHeaderBounds.width / 2,
+    testsPanelHeaderBounds.y + testsPanelHeaderBounds.height / 2
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    testsPanelHeaderBounds.x + testsPanelHeaderBounds.width / 2 + 90,
+    testsPanelHeaderBounds.y + testsPanelHeaderBounds.height / 2 + 35,
+    { steps: 8 }
+  )
+  await page.mouse.up()
+  const testsPanelAfterDrag = await page.$eval(
+    "#studio-tests-panel",
+    (panel) => {
+      const bounds = panel.getBoundingClientRect()
+      return { x: bounds.x, y: bounds.y }
+    }
+  )
+  assert.ok(
+    testsPanelAfterDrag.x > testsPanelBeforeDrag.x + 70 &&
+      testsPanelAfterDrag.y > testsPanelBeforeDrag.y + 20,
+    "dragging the Tests header should reposition its glass panel"
+  )
+
+  await page.click('button[aria-controls="studio-tests-panel"]')
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('button[aria-controls="studio-tests-panel"]')
+        ?.getAttribute("aria-expanded") === "false"
+  )
+  await page.keyboard.down("Control")
+  await page.keyboard.down("Shift")
+  await page.keyboard.press("E")
+  await page.keyboard.up("Shift")
+  await page.keyboard.up("Control")
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('button[aria-controls="studio-tests-panel"]')
+        ?.getAttribute("aria-expanded") === "true"
+  )
+
+  await page.keyboard.down("Control")
+  await page.keyboard.down("Shift")
+  await page.keyboard.press("Y")
+  await page.keyboard.up("Shift")
+  await page.keyboard.up("Control")
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('button[aria-controls="studio-runs-panel"]')
+        ?.getAttribute("aria-expanded") === "true"
+  )
+  await page.click('button[aria-controls="studio-runs-panel"]')
 
   const zoomBefore = await page.$eval(".graph-zoom-value", (element) =>
     Number(element.textContent?.replace("%", ""))
@@ -751,12 +1174,12 @@ try {
   )
   assert.deepEqual(
     offscreenGraph.nodes,
-    Array.from({ length: 7 }, (_, index) => `node-${index}`),
+    Array.from({ length: 5 }, (_, index) => `node-${index}`),
     "panning offscreen should not unmount message nodes"
   )
   assert.deepEqual(
     offscreenGraph.edges,
-    Array.from({ length: 6 }, (_, index) => `edge-${index}`),
+    Array.from({ length: 4 }, (_, index) => `edge-${index}`),
     "panning offscreen should not unmount message edges"
   )
   const viewportOffscreen = await page.$eval(
@@ -776,7 +1199,7 @@ try {
   const branchEvent = await page.$(
     '[data-node-id="event-rented"] .message-node'
   )
-  assert.ok(branchEvent, "a branching event should be available to inspect")
+  assert.ok(branchEvent, "a domain event should be available to inspect")
   await branchEvent.hover()
   await new Promise((resolve) => setTimeout(resolve, 250))
   assert.equal(
@@ -837,7 +1260,10 @@ try {
     "evt_01HZX8B8A2",
     "the event message ID control should copy the hidden identity"
   )
-  await page.mouse.click(paneBounds.x + 24, paneBounds.y + 24)
+  await page.mouse.click(
+    paneBounds.x + paneBounds.width - 24,
+    paneBounds.y + 80
+  )
   await page.waitForSelector("[data-node-popup]", { hidden: true })
 
   const commandNode = await page.$(
@@ -915,7 +1341,10 @@ try {
     eventColors.integration.includes("114, 202, 221"),
     `integration events should retain a distinct cyan palette: ${eventColors.integration}`
   )
-  await page.mouse.click(paneBounds.x + 24, paneBounds.y + 24)
+  await page.mouse.click(
+    paneBounds.x + paneBounds.width - 24,
+    paneBounds.y + 80
+  )
   await page.waitForSelector("[data-node-popup]", { hidden: true })
   const edgeStability = await page.evaluate(() => ({
     animationStarts: window.__edgeAnimationStarts,
@@ -934,7 +1363,7 @@ try {
   )
   assert.deepEqual(
     edgeStability.markers,
-    ["edge-0", "edge-1", "edge-2", "edge-3", "edge-4", "edge-5"],
+    ["edge-0", "edge-1", "edge-2", "edge-3"],
     "graph interactions should preserve the existing edge elements"
   )
   assert.equal(
@@ -944,7 +1373,7 @@ try {
   )
   assert.deepEqual(
     edgeStability.nodeMarkers,
-    Array.from({ length: 7 }, (_, index) => `node-${index}`),
+    Array.from({ length: 5 }, (_, index) => `node-${index}`),
     "graph interactions should preserve the existing message nodes"
   )
 
@@ -964,10 +1393,17 @@ try {
   await page.waitForFunction(
     () => document.querySelectorAll(".run-row").length === 16
   )
+  await page.click('button[aria-controls="studio-runs-panel"]')
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('button[aria-controls="studio-runs-panel"]')
+        ?.getAttribute("aria-expanded") === "true"
+  )
   const runScroll = await page.$eval(".past-runs-scroll", (element) => {
     const style = getComputedStyle(element)
     const sidebarStyle = getComputedStyle(
-      document.querySelector(".studio-sidebar")
+      document.querySelector(".studio-runs-panel")
     )
     const trackStyle = getComputedStyle(element, "::-webkit-scrollbar-track")
     return {
@@ -1015,7 +1451,7 @@ try {
   })
   await page.waitForFunction(
     () =>
-      document.querySelectorAll("[data-graph-node][data-context]").length === 1
+      document.querySelectorAll("[data-graph-node][data-context]").length === 3
   )
   const setupContext = await page.evaluate(() => ({
     ids: [...document.querySelectorAll("[data-graph-node][data-context]")].map(
@@ -1031,8 +1467,12 @@ try {
   }))
   assert.deepEqual(
     setupContext.ids,
-    ["fixture-event-0-demo-fleet-imported"],
-    "the canonical fixture message should appear as subdued graph context"
+    [
+      "fixture-event-0-rented-demo-bike-42-added",
+      "fixture-event-0-rented-demo-bike-99-added",
+      "fixture-event-0-fixture-bike-42-rented",
+    ],
+    "the canonical fixture history should appear as subdued graph context"
   )
   assert.equal(
     setupContext.subjectIncomingEdges,
@@ -1041,8 +1481,8 @@ try {
   )
   assert.equal(
     setupContext.mutedEdges,
-    1,
-    "the fixture-to-subject edge should use the muted context style"
+    3,
+    "fixture stream ordering and the subject link should use the muted context style"
   )
   assert.equal(
     setupContext.contextArrowheads,
@@ -1137,6 +1577,453 @@ try {
   )
   await page.screenshot({ path: rejectionScreenshot })
 
+  catalogEnabled = true
+  await page.reload({ waitUntil: "networkidle0" })
+  await page.waitForSelector('[data-tracer-source="live"]')
+  assert.equal(
+    await page.$eval('button[aria-controls="studio-tests-panel"]', (button) =>
+      button.hasAttribute("disabled")
+    ),
+    true,
+    "Tests should be unavailable when Catalog does not advertise definitions"
+  )
+  await page.click('button[aria-controls="studio-command-panel"]')
+  await page.waitForSelector("#studio-command-panel select:not(:disabled)")
+  assert.equal(
+    await page.$eval('[data-command-mode="test"]', (button) => button.disabled),
+    false,
+    "Test mode should be selectable before choosing a supported command"
+  )
+  assert.equal(
+    await page.$eval('[data-command-mode="test"]', (button) =>
+      button.getAttribute("aria-pressed")
+    ),
+    "true",
+    "Test mode should be the default command execution path"
+  )
+  const panelLayers = await page.evaluate(() => ({
+    command: Number(
+      getComputedStyle(document.querySelector("#studio-command-panel")).zIndex
+    ),
+    runs: Number(
+      getComputedStyle(document.querySelector("#studio-runs-panel")).zIndex
+    ),
+  }))
+  assert.ok(
+    panelLayers.command > panelLayers.runs,
+    "a newly opened Command panel should move in front of an open panel"
+  )
+  const commandChoice = await page.$eval(
+    "#studio-command-panel select",
+    (select) =>
+      [...select.options].find((option) =>
+        option.textContent?.includes("Rent bicycle")
+      )?.value
+  )
+  assert.ok(commandChoice, "the Catalog command should be available")
+  await page.select("#studio-command-panel select", commandChoice)
+  await page.waitForFunction(
+    () =>
+      document.querySelector('input[aria-label="Payload Fleet"]')?.value ===
+        "city-fleet" &&
+      document.querySelector('input[aria-label="Payload Bicycle"]')?.value ===
+        "bike-42"
+  )
+  const generatedRequestId = await page.$eval(
+    'input[aria-label="Payload Request id"]',
+    (input) => input.value
+  )
+  assert.match(
+    generatedRequestId,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    "an ID without advertised values should be prefilled with a UUID"
+  )
+  assert.equal(
+    await page.$(
+      '#studio-command-panel textarea[aria-label="Payload Request id"]'
+    ),
+    null,
+    "opaque IDs should use normal text fields instead of JSON textareas"
+  )
+  assert.equal(
+    await page.$eval(
+      '#studio-command-panel [data-payload-field="request_id"]',
+      (field) => field.textContent?.includes("JSON value")
+    ),
+    false,
+    "identifier fields should not ask users for raw JSON"
+  )
+  assert.equal(
+    await page.$('#studio-command-panel textarea[aria-label="Payload JSON"]'),
+    null,
+    "the command payload should use catalog-driven form controls"
+  )
+  assert.equal(
+    await page.$eval(
+      '#studio-command-panel select[aria-label="Payload Legacy identity"]',
+      (select) => select.value
+    ),
+    "option:0",
+    "a non-string advertised identity should retain its exact JSON representation"
+  )
+  await page.select(
+    '#studio-command-panel select[aria-label="Payload Attempt"]',
+    "option:0"
+  )
+  await page.click('[data-command-mode="preview"]')
+  await page.click('#studio-command-panel button[type="submit"]')
+  await page.waitForSelector("[data-command-result]")
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector("[data-command-result]")
+        ?.textContent?.includes("accepted") &&
+      document.querySelectorAll("[data-graph-node]").length === 4 &&
+      document.querySelectorAll("[data-graph-edge]").length === 2
+  )
+  assert.deepEqual(
+    previewRequests,
+    [
+      {
+        body: `{"schemaVersion":2,"payload":{"fleet_id":"city-fleet","bicycle_id":"bike-42","request_id":"${generatedRequestId}","legacy_id":42,"attempt":9007199254740993}}`,
+        idempotencyKey: undefined,
+        authorized: true,
+      },
+    ],
+    "Preview should use the control token and submit exactly once without an idempotency key or rounded numeric options"
+  )
+  const commandPreview = await page.$eval(
+    "[data-command-result]",
+    (result) => ({
+      text: result.textContent,
+      capture: result.querySelector(".command-result-meta")?.textContent,
+    })
+  )
+  assert.ok(
+    commandPreview.text?.includes("rent-bicycle v2"),
+    "the command pane should identify the completed operation"
+  )
+  assert.ok(
+    commandPreview.capture?.includes("grouped"),
+    "the command pane should report message-series fidelity"
+  )
+  assert.equal(
+    await page.$eval(
+      '[data-node-id="studio-command"]',
+      (node) => node.dataset.status
+    ),
+    "accepted",
+    "the Preview result should replace the canvas with the returned message series"
+  )
+  assert.equal(
+    await page.$eval(
+      '[data-node-id="studio-downstream-command"]',
+      (node) => node.dataset.status
+    ),
+    "idle",
+    "a command without an observed outcome must not be presented as accepted"
+  )
+  assert.equal(
+    await page.$$eval(
+      '[data-graph-edge][data-target-id="studio-unlinked-event"]',
+      (edges) => edges.length
+    ),
+    0,
+    "grouped messages without explicit causation must remain disconnected"
+  )
+  const operationSubjects = await page.evaluate(async () => {
+    const { operationGraph } = await import("/src/lib/graph.ts")
+    const operation = {
+      operationId: "out-of-order",
+      correlationId: "out-of-order-correlation",
+      operationEventsHref: "/operations/out-of-order/events",
+      correlationEventsHref: "/correlations/out-of-order/events",
+      messageSeriesHref: "/operations/out-of-order/message-series",
+      events: { kind: "observed", href: "/operations/out-of-order/events" },
+      mode: "test",
+      status: "completed",
+      context: "bike-rental",
+      command: "root-command",
+      schemaVersion: 1,
+      latestEventId: 2,
+      result: {
+        decision: "accepted",
+        commandMessageId: "root-command-message",
+      },
+    }
+    const command = (messageId, observationOrder, name) => ({
+      kind: "command",
+      messageId,
+      correlationId: "out-of-order-correlation",
+      observationOrder,
+      name,
+      schemaVersion: 1,
+      context: "bike-rental",
+      payload: {},
+    })
+    const series = {
+      operationId: operation.operationId,
+      correlationId: operation.correlationId,
+      mode: "test",
+      messageSeries: {
+        messages: [
+          command("earlier-command-message", 0, "earlier-command"),
+          command("root-command-message", 1, "root-command"),
+        ],
+        commandOutcomes: [],
+      },
+      capture: { settled: true, settledFor: "0ms", fidelity: "grouped" },
+    }
+    const nodes = operationGraph(operation, series)
+    const partial = operationGraph(
+      {
+        ...operation,
+        result: {
+          decision: "accepted",
+          commandMessageId: "missing-command-message",
+        },
+      },
+      {
+        ...series,
+        messageSeries: {
+          messages: [command("earlier-command-message", 0, "earlier-command")],
+          commandOutcomes: [],
+        },
+      }
+    )
+    return {
+      complete: Object.fromEntries(
+        nodes.map((node) => [
+          node.id,
+          { status: node.status, subject: node.subject },
+        ])
+      ),
+      partial: Object.fromEntries(
+        partial.map((node) => [
+          node.id,
+          {
+            status: node.status,
+            subject: node.subject,
+            hasResponse: node.response !== undefined,
+          },
+        ])
+      ),
+    }
+  })
+  assert.deepEqual(
+    operationSubjects,
+    {
+      complete: {
+        "earlier-command-message": { status: "idle", subject: false },
+        "root-command-message": { status: "accepted", subject: true },
+      },
+      partial: {
+        "earlier-command-message": {
+          status: "idle",
+          subject: false,
+          hasResponse: false,
+        },
+      },
+    },
+    "the operation result and focus should follow its command message ID without misattributing a missing subject"
+  )
+  const commandScreenshot = path.join(
+    tmpdir(),
+    "rostfrei-tracer-studio-command-form.png"
+  )
+  await page.screenshot({ path: commandScreenshot })
+
+  await page.click('[data-command-mode="test"]')
+  const testIdempotencyKey = await page.$eval(
+    'input[aria-label="Idempotency key"]',
+    (input) => input.value
+  )
+  assert.match(
+    testIdempotencyKey,
+    /^studio:test:[A-Za-z0-9-]+$/,
+    "Test publication should start with a valid stable idempotency key"
+  )
+  await page.$eval('input[aria-label="Idempotency key"]', (input) => {
+    const setValue = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value"
+    ).set
+    setValue.call(input, "invalid key")
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  await page.click('#studio-command-panel button[type="submit"]')
+  await page.waitForFunction(() =>
+    document
+      .querySelector(".command-form-error")
+      ?.textContent?.includes("Idempotency key must be")
+  )
+  assert.equal(
+    await page.$eval('button[aria-controls="studio-command-panel"]', (button) =>
+      button.getAttribute("aria-expanded")
+    ),
+    "true",
+    "validation errors should keep the Command panel open"
+  )
+  assert.equal(testRequests.length, 0)
+  await page.$eval(
+    'input[aria-label="Idempotency key"]',
+    (input, value) => {
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value"
+      ).set
+      setValue.call(input, value)
+      input.dispatchEvent(new Event("input", { bubbles: true }))
+    },
+    testIdempotencyKey
+  )
+  const ambiguousTest = await page.evaluate(async () => {
+    const { runTest, submitCommand } = await import("/src/lib/api.ts")
+    let unsafeRunError = ""
+    try {
+      await runTest("https://untrusted.invalid/runs/1")
+    } catch (error) {
+      unsafeRunError = error instanceof Error ? error.message : "unknown"
+    }
+    try {
+      await submitCommand(
+        "test",
+        "/ambiguous/city-fleet/test",
+        1,
+        "{}",
+        "studio:test:ambiguous"
+      )
+      return { name: "", message: "", unsafeRunError }
+    } catch (error) {
+      return {
+        name: error instanceof Error ? error.name : "",
+        message: error instanceof Error ? error.message : "",
+        unsafeRunError,
+      }
+    }
+  })
+  assert.deepEqual(ambiguousTestRequests, [
+    {
+      body: '{"schemaVersion":1,"payload":{}}',
+      idempotencyKey: "studio:test:ambiguous",
+    },
+  ])
+  assert.equal(ambiguousTest.name, "CommandSubmissionIndeterminateError")
+  assert.equal(
+    ambiguousTest.unsafeRunError,
+    "Tracer advertised an unsafe link",
+    "behavioral run links must be validated before attaching authorization"
+  )
+  assert.ok(
+    ambiguousTest.message.includes("may have reached the bus") &&
+      ambiguousTest.message.includes("same idempotency key"),
+    "an accepted Test response without an operation Location must remain indeterminate"
+  )
+  await page.click('#studio-command-panel button[type="submit"]')
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('button[aria-controls="studio-command-panel"]')
+        ?.getAttribute("aria-expanded") === "false" &&
+      document.querySelector('[data-node-id="studio-test-command"]')?.dataset
+        .status === "accepted",
+    { timeout: 30000 }
+  )
+  assert.deepEqual(
+    testRequests,
+    [
+      {
+        body: `{"schemaVersion":2,"payload":{"fleet_id":"city-fleet","bicycle_id":"bike-42","request_id":"${generatedRequestId}","legacy_id":42,"attempt":9007199254740993}}`,
+        idempotencyKey: testIdempotencyKey,
+        authorized: true,
+      },
+    ],
+    "a Test push should close the panel and send the exact body once"
+  )
+  assert.deepEqual(
+    testSeriesRequests,
+    ["?within=10s&settleFor=500ms"],
+    "Test inspection should follow the advertised message-series href with bounded settling"
+  )
+  await page.click('button[aria-controls="studio-command-panel"]')
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('button[aria-controls="studio-command-panel"]')
+        ?.getAttribute("aria-expanded") === "true"
+  )
+  await page.waitForFunction(
+    (previousKey) =>
+      document.querySelector('input[aria-label="Idempotency key"]')?.value !==
+      previousKey,
+    {},
+    testIdempotencyKey
+  )
+  const rotatedTestKey = await page.$eval(
+    'input[aria-label="Idempotency key"]',
+    (input) => input.value
+  )
+  await page.waitForFunction(
+    (requestId) =>
+      document.querySelector('input[aria-label="Payload Fleet"]')?.value ===
+        "city-fleet" &&
+      document.querySelector('input[aria-label="Payload Bicycle"]')?.value ===
+        "bike-42" &&
+      document.querySelector('input[aria-label="Payload Request id"]')
+        ?.value === requestId,
+    {},
+    generatedRequestId
+  )
+  await page.select(
+    '#studio-command-panel select[aria-label="Payload Attempt"]',
+    "option:0"
+  )
+  await page.click('#studio-command-panel button[type="submit"]')
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('button[aria-controls="studio-command-panel"]')
+        ?.getAttribute("aria-expanded") === "false" &&
+      document.querySelector('[data-graph-node][data-status="indeterminate"]'),
+    { timeout: 30000 }
+  )
+  await page.click('button[aria-controls="studio-command-panel"]')
+  await page.waitForFunction(() =>
+    document
+      .querySelector(".command-form-error")
+      ?.textContent?.includes("may have reached the bus")
+  )
+  assert.equal(
+    await page.$eval(
+      'input[aria-label="Idempotency key"]',
+      (input) => input.value
+    ),
+    rotatedTestKey,
+    "an ambiguous Test publication must preserve its submitted idempotency key"
+  )
+  assert.deepEqual(
+    await page.$$eval(
+      '#studio-command-panel select[aria-label^="Payload "]',
+      (selects) => selects.map((select) => select.value)
+    ),
+    ["option:0", "option:0"],
+    "an ambiguous Test publication must preserve the exact retry payload"
+  )
+  assert.deepEqual(
+    await page.$$eval(
+      '#studio-command-panel input[aria-label^="Payload "]',
+      (inputs) => inputs.map((input) => input.value)
+    ),
+    ["city-fleet", "bike-42", generatedRequestId],
+    "an ambiguous Test publication must preserve prefilled identifiers"
+  )
+  assert.deepEqual(testRequests[1], {
+    body: `{"schemaVersion":2,"payload":{"fleet_id":"city-fleet","bicycle_id":"bike-42","request_id":"${generatedRequestId}","legacy_id":42,"attempt":9007199254740993}}`,
+    idempotencyKey: rotatedTestKey,
+    authorized: true,
+  })
+
+  catalogEnabled = false
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })
   await page.reload({ waitUntil: "networkidle0" })
   await page.waitForSelector("[data-graph-node]")
@@ -1196,12 +2083,17 @@ try {
   )
   assert.equal(
     mobileFocus.fixtureNodes,
-    1,
-    "the canonical fixture event should remain mounted for looking back"
+    2,
+    "the canonical fixture events should remain mounted for looking back"
   )
   assert.ok(
     mobileFocus.offscreenFixtureNodes > 0,
     "fixture context may sit offscreen behind the focused command"
+  )
+  assert.deepEqual(
+    unexpectedRequests,
+    [],
+    "the smoke test must fail closed instead of reaching an unmocked API"
   )
   assert.deepEqual(pageErrors, [], `browser errors: ${pageErrors.join("; ")}`)
 
@@ -1219,35 +2111,117 @@ try {
       fixtureScreenshot,
       screenshot,
       rejectionScreenshot,
+      commandScreenshot,
+      commandPreview: true,
+      commandTest: true,
+      commandIndeterminate: true,
     })
   )
 } finally {
-  await browser?.close()
-  server.kill("SIGTERM")
-}
-
-async function waitForServer(serverUrl) {
-  const deadline = Date.now() + 10000
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(serverUrl)
-      if (response.ok) return
-    } catch {
-      // Vite is still starting.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100))
+  try {
+    await closeStudioBrowser(browser)
+  } finally {
+    await server.close()
   }
-  throw new Error(`Vite did not start at ${serverUrl}`)
 }
 
-function chromeExecutable() {
-  const candidates = [
-    process.env.CHROME_BIN,
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-  ].filter(Boolean)
-  const executable = candidates.find((candidate) => existsSync(candidate))
-  if (!executable) throw new Error("Set CHROME_BIN to a Chrome executable")
-  return executable
+function operationSnapshot(status, mode = "simulate") {
+  const test = mode === "test"
+  const operationId = test ? "studio-test" : "studio-preview"
+  const correlationId = test ? "studio-test-correlation" : "studio-correlation"
+  return {
+    operationId,
+    correlationId,
+    operationEventsHref: `/operations/${operationId}/events`,
+    correlationEventsHref: `/correlations/${correlationId}/events`,
+    messageSeriesHref: `/operations/${operationId}/message-series`,
+    events: {
+      kind: test ? "observed" : "predicted",
+      href: test
+        ? `/correlations/${correlationId}/events`
+        : `/operations/${operationId}/events`,
+    },
+    mode,
+    status,
+    command: "rent-bicycle",
+    schemaVersion: 2,
+    context: "bike-rental",
+    latestEventId: status === "completed" ? 5 : 1,
+    ...(status === "completed"
+      ? {
+          result: test
+            ? {
+                decision: "accepted",
+                commandMessageId: "studio-test-command",
+                responseMessageId: "studio-test-response",
+                published: true,
+                duplicate: false,
+              }
+            : {
+                decision: "accepted",
+                baseStreamVersion: 1,
+                predictedEvents: [
+                  {
+                    ordinal: 0,
+                    predictedStreamVersion: 2,
+                    eventType: "bicycle-rented",
+                    schemaVersion: 1,
+                    payload: { bicycle_id: "bike-42" },
+                  },
+                ],
+                published: false,
+              },
+        }
+      : {}),
+  }
+}
+
+function testMessageSeries() {
+  return {
+    operationId: "studio-test",
+    correlationId: "studio-test-correlation",
+    mode: "test",
+    messageSeries: {
+      messages: [
+        {
+          kind: "command",
+          messageId: "studio-test-command",
+          correlationId: "studio-test-correlation",
+          observationOrder: 0,
+          name: "rent-bicycle",
+          schemaVersion: 2,
+          context: "bike-rental",
+          payload: { fleet_id: "city-fleet", bicycle_id: "bike-42" },
+        },
+        {
+          kind: "domain-event",
+          messageId: "studio-test-event",
+          correlationId: "studio-test-correlation",
+          causationId: "studio-test-command",
+          observationOrder: 1,
+          name: "bicycle-rented",
+          schemaVersion: 1,
+          aggregate: {
+            type: "bike-rental/rental-fleet",
+            id: "city-fleet",
+          },
+          payload: { bicycle_id: "bike-42" },
+        },
+      ],
+      commandOutcomes: [
+        {
+          responseMessageId: "studio-test-response",
+          commandMessageId: "studio-test-command",
+          correlationId: "studio-test-correlation",
+          observationOrder: 2,
+          outcome: { status: "accepted", value: null },
+        },
+      ],
+    },
+    capture: {
+      settled: true,
+      settledFor: "500ms",
+      fidelity: "exact",
+    },
+  }
 }
