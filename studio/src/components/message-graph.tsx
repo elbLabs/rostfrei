@@ -240,7 +240,9 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
               "message-node nodrag nopan",
               `message-node-${node.kind}`,
               node.status === "running" && "message-node-running",
-              (node.status === "rejected" || node.status === "failed") &&
+              (node.status === "rejected" ||
+                node.status === "failed" ||
+                node.status === "indeterminate") &&
                 "message-node-danger"
             )}
             aria-label={`${label} ${node.name}`}
@@ -263,7 +265,9 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
           data-popup-pinned
           className={cn(
             node.kind === "command" && "w-[min(380px,calc(100vw-2rem))]",
-            (node.status === "rejected" || node.status === "failed") &&
+            (node.status === "rejected" ||
+              node.status === "failed" ||
+              node.status === "indeterminate") &&
               "payload-glass-danger"
           )}
           side="top"
@@ -277,23 +281,23 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
         >
           <div className="flex items-start gap-5 border-b border-white/8 px-3.5 py-3">
             <div className="min-w-0">
-              <div className="mb-1 flex items-center gap-1.5 text-[10px] tracking-[0.12em] text-white/42 uppercase">
+              <div className="mb-1 flex items-center gap-1.5 text-[12px] tracking-[0.12em] text-white/64 uppercase">
                 <Icon className="size-3" />
                 {label}
               </div>
-              <div className="truncate font-mono text-[13px] text-white/92">
+              <div className="truncate font-mono text-[14px] text-white/92">
                 {node.name}
               </div>
             </div>
           </div>
 
           <div className="px-3.5 py-3">
-            <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] tracking-[0.13em] text-white/34 uppercase">
+            <div className="mb-2 flex items-center gap-1.5 font-mono text-[12px] tracking-[0.13em] text-white/60 uppercase">
               <ListTree className="size-3" />
               {node.kind === "command" ? "request" : "payload"}
             </div>
             {node.payload === undefined ? (
-              <p className="m-0 font-mono text-[11px] text-white/34 italic">
+              <p className="m-0 font-mono text-[13px] text-white/56 italic">
                 redacted or empty
               </p>
             ) : (
@@ -306,14 +310,16 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
               data-command-response
               className="border-t border-white/7 px-3.5 py-3"
             >
-              <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] tracking-[0.13em] text-white/34 uppercase">
+              <div className="mb-2 flex items-center gap-1.5 font-mono text-[12px] tracking-[0.13em] text-white/60 uppercase">
                 <Reply className="size-3" />
                 response
                 <Badge
                   variant={
                     node.status === "accepted"
                       ? "success"
-                      : node.status === "rejected" || node.status === "failed"
+                      : node.status === "rejected" ||
+                          node.status === "failed" ||
+                          node.status === "indeterminate"
                         ? "danger"
                         : "neutral"
                   }
@@ -325,7 +331,7 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
                 </Badge>
               </div>
               {node.response === undefined ? (
-                <p className="m-0 font-mono text-[11px] text-white/34 italic">
+                <p className="m-0 font-mono text-[13px] text-white/56 italic">
                   {node.status === "running"
                     ? "awaiting command response"
                     : "response redacted or unavailable"}
@@ -406,7 +412,7 @@ function CopyIdentityButton({
       type="button"
       variant="outline"
       size="sm"
-      className="h-6 px-2 font-mono text-[9px] font-normal text-white/45"
+      className="h-7 px-2 font-mono text-[12px] font-normal text-white/68"
       data-copy-identity={label}
       aria-label={`Copy ${label}`}
       onClick={() => void copyIdentity()}

@@ -1,7 +1,12 @@
 # Tracer Studio
 
-Tracer Studio is a React/Vite client for Tracer behavioral tests and causal
-message-series visualization.
+Tracer Studio is a React/Vite client for executing commands, running Tracer
+behavioral tests, and visualizing causal message series. The Command pane offers
+Preview, which reads isolated Test history without publishing, and Test bus
+publication, which is the default and can append events and trigger Test-scoped
+integrations. A valid Test push submits immediately, closes the Command pane,
+and displays its message flow. Commands are discovered from Catalog v1 by
+bounded context; identifiers are prefilled editable payload fields.
 
 ```sh
 pnpm install --frozen-lockfile
