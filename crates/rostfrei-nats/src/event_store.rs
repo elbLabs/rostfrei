@@ -80,17 +80,15 @@ impl EventHistory for NatsAppendSession<'_> {
 #[async_trait]
 impl AppendSession for NatsAppendSession<'_> {
     async fn append(
-        self: Box<Self>,
+        mut self: Box<Self>,
         stream_id: &StreamId,
         expected_version: ExpectedVersion,
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
-        let mut histories = self.histories.lock().await;
         let history = self
             .store
-            .load_validated_history(stream_id, &mut histories)
+            .load_validated_history(stream_id, self.histories.get_mut())
             .await?;
-        drop(histories);
         self.validate_incarnation().await?;
         self.store
             .append_with_history(stream_id, expected_version, batch, history)
@@ -516,15 +514,11 @@ impl NatsEventStore {
             .await?;
         let stored = history
             .commits
-            .iter()
-            .find(|commit| commit.batch.commit_id() == commit_id)
+            .last()
+            .filter(|commit| commit.batch.commit_id() == commit_id)
             .ok_or_else(|| corrupt("published commit was not visible in aggregate history"))?;
         if stored.events.as_slice() != expected_events.events() {
             return Err(corrupt("published commit contains different events"));
-        }
-
-        if stored.events.last() != Some(expected_events.last()) {
-            return Err(corrupt("PubAck sequence contains a different final event"));
         }
         Ok(())
     }
@@ -1555,16 +1549,14 @@ struct MaterializedTransactionReceipt {
 
 struct RecordedBatch {
     events: Vec<RecordedEvent>,
-    last: RecordedEvent,
 }
 
 impl RecordedBatch {
     fn new(events: Vec<RecordedEvent>) -> Result<Self, EventStoreError> {
-        let last = events
-            .last()
-            .cloned()
-            .ok_or_else(|| invalid("event batch is empty"))?;
-        Ok(Self { events, last })
+        if events.is_empty() {
+            return Err(invalid("event batch is empty"));
+        }
+        Ok(Self { events })
     }
 
     fn events(&self) -> &[RecordedEvent] {
@@ -1573,10 +1565,6 @@ impl RecordedBatch {
 
     const fn len(&self) -> usize {
         self.events.len()
-    }
-
-    const fn last(&self) -> &RecordedEvent {
-        &self.last
     }
 
     fn into_events(self) -> Vec<RecordedEvent> {
@@ -3681,7 +3669,7 @@ mod tests {
         .expect("schema-4 decode");
         assert_eq!(decoded.transaction_event_ordinal, 0);
         assert_eq!(decoded.transaction_event_count, 1);
-        assert_eq!(&decoded.recorded, recorded.last());
+        assert_eq!(Some(&decoded.recorded), recorded.events().last());
         let mut builder = HistoryBuilder::default();
         builder.push(decoded).expect("schema-4 history event");
         let history = builder.finish(1).expect("schema-4 history");
