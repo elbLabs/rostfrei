@@ -1,32 +1,18 @@
 import assert from "node:assert/strict"
-import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
-import { spawn } from "node:child_process"
 
-import puppeteer from "puppeteer-core"
+import {
+  closeStudioBrowser,
+  launchStudioBrowser,
+  startStudioServer,
+} from "./browser.mjs"
 
-const root = fileURLToPath(new URL("..", import.meta.url))
-const port = 4176
-const url = `http://127.0.0.1:${port}`
-const vite = fileURLToPath(
-  new URL("../node_modules/vite/bin/vite.js", import.meta.url)
-)
-const server = spawn(
-  process.execPath,
-  [vite, "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
-  { cwd: root, stdio: "ignore" }
-)
+const { server, url } = await startStudioServer()
 
 let browser
 try {
-  await waitForServer(url)
-  browser = await puppeteer.launch({
-    executablePath: chromeExecutable(),
-    headless: true,
-    args: ["--disable-gpu"],
-  })
+  browser = await launchStudioBrowser()
   await browser
     .defaultBrowserContext()
     .overridePermissions(url, ["clipboard-read", "clipboard-sanitized-write"])
@@ -1889,8 +1875,11 @@ try {
     })
   )
 } finally {
-  await browser?.close()
-  server.kill("SIGTERM")
+  try {
+    await closeStudioBrowser(browser)
+  } finally {
+    await server.close()
+  }
 }
 
 function operationSnapshot(status, mode = "simulate") {
@@ -1992,30 +1981,4 @@ function testMessageSeries() {
       fidelity: "exact",
     },
   }
-}
-
-async function waitForServer(serverUrl) {
-  const deadline = Date.now() + 10000
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(serverUrl)
-      if (response.ok) return
-    } catch {
-      // Vite is still starting.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100))
-  }
-  throw new Error(`Vite did not start at ${serverUrl}`)
-}
-
-function chromeExecutable() {
-  const candidates = [
-    process.env.CHROME_BIN,
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-  ].filter(Boolean)
-  const executable = candidates.find((candidate) => existsSync(candidate))
-  if (!executable) throw new Error("Set CHROME_BIN to a Chrome executable")
-  return executable
 }
