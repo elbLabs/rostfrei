@@ -385,6 +385,12 @@ pub trait EventHistory: Send + Sync {
 
 #[async_trait]
 pub trait EventStore: EventHistory {
+    async fn append_session(&self) -> Result<Box<dyn crate::AppendSession + '_>, EventStoreError> {
+        Ok(Box::new(crate::append_session::ForwardingAppendSession {
+            store: self,
+        }))
+    }
+
     async fn append(
         &self,
         stream_id: &StreamId,
@@ -449,6 +455,10 @@ impl<History: EventHistory + ?Sized> EventHistory for Arc<History> {
 
 #[async_trait]
 impl<Store: EventStore + ?Sized> EventStore for Arc<Store> {
+    async fn append_session(&self) -> Result<Box<dyn crate::AppendSession + '_>, EventStoreError> {
+        self.as_ref().append_session().await
+    }
+
     async fn append(
         &self,
         stream_id: &StreamId,

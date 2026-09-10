@@ -1,3 +1,5 @@
+#[path = "event_store/append_sessions.rs"]
+mod append_sessions;
 #[path = "../src/event_store.rs"]
 mod event_store;
 #[path = "../src/event_store_config.rs"]
