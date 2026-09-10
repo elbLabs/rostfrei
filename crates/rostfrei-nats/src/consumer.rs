@@ -15,7 +15,7 @@ use rostfrei_messaging_core::{
     CallerMetadata, CommandAddress, CommandResponseAddress, ConsumeError, ConsumeErrorKind,
     ConsumerConfig, CorrelationId, DeliveryDisposition, DeliveryInfo, IntegrationEventAddress,
     MessageAddress, MessageConsumer, MessageConsumerFactory, MessageDelivery, MessageHandler,
-    MessageId, PublishableAddress, TraceContext,
+    MessageId, PublishableAddress, QuarantineFailureKind, QuarantinedMessage, TraceContext,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -51,6 +51,10 @@ pub struct QuarantineRecord {
     payload_truncated: bool,
     metadata: CallerMetadata,
     trace_context: Option<TraceContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    correlation_id: Option<CorrelationId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure_kind: Option<QuarantineFailureKind>,
     reason: String,
     attempt: u32,
     pending: u64,
@@ -61,6 +65,14 @@ pub struct QuarantineRecord {
 }
 
 impl QuarantineRecord {
+    pub const fn correlation_id(&self) -> Option<&CorrelationId> {
+        self.correlation_id.as_ref()
+    }
+
+    pub const fn failure_kind(&self) -> Option<QuarantineFailureKind> {
+        self.failure_kind
+    }
+
     pub fn message_id(&self) -> &str {
         &self.message_id
     }
@@ -103,6 +115,30 @@ impl QuarantineRecord {
 
     pub const fn consumer_sequence(&self) -> u64 {
         self.consumer_sequence
+    }
+}
+
+impl From<QuarantineRecord> for QuarantinedMessage {
+    fn from(record: QuarantineRecord) -> Self {
+        Self {
+            message_id: record.message_id,
+            address: record.address,
+            payload_base64: record.payload_base64,
+            payload_size: record.payload_size,
+            payload_sha256: record.payload_sha256,
+            payload_truncated: record.payload_truncated,
+            metadata: record.metadata,
+            trace_context: record.trace_context,
+            correlation_id: record.correlation_id,
+            failure_kind: record.failure_kind,
+            reason: record.reason,
+            attempt: record.attempt,
+            pending: record.pending,
+            source_sequence: record.source_sequence,
+            consumer_sequence: record.consumer_sequence,
+            source_stream: record.source_stream,
+            source_consumer: record.source_consumer,
+        }
     }
 }
 
@@ -401,6 +437,7 @@ where
             source_stream,
             config.durable_name().as_str(),
             "maximum delivery attempts exceeded",
+            QuarantineFailureKind::DeliveryAttemptsExhausted,
         );
         return quarantine_or_nak(
             context,
@@ -503,6 +540,7 @@ where
                 source_stream,
                 config.durable_name().as_str(),
                 "maximum delivery attempts exceeded",
+                QuarantineFailureKind::DeliveryAttemptsExhausted,
             );
             quarantine_or_nak(
                 &message.context,
@@ -521,6 +559,7 @@ where
                 source_stream,
                 config.durable_name().as_str(),
                 reason.as_str(),
+                QuarantineFailureKind::HandlerFailure,
             );
             quarantine_or_nak(
                 &message.context,
@@ -632,6 +671,7 @@ fn quarantine_record<A>(
     source_stream: &StreamName,
     source_consumer: &str,
     reason: &str,
+    failure_kind: QuarantineFailureKind,
 ) -> QuarantineRecord
 where
     A: PublishableAddress,
@@ -646,6 +686,8 @@ where
         payload_truncated: false,
         metadata: delivery.metadata().clone(),
         trace_context: delivery.trace_context().cloned(),
+        correlation_id: delivery.correlation_id().cloned(),
+        failure_kind: Some(failure_kind),
         reason: reason.to_owned(),
         attempt: delivery.attempt(),
         pending: delivery.pending(),
@@ -685,6 +727,10 @@ fn raw_quarantine_record(
         payload_truncated: false,
         metadata,
         trace_context,
+        correlation_id: headers
+            .and_then(|headers| single_header(headers, CORRELATION_ID_HEADER).ok().flatten())
+            .and_then(|value| CorrelationId::new(value).ok()),
+        failure_kind: Some(QuarantineFailureKind::InvalidSourceMessage),
         reason: reason.to_owned(),
         attempt: info.attempt(),
         pending: info.pending(),
@@ -880,6 +926,8 @@ mod tests {
             payload_truncated: false,
             metadata: CallerMetadata::new(),
             trace_context: None,
+            correlation_id: None,
+            failure_kind: Some(QuarantineFailureKind::InvalidSourceMessage),
             reason: "invalid source message".to_owned(),
             attempt: 1,
             pending: 0,
@@ -967,6 +1015,8 @@ mod tests {
 
         assert_eq!(record.payload_size(), None);
         assert_eq!(record.payload_sha256(), None);
+        assert_eq!(record.correlation_id(), None);
+        assert_eq!(record.failure_kind(), None);
         assert!(!record.payload_truncated());
     }
 }

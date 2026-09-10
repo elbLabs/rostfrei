@@ -6,6 +6,7 @@ mod error;
 mod message_series;
 mod metadata;
 mod publish;
+mod quarantine;
 mod query;
 mod scope;
 mod value;
@@ -49,6 +50,11 @@ pub use metadata::{
 pub use publish::{
     CommandPublisher, CommandResponsePublisher, IntegrationEventPublisher,
     MAX_MESSAGE_PAYLOAD_BYTES, OutboundMessage, PublishReceipt,
+};
+pub use quarantine::{
+    DEFAULT_QUARANTINE_PAGE_SIZE, MAX_QUARANTINE_PAGE_SIZE, QuarantineDiagnostic, QuarantineEntry,
+    QuarantineFailureKind, QuarantineFilter, QuarantineMessageKind, QuarantinePage,
+    QuarantineQuery, QuarantineReadError, QuarantineReader, QuarantinedMessage,
 };
 pub use query::{
     ApplicationErrorCode, DEFAULT_MAXIMUM_QUERY_RESPONSE_BYTES, DEFAULT_QUERY_TIMEOUT,
