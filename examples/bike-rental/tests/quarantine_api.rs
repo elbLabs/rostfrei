@@ -131,3 +131,111 @@ async fn poisoned_test_delivery_is_inspectable_through_catalog_and_cleared_by_re
         .await
         .unwrap();
 }
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn production_evidence_is_inspectable_after_workers_stop_and_survives_test_reset() {
+    let Ok(url) = std::env::var("ROSTFREI_NATS_URL") else {
+        return;
+    };
+    let application = format!("quarantine-prod-api-{}", std::process::id());
+    let connection = connect(&NatsConnectionConfig::new(
+        "quarantine-production-test",
+        url,
+    ))
+    .await
+    .unwrap();
+    let limits = BikeRentalNatsResourceLimits::new(16 * 1024 * 1024, 32 * 1024 * 1024, 512 * 1024);
+    let production = BikeRentalNatsRuntime::provision_with_resource_limits(
+        connection.clone(),
+        &application,
+        limits,
+    )
+    .await
+    .unwrap();
+    production.start_workers().await.unwrap();
+    let address = production
+        .config()
+        .context()
+        .command_address("rent-bicycle")
+        .unwrap();
+    connection
+        .jetstream()
+        .publish(
+            address.as_str().to_owned(),
+            "production-sensitive-payload".into(),
+        )
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let page = production
+                .quarantine_reader()
+                .list(rostfrei_messaging_core::QuarantineQuery::default())
+                .await
+                .unwrap();
+            if !page.items.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    production.stop_workers().await;
+
+    // Construct a fresh, inspection-only Tracer, with no operation state or runtime workers.
+    let tracer = TracerBuilder::new(
+        Arc::new(rostfrei::InMemoryEventStore::new()),
+        DomainRegistry::new(),
+    )
+    .with_production_quarantine_reader(production.quarantine_reader())
+    .build()
+    .unwrap();
+    let app = router(
+        tracer,
+        HttpConfig::inspection_only("quarantine-test").unwrap(),
+    );
+    let (_, catalog) = request(&app, "GET", "/catalog").await;
+    assert_eq!(catalog["contexts"], serde_json::json!([]));
+    let href = catalog["quarantine"]["production"]["listHref"]
+        .as_str()
+        .unwrap();
+    let (status, list) = request(&app, "GET", href).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["scope"], "production");
+    assert_eq!(list["retainedMessages"], "1");
+    let detail_href = list["items"][0]["detailHref"].as_str().unwrap();
+    let (status, detail) = request(&app, "GET", detail_href).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(detail["failureKind"], "invalid-source-message");
+    assert_eq!(detail["payload"]["status"], "redacted");
+    assert!(detail["payload"].get("base64").is_none());
+    assert!(detail["payload"].get("json").is_none());
+    assert!(!detail.to_string().contains("production-sensitive-payload"));
+
+    let test = BikeRentalNatsRuntime::provision_test_with_resource_limits(
+        connection.clone(),
+        &application,
+        limits,
+    )
+    .await
+    .unwrap();
+    test.reset(&demo_fixture().unwrap()).await.unwrap();
+    assert_eq!(request(&app, "GET", detail_href).await.1, detail);
+    test.stop_workers().await;
+    for runtime in [&production, &test] {
+        for stream in runtime.config().messaging().streams() {
+            connection
+                .delete_stream_if_exists(stream.name().as_str())
+                .await
+                .unwrap();
+        }
+        connection
+            .delete_stream_if_exists(runtime.config().event_store().stream_name())
+            .await
+            .unwrap();
+    }
+}
