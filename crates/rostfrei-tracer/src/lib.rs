@@ -5,6 +5,7 @@ mod correlation;
 mod input;
 mod message_series;
 mod operation;
+mod quarantine;
 mod runtime;
 mod service;
 pub mod transport;
@@ -23,8 +24,9 @@ pub use behavioral::{
 };
 pub use catalog::{
     AggregateInstanceCollection, AggregateInstanceSummary, CatalogAggregate, CatalogBehavioralTest,
-    CatalogCommand, CatalogCommandVersion, CatalogContext, CatalogTestRepository,
-    CatalogTestScenario, TestFixtureCollection, TestFixtureSummary, TracerCatalog,
+    CatalogCommand, CatalogCommandVersion, CatalogContext, CatalogQuarantine,
+    CatalogQuarantineScope, CatalogTestRepository, CatalogTestScenario, TestFixtureCollection,
+    TestFixtureSummary, TracerCatalog,
 };
 pub use command_bus::CommandBusTransport;
 pub use correlation::{
@@ -45,6 +47,11 @@ pub use operation::{
     CompletedDecision, OperationEvent, OperationEventEvidence, OperationEventEvidenceKind,
     OperationEventKind, OperationMode, OperationResult, OperationSnapshot, OperationStatus,
     OperationSubscription, PredictedDomainEvent, SubscriptionError, TouchedStreamParticipant,
+};
+pub use quarantine::{
+    QuarantineCollection, QuarantineDetail, QuarantineInspectionError, QuarantinePayload,
+    QuarantinePayloadContent, QuarantinePayloadStatus, QuarantineScope, QuarantineSource,
+    QuarantineSummary,
 };
 pub use rostfrei_fixtures::{
     Fixture, FixtureAggregate, FixtureApplyError, FixtureApplyReport,

@@ -15,7 +15,8 @@ use rostfrei_core::{
 use rostfrei_fixtures::Fixture;
 use rostfrei_messaging_core::{
     ApplicationErrorCode, CommandRejection as MessagingCommandRejection,
-    CommandRejectionClassification, CommandResponseOutcome,
+    CommandRejectionClassification, CommandResponseOutcome, QuarantineQuery, QuarantineReadError,
+    QuarantineReader, TrafficScope,
 };
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,9 @@ use crate::{
         ObservedCommandOutcome, ObservedMessageSeries, compare_message_series,
     },
     operation::{NewOperation, OperationCaptureSnapshot, OperationRecord, subscribe},
+    quarantine::{
+        self, QuarantineCollection, QuarantineDetail, QuarantineInspectionError, QuarantineScope,
+    },
     runtime::{
         CommandKey, ErasedCommandInputOptions, ErasedCommandSimulator, RuntimeBindings,
         RuntimeDecision, RuntimeSimulationError,
@@ -320,6 +324,7 @@ pub struct TracerBuilder {
     maximum_operations: usize,
     maximum_concurrent_operations: usize,
     trace_payload_policy: Arc<dyn TracePayloadPolicy>,
+    test_quarantine_reader: Option<Arc<dyn QuarantineReader>>,
 }
 
 impl TracerBuilder {
@@ -340,6 +345,7 @@ impl TracerBuilder {
             maximum_operations: DEFAULT_MAXIMUM_OPERATIONS,
             maximum_concurrent_operations: DEFAULT_MAXIMUM_CONCURRENT_OPERATIONS,
             trace_payload_policy: Arc::new(RedactTracePayloads),
+            test_quarantine_reader: None,
         }
     }
 
@@ -368,6 +374,12 @@ impl TracerBuilder {
     #[must_use]
     pub fn with_test_transport(mut self, transport: Arc<dyn CommandTransport>) -> Self {
         self.test_transport = Some(transport);
+        self
+    }
+
+    #[must_use]
+    pub fn with_test_quarantine_reader(mut self, reader: Arc<dyn QuarantineReader>) -> Self {
+        self.test_quarantine_reader = Some(reader);
         self
     }
 
@@ -474,6 +486,13 @@ impl TracerBuilder {
 
     pub fn build(self) -> Result<Tracer, RuntimeRegistrationError> {
         self.bindings.validate()?;
+        if self
+            .test_quarantine_reader
+            .as_ref()
+            .is_some_and(|reader| reader.traffic_scope() != TrafficScope::Test)
+        {
+            return Err(RuntimeRegistrationError::InvalidQuarantineScope { scope: "test" });
+        }
         if let Some(error) = self.fixture_registration_error.as_ref() {
             return Err(error.clone());
         }
@@ -498,7 +517,7 @@ impl TracerBuilder {
             )?;
         }
         let test_enabled = self.test_event_store.is_some() && self.test_transport.is_some();
-        let catalog = build_catalog(
+        let mut catalog = build_catalog(
             &self.bindings.registry,
             self.domain_model.as_ref(),
             test_enabled,
@@ -507,6 +526,14 @@ impl TracerBuilder {
             self.test_fixtures.keys().map(String::as_str),
             self.test_repository.is_some(),
         );
+        if let Some(reader) = &self.test_quarantine_reader {
+            catalog.quarantine = Some(crate::CatalogQuarantine {
+                test: Some(crate::CatalogQuarantineScope {
+                    application: reader.application().as_str().to_owned(),
+                    list_href: QuarantineScope::Test.list_href().to_owned(),
+                }),
+            });
+        }
         let maximum_concurrent_operations = self
             .maximum_concurrent_operations
             .min(self.maximum_operations)
@@ -539,6 +566,8 @@ impl TracerBuilder {
                 test_run_sequence: AtomicU64::new(0),
                 test_scenario_healthy: AtomicBool::new(true),
                 trace_payload_policy: self.trace_payload_policy,
+                test_quarantine_reader: self.test_quarantine_reader,
+                quarantine_permits: Semaphore::new(8),
             }),
         })
     }
@@ -687,6 +716,8 @@ struct TracerInner {
     test_run_sequence: AtomicU64,
     test_scenario_healthy: AtomicBool,
     trace_payload_policy: Arc<dyn TracePayloadPolicy>,
+    test_quarantine_reader: Option<Arc<dyn QuarantineReader>>,
+    quarantine_permits: Semaphore,
 }
 
 impl TracerInner {
@@ -847,6 +878,67 @@ struct OperationSubmission {
 }
 
 impl Tracer {
+    pub async fn quarantine_messages(
+        &self,
+        scope: QuarantineScope,
+        query: QuarantineQuery,
+    ) -> Result<QuarantineCollection, QuarantineInspectionError> {
+        quarantine::validate_query(&query)?;
+        let reader = self.quarantine_reader(scope)?;
+        let _permit = self
+            .inner
+            .quarantine_permits
+            .try_acquire()
+            .map_err(|_| QuarantineInspectionError::CapacityExhausted)?;
+        tokio::time::timeout(Duration::from_secs(6), async {
+            // Inspection remains useful after an unsuccessful reset; only an active reset is gated.
+            let _scenario = self.inner.test_scenario_gate.read().await;
+            let page = reader.list(query.clone()).await?;
+            Ok(quarantine::collection(
+                reader.application().as_str(),
+                scope,
+                &query,
+                &page,
+            ))
+        })
+        .await
+        .map_err(|_| QuarantineReadError::Timeout)?
+    }
+
+    pub async fn quarantine_message(
+        &self,
+        scope: QuarantineScope,
+        id: &str,
+    ) -> Result<QuarantineDetail, QuarantineInspectionError> {
+        let reader = self.quarantine_reader(scope)?;
+        let _permit = self
+            .inner
+            .quarantine_permits
+            .try_acquire()
+            .map_err(|_| QuarantineInspectionError::CapacityExhausted)?;
+        tokio::time::timeout(Duration::from_secs(6), async {
+            let _scenario = self.inner.test_scenario_gate.read().await;
+            let entry = reader.get(id).await?;
+            Ok(quarantine::detail(
+                reader.application().as_str(),
+                scope,
+                entry,
+            ))
+        })
+        .await
+        .map_err(|_| QuarantineReadError::Timeout)?
+    }
+
+    fn quarantine_reader(
+        &self,
+        scope: QuarantineScope,
+    ) -> Result<&dyn QuarantineReader, QuarantineInspectionError> {
+        match scope {
+            QuarantineScope::Test => self.inner.test_quarantine_reader.as_deref(),
+        }
+        .ok_or(QuarantineInspectionError::NotConfigured)
+    }
+
     pub fn catalog(&self) -> &TracerCatalog {
         &self.inner.catalog
     }
