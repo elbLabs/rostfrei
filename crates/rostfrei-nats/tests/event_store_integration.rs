@@ -21,8 +21,9 @@ use event_store_config::{
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventStore,
     EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion, MAX_EVENTS_PER_BATCH,
-    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
-    TransactionAppendOutcome, TransactionParticipant, derive_commit_id, derive_event_id,
+    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, RecordedEvent, StreamDirectory, StreamId,
+    StreamSummary, StreamVersion, TransactionAppendOutcome, TransactionParticipant,
+    derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
 use rostfrei_testing::event_store_contract;
@@ -58,6 +59,325 @@ fn check(condition: bool, context: &'static str) -> TestResult<()> {
 }
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+async fn directory_fixture(
+    label: &str,
+) -> TestResult<(async_nats::jetstream::Context, NatsEventStore)> {
+    let context = connect_context(&std::env::var("ROSTFREI_NATS_URL")?).await?;
+    let (bounded_context, stream_name) = unique_names(label)?;
+    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
+        .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
+    provision_event_store(&context, &config).await?;
+    let store = NatsEventStore::connect(context.clone(), config).await?;
+    Ok((context, store))
+}
+
+async fn append_directory_transaction(store: &NatsEventStore, operation: &str) -> TestResult<()> {
+    let primary = stream("directory-primary")?;
+    let secondary = StreamId::new(
+        AggregateType::new("OtherAggregate")?,
+        AggregateId::new("secondary")?,
+    );
+    let guard = stream("directory-guard")?;
+    store
+        .append_transaction(EventTransaction::new(
+            OperationId::new(operation)?,
+            ContentFingerprint::digest(operation),
+            vec![
+                TransactionParticipant::new(
+                    primary.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(&primary, operation, operation, &[b"one", b"two"])?),
+                ),
+                TransactionParticipant::new(
+                    secondary.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(&secondary, operation, operation, &[b"three"])?),
+                ),
+                TransactionParticipant::new(guard, ExpectedVersion::NoStream, None),
+            ],
+        ))
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
+async fn directory_handles_empty_control_only_and_transaction_histories() {
+    let (context, store) = directory_fixture("directory-controls")
+        .await
+        .expect("directory fixture");
+    let aggregate = stream("directory-primary").expect("aggregate identity");
+    let config = store.config();
+    assert!(
+        store
+            .list_streams(aggregate.aggregate_type())
+            .await
+            .expect("empty directory")
+            .is_empty()
+    );
+
+    for subject in [
+        config.transaction_subject("control-only"),
+        config.transaction_guard_subject("control-only", 0),
+    ] {
+        context
+            .publish(subject, br"{}".to_vec().into())
+            .await
+            .expect("publish control")
+            .await
+            .expect("control acknowledgement");
+        assert!(
+            store
+                .list_streams(aggregate.aggregate_type())
+                .await
+                .expect("control-only directory")
+                .is_empty()
+        );
+    }
+    append_directory_transaction(&store, "directory-transaction")
+        .await
+        .expect("transaction");
+    assert_eq!(
+        store
+            .list_streams(aggregate.aggregate_type())
+            .await
+            .expect("trailing receipt directory"),
+        vec![StreamSummary::new(aggregate.clone(), StreamVersion::new(2))]
+    );
+    let other = StreamId::new(
+        AggregateType::new("OtherAggregate").expect("other type"),
+        AggregateId::new("secondary").expect("other id"),
+    );
+    assert_eq!(
+        store
+            .list_streams(other.aggregate_type())
+            .await
+            .expect("other aggregate directory"),
+        vec![StreamSummary::new(other.clone(), StreamVersion::new(1))]
+    );
+    assert!(
+        store
+            .list_streams(&AggregateType::new("AbsentAggregate").expect("absent type"))
+            .await
+            .expect("absent aggregate directory")
+            .is_empty()
+    );
+    context
+        .publish(
+            config.transaction_guard_subject("trailing-guard", 0),
+            br"{}".to_vec().into(),
+        )
+        .await
+        .expect("publish trailing guard")
+        .await
+        .expect("guard acknowledgement");
+    assert_eq!(
+        store
+            .list_streams(aggregate.aggregate_type())
+            .await
+            .expect("trailing guard directory"),
+        vec![StreamSummary::new(aggregate, StreamVersion::new(2))]
+    );
+    context
+        .delete_stream(config.stream_name())
+        .await
+        .expect("cleanup directory stream");
+}
+
+#[tokio::test]
+#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
+async fn directory_excludes_appends_after_its_snapshot() {
+    let (context, store) = directory_fixture("directory-concurrent")
+        .await
+        .expect("directory fixture");
+    append_directory_transaction(&store, "before-snapshot")
+        .await
+        .expect("initial transaction");
+    let reached = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let directory = store
+        .clone()
+        .with_directory_snapshot_barriers(Arc::clone(&reached), Arc::clone(&release));
+    let primary = stream("directory-primary").expect("primary identity");
+    let later = stream("directory-later").expect("later identity");
+    let listing = directory.list_streams(primary.aggregate_type());
+    let append = async {
+        let _ = reached.wait().await;
+        store
+            .append(
+                &primary,
+                ExpectedVersion::Exact(StreamVersion::new(2)),
+                batch(&primary, "after-snapshot", "after-snapshot", &[b"later"])
+                    .expect("later batch"),
+            )
+            .await
+            .expect("concurrent append");
+        store
+            .append(
+                &later,
+                ExpectedVersion::NoStream,
+                batch(&later, "new-aggregate", "new-aggregate", &[b"new"]).expect("new batch"),
+            )
+            .await
+            .expect("new aggregate append");
+        let _ = release.wait().await;
+    };
+    let (snapshot, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(listing, append)
+    })
+    .await
+    .expect("bounded concurrent discovery");
+    assert_eq!(
+        snapshot.expect("snapshot directory"),
+        vec![StreamSummary::new(primary.clone(), StreamVersion::new(2))]
+    );
+    let mut expected = vec![
+        StreamSummary::new(primary, StreamVersion::new(3)),
+        StreamSummary::new(later, StreamVersion::new(1)),
+    ];
+    expected.sort_by(|left, right| left.stream_id().cmp(right.stream_id()));
+    assert_eq!(
+        store
+            .list_streams(&AggregateType::new("IntegrationAggregate").expect("aggregate type"))
+            .await
+            .expect("next directory"),
+        expected
+    );
+    context
+        .delete_stream(store.config().stream_name())
+        .await
+        .expect("cleanup directory stream");
+}
+
+#[tokio::test]
+#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
+async fn directory_rejects_transaction_events_without_a_valid_receipt() {
+    let (context, store) = directory_fixture("directory-corrupt")
+        .await
+        .expect("directory fixture");
+    schema_four_event_with_filler_is_not_loadable(&store, &context, store.config())
+        .await
+        .expect("corrupt receipt fixture");
+    let result = store
+        .list_streams(&AggregateType::new("IntegrationAggregate").expect("aggregate type"))
+        .await;
+    let error = result.expect_err("directory must validate transaction provenance");
+    assert_eq!(error.kind(), EventStoreErrorKind::CorruptHistory);
+    assert!(
+        error.message().contains("transaction receipt"),
+        "{}",
+        error.message()
+    );
+    context
+        .delete_stream(store.config().stream_name())
+        .await
+        .expect("cleanup directory stream");
+}
+
+#[tokio::test]
+#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
+async fn directory_rejects_version_gaps_and_incomplete_commits() {
+    for (label, version, count, reason) in [
+        ("directory-gap", 2, 1, "noncontiguous"),
+        ("directory-incomplete", 1, 2, "inside a commit"),
+    ] {
+        let (context, store) = directory_fixture(label).await.expect("directory fixture");
+        let aggregate = stream("corrupt-aggregate").expect("aggregate identity");
+        let event_batch = batch(&aggregate, label, label, &[b"corrupt"]).expect("event batch");
+        let config = store.config();
+        publish_raw_atomic_batch(
+            &context,
+            config,
+            label,
+            vec![
+                RawAtomicMessage {
+                    subject: config.aggregate_subject(
+                        aggregate.aggregate_type().as_str(),
+                        aggregate.aggregate_id().as_str(),
+                    ),
+                    payload: forged_transaction_event_payload_at(
+                        config,
+                        &aggregate,
+                        &event_batch,
+                        version,
+                        count,
+                    )
+                    .expect("corrupt coordinates"),
+                    expected_last_subject_sequence: Some(0),
+                    expectation_subject: None,
+                },
+                RawAtomicMessage {
+                    subject: config.transaction_guard_subject(label, 0),
+                    payload: br"{}".to_vec(),
+                    expected_last_subject_sequence: None,
+                    expectation_subject: None,
+                },
+            ],
+        )
+        .await
+        .expect("publish corrupt batch");
+        let error = store
+            .list_streams(aggregate.aggregate_type())
+            .await
+            .expect_err("corrupt history must not be listed");
+        assert_eq!(error.kind(), EventStoreErrorKind::CorruptHistory);
+        assert!(error.message().contains(reason), "{}", error.message());
+        context
+            .delete_stream(config.stream_name())
+            .await
+            .expect("cleanup directory stream");
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
+async fn directory_control_only_snapshot_excludes_a_concurrent_transaction() {
+    let (context, store) = directory_fixture("directory-control-race")
+        .await
+        .expect("directory fixture");
+    context
+        .publish(
+            store.config().transaction_guard_subject("control", 0),
+            br"{}".to_vec().into(),
+        )
+        .await
+        .expect("publish control")
+        .await
+        .expect("control acknowledgement");
+    let reached = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let directory = store
+        .clone()
+        .with_directory_snapshot_barriers(Arc::clone(&reached), Arc::clone(&release));
+    let aggregate_type = AggregateType::new("IntegrationAggregate").expect("aggregate type");
+    let listing = directory.list_streams(&aggregate_type);
+    let append = async {
+        let _ = reached.wait().await;
+        append_directory_transaction(&store, "after-control-snapshot")
+            .await
+            .expect("concurrent transaction");
+        let _ = release.wait().await;
+    };
+    let (snapshot, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(listing, append)
+    })
+    .await
+    .expect("bounded concurrent discovery");
+    assert!(snapshot.expect("control-only snapshot").is_empty());
+    assert_eq!(
+        store
+            .list_streams(&aggregate_type)
+            .await
+            .expect("new snapshot")
+            .len(),
+        1
+    );
+    context
+        .delete_stream(store.config().stream_name())
+        .await
+        .expect("cleanup directory stream");
+}
 
 #[tokio::test]
 #[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
@@ -1842,6 +2162,16 @@ fn forged_transaction_event_payload<'a>(
     stream_id: &'a StreamId,
     batch: &'a EventBatch,
 ) -> TestResult<Vec<u8>> {
+    forged_transaction_event_payload_at(config, stream_id, batch, 1, 1)
+}
+
+fn forged_transaction_event_payload_at<'a>(
+    config: &'a NatsEventStoreConfig,
+    stream_id: &'a StreamId,
+    batch: &'a EventBatch,
+    stream_version: u64,
+    event_count: u32,
+) -> TestResult<Vec<u8>> {
     let event = batch
         .events()
         .first()
@@ -1854,7 +2184,7 @@ fn forged_transaction_event_payload<'a>(
             aggregate_type: stream_id.aggregate_type().as_str(),
             aggregate_id: stream_id.aggregate_id().as_str(),
         },
-        stream_version: 1,
+        stream_version,
         commit_id: batch.commit_id().as_str(),
         operation_id: batch.operation_id().as_str(),
         operation_fingerprint: batch.operation_fingerprint().to_hex(),
@@ -1865,9 +2195,9 @@ fn forged_transaction_event_payload<'a>(
             .causation_id()
             .map(rostfrei_messaging_core::CausationId::as_str),
         commit_event_ordinal: 0,
-        commit_event_count: 1,
+        commit_event_count: event_count,
         transaction_event_ordinal: 0,
-        transaction_event_count: 1,
+        transaction_event_count: event_count,
         event_id: event.event_id().as_str(),
         event_type: event.event_type(),
         event_schema_version: event.schema_version(),

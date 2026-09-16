@@ -50,12 +50,14 @@ pub struct NatsEventStore {
     context: jetstream::Context,
     config: NatsEventStoreConfig,
     #[cfg(test)]
-    transaction_receipt_miss_hook: Option<TransactionReceiptMissHook>,
+    transaction_receipt_miss_hook: Option<ReadBarrierHook>,
+    #[cfg(test)]
+    directory_snapshot_hook: Option<ReadBarrierHook>,
 }
 
 #[cfg(test)]
 #[derive(Clone)]
-struct TransactionReceiptMissHook {
+struct ReadBarrierHook {
     reached: Arc<tokio::sync::Barrier>,
     release: Arc<tokio::sync::Barrier>,
 }
@@ -77,6 +79,8 @@ impl NatsEventStore {
             config,
             #[cfg(test)]
             transaction_receipt_miss_hook: None,
+            #[cfg(test)]
+            directory_snapshot_hook: None,
         })
     }
 
@@ -105,7 +109,18 @@ impl NatsEventStore {
         reached: Arc<tokio::sync::Barrier>,
         release: Arc<tokio::sync::Barrier>,
     ) -> Self {
-        self.transaction_receipt_miss_hook = Some(TransactionReceiptMissHook { reached, release });
+        self.transaction_receipt_miss_hook = Some(ReadBarrierHook { reached, release });
+        self
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn with_directory_snapshot_barriers(
+        mut self,
+        reached: Arc<tokio::sync::Barrier>,
+        release: Arc<tokio::sync::Barrier>,
+    ) -> Self {
+        self.directory_snapshot_hook = Some(ReadBarrierHook { reached, release });
         self
     }
 
@@ -811,6 +826,9 @@ impl EventHistory for NatsEventStore {
 
 #[async_trait]
 impl StreamDirectory for NatsEventStore {
+    /// Lists committed aggregate versions at the stream position captured at entry.
+    /// Later appends are excluded; receipt and guard subjects do not create entries.
+    /// Discovered transactional histories receive the same provenance validation as `load`.
     async fn list_streams(
         &self,
         aggregate_type: &AggregateType,
@@ -830,6 +848,11 @@ impl StreamDirectory for NatsEventStore {
 
         let subject_filter = self.config.aggregate_subject_filter();
         let last_sequence = state.last_sequence;
+        #[cfg(test)]
+        if let Some(hook) = &self.directory_snapshot_hook {
+            let _ = hook.reached.wait().await;
+            let _ = hook.release.wait().await;
+        }
         let mut next_sequence = state.first_sequence;
         let mut histories = BTreeMap::<StreamId, (HistoryBuilder, u64)>::new();
         loop {
@@ -839,9 +862,8 @@ impl StreamDirectory for NatsEventStore {
             {
                 Ok(message) => message,
                 Err(error) if error.kind() == LastRawMessageErrorKind::NoMessageFound => {
-                    return Err(corrupt(
-                        "event-store directory ended before its last message",
-                    ));
+                    // Remaining stream positions can belong entirely to receipts/guards.
+                    break;
                 }
                 Err(error) => {
                     return Err(unavailable(format!(
@@ -849,10 +871,14 @@ impl StreamDirectory for NatsEventStore {
                     )));
                 }
             };
-            if message.sequence < next_sequence || message.sequence > last_sequence {
+            if message.sequence < next_sequence {
                 return Err(corrupt(
                     "event-store directory returned an invalid stream sequence",
                 ));
+            }
+            if message.sequence > last_sequence {
+                // A matching event was appended after the directory snapshot.
+                break;
             }
 
             let decoded = decode_consumed_event(
@@ -881,18 +907,28 @@ impl StreamDirectory for NatsEventStore {
                 .checked_add(1)
                 .ok_or_else(|| corrupt("JetStream sequence space overflowed"))?;
         }
-        histories
+        let histories = histories
             .into_iter()
             .map(|(stream_id, (history, last_sequence))| {
-                let history = history.finish(last_sequence)?;
-                let stream_version = history
-                    .events
-                    .last()
-                    .map(RecordedEvent::stream_version)
-                    .ok_or_else(|| corrupt("aggregate history contains no committed events"))?;
-                Ok(StreamSummary::new(stream_id, stream_version))
+                Ok((stream_id, Arc::new(history.finish(last_sequence)?)))
             })
-            .collect()
+            .collect::<Result<BTreeMap<_, _>, EventStoreError>>()?;
+        let mut raw_histories = histories
+            .iter()
+            .map(|(stream_id, history)| (stream_id.clone(), Arc::clone(history)))
+            .collect();
+        let mut summaries = Vec::with_capacity(histories.len());
+        for (stream_id, history) in histories {
+            self.validate_transaction_history(&history, &mut raw_histories)
+                .await?;
+            let stream_version = history
+                .events
+                .last()
+                .map(RecordedEvent::stream_version)
+                .ok_or_else(|| corrupt("aggregate history contains no committed events"))?;
+            summaries.push(StreamSummary::new(stream_id, stream_version));
+        }
+        Ok(summaries)
     }
 }
 
