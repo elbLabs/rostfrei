@@ -1246,6 +1246,7 @@ dependencies = [
  "base64",
  "futures-util",
  "nkeys",
+ "percent-encoding",
  "rostfrei",
  "rostfrei-core",
  "rostfrei-fixtures",
