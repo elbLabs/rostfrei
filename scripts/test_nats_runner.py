@@ -129,6 +129,27 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Could not remove test container"):
                 test_nats.run(["cargo", "test"])
 
+    def test_default_run_prefetches_the_offline_fixture_lockfile(self):
+        with (
+            patch("sys.argv", ["test_nats.py"]),
+            patch("test_nats.run_command", return_value=0) as fetch,
+            patch("test_nats.run", return_value=0) as run,
+        ):
+            self.assertEqual(test_nats.main(), 0)
+        self.assertEqual(fetch.call_args.args[0], [
+            "cargo", "fetch", "--locked", "--manifest-path", str(test_nats.FIXTURE_MANIFEST),
+        ])
+        run.assert_called_once_with(test_nats.DEFAULT_COMMAND, 30)
+
+    def test_failed_dependency_preparation_does_not_start_a_broker(self):
+        with (
+            patch("sys.argv", ["test_nats.py"]),
+            patch("test_nats.run_command", return_value=7),
+            patch("test_nats.run") as run,
+        ):
+            self.assertEqual(test_nats.main(), 7)
+        run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

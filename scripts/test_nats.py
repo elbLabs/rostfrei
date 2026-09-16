@@ -22,6 +22,7 @@ DEFAULT_COMMAND = [
     "cargo", "test", "--locked", "--workspace", "--all-features",
     "--", "--test-threads=1",
 ]
+FIXTURE_MANIFEST = ROOT / "crates/rostfrei-macros/tests/dependency-matrix/Cargo.toml"
 LIMITS = {
     "ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES": "67108864",
     "ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES": "268435456",
@@ -151,6 +152,15 @@ def main():
 
     previous = signal.signal(signal.SIGTERM, terminate)
     try:
+        if not command:
+            # The macro dependency-matrix test deliberately builds offline with
+            # its own lockfile, which can pin different crates than the workspace.
+            result = run_command(
+                ["cargo", "fetch", "--locked", "--manifest-path", str(FIXTURE_MANIFEST)],
+                dict(os.environ),
+            )
+            if result:
+                return result
         return run(command or DEFAULT_COMMAND, args.ready_timeout)
     except KeyboardInterrupt:
         return 130
