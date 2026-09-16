@@ -693,6 +693,13 @@ impl BikeRentalNatsRuntime {
         self.transport.clone()
     }
 
+    pub fn quarantine_reader(&self) -> Arc<dyn rostfrei_messaging_core::QuarantineReader> {
+        Arc::new(rostfrei_nats::NatsQuarantineReader::new(
+            self.connection.jetstream().clone(),
+            self.config.messaging.topology().clone(),
+        ))
+    }
+
     pub async fn apply_fixture(
         &self,
         fixture: &Fixture,

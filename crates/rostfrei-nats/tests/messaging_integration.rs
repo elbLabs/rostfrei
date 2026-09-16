@@ -64,7 +64,6 @@ fn checked_add_usize(value: usize, increment: usize, context: &'static str) -> T
         .ok_or_else(|| format!("{context} exceeds usize").into())
 }
 
-const TEST_NATS_URL_ENV: &str = "ROSTFREI_NATS_URL";
 const TRACE_PARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -148,9 +147,7 @@ impl Fixture {
 
 #[tokio::test]
 async fn immutable_command_response_roundtrip_reconciles_duplicates_and_conflicts() {
-    let Some(url) = test_url() else {
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let fixture = Fixture::new(url).await.expect("messaging fixture");
     let command_address = fixture
         .command_address("durable-response")
@@ -278,15 +275,9 @@ async fn assert_absent_response_times_out(
     Ok(())
 }
 
-fn test_url() -> Option<String> {
-    std::env::var(TEST_NATS_URL_ENV).ok()
-}
-
 #[tokio::test]
 async fn durable_consumer_rejects_unsafe_delivery_configuration() -> TestResult<()> {
-    let Some(url) = test_url() else {
-        return Ok(());
-    };
+    let url = rostfrei_testing::integration::nats_url()?;
     let fixture = Fixture::new(url).await?;
     let factory = fixture
         .connection
@@ -431,9 +422,7 @@ async fn application_scope_guard_results(
 
 #[tokio::test]
 async fn puback_confirms_stream_sequence_duplicate_and_owned_headers() {
-    let Some(url) = test_url() else {
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let fixture = Fixture::new(url).await.expect("messaging fixture");
     let address = fixture
         .command_address("publish")
@@ -624,7 +613,8 @@ async fn publish_disposition_commands(
                     id,
                     format!(r#"{{"kind":"{prefix}"}}"#).into_bytes(),
                 )?
-                .with_metadata(metadata),
+                .with_metadata(metadata)
+                .with_correlation_id(CorrelationId::new("quarantine-correlation")?),
             )
             .await?;
     }
@@ -662,9 +652,7 @@ fn assert_consumer_rejects_test_scope(
 
 #[tokio::test]
 async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() {
-    let Some(url) = test_url() else {
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let fixture = Fixture::new(url).await.expect("messaging fixture");
     let address = fixture
         .command_address("consume")
@@ -745,6 +733,14 @@ async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() 
         br#"{"kind":"quarantine"}"#
     );
     assert_eq!(record.reason(), "test quarantine");
+    assert_eq!(
+        record.correlation_id().map(CorrelationId::as_str),
+        Some("quarantine-correlation")
+    );
+    assert_eq!(
+        record.failure_kind(),
+        Some(rostfrei_messaging_core::QuarantineFailureKind::HandlerFailure)
+    );
     assert_eq!(record.attempt(), 1);
     assert!(record.source_sequence() > 0);
 
@@ -878,9 +874,7 @@ impl QueryHandler<Value, Value> for RoundTripHandler {
 
 #[tokio::test]
 async fn core_nats_query_roundtrip_preserves_errors_and_does_not_touch_jetstream() {
-    let Some(url) = test_url() else {
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let fixture = Fixture::new(url).await.expect("messaging fixture");
     let before = fixture
         .message_counts()
@@ -977,9 +971,7 @@ impl QueryHandler<Value, Value> for QueueHandler {
 
 #[tokio::test]
 async fn query_servers_in_one_queue_group_share_requests() {
-    let Some(url) = test_url() else {
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let fixture = Fixture::new(url).await.expect("messaging fixture");
     let address = fixture.query_address("queue").expect("queue query address");
     let queue_group = QueueGroup::new(format!(

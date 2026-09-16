@@ -7,9 +7,9 @@ license.workspace = true
 
 [dependencies]
 thiserror.workspace = true
-rostfrei-core = { path = "../rostfrei-core" }
-rostfrei-domain = { path = "../rostfrei-domain" }
-rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
+rostfrei-core.workspace = true
+rostfrei-domain.workspace = true
+rostfrei-messaging-core.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
