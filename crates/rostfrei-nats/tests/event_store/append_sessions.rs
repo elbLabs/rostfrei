@@ -80,6 +80,136 @@ async fn sessions_satisfy_direct_and_transaction_contracts() -> TestResult<()> {
 
 #[tokio::test]
 #[ignore = "requires ROSTFREI_NATS_URL"]
+async fn session_load_rejects_history_without_receipt_on_every_attempt() -> TestResult<()> {
+    let (context, store) = setup("session-missing-receipt-load").await?;
+    let aggregate = publish_schema_four_event_without_receipt(&context, store.config()).await?;
+    let session = store.append_session().await?;
+    let first_load = session.load(&aggregate).await;
+    let second_load = session.load(&aggregate).await;
+    context.delete_stream(store.config().stream_name()).await?;
+
+    assert!(
+        matches!(&first_load, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory),
+        "session exposed history without a transaction receipt: {first_load:?}"
+    );
+    assert!(
+        matches!(&second_load, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory),
+        "failed validation left trusted history in the session cache: {second_load:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires ROSTFREI_NATS_URL"]
+async fn session_direct_append_rejects_history_without_receipt_before_writing() -> TestResult<()> {
+    let (context, store) = setup("session-missing-receipt-append").await?;
+    let aggregate = publish_schema_four_event_without_receipt(&context, store.config()).await?;
+    let before = broker_position(&context, &store).await?;
+    let session = store.append_session().await?;
+    // Deliberately skip load: append must validate its lazily loaded history too.
+    let result = session
+        .append(
+            &aggregate,
+            ExpectedVersion::Exact(StreamVersion::new(1)),
+            batch(
+                &aggregate,
+                "new-operation",
+                "new-content",
+                &[b"must-not-write"],
+            )?,
+        )
+        .await;
+    let after = broker_position(&context, &store).await?;
+    context.delete_stream(store.config().stream_name()).await?;
+
+    assert!(
+        matches!(&result, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory),
+        "append trusted history without a transaction receipt: {result:?}"
+    );
+    assert_eq!(after, before, "rejected append published new messages");
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires ROSTFREI_NATS_URL"]
+async fn session_transaction_rejects_writer_history_without_receipt_before_writing()
+-> TestResult<()> {
+    transaction_rejects_history_without_receipt(true).await
+}
+
+#[tokio::test]
+#[ignore = "requires ROSTFREI_NATS_URL"]
+async fn session_transaction_rejects_read_guard_history_without_receipt_before_writing()
+-> TestResult<()> {
+    transaction_rejects_history_without_receipt(false).await
+}
+
+async fn transaction_rejects_history_without_receipt(
+    invalid_participant_writes: bool,
+) -> TestResult<()> {
+    let (context, store) = setup("session-missing-receipt-transaction").await?;
+    let invalid = publish_schema_four_event_without_receipt(&context, store.config()).await?;
+    let valid = stream("valid-writer")?;
+    let operation = "new-transaction";
+    let operation_id = OperationId::new(operation)?;
+    let invalid_batch = if invalid_participant_writes {
+        Some(batch(&invalid, operation, operation, &[b"invalid-write"])?)
+    } else {
+        None
+    };
+    let transaction = EventTransaction::new(
+        operation_id.clone(),
+        ContentFingerprint::digest(operation),
+        vec![
+            TransactionParticipant::new(
+                valid.clone(),
+                ExpectedVersion::NoStream,
+                Some(batch(&valid, operation, operation, &[b"valid-write"])?),
+            ),
+            TransactionParticipant::new(
+                invalid,
+                ExpectedVersion::Exact(StreamVersion::new(1)),
+                invalid_batch,
+            ),
+        ],
+    );
+    let session = store.append_session().await?;
+    // Mix a cached valid participant with an invalid one loaded during append.
+    assert!(session.load(&valid).await?.is_empty());
+    let before = broker_position(&context, &store).await?;
+    let result = session.append_transaction(transaction).await;
+    let after = broker_position(&context, &store).await?;
+    let valid_history = store.load(&valid).await;
+    let receipt = store.load_transaction_receipt(&operation_id).await;
+    context.delete_stream(store.config().stream_name()).await?;
+
+    assert!(
+        matches!(&result, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory),
+        "transaction trusted participant history without a receipt: {result:?}"
+    );
+    assert_eq!(after, before, "rejected transaction published new messages");
+    assert!(
+        valid_history?.is_empty(),
+        "valid writer was partially committed"
+    );
+    assert!(
+        receipt?.is_none(),
+        "rejected transaction persisted a receipt"
+    );
+    Ok(())
+}
+
+async fn broker_position(
+    context: &async_nats::jetstream::Context,
+    store: &NatsEventStore,
+) -> TestResult<(u64, u64)> {
+    let stream = context.get_stream(store.config().stream_name()).await?;
+    let state = &stream.cached_info().state;
+    Ok((state.messages, state.last_sequence))
+}
+
+#[tokio::test]
+#[ignore = "requires ROSTFREI_NATS_URL"]
 #[allow(clippy::too_many_lines)]
 async fn append_request_count_does_not_grow_with_loaded_history() -> TestResult<()> {
     let (context, store) = setup("session-read-cost").await?;
