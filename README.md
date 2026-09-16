@@ -186,6 +186,38 @@ by participating packages and executes each package's `rostfrei-domain-check`
 target to validate its compiled domain model. A commit is rejected when either
 check or Clippy reports an error.
 
+### Crate versions and releases
+
+Framework crates share `[workspace.package].version`. Internal dependencies,
+including renamed dependencies, inherit their paths and version requirements
+from `[workspace.dependencies]`. CI checks this with:
+
+```sh
+python3 scripts/versions.py check
+```
+
+To prepare a new version, use Python 3.11+ and the repository Rust toolchain:
+
+```sh
+python3 scripts/versions.py bump 0.0.5-alpha
+```
+
+This updates the root manifest and both Cargo lockfiles, including the standalone
+macro dependency-matrix fixture. Cargo runs offline and retains locked registry
+versions; dependencies must already be cached. On failure, the command restores
+the manifest and lockfiles. Review and commit the resulting diff together.
+The fixture packages keep their private `0.0.0` versions.
+
+The **Prepare GitHub release** workflow must run from `main` with a tag matching
+the shared version exactly, including the `v` prefix (for example,
+`v0.0.5-alpha`). You can check that locally with:
+
+```sh
+python3 scripts/versions.py check --tag v0.0.5-alpha
+```
+
+The workflow creates a draft GitHub release; it does not publish crates.
+
 ## License
 
 Copyright (c) 2026 elbtech.dev.
