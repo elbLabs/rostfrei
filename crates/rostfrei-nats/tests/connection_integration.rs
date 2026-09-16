@@ -193,6 +193,65 @@ async fn authentication_configuration_retains_reconnect_health_and_drain() -> Te
 
 #[tokio::test]
 #[ignore = "requires nats-server"]
+async fn signed_authentication_challenges_work_on_connect_and_reconnect() -> TestResult {
+    let key_pair = Arc::new(nkeys::KeyPair::new_user());
+    let public_key = key_pair.public_key();
+    let mut server = Server::new(&format!(
+        "authorization {{ users: [{{ nkey: \"{public_key}\" }}] }}"
+    ));
+    server.start().await;
+    let signed_challenges = Arc::new(AtomicUsize::new(0));
+    let challenges = Arc::clone(&signed_challenges);
+    let config =
+        NatsConnectionConfig::new("signed-auth", server.url()).with_auth_callback(move |nonce| {
+            let key_pair = Arc::clone(&key_pair);
+            let challenges = Arc::clone(&challenges);
+            async move {
+                assert!(
+                    !nonce.is_empty(),
+                    "server must supply an authentication challenge"
+                );
+                let signature = key_pair.sign(&nonce).map_err(async_nats::AuthError::new)?;
+                let mut auth = async_nats::Auth::new();
+                auth.nkey = Some(key_pair.public_key());
+                auth.signature = Some(signature);
+                challenges.fetch_add(1, Ordering::SeqCst);
+                Ok(auth)
+            }
+        });
+
+    let connection = connect(&config).await?;
+    connection.check_health().await?;
+    assert_eq!(signed_challenges.load(Ordering::SeqCst), 1);
+    server.stop();
+    wait_for_health(&connection, ConnectionHealth::Disconnected).await;
+    server.start().await;
+    wait_for_health(&connection, ConnectionHealth::Connected).await;
+    connection.check_health().await?;
+    assert_eq!(signed_challenges.load(Ordering::SeqCst), 2);
+    connection.drain().await?;
+    assert_eq!(connection.health(), ConnectionHealth::Closed);
+
+    let wrong_key = Arc::new(nkeys::KeyPair::new_user());
+    let invalid = config.with_auth_callback(move |nonce| {
+        let wrong_key = Arc::clone(&wrong_key);
+        let public_key = public_key.clone();
+        async move {
+            let mut auth = async_nats::Auth::new();
+            auth.nkey = Some(public_key);
+            auth.signature = Some(wrong_key.sign(&nonce).map_err(async_nats::AuthError::new)?);
+            Ok(auth)
+        }
+    });
+    assert!(matches!(
+        connect(&invalid).await,
+        Err(NatsError::Connection)
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires nats-server"]
 async fn token_authentication_retains_version_checks_and_tls_requirement() -> TestResult {
     let mut server = Server::new("authorization { token: test-token }");
     server.start().await;
