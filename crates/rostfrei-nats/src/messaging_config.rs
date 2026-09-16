@@ -1,4 +1,4 @@
-use std::{fmt, time::Duration};
+use std::{fmt, future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
 
 use rostfrei_messaging_core::{AddressKind, ApplicationName, TrafficScope};
 
@@ -347,6 +347,11 @@ impl fmt::Display for ServerVersion {
     }
 }
 
+/// Connection settings with application-owned authentication and TLS configuration.
+///
+/// Rostfrei owns initial connection establishment, reconnect policy, lifecycle
+/// events, version checks, health tracking, and graceful drain. Authentication
+/// builders replace the previously selected authentication method.
 #[derive(Clone)]
 pub struct NatsConnectionConfig {
     client_name: String,
@@ -354,7 +359,25 @@ pub struct NatsConnectionConfig {
     connection_timeout: Duration,
     drain_timeout: Duration,
     minimum_server_version: ServerVersion,
+    authentication: Option<Authentication>,
+    tls_required: bool,
+    root_certificates: Option<PathBuf>,
+    client_certificate: Option<(PathBuf, PathBuf)>,
 }
+
+#[derive(Clone)]
+enum Authentication {
+    Token(String),
+    UserAndPassword { username: String, password: String },
+    Callback(Arc<AuthenticationCallback>),
+}
+
+type AuthenticationCallback = dyn Fn(
+        Vec<u8>,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<async_nats::Auth, async_nats::AuthError>> + Send + Sync>,
+    > + Send
+    + Sync;
 
 impl NatsConnectionConfig {
     pub fn new(client_name: impl Into<String>, server_urls: impl Into<String>) -> Self {
@@ -364,6 +387,10 @@ impl NatsConnectionConfig {
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
             minimum_server_version: MINIMUM_NATS_SERVER_VERSION,
+            authentication: None,
+            tls_required: false,
+            root_certificates: None,
+            client_certificate: None,
         }
     }
 
@@ -378,6 +405,10 @@ impl NatsConnectionConfig {
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
             minimum_server_version: MINIMUM_NATS_SERVER_VERSION,
+            authentication: None,
+            tls_required: false,
+            root_certificates: None,
+            client_certificate: None,
         }
     }
 
@@ -397,6 +428,108 @@ impl NatsConnectionConfig {
     pub const fn with_minimum_server_version(mut self, version: ServerVersion) -> Self {
         self.minimum_server_version = version;
         self
+    }
+
+    /// Authenticates using a token, replacing any previous authentication method.
+    #[must_use]
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        self.authentication = Some(Authentication::Token(token.into()));
+        self
+    }
+
+    /// Authenticates using a username and password, replacing any previous method.
+    #[must_use]
+    pub fn with_user_and_password(
+        mut self,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        self.authentication = Some(Authentication::UserAndPassword {
+            username: username.into(),
+            password: password.into(),
+        });
+        self
+    }
+
+    /// Obtains authentication for each connection attempt, including reconnects.
+    ///
+    /// The callback receives the server nonce and returns credentials or a signed
+    /// challenge response. It replaces any previous authentication method and is
+    /// bounded by the connection timeout. It does not receive lifecycle events.
+    #[must_use]
+    pub fn with_auth_callback<F, Fut>(mut self, callback: F) -> Self
+    where
+        F: Fn(Vec<u8>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<async_nats::Auth, async_nats::AuthError>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.authentication = Some(Authentication::Callback(Arc::new(move |nonce| {
+            Box::pin(callback(nonce))
+        })));
+        self
+    }
+
+    /// Requires TLS using the system trust roots unless custom roots are supplied.
+    #[must_use]
+    pub const fn with_tls(mut self) -> Self {
+        self.tls_required = true;
+        self
+    }
+
+    /// Requires TLS and trusts the certificates in a PEM bundle.
+    #[must_use]
+    pub fn with_root_certificates(mut self, path: impl Into<PathBuf>) -> Self {
+        self.root_certificates = Some(path.into());
+        self.tls_required = true;
+        self
+    }
+
+    /// Requires TLS and presents a PEM client certificate chain and private key.
+    #[must_use]
+    pub fn with_client_certificate(
+        mut self,
+        certificate: impl Into<PathBuf>,
+        key: impl Into<PathBuf>,
+    ) -> Self {
+        self.client_certificate = Some((certificate.into(), key.into()));
+        self.tls_required = true;
+        self
+    }
+
+    pub(crate) fn connect_options(&self) -> async_nats::ConnectOptions {
+        let mut options = match &self.authentication {
+            None => async_nats::ConnectOptions::new(),
+            Some(Authentication::Token(token)) => {
+                async_nats::ConnectOptions::with_token(token.clone())
+            }
+            Some(Authentication::UserAndPassword { username, password }) => {
+                async_nats::ConnectOptions::with_user_and_password(
+                    username.clone(),
+                    password.clone(),
+                )
+            }
+            Some(Authentication::Callback(callback)) => {
+                let callback = Arc::clone(callback);
+                let connection_timeout = self.connection_timeout;
+                async_nats::ConnectOptions::with_auth_callback(move |nonce| {
+                    let authentication = callback(nonce);
+                    async move {
+                        tokio::time::timeout(connection_timeout, authentication)
+                            .await
+                            .map_err(|_| async_nats::AuthError::new("authentication timed out"))?
+                    }
+                })
+            }
+        };
+        if let Some(path) = &self.root_certificates {
+            options = options.add_root_certificates(path.clone());
+        }
+        if let Some((certificate, key)) = &self.client_certificate {
+            options = options.add_client_certificate(certificate.clone(), key.clone());
+        }
+        options.require_tls(self.tls_required)
     }
 
     pub fn validate(&self) -> Result<(), NatsError> {
@@ -462,6 +595,10 @@ impl fmt::Debug for NatsConnectionConfig {
             .field("connection_timeout", &self.connection_timeout)
             .field("drain_timeout", &self.drain_timeout)
             .field("minimum_server_version", &self.minimum_server_version)
+            .field("has_authentication", &self.authentication.is_some())
+            .field("tls_required", &self.tls_required)
+            .field("has_root_certificates", &self.root_certificates.is_some())
+            .field("has_client_certificate", &self.client_certificate.is_some())
             .finish()
     }
 }
@@ -472,6 +609,24 @@ mod tests {
 
     const VALID_SERVER_VERSION: Result<(), NatsError> = ServerVersion::new(2, 10, 0).validate();
     const INVALID_SERVER_VERSION: Result<(), NatsError> = ServerVersion::new(0, 10, 0).validate();
+
+    #[test]
+    fn connection_debug_omits_authentication_secrets() {
+        let config =
+            NatsConnectionConfig::new("application", "nats://url-user:url-password@localhost:4222")
+                .with_user_and_password("configured-user", "configured-password");
+        let debug = format!("{config:?}");
+        for secret in [
+            "url-user",
+            "url-password",
+            "configured-user",
+            "configured-password",
+        ] {
+            assert!(!debug.contains(secret));
+        }
+        let config = config.with_token("configured-token");
+        assert!(!format!("{config:?}").contains("configured-token"));
+    }
 
     #[test]
     fn server_versions_are_const_validated() {

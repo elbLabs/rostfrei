@@ -86,6 +86,19 @@ names from rostfrei, ADR 0005's deployment-owned event-store naming, and ADR
 message names, schemas, delivery classification, environment variables, and
 operator composition.
 
+## Connection authentication and TLS
+
+Applications configure credentials and TLS through `NatsConnectionConfig`:
+`with_token`, `with_user_and_password`, or `with_auth_callback` select authentication;
+`with_tls`, `with_root_certificates`, and `with_client_certificate` configure TLS.
+Supplying a trust bundle or client certificate automatically requires TLS.
+
+Rostfrei owns connection establishment, reconnect policy, lifecycle events,
+version checks, health tracking, and graceful drain. `connect()` completes the
+initial connection under the configured deadline and validates the server version
+before returning. Authentication callbacks receive the server nonce on connection
+attempts, including reconnects, and are bounded by the connection timeout.
+
 ## Durable consumer versions
 
 Consumer and durable names follow

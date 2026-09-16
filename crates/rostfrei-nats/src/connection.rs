@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use async_nats::{
-    Client, ConnectOptions, Event,
+    Client, Event,
     jetstream::{self, ErrorCode, context::DeleteStreamErrorKind},
 };
 use rostfrei_messaging_core::{ApplicationName, TrafficScope};
@@ -179,12 +179,33 @@ impl NatsConnection {
     }
 }
 
+/// Connects with application-specific authentication and TLS settings.
+///
+/// The initial connection completes within the configured connection timeout and
+/// passes the server-version check before this function returns a connection.
+/// Rostfrei owns reconnect policy, lifecycle logging, health tracking, and drain.
+///
+/// ```no_run
+/// # async fn example() -> Result<(), rostfrei_nats::NatsError> {
+/// use rostfrei_nats::{NatsConnectionConfig, connect};
+///
+/// let config = NatsConnectionConfig::new("orders", "tls://nats.example.com:4222")
+///     .with_user_and_password("orders", "secret")
+///     .with_root_certificates("nats-ca.pem")
+///     .with_client_certificate("orders.pem", "orders-key.pem");
+/// let connection = connect(&config).await?;
+/// connection.check_health().await?;
+/// connection.drain().await?;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn connect(config: &NatsConnectionConfig) -> Result<NatsConnection, NatsError> {
     let servers = config.server_addrs()?;
     let client_name = config.client_name().to_owned();
     let event_client_name = client_name.clone();
     let (closed_tx, closed) = watch::channel(false);
-    let client = ConnectOptions::new()
+    let options = config
+        .connect_options()
         .name(client_name)
         .connection_timeout(config.connection_timeout())
         .max_reconnects(None)
@@ -192,7 +213,7 @@ pub async fn connect(config: &NatsConnectionConfig) -> Result<NatsConnection, Na
             let closed_tx = closed_tx.clone();
             let client_name = event_client_name.clone();
             async move {
-                match event {
+                match &event {
                     Event::Connected => tracing::info!(%client_name, "NATS connected"),
                     Event::Disconnected => tracing::warn!(%client_name, "NATS disconnected"),
                     Event::LameDuckMode => {
@@ -214,20 +235,25 @@ pub async fn connect(config: &NatsConnectionConfig) -> Result<NatsConnection, Na
                     }
                 }
             }
-        })
-        .connect(servers)
+        });
+    let client = timeout(config.connection_timeout(), options.connect(servers))
         .await
+        .map_err(|_| NatsError::Connection)?
         .map_err(|_| NatsError::Connection)?;
-    let minimum = config.minimum_server_version();
-    if !client.is_server_compatible(minimum.major(), minimum.minor(), minimum.patch()) {
-        return Err(NatsError::MinimumServerVersion { required: minimum });
-    }
-
-    Ok(NatsConnection {
+    let connection = NatsConnection {
         jetstream: jetstream::new(client.clone()),
         client,
         closed,
         operation_timeout: config.connection_timeout(),
         drain_timeout: config.drain_timeout(),
-    })
+    };
+    let minimum = config.minimum_server_version();
+    if !connection
+        .client
+        .is_server_compatible(minimum.major(), minimum.minor(), minimum.patch())
+    {
+        let _ = connection.drain().await;
+        return Err(NatsError::MinimumServerVersion { required: minimum });
+    }
+    Ok(connection)
 }
