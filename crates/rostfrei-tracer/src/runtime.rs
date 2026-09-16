@@ -17,6 +17,10 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum RuntimeRegistrationError {
+    #[error("quarantine reader does not match its configured {scope} traffic scope")]
+    InvalidQuarantineScope { scope: &'static str },
+    #[error("Test and production quarantine readers must belong to the same application")]
+    QuarantineApplicationMismatch,
     #[error("command `{command}` version {schema_version} is not in the domain registry")]
     MissingDescriptor {
         command: &'static str,
