@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- First-class NATS username/password authentication through
+  `NatsConnectionConfig::with_user_and_password` or percent-encoded URL
+  credentials. Authentication is retained across reconnects and server
+  failover, including discovered servers. Incomplete or conflicting pool
+  credentials are rejected, and credentials are stripped from client addresses
+  and excluded from configuration debug output and returned errors.
+
 ## [0.0.4-alpha] - 2026-09-08
 
 ### Changed

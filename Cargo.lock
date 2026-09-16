@@ -1126,6 +1126,7 @@ dependencies = [
  "async-trait",
  "base64",
  "futures-util",
+ "percent-encoding",
  "rostfrei",
  "rostfrei-core",
  "rostfrei-fixtures",
