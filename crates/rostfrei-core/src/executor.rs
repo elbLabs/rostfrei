@@ -7,11 +7,11 @@ use thiserror::Error;
 
 use crate::identity::{derive_commit_id, derive_event_id};
 use crate::{
-    Aggregate, AggregateId, AggregateInstance, AggregateType, CommandExecutionMetadata, Event,
-    EventBatch, EventCodec, EventCodecError, EventHistory, EventStore, EventStoreError,
-    EventStoreErrorKind, EventTransaction, ExpectedVersion, JsonEventCodec, NewEvent,
-    RecordedEvent, StreamId, StreamVersion, TransactionAppendOutcome, TransactionParticipant,
-    TransactionReceipt,
+    Aggregate, AggregateId, AggregateInstance, AggregateType, AppendSession,
+    CommandExecutionMetadata, Event, EventBatch, EventCodec, EventCodecError, EventHistory,
+    EventStore, EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion,
+    JsonEventCodec, NewEvent, RecordedEvent, StreamId, StreamVersion, TransactionAppendOutcome,
+    TransactionParticipant, TransactionReceipt,
 };
 
 const DEFAULT_MAX_CONFLICT_RETRIES: usize = 3;
@@ -590,8 +590,9 @@ where
                 return Ok(CommandOutcome::Accepted(receipt));
             }
 
+            let session = self.store.append_session().await?;
             let mut execution =
-                CommandExecution::with_codecs(&self.store, &metadata, self.codecs.as_ref());
+                CommandExecution::with_codecs(session.as_ref(), &metadata, self.codecs.as_ref());
             match handler.handle(command, &mut execution).await? {
                 CommandDecision::Rejected(rejection) => {
                     execution.finish_rejected()?;
@@ -613,7 +614,7 @@ where
                 }
                 return Ok(CommandOutcome::Accepted(CommandReceipt::NoEvents));
             }
-            match append_transaction(&self.store, &metadata, participants).await? {
+            match append_transaction(session, &metadata, participants).await? {
                 PersistenceAttempt::Completed(receipt) => {
                     return Ok(CommandOutcome::Accepted(receipt));
                 }
@@ -631,8 +632,8 @@ enum PersistenceAttempt {
     Conflict(EventStoreError),
 }
 
-async fn append_transaction<S: EventStore>(
-    store: &S,
+async fn append_transaction(
+    session: Box<dyn AppendSession + '_>,
     metadata: &CommandExecutionMetadata,
     participants: Vec<CollectedParticipant>,
 ) -> Result<PersistenceAttempt, CommandExecutionError> {
@@ -660,7 +661,7 @@ async fn append_transaction<S: EventStore>(
     if let Some(causation_id) = metadata.causation_id() {
         transaction = transaction.with_causation_id(causation_id.clone());
     }
-    match store.append_transaction(transaction).await {
+    match session.append_transaction(transaction).await {
         Ok(TransactionAppendOutcome::Appended(receipt)) => Ok(PersistenceAttempt::Completed(
             CommandReceipt::Appended(receipt.events()),
         )),
@@ -1425,17 +1426,65 @@ mod tests {
     struct ConflictOnceStore {
         inner: InMemoryEventStore,
         attempts: Arc<AtomicUsize>,
+        sessions: Arc<AtomicUsize>,
+        session_loads: Arc<AtomicUsize>,
     }
 
     #[async_trait]
     impl EventHistory for ConflictOnceStore {
+        async fn load(&self, _stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+            Err(invalid_request(
+                "execution must load through its append session",
+            ))
+        }
+    }
+
+    struct ConflictOnceSession<'a> {
+        store: &'a ConflictOnceStore,
+        session_id: usize,
+        loads: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl EventHistory for ConflictOnceSession<'_> {
         async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
-            self.inner.load(stream_id).await
+            self.loads.fetch_add(1, Ordering::Relaxed);
+            self.store.session_loads.fetch_add(1, Ordering::Relaxed);
+            self.store.inner.load(stream_id).await
+        }
+    }
+
+    #[async_trait]
+    impl AppendSession for ConflictOnceSession<'_> {
+        async fn append(
+            self: Box<Self>,
+            stream_id: &StreamId,
+            expected_version: ExpectedVersion,
+            batch: EventBatch,
+        ) -> Result<AppendOutcome, EventStoreError> {
+            self.store.append(stream_id, expected_version, batch).await
+        }
+
+        async fn append_transaction(
+            self: Box<Self>,
+            transaction: EventTransaction,
+        ) -> Result<TransactionAppendOutcome, EventStoreError> {
+            assert_eq!(self.loads.load(Ordering::Relaxed), 2);
+            assert_eq!(self.session_id, self.store.attempts.load(Ordering::Relaxed));
+            self.store.append_transaction(transaction).await
         }
     }
 
     #[async_trait]
     impl EventStore for ConflictOnceStore {
+        async fn append_session(&self) -> Result<Box<dyn AppendSession + '_>, EventStoreError> {
+            Ok(Box::new(ConflictOnceSession {
+                store: self,
+                session_id: self.sessions.fetch_add(1, Ordering::Relaxed),
+                loads: AtomicUsize::new(0),
+            }))
+        }
+
         async fn append(
             &self,
             stream_id: &StreamId,
@@ -1479,10 +1528,14 @@ mod tests {
     #[tokio::test]
     async fn a_conflict_retries_the_entire_handler_and_unit_of_work() {
         let attempts = Arc::new(AtomicUsize::new(0));
-        let store = ConflictOnceStore {
+        let sessions = Arc::new(AtomicUsize::new(0));
+        let session_loads = Arc::new(AtomicUsize::new(0));
+        let store: Arc<dyn EventStore> = Arc::new(ConflictOnceStore {
             inner: InMemoryEventStore::new(),
             attempts: Arc::clone(&attempts),
-        };
+            sessions: Arc::clone(&sessions),
+            session_loads: Arc::clone(&session_loads),
+        });
         let handler = WriteHandler {
             calls: AtomicUsize::new(0),
         };
@@ -1497,6 +1550,8 @@ mod tests {
             CommandOutcome::Accepted(CommandReceipt::Appended(_))
         ));
         assert_eq!(attempts.load(Ordering::Relaxed), 2);
+        assert_eq!(sessions.load(Ordering::Relaxed), 2);
+        assert_eq!(session_loads.load(Ordering::Relaxed), 4);
         assert_eq!(handler.calls.load(Ordering::Relaxed), 2);
     }
 

@@ -44,8 +44,8 @@ fn projects_registered_services_and_omits_unattached_capabilities() {
     );
 
     assert_eq!(model["queries"], json!([]));
-    assert_eq!(model["domainErrors"][2]["id"], "invalid-rental-fleet");
-    assert_eq!(model["domainErrors"][2]["code"], "INVALID_RENTAL_FLEET");
+    assert_eq!(model["domainErrors"][2]["id"], "bicycle-already-in-fleet");
+    assert_eq!(model["domainErrors"][2]["code"], "BICYCLE_ALREADY_IN_FLEET");
     assert_eq!(model["domainErrors"][3]["id"], "bicycle-cannot-be-retired");
     assert_eq!(model["domainErrors"][4]["id"], "bicycle-transfer-rejected");
     assert_eq!(

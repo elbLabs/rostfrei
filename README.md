@@ -115,6 +115,10 @@ or no credentials on any entry. With explicit credentials, URLs may omit the
 pair, but any embedded pair must be complete and match. Invalid or conflicting
 configuration is rejected before connecting.
 
+Token and callback authentication from the managed connection API remain
+available. They cannot be combined with username/password credentials embedded
+in server URLs; select a single connection-wide authentication method.
+
 Credentials are removed from server addresses before they reach the NATS client
 and omitted from configuration debug output and returned errors. The resolved
 pair is also used when reconnecting to servers discovered by NATS.
@@ -157,8 +161,51 @@ adding technical path arguments to individual domain declarations.
 
 ## Development
 
-The repository pins Rust 1.98 with Clippy and rustfmt through
-[`rust-toolchain.toml`](rust-toolchain.toml).
+The repository pins Rust 1.98 with Clippy, rustfmt, and `rust-src` through
+[`rust-toolchain.toml`](rust-toolchain.toml). Standard-library sources keep the
+compile-failure test diagnostics consistent across local machines and CI.
+
+### Tests
+
+With Python 3.11+ and a running local Docker engine, run the complete Rust suite:
+
+```sh
+python3 scripts/test_nats.py
+```
+
+The default run first fetches the separately locked dependencies needed by the
+offline macro compatibility tests. It then starts a pinned NATS 2.12.1 container
+with JetStream, fresh storage,
+random loopback-only ports, and the required payload limit. It waits for
+JetStream readiness, sets bounded bike-rental stream limits, and runs
+`cargo test --locked --workspace --all-features -- --test-threads=1`. It removes
+its container and storage on success, failure, or cancellation, and prints
+broker logs on failure. An inherited `ROSTFREI_NATS_URL` is always replaced with
+the disposable broker's address.
+
+To run a narrower suite using the same setup:
+
+```sh
+python3 scripts/test_nats.py -- cargo test --locked -p rostfrei-nats -p bike-rental -- --test-threads=1
+```
+
+Shared-broker NATS tests are ordinary, non-ignored tests. Direct Cargo runs that include
+them require an explicit, nonempty `ROSTFREI_NATS_URL`; missing configuration is
+an error, never a successful skip. Use a disposable broker: these tests provision
+and remove streams. Run `cargo test --locked -p rostfrei-tracer --features http`
+for a broker-free Tracer API check.
+
+The **Tests** GitHub Actions workflow runs the Rust suite with the same broker
+runner, and separately runs Studio lint/build, mocked-API browser tests, and
+visual inspection. Screenshots, layout state, and browser diagnostics are
+uploaded as artifacts. Studio browser tests do not yet exercise a live Tracer
+backend. The runner's own lifecycle tests need no Docker:
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_*.py'
+```
+
+### Git hooks
 
 Enable the tracked Git hooks once per checkout:
 
@@ -184,8 +231,49 @@ tests correct, missing, and wrong credentials, percent-encoded URL credentials,
 server restart, pool failover, and discovered-server failover:
 
 ```sh
-cargo test -p rostfrei-nats --test authentication_integration -- --ignored
+cargo test --locked -p rostfrei-nats --test authentication_integration
 ```
+
+CI also installs a checksum-pinned native NATS server and explicitly runs the
+authentication callback, signed-challenge, mutual TLS, and timeout fixtures.
+To run those locally, install NATS 2.12.15 and OpenSSL, then use:
+
+```sh
+ROSTFREI_NATS_SERVER=/path/to/nats-server \
+  cargo test --locked -p rostfrei-nats --test connection_integration -- --include-ignored --test-threads=1
+```
+
+### Crate versions and releases
+
+Framework crates share `[workspace.package].version`. Internal dependencies,
+including renamed dependencies, inherit their paths and version requirements
+from `[workspace.dependencies]`. CI checks this with:
+
+```sh
+python3 scripts/versions.py check
+```
+
+To prepare a new version, use Python 3.11+ and the repository Rust toolchain:
+
+```sh
+python3 scripts/versions.py bump 0.0.5-alpha
+```
+
+This updates the root manifest and both Cargo lockfiles, including the standalone
+macro dependency-matrix fixture. Cargo runs offline and retains locked registry
+versions; dependencies must already be cached. On failure, the command restores
+the manifest and lockfiles. Review and commit the resulting diff together.
+The fixture packages keep their private `0.0.0` versions.
+
+The **Prepare GitHub release** workflow must run from `main` with a tag matching
+the shared version exactly, including the `v` prefix (for example,
+`v0.0.5-alpha`). You can check that locally with:
+
+```sh
+python3 scripts/versions.py check --tag v0.0.5-alpha
+```
+
+The workflow creates a draft GitHub release; it does not publish crates.
 
 ## License
 

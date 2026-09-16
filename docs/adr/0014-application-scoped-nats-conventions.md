@@ -86,6 +86,39 @@ names from rostfrei, ADR 0005's deployment-owned event-store naming, and ADR
 message names, schemas, delivery classification, environment variables, and
 operator composition.
 
+## Connection authentication and TLS
+
+Applications configure credentials and TLS through `NatsConnectionConfig`:
+`with_token`, `with_user_and_password`, or `with_auth_callback` select authentication;
+`with_tls`, `with_root_certificates`, and `with_client_certificate` configure TLS.
+Supplying a trust bundle or client certificate automatically requires TLS.
+
+Rostfrei owns connection establishment, reconnect policy, lifecycle events,
+version checks, health tracking, and graceful drain. `connect()` completes the
+initial connection under the configured deadline and validates the server version
+before returning. Authentication callbacks receive the server nonce on connection
+attempts, including reconnects, and are bounded by the connection timeout.
+
+## Durable consumer versions
+
+Consumer and durable names follow
+`<application>[--test]--<context>--<purpose>--v<major>`. This version identifies the
+consumer and its delivery progress; it is independent of a message's payload
+schema version. Subjects do not route messages by either version.
+
+A newly provisioned durable consumer uses `DeliverPolicy::All`, so it receives
+matching retained history. Integration-event processing also includes the durable
+name when deriving command operation IDs. Changing the durable version can
+therefore replay an already processed event under a new operation ID. Earlier
+operation IDs do not deduplicate those commands, and business actions may repeat
+unless the command's own semantics prevent them.
+
+Keep the existing durable identity when deploying a compatible handler or adding
+support for a new payload schema. Change it only as an explicit consumer migration
+or replay decision, accounting for retained history and repeated business effects.
+The payload rollout sequence is documented in
+[ADR 0004](0004-private-and-integration-events.md#schema-upgrades).
+
 ## Consequences
 
 Two applications can safely share one NATS account because their first subject

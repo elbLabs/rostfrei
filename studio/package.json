@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "test:ui": "node scripts/ui-smoke.mjs",
+    "inspect:ui": "node scripts/ui-inspect.mjs",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview"
   },

@@ -41,10 +41,9 @@ impl CorrelatedMessageHandler for ChannelHandler {
 }
 
 #[tokio::test]
-#[ignore = "requires a real NATS server with JetStream and ROSTFREI_NATS_URL"]
 #[allow(clippy::too_many_lines)]
 async fn observer_reads_new_persisted_messages_without_advancing_worker_consumers() -> TestResult {
-    let nats_url = std::env::var("ROSTFREI_NATS_URL")?;
+    let nats_url = rostfrei_testing::integration::nats_url()?;
     let suffix = unique_suffix()?;
     let application = ApplicationName::new(format!("correlation-{suffix}"))?;
     let domain_stream = format!("CORRELATION_{suffix}_DOMAIN").to_ascii_uppercase();

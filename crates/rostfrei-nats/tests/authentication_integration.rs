@@ -1,6 +1,6 @@
 //! Self-contained acceptance tests against password-protected NATS servers.
 //! Run with Docker available:
-//! `cargo test -p rostfrei-nats --test authentication_integration -- --ignored`
+//! `cargo test --locked -p rostfrei-nats --test authentication_integration`
 
 use std::{
     ffi::OsStr,
@@ -205,7 +205,6 @@ async fn wait_for_server(connection: &NatsConnection, server: &Server) -> TestRe
 }
 
 #[tokio::test]
-#[ignore = "requires Docker; starts isolated NATS servers"]
 async fn authenticates_with_explicit_and_percent_encoded_url_credentials() {
     let server = Server::new(true, None, None).await.expect("NATS server");
     for explicit in [true, false] {
@@ -221,7 +220,6 @@ async fn authenticates_with_explicit_and_percent_encoded_url_credentials() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker; starts isolated NATS servers"]
 async fn rejects_missing_and_wrong_credentials_without_exposing_secrets() {
     let server = Server::new(true, None, None).await.expect("NATS server");
     for config in [
@@ -264,7 +262,6 @@ async fn rejects_missing_and_wrong_credentials_without_exposing_secrets() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker; starts isolated NATS servers"]
 async fn anonymous_servers_remain_supported() {
     let server = Server::new(false, None, None).await.expect("NATS server");
     let connection = connect(&NatsConnectionConfig::new("anonymous", server.url()))
@@ -278,7 +275,6 @@ async fn anonymous_servers_remain_supported() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker; starts isolated NATS servers"]
 async fn preserves_authentication_and_subscriptions_after_server_restart() {
     let server = Server::new(true, None, None).await.expect("NATS server");
     for explicit in [true, false] {
@@ -309,7 +305,6 @@ async fn preserves_authentication_and_subscriptions_after_server_restart() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker; starts isolated NATS servers"]
 async fn preserves_authentication_during_server_pool_failover() {
     let first = Server::new(true, None, None)
         .await
@@ -361,7 +356,6 @@ async fn preserves_authentication_during_server_pool_failover() {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker; starts isolated NATS servers"]
 async fn preserves_authentication_when_failing_over_to_a_discovered_server() {
     let network = Network::new().expect("cluster network");
     let first = Server::new(true, Some(&network), None)
