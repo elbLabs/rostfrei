@@ -1562,28 +1562,21 @@ impl NatsEventStore {
     }
 }
 
+/// Creates an absent event store or verifies an existing store without changing it.
+///
+/// Policy mismatches return `ConfigurationMismatch`. Use [`update_event_store`]
+/// for deliberate capacity changes or legacy subject-policy migrations. Normal
+/// application startup should use [`NatsEventStore::connect`] to verify only.
 pub async fn provision_event_store(
     context: &jetstream::Context,
     config: &NatsEventStoreConfig,
 ) -> Result<(), EventStoreError> {
     validate_server_compatibility(context)?;
     validate_server_payload_capacity(context, config)?;
-    let mut expected = config.stream_config();
+    let expected = config.stream_config();
     match context.get_stream(config.stream_name()).await {
         Ok(existing) => {
-            let actual = &existing.cached_info().config;
-            let subjects = &actual.subjects;
-            let legacy_subjects = vec![config.aggregate_subject_filter()];
-            if subjects != &expected.subjects && subjects != &legacy_subjects {
-                return Err(EventStoreError::new(
-                    EventStoreErrorKind::ConfigurationMismatch,
-                    "existing event-store stream belongs to a different application or bounded context",
-                ));
-            }
-            if actual.max_message_size == -1 || actual.max_message_size > expected.max_message_size
-            {
-                expected.max_message_size = actual.max_message_size;
-            }
+            return verify_stream_config(&expected, &existing.cached_info().config);
         }
         Err(error) if is_stream_not_found(&error) => {}
         Err(error) => {
@@ -1592,11 +1585,63 @@ pub async fn provision_event_store(
             )));
         }
     }
-    let provisioned = context
-        .create_or_update_stream(expected.clone())
+    match context.create_stream(expected.clone()).await {
+        Ok(created) => verify_stream_config(&expected, &created.cached_info().config),
+        Err(error) => {
+            // A concurrent winner may surface as an account-capacity error or
+            // an uncertain response, not only STREAM_NAME_EXIST. Reconcile by
+            // inspecting the winner's policy; never change it or retry creation.
+            context.get_stream(config.stream_name()).await.map_or_else(
+                |_| {
+                    Err(unavailable(format!(
+                        "failed to create event-store stream: {error}"
+                    )))
+                },
+                |existing| verify_stream_config(&expected, &existing.cached_info().config),
+            )
+        }
+    }
+}
+
+/// Explicitly updates an existing event-store policy, including total stream capacity.
+///
+/// The stream must already exist and belong to the configured application and
+/// bounded context. Legacy aggregate-only subjects are upgraded to include
+/// transaction subjects. Larger existing message-size limits remain compatible
+/// and are preserved; the adapter still enforces its configured event write limit.
+/// Capacity reductions and other server-supported policy changes are operator-owned.
+pub async fn update_event_store(
+    context: &jetstream::Context,
+    config: &NatsEventStoreConfig,
+) -> Result<(), EventStoreError> {
+    validate_server_compatibility(context)?;
+    validate_server_payload_capacity(context, config)?;
+    let existing = context
+        .get_stream(config.stream_name())
         .await
-        .map_err(|error| unavailable(format!("failed to provision event-store stream: {error}")))?;
-    verify_stream_config(&expected, &provisioned.config)
+        .map_err(|error| {
+            unavailable(format!(
+                "failed to inspect event-store stream before policy update: {error}"
+            ))
+        })?;
+    let actual = &existing.cached_info().config;
+    let mut expected = config.stream_config();
+    if actual.subjects != expected.subjects
+        && actual.subjects != vec![config.aggregate_subject_filter()]
+    {
+        return Err(EventStoreError::new(
+            EventStoreErrorKind::ConfigurationMismatch,
+            "existing event-store stream belongs to a different application or bounded context",
+        ));
+    }
+    if actual.max_message_size == -1 || actual.max_message_size > expected.max_message_size {
+        expected.max_message_size = actual.max_message_size;
+    }
+    let updated = context
+        .update_stream(expected.clone())
+        .await
+        .map_err(|error| unavailable(format!("failed to update event-store policy: {error}")))?;
+    verify_stream_config(&expected, &updated.config)
 }
 
 #[derive(Clone, Default)]
