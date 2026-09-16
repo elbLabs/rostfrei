@@ -124,6 +124,46 @@ adding technical path arguments to individual domain declarations.
 The repository pins Rust 1.98 with Clippy and rustfmt through
 [`rust-toolchain.toml`](rust-toolchain.toml).
 
+### Tests
+
+With Python 3.11+ and a running local Docker engine, run the complete Rust suite:
+
+```sh
+python3 scripts/test_nats.py
+```
+
+The runner starts a pinned NATS 2.12.1 container with JetStream, fresh storage,
+random loopback-only ports, and the required payload limit. It waits for
+JetStream readiness, sets bounded bike-rental stream limits, and runs
+`cargo test --locked --workspace --all-features -- --test-threads=1`. It removes
+its container and storage on success, failure, or cancellation, and prints
+broker logs on failure. An inherited `ROSTFREI_NATS_URL` is always replaced with
+the disposable broker's address.
+
+To run a narrower suite using the same setup:
+
+```sh
+python3 scripts/test_nats.py -- cargo test --locked -p rostfrei-nats -p bike-rental -- --test-threads=1
+```
+
+Real-NATS tests are ordinary, non-ignored tests. Direct Cargo runs that include
+them require an explicit, nonempty `ROSTFREI_NATS_URL`; missing configuration is
+an error, never a successful skip. Use a disposable broker: these tests provision
+and remove streams. Run `cargo test --locked -p rostfrei-tracer --features http`
+for a broker-free Tracer API check.
+
+The **Tests** GitHub Actions workflow runs the Rust suite with the same broker
+runner, and separately runs Studio lint/build, mocked-API browser tests, and
+visual inspection. Screenshots, layout state, and browser diagnostics are
+uploaded as artifacts. Studio browser tests do not yet exercise a live Tracer
+backend. The runner's own lifecycle tests need no Docker:
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_*.py'
+```
+
+### Git hooks
+
 Enable the tracked Git hooks once per checkout:
 
 ```sh

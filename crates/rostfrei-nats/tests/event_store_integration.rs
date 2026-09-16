@@ -60,13 +60,9 @@ fn check(condition: bool, context: &'static str) -> TestResult<()> {
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test]
-#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
 #[allow(clippy::too_many_lines)]
 async fn real_nats_event_store_contract_and_operator_policy() {
-    let Ok(url) = std::env::var("ROSTFREI_NATS_URL") else {
-        eprintln!("ROSTFREI_NATS_URL is not set; skipping real NATS integration test");
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let context = connect_context(&url)
         .await
         .expect("real NATS JetStream context");

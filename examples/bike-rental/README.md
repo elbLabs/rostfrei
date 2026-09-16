@@ -261,9 +261,16 @@ scalar values and array lengths/order must match exactly. The filesystem remains
 the source of truth, and the skill can list, read, validate, and run both
 persisted and inline JSON definitions through advertised Catalog links.
 
-Run the dispatch-isolation check and all five behavioral definitions against
-a real NATS Server 2.12.1 or newer. These tests are deliberately ignored during
-normal test runs; the explicit command is:
+Run the scope-isolation checks, all five behavioral definitions, integration
+command reactions, and multi-stream transfers with a disposable NATS broker
+from the repository root:
+
+```sh
+python3 scripts/test_nats.py -- cargo test --locked -p bike-rental -- --test-threads=1
+```
+
+The broker tests are enabled during normal Cargo test runs. To use an explicitly
+configured disposable NATS Server 2.12.1 or newer instead:
 
 ```sh
 ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
@@ -271,10 +278,10 @@ ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
   ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES=268435456 \
   ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES=524288 \
   cargo test --locked -p bike-rental \
-  --test nats_runtime_integration -- --ignored --test-threads=1
+  --test nats_runtime_integration --test transfer -- --test-threads=1
 ```
 
-The opt-in run fails rather than skips when `ROSTFREI_NATS_URL` is missing,
+The tests fail rather than skip when `ROSTFREI_NATS_URL` is missing,
 empty, unreachable, or points to an unsupported server version.
 
 The three Tracer actions have distinct semantics:
