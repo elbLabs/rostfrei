@@ -4,9 +4,9 @@ use super::{
     BikeRental,
     bicycle_transfer::BicycleTransfer,
     rental_fleet::{
-        Bicycle, BicycleCannotBeRetired, BicycleCondition, BicycleNotRented,
+        Bicycle, BicycleAlreadyInFleet, BicycleCannotBeRetired, BicycleCondition, BicycleNotRented,
         BicycleTransferRejected, BicycleTransferRejectionReason, BicycleUnavailable,
-        InvalidRentalFleet, RegistrationNumber, RentalFleet, RentalFleetAggregate,
+        RegistrationNumber, RentalFleet, RentalFleetAggregate,
     },
 };
 
@@ -20,7 +20,7 @@ pub fn domain_model() -> Result<serde_json::Value, rostfrei::DomainModelError> {
         errors: [
             BicycleUnavailable,
             BicycleNotRented,
-            InvalidRentalFleet,
+            BicycleAlreadyInFleet,
             BicycleCannotBeRetired,
             BicycleTransferRejected,
         ],

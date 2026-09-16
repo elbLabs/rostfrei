@@ -100,10 +100,10 @@ impl rostfrei_core::Aggregate for RentalFleetAggregate {
     file: "src/domain/bike_rental/rental_fleet/event_set.rs",
     authored: `#[derive(AggregateEvents)]
 pub enum RentalFleetEvent {
-    RentalFleetImported(RentalFleetImported),
     BicycleAdded(BicycleAdded),
     BicycleRented(BicycleRented),
     BicycleReturned(BicycleReturned),
+    BicycleRetired(BicycleRetired),
 }`,
     generated: `impl From<BicycleRented> for RentalFleetEvent { /* … */ }
 impl EventVariant<BicycleRented> for RentalFleetEvent { /* … */ }
@@ -591,7 +591,7 @@ const __DOMAIN_TEST_SUBJECT: DomainTestSubject =
     entities: [RentalFleet, Bicycle],
     value_objects: [BicycleCondition, RegistrationNumber],
     services: [],
-    errors: [BicycleUnavailable, BicycleNotRented, InvalidRentalFleet],
+    errors: [BicycleUnavailable, BicycleNotRented, BicycleAlreadyInFleet, BicycleCannotBeRetired],
 }`,
     generated: `try_build(|builder| {
     builder.add_bounded_context(BikeRental::DESCRIPTOR)?;
@@ -602,7 +602,8 @@ const __DOMAIN_TEST_SUBJECT: DomainTestSubject =
     builder.add_value_object_type::<RegistrationNumber>()?;
     builder.add_domain_error(BicycleUnavailable::DESCRIPTOR)?;
     builder.add_domain_error(BicycleNotRented::DESCRIPTOR)?;
-    builder.add_domain_error(InvalidRentalFleet::DESCRIPTOR)?;
+    builder.add_domain_error(BicycleAlreadyInFleet::DESCRIPTOR)?;
+    builder.add_domain_error(BicycleCannotBeRetired::DESCRIPTOR)?;
     Ok(())
 })`,
   },

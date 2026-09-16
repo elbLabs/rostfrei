@@ -47,7 +47,7 @@ async fn executor_atomically_transfers_replays_and_rejects_in_memory() -> TestRe
         "transfer was rejected for the wrong reason",
     )?;
     ensure(
-        store.load(&demo_stream()).await?.len() == 2,
+        store.load(&demo_stream()).await?.len() == 3,
         "rejected transfer appended to the source stream",
     )?;
     ensure(
@@ -70,7 +70,7 @@ async fn executor_atomically_transfers_replays_and_rejects_in_memory() -> TestRe
         "same-fleet transfer did not return its domain rejection",
     )?;
     ensure(
-        store.load(&demo_stream()).await?.len() == 2
+        store.load(&demo_stream()).await?.len() == 3
             && store.load(&destination_stream()?).await?.len() == 1,
         "same-fleet rejection appended an event",
     )
@@ -115,7 +115,7 @@ async fn simulation_reports_both_participants_without_appending() -> TestResult 
         "simulation additional participant is not the destination transfer event",
     )?;
     ensure(
-        store.load(&demo_stream()).await?.len() == 1
+        store.load(&demo_stream()).await?.len() == 2
             && store.load(&destination_stream()?).await?.is_empty(),
         "simulation changed persisted history",
     )
@@ -275,7 +275,7 @@ async fn dispatch_transfer_through_nats(
     let source = runtime.store().load(&demo_stream()).await?;
     let destination = runtime.store().load(&destination_stream()?).await?;
     ensure(
-        source.len() == 2 && destination.len() == 1,
+        source.len() == 3 && destination.len() == 1,
         "transported transfer did not append exactly once to both streams",
     )?;
     let outgoing = source

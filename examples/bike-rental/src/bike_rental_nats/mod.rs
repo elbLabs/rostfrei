@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use rostfrei::{
     Command, CommandBindingRegistrationError, CommandBus, CommandMessageAdapter, CommandProcessor,
     CommittedDomainEvent, DomainEventDispatcher, DomainEventRegistrationError,
-    EncodedIntegrationMessage, EventStore, EventStoreError, InfallibleCommandRejectionMapper,
-    IntegrationEvent, IntegrationEventBus, IntegrationEventDispatcherExt, IntegrationEventMapper,
-    IntegrationMessageAdapter, JsonDomainRejectionMapper,
+    EncodedIntegrationMessage, EventStore, EventStoreError, IntegrationEvent, IntegrationEventBus,
+    IntegrationEventDispatcherExt, IntegrationEventMapper, IntegrationMessageAdapter,
+    JsonDomainRejectionMapper,
 };
 use rostfrei_fixtures::{Fixture, FixtureApplyReport, FixtureEventSet};
 use rostfrei_messaging_core::{
@@ -742,7 +742,10 @@ impl BikeRentalNatsRuntime {
             ReturnBicycleHandler,
             JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
         )?;
-        processor.register::<AddBicycle, _>(AddBicycleHandler, InfallibleCommandRejectionMapper)?;
+        processor.register::<AddBicycle, _>(
+            AddBicycleHandler,
+            JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
+        )?;
         processor.register::<TransferBicycle, _>(
             TransferBicycleHandler,
             JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
