@@ -277,6 +277,143 @@ async fn directory_rejects_transaction_events_without_a_valid_receipt() {
 
 #[tokio::test]
 #[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
+async fn directory_and_load_reject_incompatible_aggregate_sequence_expectations() {
+    for schema_version in [3, 4] {
+        for base_version in [0, 2] {
+            let (context, store) = directory_fixture("directory-sequence-expectation")
+                .await
+                .expect("directory fixture");
+            let aggregate = stream("sequence-expectation").expect("aggregate identity");
+            if base_version != 0 {
+                store
+                    .append(
+                        &aggregate,
+                        ExpectedVersion::NoStream,
+                        batch(
+                            &aggregate,
+                            "previous-commit",
+                            "previous-commit",
+                            &[b"one", b"two"],
+                        )
+                        .expect("previous multi-event commit"),
+                    )
+                    .await
+                    .expect("append valid history");
+                assert_eq!(
+                    store
+                        .list_streams(aggregate.aggregate_type())
+                        .await
+                        .expect("valid directory"),
+                    vec![StreamSummary::new(
+                        aggregate.clone(),
+                        StreamVersion::new(base_version)
+                    )]
+                );
+            }
+            publish_commit_with_wrong_sequence_expectation(
+                &context,
+                store.config(),
+                &aggregate,
+                base_version,
+                schema_version,
+            )
+            .await
+            .expect("publish checksummed history with a wrong sequence expectation");
+
+            let load_error = store
+                .load(&aggregate)
+                .await
+                .expect_err("load rejects the wrong predecessor");
+            assert_eq!(load_error.kind(), EventStoreErrorKind::CorruptHistory);
+            assert_eq!(
+                load_error.message(),
+                "stored commit has an incompatible aggregate sequence expectation"
+            );
+            let directory_error = store
+                .list_streams(aggregate.aggregate_type())
+                .await
+                .expect_err("directory must reject the same inconsistent history");
+            assert_eq!(directory_error, load_error);
+            if schema_version == 4 {
+                let receipt_error = store
+                    .load_transaction_receipt(
+                        &OperationId::new("wrong-predecessor").expect("operation identity"),
+                    )
+                    .await
+                    .expect_err("receipt loading rejects the wrong predecessor");
+                assert_eq!(receipt_error, load_error);
+            }
+            context
+                .delete_stream(store.config().stream_name())
+                .await
+                .expect("cleanup directory stream");
+        }
+    }
+}
+
+async fn publish_commit_with_wrong_sequence_expectation(
+    context: &async_nats::jetstream::Context,
+    config: &NatsEventStoreConfig,
+    aggregate: &StreamId,
+    base_version: u64,
+    schema_version: u16,
+) -> TestResult<()> {
+    let control_subject = config.transaction_guard_subject("unrelated-predecessor", 0);
+    let control = context
+        .publish(control_subject.clone(), br"{}".to_vec().into())
+        .await?
+        .await?;
+    let operation = "wrong-predecessor";
+    let event_batch = batch(aggregate, operation, operation, &[b"must-not-load"])?;
+    let mut messages = vec![RawAtomicMessage {
+        subject: config.aggregate_subject(
+            aggregate.aggregate_type().as_str(),
+            aggregate.aggregate_id().as_str(),
+        ),
+        payload: forged_event_payload_at(
+            config,
+            aggregate,
+            &event_batch,
+            checked_add_u64(base_version, 1, "forged stream version")?,
+            1,
+            schema_version,
+        )?,
+        // NATS accepts this expectation against the unrelated control subject;
+        // Rostfrei must reject it as the predecessor of this aggregate's commit.
+        expected_last_subject_sequence: Some(control.sequence),
+        expectation_subject: Some(control_subject),
+    }];
+    if schema_version == 4 {
+        let receipt = ForgedReceiptContent {
+            event_store_stream: config.stream_name(),
+            application: config.application().as_str(),
+            bounded_context: config.bounded_context().as_str(),
+            operation_id: operation,
+            operation_fingerprint: event_batch.operation_fingerprint().to_hex(),
+            correlation_id: None,
+            causation_id: None,
+            participants: vec![ForgedReceiptParticipant {
+                stream: ForgedStreamIdentity {
+                    aggregate_type: aggregate.aggregate_type().as_str(),
+                    aggregate_id: aggregate.aggregate_id().as_str(),
+                },
+                base_stream_version: base_version,
+                commit_id: Some(event_batch.commit_id().as_str()),
+                event_count: 1,
+            }],
+        };
+        messages.push(RawAtomicMessage {
+            subject: config.transaction_subject(operation),
+            payload: forged_receipt_payload(&receipt)?,
+            expected_last_subject_sequence: Some(0),
+            expectation_subject: None,
+        });
+    }
+    publish_raw_atomic_batch(context, config, "wrong-predecessor-batch", messages).await
+}
+
+#[tokio::test]
+#[ignore = "requires a real NATS server configured by ROSTFREI_NATS_URL"]
 async fn directory_rejects_version_gaps_and_incomplete_commits() {
     for (label, version, count, reason) in [
         ("directory-gap", 2, 1, "noncontiguous"),
@@ -2127,8 +2264,10 @@ struct ForgedStoredEventContent<'a> {
     causation_id: Option<&'a str>,
     commit_event_ordinal: u32,
     commit_event_count: u32,
-    transaction_event_ordinal: u32,
-    transaction_event_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transaction_event_ordinal: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transaction_event_count: Option<u32>,
     event_id: &'a str,
     event_type: &'a str,
     event_schema_version: u32,
@@ -2172,6 +2311,17 @@ fn forged_transaction_event_payload_at<'a>(
     stream_version: u64,
     event_count: u32,
 ) -> TestResult<Vec<u8>> {
+    forged_event_payload_at(config, stream_id, batch, stream_version, event_count, 4)
+}
+
+fn forged_event_payload_at<'a>(
+    config: &'a NatsEventStoreConfig,
+    stream_id: &'a StreamId,
+    batch: &'a EventBatch,
+    stream_version: u64,
+    event_count: u32,
+    schema_version: u16,
+) -> TestResult<Vec<u8>> {
     let event = batch
         .events()
         .first()
@@ -2196,8 +2346,8 @@ fn forged_transaction_event_payload_at<'a>(
             .map(rostfrei_messaging_core::CausationId::as_str),
         commit_event_ordinal: 0,
         commit_event_count: event_count,
-        transaction_event_ordinal: 0,
-        transaction_event_count: event_count,
+        transaction_event_ordinal: (schema_version == 4).then_some(0),
+        transaction_event_count: (schema_version == 4).then_some(event_count),
         event_id: event.event_id().as_str(),
         event_type: event.event_type(),
         event_schema_version: event.schema_version(),
@@ -2208,12 +2358,12 @@ fn forged_transaction_event_payload_at<'a>(
     };
     let checksum = hex::encode_lower_hex(Sha256::digest(serde_json::to_vec(
         &ForgedEventChecksumInput {
-            schema_version: 4,
+            schema_version,
             event: &content,
         },
     )?));
     Ok(serde_json::to_vec(&ForgedStoredEventWire {
-        schema_version: 4,
+        schema_version,
         checksum,
         event: &content,
     })?)
