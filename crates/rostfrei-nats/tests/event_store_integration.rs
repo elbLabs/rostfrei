@@ -1,3 +1,5 @@
+#[path = "event_store/append_sessions.rs"]
+mod append_sessions;
 #[path = "../src/event_store.rs"]
 mod event_store;
 #[path = "../src/event_store_config.rs"]
@@ -2504,9 +2506,23 @@ async fn schema_four_event_with_filler_is_not_loadable(
     context: &async_nats::jetstream::Context,
     config: &NatsEventStoreConfig,
 ) -> TestResult<()> {
+    let aggregate = publish_schema_four_event_without_receipt(context, config).await?;
+    let loaded = store.load(&aggregate).await;
+    check(
+        matches!(loaded, Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory),
+        "schema-4 history was exposed without a valid transaction receipt",
+    )
+}
+
+async fn publish_schema_four_event_without_receipt(
+    context: &async_nats::jetstream::Context,
+    config: &NatsEventStoreConfig,
+) -> TestResult<StreamId> {
     let aggregate = stream("schema-four-event-with-filler")?;
     let operation = "schema-four-event-with-filler-operation";
     let event_batch = batch(&aggregate, operation, operation, &[b"must-not-load"])?;
+    // The event passes envelope and atomic-header validation. Only transaction
+    // provenance validation detects the filler in place of a durable receipt.
     publish_raw_atomic_batch(
         context,
         config,
@@ -2530,12 +2546,7 @@ async fn schema_four_event_with_filler_is_not_loadable(
         ],
     )
     .await?;
-
-    let loaded = store.load(&aggregate).await;
-    check(
-        matches!(loaded, Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory),
-        "schema-4 history was exposed without a valid transaction receipt",
-    )
+    Ok(aggregate)
 }
 
 #[allow(clippy::too_many_lines)]
