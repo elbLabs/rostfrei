@@ -31,7 +31,7 @@ pub use domain_event_consumer::{
     NatsDomainEventConsumerConfig, provision_domain_event_consumer,
 };
 pub use error::{NatsError, NatsErrorKind};
-pub use event_store::{NatsEventStore, provision_event_store};
+pub use event_store::{NatsEventStore, provision_event_store, update_event_store};
 pub use event_store_config::{
     DEFAULT_EVENT_STORE_MAX_EVENT_BYTES, DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
     DEFAULT_EVENT_STORE_PUBACK_TIMEOUT, DEFAULT_EVENT_STORE_REPLICAS, NatsEventStoreConfig,
