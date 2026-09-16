@@ -20,7 +20,7 @@ pub use command_response::{
     DEFAULT_COMMAND_RESPONSE_POLL_INTERVAL, MAX_COMMAND_RESPONSE_POLL_INTERVAL,
     NatsCommandResponseReader,
 };
-pub use connection::{ConnectionHealth, NatsConnection, connect, connect_with_options};
+pub use connection::{ConnectionHealth, NatsConnection, connect};
 pub use consumer::{MAX_QUARANTINE_RECORD_BYTES, NatsConsumerFactory, QuarantineRecord};
 pub use correlation_observer::{
     CorrelatedMessage, CorrelatedMessageFamily, CorrelatedMessageHandler, NatsCorrelationObserver,
