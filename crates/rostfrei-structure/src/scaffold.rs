@@ -89,7 +89,7 @@ const TEMPLATES: &[Template] = &[
     },
     Template {
         path: "Cargo.toml",
-        contents: include_str!("../templates/new/Cargo.toml"),
+        contents: include_str!("../templates/new/Cargo.toml.template"),
     },
     Template {
         path: "README.md",
@@ -364,9 +364,11 @@ mod tests {
             domain_modules: "mod model;\nmod sample;".to_owned(),
             domain_exports: "pub use model::domain_model;\npub use sample::Sample;".to_owned(),
         };
-        let generated_manifest: toml::Value =
-            toml::from_str(&render(include_str!("../templates/new/Cargo.toml"), &names))
-                .unwrap_or_else(|error| panic!("generated manifest must parse: {error}"));
+        let generated_manifest: toml::Value = toml::from_str(&render(
+            include_str!("../templates/new/Cargo.toml.template"),
+            &names,
+        ))
+        .unwrap_or_else(|error| panic!("generated manifest must parse: {error}"));
 
         assert_eq!(
             generated_manifest

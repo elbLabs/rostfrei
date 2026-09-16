@@ -256,7 +256,7 @@ python3 scripts/versions.py check
 To prepare a new version, use Python 3.11+ and the repository Rust toolchain:
 
 ```sh
-python3 scripts/versions.py bump 0.0.5-alpha
+python3 scripts/versions.py bump 0.0.6-alpha
 ```
 
 This updates the root manifest and both Cargo lockfiles, including the standalone
@@ -267,10 +267,10 @@ The fixture packages keep their private `0.0.0` versions.
 
 The **Prepare GitHub release** workflow must run from `main` with a tag matching
 the shared version exactly, including the `v` prefix (for example,
-`v0.0.5-alpha`). You can check that locally with:
+`v0.0.6-alpha`). You can check that locally with:
 
 ```sh
-python3 scripts/versions.py check --tag v0.0.5-alpha
+python3 scripts/versions.py check --tag v0.0.6-alpha
 ```
 
 The workflow creates a draft GitHub release; it does not publish crates.
