@@ -603,6 +603,12 @@
   );
 }
 
+.message-popup {
+  max-height: var(--radix-popover-content-available-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .payload-list {
   max-height: 210px;
   margin: 0;

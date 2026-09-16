@@ -7,6 +7,7 @@ import {
   launchStudioBrowser,
   startStudioServer,
 } from "./browser.mjs"
+import { checkCommandRefresh } from "./command-refresh.mjs"
 
 const smokeControlToken = "ui-smoke-control-token"
 const { server, url } = await startStudioServer({
@@ -2022,6 +2023,8 @@ try {
     idempotencyKey: rotatedTestKey,
     authorized: true,
   })
+
+  await checkCommandRefresh(browser, url)
 
   catalogEnabled = false
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })

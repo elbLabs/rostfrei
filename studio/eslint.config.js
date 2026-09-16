@@ -10,6 +10,7 @@ export default defineConfig([
   {
     files: [
       "scripts/browser.mjs",
+      "scripts/command-refresh.mjs",
       "scripts/ui-inspect.mjs",
       "scripts/ui-smoke.mjs",
       "scripts/visual-scenarios.mjs",

@@ -274,6 +274,7 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
           data-node-popup
           data-popup-pinned
           className={cn(
+            "message-popup",
             node.kind === "command" && "w-[min(380px,calc(100vw-2rem))]",
             (node.status === "rejected" ||
               node.status === "failed" ||
@@ -282,6 +283,7 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
           )}
           side="top"
           align="start"
+          collisionPadding={{ top: 62, bottom: 64, left: 8, right: 8 }}
           onOpenAutoFocus={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => {

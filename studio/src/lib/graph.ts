@@ -278,7 +278,11 @@ export function operationGraph(
     return {
       id: message.messageId,
       parentId: exactParent ? message.causationId : undefined,
-      edgeFidelity: exactParent ? "exact" : "grouped",
+      edgeFidelity: exactParent
+        ? "exact"
+        : isSubject && !message.causationId
+          ? undefined
+          : "grouped",
       subject: message.kind === "command" ? isSubject : undefined,
       kind: message.kind,
       name: message.name,
