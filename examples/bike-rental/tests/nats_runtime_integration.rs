@@ -410,7 +410,8 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                             .operation_id()
                             .as_str()
                             .starts_with("fixture:")
-                        && fixture_event.stream_version().value() == index as u64 + 1
+                        && fixture_event.stream_version().value()
+                            == u64::try_from(index)?.saturating_add(1)
                         && fixture_event
                             .correlation_id()
                             .is_some_and(|id| id.as_str() == correlation_id)
