@@ -35,12 +35,14 @@ pub fn validate_query(query: &QuarantineQuery) -> Result<(), QuarantineReadError
 #[serde(rename_all = "lowercase")]
 pub enum QuarantineScope {
     Test,
+    Production,
 }
 
 impl QuarantineScope {
     pub const fn list_href(self) -> &'static str {
         match self {
             Self::Test => "/quarantine/test",
+            Self::Production => "/quarantine/production",
         }
     }
 }
@@ -140,6 +142,7 @@ pub enum QuarantinePayloadStatus {
     InvalidBase64,
     Truncated,
     Unavailable,
+    Redacted,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -158,11 +161,52 @@ pub struct QuarantinePayload {
     pub sha256: Option<String>,
 }
 
+impl QuarantinePayload {
+    /// Removes every content representation and its digest together. Size and truncation remain.
+    #[must_use]
+    pub fn redacted(mut self) -> Self {
+        self.status = QuarantinePayloadStatus::Redacted;
+        self.base64 = None;
+        self.json = None;
+        self.sha256 = None;
+        self
+    }
+}
+
+/// Applied by the service, for every protocol. Defaults expose Test evidence and redact production.
+/// A policy returning sanitized JSON should start with `payload.redacted()` to also remove raw bytes.
+pub trait QuarantinePayloadPolicy: Send + Sync {
+    fn payload(&self, scope: QuarantineScope, payload: QuarantinePayload) -> QuarantinePayload {
+        match scope {
+            QuarantineScope::Test => payload,
+            QuarantineScope::Production => payload.redacted(),
+        }
+    }
+
+    fn metadata(&self, scope: QuarantineScope, metadata: CallerMetadata) -> Option<CallerMetadata> {
+        (scope == QuarantineScope::Test).then_some(metadata)
+    }
+
+    fn trace_context(&self, scope: QuarantineScope, context: TraceContext) -> Option<TraceContext> {
+        (scope == QuarantineScope::Test).then_some(context)
+    }
+
+    fn reason(&self, scope: QuarantineScope, reason: String) -> Option<String> {
+        (scope == QuarantineScope::Test).then_some(reason)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DefaultQuarantinePayloadPolicy;
+
+impl QuarantinePayloadPolicy for DefaultQuarantinePayloadPolicy {}
+
 pub fn collection(
     application: &str,
     scope: QuarantineScope,
     query: &QuarantineQuery,
     page: &QuarantinePage,
+    policy: &dyn QuarantinePayloadPolicy,
 ) -> QuarantineCollection {
     QuarantineCollection {
         application: application.to_owned(),
@@ -170,7 +214,7 @@ pub fn collection(
         items: page
             .items
             .iter()
-            .map(|entry| summary(scope, entry))
+            .map(|entry| summary(scope, entry, policy))
             .collect(),
         next_href: page
             .next_cursor
@@ -208,7 +252,11 @@ fn next_href(scope: QuarantineScope, query: &QuarantineQuery, cursor: &str) -> S
     href
 }
 
-fn summary(scope: QuarantineScope, entry: &QuarantineEntry) -> QuarantineSummary {
+fn summary(
+    scope: QuarantineScope,
+    entry: &QuarantineEntry,
+    policy: &dyn QuarantinePayloadPolicy,
+) -> QuarantineSummary {
     let message = entry.message.as_ref();
     let address = message.and_then(|message| MessageAddress::parse(message.address.clone()).ok());
     let kind = address.as_ref().and_then(|address| match address.kind() {
@@ -227,7 +275,7 @@ fn summary(scope: QuarantineScope, entry: &QuarantineEntry) -> QuarantineSummary
         kind,
         context: address.as_ref().map(|address| address.context().to_owned()),
         name: address.as_ref().map(|address| address.name().to_owned()),
-        reason: message.map(|message| message.reason.clone()),
+        reason: message.and_then(|message| policy.reason(scope, message.reason.clone())),
         failure_kind: message.and_then(|message| message.failure_kind),
         attempt: message.map(|message| message.attempt),
         source_consumer: message.map(|message| message.source_consumer.clone()),
@@ -245,8 +293,9 @@ pub fn detail(
     application: &str,
     scope: QuarantineScope,
     entry: QuarantineEntry,
+    policy: &dyn QuarantinePayloadPolicy,
 ) -> QuarantineDetail {
-    let summary = summary(scope, &entry);
+    let summary = summary(scope, &entry, policy);
     let (source, metadata, trace_context, payload) = if let Some(message) = entry.message {
         let source = QuarantineSource {
             stream: message.source_stream,
@@ -285,9 +334,9 @@ pub fn detail(
         scope,
         summary,
         source,
-        metadata,
-        trace_context,
-        payload,
+        metadata: metadata.and_then(|metadata| policy.metadata(scope, metadata)),
+        trace_context: trace_context.and_then(|context| policy.trace_context(scope, context)),
+        payload: policy.payload(scope, payload),
     }
 }
 

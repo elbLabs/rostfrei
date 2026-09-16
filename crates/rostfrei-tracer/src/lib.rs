@@ -49,8 +49,9 @@ pub use operation::{
     OperationSubscription, PredictedDomainEvent, SubscriptionError, TouchedStreamParticipant,
 };
 pub use quarantine::{
-    QuarantineCollection, QuarantineDetail, QuarantineInspectionError, QuarantinePayload,
-    QuarantinePayloadContent, QuarantinePayloadStatus, QuarantineScope, QuarantineSource,
+    DefaultQuarantinePayloadPolicy, QuarantineCollection, QuarantineDetail,
+    QuarantineInspectionError, QuarantinePayload, QuarantinePayloadContent,
+    QuarantinePayloadPolicy, QuarantinePayloadStatus, QuarantineScope, QuarantineSource,
     QuarantineSummary,
 };
 pub use rostfrei_fixtures::{

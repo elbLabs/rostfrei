@@ -1,6 +1,6 @@
 ---
 name: rostfrei-tracer
-description: Use when discovering, simulating, publishing, dispatching, testing, inspecting, explaining, or visualizing Rostfrei Tracer command flows with Mermaid.
+description: Use when inspecting quarantined messages through Rostfrei Tracer, or discovering, simulating, publishing, dispatching, testing, inspecting, explaining, or visualizing Tracer command flows with Mermaid.
 ---
 
 # Rostfrei Tracer
@@ -20,7 +20,8 @@ Call simulation **Preview**, direct isolated publication **Test**, and productio
 - Read `ROSTFREI_TRACER_URL`; default to `http://127.0.0.1:1309` when unset.
 - Use `ROSTFREI_API_TOKEN` for discovery, Preview, Test, behavioral tests, reset, and their operations.
 - Use `ROSTFREI_DISPATCH_TOKEN` only for production dispatch and production operation inspection.
-- Never print, quote back, log, persist, or place either token in a URL, request body, idempotency key, Mermaid graph, or temporary file.
+- Use `ROSTFREI_INSPECTION_TOKEN` only for production quarantine inspection and its catalog discovery. Test quarantine inspection uses `ROSTFREI_API_TOKEN`.
+- Never print, quote back, log, persist, or place any capability token in a URL, request body, idempotency key, Mermaid graph, or temporary file.
 - Never use shell tracing, verbose HTTP output, credential files, or command forms that place an expanded token in process arguments or displayed output.
 - Do not substitute one capability token after a `403`; the capabilities are intentionally separate.
 
@@ -78,6 +79,39 @@ When choosing inputs:
 - Treat a missing action href as an unavailable capability; do not synthesize it.
 
 If the user says “test”, use Test publication rather than Preview. If the user says only “run”, “show”, “try”, “visualize”, or otherwise leaves the mode ambiguous, default to Preview.
+
+## Quarantine Inspection
+
+Choose Test or production from the user's request; ask if the scope is unclear.
+Fetch Catalog v1 using that scope's token and follow
+`quarantine.test.listHref` or `quarantine.production.listHref`. A missing relation
+means that capability is unavailable. Production inspection discovery uses the
+inspection token from the first catalog request, not a fallback after a `403`.
+For a separately deployed inspector, configure `ROSTFREI_TRACER_URL` to its origin.
+Apply the same token handling, origin validation, link checks, redirect rules,
+and bounded timeouts used elsewhere in this skill.
+
+Inspection is read-only and requires no publication/reset confirmation. List
+filters are `kind` (`command`, `command-response`, `integration-event`), `context`,
+and `name`; `limit` is at most 100. Follow returned `nextHref` and `detailHref`.
+Do not invent record IDs or assume source message IDs identify quarantine records.
+Lists use `oldest-first` order, and `retainedMessages` counts all retained records,
+not unresolved incidents or matches for the filters. Preserve decimal-string
+sequences exactly.
+
+Explain the captured reason/category, source consumer, delivery attempts,
+correlation ID when present, and payload/record diagnostics. Distinguish complete,
+truncated, malformed, unavailable, and redacted evidence. Production policies may
+hide reasons and payloads; never use Dispatch credentials or direct broker access
+to bypass that policy. A transport correlation ID alone does not establish valid
+envelope identity or exact causality. Generic reasons do not establish root cause.
+Do not generate a causal Mermaid graph from quarantine list order or timestamps.
+
+On `410 quarantine-reset`, explain that reset/recreation invalidated the record
+or cursor and begin a fresh listing if needed. A `404 quarantine-not-found` means
+the record is absent/expired. Report broker unavailability as an inspection error,
+not an empty quarantine. Summarize quarantine results directly rather than using
+the command-operation response template below.
 
 ## Command Workflow
 
