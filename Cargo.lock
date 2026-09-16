@@ -183,6 +183,7 @@ dependencies = [
  "rostfrei-fixtures",
  "rostfrei-messaging-core",
  "rostfrei-nats",
+ "rostfrei-testing",
  "rostfrei-tracer",
  "serde",
  "serde_json",

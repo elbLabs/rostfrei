@@ -6,8 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-rostfrei-core = { path = "../rostfrei-core" }
-rostfrei-messaging-core = { path = "../rostfrei-messaging-core" }
+rostfrei-core.workspace = true
+rostfrei-messaging-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
