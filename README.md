@@ -121,8 +121,9 @@ adding technical path arguments to individual domain declarations.
 
 ## Development
 
-The repository pins Rust 1.98 with Clippy and rustfmt through
-[`rust-toolchain.toml`](rust-toolchain.toml).
+The repository pins Rust 1.98 with Clippy, rustfmt, and `rust-src` through
+[`rust-toolchain.toml`](rust-toolchain.toml). Standard-library sources keep the
+compile-failure test diagnostics consistent across local machines and CI.
 
 ### Tests
 
