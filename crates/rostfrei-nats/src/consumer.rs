@@ -294,10 +294,26 @@ fn verify_consumer<A>(
 where
     A: PublishableAddress,
 {
+    verify_consumer_config(
+        &consumer.cached_info().name,
+        &consumer.cached_info().config,
+        config,
+    )
+}
+
+fn verify_consumer_config<A>(
+    name: &str,
+    actual: &consumer::Config,
+    config: &ConsumerConfig<A>,
+) -> Result<(), ConsumeError>
+where
+    A: PublishableAddress,
+{
     let expected = durable_consumer_config(config)
         .map_err(|_| ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
-    let actual = &consumer.cached_info().config;
-    if consumer.cached_info().name != config.durable_name().as_str()
+    // These settings control payload delivery, durable progress, and the pull requests
+    // and acknowledgement deadlines used by run(). Reject drift before consuming.
+    if name != config.durable_name().as_str()
         || actual.deliver_subject.is_some()
         || actual.durable_name.as_deref() != expected.durable_name.as_deref()
         || actual.deliver_policy != DeliverPolicy::All
@@ -305,7 +321,20 @@ where
         || actual.ack_wait != expected.ack_wait
         || actual.max_deliver != -1
         || actual.filter_subject != expected.filter_subject
+        || actual.filter_subjects != expected.filter_subjects
         || actual.max_ack_pending != expected.max_ack_pending
+        || actual.headers_only != expected.headers_only
+        || actual.max_batch != expected.max_batch
+        || actual.max_bytes != expected.max_bytes
+        || actual.max_expires != expected.max_expires
+        || actual.inactive_threshold != expected.inactive_threshold
+        || actual.num_replicas != expected.num_replicas
+        || actual.memory_storage != expected.memory_storage
+        || actual.backoff != expected.backoff
+        || actual.replay_policy != expected.replay_policy
+        || actual.rate_limit != expected.rate_limit
+        || actual.priority_policy != expected.priority_policy
+        || actual.priority_groups != expected.priority_groups
     {
         return Err(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration));
     }
@@ -775,6 +804,71 @@ async fn apply_ack(message: &jetstream::Message, kind: AckKind) -> Result<(), Co
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_nats::jetstream::consumer::IntoConsumerConfig as _;
+
+    #[test]
+    fn consumer_verification_requires_payloads_and_durable_progress() {
+        let context = rostfrei_messaging_core::ApplicationName::new("consumer-test")
+            .unwrap()
+            .bounded_context("orders")
+            .unwrap();
+        let config = ConsumerConfig::new(
+            context.consumer_name("process", 1).unwrap(),
+            context.durable_name("process", 1).unwrap(),
+            context.command_address("place-order").unwrap(),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            4,
+            3,
+        )
+        .unwrap();
+        let expected = durable_consumer_config(&config)
+            .unwrap()
+            .into_consumer_config();
+        let name = config.durable_name().as_str();
+        assert!(verify_consumer_config(name, &expected, &config).is_ok());
+        for actual in [
+            consumer::Config {
+                headers_only: true,
+                ..expected.clone()
+            },
+            consumer::Config {
+                memory_storage: true,
+                ..expected.clone()
+            },
+            consumer::Config {
+                inactive_threshold: Duration::from_secs(60),
+                ..expected.clone()
+            },
+            consumer::Config {
+                num_replicas: 1,
+                ..expected.clone()
+            },
+            consumer::Config {
+                max_batch: 1,
+                ..expected.clone()
+            },
+            consumer::Config {
+                backoff: vec![config.ack_wait(), Duration::from_secs(60)],
+                ..expected.clone()
+            },
+        ] {
+            assert_eq!(
+                verify_consumer_config(name, &actual, &config)
+                    .unwrap_err()
+                    .kind(),
+                ConsumeErrorKind::InvalidConfiguration,
+            );
+        }
+        // NATS supplies a default pull wait queue and server metadata. Neither
+        // changes the application's delivery contract.
+        let mut normalized = expected;
+        normalized.max_waiting = 512;
+        normalized
+            .metadata
+            .insert("_nats.level".to_owned(), "2".to_owned());
+        assert!(verify_consumer_config(name, &normalized, &config).is_ok());
+    }
 
     fn record(payload: &[u8]) -> QuarantineRecord {
         QuarantineRecord {

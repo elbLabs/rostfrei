@@ -145,8 +145,9 @@ those schemas, its parser and test repository do not accept v1 behavioral-test
 documents, and it does not translate v1 documents during reads or test runs.
 Likewise, the removed aggregate-addressed Tracer command input, Simulation,
 Test, and Dispatch routes have no executable compatibility aliases; requests to
-the old paths receive `404 Not Found`. Catalog v1 is the version of the discovery
-document and does not imply runtime support for Tracer schema-v1 documents.
+the old paths receive `404 Not Found`. The discovery document reports
+`catalogVersion: 2`. Its version is independent of the advertised document schema
+versions and does not imply runtime support for Tracer schema-v1 documents.
 
 NATS event-store streams contain both aggregate events and transaction bookkeeping. Correlation
 observers subscribe to the store's aggregate-event subject filter rather than the broader domain
@@ -180,7 +181,7 @@ Before deploying this change:
    top-level `schemaVersion`. Command observations now carry `context` instead of
    `aggregate`; domain-event aggregate identity and operation participant identity
    remain unchanged.
-5. Update Tracer clients to start from Catalog v1 and follow its advertised v2
+5. Update Tracer clients to start from Catalog v2 and follow its advertised v2
    schema and bounded-context command links. Do not rewrite old URLs mechanically:
    construct requests from the discovered templates and self-contained payload.
 6. Keep v1 schema artifacts only for offline validation of source material while
