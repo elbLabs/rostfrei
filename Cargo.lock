@@ -183,6 +183,7 @@ dependencies = [
  "rostfrei-fixtures",
  "rostfrei-messaging-core",
  "rostfrei-nats",
+ "rostfrei-testing",
  "rostfrei-tracer",
  "serde",
  "serde_json",
@@ -1135,6 +1136,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+ "time",
  "tokio",
  "tracing",
 ]
@@ -1185,6 +1187,7 @@ version = "0.0.4-alpha"
 dependencies = [
  "async-trait",
  "axum",
+ "base64",
  "futures-util",
  "http-body-util",
  "rostfrei",

@@ -6,6 +6,13 @@ use crate::domain::rental_fleet::RentalFleet;
     id = "unique-bicycle-identities",
     label = "Bicycle identities are unique"
 )]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "standalone invariant demonstration exercised by domain tests"
+    )
+)]
 pub(in crate::domain) trait FleetConsistency {
     fn unique_bicycle_identities(candidate: &RentalFleet) -> Option<InvariantViolation>;
 }

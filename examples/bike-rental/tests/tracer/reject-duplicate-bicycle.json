@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 2,
+  "id": "reject-duplicate-bicycle",
+  "name": "Reject a bicycle already in the fleet",
+  "setup": {
+    "fixture": "demo-fleet"
+  },
+  "expected": {
+    "within": "35s",
+    "settleFor": "1s",
+    "graphs": [
+      {
+        "nodes": [
+          {
+            "kind": "command",
+            "key": "subject",
+            "name": "add-bicycle",
+            "schemaVersion": 2,
+            "payload": {
+              "bicycle_id": "bike-42",
+              "condition": "serviceable",
+              "fleet_id": "city-fleet"
+            },
+            "outcome": {
+              "rejected": {
+                "code": "BICYCLE_ALREADY_IN_FLEET",
+                "payload": {
+                  "bicycle_id": "bike-42"
+                }
+              }
+            },
+            "context": "bike-rental"
+          }
+        ]
+      }
+    ]
+  }
+}

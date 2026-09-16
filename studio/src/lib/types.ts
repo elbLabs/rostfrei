@@ -1,11 +1,7 @@
 export type MessageKind = "command" | "domain-event" | "integration-event"
 
 export type MessageStatus =
-  | "idle"
-  | "running"
-  | "accepted"
-  | "rejected"
-  | "failed"
+  "idle" | "running" | "accepted" | "rejected" | "failed" | "indeterminate"
 
 export type EdgeFidelity = "exact" | "grouped"
 export type EdgeRelationship = "causation" | "stream-order" | "context"
@@ -17,6 +13,7 @@ export interface MessageGraphNode {
   edgeFidelity?: EdgeFidelity
   edgeRelationship?: EdgeRelationship
   context?: "fixture"
+  subject?: boolean
   kind: MessageKind
   name: string
   schemaVersion: number
@@ -34,6 +31,88 @@ export interface MessageGraphNode {
 export interface AggregateReference {
   type: string
   id: string
+}
+
+export interface TracerCatalog {
+  catalogVersion: number
+  contexts: CatalogContext[]
+  testRepository?: { definitionsHref: string }
+  behavioralTest?: { definitionsHref?: string }
+}
+
+export interface CatalogContext {
+  id: string
+  label: string
+  commands: CatalogCommand[]
+  aggregates: CatalogAggregate[]
+}
+
+export interface CatalogAggregate {
+  id: string
+  label: string
+  aggregateType: string
+  testInstancesHref: string
+}
+
+export interface CatalogCommand {
+  id: string
+  label: string
+  versions: CatalogCommandVersion[]
+}
+
+export interface CatalogCommandVersion {
+  schemaVersion: number
+  contentType: string
+  fields: CatalogCommandField[]
+  payloadTemplate: unknown
+  testInputsHrefTemplate: string
+  simulateHrefTemplate: string
+  testHrefTemplate?: string
+  dispatchHrefTemplate?: string
+}
+
+export interface CatalogCommandField {
+  name: string
+  value: CatalogFieldValue
+}
+
+export type CatalogScalar =
+  | string
+  | {
+      kind: "semantic"
+      id: unknown
+      label: string
+      representation: string
+    }
+
+export type CatalogFieldValue =
+  | { kind: "scalar"; scalar: CatalogScalar }
+  | { kind: "list"; element: CatalogFieldValue }
+  | { kind: "optional"; value: CatalogFieldValue }
+  | { kind: "entity"; id: unknown }
+  | { kind: "aggregateReference"; aggregate: unknown }
+  | { kind: "opaque" }
+
+export interface AggregateInstance {
+  aggregateId: string
+  streamVersion: number
+}
+
+export interface CommandInputDocument {
+  fields: CommandInputField[]
+}
+
+export interface CommandInputField {
+  name: string
+  label: string
+  options: CommandInputOption[]
+}
+
+export interface CommandInputOption {
+  value: unknown
+  valueJson?: string
+  label: string
+  description?: string
 }
 
 export interface FixtureDomainEvent {
@@ -64,8 +143,7 @@ export interface TestDefinitionSummary {
 }
 
 export type ExpectedOutcome =
-  | "accepted"
-  | { rejected: { code: string; payload?: unknown } }
+  "accepted" | { rejected: { code: string; payload?: unknown } }
 
 interface ExpectedMessageNodeBase {
   key: string
@@ -198,6 +276,25 @@ export interface OperationSnapshot {
     commandMessageId?: string
     duplicate?: boolean
   }
+}
+
+export interface OperationMessageSeries {
+  operationId: string
+  correlationId: string
+  mode: OperationSnapshot["mode"]
+  messageSeries: ObservedMessageSeries
+  capture: {
+    settled: boolean
+    settledFor: string
+    fidelity: EdgeFidelity
+    note?: string
+  }
+}
+
+export interface CommandExecutionResult {
+  operation: OperationSnapshot
+  series?: OperationMessageSeries
+  inspectionError?: string
 }
 
 export interface TestReport {

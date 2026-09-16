@@ -64,7 +64,6 @@ fn checked_add_usize(value: usize, increment: usize, context: &'static str) -> T
         .ok_or_else(|| format!("{context} exceeds usize").into())
 }
 
-const TEST_NATS_URL_ENV: &str = "ROSTFREI_NATS_URL";
 const TRACE_PARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -148,9 +147,7 @@ impl Fixture {
 
 #[tokio::test]
 async fn immutable_command_response_roundtrip_reconciles_duplicates_and_conflicts() {
-    let Some(url) = test_url() else {
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let fixture = Fixture::new(url).await.expect("messaging fixture");
     let command_address = fixture
         .command_address("durable-response")
@@ -278,8 +275,77 @@ async fn assert_absent_response_times_out(
     Ok(())
 }
 
-fn test_url() -> Option<String> {
-    std::env::var(TEST_NATS_URL_ENV).ok()
+#[tokio::test]
+async fn durable_consumer_rejects_unsafe_delivery_configuration() -> TestResult<()> {
+    let url = rostfrei_testing::integration::nats_url()?;
+    let fixture = Fixture::new(url).await?;
+    let factory = fixture
+        .connection
+        .consumer_factory(fixture.topology.clone());
+    for setting in [
+        "headers-only",
+        "memory-storage",
+        "inactive-threshold",
+        "max-batch",
+        "max-bytes",
+        "max-expires",
+        "backoff",
+    ] {
+        let config = ConsumerConfig::new(
+            fixture.context.consumer_name(setting, 1)?,
+            fixture.context.durable_name(setting, 1)?,
+            fixture.command_address(setting)?,
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            4,
+            3,
+        )?;
+        let mut actual = provisioning::durable_consumer_config(&config)?;
+        match setting {
+            "headers-only" => actual.headers_only = true,
+            "memory-storage" => actual.memory_storage = true,
+            "inactive-threshold" => actual.inactive_threshold = Duration::from_secs(60),
+            "max-batch" => actual.max_batch = 1,
+            "max-bytes" => actual.max_bytes = 1,
+            "max-expires" => actual.max_expires = Duration::from_millis(1),
+            "backoff" => actual.backoff = vec![config.ack_wait(), Duration::from_secs(60)],
+            _ => return Err(format!("unknown unsafe configuration setting: {setting}").into()),
+        }
+        fixture
+            .connection
+            .jetstream()
+            .create_consumer_on_stream(actual, fixture.topology.command_stream().as_str())
+            .await?;
+
+        let verification = factory.verify_consumer(&config).await;
+        let consumer = <NatsConsumerFactory as MessageConsumerFactory<CommandAddress>>::create(
+            &factory,
+            config.clone(),
+        )?;
+        let startup = tokio::time::timeout(
+            Duration::from_secs(1),
+            consumer.run(Arc::new(DispositionHandler::new()?)),
+        )
+        .await?;
+        fixture
+            .connection
+            .jetstream()
+            .get_stream(fixture.topology.command_stream().as_str())
+            .await?
+            .delete_consumer(config.durable_name().as_str())
+            .await?;
+        if verification.map_err(rostfrei_messaging_core::ConsumeError::kind)
+            != Err(rostfrei_messaging_core::ConsumeErrorKind::InvalidConfiguration)
+        {
+            return Err(format!("verification did not reject unsafe setting: {setting}").into());
+        }
+        if startup.map_err(rostfrei_messaging_core::ConsumeError::kind)
+            != Err(rostfrei_messaging_core::ConsumeErrorKind::InvalidConfiguration)
+        {
+            return Err(format!("worker startup did not reject unsafe setting: {setting}").into());
+        }
+    }
+    fixture.cleanup().await
 }
 
 fn message_id(prefix: &str) -> TestResult<MessageId> {
@@ -356,9 +422,7 @@ async fn application_scope_guard_results(
 
 #[tokio::test]
 async fn puback_confirms_stream_sequence_duplicate_and_owned_headers() {
-    let Some(url) = test_url() else {
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let fixture = Fixture::new(url).await.expect("messaging fixture");
     let address = fixture
         .command_address("publish")
@@ -549,7 +613,8 @@ async fn publish_disposition_commands(
                     id,
                     format!(r#"{{"kind":"{prefix}"}}"#).into_bytes(),
                 )?
-                .with_metadata(metadata),
+                .with_metadata(metadata)
+                .with_correlation_id(CorrelationId::new("quarantine-correlation")?),
             )
             .await?;
     }
@@ -587,9 +652,7 @@ fn assert_consumer_rejects_test_scope(
 
 #[tokio::test]
 async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() {
-    let Some(url) = test_url() else {
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let fixture = Fixture::new(url).await.expect("messaging fixture");
     let address = fixture
         .command_address("consume")
@@ -670,6 +733,14 @@ async fn durable_consumer_applies_ack_retry_and_puback_before_quarantine_term() 
         br#"{"kind":"quarantine"}"#
     );
     assert_eq!(record.reason(), "test quarantine");
+    assert_eq!(
+        record.correlation_id().map(CorrelationId::as_str),
+        Some("quarantine-correlation")
+    );
+    assert_eq!(
+        record.failure_kind(),
+        Some(rostfrei_messaging_core::QuarantineFailureKind::HandlerFailure)
+    );
     assert_eq!(record.attempt(), 1);
     assert!(record.source_sequence() > 0);
 
@@ -803,9 +874,7 @@ impl QueryHandler<Value, Value> for RoundTripHandler {
 
 #[tokio::test]
 async fn core_nats_query_roundtrip_preserves_errors_and_does_not_touch_jetstream() {
-    let Some(url) = test_url() else {
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let fixture = Fixture::new(url).await.expect("messaging fixture");
     let before = fixture
         .message_counts()
@@ -902,9 +971,7 @@ impl QueryHandler<Value, Value> for QueueHandler {
 
 #[tokio::test]
 async fn query_servers_in_one_queue_group_share_requests() {
-    let Some(url) = test_url() else {
-        return;
-    };
+    let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
     let fixture = Fixture::new(url).await.expect("messaging fixture");
     let address = fixture.query_address("queue").expect("queue query address");
     let queue_group = QueueGroup::new(format!(

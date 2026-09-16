@@ -57,7 +57,7 @@ impl EventStore for SessionStore {
 }
 
 async fn setup(label: &str) -> TestResult<(async_nats::jetstream::Context, NatsEventStore)> {
-    let url = std::env::var("ROSTFREI_NATS_URL")?;
+    let url = rostfrei_testing::integration::nats_url()?;
     let context = connect_context(&url).await?;
     let (bounded_context, stream_name) = unique_names(label)?;
     let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
@@ -68,7 +68,6 @@ async fn setup(label: &str) -> TestResult<(async_nats::jetstream::Context, NatsE
 }
 
 #[tokio::test]
-#[ignore = "requires ROSTFREI_NATS_URL"]
 async fn sessions_satisfy_direct_and_transaction_contracts() -> TestResult<()> {
     let (context, store) = setup("session-contract").await?;
     event_store_contract::try_run(|| SessionStore(store.clone())).await?;
@@ -79,7 +78,6 @@ async fn sessions_satisfy_direct_and_transaction_contracts() -> TestResult<()> {
 }
 
 #[tokio::test]
-#[ignore = "requires ROSTFREI_NATS_URL"]
 async fn session_load_rejects_history_without_receipt_on_every_attempt() -> TestResult<()> {
     let (context, store) = setup("session-missing-receipt-load").await?;
     let aggregate = publish_schema_four_event_without_receipt(&context, store.config()).await?;
@@ -100,7 +98,6 @@ async fn session_load_rejects_history_without_receipt_on_every_attempt() -> Test
 }
 
 #[tokio::test]
-#[ignore = "requires ROSTFREI_NATS_URL"]
 async fn session_direct_append_rejects_history_without_receipt_before_writing() -> TestResult<()> {
     let (context, store) = setup("session-missing-receipt-append").await?;
     let aggregate = publish_schema_four_event_without_receipt(&context, store.config()).await?;
@@ -131,14 +128,12 @@ async fn session_direct_append_rejects_history_without_receipt_before_writing() 
 }
 
 #[tokio::test]
-#[ignore = "requires ROSTFREI_NATS_URL"]
 async fn session_transaction_rejects_writer_history_without_receipt_before_writing()
 -> TestResult<()> {
     transaction_rejects_history_without_receipt(true).await
 }
 
 #[tokio::test]
-#[ignore = "requires ROSTFREI_NATS_URL"]
 async fn session_transaction_rejects_read_guard_history_without_receipt_before_writing()
 -> TestResult<()> {
     transaction_rejects_history_without_receipt(false).await
@@ -209,7 +204,6 @@ async fn broker_position(
 }
 
 #[tokio::test]
-#[ignore = "requires ROSTFREI_NATS_URL"]
 #[allow(clippy::too_many_lines)]
 async fn append_request_count_does_not_grow_with_loaded_history() -> TestResult<()> {
     let (context, store) = setup("session-read-cost").await?;
@@ -327,7 +321,6 @@ async fn append_request_count_does_not_grow_with_loaded_history() -> TestResult<
 }
 
 #[tokio::test]
-#[ignore = "requires ROSTFREI_NATS_URL"]
 async fn stale_sessions_reconcile_replays_and_preserve_read_guards() -> TestResult<()> {
     let (context, store) = setup("session-races").await?;
     let writer = stream("writer")?;
@@ -397,7 +390,6 @@ async fn stale_sessions_reconcile_replays_and_preserve_read_guards() -> TestResu
 }
 
 #[tokio::test]
-#[ignore = "requires ROSTFREI_NATS_URL"]
 async fn stream_recreation_invalidates_loaded_sessions() -> TestResult<()> {
     let (context, store) = setup("session-reset").await?;
     let stream_id = stream("aggregate")?;
