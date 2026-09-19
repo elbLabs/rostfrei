@@ -94,6 +94,13 @@ subscriptions use a bounded hash of the canonical address as their purpose, so
 different producers with the same event name do not share a durable. Observation
 codecs are keyed by producer, event name and schema version as well.
 
+One address has one durable, so it takes exactly one integration handler.
+`NatsRuntimeConfig::new` rejects a second handler for the same address, including
+another schema version of the same contract or an explicitly declared own context.
+To accept several schemas, register one `MessageHandler<IntegrationEventAddress>`
+that decodes each of them (see [ADR 0004](adr/0004-private-and-integration-events.md#schema-upgrades)).
+Typed version-aware decoding is tracked in [#111](https://github.com/elbLabs/rostfrei/issues/111).
+
 ## Bike rental: one entry point, one flag
 
 With JetStream NATS 2.12.1 or newer available:

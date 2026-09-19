@@ -39,7 +39,9 @@ For a rollout that keeps processing messages:
    pending delivery, retries, retained history, or quarantine redelivery.
 
 A v2-only typed handler is not sufficient for the first step: it would quarantine
-remaining v1 messages. Applications own the compatibility mapping; the framework
+remaining v1 messages. Registering a v1 and a v2 typed handler side by side is
+rejected by the application host: both would share the address's durable and
+quarantine each other's deliveries. Applications own the compatibility mapping; the framework
 does not automatically translate payload schemas.
 
 See [ADR 0014](0014-application-scoped-nats-conventions.md#durable-consumer-versions)

@@ -169,6 +169,16 @@ impl NatsRuntimeConfig {
         let mut integrations = Vec::new();
         for binding in &bindings.integration_handlers {
             let address = binding.address(&context)?;
+            // The durable is derived from the address alone; competing handlers
+            // on it would each quarantine the deliveries meant for the other.
+            if integrations
+                .iter()
+                .any(|c: &ConsumerConfig<IntegrationEventAddress>| c.address() == &address)
+            {
+                return Err(NatsHostError::Configuration(format!(
+                    "multiple integration handlers use the same address `{address}`"
+                )));
+            }
             let purpose = if address.context() == context.name().as_str() {
                 format!("{}-consumer", binding.name)
             } else {
