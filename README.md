@@ -61,6 +61,10 @@ authorization. The aggregate identity in the API is qualified by its bounded
 context. Command and rejection derives supply their canonical JSON codecs,
 while aggregate event JSON comes from the compiled aggregate codec.
 
+The example also includes a self-checking [quarantine walkthrough](examples/bike-rental/QUARANTINE.md)
+covering retry exhaustion, quarantine inspection, repair and republication, and
+invalid-message handling against real NATS JetStream.
+
 A Tracer instance receives an explicit test `EventHistory` for discovery,
 dynamic inputs, and read-only Simulate. Test and Dispatch instead use separately
 configured implementations of the same protocol-neutral command transport. The
