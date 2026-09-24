@@ -1,12 +1,30 @@
 # Tracer Studio
 
-Tracer Studio is a React/Vite client for executing commands, running Tracer
-behavioral tests, and visualizing causal message series. The Command pane offers
-Preview, which reads isolated Test history without publishing, and Test bus
-publication, which is the default and can append events and trigger Test-scoped
-integrations. A valid Test push submits immediately, closes the Command pane,
-and displays its message flow. Commands are discovered from Catalog v1 by
-bounded context; identifiers are prefilled editable payload fields.
+Tracer Studio is a React/Vite client for command execution, Tracer behavioral
+tests, and causal message-series visualization.
+
+Select a test to read its Given/When/Then summary and expected message flow.
+Run it to inspect the observed flow, test verdict, and command outcome. Message
+cards expose payload summaries; selecting a card opens its request, response,
+relationship, and metadata in a persistent inspector. Narrow screens use a
+message list with a dedicated details view.
+
+Use the **Canvas / Workbench** switch in the top bar to compare layouts. Canvas
+gives the flow the full working area, with navigation and message details opened
+on demand and a collapsible scenario summary. Workbench retains the expanded
+summary and persistent inspector. Switching keeps the current test, run, and
+message selection; the layout preference is saved in this browser.
+Keyboard shortcuts: **1** selects Canvas and **2** selects Workbench. Shortcuts
+are ignored while editing text or using modifier keys.
+
+Open **Command** (or **Ctrl/⌘ Shift K**) to use the catalog-driven command form.
+**Preview** reads isolated Test history without publishing; **Test bus** uses
+the isolated command pipeline and can append events and trigger integrations.
+Test bus is the default for commands that advertise that capability. Commands
+remain available even when the catalog has no behavioral-test repository.
+Identifiers are editable, discovered payload options refresh after Test runs,
+and numeric options retain their exact JSON representation. An unconfirmed Test
+submission keeps its idempotency key and payload for an explicit retry.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -19,89 +37,58 @@ Run the Chrome/Puppeteer interaction smoke test with:
 pnpm test:ui
 ```
 
+The smoke test intercepts every Tracer request and uses deterministic HTTP
+fixtures from `scripts/fixtures.mjs`, including connection failures and retry,
+reruns, rejection, failed expectations, storage failure, and responsive layouts.
+These fixtures are test-only and are not included in the application bundle.
+The smoke test does not publish to a running Tracer. Set `CHROME_BIN` if Chrome
+is installed outside the standard
+locations; container environments that require it can set `CHROME_NO_SANDBOX=1`.
+
 ## Browser inspection
 
-Capture a reproducible UI state with the installed Chrome browser (or set
-`CHROME_BIN` to its executable):
+Use the shared browser tools to capture named, deterministic UI scenarios:
 
 ```sh
+pnpm inspect:ui --list
 pnpm inspect:ui --scene accepted
 pnpm inspect:ui --scene all
 pnpm inspect:ui --scene command --viewport 390x844
+pnpm inspect:ui --scene narrow --out artifacts/after
 ```
 
-The inspector starts its own Vite server on an available port, opens a fresh
-browser context, and drives the real Studio controls. Named scenarios mock all
-API fetches, reuse the demo test definitions and fixtures, and label their test
-and command names as visual fixtures. They run without a Tracer backend. Unknown
-API requests fail instead of falling through to a backend.
+The inspector starts Vite on an available port and launches a fresh Chrome
+session. Named scenarios intercept every API request and label their synthetic
+responses as visual fixtures. They cover the workbench overview, command form,
+accepted/rejected Preview, pending and indeterminate results, a 25-message
+branching graph, long payloads, and the narrow-screen inspector. Unknown API
+requests fail rather than reaching a backend.
 
-| Scene           | Captured state                                         |
-| --------------- | ------------------------------------------------------ |
-| `overview`      | Expected rental flow with Tests open                   |
-| `command`       | Populated catalog-driven command form                  |
-| `accepted`      | Accepted Preview with command details open             |
-| `rejected`      | Business rejection with command details open           |
-| `loading`       | Pending Preview and observing indicator                |
-| `indeterminate` | Mocked ambiguous Test submission and retry details     |
-| `branching`     | 25 synthetic messages after clicking Fit graph to view |
-| `long-payload`  | Long strings and nested properties in a command popup  |
-| `narrow`        | Accepted command popup at 390 × 844                    |
+Each capture writes `screenshot.png`, `state.json`, `accessibility.json`, and
+`diagnostics.json` under the gitignored `artifacts/inspect/` directory (or `--out`).
+State includes panel/card bounds, selection, inspector content, and viewport
+visibility. Inspect the screenshot to evaluate wrapping, clipping, and contrast;
+browser exceptions, failed requests, unexpected HTTP errors, and missing fixture
+routes fail the capture. Fixture sessions freeze wall time/UUIDs and disable motion.
 
-Other scenes default to 1440 × 900. `--viewport WIDTHxHEIGHT` overrides either
-default. Use `--list` or `--help` for the command reference.
-
-Each capture writes four files to `artifacts/inspect/<scene>-<width>x<height>/`:
-
-- `screenshot.png`: the rendered viewport, including clipping and overlays.
-- `state.json`: scenario/source, browser version, panels, controls, graph nodes,
-  edges, geometry, popup contents, and node-center visibility.
-- `accessibility.json`: browser accessibility roles, names, and tree relationships.
-- `diagnostics.json`: page exceptions, console warnings/errors, failed requests,
-  HTTP errors, and unexpected fixture requests. The `indeterminate` scene declares
-  its deliberate 503 in `expectedHttpErrors`.
-
-Browser exceptions, failed requests, unexpected HTTP errors, and missing fixture
-routes make the command fail after saving diagnostic artifacts. Console messages
-are recorded for inspection. A successful capture verifies that the scenario
-was reached; inspect the screenshot to assess the layout.
-
-`artifacts/` is gitignored. Capturing the same scene and viewport replaces its
-files; use `--out artifacts/before` and `--out artifacts/after` to retain both.
-Fixture sessions freeze wall time and UUID generation and disable CSS motion.
-Timers and React Flow interactions still run. Compare pixels using the same
-Chrome version and operating system.
-
-### Interactive and live inspection
+`--headed` keeps Chrome open: Enter recaptures and `q` exits. To inspect a running
+Studio with its actual API instead of fixtures, use its URL:
 
 ```sh
-pnpm inspect:ui --scene rejected --headed
-pnpm inspect:ui --url http://127.0.0.1:5174 --headed
+pnpm inspect:ui --url http://127.0.0.1:4173 --headed
 ```
 
-`--headed` keeps Chrome open for interaction. Press Enter in the terminal to
-capture the current view again, or `q` to close it. The server and browser are
-closed when the inspector exits.
-
-`--url` selects the `live` scene and connects to an existing Studio, using its
-configured API. Live inspection captures the initial view automatically; further
-actions are manual. Its fresh browser context has separate local storage from
-your normal browser. `state.json` records `source: "live"` or `source: "mocked"`;
-the fixture connection badge is rendered by the real application.
-
-### Extending the workflow
-
-`scripts/browser.mjs` exports the shared Vite/Chrome launchers,
-`closeStudioBrowser`, `observePage`, `settlePage`, and `capturePage` for custom
-Puppeteer interactions. The smoke test uses the same launchers.
-`scripts/visual-scenarios.mjs` holds mock API responses and named interaction
-recipes. Add a scenario there, then capture it using `--scene NAME`. Keep
-scenario readiness checks tied to visible UI state.
+Live inspection uses a separate browser profile and initially only reads the UI;
+further actions are manual. Artifacts identify live versus mocked sources.
+`scripts/browser.mjs` provides the shared server/browser lifecycle, layout settling,
+diagnostics, and capture helpers. `scripts/visual-scenarios.mjs` contains scenario
+recipes, and `scripts/fixtures.mjs` imports the canonical bike-rental fixtures and
+behavioral definitions. These test-only resources are not bundled into Studio.
 
 ## Tracer connection
 
-The development server proxies `/api` to `http://127.0.0.1:1309`. Override the
-target or control token when needed:
+The development and preview servers proxy `/api` to `http://127.0.0.1:1309`.
+Override the target or control token when needed:
 
 ```sh
 VITE_TRACER_TARGET=http://127.0.0.1:1309 \
@@ -109,6 +96,20 @@ VITE_TRACER_TOKEN=local-development-token \
 pnpm dev
 ```
 
-When Tracer is unavailable, the Studio uses clearly labelled demo data. Past
-run summaries are retained in browser local storage because Tracer does not yet
-provide a run-history endpoint.
+Studio discovers commands and optional behavioral tests through Catalog v1 and
+follows advertised action and operation links. It requires a reachable Tracer API.
+Connection failures display the failed
+request, HTTP status when available, connection settings, and a **Retry connection**
+action. Discovery requests time out after 10 seconds; test submissions after
+60 seconds. Retrying a connection only reloads discovery and never executes a test.
+There is no built-in demo execution or automatic fallback to sample messages.
+
+In Docker, `127.0.0.1` refers to the Studio container itself. Configure
+`VITE_TRACER_TARGET` to a reachable Tracer container/host address, or explicitly use
+host networking for a local Tracer. Restart the dev/preview server after changing
+the proxy target; token and other frontend environment changes require a rebuild.
+
+Run summaries are retained in browser local storage because Tracer does not yet
+provide a run-history endpoint. Saved real runs can be inspected while disconnected,
+but rerunning requires a connection and uses the current test definition. Previously
+generated demo entries are excluded from history and cannot appear as real results.

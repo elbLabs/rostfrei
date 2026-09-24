@@ -1,4 +1,7 @@
 export type MessageKind = "command" | "domain-event" | "integration-event"
+export type StudioLayout = "canvas" | "workbench"
+export type FlowView =
+  "expected" | "running" | "observed" | "predicted" | "unavailable"
 
 export type MessageStatus =
   "idle" | "running" | "accepted" | "rejected" | "failed" | "indeterminate"
@@ -26,6 +29,7 @@ export interface MessageGraphNode {
   aggregateId?: string
   streamVersion?: number
   status?: MessageStatus
+  expectedOutcome?: ExpectedOutcome
 }
 
 export interface AggregateReference {
@@ -321,4 +325,7 @@ export interface StoredRun {
   status: TestReport["status"]
   createdAt: string
   nodes: MessageGraphNode[]
+  source?: "live" | "demo"
+  definition?: TestDefinitionRevision
+  diagnostics?: MessageSeriesComparison["diagnostics"]
 }
