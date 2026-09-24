@@ -3,8 +3,6 @@ import type {
   Fixture,
   MessageGraphNode,
   ObservedCommandOutcome,
-  OperationMessageSeries,
-  OperationSnapshot,
   TestDefinition,
   TestReport,
 } from "@/lib/types"
@@ -28,8 +26,11 @@ export interface GraphLayout {
   edges: GraphEdge[]
 }
 
-const HORIZONTAL_GAP = 280
-const LANE_GAP = 140
+export const MESSAGE_WIDTH = 240
+export const MESSAGE_HEIGHT = 136
+export const FIXTURE_WIDTH = 168
+const HORIZONTAL_GAP = 48
+const LANE_GAP = 176
 
 export function layoutMessageGraph(nodes: MessageGraphNode[]): GraphLayout {
   const byId = new Map(nodes.map((node) => [node.id, node]))
@@ -64,7 +65,11 @@ export function layoutMessageGraph(nodes: MessageGraphNode[]): GraphLayout {
       ...node,
       depth,
       lane,
-      x: depth * HORIZONTAL_GAP,
+      x: parent
+        ? parent.x +
+          (parent.context ? FIXTURE_WIDTH : MESSAGE_WIDTH) +
+          HORIZONTAL_GAP
+        : 0,
       y: lane * LANE_GAP,
     })
   }
@@ -158,13 +163,13 @@ export function expectedGraph(
         parentId: isRoot ? context.anchorId : expectedParentId,
         edgeFidelity: expectedParentId ? "exact" : undefined,
         edgeRelationship: isRoot && context.anchorId ? "context" : undefined,
-        subject: node.kind === "command" ? isRoot : undefined,
         kind: node.kind,
         name: node.name,
         schemaVersion: node.schemaVersion,
         payload: node.payload,
         boundedContext: node.kind === "command" ? node.context : undefined,
         status: "idle",
+        expectedOutcome: node.kind === "command" ? node.outcome : undefined,
       }
     }),
   ]
@@ -185,14 +190,9 @@ export function reportGraph(
   const matchedRootId = report.comparison.matches.find(
     (match) => match.expectedKey === expectedRoot?.key
   )?.observedMessageId
-  const subjectId =
-    commandMessageId(report.operation.result) ??
-    report.operation.failure?.commandMessageId ??
-    report.commandOutcome?.commandMessageId ??
-    matchedRootId
-  const subject = subjectId
-    ? messages.find((message) => message.messageId === subjectId)
-    : messages.find((message) => message.kind === "command")
+  const subject =
+    messages.find((message) => message.messageId === matchedRootId) ??
+    messages.find((message) => message.kind === "command")
   const outcomes = new Map(
     report.observed.commandOutcomes.map((outcome) => [
       outcome.commandMessageId,
@@ -217,9 +217,14 @@ export function reportGraph(
       return {
         id: message.messageId,
         parentId: exactParent ? message.causationId : fallbackParent,
-        edgeFidelity: exactParent ? "exact" : "grouped",
-        edgeRelationship: isSubject && context.anchorId ? "context" : undefined,
-        subject: message.kind === "command" ? isSubject : undefined,
+        // A layout association without an explicit causal identity is not an edge.
+        hideIncomingEdge: !exactParent && !isSubject,
+        edgeFidelity:
+          exactParent || (isSubject && !message.causationId)
+            ? "exact"
+            : "grouped",
+        edgeRelationship:
+          isSubject && context.anchorId && !exactParent ? "context" : undefined,
         kind: message.kind,
         name: message.name,
         schemaVersion: message.schemaVersion,
@@ -243,75 +248,6 @@ export function reportGraph(
       }
     }),
   ]
-}
-
-export function operationGraph(
-  operation: OperationSnapshot,
-  series: OperationMessageSeries
-): MessageGraphNode[] {
-  const messages = [...series.messageSeries.messages].sort(
-    (left, right) => left.observationOrder - right.observationOrder
-  )
-  const knownIds = new Set(messages.map((message) => message.messageId))
-  const subjectId =
-    commandMessageId(operation.result) ?? operation.failure?.commandMessageId
-  const subject = subjectId
-    ? messages.find(
-        (message) =>
-          message.kind === "command" && message.messageId === subjectId
-      )
-    : messages.find((message) => message.kind === "command")
-  const outcomes = new Map(
-    series.messageSeries.commandOutcomes.map((outcome) => [
-      outcome.commandMessageId,
-      outcome,
-    ])
-  )
-
-  return messages.map<MessageGraphNode>((message) => {
-    const exactParent = message.causationId
-      ? knownIds.has(message.causationId)
-      : false
-    const isSubject = message.messageId === subject?.messageId
-    const outcome = outcomes.get(message.messageId)
-
-    return {
-      id: message.messageId,
-      parentId: exactParent ? message.causationId : undefined,
-      edgeFidelity: exactParent
-        ? "exact"
-        : isSubject && !message.causationId
-          ? undefined
-          : "grouped",
-      subject: message.kind === "command" ? isSubject : undefined,
-      kind: message.kind,
-      name: message.name,
-      schemaVersion: message.schemaVersion,
-      payload: message.payload,
-      response:
-        message.kind === "command"
-          ? (outcome?.outcome ??
-            (isSubject ? (operation.result ?? operation.failure) : undefined))
-          : undefined,
-      messageId: message.messageId,
-      causationId: message.causationId,
-      boundedContext: message.kind === "command" ? message.context : undefined,
-      aggregateType:
-        message.kind === "domain-event" ? message.aggregate?.type : undefined,
-      aggregateId:
-        message.kind === "domain-event" ? message.aggregate?.id : undefined,
-      status:
-        message.kind === "command"
-          ? operationCommandStatus(outcome, operation, isSubject)
-          : "accepted",
-    }
-  })
-}
-
-function commandMessageId(result: unknown): string | undefined {
-  if (typeof result !== "object" || result === null) return undefined
-  const value = Reflect.get(result, "commandMessageId")
-  return typeof value === "string" ? value : undefined
 }
 
 function fixtureContext(
@@ -369,33 +305,20 @@ function commandStatus(
 ): MessageGraphNode["status"] {
   if (outcome?.outcome.status === "accepted") return "accepted"
   if (outcome?.outcome.status === "rejected") return "rejected"
-  if (!isSubject) return "idle"
-  if (report.operation.status === "failed") return "failed"
-  if (report.operation.status === "indeterminate") return "indeterminate"
-  return report.operation.status === "completed" ? "indeterminate" : "running"
-}
-
-function operationCommandStatus(
-  outcome: ObservedCommandOutcome | undefined,
-  operation: OperationSnapshot,
-  isSubject: boolean
-): MessageGraphNode["status"] {
-  if (outcome?.outcome.status === "accepted") return "accepted"
-  if (outcome?.outcome.status === "rejected") return "rejected"
-  if (!isSubject) return "idle"
-  if (operation.status === "failed") return "failed"
-  if (operation.status === "indeterminate") return "indeterminate"
-  const decision = decisionOf(operation.result)
-  if (decision === "accepted" || decision === "rejected") return decision
-  return operation.status === "completed" ? "indeterminate" : "running"
-}
-
-function decisionOf(result: unknown): "accepted" | "rejected" | undefined {
-  if (typeof result !== "object" || result === null) return undefined
-  const decision = Reflect.get(result, "decision")
-  return decision === "accepted" || decision === "rejected"
-    ? decision
-    : undefined
+  if (!isSubject) return undefined
+  if (
+    report.operation.status === "failed" ||
+    report.operation.status === "indeterminate"
+  ) {
+    return "failed"
+  }
+  const result = report.operation.result
+  if (typeof result === "object" && result !== null && "decision" in result) {
+    if (result.decision === "accepted" || result.decision === "rejected") {
+      return result.decision
+    }
+  }
+  return report.operation.status === "completed" ? undefined : "running"
 }
 
 function commandResponse(
