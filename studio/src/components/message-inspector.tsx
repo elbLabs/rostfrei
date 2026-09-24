@@ -79,8 +79,10 @@ export function MessageInspector({
                 : node.edgeRelationship === "context"
                   ? "Root command. Evaluates the fixture state; the fixture is not its cause."
                   : parent && node.edgeFidelity === "exact"
-                    ? `${view === "expected" ? "Expected after" : "Caused by"} ${parent.name}.`
-                    : node.kind === "command" && !node.causationId
+                    ? `${view === "expected" ? "Expected after" : view === "predicted" ? "Predicted after" : "Caused by"} ${parent.name}.`
+                    : node.kind === "command" &&
+                        node.subject !== false &&
+                        !node.causationId
                       ? "Root command for this execution."
                       : view === "expected"
                         ? "No parent specified in the expectation."

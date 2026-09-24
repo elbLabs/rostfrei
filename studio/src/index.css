@@ -156,6 +156,84 @@
 .connection-status[data-source="live"] .connection-dot {
   background: #86d8bc;
 }
+.connection-status[data-source="disconnected"] {
+  color: #f2a7b0;
+}
+.connection-status[data-source="disconnected"] .connection-dot {
+  background: #f2a7b0;
+}
+.studio-heading {
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.connection-notice {
+  padding: 22px 24px;
+  border-bottom: 1px solid #65424b;
+  background: #2b242e;
+}
+.connection-notice[data-connection="connecting"] {
+  background: #1b222d;
+  border-color: var(--border);
+}
+.connection-notice-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.connection-notice-heading > svg {
+  flex-shrink: 0;
+  color: #f2a7b0;
+  margin-top: 2px;
+}
+.connection-notice[data-connection="connecting"] svg {
+  color: #a7dcf0;
+}
+.connection-notice-heading > div {
+  flex: 1;
+  min-width: 0;
+}
+.connection-notice h1 {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.connection-notice p {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #c9bdc7;
+  margin-top: 6px;
+}
+.connection-notice .connection-error-detail {
+  margin-top: 14px;
+  font-family: var(--font-mono);
+  color: #f6c7ce;
+  overflow-wrap: anywhere;
+}
+.connection-help {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.connection-help summary {
+  cursor: pointer;
+  color: #d6b7c1;
+}
+.connection-help code {
+  color: #f1d6df;
+}
+@media (max-width: 767px) {
+  .connection-notice {
+    padding: 16px;
+  }
+  .connection-notice-heading {
+    flex-wrap: wrap;
+  }
+  .connection-notice-heading > div {
+    flex-basis: calc(100% - 32px);
+  }
+  .connection-retry {
+    margin-left: 32px;
+  }
+}
 .connection-detail {
   color: var(--muted-foreground);
   margin-left: 10px;
@@ -664,6 +742,22 @@
 }
 .message-card-footer[data-status="failed"] {
   color: #f2a7b0;
+}
+.message-card-footer[data-status="indeterminate"] {
+  color: #f3cb90;
+}
+.message-state[data-status="indeterminate"] {
+  background: #453c2e;
+  color: #f3cb90;
+}
+.graph-caption {
+  color: #b7c8db;
+}
+@media (max-width: 767px) {
+  .command-panel-trigger > span,
+  .studio-topbar:has(.command-panel-trigger) .studio-logo {
+    display: none;
+  }
 }
 .message-card-footer[data-status="running"] {
   color: #a7dcf0;
