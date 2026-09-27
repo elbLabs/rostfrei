@@ -2,6 +2,10 @@
 
 Rostfrei macros attach stable semantic metadata to ordinary Rust types and traits. Start with declarations, then add focused behavior contracts and explicit model composition.
 
+Your types and trait implementations carry the business rules. The macros describe their roles and relationships so the compiled model, runtime, and developer tools can work with the same contracts.
+
+**New to Rostfrei?** Start with the [bike-rental walkthrough](/docs/getting-started) to see these declarations in a working application. Use this reference when you are ready to read or write a specific contract, and [Project structure](/docs/project-structure) to find its home.
+
 ## Declarations
 
 - [`install_macro_support!`](/docs/domain-macros/install-macro-support)
@@ -13,7 +17,7 @@ Rostfrei macros attach stable semantic metadata to ordinary Rust types and trait
 - [`PolicyOutcome`](/docs/domain-macros/policy-outcome), [`EntityLifecycle`](/docs/domain-macros/entity-lifecycle), and [`StateTransition`](/docs/domain-macros/state-transition)
 - [`domain_model!`](/docs/domain-macros/domain-model)
 
-## Behaviour
+## Behavior
 
 - [`domain_action`](/docs/domain-macros/domain-action)
 - [`domain_query`](/docs/domain-macros/domain-query)
