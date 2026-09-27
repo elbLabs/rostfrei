@@ -9,18 +9,18 @@ export function MacroExplorerSection() {
       <div className="mx-auto max-w-7xl">
         <div className="mb-10 max-w-3xl">
           <p className="mb-3 font-mono text-xs font-semibold tracking-[0.18em] text-primary uppercase">
-            Macro by macro
+            Explicit behavior, discoverable contracts
           </p>
           <h2
             className="text-3xl font-semibold tracking-tight sm:text-5xl"
             id="macro-explorer-title"
           >
-            Small markers. Visible Rust.
+            Your Rust carries the rules. Macros describe the model.
           </h2>
           <p className="mt-5 max-w-2xl text-base leading-7 text-stone-400">
-            Move through the complete public macro surface. Each slide pairs the
-            authored domain code with a simplified view of what Rostfrei
-            generates.
+            See how domain declarations become metadata that the runtime and
+            tooling can use. Each example pairs the Rust you write with a
+            simplified view of the generated code.
           </p>
         </div>
 

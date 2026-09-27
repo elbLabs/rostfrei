@@ -37,18 +37,19 @@ export function ProjectStructureSection() {
       <div className="mx-auto max-w-7xl">
         <div className="mb-8 max-w-3xl sm:mb-10">
           <p className="mb-3 font-mono text-xs font-semibold tracking-[0.18em] text-[#9a5729] uppercase">
-            Convention, checked
+            A model you can navigate
           </p>
           <h2
             id="project-structure-title"
             className="text-3xl font-semibold tracking-[-0.035em] text-[#201d18] sm:text-5xl"
           >
-            The filesystem becomes part of the type system.
+            Make ownership visible. Keep it checked.
           </h2>
           <p className="mt-5 max-w-2xl text-base leading-7 text-[#625b51] sm:text-lg">
-            One representative path shows how Rostfrei gives every domain role a
-            predictable home, then verifies the relationships encoded by that
-            structure.
+            Find the rule where you expect it. Every domain concept and behavior
+            has a predictable home, and the structure checker validates those
+            ownership relationships alongside the compiled model. Explore a
+            representative project below.
           </p>
         </div>
 
