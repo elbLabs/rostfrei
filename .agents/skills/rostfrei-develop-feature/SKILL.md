@@ -12,6 +12,42 @@ installed Rostfrei version, real implementation and existing test conventions.
 The loop is: agree on behavior, write and explain its test, observe red,
 implement, observe green, refactor.
 
+## Evolve contracts through deliberate migrations
+
+Keep one current command or integration-event contract and one current business
+implementation. Schema versions support step-by-step migration when an incompatible
+contract change must coexist with existing callers or messages. They are not a
+counter for implementation iterations, features or releases.
+
+- Preserve the schema version for internal refactoring and compatible contract
+  changes. Moving handlers, renaming internal types or fixing an implementation
+  without breaking the public contract does not justify another version.
+- Before introducing a version or compatibility path, identify the incompatible
+  change and the concrete obligation: deployed callers/consumers, queued or retried
+  messages, retained history, or quarantine redelivery. Do not invent legacy
+  clients, speculative `V2` types or parallel handlers for hypothetical future use.
+  When no compatibility obligation exists, update the current contract directly.
+- For an actual migration, record the affected callers/messages, rollout order and
+  observable retirement condition alongside the change. Adapt older payloads at
+  the boundary into the current implementation where their semantics permit;
+  avoid copying business workflows for each schema version.
+- For integration events, deploy readers that accept both schemas before switching
+  producers. Typed decoding accepts exactly the declared schema version; a version
+  bump does not supply automatic translation.
+- Retire old command/integration-event support once callers and producers have
+  migrated and pending delivery, retries, retained history and quarantine can no
+  longer deliver the old schema. Remove the migration code when that condition is
+  met rather than accumulating permanent compatibility paths.
+- Stored domain events have a different lifetime: historical schemas may need
+  decoding indefinitely for aggregate replay. Preserve replay through codecs or
+  upcasting into the current model; this does not require parallel historical
+  business implementations. Do not remove a decoder while stored history needs it.
+
+Payload schema versions are independent of crate releases, Tracer document/catalog
+versions and durable consumer identities. Preserve an existing durable identity
+when adding schema support; changing it is a separate subscription migration and
+can replay already processed messages.
+
 ## 1. Discover the intended behavior together
 
 Read the request and relevant repository instructions. Briefly inspect the owning

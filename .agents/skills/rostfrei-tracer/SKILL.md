@@ -99,6 +99,14 @@ version numbers describe different contracts. Optional capabilities must be
 discovered on this host, not assumed from a version number.
 Command-payload schema versions are independent of those protocol versions too.
 
+Command and integration-event schema versions support deliberate contract
+migrations. Multiple advertised versions describe supported contracts, not a
+recommendation to create another version for each feature or refactor. Use the
+agreed registered contract; do not bump versions to work around a payload error.
+An actual migration needs a concrete compatibility obligation, a rollout order
+and a retirement condition for old support. Adding payload-schema support does
+not require a new durable consumer identity, which can replay processed messages.
+
 Use these advertised relations:
 
 - `contexts[].aggregates[].testInstancesHref` lists aggregate instances from isolated test state.
