@@ -323,7 +323,6 @@ async fn assert_execution_metadata_parity(
                 .await?,
             CommandOutcome::Accepted(CommandReceipt::ExactReplay(events.clone()))
         );
-        // A receipt written through the bus must also replay through direct execution.
         assert_eq!(
             CommandExecutor::new(bus_store.clone())
                 .execute(&CreditAccountHandler, retry_metadata, &command)
