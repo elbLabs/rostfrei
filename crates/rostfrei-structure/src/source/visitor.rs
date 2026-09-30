@@ -77,6 +77,7 @@ impl<'ast> Visit<'ast> for FactVisitor {
                 })
                 .collect(),
             line: line(implementation.span()),
+            column: implementation.span().start().column,
         });
         visit::visit_item_impl(self, implementation);
     }

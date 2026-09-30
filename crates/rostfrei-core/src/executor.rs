@@ -1,5 +1,6 @@
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -114,6 +115,10 @@ where
 }
 
 /// An aggregate loaded during one command-handling attempt.
+///
+/// Dereferences to its tracked [`AggregateInstance`], so domain action traits in scope can be
+/// invoked directly on the loaded handle. A mutable binding is sufficient to call mutable
+/// actions; event tracking and finalization remain attached to the loaded instance.
 pub struct LoadedAggregate<A: Aggregate> {
     aggregate: AggregateInstance<A>,
     base_version: StreamVersion,
@@ -136,6 +141,20 @@ impl<A: Aggregate> LoadedAggregate<A> {
 
     pub const fn base_version(&self) -> StreamVersion {
         self.base_version
+    }
+}
+
+impl<A: Aggregate> Deref for LoadedAggregate<A> {
+    type Target = AggregateInstance<A>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.aggregate
+    }
+}
+
+impl<A: Aggregate> DerefMut for LoadedAggregate<A> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.aggregate
     }
 }
 
@@ -982,7 +1001,7 @@ mod tests {
         let mut first = execution.load::<TestAggregate>("first").await.unwrap();
         let mut second = execution.load::<TestAggregate>("second").await.unwrap();
 
-        raise_on_both(first.aggregate_mut(), second.aggregate_mut());
+        raise_on_both(&mut first, &mut second);
         drop(first);
         drop(second);
         let participants = execution.finish().unwrap();
@@ -1061,6 +1080,16 @@ mod tests {
         calls: AtomicUsize,
     }
 
+    trait WriteAction {
+        fn write(&mut self);
+    }
+
+    impl WriteAction for AggregateInstance<TestAggregate> {
+        fn write(&mut self) {
+            self.raise(TestEvent);
+        }
+    }
+
     #[async_trait]
     impl CommandHandler<()> for WriteHandler {
         type Rejection = ();
@@ -1073,7 +1102,7 @@ mod tests {
             self.calls.fetch_add(1, Ordering::Relaxed);
             let _guard = execution.load::<TestAggregate>("guard").await?;
             let mut writer = execution.load::<TestAggregate>("writer").await?;
-            writer.aggregate_mut().raise(TestEvent);
+            writer.write();
             Ok(CommandDecision::Accepted)
         }
     }
@@ -1387,7 +1416,7 @@ mod tests {
         ) -> CommandHandlingResult<Self::Rejection> {
             let mut first = execution.load::<TestAggregate>("first-writer").await?;
             let mut second = execution.load::<TestAggregate>("second-writer").await?;
-            raise_on_both(first.aggregate_mut(), second.aggregate_mut());
+            raise_on_both(&mut first, &mut second);
             Ok(CommandDecision::Accepted)
         }
     }
@@ -1946,9 +1975,9 @@ mod tests {
             execution: &mut CommandExecution<'_>,
         ) -> CommandHandlingResult<Self::Rejection> {
             let mut loaded = execution.load::<TestAggregate>("replaced").await?;
-            let stream_id = loaded.aggregate().stream_id().clone();
-            *loaded.aggregate_mut() = AggregateInstance::new(stream_id);
-            loaded.aggregate_mut().raise(TestEvent);
+            let stream_id = loaded.stream_id().clone();
+            *loaded = AggregateInstance::new(stream_id);
+            loaded.write();
             Ok(CommandDecision::Accepted)
         }
     }

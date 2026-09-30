@@ -1,6 +1,7 @@
 mod action_ownership;
 mod content;
 mod evaluation_ownership;
+mod event_raising;
 mod files;
 mod hierarchy;
 mod modules;
@@ -25,7 +26,9 @@ pub fn check_domain_root(root: &Path) -> Vec<Diagnostic> {
     let facts = parse_sources(&sources.rust_files, &mut diagnostics);
 
     files::check(root, &facts, &mut diagnostics);
-    action_ownership::check(root, &sources.directories, &facts, &mut diagnostics);
+    let action_implementations =
+        action_ownership::check(root, &sources.directories, &facts, &mut diagnostics);
+    event_raising::check(root, &facts, &action_implementations, &mut diagnostics);
     evaluation_ownership::check(root, &sources.directories, &facts, &mut diagnostics);
     query_ownership::check(root, &sources.directories, &facts, &mut diagnostics);
     content::check(root, &facts, &mut diagnostics);

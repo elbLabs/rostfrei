@@ -14,6 +14,7 @@ fn diagnostic_codes_keep_their_stable_external_representation() {
         (DiagnosticCode::InvalidTestMirror, "RF008"),
         (DiagnosticCode::MissingDomainCheckTarget, "RF009"),
         (DiagnosticCode::CompiledDomainCheckFailed, "RF010"),
+        (DiagnosticCode::EventRaisingOutsideAction, "RF011"),
     ];
 
     for (code, expected) in cases {
