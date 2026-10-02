@@ -39,6 +39,7 @@ const CORRELATION_EVENT_SCHEMA_VERSION: u16 = 2;
 const EVENT_SCHEMA_VERSION: u16 = 3;
 const TRANSACTION_EVENT_SCHEMA_VERSION: u16 = 4;
 const TRANSACTION_RECEIPT_SCHEMA_VERSION: u16 = 1;
+const EVENT_FREE_RECEIPT_SCHEMA_VERSION: u16 = 2;
 const ATOMIC_BATCH_API_LEVEL: &str = "2";
 const MINIMUM_ATOMIC_BATCH_SERVER_VERSION: (i64, i64, i64) = (2, 12, 1);
 const NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT: &str =
@@ -805,13 +806,6 @@ impl NatsEventStore {
             .map(CausationId::new)
             .transpose()
             .map_err(|error| corrupt(format!("invalid transaction causation identity: {error}")))?;
-        if !content
-            .participants
-            .iter()
-            .any(|participant| participant.event_count > 0 && participant.commit_id.is_some())
-        {
-            return Err(corrupt("transaction receipt has no writing participant"));
-        }
         let transaction_event_count =
             content
                 .participants
@@ -825,7 +819,7 @@ impl NatsEventStore {
                         corrupt("transaction receipt event count calculation overflowed")
                     })
                 })?;
-        if transaction_event_count == 0 || transaction_event_count > MAX_EVENTS_PER_BATCH {
+        if transaction_event_count > MAX_EVENTS_PER_BATCH {
             return Err(corrupt(
                 "transaction receipt has an invalid transaction event count",
             ));
@@ -2855,12 +2849,6 @@ fn validate_derived_identities(
 }
 
 fn validate_transaction_shape(transaction: &EventTransaction) -> Result<(), EventStoreError> {
-    if transaction.participants().is_empty() {
-        return Err(invalid(
-            "an event transaction must contain at least one participant",
-        ));
-    }
-
     let mut streams = HashSet::with_capacity(transaction.participants().len());
     for participant in transaction.participants() {
         if !streams.insert(participant.stream_id()) {
@@ -3171,7 +3159,8 @@ async fn verify_transaction_guard(
     }
     if required_single_header(&message.headers, "Content-Type")? != "application/json"
         || required_single_header(&message.headers, "Nats-Batch-Id")? != batch_id
-        || optional_single_header(&message.headers, "Nats-Expected-Stream")?.is_some()
+        || optional_single_header(&message.headers, "Nats-Expected-Stream")?
+            != (batch_ordinal == 0).then_some(config.stream_name())
         || optional_single_header(&message.headers, "Nats-Batch-Commit")?.is_some()
     {
         return Err(corrupt(
@@ -3252,10 +3241,19 @@ fn global_sequence_at_version(
 fn encode_transaction_receipt(
     content: &TransactionReceiptContentWire,
 ) -> Result<Vec<u8>, EventStoreError> {
-    let checksum = transaction_receipt_checksum(TRANSACTION_RECEIPT_SCHEMA_VERSION, content)
+    let schema_version = if content
+        .participants
+        .iter()
+        .any(|participant| participant.event_count > 0)
+    {
+        TRANSACTION_RECEIPT_SCHEMA_VERSION
+    } else {
+        EVENT_FREE_RECEIPT_SCHEMA_VERSION
+    };
+    let checksum = transaction_receipt_checksum(schema_version, content)
         .map_err(|error| invalid(format!("failed to checksum transaction receipt: {error}")))?;
     serde_json::to_vec(&StoredTransactionReceiptWire {
-        schema_version: TRANSACTION_RECEIPT_SCHEMA_VERSION,
+        schema_version,
         checksum,
         receipt: content.clone(),
     })
@@ -3295,12 +3293,23 @@ fn decode_transaction_receipt(
             "stored transaction receipt has an invalid batch sequence",
         ));
     }
+    if optional_single_header(headers, "Nats-Expected-Stream")?
+        != (batch_sequence == 1).then_some(config.stream_name())
+        || optional_single_header(headers, NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT)?.is_some()
+    {
+        return Err(corrupt(
+            "stored transaction receipt has incompatible stream expectations",
+        ));
+    }
     let wire: StoredTransactionReceiptWire = serde_json::from_slice(payload).map_err(|error| {
         corrupt(format!(
             "stored transaction receipt is invalid JSON: {error}"
         ))
     })?;
-    if wire.schema_version != TRANSACTION_RECEIPT_SCHEMA_VERSION {
+    if !matches!(
+        wire.schema_version,
+        TRANSACTION_RECEIPT_SCHEMA_VERSION | EVENT_FREE_RECEIPT_SCHEMA_VERSION
+    ) {
         return Err(corrupt(
             "stored transaction receipt has an unsupported schema version",
         ));
@@ -3319,17 +3328,30 @@ fn decode_transaction_receipt(
     if wire.receipt.event_store_stream != config.stream_name()
         || wire.receipt.application != config.application().as_str()
         || wire.receipt.bounded_context != config.bounded_context().as_str()
-        || wire.receipt.participants.is_empty()
     {
         return Err(corrupt(
-            "stored transaction receipt belongs to another event store or has no participants",
+            "stored transaction receipt belongs to another event store",
         ));
     }
-    if !wire
+    validate_receipt_participant_shape(&wire, batch_sequence)?;
+    Ok(DecodedTransactionReceipt {
+        batch_id: batch_id.to_owned(),
+        batch_sequence,
+        stream_sequence,
+        content: wire.receipt,
+    })
+}
+
+fn validate_receipt_participant_shape(
+    wire: &StoredTransactionReceiptWire,
+    batch_sequence: usize,
+) -> Result<(), EventStoreError> {
+    let has_events = wire
         .receipt
         .participants
         .iter()
-        .any(|participant| participant.event_count > 0 && participant.commit_id.is_some())
+        .any(|participant| participant.event_count > 0);
+    if (wire.schema_version == TRANSACTION_RECEIPT_SCHEMA_VERSION) != has_events
         || wire
             .receipt
             .participants
@@ -3352,17 +3374,14 @@ fn decode_transaction_receipt(
                     corrupt("stored transaction receipt batch sequence calculation overflowed")
                 })
             })?;
-    if batch_sequence != expected_final_sequence {
+    if batch_sequence != expected_final_sequence
+        || batch_sequence > rostfrei_core::MAX_TRANSACTION_ITEMS
+    {
         return Err(corrupt(
             "stored transaction receipt batch sequence does not match its participants",
         ));
     }
-    Ok(DecodedTransactionReceipt {
-        batch_id: batch_id.to_owned(),
-        batch_sequence,
-        stream_sequence,
-        content: wire.receipt,
-    })
+    Ok(())
 }
 
 fn transaction_receipt_checksum(
@@ -3884,7 +3903,7 @@ mod tests {
     }
 
     #[test]
-    fn transaction_receipt_requires_at_least_one_writer() {
+    fn event_free_receipts_use_a_distinct_schema_and_legacy_validation_stays_strict() {
         let config = config();
         let mut content = transaction_receipt_fixture();
         for participant in &mut content.participants {
@@ -3892,14 +3911,37 @@ mod tests {
             participant.event_count = 0;
         }
         let payload = encode_transaction_receipt(&content).unwrap();
+        let wire: StoredTransactionReceiptWire = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(wire.schema_version, EVENT_FREE_RECEIPT_SCHEMA_VERSION);
+        decode_transaction_receipt(&config, 3, &transaction_receipt_headers("3"), &payload)
+            .expect("event-free acceptance with two guards");
 
+        let legacy = StoredTransactionReceiptWire {
+            schema_version: TRANSACTION_RECEIPT_SCHEMA_VERSION,
+            checksum: transaction_receipt_checksum(TRANSACTION_RECEIPT_SCHEMA_VERSION, &content)
+                .unwrap(),
+            receipt: content.clone(),
+        };
+        let payload = serde_json::to_vec(&legacy).unwrap();
         let error =
             decode_transaction_receipt(&config, 3, &transaction_receipt_headers("3"), &payload)
                 .err()
-                .expect("a receipt with no writer must be rejected");
+                .expect("a legacy receipt with no writer must still be rejected");
 
         assert_eq!(error.kind(), EventStoreErrorKind::CorruptHistory);
         assert!(error.message().contains("participant commit shape"));
+
+        content.participants.clear();
+        let payload = encode_transaction_receipt(&content).unwrap();
+        let mut headers = transaction_receipt_headers("1");
+        headers.insert(NATS_EXPECTED_STREAM, config.stream_name());
+        decode_transaction_receipt(&config, 1, &headers, &payload)
+            .expect("receipt-only atomic batch");
+        headers.insert(
+            NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT,
+            "another-subject",
+        );
+        assert!(decode_transaction_receipt(&config, 1, &headers, &payload).is_err());
     }
 
     #[test]

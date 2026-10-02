@@ -119,7 +119,10 @@ where
     Store: EventStore,
 {
     try_multi_stream_transaction_is_atomic_and_ordered(&make_store()).await?;
-    try_transaction_requires_a_writing_participant(&make_store()).await?;
+    try_event_free_acceptance(&make_store()).await?;
+    try_event_free_read_guard_conflict(&make_store()).await?;
+    try_event_free_item_limit(&make_store()).await?;
+    try_concurrent_event_free_acceptance(&make_store()).await?;
     try_transaction_accepts_a_read_only_first_participant(&make_store()).await?;
     try_transaction_identities_are_store_scoped(&make_store()).await?;
     try_transaction_rejects_identity_reused_from_a_participant(&make_store()).await?;
@@ -262,38 +265,287 @@ pub async fn try_concurrent_transactions_have_one_winner<Store: EventStore>(
     Ok(())
 }
 
-pub async fn transaction_requires_a_writing_participant<Store: EventStore>(store: &Store) {
-    assert_contract_success(try_transaction_requires_a_writing_participant(store).await);
-}
-
-pub async fn try_transaction_requires_a_writing_participant<Store: EventStore>(
-    store: &Store,
-) -> ContractResult {
+pub async fn try_event_free_acceptance<Store: EventStore>(store: &Store) -> ContractResult {
     let participant = stream("transaction-read-only")?;
-    let operation = "transaction-read-only";
-    let result = store
-        .append_transaction(EventTransaction::new(
-            OperationId::new(operation)
-                .map_err(|error| fixture_error("read-only transaction operation ID", error))?,
-            ContentFingerprint::digest(operation),
+    for (operation, participants) in [
+        ("transaction-empty", Vec::new()),
+        (
+            "event-free-read-only",
             vec![TransactionParticipant::new(
                 participant.clone(),
                 ExpectedVersion::NoStream,
                 None,
             )],
-        ))
-        .await;
-    let Err(error) = result else {
-        return Err(ContractTestError::UnexpectedSuccess {
-            context: "transaction without a writing participant",
-        });
-    };
-    assert_eq!(error.kind(), EventStoreErrorKind::InvalidRequest);
+        ),
+    ] {
+        let operation_id = OperationId::new(operation)
+            .map_err(|error| fixture_error("event-free operation ID", error))?;
+        let transaction = EventTransaction::new(
+            operation_id.clone(),
+            ContentFingerprint::digest(operation),
+            participants.clone(),
+        );
+        let first = store
+            .append_transaction(transaction.clone())
+            .await
+            .map_err(|source| store_error("event-free acceptance", source))?;
+        assert!(!first.is_exact_replay());
+        assert!(first.receipt().events().is_empty());
+        let loaded = store
+            .load_transaction_receipt(&operation_id)
+            .await
+            .map_err(|source| store_error("event-free receipt lookup", source))?;
+        assert_eq!(loaded.as_ref(), Some(first.receipt()));
+        let replay = store
+            .append_transaction(transaction)
+            .await
+            .map_err(|source| store_error("event-free replay", source))?;
+        assert!(replay.is_exact_replay());
+        assert_eq!(replay.receipt(), first.receipt());
+        let original = EventTransaction::new(
+            operation_id.clone(),
+            ContentFingerprint::digest(operation),
+            participants.clone(),
+        );
+        for changed in [
+            EventTransaction::new(
+                operation_id,
+                ContentFingerprint::digest("changed"),
+                participants,
+            ),
+            original.clone().with_correlation_id(
+                CorrelationId::new("changed")
+                    .map_err(|error| fixture_error("changed correlation", error))?,
+            ),
+            original.with_causation_id(
+                CausationId::new("changed")
+                    .map_err(|error| fixture_error("changed causation", error))?,
+            ),
+        ] {
+            let Err(error) = store.append_transaction(changed).await else {
+                return Err(ContractTestError::UnexpectedSuccess {
+                    context: "changed event-free evidence",
+                });
+            };
+            assert_eq!(error.kind(), EventStoreErrorKind::IdentityConflict);
+        }
+    }
     let history = store
         .load(&participant)
         .await
         .map_err(|source| store_error("read-only participant load", source))?;
     assert!(history.is_empty());
+    // Later domain events do not invalidate the historical guard or its acceptance.
+    store
+        .append(
+            &participant,
+            ExpectedVersion::NoStream,
+            batch(
+                &participant,
+                "after-no-events",
+                "after-no-events",
+                &[b"later"],
+            )?,
+        )
+        .await
+        .map_err(|source| store_error("write after acceptance", source))?;
+    let replay = store
+        .append_transaction(EventTransaction::new(
+            OperationId::new("event-free-read-only")
+                .map_err(|error| fixture_error("operation", error))?,
+            ContentFingerprint::digest("event-free-read-only"),
+            vec![TransactionParticipant::new(
+                participant,
+                ExpectedVersion::NoStream,
+                None,
+            )],
+        ))
+        .await
+        .map_err(|source| store_error("acceptance replay after write", source))?;
+    assert!(replay.is_exact_replay());
+    assert!(replay.receipt().events().is_empty());
+    Ok(())
+}
+
+pub async fn try_event_free_read_guard_conflict<Store: EventStore>(
+    store: &Store,
+) -> ContractResult {
+    let participant = stream("event-free-stale-guard")?;
+    let operation = OperationId::new("event-free-stale-guard")
+        .map_err(|error| fixture_error("guard operation", error))?;
+    let session = store
+        .append_session()
+        .await
+        .map_err(|source| store_error("guard session", source))?;
+    assert!(
+        session
+            .load(&participant)
+            .await
+            .map_err(|source| store_error("guard load", source))?
+            .is_empty()
+    );
+    store
+        .append(
+            &participant,
+            ExpectedVersion::NoStream,
+            batch(
+                &participant,
+                "invalidate-guard",
+                "invalidate-guard",
+                &[b"changed"],
+            )?,
+        )
+        .await
+        .map_err(|source| store_error("invalidate guard", source))?;
+    let Err(error) = session
+        .append_transaction(EventTransaction::new(
+            operation.clone(),
+            ContentFingerprint::digest("guard"),
+            vec![TransactionParticipant::new(
+                participant,
+                ExpectedVersion::NoStream,
+                None,
+            )],
+        ))
+        .await
+    else {
+        return Err(ContractTestError::UnexpectedSuccess {
+            context: "stale event-free read guard",
+        });
+    };
+    assert_eq!(error.kind(), EventStoreErrorKind::Conflict);
+    assert!(
+        store
+            .load_transaction_receipt(&operation)
+            .await
+            .map_err(|source| store_error("stale guard receipt", source))?
+            .is_none()
+    );
+    Ok(())
+}
+
+pub async fn try_event_free_item_limit<Store: EventStore>(store: &Store) -> ContractResult {
+    let operation = OperationId::new("event-free-item-limit")
+        .map_err(|error| fixture_error("guard-limit operation", error))?;
+    let participants = (0..MAX_TRANSACTION_ITEMS)
+        .map(|index| {
+            Ok(TransactionParticipant::new(
+                stream(&format!("event-free-guard-{index}"))?,
+                ExpectedVersion::NoStream,
+                None,
+            ))
+        })
+        .collect::<ContractResult<Vec<_>>>()?;
+    let mut transaction = EventTransaction::new(
+        operation.clone(),
+        ContentFingerprint::digest("guards"),
+        participants,
+    );
+    let Err(error) = store.append_transaction(transaction.clone()).await else {
+        return Err(ContractTestError::UnexpectedSuccess {
+            context: "event-free transaction over item limit",
+        });
+    };
+    assert_eq!(error.kind(), EventStoreErrorKind::InvalidRequest);
+    assert!(
+        store
+            .load_transaction_receipt(&operation)
+            .await
+            .map_err(|source| store_error("oversized acceptance receipt", source))?
+            .is_none()
+    );
+    let mut participants = transaction.into_participants();
+    participants.pop();
+    transaction = EventTransaction::new(
+        operation,
+        ContentFingerprint::digest("guards"),
+        participants,
+    );
+    let accepted = store
+        .append_transaction(transaction)
+        .await
+        .map_err(|source| store_error("event-free transaction at item limit", source))?;
+    assert!(accepted.receipt().events().is_empty());
+    assert_eq!(
+        accepted.receipt().streams().len(),
+        MAX_TRANSACTION_ITEMS.saturating_sub(1)
+    );
+    Ok(())
+}
+
+pub async fn try_concurrent_event_free_acceptance<Store: EventStore>(
+    store: &Store,
+) -> ContractResult {
+    for contender in ["identical", "changed", "writer"] {
+        let operation = OperationId::new(format!("event-free-race-{contender}"))
+            .map_err(|error| fixture_error("race operation", error))?;
+        let first = EventTransaction::new(
+            operation.clone(),
+            ContentFingerprint::digest("original"),
+            Vec::new(),
+        );
+        let second = match contender {
+            "changed" => EventTransaction::new(
+                operation.clone(),
+                ContentFingerprint::digest("changed"),
+                Vec::new(),
+            ),
+            "writer" => {
+                let participant = stream("event-free-racing-writer")?;
+                EventTransaction::new(
+                    operation.clone(),
+                    ContentFingerprint::digest("original"),
+                    vec![TransactionParticipant::new(
+                        participant.clone(),
+                        ExpectedVersion::NoStream,
+                        Some(batch(
+                            &participant,
+                            operation.as_str(),
+                            "original",
+                            &[b"event"],
+                        )?),
+                    )],
+                )
+            }
+            _ => first.clone(),
+        };
+        let results: [_; 2] = tokio::join!(
+            store.append_transaction(first),
+            store.append_transaction(second)
+        )
+        .into();
+        if contender == "identical" {
+            let outcomes = results
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|source| store_error("identical acceptance race", source))?;
+            assert_eq!(
+                outcomes
+                    .iter()
+                    .filter(|outcome| !outcome.is_exact_replay())
+                    .count(),
+                1
+            );
+            assert_eq!(
+                outcomes.first().map(TransactionAppendOutcome::receipt),
+                outcomes.last().map(TransactionAppendOutcome::receipt)
+            );
+        } else {
+            assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+            for result in results {
+                if let Err(error) = result {
+                    assert_eq!(error.kind(), EventStoreErrorKind::IdentityConflict);
+                }
+            }
+        }
+        assert!(
+            store
+                .load_transaction_receipt(&operation)
+                .await
+                .map_err(|source| store_error("racing acceptance receipt", source))?
+                .is_some()
+        );
+    }
     Ok(())
 }
 
