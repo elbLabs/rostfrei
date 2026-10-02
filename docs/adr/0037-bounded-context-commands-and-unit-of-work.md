@@ -73,7 +73,10 @@ upcasting, Protobuf, or other representations without forcing heterogeneous
 participants through one codec. A loaded aggregate with events is a writer. A loaded aggregate without
 events is a read guard when another participant writes. Failed loads enlist
 nothing, and a loaded aggregate that escapes its command-handling attempt fails
-closed. Mutation uses the direct `aggregate_mut()` API. Tracking belongs to the aggregate instance
+closed. Loaded handles dereference to their tracked aggregate instances, so handlers invoke
+domain actions directly, such as `fleet.rent_bicycle(bicycle_id)`, with the action trait in scope.
+Shared and mutable handle references also coerce to aggregate-instance references for
+multi-aggregate actions. Tracking belongs to the aggregate instance
 returned by `load`, not to arbitrary aggregate instances manually constructed by application code.
 When the loaded handle leaves the handler, its load lease verifies that the tracked instance is
 attached before the unit of work can commit. A handle that finishes with a replacement or swapped
@@ -86,6 +89,12 @@ For automatically tracked aggregates, each raised event opens its journal entry 
 is applied and completes it after synchronous encoding. Returned encoding failures are
 reported when the accepted unit of work finishes; a caught encoding panic leaves
 an incomplete journal and also fails closed before persistence.
+
+Within configured domain roots, `cargo rostfrei-dev check --workspace` reserves event raising
+for validated domain action implementations and reports violations as `RF011`. Handlers load
+aggregates and invoke actions; the action implementations call `raise`. This is a source-level
+architectural rule, not Rust visibility: the runtime method remains public. See
+[ADR 0025](0025-aggregate-event-sets-authorize-raising.md) for the rule's scope.
 
 Every event-producing command is committed as one `EventTransaction`, whether
 it has one participant or many. There is no distinguished primary participant;
