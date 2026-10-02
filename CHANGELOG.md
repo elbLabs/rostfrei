@@ -14,6 +14,20 @@ All notable changes to this project are documented in this file.
   2 for event-free acceptance and continues reading existing receipts and histories.
   Past transient no-op acceptances cannot be reconstructed retroactively. See
   [ADR 0039](docs/adr/0039-durable-event-free-acceptance.md).
+- **NATS read policy:** ordinary aggregate/session reads and stream discovery now
+  trust committed writes after local history checks, instead of rereading every
+  historical transaction receipt. Use `NatsEventStore::audit_history` or
+  `audit_streams` for deep historical receipt, participant, and guard verification.
+  Missing or inconsistent historical receipts inserted outside the supported
+  store API are no longer detected by every ordinary load. Atomic writes,
+  operation-specific replay/reconciliation, and stored wire formats are preserved.
+
+### Added
+
+- `NatsEventStore::with_history_auditing(bool)` enables or disables historical
+  auditing per handle. It defaults to off, applies consistently to loads,
+  discovery and append-session histories, and never disables local integrity or
+  operation-specific write/retry checks. Explicit audit methods always audit.
 
 ### Fixed
 

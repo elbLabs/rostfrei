@@ -92,6 +92,15 @@ receipt, and changed command content or provenance conflicts under the accepted
 operation identity. See [Durable event-free acceptance](docs/adr/0039-durable-event-free-acceptance.md)
 for concurrency, storage compatibility, and migration from transient no-op results.
 
+By default, NATS history loads trust committed event-store writes and validate local
+envelopes, checksums, identities, ordering, and commit structure. Deep historical
+receipt/participant/guard checks are available through `audit_history` and
+`audit_streams`. Enable them for every load on a handle with
+`store.with_history_auditing(true)`, or select trusted reads with `false`.
+The setting also applies to session loads and discovery; local and
+operation-specific write/retry checks always run. See
+[the read/audit trust boundary](docs/adr/0040-trusted-event-store-reads-and-explicit-audits.md).
+
 The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual architecture
 decisions are recorded in [`docs/adr`](docs/adr).
@@ -227,6 +236,23 @@ backend. The runner's own lifecycle tests need no Docker:
 ```sh
 python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
+
+### Aggregate benchmarks
+
+Measure the time until an aggregate is fully rehydrated and ready to use, along
+with history-only loading, event application, and a new executor command:
+
+```sh
+python3 scripts/test_nats.py -- cargo bench --locked \
+  -p rostfrei-nats --bench aggregate_loading -- \
+  --events 0,100,1000 --samples 5 \
+  --output /tmp/rostfrei-aggregate-loading.json
+```
+
+The release-mode suite creates both direct-appended and actual command-generated
+histories, verifies the resulting state, and writes raw samples and summaries as
+JSON. Fixture creation is excluded from sample timings and may take time for
+large command histories. See [benchmark methodology and options](docs/benchmarks/aggregate-loading.md).
 
 ### Git hooks
 
