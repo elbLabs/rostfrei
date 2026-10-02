@@ -255,7 +255,10 @@ check or Clippy reports an error.
 
 The NATS authentication acceptance suite starts isolated Docker containers and
 tests correct, missing, and wrong credentials, percent-encoded URL credentials,
-server restart, pool failover, and discovered-server failover:
+server restart, pool failover, and discovered-server failover. Its authenticated
+JetStream scenarios also exercise command delivery and durable responses, then
+recreate the managed connection to verify aggregate/command replay and durable
+post-commit consumption with both explicit and URL credentials:
 
 ```sh
 cargo test --locked -p rostfrei-nats --test authentication_integration
