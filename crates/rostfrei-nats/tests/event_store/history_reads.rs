@@ -63,8 +63,138 @@ async fn ordinary_history_reads_do_not_traverse_historical_receipts() -> TestRes
                     .ok_or("audit budget overflow")?
         );
         eprintln!("audit of {size} transactions: {audit_requests} requests");
+        let strict = store.clone().with_history_auditing(true);
+        for explicit in [false, true] {
+            let before = client.statistics().out_messages.load(Ordering::Relaxed);
+            let strict_history = if explicit {
+                strict.audit_history(&writer).await?
+            } else {
+                strict.load(&writer).await?
+            };
+            assert_eq!(strict_history, loaded);
+            client.flush().await?;
+            let used = client
+                .statistics()
+                .out_messages
+                .load(Ordering::Relaxed)
+                .checked_sub(before)
+                .ok_or("strict audit counter regressed")?;
+            assert_eq!(
+                used, audit_requests,
+                "strict and explicit auditing must each audit once"
+            );
+        }
     }
     context.delete_stream(store.config().stream_name()).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn auditing_policy_is_local_to_the_handle_and_rejects_bad_receipts_before_writes()
+-> TestResult<()> {
+    use rostfrei_core::EventHistory;
+
+    for invalid_writes in [false, true] {
+        let (context, store) = directory_fixture("history-auditing-policy").await?;
+        let aggregate = publish_schema_four_event_without_receipt(&context, store.config()).await?;
+        assert!(!store.history_auditing_enabled());
+        let ordinary = store.load(&aggregate).await?;
+        let ordinary_session = store.append_session().await?;
+        assert_eq!(ordinary_session.load(&aggregate).await?, ordinary);
+
+        let strict = store.clone().with_history_auditing(true);
+        assert!(strict.history_auditing_enabled());
+        assert!(!store.history_auditing_enabled());
+        let history: Arc<dyn EventHistory> = Arc::new(strict.clone());
+        assert!(
+            matches!(history.load(&aggregate).await, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory)
+        );
+        assert!(
+            matches!(strict.list_streams(aggregate.aggregate_type()).await, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory)
+        );
+        let strict_session = strict.append_session().await?;
+        for _ in 0..2 {
+            assert!(
+                matches!(strict_session.load(&aggregate).await, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory)
+            );
+        }
+
+        let fast = strict.clone().with_history_auditing(false);
+        assert!(!fast.history_auditing_enabled());
+        assert!(strict.history_auditing_enabled());
+        assert_eq!(fast.load(&aggregate).await?, ordinary);
+        assert_eq!(ordinary_session.load(&aggregate).await?, ordinary);
+        assert!(
+            matches!(strict_session.load(&aggregate).await, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory)
+        );
+        assert!(
+            matches!(fast.audit_history(&aggregate).await, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory)
+        );
+        assert!(
+            matches!(fast.audit_streams(aggregate.aggregate_type()).await, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory)
+        );
+
+        let before = context
+            .get_stream(store.config().stream_name())
+            .await?
+            .cached_info()
+            .state
+            .last_sequence;
+        let direct = batch(
+            &aggregate,
+            "strict-direct",
+            "strict-direct",
+            &[b"must-not-write"],
+        )?;
+        assert!(
+            matches!(strict.append(&aggregate, ExpectedVersion::Exact(StreamVersion::new(1)), direct).await,
+            Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory)
+        );
+        let valid = stream("strict-valid-writer")?;
+        let operation = "strict-transaction";
+        let invalid_batch = if invalid_writes {
+            Some(batch(&aggregate, operation, operation, &[b"bad-write"])?)
+        } else {
+            None
+        };
+        let transaction = EventTransaction::new(
+            OperationId::new(operation)?,
+            ContentFingerprint::digest(operation),
+            vec![
+                TransactionParticipant::new(
+                    valid.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch(&valid, operation, operation, &[b"valid-write"])?),
+                ),
+                TransactionParticipant::new(
+                    aggregate.clone(),
+                    ExpectedVersion::Exact(StreamVersion::new(1)),
+                    invalid_batch,
+                ),
+            ],
+        );
+        assert!(
+            matches!(strict.append_transaction(transaction.clone()).await, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory)
+        );
+        assert!(
+            matches!(strict_session.append_transaction(transaction).await, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory)
+        );
+        assert!(store.load(&valid).await?.is_empty());
+        assert!(
+            store
+                .load_transaction_receipt(&OperationId::new(operation)?)
+                .await?
+                .is_none()
+        );
+        let after = context
+            .get_stream(store.config().stream_name())
+            .await?
+            .cached_info()
+            .state
+            .last_sequence;
+        assert_eq!(after, before, "strict history audit failure published data");
+        context.delete_stream(store.config().stream_name()).await?;
+    }
     Ok(())
 }
 

@@ -92,10 +92,13 @@ receipt, and changed command content or provenance conflicts under the accepted
 operation identity. See [Durable event-free acceptance](docs/adr/0039-durable-event-free-acceptance.md)
 for concurrency, storage compatibility, and migration from transient no-op results.
 
-Ordinary NATS history loads trust committed event-store writes and validate local
+By default, NATS history loads trust committed event-store writes and validate local
 envelopes, checksums, identities, ordering, and commit structure. Deep historical
 receipt/participant/guard checks are available through `audit_history` and
-`audit_streams`; operation-specific write/retry checks remain enforced. See
+`audit_streams`. Enable them for every load on a handle with
+`store.with_history_auditing(true)`, or select trusted reads with `false`.
+The setting also applies to session loads and discovery; local and
+operation-specific write/retry checks always run. See
 [the read/audit trust boundary](docs/adr/0039-trusted-event-store-reads-and-explicit-audits.md).
 
 The canonical project terminology is in

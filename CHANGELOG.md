@@ -22,6 +22,13 @@ All notable changes to this project are documented in this file.
   store API are no longer detected by every ordinary load. Atomic writes,
   operation-specific replay/reconciliation, and stored wire formats are preserved.
 
+### Added
+
+- `NatsEventStore::with_history_auditing(bool)` enables or disables historical
+  auditing per handle. It defaults to off, applies consistently to loads,
+  discovery and append-session histories, and never disables local integrity or
+  operation-specific write/retry checks. Explicit audit methods always audit.
+
 ## [0.0.5-alpha] - 2026-09-16
 
 ### Added

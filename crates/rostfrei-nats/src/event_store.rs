@@ -116,6 +116,7 @@ impl AppendSession for NatsAppendSession<'_> {
 pub struct NatsEventStore {
     context: jetstream::Context,
     config: NatsEventStoreConfig,
+    history_auditing: bool,
     #[cfg(test)]
     transaction_receipt_miss_hook: Option<ReadBarrierHook>,
     #[cfg(test)]
@@ -157,6 +158,7 @@ impl NatsEventStore {
         Ok(Self {
             context,
             config,
+            history_auditing: false,
             #[cfg(test)]
             transaction_receipt_miss_hook: None,
             #[cfg(test)]
@@ -168,6 +170,25 @@ impl NatsEventStore {
 
     pub const fn config(&self) -> &NatsEventStoreConfig {
         &self.config
+    }
+
+    /// Enables or disables historical receipt/participant/guard auditing for this handle.
+    ///
+    /// Defaults to `false`. The policy applies to ordinary loads, discovery, and
+    /// histories loaded by append sessions and writes. Local history checks and
+    /// operation-specific write/retry checks always run. Explicit audit methods
+    /// always audit, regardless of this setting.
+    ///
+    /// Configure before sharing the handle. Clones inherit the policy, but changing
+    /// one clone does not change other handles or their existing sessions.
+    #[must_use]
+    pub const fn with_history_auditing(mut self, enabled: bool) -> Self {
+        self.history_auditing = enabled;
+        self
+    }
+
+    pub const fn history_auditing_enabled(&self) -> bool {
+        self.history_auditing
     }
 
     #[cfg(test)]
@@ -221,11 +242,11 @@ impl NatsEventStore {
         }
     }
 
-    /// Loads an aggregate's recorded events, trusting the store's committed writes.
+    /// Loads an aggregate's recorded events using this handle's audit policy.
     ///
     /// Envelopes, checksums, identities, ordering, and local commit coordinates are
-    /// checked. Historical transaction receipts and related participants are not
-    /// reread. Use [`Self::audit_history`] to verify that historical evidence.
+    /// always checked. Historical evidence is reread only when enabled with
+    /// [`Self::with_history_auditing`]. Use [`Self::audit_history`] for a one-off audit.
     pub async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         <Self as EventHistory>::load(self, stream_id).await
     }
@@ -239,15 +260,7 @@ impl NatsEventStore {
         &self,
         stream_id: &StreamId,
     ) -> Result<Vec<RecordedEvent>, EventStoreError> {
-        let history = self.load_history(stream_id).await?;
-        let mut raw_histories = RawHistoryCache {
-            histories: HashMap::from([(stream_id.clone(), Arc::clone(&history))]),
-            maximum_stream_sequence: None,
-        };
-        self.validate_transaction_history(&history, &mut raw_histories)
-            .await?;
-        drop(raw_histories);
-        Ok(Arc::unwrap_or_clone(history).events)
+        Ok(Arc::unwrap_or_clone(self.load_history_with_audit(stream_id, true).await?).events)
     }
 
     /// Lists aggregate versions while auditing their historical transaction evidence.
@@ -322,7 +335,25 @@ impl NatsEventStore {
     }
 
     async fn load_history(&self, stream_id: &StreamId) -> Result<Arc<History>, EventStoreError> {
-        self.load_raw_history(stream_id).await.map(Arc::new)
+        self.load_history_with_audit(stream_id, self.history_auditing)
+            .await
+    }
+
+    async fn load_history_with_audit(
+        &self,
+        stream_id: &StreamId,
+        audit: bool,
+    ) -> Result<Arc<History>, EventStoreError> {
+        let history = Arc::new(self.load_raw_history(stream_id).await?);
+        if audit {
+            let mut raw_histories = RawHistoryCache {
+                histories: HashMap::from([(stream_id.clone(), Arc::clone(&history))]),
+                maximum_stream_sequence: None,
+            };
+            self.validate_transaction_history(&history, &mut raw_histories)
+                .await?;
+        }
+        Ok(history)
     }
 
     async fn load_cached_raw_history(
@@ -1065,12 +1096,13 @@ impl EventHistory for NatsEventStore {
 impl StreamDirectory for NatsEventStore {
     /// Lists committed aggregate versions at the stream position captured at entry.
     /// Later appends are excluded; receipt and guard subjects do not create entries.
-    /// Local history checks match `load`; use `audit_streams` for receipt/guard auditing.
+    /// Checks match this handle's `load` policy; `audit_streams` always audits.
     async fn list_streams(
         &self,
         aggregate_type: &AggregateType,
     ) -> Result<Vec<StreamSummary>, EventStoreError> {
-        self.list_streams_inner(aggregate_type, false).await
+        self.list_streams_inner(aggregate_type, self.history_auditing)
+            .await
     }
 }
 
@@ -1756,8 +1788,8 @@ impl RawHistoryCache {
 }
 
 #[derive(Default)]
-// Attempt-local, structurally checked histories. Historical receipts are audited
-// only through the explicit audit APIs, not as a condition of using this cache.
+// Attempt-local histories checked according to the borrowed store handle's
+// immutable policy. Failures in local checks or enabled audits never populate this cache.
 struct LoadedHistories {
     by_stream: HashMap<StreamId, Arc<History>>,
 }

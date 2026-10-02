@@ -15,8 +15,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use async_trait::async_trait;
-use rostfrei_core::{CommandExecutor, EventHistory, EventStoreError, RecordedEvent, StreamId};
+use rostfrei_core::CommandExecutor;
 use rostfrei_messaging_core::ApplicationName;
 use rostfrei_nats::{
     NatsConnectionConfig, NatsEventStore, NatsEventStoreConfig, connect, provision_event_store,
@@ -26,15 +25,6 @@ use suite::{
     config::HistoryKind,
     model::{self, InventoryAggregate},
 };
-
-struct AuditedHistory(NatsEventStore);
-
-#[async_trait]
-impl EventHistory for AuditedHistory {
-    async fn load(&self, stream: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
-        self.0.audit_history(stream).await
-    }
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "release-mode A/B benchmark of 1000 genuine command transactions"]
@@ -56,7 +46,7 @@ async fn compare_readiness() -> BenchResult {
         suite::seed::seed(store.clone(), "inventory", HistoryKind::Commands, 1000, 128).await?;
         let stream = model::stream("inventory")?;
         let trusted = CommandExecutor::new(store.clone());
-        let audited = CommandExecutor::new(AuditedHistory(store));
+        let audited = CommandExecutor::new(store.with_history_auditing(true));
         let expected = audited.rehydrate::<InventoryAggregate>(&stream).await?;
         model::verify(expected.state(), 1000, 128)?;
         assert_eq!(trusted.rehydrate::<InventoryAggregate>(&stream).await?.state(), expected.state());

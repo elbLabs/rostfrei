@@ -23,14 +23,35 @@ Treat the correctly provisioned event store and its supported append API as the
 authority for committed history. Separate ordinary reads from deep auditing:
 
 - `NatsEventStore::load`, append-session loads, and `StreamDirectory::list_streams`
-  decode stored records and check local history structure. They do not traverse
-  historical transaction receipts, other aggregate histories, or read guards.
+  decode stored records and check local history structure. By default they do not
+  traverse historical transaction receipts, other aggregate histories, or read guards.
 - `NatsEventStore::audit_history` explicitly loads and verifies a history's
   transaction receipts, participant provenance, and guards, returning the audited
   events. `audit_streams` performs the corresponding directory audit with one
   captured cutoff shared by discovery and referenced participants.
 - Audits retain the existing legacy-first receipt selection and error behavior.
   They do not recursively audit unrelated transactions in referenced histories.
+
+### Per-handle audit policy
+
+`NatsEventStore::with_history_auditing(bool)` selects the policy for a handle:
+
+```rust
+let strict = store.clone().with_history_auditing(true);
+let fast = store.with_history_auditing(false); // the default
+```
+
+With auditing enabled, ordinary loads, directory discovery, and histories loaded
+for direct/session writes receive the deep historical checks. A failed audit does
+not populate a session cache, and a failed participant audit prevents that write. Explicit
+`audit_history` and `audit_streams` always audit, including on a fast handle;
+calling them on a strict handle performs one audit rather than two.
+
+The policy is immutable for a handle and inherited by clones. Configuring a clone
+does not change other handles or existing sessions. Applications can select the
+policy before sharing a store with workers, or select a configured clone for a
+specific operation. There is no process-global switch or mid-attempt mode change.
+This client-side setting does not change persisted stream policy or permissions.
 
 Ordinary reads retain envelope/schema/checksum validation, aggregate identity,
 derived event/commit identities, version continuity, duplicate detection,
@@ -42,18 +63,19 @@ Typed event decoding and aggregate application remain unchanged.
 Incoming write validation, writer/read-guard expectations, atomic publication,
 PubAck and new-suffix verification, exact replay, and uncertain-write
 reconciliation remain enforced. Those paths still read the **specific operation's
-receipt** when needed. They do not audit every older transaction merely because
-a new command loads or writes an aggregate. Durable domain-event delivery retains
+receipt** when needed. The default policy does not audit older transactions merely
+because a new command loads or writes an aggregate; strict handles opt into that
+cost. Durable domain-event delivery retains
 its operation-specific transaction checks.
 
 ## Trust boundary and compatibility
 
 This deliberately changes the detection boundary for out-of-band modifications.
 A structurally valid transactional event planted directly in NATS with a missing
-or incompatible receipt can be returned by ordinary reads; explicit auditing
-rejects it. An unrelated participant's malformed history or a receipt shadow is
-not discovered by every aggregate load. Such data is outside the supported
-event-store write contract; imports and administrative recovery can invoke the
+or incompatible receipt can be returned by default reads; strict handles and
+explicit auditing reject it. An unrelated participant's malformed history or a
+receipt shadow is not discovered by every default aggregate load. Such data is
+outside the supported event-store write contract; imports and administrative recovery can invoke the
 audit APIs before exposing the data to application execution.
 
 Basic corrupt local history still fails ordinary reads and append-session use.
@@ -83,6 +105,9 @@ full aggregate readiness, request counts, correctness checks, and limitations.
 
 ## Rollback
 
-The experiment is kept in a separate commit after the optimization/benchmark
-baseline. Reverting that commit restores historical receipt verification during
-ordinary reads. No stored data migration or rollback is required.
+Strict historical checking can be restored per handle with
+`with_history_auditing(true)`, without reverting code or migrating data.
+
+The original experiment is a separate commit after the optimization/benchmark
+baseline. For a code-level rollback, revert its configuration follow-up first,
+then the experiment commit. No stored data migration or rollback is required.

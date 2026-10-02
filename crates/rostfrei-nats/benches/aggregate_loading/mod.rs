@@ -29,18 +29,13 @@ pub type BenchResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync
 struct MeasuredHistory {
     store: NatsEventStore,
     last_load_ns: AtomicU64,
-    audit: bool,
 }
 
 #[async_trait]
 impl EventHistory for MeasuredHistory {
     async fn load(&self, stream: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         let started = Instant::now();
-        let result = if self.audit {
-            self.store.audit_history(stream).await
-        } else {
-            self.store.load(stream).await
-        };
+        let result = self.store.load(stream).await;
         self.last_load_ns.store(
             u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
             Ordering::Relaxed,
@@ -157,9 +152,8 @@ async fn measure_case(
         expected_events: u64::from(count),
         note_bytes: options.note_bytes,
         executor: CommandExecutor::new(MeasuredHistory {
-            store: store.clone(),
+            store: store.clone().with_history_auditing(options.audit_reads),
             last_load_ns: AtomicU64::new(0),
-            audit: options.audit_reads,
         }),
         decoded,
     };
