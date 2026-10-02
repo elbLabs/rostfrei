@@ -105,7 +105,7 @@ The workspace contains fourteen framework crates plus the bike-rental example:
 - `rostfrei-messaging-core`: transport-neutral commands, integration events,
   queries, envelopes, and delivery contracts.
 - `rostfrei-nats`: command and integration-event bus adapters, NATS messaging,
-  and authoritative JetStream event storage.
+  authoritative JetStream event storage, and typed KV-backed read-model storage.
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
 
 ## Runtime and messaging
@@ -173,6 +173,16 @@ for concurrency, storage compatibility, and migration from transient no-op resul
 The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual architecture
 decisions are recorded in [`docs/adr`](docs/adr).
+
+## KV-backed read models
+
+For application-owned snapshots maintained by multiple domain/integration event
+handlers, see [KV-backed read models](docs/read-models.md). The typed storage API
+provides revision-aware reads, CAS writes, versioned codecs, and explicitly
+provisioned Normal/Test-scoped buckets.
+
+The [read-model benchmark](docs/read-model-benchmark.md) compares a KV query with
+replaying two connected aggregates, including measured latency and broker traffic.
 
 ## NATS authentication
 
