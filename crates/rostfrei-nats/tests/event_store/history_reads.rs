@@ -3,7 +3,7 @@
 use super::*;
 
 #[tokio::test]
-async fn transaction_history_reuses_stream_metadata_and_loaded_first_events() -> TestResult<()> {
+async fn ordinary_history_reads_do_not_traverse_historical_receipts() -> TestResult<()> {
     let (context, store) = directory_fixture("history-read-cost").await?;
     let client = context.client();
     for size in [1_u64, 100] {
@@ -39,18 +39,30 @@ async fn transaction_history_reuses_stream_metadata_and_loaded_first_events() ->
             .checked_sub(before)
             .ok_or("request counter regressed")?;
         assert_eq!(loaded.len(), usize::try_from(size)?);
-        // One event read and two receipt-layout lookups per transaction, with a
-        // small fixed allowance for metadata and range boundaries. Stream-info
-        // requests and first-event rereads must not recur per transaction.
-        let budget = size
-            .checked_mul(3)
-            .and_then(|count| count.checked_add(16))
-            .ok_or("request budget overflowed")?;
+        // Only this aggregate's event reads, metadata, and bounded window probes.
+        // Historical receipt work belongs to the explicit audit below.
+        let budget = size.checked_add(16).ok_or("request budget overflowed")?;
         assert!(
             requests <= budget,
             "history of {size} transactions used {requests} requests; budget {budget}"
         );
         eprintln!("history of {size} transactions: {requests} requests");
+        let before_audit = client.statistics().out_messages.load(Ordering::Relaxed);
+        assert_eq!(store.audit_history(&writer).await?, loaded);
+        client.flush().await?;
+        let audit_requests = client
+            .statistics()
+            .out_messages
+            .load(Ordering::Relaxed)
+            .checked_sub(before_audit)
+            .ok_or("audit counter regressed")?;
+        assert!(
+            audit_requests
+                >= requests
+                    .checked_add(size.checked_mul(2).ok_or("audit budget overflow")?)
+                    .ok_or("audit budget overflow")?
+        );
+        eprintln!("audit of {size} transactions: {audit_requests} requests");
     }
     context.delete_stream(store.config().stream_name()).await?;
     Ok(())

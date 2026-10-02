@@ -75,9 +75,16 @@ aggregate state may cost substantially more than this bounded inventory model.
 
 ## What each phase includes
 
+Read phases use ordinary trusted loads by default. Add `--audit-reads` to include
+deep historical transaction auditing in `history-load` and `rehydrate`, reproducing
+the previous read policy. This flag does not change fixture writes or timed
+executor-command semantics. The original baseline report predates this separation.
+See the [trusted-versus-audited comparison](trusted-reads-experiment.md) for a
+controlled A/B measurement on the same 1,000-command history.
+
 | Phase | Timed boundary |
 | --- | --- |
-| `history-load` | `NatsEventStore::load()` through its returned validated event vector |
+| `history-load` | `NatsEventStore::load()` through its returned locally checked event vector |
 | **`rehydrate`** | **`CommandExecutor::rehydrate::<InventoryAggregate>()` through the returned ready-to-use aggregate** |
 | `apply-only` | Aggregate initialization and applying an already decoded owned event vector |
 | `execute-command` | A new `CommandExecutor::execute()` call, including loading, validation, typed decoding, apply, decision, encoding, concurrency checks, atomic append, and verification |
@@ -167,6 +174,7 @@ not a reliable production p95/p99 under load.
 | `--history` | `direct,commands` | Select fixture provenance |
 | `--samples` | `5` | Timed samples per phase |
 | `--warmups` | `1` | Untimed warmups per read phase; writes warm a separate aggregate |
+| `--audit-reads` | off | Audit historical receipts/participants during read phases |
 | `--note-bytes` | `128` | JSON note length, up to 65,536 bytes |
 | `--workers` | `2` | Explicit Tokio worker count |
 | `--case-timeout-seconds` | `1800` | Whole-case bound, including fixture generation |
