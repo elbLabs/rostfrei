@@ -98,6 +98,10 @@ impl TransactionParticipant {
     }
 }
 
+/// An atomic command acceptance, with zero or more aggregate participants.
+///
+/// Participants without a batch are optimistic read guards. A transaction with no domain
+/// events still persists a receipt; an empty participant list persists only the receipt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventTransaction {
     bounded_context: Option<BoundedContextName>,
@@ -171,18 +175,13 @@ impl EventTransaction {
     }
 }
 
-/// Validates that a transaction writes events and fits within the durable item limit.
+/// Validates that a transaction fits within the durable item limit.
 ///
-/// Returns the number of domain events in the transaction.
+/// Returns the number of domain events, which may be zero. Each read guard and the
+/// acceptance receipt consume one item, including for an event-free transaction.
 pub fn validate_transaction_item_limit(
     transaction: &EventTransaction,
 ) -> Result<usize, EventStoreError> {
-    if transaction.participants().is_empty() {
-        return Err(EventStoreError::new(
-            EventStoreErrorKind::InvalidRequest,
-            "an event transaction must contain at least one participant",
-        ));
-    }
     let domain_event_count = transaction
         .participants()
         .iter()
@@ -196,12 +195,6 @@ pub fn validate_transaction_item_limit(
                 "transaction event count overflowed",
             )
         })?;
-    if domain_event_count == 0 {
-        return Err(EventStoreError::new(
-            EventStoreErrorKind::InvalidRequest,
-            "an event transaction must contain at least one writing participant",
-        ));
-    }
     let read_guard_count = transaction
         .participants()
         .iter()
@@ -338,6 +331,7 @@ impl TransactionReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TransactionAppendOutcome {
+    /// The receipt and any domain events/read guards were atomically persisted.
     Appended(TransactionReceipt),
     ExactReplay(TransactionReceipt),
 }
@@ -409,6 +403,11 @@ pub trait EventStore: EventHistory {
         operation_id: &OperationId,
     ) -> Result<Option<TransactionReceipt>, EventStoreError>;
 
+    /// Atomically validates all participant versions and persists acceptance, even without
+    /// domain events or participants. A context-scoped operation identity has a single winner.
+    /// Exact retries return its original receipt before checking current participant versions;
+    /// changed metadata or participant content returns `IdentityConflict`.
+    /// Receipt-write failures must not report successful acceptance.
     async fn append_transaction(
         &self,
         transaction: EventTransaction,

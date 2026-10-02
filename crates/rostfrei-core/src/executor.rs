@@ -403,20 +403,24 @@ pub enum CommandOutcome<Rejection> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommandReceipt {
+    /// Newly persisted domain events and their durable acceptance receipt.
     Appended(Vec<RecordedEvent>),
+    /// The original durable acceptance, without invoking the handler again on retry.
+    /// An empty event list replays an accepted event-free command.
     ExactReplay(Vec<RecordedEvent>),
-    /// No aggregates were loaded, or every loaded aggregate produced no events.
+    /// Durable acceptance without domain events, including commands that load no aggregates.
     ///
-    /// This result is not persisted as a durable idempotency receipt. Executing the same operation
-    /// again may therefore invoke the command handler again.
-    NoEvents,
+    /// All loaded aggregate versions were guarded atomically with the receipt write.
+    /// Retries return `ExactReplay` with an empty event list. Simulation is the read-only,
+    /// transient alternative; execution never reports acceptance without persistence.
+    AcceptedNoEvents,
 }
 
 impl CommandReceipt {
     pub fn events(&self) -> &[RecordedEvent] {
         match self {
             Self::Appended(events) | Self::ExactReplay(events) => events,
-            Self::NoEvents => &[],
+            Self::AcceptedNoEvents => &[],
         }
     }
 
@@ -605,23 +609,23 @@ where
             }
 
             let participants = execution.finish()?;
-            if !participants
-                .iter()
-                .any(|participant| !participant.events.is_empty())
-            {
-                if let Some(receipt) = reconcile_existing(&self.store, &metadata).await? {
-                    return Ok(CommandOutcome::Accepted(receipt));
-                }
-                return Ok(CommandOutcome::Accepted(CommandReceipt::NoEvents));
-            }
             match append_transaction(session, &metadata, participants).await? {
                 PersistenceAttempt::Completed(receipt) => {
                     return Ok(CommandOutcome::Accepted(receipt));
                 }
-                PersistenceAttempt::Conflict(_) if remaining_conflict_retries > 0 => {
+                PersistenceAttempt::Conflict(error) => {
+                    // A simultaneous execution can decide differently against newer state.
+                    // The winning acceptance is authoritative if the command evidence matches.
+                    if let Some(receipt) = reconcile_existing(&self.store, &metadata).await? {
+                        return Ok(CommandOutcome::Accepted(receipt));
+                    }
+                    if error.kind() != EventStoreErrorKind::Conflict
+                        || remaining_conflict_retries == 0
+                    {
+                        return Err(error.into());
+                    }
                     remaining_conflict_retries = remaining_conflict_retries.saturating_sub(1);
                 }
-                PersistenceAttempt::Conflict(error) => return Err(error.into()),
             }
         }
     }
@@ -662,13 +666,23 @@ async fn append_transaction(
         transaction = transaction.with_causation_id(causation_id.clone());
     }
     match session.append_transaction(transaction).await {
-        Ok(TransactionAppendOutcome::Appended(receipt)) => Ok(PersistenceAttempt::Completed(
-            CommandReceipt::Appended(receipt.events()),
-        )),
+        Ok(TransactionAppendOutcome::Appended(receipt)) => {
+            let events = receipt.events();
+            Ok(PersistenceAttempt::Completed(if events.is_empty() {
+                CommandReceipt::AcceptedNoEvents
+            } else {
+                CommandReceipt::Appended(events)
+            }))
+        }
         Ok(TransactionAppendOutcome::ExactReplay(receipt)) => Ok(PersistenceAttempt::Completed(
             CommandReceipt::ExactReplay(receipt.events()),
         )),
-        Err(error) if error.kind() == EventStoreErrorKind::Conflict => {
+        Err(error)
+            if matches!(
+                error.kind(),
+                EventStoreErrorKind::Conflict | EventStoreErrorKind::IdentityConflict
+            ) =>
+        {
             Ok(PersistenceAttempt::Conflict(error))
         }
         Err(error) => Err(error.into()),
@@ -1425,6 +1439,7 @@ mod tests {
     #[derive(Clone)]
     struct ConflictOnceStore {
         inner: InMemoryEventStore,
+        failure_kind: EventStoreErrorKind,
         attempts: Arc<AtomicUsize>,
         sessions: Arc<AtomicUsize>,
         session_loads: Arc<AtomicUsize>,
@@ -1517,7 +1532,7 @@ mod tests {
         ) -> Result<TransactionAppendOutcome, EventStoreError> {
             if self.attempts.fetch_add(1, Ordering::Relaxed) == 0 {
                 return Err(EventStoreError::new(
-                    EventStoreErrorKind::Conflict,
+                    self.failure_kind,
                     "injected transaction conflict",
                 ));
             }
@@ -1532,6 +1547,7 @@ mod tests {
         let session_loads = Arc::new(AtomicUsize::new(0));
         let store: Arc<dyn EventStore> = Arc::new(ConflictOnceStore {
             inner: InMemoryEventStore::new(),
+            failure_kind: EventStoreErrorKind::Conflict,
             attempts: Arc::clone(&attempts),
             sessions: Arc::clone(&sessions),
             session_loads: Arc::clone(&session_loads),
@@ -2083,19 +2099,23 @@ mod tests {
             execution: &mut CommandExecution<'_>,
         ) -> CommandHandlingResult<Self::Rejection> {
             let _aggregate = execution.load::<TestAggregate>("guard-only").await?;
+            let _other = execution.load::<TestAggregate>("other-guard").await?;
             Ok(CommandDecision::Accepted)
         }
     }
 
     #[tokio::test]
-    async fn automatically_enlisted_read_guards_without_writes_return_no_events() {
+    async fn automatically_enlisted_read_guards_without_writes_persist_acceptance() {
         let store = InMemoryEventStore::new();
         let outcome = CommandExecutor::new(store.clone())
             .execute(&NoEventsHandler, metadata(), &())
             .await
             .unwrap();
 
-        assert_eq!(outcome, CommandOutcome::Accepted(CommandReceipt::NoEvents));
+        assert_eq!(
+            outcome,
+            CommandOutcome::Accepted(CommandReceipt::AcceptedNoEvents)
+        );
         assert!(
             store
                 .load_transaction_receipt_in_context(
@@ -2104,7 +2124,123 @@ mod tests {
                 )
                 .await
                 .unwrap()
-                .is_none()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn event_free_acceptance_retries_conflicts_but_never_accepts_write_failures() {
+        for failure_kind in [
+            EventStoreErrorKind::Conflict,
+            EventStoreErrorKind::Unavailable,
+        ] {
+            let store = ConflictOnceStore {
+                inner: InMemoryEventStore::new(),
+                failure_kind,
+                attempts: Arc::new(AtomicUsize::new(0)),
+                sessions: Arc::new(AtomicUsize::new(0)),
+                session_loads: Arc::new(AtomicUsize::new(0)),
+            };
+            let executor = CommandExecutor::new(store.clone());
+            let result = executor.execute(&NoEventsHandler, metadata(), &()).await;
+            let receipt = store
+                .inner
+                .load_transaction_receipt_in_context(
+                    metadata().bounded_context().unwrap(),
+                    metadata().operation_id(),
+                )
+                .await
+                .unwrap();
+            if failure_kind == EventStoreErrorKind::Conflict {
+                assert_eq!(
+                    result.unwrap(),
+                    CommandOutcome::Accepted(CommandReceipt::AcceptedNoEvents)
+                );
+                assert_eq!(store.attempts.load(Ordering::Relaxed), 2);
+                assert!(receipt.is_some());
+            } else {
+                assert!(
+                    matches!(result, Err(CommandExecutionError::Store(error)) if error.kind() == EventStoreErrorKind::Unavailable)
+                );
+                assert_eq!(store.attempts.load(Ordering::Relaxed), 1);
+                assert!(receipt.is_none());
+            }
+        }
+    }
+
+    struct EmptyHandler;
+
+    #[async_trait]
+    impl CommandHandler<()> for EmptyHandler {
+        type Rejection = ();
+
+        async fn handle(
+            &self,
+            _command: &(),
+            _execution: &mut CommandExecution<'_>,
+        ) -> CommandHandlingResult<()> {
+            Ok(CommandDecision::Accepted)
+        }
+    }
+
+    #[tokio::test]
+    async fn acceptance_without_aggregates_is_context_scoped() {
+        let store = InMemoryEventStore::new();
+        for context in ["test-context", "other-context"] {
+            let metadata = metadata().with_bounded_context(
+                rostfrei_messaging_core::BoundedContextName::new(context).unwrap(),
+            );
+            let executor = CommandExecutor::new(store.clone());
+            assert_eq!(
+                executor
+                    .execute(&EmptyHandler, metadata.clone(), &())
+                    .await
+                    .unwrap(),
+                CommandOutcome::Accepted(CommandReceipt::AcceptedNoEvents)
+            );
+            let recreated = CommandExecutor::new(store.clone());
+            assert_eq!(
+                recreated
+                    .execute(&EmptyHandler, metadata, &())
+                    .await
+                    .unwrap(),
+                CommandOutcome::Accepted(CommandReceipt::ExactReplay(Vec::new()))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn eventful_contender_replays_a_concurrent_event_free_acceptance() {
+        let inner = InMemoryEventStore::new();
+        CommandExecutor::new(inner.clone())
+            .execute(&EmptyHandler, metadata(), &())
+            .await
+            .unwrap();
+        let store = ReceiptAfterDecisionStore {
+            inner: inner.clone(),
+            receipt_lookups: AtomicUsize::new(0),
+        };
+        let result = CommandExecutor::new(store)
+            .with_max_conflict_retries(0)
+            .execute(
+                &WriteHandler {
+                    calls: AtomicUsize::new(0),
+                },
+                metadata(),
+                &(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            CommandOutcome::Accepted(CommandReceipt::ExactReplay(Vec::new()))
+        );
+        assert!(
+            inner
+                .load(&stream_id_for::<TestAggregate>("writer").unwrap())
+                .await
+                .unwrap()
+                .is_empty()
         );
     }
 

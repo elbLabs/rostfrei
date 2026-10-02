@@ -14,6 +14,8 @@ pub trait AppendSession: EventHistory {
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError>;
 
+    /// Consumes this attempt to atomically persist its acceptance and any events/read guards.
+    /// Event-free and participant-free transactions follow [`EventStore::append_transaction`].
     async fn append_transaction(
         self: Box<Self>,
         transaction: EventTransaction,

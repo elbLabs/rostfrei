@@ -29,10 +29,12 @@ identity-conflict classification.
 
 Exact retry is a persisted semantic, not reliance on a broker duplicate window.
 An accepted eventful operation returns `CommandReceipt::Appended` when newly
-committed. An accepted no-event decision returns `CommandReceipt::NoEvents`, but
-has no durable retry evidence in this release. Rejections likewise are not
-persisted; retrying a no-event or rejected operation reruns the decision against
-the then-current aggregate state.
+committed. An accepted no-event decision returns `CommandReceipt::AcceptedNoEvents`
+after its receipt and any read guards are atomically persisted. Exact retry returns
+`CommandReceipt::ExactReplay` with an empty event list. Rejections are not persisted
+and may rerun against the then-current state. Historical transient `NoEvents`
+acceptances cannot be reconstructed retroactively. See
+[ADR 0039](0039-durable-event-free-acceptance.md).
 
 The low-level `EventStore::append` API retains stream-scoped operation identity
 for fixtures, imports, and infrastructure operations. Direct append IDs and
