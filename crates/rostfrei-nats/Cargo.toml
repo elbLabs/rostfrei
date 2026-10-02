@@ -24,6 +24,7 @@ rostfrei-fixtures.workspace = true
 rostfrei-messaging-core.workspace = true
 
 [dev-dependencies]
+clap.workspace = true
 nkeys.workspace = true
 tempfile.workspace = true
 rostfrei.workspace = true
