@@ -5,7 +5,7 @@
 Proposed. Extends [ADR 0005](0005-nats-event-store.md) and
 [ADR 0037](0037-bounded-context-commands-and-unit-of-work.md).
 The read trust boundary is refined by
-[ADR 0039](0039-trusted-event-store-reads-and-explicit-audits.md): normal session
+[ADR 0040](0040-trusted-event-store-reads-and-explicit-audits.md): normal session
 loads retain local history checks; deep historical receipt verification is explicit.
 
 ## Context

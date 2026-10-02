@@ -1,7 +1,7 @@
 # Trusted reads versus historical auditing
 
 This reversible experiment implements
-[ADR 0039](../adr/0039-trusted-event-store-reads-and-explicit-audits.md).
+[ADR 0040](../adr/0040-trusted-event-store-reads-and-explicit-audits.md).
 The earlier optimization and benchmark baseline was checkpointed as
 `d2c9a17` before changing the read policy.
 
@@ -100,6 +100,6 @@ Local logs:
 
 Historical audits can now be restored per handle with
 `with_history_auditing(true)`. For a code-level rollback, revert the configuration
-follow-up before the separate commit introducing ADR 0039. Earlier optimizations
+follow-up before the separate commit introducing the trusted-read policy. Earlier optimizations
 and the benchmark suite remain in the baseline checkpoint. Stored data and wire
 formats require no rollback migration.

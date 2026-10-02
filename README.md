@@ -99,7 +99,7 @@ receipt/participant/guard checks are available through `audit_history` and
 `store.with_history_auditing(true)`, or select trusted reads with `false`.
 The setting also applies to session loads and discovery; local and
 operation-specific write/retry checks always run. See
-[the read/audit trust boundary](docs/adr/0039-trusted-event-store-reads-and-explicit-audits.md).
+[the read/audit trust boundary](docs/adr/0040-trusted-event-store-reads-and-explicit-audits.md).
 
 The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual architecture
