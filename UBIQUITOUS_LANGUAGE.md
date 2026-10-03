@@ -46,6 +46,9 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | **Integration event** | A bounded, independently versioned public contract normally derived from committed private domain events. | Domain event, raw event, notification |
 | **Integration-command mapping** | A consuming bounded context's pure mapping from one integration event to one self-contained typed command, dispatched under a stable durable identity. | Transport handler, event side effect |
 | **Projection** | A read-oriented model derived from committed domain events without becoming aggregate truth. | Aggregate, source of truth |
+| **Read model** | An application-owned, query-oriented materialization whose authoritative inputs may be committed domain events, integration events, or external facts. | Aggregate state, source of truth |
+| **Storage revision** | An opaque compare-and-set token for one persisted read-model value. | Stream version, source checkpoint |
+| **Source checkpoint** | Application-owned progress for a read model's input source, persisted with the corresponding materialized value. | Storage revision, delivery attempt |
 | **Domain-event handler** | A post-commit application handler for one or more private domain events. It may perform side effects but never participates in aggregate decisions or changes the originating commit. | Projection handler, reaction, event projector |
 
 ## Tracer testing

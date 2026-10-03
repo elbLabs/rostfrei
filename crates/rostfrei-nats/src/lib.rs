@@ -15,6 +15,8 @@ mod provisioning;
 mod publish;
 mod quarantine;
 mod query;
+mod read_model;
+mod read_model_config;
 mod stream_policy;
 
 pub use command_response::{
@@ -50,3 +52,7 @@ pub use provisioning::{
 pub use publish::{CORRELATION_ID_HEADER, NatsPublishAck, NatsPublisher};
 pub use quarantine::NatsQuarantineReader;
 pub use query::{NatsQueryRequester, NatsQueryServer, NatsQueryServerConfig};
+pub use read_model::NatsReadModelStore;
+pub use read_model_config::{
+    NatsReadModelConfig, provision_read_model, update_read_model, verify_read_model,
+};
