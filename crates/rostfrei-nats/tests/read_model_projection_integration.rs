@@ -3,6 +3,9 @@
 #[path = "../examples/read_model/application.rs"]
 mod application;
 
+#[path = "read_model/recovery.rs"]
+mod recovery;
+
 use std::{num::NonZeroU32, sync::Arc};
 
 use application::{

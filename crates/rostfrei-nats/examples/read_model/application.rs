@@ -151,6 +151,7 @@ pub struct Entitlements {
     store: Arc<dyn ReadModelStore<Entitlement>>,
     retry_delay: RetryDelay,
     invalid_message: QuarantineReason,
+    materialization_failed: QuarantineReason,
 }
 
 impl Entitlements {
@@ -160,6 +161,9 @@ impl Entitlements {
             retry_delay: RetryDelay::new(Duration::from_millis(100))?,
             invalid_message: QuarantineReason::new(
                 "invalid billing read-model input or configuration",
+            )?,
+            materialization_failed: QuarantineReason::new(
+                "billing snapshot not materialized; repair storage/configuration, then replay or refresh billing",
             )?,
         })
     }
@@ -211,6 +215,11 @@ impl Entitlements {
     }
 
     /// A complete billing fact can skip versions, unlike organization deltas.
+    ///
+    /// Also use this path with the latest fact fetched from the billing authority
+    /// to reconcile a quarantined update. Fetch/retry scheduling and recovery
+    /// tracking belong to the application; storage recovery alone does not redrive
+    /// an integration event that the consumer has already quarantined.
     pub async fn billing_changed(
         &self,
         event: &BillingChanged,
@@ -328,9 +337,16 @@ impl MessageHandler<IntegrationEventAddress> for Entitlements {
             // The snapshot AND source position are durable before returning ACK.
             Ok(()) => DeliveryDisposition::Acknowledge,
             Err(error) if error.kind() == DomainEventHandlerErrorKind::Retryable => {
+                // Retry exhaustion also ends in quarantine. The durable may
+                // advance without updating billing_version: reconcile explicitly.
                 DeliveryDisposition::RetryAfter(self.retry_delay)
             }
-            Err(_) => DeliveryDisposition::Quarantine(self.invalid_message.clone()),
+            Err(error) if error.kind() == DomainEventHandlerErrorKind::InvalidCommittedEvent => {
+                DeliveryDisposition::Quarantine(self.invalid_message.clone())
+            }
+            // Quarantine persists the failed delivery, then terminally ACKs it.
+            // Repair the cause and replay it or refresh the authoritative fact.
+            Err(_) => DeliveryDisposition::Quarantine(self.materialization_failed.clone()),
         }
     }
 }

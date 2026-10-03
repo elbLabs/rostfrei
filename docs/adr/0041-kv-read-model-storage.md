@@ -28,7 +28,10 @@ for reusable storage without transferring ownership of these rules to Rostfrei.
   integration event handlers may maintain one model using the same typed store.
 - Keep the authoritative EventStore and external systems authoritative. KV
   revisions are not stream versions or projection checkpoints. Model value and
-  per-source progress should be persisted together before acknowledging delivery.
+  per-source progress should be persisted together before acknowledging successful
+  materialization. Integration quarantine/retry exhaustion can terminally
+  acknowledge a delivery without materialization; applications must reconcile
+  from the authority or explicitly replay the retained quarantine record.
 - Defer enumeration and watch/resume until their consistency and lifecycle
   contracts are designed.
 
