@@ -14,10 +14,11 @@ Changed command content or provenance conflicts under the accepted operation
 identity. See [durable event-free acceptance](adr/0039-durable-event-free-acceptance.md)
 for concurrency and migration from transient no-op results.
 
-Aggregate histories use bounded, exact-subject ephemeral replay without advancing
+Aggregate histories use native ordered, exact-subject ephemeral replay without advancing
 application durable consumers. Reader credentials need scoped replay-consumer
 create/pull/delete and inbox permissions, plus stream-info/raw-message access.
-See [batched history replay](adr/0042-batched-aggregate-history-replay.md).
+The native iterator uses 500-message pulls without a batch byte cap; each
+next-message wait, including recovery, has a five-second deadline.
 
 By default, history loads trust committed writes and validate local envelopes,
 checksums, identities, ordering, and commit structure. `audit_history` and

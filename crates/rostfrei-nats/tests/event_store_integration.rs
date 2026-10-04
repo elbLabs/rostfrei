@@ -14,6 +14,8 @@ mod event_store;
 mod event_store_config;
 #[path = "../src/hex.rs"]
 mod hex;
+#[path = "event_store/history_cluster.rs"]
+mod history_cluster;
 #[path = "event_store/history_reads.rs"]
 mod history_reads;
 mod native_connection_support;

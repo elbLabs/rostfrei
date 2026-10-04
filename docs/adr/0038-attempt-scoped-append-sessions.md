@@ -78,8 +78,7 @@ that retries create fresh sessions through `Arc<dyn EventStore>`.
 
 This is not snapshotting, batched initial loading, or a global cache. Initial
 rehydration and historical transaction validation remain history-dependent.
-Initial batched loading is now covered by
-[ADR 0042](0042-batched-aggregate-history-replay.md). Sessions retain histories for
+Initial loading now uses batched ephemeral replay. Sessions retain histories for
 the duration of a command attempt; suffix validation
 also clones and indexes the retained prefix in memory. Large-history latency and
 memory benchmarks and aggregate snapshot design remain follow-up work.
@@ -100,7 +99,7 @@ Direct Get batching prototype. That prototype is not part of the authoritative
 loader because replica-read consistency and explicit operator configuration need
 further design and testing.
 
-Before ADR 0042, initial raw-history discovery used bounded parallel leader-read windows:
+Before batched replay, initial raw-history discovery used bounded parallel leader-read windows:
 up to eight windows of 128 global positions, with a 256 KiB chunk target and
 oversized-record progress. One ordered fold validates commits across all window
 and chunk boundaries. Indexed lookahead skips empty subject gaps, while a sparse
