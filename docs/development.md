@@ -128,7 +128,7 @@ python3 scripts/versions.py check
 To prepare a version:
 
 ```sh
-python3 scripts/versions.py bump 0.1.1
+python3 scripts/versions.py bump 0.1.2
 ```
 
 The script updates the root manifest and both Cargo lockfiles, including the
@@ -141,7 +141,7 @@ The **Prepare GitHub release** workflow runs from `main` with a tag matching the
 shared version, including the `v` prefix. Validate it locally with:
 
 ```sh
-python3 scripts/versions.py check --tag v0.1.1
+python3 scripts/versions.py check --tag v0.1.2
 ```
 
 The workflow creates a draft GitHub release; it does not publish crates.
@@ -177,8 +177,8 @@ failed upload means the server rejected it. After publication, check every versi
 and checksum and build an external application using registry-only dependencies.
 Install the registry CLI and qualify its dependency-aware Skills setup as well.
 
-Registry consumers use `rostfrei = "0.1.1"` and matching adapters, and install the
-CLI with `cargo install --locked --version 0.1.1 rostfrei-structure`. The GitHub
+Registry consumers use `rostfrei = "0.1.2"` and matching adapters, and install the
+CLI with `cargo install --locked --version 0.1.2 rostfrei-structure`. The GitHub
 workflow remains a separate publication step for the matching kit and checksum.
 
 ## Starter dependency contract

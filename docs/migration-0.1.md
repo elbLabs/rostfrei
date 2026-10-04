@@ -12,9 +12,9 @@ also supports crates.io dependencies:
 
 ```toml
 [dependencies]
-rostfrei = "0.1.1"
-rostfrei-nats = "0.1.1"
-rostfrei-tracer = { version = "0.1.1", features = ["nats-host"] }
+rostfrei = "0.1.2"
+rostfrei-nats = "0.1.2"
+rostfrei-tracer = { version = "0.1.2", features = ["nats-host"] }
 ```
 
 Resolve and commit the application's new `Cargo.lock`; inspect `cargo tree` or
@@ -24,7 +24,7 @@ broker version. Native atomic transactions require NATS 2.12.1 or newer.
 Install the matching setup CLI separately:
 
 ```sh
-cargo install --locked --version 0.1.1 rostfrei-structure
+cargo install --locked --version 0.1.2 rostfrei-structure
 cargo rostfrei skills install
 # Use skills update for an existing managed installation after the dependency upgrade.
 ```
