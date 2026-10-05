@@ -32,7 +32,8 @@ async fn main() -> ExampleResult {
     ))
     .await?;
     let context = ApplicationName::new("read-model-example")?.bounded_context("access")?;
-    let events = NatsEventStoreConfig::for_bounded_context(&context)?;
+    let events = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     provision_event_store(connection.jetstream(), &events).await?;
     let history = NatsEventStore::connect(connection.jetstream().clone(), events).await?;
     let config = NatsReadModelConfig::new(&context, "entitlements")?;
@@ -78,9 +79,7 @@ async fn main() -> ExampleResult {
         .append(&stream, ExpectedVersion::NoStream, batch)
         .await?;
     rebuild(&history, &stream, &dispatcher).await?;
-    rebuild(&history, &stream, &dispatcher).await?; // Duplicate delivery/replay.
-    // In a running service the MessageHandler implementation receives this
-    // fact through its independent durable integration-event consumer.
+    rebuild(&history, &stream, &dispatcher).await?;
     handlers
         .billing_changed(&BillingChanged {
             organization_id: "org-1".to_owned(),

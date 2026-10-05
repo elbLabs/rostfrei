@@ -42,8 +42,6 @@ pub enum OrganizationEvent {
     DemoChanged(DemoChanged),
 }
 
-// Minimal event-sourced source model for this storage example. Applications
-// normally use their compiled domain model and generated aggregate event codec.
 pub struct Organization;
 
 impl Aggregate for Organization {
@@ -200,8 +198,6 @@ impl Entitlements {
             };
             match result {
                 Ok(_) => return Ok(()),
-                // Reload, re-check source position, and re-apply. Never write a
-                // snapshot calculated from the losing revision a second time.
                 Err(error) if error.kind() == ReadModelErrorKind::Conflict => {
                     tokio::task::yield_now().await;
                 }
@@ -260,8 +256,6 @@ fn next_organization_event(
         return Ok(false);
     }
     if value.organization_version.checked_add(1) != Some(version) {
-        // Block this source until the missing history is replayed. A filtered
-        // consumer must also advance positions for source events it ignores.
         return Err(DomainEventHandlerError::new(
             DomainEventHandlerErrorKind::OperatorBlocking,
             "organization source gap: rebuild missing history before resuming",
@@ -334,18 +328,13 @@ impl MessageHandler<IntegrationEventAddress> for Entitlements {
             return DeliveryDisposition::Quarantine(self.invalid_message.clone());
         }
         match self.billing_changed(envelope.payload()).await {
-            // The snapshot AND source position are durable before returning ACK.
             Ok(()) => DeliveryDisposition::Acknowledge,
             Err(error) if error.kind() == DomainEventHandlerErrorKind::Retryable => {
-                // Retry exhaustion also ends in quarantine. The durable may
-                // advance without updating billing_version: reconcile explicitly.
                 DeliveryDisposition::RetryAfter(self.retry_delay)
             }
             Err(error) if error.kind() == DomainEventHandlerErrorKind::InvalidCommittedEvent => {
                 DeliveryDisposition::Quarantine(self.invalid_message.clone())
             }
-            // Quarantine persists the failed delivery, then terminally ACKs it.
-            // Repair the cause and replay it or refresh the authoritative fact.
             Err(_) => DeliveryDisposition::Quarantine(self.materialization_failed.clone()),
         }
     }

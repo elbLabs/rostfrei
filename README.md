@@ -180,6 +180,7 @@ For application-owned snapshots maintained by multiple domain/integration event
 handlers, see [event-driven read models](docs/read-model-runtime.md): derive
 `ReadModel`, register typed event transformations, and let the runtime load,
 checkpoint, CAS-retry, and persist each value. Queries use a read-only handle.
+Integration inputs default to broker order, with optional business-version policies.
 The underlying [typed storage API](docs/read-models.md)
 provides revision-aware reads, CAS writes, versioned codecs, and explicitly
 provisioned Normal/Test-scoped buckets.

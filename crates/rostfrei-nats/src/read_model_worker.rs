@@ -1,20 +1,18 @@
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, time::Duration};
 
 use async_nats::jetstream;
 use futures_util::{StreamExt as _, stream::FuturesUnordered};
 use rostfrei::{ReadModel, ReadModelRuntime};
-use rostfrei_messaging_core::{
-    ConsumeError, ConsumerConfig, IntegrationEventAddress, MessageConsumer, MessageConsumerFactory,
-    MessageHandler, RetryDelay,
-};
+use rostfrei_messaging_core::{ConsumeError, RetryDelay};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::watch;
 
 use crate::{
-    DomainEventConsumerError, MessagingTopology, NatsConsumerFactory, NatsDomainEventConsumer,
+    DomainEventConsumerError, MessagingTopology, NatsDomainEventConsumer,
     NatsDomainEventConsumerConfig, NatsError, NatsEventStoreConfig,
-    provision_domain_event_consumer, provision_durable_consumer,
+    provision_domain_event_consumer,
+    read_model_integration_consumer::{self, ReadModelIntegrationConsumer},
 };
 
 /// Delivery policy shared by one model's independently checkpointed consumers.
@@ -51,16 +49,11 @@ pub enum ReadModelWorkerError {
     Ended,
 }
 
-type IntegrationWorker = (
-    Arc<dyn MessageConsumer<IntegrationEventAddress>>,
-    Arc<dyn MessageHandler<IntegrationEventAddress>>,
-);
-
 /// Runs the registered event subscriptions. Successful handlers have persisted
 /// state before ACK; integration quarantine still requires explicit recovery.
 pub struct NatsReadModelWorker {
     domain: Option<NatsDomainEventConsumer>,
-    integrations: Vec<IntegrationWorker>,
+    integration: Option<ReadModelIntegrationConsumer>,
 }
 
 impl NatsReadModelWorker {
@@ -85,16 +78,11 @@ impl NatsReadModelWorker {
         } else {
             None
         };
-        let factory = NatsConsumerFactory::new(context, topology.clone());
-        let mut integrations = Vec::new();
-        for binding in model.integration_bindings() {
-            let config =
-                integration_config(model, binding.address(), binding.schema_version(), options)?;
-            integrations.push((factory.create(config)?, binding.handler()));
-        }
+        let integration =
+            ReadModelIntegrationConsumer::connect(context, model, topology, options).await?;
         Ok(Self {
             domain,
-            integrations,
+            integration,
         })
     }
 
@@ -116,10 +104,10 @@ impl NatsReadModelWorker {
                     .map_err(Into::into)
             }));
         }
-        for (consumer, handler) in self.integrations {
-            jobs.push(Box::pin(async move {
-                consumer.run(handler).await.map_err(Into::into)
-            }));
+        if let Some(consumer) = self.integration {
+            jobs.push(Box::pin(
+                async move { consumer.run().await.map_err(Into::into) },
+            ));
         }
         loop {
             tokio::select! {
@@ -136,8 +124,8 @@ impl NatsReadModelWorker {
     }
 }
 
-/// Explicitly provisions one domain durable and one durable per integration
-/// registration. Each read model has independent delivery/recovery progress.
+/// Provisions one domain durable and one ordered integration durable per model.
+/// Integration subject filters cover exactly the model's registered inputs.
 pub async fn provision_read_model_consumers<M: ReadModel>(
     context: &jetstream::Context,
     model: &ReadModelRuntime<M>,
@@ -149,15 +137,7 @@ pub async fn provision_read_model_consumers<M: ReadModel>(
     if model.has_domain_events() {
         provision_domain_event_consumer(context, history, &domain_config(model, options)?).await?;
     }
-    for binding in model.integration_bindings() {
-        provision_durable_consumer(
-            context,
-            topology,
-            &integration_config(model, binding.address(), binding.schema_version(), options)?,
-        )
-        .await?;
-    }
-    Ok(())
+    read_model_integration_consumer::provision(context, model, topology, options).await
 }
 
 fn validate_scope<M: ReadModel>(
@@ -206,37 +186,8 @@ fn domain_config<M: ReadModel>(
     )?)
 }
 
-fn integration_config<M: ReadModel>(
-    model: &ReadModelRuntime<M>,
-    address: &IntegrationEventAddress,
-    schema: u32,
-    options: &NatsReadModelConsumerOptions,
-) -> Result<ConsumerConfig<IntegrationEventAddress>, ReadModelWorkerError> {
-    let name = consumer_purpose(M::NAME, address.as_str(), schema);
-    let invalid = |error: rostfrei_messaging_core::ContractError| {
-        ReadModelWorkerError::Configuration(error.to_string())
-    };
-    ConsumerConfig::new(
-        model
-            .context()
-            .consumer_name(&name, M::SCHEMA_VERSION)
-            .map_err(invalid)?,
-        model
-            .context()
-            .durable_name(&name, M::SCHEMA_VERSION)
-            .map_err(invalid)?,
-        address.clone(),
-        options.ack_wait,
-        options.processing_timeout,
-        1,
-        options.maximum_integration_attempts,
-    )
-    .map_err(invalid)
-}
-
-fn consumer_purpose(model: &str, source: &str, schema: u32) -> String {
-    // A purpose is itself a <=64-byte scope segment. Hash the full identity so
-    // truncating its human-readable prefix cannot alias two valid model names.
+pub fn consumer_purpose(model: &str, source: &str, schema: u32) -> String {
+    // Hash the full identity while bounding the readable prefix.
     let prefix: String = model.chars().take(19).collect();
     let prefix = prefix.trim_end_matches('-');
     let digest = crate::hex::encode_lower_hex(Sha256::digest(format!("{model}:{source}:{schema}")));

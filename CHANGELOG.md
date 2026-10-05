@@ -12,7 +12,8 @@ All notable changes to this project are documented in this file.
   multi-handler query/rebuild example and migration/operations documentation.
 - `ReadModel` declarations and event-only registration builders with automatic
   persistence, source checkpoints, bounded CAS retries, authoritative domain-gap
-  catch-up, explicit integration ordering policies, read-only query handles, and
+  catch-up, broker-default integration ordering with optional business versions,
+  read-only query handles, and
   managed NATS consumer workers.
 
 ### Changed

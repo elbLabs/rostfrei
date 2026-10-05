@@ -45,7 +45,8 @@ async fn main() -> ExampleResult {
     let application = ApplicationName::new("read-model-runtime-example")?;
     let context = application.bounded_context("access")?;
     let billing = application.bounded_context("billing")?;
-    let events = NatsEventStoreConfig::for_bounded_context(&context)?;
+    let events = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     let messaging =
         ApplicationMessagingConfig::new(&application)?.with_max_bytes(8 * 1024 * 1024)?;
     let policy = NatsReadModelConfig::for_model::<OrganizationAccess>(&context)?;
@@ -55,9 +56,10 @@ async fn main() -> ExampleResult {
 
     let read_models = ReadModels::new(
         context,
-        NatsReadModelBackend::new(connection.jetstream().clone()),
+        NatsReadModelBackend::new(connection.jetstream().clone())
+            .with_event_store_config(events.clone()),
     );
-    let model = application::register(&read_models, billing.clone()).await?;
+    let model = application::register(&read_models).await?;
     let options = NatsReadModelConsumerOptions::default();
     provision_read_model_consumers(
         connection.jetstream(),
@@ -79,11 +81,10 @@ async fn main() -> ExampleResult {
     let history = NatsEventStore::connect(connection.jetstream().clone(), events).await?;
     seed_organization(&history).await?;
     let fact = IntegrationEventEnvelope::new(
-        envelope("billing-7")?,
+        envelope("billing-update")?,
         MessageTimestamp::from_unix_milliseconds(1)?,
         BillingChanged {
             organization_id: "org-1".to_owned(),
-            source_version: 7,
             paid: true,
         },
     )?;
@@ -140,7 +141,6 @@ async fn seed_organization(history: &NatsEventStore) -> ExampleResult {
         OrganizationEvent::MemberJoined(MemberJoined {
             organization_id: "org-1".to_owned(),
         }),
-        // Intentionally unhandled: the runtime fills this source-version gap.
         OrganizationEvent::OrganizationRenamed(OrganizationRenamed {
             name: "Example".to_owned(),
         }),

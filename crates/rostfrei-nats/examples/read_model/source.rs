@@ -51,11 +51,11 @@ impl Aggregate for Organization {
 #[derive(Deserialize, Serialize)]
 pub struct BillingChanged {
     pub organization_id: String,
-    pub source_version: u64,
     pub paid: bool,
 }
 
 impl rostfrei::IntegrationEvent for BillingChanged {
     const EVENT_NAME: &'static str = "billing-changed";
     const SCHEMA_VERSION: u32 = 1;
+    const BOUNDED_CONTEXT: Option<&'static str> = Some("billing");
 }

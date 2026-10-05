@@ -64,7 +64,7 @@ pub struct NoDomainSource;
 
 type Source = Box<dyn Any + Send + Sync>;
 type BindIntegration = Box<
-    dyn FnOnce(Source) -> Result<ReadModelIntegrationBinding, ReadModelProcessingError>
+    dyn FnOnce(Option<Source>) -> Result<ReadModelIntegrationBinding, ReadModelProcessingError>
         + Send
         + Sync,
 >;
@@ -142,19 +142,34 @@ impl<M: ReadModel, B: ReadModelBackend, A> ReadModelBuilder<M, B, A> {
         self.integrations.push(PendingIntegration {
             event_type: TypeId::of::<E>(),
             bind: Box::new(move |source| {
-                let source = source.downcast::<IntegrationSource<E>>().map_err(|_| {
-                    ReadModelProcessingError::Configuration(
-                        "integration policy type mismatch".to_owned(),
-                    )
-                })?;
-                IntegrationHandler::bind(session, *source, key, change)
+                let source = source.map_or_else(
+                    || IntegrationSource::default_for(&session.context),
+                    |source| {
+                        source
+                            .downcast::<IntegrationSource<E>>()
+                            .map(|source| *source)
+                            .map_err(|_| {
+                                ReadModelProcessingError::Configuration(
+                                    "integration policy type mismatch".to_owned(),
+                                )
+                            })
+                    },
+                )?;
+                IntegrationHandler::bind(session, source, key, change)
             }),
         });
         self
     }
 
-    /// Required producer identity and per-key source-order contract. A transport
-    /// message ID or delivery sequence is not inferred to be a business version.
+    /// Override the producer while retaining default broker ordering. Otherwise
+    /// use the event's declared context, falling back to the model's context.
+    #[must_use]
+    pub fn integration_context<E: IntegrationEvent>(self, context: BoundedContext) -> Self {
+        self.integration_source::<E>(context, IntegrationEventOrder::broker())
+    }
+
+    /// Override the default broker ordering with a per-key business source contract,
+    /// or explicitly choose broker order for a producer context.
     #[must_use]
     pub fn integration_source<E: IntegrationEvent>(
         mut self,
@@ -163,10 +178,11 @@ impl<M: ReadModel, B: ReadModelBackend, A> ReadModelBuilder<M, B, A> {
     ) -> Self {
         if context.application() != self.context.application()
             || context.traffic_scope() != self.context.traffic_scope()
-            || BoundedContextName::new(&order.source).is_err()
+            || (!order.is_broker_ordered() && BoundedContextName::new(&order.source).is_err())
+            || E::BOUNDED_CONTEXT.is_some_and(|producer| producer != context.name().as_str())
         {
             self.fail(
-                "integration source must have a valid name and the same application/traffic scope",
+                "integration source must have a valid name, match its declared producer, and use the same application/traffic scope",
             );
         }
         if self
@@ -200,12 +216,7 @@ impl<M: ReadModel, B: ReadModelBackend, A> ReadModelBuilder<M, B, A> {
         }
         let mut bindings = Vec::new();
         for input in self.integrations {
-            let source = self.sources.remove(&input.event_type).ok_or_else(|| {
-                ReadModelProcessingError::Configuration(
-                    "integration handler requires an explicit integration_source ordering policy"
-                        .to_owned(),
-                )
-            })?;
+            let source = self.sources.remove(&input.event_type);
             let binding = (input.bind)(source)?;
             if bindings
                 .iter()

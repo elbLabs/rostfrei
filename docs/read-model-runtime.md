@@ -61,13 +61,6 @@ let model = read_models
         |event| event.organization_id.clone(),
         |view, event| view.paid = event.paid,
     )
-    .integration_source::<BillingChanged>(
-        billing_context,
-        rostfrei::IntegrationEventOrder::<BillingChanged>::latest(
-            "billing-account",
-            |event| event.source_version,
-        ),
-    )
     .build()
     .await?;
 ```
@@ -92,10 +85,23 @@ Use that form when an event payload does not repeat its aggregate ID. The select
 otherwise dereferences to the typed event, so ordinary `event.organization_id`
 field access works.
 
-Integration inputs must implement `IntegrationEvent`. Their producer context and
-ordering policy are required; `.build()` rejects an unspecified policy rather than
-guessing business ordering from delivery attempts, message IDs, or broker sequences.
-The producer may be another bounded context in the same application and traffic scope.
+Integration inputs must implement `IntegrationEvent`. Broker ordering is automatic;
+an ordinary event does not need a business version or an `integration_source` call.
+Declare a cross-context producer once with its public event contract:
+
+```rust
+impl rostfrei::IntegrationEvent for BillingChanged {
+    const EVENT_NAME: &'static str = "billing-changed";
+    const SCHEMA_VERSION: u32 = 1;
+    const BOUNDED_CONTEXT: Option<&'static str> = Some("billing");
+}
+```
+
+When `BOUNDED_CONTEXT` is absent, the model's bounded context is used. For an
+existing unannotated contract, `.integration_context::<E>(producer_context)`
+overrides routing while retaining broker order. Declared producers are checked by
+the typed integration bus and read-model registration. Sources stay in the same
+application and traffic scope, even when produced by another bounded context.
 
 Commands and queries do not satisfy these registration bounds. Compile-failure
 tests verify rejection of both input families, foreign aggregate event types,
@@ -119,7 +125,48 @@ history for a gap has a cost; the usual next-version path only applies the suppl
 event. Long histories can therefore increase materialization latency even though
 queries remain a single KV read.
 
-For integration events, declare one of:
+### Default: broker ordering
+
+All of a model's registered integration subjects share one ordered NATS durable
+with one outstanding delivery (`MaxAckPending=1`). This preserves broker order
+across event types and producing contexts, including while an earlier message is
+waiting for retry. The worker rejects incompatible consumer settings.
+
+Each key's saved state includes the latest successfully materialized broker source
+sequence. It commits atomically with the value. Redelivery uses the original source
+sequence, so an uncertain write that actually committed is not applied twice.
+Consumer delivery-attempt sequences and payload schema versions are not checkpoints.
+Gaps in broker source sequences are normal when unrelated subjects are filtered out.
+
+Broker order is arrival order, not business chronology. A late fact published as a
+new message can update the view. Likewise, republication after the broker's duplicate
+window or a quarantine redrive has a new source sequence and can apply again. The
+default does not deduplicate arbitrary new publications by logical business identity.
+Use idempotent state updates, authoritative reconciliation, or opt into business
+versions when that distinction matters.
+
+Custom adapters invoking the exposed handlers must provide one ordered, stable
+integration source stream per model and preserve the single-in-flight/retry
+contract. Independent concurrent deliveries cannot safely use a broker high-water
+mark. NATS read-model workers enforce this contract. There is no total ordering
+between the separate domain-event and integration-event streams.
+
+### Optional: business ordering
+
+For an event carrying an authoritative per-key business version, override the
+default with `integration_source`:
+
+```rust
+.integration_source::<VersionedBillingChanged>(
+    billing_context,
+    rostfrei::IntegrationEventOrder::<VersionedBillingChanged>::latest(
+        "billing-account",
+        |event| event.source_version,
+    ),
+)
+```
+
+Choose one of:
 
 - `IntegrationEventOrder::consecutive("source", position)`: each key's source starts
   at version 1 and requires contiguous deltas. A gap rejects materialization.
@@ -127,11 +174,13 @@ For integration events, declare one of:
   supersedes smaller versions for that key/source. This permits skipped versions;
   use it only when the transformation has that meaning.
 
+Named business checkpoints use a separate namespace from broker checkpoints.
 The source name is scoped by producer context. Several event types may share it
 only if they describe the same logical version sequence and compatible policy.
 Separate sources need separate names; versions must be positive and authoritative
 for the model key. A provider webhook ID or timestamp is not automatically such a
-version. The application still owns freshness and ordering meaning.
+version. `IntegrationEventOrder::broker()` explicitly selects the default when
+needed. The application still owns freshness and ordering meaning.
 
 Concurrent handlers reload the state and reevaluate their transformation after a
 CAS conflict. There are eight attempts per delivery, then a retryable error. A
@@ -168,8 +217,9 @@ their existing APIs. The backend defaults to the corresponding scoped event-stor
 and read-model policies; use the shown overrides for nondefault limits/configuration.
 `.build()` opens/verifies resources and does not create them.
 
-The worker uses one independent domain durable per model and one durable per
-integration binding, named deterministically from the model/schema and source.
+The worker uses one independent domain durable and one integration durable per
+model. The latter filters exactly the registered integration subjects and processes
+them sequentially. Durables are named deterministically from the model/schema.
 Two models can subscribe to the same event without sharing delivery progress.
 It handles only committed domain events and integration events. Consumer tasks
 are owned by the worker future, and are cancelled on shutdown or worker failure.
@@ -179,9 +229,11 @@ Successful materialization is awaited before ACK. Domain failures compose with
 the existing domain-consumer blocking/retry contract. Integration failures can
 be quarantined immediately, or after retry exhaustion, which terminally advances
 delivery without materialization. See [quarantine and recovery](read-models.md#integration-quarantine-and-recovery):
-repairing storage alone does not replay a quarantined event. Republish with a fresh
-message ID and the original logical source version, or publish a refreshed latest
-authoritative fact. A normal reader never treats consumer progress as freshness.
+repairing storage alone does not replay a quarantined event. In broker mode a
+redrive is a new, later publication; order-sensitive deltas may require rebuilding
+or reconciliation instead. With business ordering, retain the original logical
+source version when redriving, or publish a refreshed latest authoritative fact.
+A normal reader never treats consumer progress as freshness.
 
 ## Query and rebuild
 
@@ -206,6 +258,10 @@ required internal envelope metadata. It is incompatible with a value-only record
 or the low-level example's manually checkpointed schema. Use a fresh named bucket
 and rebuild when adopting the runtime; do not manufacture or copy KV revisions.
 Model schema version changes also need the usual deliberate migration/rebuild.
+Changing ordering policies is also a generation/rebuild decision. Broker and
+business checkpoint numbers cannot be translated into each other. Deploying the
+ordered-worker topology replaces the earlier per-integration-type durables; stop
+old workers and retire those old durables during cutover.
 When recreating authoritative history, including an isolated Test reset, reset or
 rebuild the associated read-model buckets and consumer progress as part of the
 same lifecycle. A source version from a previous history generation cannot serve

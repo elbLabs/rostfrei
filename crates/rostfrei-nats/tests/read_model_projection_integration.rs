@@ -68,7 +68,8 @@ async fn multiple_handlers_merge_checkpoints_and_rebuild_from_authoritative_hist
     let jetstream = async_nats::jetstream::new(client);
     let context = ApplicationName::new(format!("read-model-projection-{}", std::process::id()))?
         .bounded_context("access")?;
-    let events = NatsEventStoreConfig::for_bounded_context(&context)?;
+    let events = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     provision_event_store(&jetstream, &events).await?;
     let history = NatsEventStore::connect(jetstream.clone(), events.clone()).await?;
     let config = NatsReadModelConfig::new(&context, "entitlements")?;

@@ -18,6 +18,7 @@ mod query;
 mod read_model;
 mod read_model_backend;
 mod read_model_config;
+mod read_model_integration_consumer;
 mod read_model_worker;
 mod stream_policy;
 

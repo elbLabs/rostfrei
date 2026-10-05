@@ -206,8 +206,7 @@ impl<T: Serialize + DeserializeOwned> ReadModelCodec<T> for JsonReadModelCodec<T
                 "unsupported read-model schema version",
             ));
         }
-        // Decode directly into T after checking the version. An intermediate
-        // JSON Value would discard duplicate fields and limit integer fidelity.
+        // Preserve duplicate-field validation and integer fidelity.
         serde_json::from_slice::<JsonSnapshot<T>>(bytes)
             .map(|snapshot| snapshot.value)
             .map_err(|_| {
