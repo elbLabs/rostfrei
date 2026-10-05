@@ -13,6 +13,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scaffold:
+    name: External generated project
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the repository Rust toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: external-starter
+      - name: Check and test the unmodified external starter
+        run: python3 scripts/check_new_project.py
+
   rust:
     name: Rust and real NATS
     runs-on: ubuntu-latest

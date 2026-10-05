@@ -7,7 +7,10 @@ use heck::{ToKebabCase, ToSnakeCase, ToTitleCase, ToUpperCamelCase};
 use tempfile::Builder;
 use thiserror::Error;
 
-const ROSTFREI_VERSION: &str = env!("CARGO_PKG_VERSION");
+// A tested, already published Git release, independent of the CLI's package version.
+// Advance explicitly after publication; see README's starter dependency contract.
+const SCAFFOLD_RELEASE: &str = "v0.0.5-alpha";
+const SCAFFOLD_REVISION: &str = "c9f5516ddc324265916b60e1eb7300dad9acac9d";
 const RUST_VERSION: &str = env!("CARGO_PKG_RUST_VERSION");
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,6 +29,10 @@ pub enum NewProjectError {
     InvalidName(String),
     #[error("project name `{0}` produces a reserved Rust module name")]
     ReservedName(String),
+    #[error(
+        "project name `{name}` collides with the generated `{module}` module; choose a different name, for example `{name}-app`"
+    )]
+    GeneratedModuleName { name: String, module: String },
     #[error("destination `{0}` already exists")]
     DestinationExists(PathBuf),
     #[error("could not inspect destination `{path}`: {source}")]
@@ -215,6 +222,12 @@ fn project_names(destination: &Path) -> Result<ProjectNames, NewProjectError> {
     if is_reserved_rust_identifier(&module) {
         return Err(NewProjectError::ReservedName(name.to_owned()));
     }
+    if matches!(module.as_str(), "model" | "tests") {
+        return Err(NewProjectError::GeneratedModuleName {
+            name: name.to_owned(),
+            module,
+        });
+    }
 
     let context_type = name.to_upper_camel_case();
     let (domain_modules, domain_exports) = if module.as_str() < "model" {
@@ -327,7 +340,8 @@ fn render(template: &str, names: &ProjectNames) -> String {
         .replace("{{context_label}}", &names.context_label)
         .replace("{{domain_modules}}", &names.domain_modules)
         .replace("{{domain_exports}}", &names.domain_exports)
-        .replace("{{rostfrei_version}}", ROSTFREI_VERSION)
+        .replace("{{rostfrei_release}}", SCAFFOLD_RELEASE)
+        .replace("{{rostfrei_revision}}", SCAFFOLD_REVISION)
         .replace("{{rust_version}}", RUST_VERSION)
 }
 
