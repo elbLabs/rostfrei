@@ -3,6 +3,7 @@ import { Outlet, createRootRoute } from "@tanstack/react-router"
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools"
 
 import { ThemeProvider } from "@/components/theme-provider"
+import { PageMetadata } from "@/components/page-shell/PageMetadata"
 import "../index.css"
 
 export const Route = createRootRoute({
@@ -12,6 +13,7 @@ export const Route = createRootRoute({
 function RootComponent() {
   return (
     <ThemeProvider>
+      <PageMetadata />
       <div className="min-h-svh bg-background text-foreground">
         <Outlet />
       </div>

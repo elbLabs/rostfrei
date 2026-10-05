@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Domain modeling, event sourcing, and typed messaging for Rust applications"
+repository = "https://github.com/elbLabs/rostfrei"
+homepage = "https://elblabs.github.io/rostfrei/"
+documentation = "https://elblabs.github.io/rostfrei/docs"
+readme = "../../README.md"
 
 [dependencies]
 async-trait.workspace = true

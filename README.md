@@ -1,14 +1,82 @@
-# rostfrei
+# Rostfrei
 
-<img width="160" height="160" alt="raccoon_smith" src="https://github.com/user-attachments/assets/498043fe-2f24-4ba8-b61e-04c7bb2fbb13" />
+**Understand your code. Even when AI wrote it.**
 
-rostfrei is a Rust domain-modeling, event-sourcing, and messaging platform. It
-keeps domain aggregates independent from persistence, serialization, and brokers
-while providing a compiled domain model, strict execution, developer tooling,
-and NATS JetStream adapters at the application edge.
+<img width="160" height="160" alt="Rostfrei's raccoon blacksmith mascot" src="https://github.com/user-attachments/assets/498043fe-2f24-4ba8-b61e-04c7bb2fbb13" />
 
-The workspace contains fourteen framework crates plus the bike-rental example
-Cargo package:
+Rostfrei is a Rust framework for domain modeling, event sourcing, and messaging.
+It helps humans and AI agents work from a shared model of the business: explicit
+ownership, typed contracts, event history, and behavior you can inspect. A compiled
+domain model connects your declarations to the runtime and developer tools while
+keeping persistence, serialization, and brokers outside your aggregates.
+
+[Website](https://elblabs.github.io/rostfrei/) ·
+[Documentation](https://elblabs.github.io/rostfrei/docs) ·
+[Getting started](https://elblabs.github.io/rostfrei/docs/getting-started) ·
+[Bike-rental example](examples/bike-rental) ·
+[Changelog](CHANGELOG.md)
+
+**Status: alpha.** APIs are evolving. The runnable example and architecture
+decisions are the best starting points for evaluating the framework.
+
+## Why Rostfrei?
+
+An agent can implement a feature. Your team still needs to understand where its
+rules live, what they can change, and how the system behaves. Rostfrei connects
+the code's structure to its business meaning and runtime evidence:
+
+- **Model the business.** Give commands, policies, and invariants explicit
+  owners. Typed declarations and checked project structure help both developers
+  and coding agents navigate the model and find the implementation of a rule.
+- **Keep the history.** Rebuild aggregate state from domain events. Execute
+  commands with atomic commits, expected stream versions, and exact retries,
+  including transactions across aggregate streams in the same event store.
+- **Connect the application.** Use typed command, query, and integration-event
+  buses, with NATS JetStream adapters for durable messaging and event storage.
+  Public integration contracts stay separate from private aggregate history.
+- **Inspect the behavior.** Use Tracer for read-only Preview, isolated Test
+  publication, and behavioral tests. Explore commands and message flows visually
+  in [Tracer Studio](studio), or through Tracer's agent-facing HTTP API.
+
+Rostfrei is aimed at applications where business rules, consistency boundaries,
+and the history of change are central to the design—especially when teams want
+to keep an agent-assisted codebase understandable as it grows.
+
+## Start with a bicycle rental
+
+In the example, `RentBicycle` asks the fleet to make a decision. An accepted
+rental commits a private `BicycleRented` domain event. Application code then maps
+it to the public `BicycleRentalStarted` integration event. An unavailable bicycle
+produces a rejection and no new domain events.
+
+With Git and [rustup](https://rustup.rs/) installed, inspect that model without a
+broker:
+
+```sh
+git clone https://github.com/elbLabs/rostfrei.git
+cd rostfrei
+cargo run --locked -p bike-rental --bin bike-rental-model
+```
+
+The repository selects its pinned Rust toolchain automatically through rustup.
+The command prints the compiled domain model. Continue with the
+[getting-started guide](https://elblabs.github.io/rostfrei/docs/getting-started)
+to run the NATS-backed application and explore its behavior in Studio.
+
+## Find your way
+
+| Goal | Guide |
+| --- | --- |
+| Understand the model and its vocabulary | [Documentation introduction](https://elblabs.github.io/rostfrei/docs) and [ubiquitous language](UBIQUITOUS_LANGUAGE.md) |
+| Follow a command through NATS | [Subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects) |
+| Declare domain types and behavior | [Domain macros](https://elblabs.github.io/rostfrei/docs/domain-macros) |
+| Organize a domain and check ownership | [Project structure](https://elblabs.github.io/rostfrei/docs/project-structure) |
+| Understand architectural tradeoffs | [Architecture decisions](docs/adr) |
+| Contribute or run the test suite | [Development](#development) |
+
+## Workspace components
+
+The workspace contains fourteen framework crates plus the bike-rental example:
 
 - `rostfrei`: application facade for the compiled domain model, typed command,
   query, and integration-event buses, event-sourcing runtime, registry, and
@@ -39,6 +107,8 @@ Cargo package:
 - `rostfrei-nats`: command and integration-event bus adapters, NATS messaging,
   and authoritative JetStream event storage.
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
+
+## Runtime and messaging
 
 Messaging is application-scoped. An application name such as `fast-inbox`
 derives its command, command-response, integration-event, and quarantine streams
