@@ -177,7 +177,10 @@ decisions are recorded in [`docs/adr`](docs/adr).
 ## KV-backed read models
 
 For application-owned snapshots maintained by multiple domain/integration event
-handlers, see [KV-backed read models](docs/read-models.md). The typed storage API
+handlers, see [event-driven read models](docs/read-model-runtime.md): derive
+`ReadModel`, register typed event transformations, and let the runtime load,
+checkpoint, CAS-retry, and persist each value. Queries use a read-only handle.
+The underlying [typed storage API](docs/read-models.md)
 provides revision-aware reads, CAS writes, versioned codecs, and explicitly
 provisioned Normal/Test-scoped buckets.
 

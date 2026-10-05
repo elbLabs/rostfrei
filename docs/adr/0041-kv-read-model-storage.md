@@ -26,6 +26,12 @@ for reusable storage without transferring ownership of these rules to Rostfrei.
 - Applications own snapshots, source positions, duplicate/gap policies, schema
   migrations, freshness, and read-model generation cutover. Several domain and
   integration event handlers may maintain one model using the same typed store.
+- Provide an application-layer `ReadModel` derive and typed event-only builder
+  above that storage contract. The runtime owns CAS retries and checkpoint
+  persistence, catches up domain gaps from authoritative history, and requires
+  explicit integration-source ordering semantics. Transformations are synchronous
+  and repeatable; queries receive a read-only reader. NATS workers use independent
+  model-scoped durables and explicit infrastructure provisioning.
 - Keep the authoritative EventStore and external systems authoritative. KV
   revisions are not stream versions or projection checkpoints. Model value and
   per-source progress should be persisted together before acknowledging successful
@@ -37,8 +43,8 @@ for reusable storage without transferring ownership of these rules to Rostfrei.
 
 ## Consequences
 
-Applications get reusable persistence mechanics without a new handler framework
-or implicit business rules. CAS prevents lost writes on a single key; retries
+Applications get reusable persistence mechanics and a declarative event-handler
+runtime while retaining their business rules and source contracts. CAS prevents lost writes on a single key; retries
 and multi-key workflows still require application contracts. A failed write can
 have committed, so persisted source positions are essential for safe redelivery.
 TTL is retention rather than freshness. Bucket recreation is an explicit lifecycle
@@ -46,3 +52,5 @@ boundary requiring new handles and revision tokens.
 
 See [the guide](../read-models.md) for operational guarantees, permissions,
 migration, a runnable multi-handler/query example, and rebuild behavior.
+The [runtime guide](../read-model-runtime.md) covers typed declarations, event-only
+registration, automatic checkpoints, and migration from manually maintained state.

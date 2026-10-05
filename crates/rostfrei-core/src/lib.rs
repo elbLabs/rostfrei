@@ -32,8 +32,8 @@ pub use identity::{
 };
 pub use memory::InMemoryEventStore;
 pub use read_model::{
-    JsonReadModelCodec, ReadModelCodec, ReadModelEntry, ReadModelError, ReadModelErrorKind,
-    ReadModelKey, ReadModelRevision, ReadModelStore,
+    JsonReadModelCodec, ReadModel, ReadModelCodec, ReadModelEntry, ReadModelError,
+    ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelStore,
 };
 pub use store::{
     AppendOutcome, EventHistory, EventStore, EventStoreError, EventStoreErrorKind,

@@ -50,6 +50,7 @@ mod in_memory_messaging;
 mod integration_event;
 mod integration_event_bus;
 mod query_bus;
+mod read_model;
 
 pub use command_bus::{
     CommandBindingRegistrationError, CommandBus, CommandBusError, CommandBusErrorKind,
@@ -76,6 +77,11 @@ pub use query_bus::{
     QueryBus, QueryBusError, QueryBusErrorKind, QueryMessageAdapter, QueryProcessor,
     QueryProcessorHandler, QueryRequest, RoutedQuery, RoutedQueryError,
 };
+pub use read_model::{
+    IntegrationEventOrder, NoDomainSource, ReadModelBackend, ReadModelBuilder,
+    ReadModelDomainEvent, ReadModelIntegrationBinding, ReadModelProcessingError, ReadModelReader,
+    ReadModelRuntime, ReadModelState, ReadModels,
+};
 pub use rostfrei_core::{
     Aggregate, AggregateCodecs, AggregateId as StreamAggregateId, AggregateInstance,
     AggregateType as StreamAggregateType, AppendOutcome, AppendSession, CommandDecision,
@@ -86,13 +92,14 @@ pub use rostfrei_core::{
     DomainEventRegistrationError, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind,
     EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind, EventTransaction,
     EventVariant, ExpectedVersion, InMemoryEventStore, JsonReadModelCodec, LoadedAggregate,
-    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, ReadModelCodec, ReadModelEntry, ReadModelError,
-    ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelStore, RecordedEvent,
-    SimulatedParticipant, SimulationError, SimulationOutcome, StreamId, StreamVersion,
-    TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
+    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, ReadModel, ReadModelCodec, ReadModelEntry,
+    ReadModelError, ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelStore,
+    RecordedEvent, SimulatedParticipant, SimulationError, SimulationOutcome, StreamId,
+    StreamVersion, TransactionAppendOutcome, TransactionParticipant, TransactionReceipt,
+    TransactionStreamReceipt,
 };
 pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};
-pub use rostfrei_macros::QueryDefinition;
+pub use rostfrei_macros::{QueryDefinition, ReadModel};
 pub use rostfrei_messaging_core::{
     ApplicationErrorCode, ApplicationName, BoundedContext, BoundedContextName, CallerMetadata,
     CausationId, CommandAddress, CommandPublisher, CommandRejection,

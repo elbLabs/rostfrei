@@ -1,0 +1,18 @@
+error: ReadModel can only be derived for a struct
+ --> tests/ui/fail/read_model_declarations.rs:4:1
+  |
+4 | / #[read_model(id = "not-a-struct", version = 1)]
+5 | | enum EnumModel { Value }
+  | |________________________^
+
+error: read-model id must be a lowercase kebab-case name of 1–64 bytes
+ --> tests/ui/fail/read_model_declarations.rs:8:19
+  |
+8 | #[read_model(id = "bad.name", version = 1)]
+  |                   ^^^^^^^^^^
+
+error: read-model version must be greater than zero
+  --> tests/ui/fail/read_model_declarations.rs:12:44
+   |
+12 | #[read_model(id = "bad-version", version = 0)]
+   |                                            ^

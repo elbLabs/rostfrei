@@ -31,6 +31,12 @@ pub struct NatsReadModelConfig {
 }
 
 impl NatsReadModelConfig {
+    pub fn for_model<M: rostfrei_core::ReadModel>(
+        context: &BoundedContext,
+    ) -> Result<Self, ReadModelError> {
+        Self::new(context, M::NAME)
+    }
+
     pub fn new(context: &BoundedContext, name: impl Into<String>) -> Result<Self, ReadModelError> {
         let name = BoundedContextName::new(name)
             .map_err(|_| invalid("read-model name must be a lowercase kebab-case scope name"))?;
