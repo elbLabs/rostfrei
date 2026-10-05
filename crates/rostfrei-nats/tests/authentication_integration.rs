@@ -2,6 +2,9 @@
 //! Run with Docker available:
 //! `cargo test --locked -p rostfrei-nats --test authentication_integration`
 
+#[path = "authentication/command_flow.rs"]
+mod command_flow;
+
 use std::{
     ffi::OsStr,
     net::TcpListener,
@@ -71,6 +74,19 @@ impl Server {
         network: Option<&Network>,
         route: Option<&Self>,
     ) -> TestResult<Self> {
+        Self::start(authenticated, network, route, false).await
+    }
+
+    async fn authenticated_jetstream() -> TestResult<Self> {
+        Self::start(true, None, None, true).await
+    }
+
+    async fn start(
+        authenticated: bool,
+        network: Option<&Network>,
+        route: Option<&Self>,
+        jetstream: bool,
+    ) -> TestResult<Self> {
         let name = unique_name();
         let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
         let address = format!("127.0.0.1:{port}");
@@ -85,11 +101,23 @@ impl Server {
         if let Some(network) = network {
             args.extend(["--network".to_owned(), network.0.clone()]);
         }
+        if jetstream {
+            args.extend([
+                "--mount".to_owned(),
+                format!(
+                    "type=bind,src={}/../../scripts/nats-test.conf,dst=/etc/nats/test.conf,readonly",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+            ]);
+        }
         args.extend([
             "nats:2.12.15-alpine".to_owned(),
             "--server_name".to_owned(),
             name.clone(),
         ]);
+        if jetstream {
+            args.extend(["--config".to_owned(), "/etc/nats/test.conf".to_owned()]);
+        }
         if authenticated {
             args.extend([
                 "--user".to_owned(),
@@ -165,7 +193,7 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = docker(["rm", "--force", &self.name]);
+        let _ = docker(["rm", "--force", "--volumes", &self.name]);
     }
 }
 
@@ -401,3 +429,5 @@ async fn preserves_authentication_when_failing_over_to_a_discovered_server() {
         first.restart().await.expect("restart initial NATS");
     }
 }
+
+rostfrei::install_macro_support!();

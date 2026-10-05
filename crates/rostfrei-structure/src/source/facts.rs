@@ -93,6 +93,7 @@ pub struct TraitImplementation {
     pub associated_event_types: Vec<AssociatedTypeReference>,
     pub associated_root_types: Vec<AssociatedTypeReference>,
     pub line: usize,
+    pub column: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -144,6 +145,12 @@ pub struct TopLevelItem {
 }
 
 #[derive(Clone, Debug)]
+pub struct EventRaise {
+    pub line: usize,
+    pub implementation: Option<(usize, usize)>,
+}
+
+#[derive(Clone, Debug)]
 pub struct SourceFileFacts {
     pub path: PathBuf,
     pub modules: Vec<ModuleDeclaration>,
@@ -155,4 +162,5 @@ pub struct SourceFileFacts {
     pub non_composition_items: Vec<(usize, &'static str)>,
     pub test_lines: Vec<usize>,
     pub include_lines: Vec<usize>,
+    pub event_raises: Vec<EventRaise>,
 }

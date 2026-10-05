@@ -62,6 +62,64 @@ fn check(condition: bool, context: &'static str) -> TestResult<()> {
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[tokio::test]
+async fn nats_store_persists_command_acceptance() -> TestResult<()> {
+    let context = connect_context(&rostfrei_testing::integration::nats_url()?).await?;
+    let (unique_context, stream_name) = unique_names("command-acceptance")?;
+    let bounded_context =
+        ApplicationName::new(unique_context.name().as_str())?.bounded_context("acceptance")?;
+    let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
+        .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
+    provision_event_store(&context, &config).await?;
+    let store = NatsEventStore::connect(context.clone(), config.clone()).await?;
+    let result = rostfrei_testing::command_acceptance_contract::run(Arc::new(store)).await;
+    context.delete_stream(config.stream_name()).await?;
+    result
+}
+
+#[tokio::test]
+async fn event_free_operation_identity_is_bounded_context_scoped() -> TestResult<()> {
+    let (context, first_store) = directory_fixture("event-free-contexts").await?;
+    let second_context = first_store
+        .config()
+        .application()
+        .bounded_context("other-context")?;
+    let second_config = NatsEventStoreConfig::for_bounded_context(&second_context)?
+        .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
+    provision_event_store(&context, &second_config).await?;
+    let second_store = NatsEventStore::connect(context.clone(), second_config).await?;
+    let operation = OperationId::new("context-scoped-event-free")?;
+    for store in [&first_store, &second_store] {
+        let bounded_context = store.config().bounded_context();
+        let accepted = store
+            .append_transaction(
+                EventTransaction::new(
+                    operation.clone(),
+                    ContentFingerprint::digest(bounded_context.as_str()),
+                    Vec::new(),
+                )
+                .with_bounded_context(bounded_context.clone()),
+            )
+            .await?;
+        check(
+            !accepted.is_exact_replay(),
+            "another context's acceptance was replayed",
+        )?;
+        check(
+            store
+                .load_transaction_receipt_in_context(bounded_context, &operation)
+                .await?
+                .as_ref()
+                == Some(accepted.receipt()),
+            "context-scoped acceptance receipt was not preserved",
+        )?;
+    }
+    for store in [&first_store, &second_store] {
+        context.delete_stream(store.config().stream_name()).await?;
+    }
+    Ok(())
+}
+
 async fn directory_fixture(
     label: &str,
 ) -> TestResult<(async_nats::jetstream::Context, NatsEventStore)> {
