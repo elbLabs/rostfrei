@@ -1274,6 +1274,10 @@
   .studio-panel-dock {
     bottom: 12px;
   }
+
+  .studio-panel-trigger kbd {
+    display: none;
+  }
 }
 
 @media (max-height: 600px) {
