@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="A visual guide to Rostfrei’s NATS subjects, illustrated with the bike-rental example: commands, private history, public events, streams, and test isolation.">
+    <meta name="color-scheme" content="light">
+    <title>Subjects in Rostfrei · A bike-rental field guide</title>
+    <style>
+      :root {
+        --paper: #f7f8f5;
+        --surface: #ffffff;
+        --ink: #182b36;
+        --muted: #52646d;
+        --line: #dbe2df;
+        --green: #16634c;
+        --green-soft: #e9f4ee;
+        --blue: #234ca3;
+        --blue-soft: #edf2fe;
+        --amber: #805013;
+        --amber-soft: #fff3dc;
+        --purple: #71469c;
+        --purple-soft: #f4edfb;
+        --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; scroll-padding-top: 6rem; }
+      body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      [hidden] { display: none !important; }
+      a { color: var(--green); text-underline-offset: .2em; }
+      a:hover { text-decoration-thickness: 2px; }
+      :focus-visible { outline: 3px solid var(--blue); outline-offset: 4px; }
+      h1, h2, h3, p { margin-top: 0; }
+      h1, h2, h3 { line-height: 1.2; letter-spacing: -.025em; }
+      h1 { max-width: 760px; margin-bottom: 1.35rem; font-size: clamp(2.75rem, 6vw, 4.75rem); font-weight: 750; }
+      h2 { margin-bottom: 1rem; font-size: clamp(1.75rem, 3vw, 2.25rem); }
+      h3 { margin-bottom: .7rem; font-size: 1.15rem; }
+      p { margin-bottom: 1rem; }
+      code { font-family: var(--mono); font-size: .87em; overflow-wrap: anywhere; }
+      p code, li code, td code, dd code { background: #edf0ee; padding: .1rem .25rem; border-radius: 4px; }
+      pre { margin: 1rem 0; padding: 1.35rem; background: #172c37; color: #e9f1f4; border-radius: 12px; overflow-x: auto; line-height: 1.75; }
+      pre code { background: none; padding: 0; overflow-wrap: normal; }
+      .wrap { width: min(1180px, calc(100% - 3rem)); margin-inline: auto; }
+      .skip { position: absolute; left: 1rem; top: -6rem; z-index: 10; background: white; padding: .75rem; }
+      .skip:focus { top: 1rem; }
+      .masthead { border-bottom: 1px solid var(--line); }
+      .masthead .wrap { display: flex; justify-content: space-between; align-items: center; min-height: 76px; gap: 1rem; }
+      .brand { color: var(--ink); font-size: 1.3rem; font-weight: 800; text-decoration: none; letter-spacing: -.04em; }
+      .brand span { color: var(--green); }
+      .edition { color: var(--muted); font: .75rem var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+      .hero { padding: 4.5rem 0 3rem; }
+      .eyebrow { display: block; margin-bottom: 1rem; color: var(--green); font-size: .74rem; font-weight: 750; text-transform: uppercase; letter-spacing: .14em; }
+      .lede { max-width: 780px; color: var(--muted); font-size: 1.2rem; }
+      .tags { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1.5rem; }
+      .tag { border: 1px solid var(--line); border-radius: 999px; padding: .25rem .7rem; font-size: .78rem; color: var(--muted); }
+      .toolbar { position: sticky; top: 0; z-index: 5; border-block: 1px solid var(--line); background: var(--paper); }
+      .toolbar .wrap { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: .85rem; }
+      nav { display: flex; flex-wrap: wrap; gap: .35rem 1.25rem; }
+      nav a { font-size: .83rem; font-weight: 650; color: var(--muted); text-decoration: none; }
+      nav a:hover { color: var(--green); }
+      .scope-control { display: flex; align-items: center; gap: .65rem; flex-shrink: 0; }
+      .scope-control > span { font-size: .75rem; color: var(--muted); }
+      .scope-buttons { display: flex; border: 1px solid var(--line); border-radius: 8px; padding: 3px; background: white; }
+      button { font: inherit; cursor: pointer; }
+      .scope-buttons button { border: 0; border-radius: 5px; background: transparent; padding: .35rem .8rem; font-size: .8rem; font-weight: 650; color: var(--muted); }
+      .scope-buttons button[aria-pressed="true"] { background: var(--ink); color: white; }
+      main > section { padding-block: 3.5rem; border-bottom: 1px solid var(--line); }
+      .section-head { display: flex; align-items: baseline; gap: 1rem; }
+      .section-number { color: var(--green); font: .8rem var(--mono); }
+      .intro { max-width: 850px; color: var(--muted); }
+      .grid { display: grid; gap: 1rem; }
+      .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .card { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 1.5rem; min-width: 0; }
+      .card p:last-child { margin-bottom: 0; }
+      .card p { font-size: .92rem; color: var(--muted); }
+      .card-label { display: block; margin-bottom: 1rem; color: var(--green); font: .72rem var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+      .anatomy { margin-top: 1.5rem; padding: 2rem; border: 1px solid var(--line); border-radius: 16px; background: white; }
+      .tokens { display: flex; flex-wrap: wrap; gap: .5rem; align-items: stretch; margin: 1.25rem 0; }
+      .token { padding: .8rem 1rem; border-radius: 8px; border: 1px solid currentColor; }
+      .token code { display: block; font-size: clamp(.85rem, 1.5vw, 1.05rem); font-weight: 700; }
+      .token small { display: block; margin-top: .4rem; font-size: .73rem; }
+      .application { color: var(--green); background: var(--green-soft); }
+      .kind { color: var(--blue); background: var(--blue-soft); }
+      .context { color: var(--amber); background: var(--amber-soft); }
+      .name { color: var(--purple); background: var(--purple-soft); }
+      .test-token { color: var(--ink); background: #eef0f2; }
+      .dot { align-self: center; color: var(--muted); font-family: var(--mono); }
+      .topic { display: block; padding: .85rem 1rem; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font: .81rem/1.65 var(--mono); overflow-wrap: anywhere; }
+      .anatomy .topic { margin-bottom: 1rem; }
+      .note { margin-top: 1.25rem; padding: 1rem 1.25rem; border-left: 3px solid var(--green); background: var(--green-soft); border-radius: 0 8px 8px 0; font-size: .91rem; }
+      .note p:last-child { margin-bottom: 0; }
+      .subtle { color: var(--muted); font-size: .85rem; }
+      .family { display: flex; flex-direction: column; }
+      .family .topic { margin-top: auto; }
+      .badge { display: inline-block; padding: .2rem .55rem; border-radius: 5px; font: .7rem var(--mono); background: var(--green-soft); color: var(--green); margin-bottom: 1rem; align-self: flex-start; }
+      .badge.private { background: var(--amber-soft); color: var(--amber); }
+      .badge.read { background: var(--blue-soft); color: var(--blue); }
+      .scenario { display: flex; gap: 1.5rem; align-items: center; background: var(--ink); color: #eef5f7; padding: 1.5rem; border-radius: 14px; margin-block: 1.5rem; }
+      .scenario p { margin: 0; }
+      .scenario strong { display: block; font-size: 1.2rem; }
+      .scenario code { background: #29434f; color: white; }
+      .bike { width: 70px; height: 54px; flex-shrink: 0; color: #a6d7b7; }
+      .flow { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+      .flow > li { position: relative; padding-left: 3.5rem; padding-bottom: 1.5rem; counter-increment: step; }
+      .flow > li::before { content: counter(step, decimal-leading-zero); position: absolute; top: 0; left: 0; width: 2.25rem; height: 2.25rem; display: grid; place-items: center; background: var(--green); color: white; border-radius: 50%; font: .75rem var(--mono); }
+      .flow > li:not(:last-child)::after { content: ""; position: absolute; left: 1.1rem; top: 2.6rem; bottom: .4rem; border-left: 1px solid #afc8bb; }
+      .flow h3 { padding-top: .3rem; }
+      .flow .topic { margin-block: .75rem; }
+      .branch { margin-top: 1rem; }
+      .branch .card { border-top: 3px solid var(--green); }
+      .branch .card:last-child { border-top-color: var(--purple); }
+      details { border: 1px solid var(--line); background: white; border-radius: 10px; margin-top: 1rem; padding: 1rem 1.25rem; }
+      summary { cursor: pointer; font-weight: 650; font-size: .94rem; }
+      details p { margin: 1rem 0 0; font-size: .92rem; }
+      .table-wrap { margin-top: 1.5rem; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: white; }
+      table { border-collapse: collapse; width: 100%; text-align: left; font-size: .85rem; }
+      caption { text-align: left; padding: 1rem; font-weight: 650; background: #edf1ed; }
+      th, td { padding: 1rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--muted); font-size: .73rem; text-transform: uppercase; letter-spacing: .06em; }
+      tbody tr:last-child td { border-bottom: 0; }
+      td .topic { background: none; padding: 0; border: 0; font-size: .78rem; }
+      td .topic + .topic { margin-top: .5rem; }
+      .stream { display: block; font: .76rem/1.7 var(--mono); overflow-wrap: anywhere; }
+      .scope-comparison { margin-block: 1.5rem; }
+      .scope-comparison .topic + .stream { margin-top: .8rem; }
+      .scope-comparison .card:last-child { border-color: #b7cbbf; background: #f0f7f2; }
+      .wildcards { margin: 0; }
+      .wildcards > div { display: grid; grid-template-columns: 2.5rem 1fr; gap: 1rem; padding-bottom: 1rem; }
+      .wildcards dt { font: 1.4rem var(--mono); font-weight: 700; color: var(--green); }
+      .wildcards dd { margin: 0; font-size: .93rem; }
+      .rule-list { padding-left: 1.2rem; font-size: .94rem; }
+      .rule-list li { padding-left: .25rem; margin-bottom: .6rem; }
+      .sources { list-style: none; padding: 0; margin-bottom: 0; }
+      .sources li { padding-block: .8rem; border-top: 1px solid var(--line); }
+      .sources a { font-weight: 650; font-size: .9rem; }
+      .sources span { display: block; color: var(--muted); font-size: .84rem; }
+      footer { padding-block: 2rem; color: var(--muted); font-size: .8rem; }
+      @media (max-width: 900px) {
+        .three { grid-template-columns: 1fr; }
+        .toolbar .wrap { flex-wrap: wrap; gap: .7rem; }
+        .scope-control { margin-left: auto; }
+        .hero { padding-top: 3rem; }
+        html { scroll-padding-top: 8rem; }
+      }
+      @media (max-width: 620px) {
+        .wrap { width: calc(100% - 2rem); }
+        .two { grid-template-columns: 1fr; }
+        .edition { font-size: .65rem; }
+        .hero { padding-block: 2.5rem; }
+        main > section { padding-block: 2.5rem; }
+        .anatomy, .card { padding: 1.15rem; }
+        .tokens { gap: .35rem; }
+        .token { padding: .65rem; }
+        .token small { font-size: .68rem; }
+        .scenario { gap: 1rem; padding: 1.15rem; }
+        .bike { width: 46px; }
+        .flow > li { padding-left: 2.9rem; }
+        nav { gap: .3rem .9rem; }
+        nav a { font-size: .75rem; }
+        th, td { padding: .75rem; }
+        .table-wrap table { min-width: 660px; }
+      }
+      @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+      @media print {
+        body { background: white; font-size: 10pt; }
+        .wrap { width: 100%; }
+        .toolbar, .skip, .tags { display: none; }
+        .hero { padding-block: 1.5rem; }
+        h1 { font-size: 32pt; }
+        h2 { font-size: 20pt; }
+        main > section { padding-block: 1.5rem; }
+        .card, .anatomy, .scenario, pre, tr { break-inside: avoid; }
+        .table-wrap { overflow: visible; }
+        .table-wrap table { min-width: 0; }
+        .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .topic, .stream { font-size: 8pt; }
+        a { color: inherit; }
+        details { display: block; }
+        details::details-content { content-visibility: visible; }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#overview">Skip to the guide</a>
+    <header class="masthead">
+      <div class="wrap">
+        <a class="brand" href="../README.md">rostfrei<span>.</span></a>
+        <span class="edition">Field guide / Messaging</span>
+      </div>
+    </header>
+
+    <div class="hero wrap">
+      <span class="eyebrow">NATS subjects, explained</span>
+      <h1>One address.<br>A lot of intention.</h1>
+      <p class="lede">A <strong>subject</strong> is the dot-separated address on a NATS message.
+        Rostfrei gives that address a predictable shape: which application, which traffic scope,
+        what kind of message, and which bounded context owns it.</p>
+      <p class="lede">Let’s follow <strong>renting a bicycle</strong> through the real bike-rental example.</p>
+      <div class="tags">
+        <span class="tag">Application: bike-rental</span>
+        <span class="tag">Context: Bike Rental</span>
+        <span class="tag">Self-contained · works offline</span>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="wrap">
+        <nav aria-label="Guide sections">
+          <a href="#overview">Mental model</a>
+          <a href="#families">Subject families</a>
+          <a href="#rental">Rental walkthrough</a>
+          <a href="#streams">Streams</a>
+          <a href="#scope">Test scope</a>
+          <a href="#code">In code</a>
+        </nav>
+        <div class="scope-control" id="scope-control" hidden>
+          <span id="scope-label">Examples</span>
+          <div class="scope-buttons" role="group" aria-labelledby="scope-label">
+            <button type="button" data-scope="normal" aria-pressed="true">Normal</button>
+            <button type="button" data-scope="test" aria-pressed="false">Test</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <main class="wrap" id="overview">
+      <section aria-labelledby="mental-model-title">
+        <div class="section-head"><span class="section-number">01</span><h2 id="mental-model-title">Routing, storage, and history.</h2></div>
+        <p class="intro">These three concepts work together, but answer different questions.</p>
+        <div class="grid three">
+          <article class="card">
+            <span class="card-label">Where does the message go?</span>
+            <h3>NATS subject</h3>
+            <p>An address attached to a message. Subscribers and JetStream streams use subject filters to select messages.</p>
+          </article>
+          <article class="card">
+            <span class="card-label">Where is it retained?</span>
+            <h3>JetStream stream</h3>
+            <p>A broker storage resource that captures matching subjects. A single stream can contain many different subjects.</p>
+          </article>
+          <article class="card">
+            <span class="card-label">What happened to this aggregate?</span>
+            <h3>Aggregate stream</h3>
+            <p>The ordered domain-event history of one aggregate identity. The NATS event store maps that history to one opaque aggregate subject.</p>
+          </article>
+        </div>
+
+        <div class="anatomy">
+          <span class="eyebrow">Read a command address from left to right</span>
+          <div class="tokens" aria-label="Parts of the rental command subject">
+            <div class="token application"><code>bike-rental</code><small>Application</small></div>
+            <span class="dot" aria-hidden="true">.</span>
+            <div class="token test-token" data-test-token hidden><code>test</code><small>Traffic scope</small></div>
+            <span class="dot" data-test-token hidden aria-hidden="true">.</span>
+            <div class="token kind"><code>command</code><small>Message kind</small></div>
+            <span class="dot" aria-hidden="true">.</span>
+            <div class="token context"><code>bike-rental</code><small>Bounded context</small></div>
+            <span class="dot" aria-hidden="true">.</span>
+            <div class="token name"><code>rent-bicycle</code><small>Business name</small></div>
+          </div>
+          <code class="topic" data-subject="command.bike-rental.rent-bicycle">bike-rental.command.bike-rental.rent-bicycle</code>
+          <p><strong>Why does “bike-rental” appear twice?</strong> The example gives its application and its bounded context the same name.
+            The first token scopes the whole application; the later token identifies the context inside it.</p>
+          <p class="subtle" id="scope-status" role="status">Showing Normal traffic: no extra scope token is inserted.</p>
+          <noscript><p class="subtle">The examples show Normal traffic. The Test scope section below shows the corresponding isolated addresses.</p></noscript>
+        </div>
+        <div class="note">
+          <strong>The general business-address shape:</strong>
+          <code>&lt;application&gt;[.test].&lt;kind&gt;.&lt;bounded-context&gt;.&lt;name&gt;</code>.
+          Brackets mean the literal <code>.test</code> is optional; they are not part of the subject.
+          Aggregate IDs, correlation IDs, and schema versions belong in the message or storage envelope, not extra business-address tokens.
+        </div>
+      </section>
+
+      <section id="families" aria-labelledby="families-title">
+        <div class="section-head"><span class="section-number">02</span><h2 id="families-title">Six subject families to recognize.</h2></div>
+        <p class="intro">Commands ask for a decision. Domain events preserve the private facts. Integration events communicate public facts.
+          The other families carry outcomes, read requests, and quarantined deliveries.</p>
+        <div class="grid two">
+          <article class="card family">
+            <span class="badge">command · durable work</span>
+            <h3>“Please rent this bicycle.”</h3>
+            <p><code>RentBicycle</code> is routed to a command worker. Its payload identifies the fleet and bicycle.</p>
+            <code class="topic" data-subject="command.bike-rental.rent-bicycle">bike-rental.command.bike-rental.rent-bicycle</code>
+          </article>
+          <article class="card family">
+            <span class="badge">command-response · durable outcome</span>
+            <h3>“Accepted” or “Rejected.”</h3>
+            <p>The adapter derives an exact response address from the command address, operation ID, and command message ID.
+              The retained result is distinct from a broker publish acknowledgement.</p>
+            <code class="topic" data-subject="command-response.bike-rental.&lt;response-digest&gt;">bike-rental.command-response.bike-rental.&lt;response-digest&gt;</code>
+          </article>
+          <article class="card family">
+            <span class="badge private">domain · authoritative private history</span>
+            <h3>“BicycleRented happened in this fleet.”</h3>
+            <p>The event store appends <code>BicycleRented</code> to the fleet aggregate’s history. The last token is derived from
+              the aggregate type and ID; different event types for that aggregate share this subject.</p>
+            <code class="topic" data-subject="domain.bike-rental.aggregate.&lt;aggregate-digest&gt;">bike-rental.domain.bike-rental.aggregate.&lt;aggregate-digest&gt;</code>
+          </article>
+          <article class="card family">
+            <span class="badge">integration · public contract</span>
+            <h3>“A bicycle rental has started.”</h3>
+            <p>After commit, the example maps the private event to the separately versioned
+              <code>BicycleRentalStarted</code> contract and publishes it through <code>IntegrationEventBus</code>.</p>
+            <code class="topic" data-subject="integration.bike-rental.bicycle-rental-started">bike-rental.integration.bike-rental.bicycle-rental-started</code>
+          </article>
+          <article class="card family">
+            <span class="badge read">query · Core NATS request/reply</span>
+            <h3>“Is this bicycle available?”</h3>
+            <p>A NATS query adapter uses a query subject without a JetStream query stream. Replies use transport-managed inboxes.</p>
+            <p><strong>Illustrative address:</strong> the example defines a domain-level availability query;
+              its current runtime does not mount a NATS query responder for it.</p>
+            <code class="topic" data-subject="query.bike-rental.bicycle-availability">bike-rental.query.bike-rental.bicycle-availability</code>
+          </article>
+          <article class="card family">
+            <span class="badge private">quarantine · delivery triage</span>
+            <h3>“This delivery needs inspection.”</h3>
+            <p>A quarantined delivery keeps the source kind, context, and name in its address.
+              For example, a quarantined rental command would use the subject below. A normal business rejection uses a command response.</p>
+            <code class="topic" data-subject="quarantine.command.bike-rental.rent-bicycle">bike-rental.quarantine.command.bike-rental.rent-bicycle</code>
+          </article>
+        </div>
+        <p class="subtle" style="margin-top: 1rem;">Angle-bracketed digests are explanatory placeholders, not literal subjects or NATS wildcards.
+          Rostfrei derives the real opaque values.</p>
+      </section>
+
+      <section id="rental" aria-labelledby="rental-title">
+        <div class="section-head"><span class="section-number">03</span><h2 id="rental-title">Follow one rental.</h2></div>
+        <p class="intro">This is a source-based walkthrough of the accepted path in <code>examples/bike-rental</code>.
+          It assumes the demo fixture’s serviceable <code>bike-42</code> is still available in <code>city-fleet</code>.</p>
+        <div class="scenario">
+          <svg class="bike" viewBox="0 0 84 60" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="18" cy="40" r="14"/><circle cx="66" cy="40" r="14"/>
+            <path d="M18 40 31 17 46 40H18L36 25H59M46 40 59 25 66 40M59 25 55 11H48M27 17H37"/>
+          </svg>
+          <p><strong>Rent bike-42 from city-fleet.</strong>
+            Command: <code>RentBicycle</code> · Schema version: <code>2</code> · Aggregate: <code>RentalFleetAggregate</code></p>
+        </div>
+        <ol class="flow">
+          <li>
+            <h3>Publish the command to the use-case address.</h3>
+            <p><code>CommandBus</code> derives the address from the bound context and the command’s local ID,
+              <code>rent-bicycle</code>. The durable command stream captures it.</p>
+            <code class="topic" data-subject="command.bike-rental.rent-bicycle">bike-rental.command.bike-rental.rent-bicycle</code>
+            <pre aria-label="RentBicycle business payload"><code>{
+  "fleet_id": "city-fleet",
+  "bicycle_id": "bike-42"
+}</code></pre>
+            <p class="subtle">This is the business payload. The bus supplies the surrounding message envelope and execution identities.
+              Neither <code>city-fleet</code>, <code>bike-42</code>, nor schema version <code>2</code> is appended to the command subject.</p>
+          </li>
+          <li>
+            <h3>Load the fleet and make the domain decision.</h3>
+            <p>The NATS worker hands the command to the registered processor and <code>RentBicycleHandler</code>.
+              The handler loads <code>RentalFleetAggregate</code> for <code>city-fleet</code> through <code>CommandExecution</code>.
+              The aggregate is reconstructed from its history, and the rental behavior checks eligibility.</p>
+          </li>
+          <li>
+            <h3>Commit the private fact to the fleet’s history.</h3>
+            <p>On success, <code>BicycleRented</code> is appended through <code>NatsEventStore</code>, with the expected
+              aggregate stream version. The fleet is the aggregate; the bicycle is an entity inside it.</p>
+            <code class="topic" data-subject="domain.bike-rental.aggregate.&lt;aggregate-digest&gt;">bike-rental.domain.bike-rental.aggregate.&lt;aggregate-digest&gt;</code>
+            <p class="subtle">This subject also holds that fleet’s added, returned, retired, and transferred domain events.
+              Event type is stored in the event envelope, not in the subject.</p>
+          </li>
+          <li>
+            <h3>Report the outcome and publish the public fact.</h3>
+            <p>Two separate responsibilities follow the successful commit:</p>
+            <div class="grid two branch">
+              <article class="card">
+                <span class="card-label">Back to the caller</span>
+                <h3>Accepted response</h3>
+                <p>The command worker publishes a durable outcome on the derived response address, so the caller can retrieve it.</p>
+                <code class="topic" data-subject="command-response.bike-rental.&lt;response-digest&gt;">bike-rental.command-response.bike-rental.&lt;response-digest&gt;</code>
+              </article>
+              <article class="card">
+                <span class="card-label">Out to consumers</span>
+                <h3>BicycleRentalStarted</h3>
+                <p>A durable domain-event consumer maps the committed event to this public schema-v1 event.
+                  A separate durable integration-event consumer handles and logs it.</p>
+                <code class="topic" data-subject="integration.bike-rental.bicycle-rental-started">bike-rental.integration.bike-rental.bicycle-rental-started</code>
+              </article>
+            </div>
+            <p class="subtle" style="margin-top: 1rem;">The response and integration-event publication are separate post-commit paths.
+              Their relative arrival order is not a contract; an accepted response does not mean all downstream consumers have finished.</p>
+          </li>
+        </ol>
+        <details>
+          <summary>What if the bicycle cannot be rented?</summary>
+          <p>The fixture also includes maintenance-required <code>bike-99</code>. A business rejection returns a rejected command response
+            and appends no rental domain events. There is consequently no <code>BicycleRentalStarted</code> from that rejected attempt.
+            The command subject stays the same; the outcome changes.</p>
+        </details>
+        <details>
+          <summary>What if a command touches two fleets?</summary>
+          <p><code>TransferBicycle</code> uses the <code>transfer-bicycle</code> command name with source and destination fleet IDs in its payload.
+            It records <code>BicycleTransferredOut</code> and <code>BicycleTransferredIn</code> on two different aggregate subjects.
+            Both commits belong to one atomic event transaction in the same bounded-context event store.</p>
+          <code class="topic" data-subject="command.bike-rental.transfer-bicycle" style="margin-top: 1rem;">bike-rental.command.bike-rental.transfer-bicycle</code>
+        </details>
+      </section>
+
+      <section id="streams" aria-labelledby="streams-title">
+        <div class="section-head"><span class="section-number">04</span><h2 id="streams-title">Subjects route. Streams retain.</h2></div>
+        <p class="intro">Rostfrei derives four messaging streams per application and traffic scope, plus one authoritative
+          domain-event stream per bounded context and scope. Stream names use uppercase letters and underscores;
+          subjects keep lowercase kebab-case tokens.</p>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Scrollable subject-to-stream table">
+          <table>
+            <caption>Bike-rental topology · <span data-scope-name>Normal</span> traffic</caption>
+            <thead><tr><th scope="col">Purpose</th><th scope="col">Captured subject filter</th><th scope="col">JetStream stream</th></tr></thead>
+            <tbody>
+              <tr><td>Commands<br><span class="subtle">WorkQueue retention</span></td><td><code class="topic" data-subject="command.&gt;">bike-rental.command.&gt;</code></td><td><code class="stream" data-stream="COMMANDS">BIKE_RENTAL_COMMANDS</code></td></tr>
+              <tr><td>Command responses<br><span class="subtle">Limits retention</span></td><td><code class="topic" data-subject="command-response.&gt;">bike-rental.command-response.&gt;</code></td><td><code class="stream" data-stream="COMMAND_RESPONSES">BIKE_RENTAL_COMMAND_RESPONSES</code></td></tr>
+              <tr><td>Integration events<br><span class="subtle">Limits retention</span></td><td><code class="topic" data-subject="integration.&gt;">bike-rental.integration.&gt;</code></td><td><code class="stream" data-stream="INTEGRATION_EVENTS">BIKE_RENTAL_INTEGRATION_EVENTS</code></td></tr>
+              <tr><td>Quarantine<br><span class="subtle">Limits retention</span></td><td><code class="topic" data-subject="quarantine.&gt;">bike-rental.quarantine.&gt;</code></td><td><code class="stream" data-stream="QUARANTINE">BIKE_RENTAL_QUARANTINE</code></td></tr>
+              <tr><td>Private event storage<br><span class="subtle">History + transaction internals</span></td><td><code class="topic" data-subject="domain.bike-rental.aggregate.*">bike-rental.domain.bike-rental.aggregate.*</code><code class="topic" data-subject="domain.bike-rental.transaction.&gt;">bike-rental.domain.bike-rental.transaction.&gt;</code></td><td><code class="stream" data-domain-stream>BIKE_RENTAL__BIKE_RENTAL_DOMAIN_EVENTS</code></td></tr>
+              <tr><td>Queries<br><span class="subtle">Core NATS request/reply</span></td><td><code class="topic" data-subject="query.bike-rental.bicycle-availability">bike-rental.query.bike-rental.bicycle-availability</code><span class="subtle">Illustrative request address</span></td><td>No JetStream query stream</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note"><strong>A stream name does not namespace subjects.</strong> Separate Normal and Test stream names alone are insufficient;
+          their subject filters must also be disjoint. Provisioning is explicit: operators create the topology, then runtimes connect and verify it.
+          The local example explicitly provisions its demo resources during startup.</div>
+
+        <div class="grid two" style="margin-top: 1.5rem;">
+          <article class="card">
+            <h3>How wildcards work</h3>
+            <dl class="wildcards">
+              <div><dt>*</dt><dd>Matches exactly one token. <code>bike-rental.command.bike-rental.*</code> selects every command name in this context.</dd></div>
+              <div><dt>&gt;</dt><dd>Matches one or more trailing tokens and must be last. <code>bike-rental.command.&gt;</code> selects Normal commands across the application’s contexts.</dd></div>
+            </dl>
+            <p>Wildcards belong in subscriptions and storage filters. A published business message has one concrete, validated address.</p>
+          </article>
+          <article class="card">
+            <h3>Private storage has internal subjects too</h3>
+            <p>The domain-event stream also contains operation-scoped transaction receipts and read guards under
+              <code>transaction.&lt;operation-digest&gt;</code> and <code>transaction.&lt;operation-digest&gt;.guard.&lt;ordinal&gt;</code>.</p>
+            <p>Domain-event consumers select <code>aggregate.*</code>, so these internal records are excluded.
+              A JetStream stream sequence is therefore different from an aggregate’s own event version.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="scope" aria-labelledby="scope-title">
+        <div class="section-head"><span class="section-number">05</span><h2 id="scope-title">Same application. Isolated Test traffic.</h2></div>
+        <p class="intro">Select <code>TrafficScope::Test</code> when constructing the context. Rostfrei inserts <code>.test</code>
+          immediately after the application token and derives separate streams and consumer identities.
+          These two cards always show both scopes for comparison.</p>
+        <div class="grid two scope-comparison">
+          <article class="card">
+            <span class="card-label">TrafficScope::Normal</span>
+            <h3>No scope token</h3>
+            <code class="topic">bike-rental.command.bike-rental.rent-bicycle</code>
+            <code class="stream">BIKE_RENTAL_COMMANDS</code>
+            <code class="stream">BIKE_RENTAL__BIKE_RENTAL_DOMAIN_EVENTS</code>
+          </article>
+          <article class="card">
+            <span class="card-label">TrafficScope::Test</span>
+            <h3>Insert the reserved “test” token</h3>
+            <code class="topic">bike-rental.test.command.bike-rental.rent-bicycle</code>
+            <code class="stream">BIKE_RENTAL__TEST_COMMANDS</code>
+            <code class="stream">BIKE_RENTAL__TEST__BIKE_RENTAL_DOMAIN_EVENTS</code>
+          </article>
+        </div>
+        <ul class="rule-list">
+          <li>The application identity remains <code>bike-rental</code> in both scopes. Normal is not a literal <code>.normal</code> or <code>.prod</code> token.</li>
+          <li>The example’s Test reset recreates only its isolated Test resources. Normal history persists.</li>
+          <li>Scoped adapters validate application and traffic scope, so a Normal component rejects a Test address and vice versa.</li>
+          <li>The stream-name marker <code>__TEST</code> distinguishes Test resources from the Normal resources of a separately named application such as <code>bike-rental-test</code>.</li>
+        </ul>
+        <div class="note"><strong>Read broad filters literally.</strong> <code>bike-rental.&gt;</code> includes <em>both</em> scopes.
+          <code>bike-rental.command.&gt;</code> matches only Normal commands;
+          <code>bike-rental.test.command.&gt;</code> matches only Test commands.
+          This distinction matters for subscriptions and NATS permissions alike.</div>
+      </section>
+
+      <section id="code" aria-labelledby="code-title">
+        <div class="section-head"><span class="section-number">06</span><h2 id="code-title">Derive addresses from a context.</h2></div>
+        <p class="intro">Application code supplies the business names. The typed messaging API handles validation and the namespace.
+          This small example uses the same derivation APIs as the bike-rental configuration.</p>
+        <pre aria-label="Rust address derivation example"><code>use rostfrei_messaging_core::ApplicationName;
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let application = ApplicationName::new("bike-rental")?;
+
+    let normal = application.bounded_context("bike-rental")?;
+    let test = application.test_bounded_context("bike-rental")?;
+
+    let command = normal.command_address("rent-bicycle")?;
+    let test_command = test.command_address("rent-bicycle")?;
+    let public_event = normal
+        .integration_event_address("bicycle-rental-started")?;
+
+    assert_eq!(command.as_str(),
+        "bike-rental.command.bike-rental.rent-bicycle");
+    assert_eq!(test_command.as_str(),
+        "bike-rental.test.command.bike-rental.rent-bicycle");
+    assert_eq!(public_event.as_str(),
+        "bike-rental.integration.bike-rental.bicycle-rental-started");
+
+    Ok(())
+}</code></pre>
+        <div class="grid two">
+          <article class="card">
+            <h3>Names are validated tokens</h3>
+            <p>Application, context, and business-name tokens use lowercase ASCII letters, digits, and single hyphens.
+              Tokens are nonempty, cannot start or end with a hyphen, and cannot contain repeated hyphens, dots, spaces, or wildcards.
+              Each token is limited to 64 bytes; a business address to 256 bytes.</p>
+          </article>
+          <article class="card">
+            <h3>A durable name is a different identifier</h3>
+            <p>The rental command’s Normal durable is <code>bike-rental--bike-rental--rent-bicycle--v2</code>.
+              Test inserts <code>--test</code> after the application. The version belongs to the consumer identity and message schema;
+              the subject still ends in <code>rent-bicycle</code>.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="sources" aria-labelledby="sources-title">
+        <div class="section-head"><span class="section-number">07</span><h2 id="sources-title">Keep the source close.</h2></div>
+        <p class="intro">The addresses and behavior above come from these repository files. Open this HTML file from the checkout
+          to follow the relative source links.</p>
+        <ul class="sources">
+          <li><a href="../examples/bike-rental/README.md">Bike-rental example</a><span>Domain model, demo fixture, multi-fleet transfer, and local runtime instructions.</span></li>
+          <li><a href="../examples/bike-rental/src/bike_rental_nats/mod.rs">Bike-rental NATS configuration and integration mapping</a><span>Application/context constants, command routes, scope construction, and BicycleRented → BicycleRentalStarted.</span></li>
+          <li><a href="../examples/bike-rental/src/bike_rental_nats/tests.rs">Example topology assertions</a><span>Exact Normal/Test subjects, stream names, and versioned consumer identities.</span></li>
+          <li><a href="../crates/rostfrei-messaging-core/src/scope.rs">Typed context builders</a> · <a href="../crates/rostfrei-messaging-core/src/address.rs">Address grammar</a><span>ApplicationName, TrafficScope, BoundedContext, and token validation.</span></li>
+          <li><a href="../crates/rostfrei-messaging-core/src/command_response.rs">Command response derivation</a><span>Stable opaque response addresses from command address and execution identities.</span></li>
+          <li><a href="../crates/rostfrei-nats/src/event_store_config.rs">Private event-store subjects</a> · <a href="../crates/rostfrei-nats/src/provisioning.rs">Messaging provisioning</a><span>Aggregate and transaction subjects, stream filters, and retention policies.</span></li>
+          <li><a href="../crates/rostfrei-nats/src/query.rs">Core NATS query transport</a> · <a href="../examples/bike-rental/src/domain/bike_rental/rental_fleet/bicycle_availability/query.rs">Example domain query</a><span>The framework’s request/reply adapter and the example’s domain-level availability contract.</span></li>
+          <li><a href="adr/0014-application-scoped-nats-conventions.md">ADR 0014 · Application-scoped conventions</a> · <a href="adr/0018-opinionated-test-traffic-scope.md">ADR 0018 · Test traffic scope</a><span>The architectural decisions behind the naming scheme.</span></li>
+          <li><a href="../UBIQUITOUS_LANGUAGE.md">Ubiquitous language</a><span>Canonical definitions of subjects’ surrounding concepts: application, context, aggregate stream, and integration event.</span></li>
+        </ul>
+      </section>
+    </main>
+    <footer class="wrap">Rostfrei field guide · Subjects are addresses; domain events are history; integration events are public contracts.</footer>
+
+    <script>
+      (() => {
+        const buttons = document.querySelectorAll("[data-scope]");
+        const setScope = (scope) => {
+          const isTest = scope === "test";
+          const subjectPrefix = isTest ? "bike-rental.test" : "bike-rental";
+          const streamPrefix = isTest ? "BIKE_RENTAL__TEST" : "BIKE_RENTAL";
+
+          document.querySelectorAll("[data-subject]").forEach((element) => {
+            element.textContent = `${subjectPrefix}.${element.dataset.subject}`;
+          });
+          document.querySelectorAll("[data-stream]").forEach((element) => {
+            element.textContent = `${streamPrefix}_${element.dataset.stream}`;
+          });
+          document.querySelectorAll("[data-domain-stream]").forEach((element) => {
+            element.textContent = `${streamPrefix}__BIKE_RENTAL_DOMAIN_EVENTS`;
+          });
+          document.querySelectorAll("[data-test-token]").forEach((element) => {
+            element.hidden = !isTest;
+          });
+          document.querySelectorAll("[data-scope-name]").forEach((element) => {
+            element.textContent = isTest ? "Test" : "Normal";
+          });
+          buttons.forEach((button) => {
+            button.setAttribute("aria-pressed", String(button.dataset.scope === scope));
+          });
+          document.getElementById("scope-status").textContent = isTest
+            ? "Showing Test traffic: .test subjects and separate __TEST streams; the application is still bike-rental."
+            : "Showing Normal traffic: no extra scope token is inserted.";
+        };
+
+        buttons.forEach((button) => {
+          button.addEventListener("click", () => setScope(button.dataset.scope));
+        });
+        document.getElementById("scope-control").hidden = false;
+      })();
+    </script>
+  </body>
+</html>
