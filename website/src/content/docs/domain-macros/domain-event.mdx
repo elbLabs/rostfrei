@@ -9,3 +9,6 @@ Events describe facts, not owners. An event owns intrinsic wire metadata. Aggreg
 **Placement:** [Aggregate action](/docs/project-structure/aggregate-action) — `event.rs`.
 
 <MacroExample name="DomainEvent" />
+
+Committed domain events can also update a [read model](/docs/read-models). Register
+typed transformations and let the runtime load, checkpoint, and persist the query view.

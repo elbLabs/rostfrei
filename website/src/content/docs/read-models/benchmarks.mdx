@@ -1,0 +1,92 @@
+# KV queries versus replay
+
+The benchmark compares the same organization-access query over two linked aggregates:
+an organization with membership events and a billing account with purchased-seat
+events. The response contains member count, purchased seats, and available seats.
+
+Every measured path returns identical JSON, checked on every query.
+
+## The four paths
+
+| Path | Work performed |
+| --- | --- |
+| KV snapshot | Read and decode one saved value |
+| Sequential replay | Load and replay organization history, discover the billing ID, then load and replay billing history |
+| Parallel replay | Load both histories concurrently, assuming both IDs are already known, then replay and join |
+| Loaded-history replay | Decode and apply already-loaded, validated events in memory |
+
+All paths include typed handler execution and response JSON serialization. The
+network paths include their storage calls. HTTP/QueryBus transport, seeding,
+projection maintenance, and warmup are outside the timer.
+
+## Recorded baseline: 2026-10-02
+
+The run used Rust 1.98.0 in release mode, two Tokio workers, and a local Docker NATS
+2.12.1 broker with file storage and one replica. The Linux x86-64 KVM host exposed
+16 AMD EPYC cores. Each path has 300 samples per case after 10 warmups, with path
+order rotated between iterations. There were no concurrent source writers or
+competing benchmark queries.
+
+**Latency in milliseconds: median / p95.** Event counts include the opening event
+in each aggregate stream.
+
+| Events per aggregate | Total events | KV snapshot | Sequential replay | Parallel replay | Loaded-history replay |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | 20 | 0.849 / 1.960 | 23.387 / 34.575 | 13.360 / 21.344 | 0.021 / 0.031 |
+| 50 | 100 | 1.229 / 3.070 | 118.079 / 173.239 | 66.995 / 98.565 | 0.086 / 0.140 |
+| 100 | 200 | 1.279 / 3.281 | 231.836 / 413.025 | 134.290 / 220.973 | 0.183 / 0.264 |
+
+For 100 total events, the recorded KV median was about 96 times lower than sequential
+replay and 54 times lower than parallel replay.
+
+## Where the time went
+
+The history reader used for this baseline performed a stream-info request, a
+last-message lookup, and one request per event. Across two aggregates, the observed
+broker request counts were:
+
+| Total events | KV requests per query | Replay requests per query |
+| ---: | ---: | ---: |
+| 20 | 1 | 24 |
+| 100 | 1 | 104 |
+| 200 | 1 | 204 |
+
+Applying 100 already-loaded events took about **86 microseconds** at the median,
+faster than the remote KV read. Most of the network-replay cost came from broker
+round trips and storage decoding/validation, rather than the transformations alone.
+
+These are historical measurements of that per-message history reader and the
+lower-level typed KV adapter. They do not separately measure the declarative
+runtime's checkpoint envelope or a newer optimized history reader. Batching,
+aggregate snapshots, caching, concurrency, replication, and network placement can
+change the comparison. The results are not saturation-throughput measurements.
+
+Read models move materialization work from each query into event processing. Their
+query cost depends on the saved value's size, while freshness depends on the worker
+keeping up with its sources.
+
+## Reproduce the comparison
+
+From the repository root, with its Rust toolchain, Python 3.11+, and Docker:
+
+```sh
+cargo build --locked --release -p rostfrei-nats --example read_model_benchmark
+
+python3 scripts/test_nats.py -- cargo run --locked --release \
+  -p rostfrei-nats --example read_model_benchmark -- \
+  --events-per-aggregate 10,50,100 \
+  --samples 100 --rounds 3 --warmup 10 \
+  --events-per-commit 1 --extra-event-bytes 256
+```
+
+This covers 20, 100, and 200 total events. Use `--events-per-aggregate 100` for two
+aggregates with 100 events each. The runner starts a checksum-pinned disposable
+broker. The benchmark checks every result and emits a JSON report with percentiles,
+mean latency, payload sizes, and client traffic counters.
+
+- [Full methodology](https://github.com/elbLabs/rostfrei/blob/main/docs/read-model-benchmark.md)
+- [Recorded JSON results](https://github.com/elbLabs/rostfrei/blob/main/docs/benchmarks/read-model-2026-10-02.json)
+- [Benchmark source](https://github.com/elbLabs/rostfrei/tree/main/crates/rostfrei-nats/examples/read_model_benchmark)
+
+Start building a [read model](/docs/read-models), or review its
+[ordering and recovery contract](/docs/read-models/ordering).
