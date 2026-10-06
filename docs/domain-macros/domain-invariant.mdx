@@ -1,0 +1,17 @@
+# `domain_invariant`
+
+Adds metadata to a trait describing a rule that must hold for domain state. Implement it in `evaluate.rs` for the enclosing aggregate, entity, or value object. Signatures are application-defined; the example returns `Option<InvariantViolation>`.
+
+**Placement:** [Aggregate invariant](../project-structure/aggregate-invariant.mdx) or [value-object invariant](../project-structure/value-object-invariant.mdx) — `contract.rs`.
+
+```rust
+#[domain_invariant(
+    id = "unique-bicycle-identities",
+    label = "Bicycle identities are unique"
+)]
+pub trait FleetConsistency {
+    fn unique_bicycle_identities(
+        candidate: &RentalFleet,
+    ) -> Option<InvariantViolation>;
+}
+```

@@ -1,5 +1,5 @@
-//! Future-API acceptance. Baseline compile gaps are NOT behavioral REDs.
-//! Exact interface choices and matrix mapping: docs/testing/modular-runtime-tdd.md.
+//! Acceptance contracts for command processing, authorization, audit, and recovery.
+//! Service boundaries: docs/command-runtime.md.
 #![allow(
     clippy::panic_in_result_fn,
     clippy::unwrap_used,

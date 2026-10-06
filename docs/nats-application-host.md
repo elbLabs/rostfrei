@@ -98,7 +98,7 @@ One address has one durable, so it takes exactly one integration handler.
 `NatsRuntimeConfig::new` rejects a second handler for the same address, including
 another schema version of the same contract or an explicitly declared own context.
 To accept several schemas, register one `MessageHandler<IntegrationEventAddress>`
-that decodes each of them (see [ADR 0004](adr/0004-private-and-integration-events.md#schema-upgrades)).
+that decodes each of them (see [schema upgrades](messaging-upgrades.md#payload-schema-upgrades)).
 Typed version-aware decoding is tracked in [#111](https://github.com/elbLabs/rostfrei/issues/111).
 
 ## Bike rental: one entry point, one flag
@@ -162,7 +162,7 @@ identity is never inferred from actor attribution or HTTP capability tokens.
 Configured Tracer replay requires real command republication and its actual PubAck,
 followed by current winner admission; completed handlers are not reevaluated.
 
-`NatsRuntime::store()` returns an owned current snapshot. Retained old snapshots
+`NatsRuntime::store()` returns an owned current store handle. Retained old handles
 remain fenced after reset. `NatsRuntime::tracer_builder()` supplies current-history
 and directory indirection for manually composed diagnostics; the application host
 uses it automatically. History reads do not themselves verify authority health.
@@ -208,7 +208,7 @@ publication or synthetic MessageSeries. Preview remains unavailable. The known
 direct-runtime-reset diagnostic-health boundary is still deferred: Tracer-mediated
 reset gates diagnostics, but a direct failed `NatsRuntime::reset` does not update
 Tracer's separate diagnostic health flag. Current readable history is not proof of
-an intact writable authority. See [diagnostic limitations](tracer-preview-retirement.md).
+an intact writable authority. See [diagnostic limitations](handler-simulation.md).
 
 ### Submission admission during teardown
 
@@ -226,7 +226,7 @@ Drop cannot await graceful completion; use explicit shutdown for that. A stopped
 raw runtime can be explicitly restarted; application shutdown is terminal for its
 owned runtimes. Reset retains its exclusive submission gate and Test-only scope.
 
-## Current isolation boundary and related issues
+## Isolation
 
 One host owns the Test messaging namespace for its application and one bounded
 context's event store. Use a dedicated broker or a unique `ApplicationName` for
@@ -234,32 +234,7 @@ each independent development host/process. External publishers must not submit
 into that owned Test namespace during reset. The gate coordinates host
 submissions, not independent processes or arbitrary broker publishers.
 
-This uses the existing unqualified `TrafficScope::Test`. Framework-owned run IDs
-and same-logical-application cross-process isolation remain #68. The typed
-registration foundation and explicit consumer generation support #101, but its
-full topology/retention-aware compatibility diagnostics are separate work.
-
-## Measurement
-
-Physical Rust lines, including imports, comments and blanks:
-
-| Application-owned file | Before (`1d7d861`) | After |
-| --- | ---: | ---: |
-| `bike_rental_nats/mod.rs` | 1,061 | 516 |
-| `bin/bike-rental-api.rs` | 119 | 94 |
-| `tracer.rs` | 34 | 59 |
-| **Total** | **1,214** | **669** |
-
-Reduction: **545 lines (45%)**, including both continuous-observation feeds.
-Against the issue's v0.0.5-alpha baseline of 1,211 lines, the reduction is 542 lines.
-The retained code includes business
-integration mappings, resource/environment policy and compatibility accessors
-used by existing integration/inspection tests; it is not all host boilerplate.
-
-The standalone consumer has **60 composition/startup lines**: 43 in `main.rs`
-plus 17 in its binding functions, excluding domain code and fixture/test JSON.
-
-See [acceptance evidence](tracer-host-acceptance.md) and run:
+## Integration checks
 
 ```sh
 python3 scripts/test_nats.py -- python3 scripts/check_tracer_host.py

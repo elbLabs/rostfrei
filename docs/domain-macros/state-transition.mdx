@@ -1,0 +1,24 @@
+# `StateTransition`
+
+Declares the legal transitions of one lifecycle. Each fieldless variant names one transition and lists one or more source/target state pairs.
+
+**Placement:** [Lifecycle](../project-structure/entity-lifecycle.mdx) — `transition.rs` beside `lifecycle.rs`.
+
+```rust
+#[derive(StateTransition)]
+#[transition(state = BicycleStatus)]
+pub enum BicycleRentalTransition {
+    #[transition(id = "rent", label = "Rent")]
+    #[edge(from = Available, to = Rented)]
+    Rent,
+    #[transition(id = "return", label = "Return")]
+    #[edge(from = Rented, to = Available)]
+    Return,
+    #[transition(id = "retire", label = "Retire")]
+    #[edge(from = Available, to = Retired)]
+    #[edge(from = Rented, to = Retired)]
+    Retire,
+}
+```
+
+The generated implementation returns `StateChange` only when the current state matches one of the transition's edge sources. Duplicate source states within one variant are rejected, so a `(transition, current state)` pair has at most one target. Use policies and invariants for rules that require additional domain facts.

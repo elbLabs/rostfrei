@@ -80,6 +80,5 @@ subprocess failures/timeouts and parity with every recorded comparison. Docker
 lifecycle tests are opt-in. The separate 1,000-command historical audit experiment
 is also opt-in and should be run in release mode, not with the default unit suite.
 
-Methodology: [aggregate readiness](../../docs/benchmarks/aggregate-loading.md),
-[read-model queries](../../docs/read-model-benchmark.md), and
-[paired history replay](../../docs/history-replay-benchmark.md).
+Methodology: [aggregate readiness](../../docs/benchmarks/aggregate-loading.md) and
+[read-model queries](../../docs/benchmarks/read-models.md).

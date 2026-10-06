@@ -1,57 +1,7 @@
 import { useId, useState } from "react"
 
 import { Button } from "@/components/ui/button"
-
-const families = [
-  {
-    title: "Command",
-    description: "Ask a bounded context to make a decision.",
-    subject: "command.bike-rental.rent-bicycle",
-    filters: ["command.>"],
-    stream: "_COMMANDS",
-  },
-  {
-    title: "Command response",
-    description: "Retain the accepted or rejected outcome for one operation.",
-    subject: "command-response.bike-rental.<response-digest>",
-    filters: ["command-response.>"],
-    stream: "_COMMAND_RESPONSES",
-  },
-  {
-    title: "Private domain event",
-    description: "Append BicycleRented to the fleet aggregate’s history.",
-    subject: "domain.bike-rental.aggregate.<aggregate-digest>",
-    filters: [
-      "domain.bike-rental.aggregate.*",
-      "domain.bike-rental.transaction.>",
-    ],
-    stream: "__BIKE_RENTAL_DOMAIN_EVENTS",
-  },
-  {
-    title: "Integration event",
-    description:
-      "Publish the public BicycleRentalStarted contract after commit.",
-    subject: "integration.bike-rental.bicycle-rental-started",
-    filters: ["integration.>"],
-    stream: "_INTEGRATION_EVENTS",
-  },
-  {
-    title: "Query (illustrative)",
-    description:
-      "Read state with Core NATS request/reply. The example defines an availability query but does not mount a NATS responder for it.",
-    subject: "query.bike-rental.bicycle-availability",
-    filters: [],
-    stream: null,
-  },
-  {
-    title: "Quarantine",
-    description:
-      "Retain a delivery needing inspection, preserving its source kind and business address.",
-    subject: "quarantine.command.bike-rental.rent-bicycle",
-    filters: ["quarantine.>"],
-    stream: "_QUARANTINE",
-  },
-] as const
+import { subjectFamilies } from "@/docs/subject-data"
 
 export function SubjectExplorer() {
   const labelId = useId()
@@ -111,7 +61,7 @@ export function SubjectExplorer() {
       </dl>
 
       <div className="grid gap-3 xl:grid-cols-2">
-        {families.map((family) => (
+        {subjectFamilies.map((family) => (
           <article
             className="min-w-0 rounded-lg border border-border bg-background p-4"
             key={family.title}
@@ -163,10 +113,6 @@ export function SubjectExplorer() {
           </article>
         ))}
       </div>
-      <p className="mt-4 text-xs leading-6 text-muted-foreground">
-        Angle-bracketed digests are explanatory placeholders, not literal
-        subjects or wildcards. Rostfrei derives their opaque values.
-      </p>
     </section>
   )
 }

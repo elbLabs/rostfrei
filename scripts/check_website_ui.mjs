@@ -42,6 +42,8 @@ const routes = [
   "docs/getting-started",
   "docs/domain-macros/command",
   "docs/messaging/subjects",
+  "docs/reference",
+  "docs/command-runtime",
 ]
 
 async function mockRepositoryMetadata(page) {
@@ -108,6 +110,44 @@ async function checkThemeBoot(browser) {
 try {
   browser = await launchStudioBrowser()
   await checkThemeBoot(browser)
+  const documentation = await browser.newPage()
+  await documentation.goto(`${origin}${base}docs/domain-macros/command`, {
+    waitUntil: "networkidle0",
+  })
+  assert.match(await documentation.$eval("article pre", (element) => element.textContent), /pub fleet_id:/)
+  await documentation.click('article a[href$="/docs/project-structure/aggregate-action"]')
+  await documentation.waitForFunction(() => document.querySelector("h1")?.textContent === "Aggregate action")
+  await documentation.goto(`${origin}${base}docs/command-response-timeout`, {
+    waitUntil: "networkidle0",
+  })
+  await documentation.click('article a[href$="/docs/command-runtime#identity-and-results"]')
+  await documentation.waitForFunction(() =>
+    location.hash === "#identity-and-results" && document.querySelector("h1")?.textContent === "Command runtime"
+  )
+  const machineIndex = await fetch(`${origin}${base}llms.txt`)
+  assert.equal(machineIndex.status, 200)
+  assert.ok((await machineIndex.text()).includes(`${base}docs/source/domain-macros/command.mdx`))
+  const rawPage = await fetch(`${origin}${base}docs/source/domain-macros/command.mdx`)
+  assert.equal(rawPage.status, 200)
+  assert.match(await rawPage.text(), /pub fleet_id:/)
+  const rawSubjects = await fetch(`${origin}${base}docs/source/messaging/subjects.mdx`)
+  assert.equal(rawSubjects.status, 200)
+  const subjectSource = await rawSubjects.text()
+  assert.match(subjectSource, /\| Command response \|.*`_COMMAND_RESPONSES`/)
+  assert.match(subjectSource, /\| Integration event \|.*`_INTEGRATION_EVENTS`/)
+  assert.match(subjectSource, /\| Completed-outcome state \|.*__SPLIT_<epoch-digest>_STATE/)
+  await documentation.goto(`${origin}${base}docs/messaging/subjects`, {
+    waitUntil: "networkidle0",
+  })
+  const explorer = 'section[aria-label="Bike-rental subject explorer"]'
+  assert.equal(await documentation.$$eval(`${explorer} article`, (cards) => cards.length), 7)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /BIKE_RENTAL_COMMAND_RESPONSES/)
+  await documentation.click(`${explorer} button:nth-child(2)`)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /BIKE_RENTAL__TEST_COMMAND_RESPONSES/)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /bike-rental\.test\.integration\.bike-rental\.bicycle-rental-started/)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /bike-rental\.test\.domain\.bike-rental\.split\.<epoch-digest>\.aggregate\.\*/)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /BIKE_RENTAL__TEST__BIKE_RENTAL_DOMAIN_EVENTS__SPLIT_<epoch-digest>_STATE/)
+  await documentation.close()
   for (const theme of ["light", "dark"]) {
     const context = await browser.createBrowserContext()
     const page = await context.newPage()
@@ -198,7 +238,7 @@ try {
           assert.deepEqual(diagnostics.pageErrors, [], label)
           assert.deepEqual(diagnostics.failedRequests, [], label)
           assert.deepEqual(diagnostics.httpErrors, [], label)
-          if (["", "docs"].includes(route) && width !== 320) {
+          if (["", "docs", "docs/messaging/subjects"].includes(route) && width !== 320) {
             await page.screenshot({
               path: fileURLToPath(new URL(`${label}.png`, output)),
               fullPage: true,

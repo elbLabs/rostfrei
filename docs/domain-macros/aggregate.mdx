@@ -1,0 +1,17 @@
+# `Aggregate`
+
+Adds an ID and label to an aggregate marker. Implement `AggregateDefinition` to select its bounded context, root entity, and event set. The derive connects those types to the event-sourcing runtime.
+
+**Placement:** [Aggregate](../project-structure/aggregate.mdx) — `aggregate.rs`.
+
+```rust
+#[derive(Aggregate)]
+#[domain(id = "rental-fleet", label = "Rental fleet")]
+pub struct RentalFleetAggregate;
+
+impl AggregateDefinition for RentalFleetAggregate {
+    type Context = BikeRental;
+    type Root = RentalFleet;
+    type Event = RentalFleetEvent;
+}
+```

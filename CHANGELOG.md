@@ -120,7 +120,7 @@ application or NATS authority.
   issuing one broker request per event. Reads preserve snapshot cutoffs and integrity
   checks and do not advance application durable consumers. Reader credentials now
   also require event-stream-scoped ephemeral consumer create/pull/delete permissions;
-  no stream-policy update is required.
+  no stream-policy update is required. See [history reads](docs/runtime.md#event-history-and-accepted-commands).
 - **Breaking (command acceptance):** successful event-free commands now persist a
   context-scoped acceptance receipt by default. `CommandReceipt::AcceptedNoEvents`
   replaces transient `NoEvents`; exact retries return `ExactReplay` with no events.
@@ -129,7 +129,7 @@ application or NATS authority.
   event-free receipts remain readable; new split execution uses permanent
   manifest-bearing receipts and separate result state.
   Past transient no-op acceptances cannot be reconstructed retroactively. See
-  [ADR 0039](docs/adr/0039-durable-event-free-acceptance.md).
+  [command execution](docs/adr/command-execution.md).
 - **NATS read policy:** ordinary aggregate/session reads and stream discovery now
   trust committed writes after local history checks, instead of rereading every
   historical transaction receipt. Use `NatsEventStore::audit_history` or
@@ -176,7 +176,7 @@ application or NATS authority.
   Agent Skills archive and checksum, not crates.io packages.
 - The generated starter still pins published `v0.0.5-alpha`, which predates Skills.
   Upgrade its dependency deliberately before installing 0.1 skills; advancing the
-  default starter pin is a [post-publication follow-up](docs/starter-skills-followup.md).
+  default starter pin follows the [starter release procedure](docs/development.md#starter-dependency-contract).
 - Aggregate snapshots, whole-history completed-result replay optimization and richer
   integration-event redrive UX remain deferred. Local broker qualification does not
   establish replicated failover, Kubernetes lifecycle or restore qualification.

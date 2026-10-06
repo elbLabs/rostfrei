@@ -144,6 +144,10 @@ jobs:
         env:
           VITE_BASE_PATH: /rostfrei/
         run: pnpm --dir website build
+      - name: Check shared documentation and machine-readable output
+        env:
+          VITE_BASE_PATH: /rostfrei/
+        run: pnpm test:docs
       - name: Check website and component gallery in Chrome
         env:
           VITE_BASE_PATH: /rostfrei/

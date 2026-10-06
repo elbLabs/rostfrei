@@ -12,6 +12,7 @@
     "dev:studio": "pnpm --filter rostfrei-tracer-studio dev",
     "dev:ui": "pnpm --filter @rostfrei/ui dev",
     "test:studio": "pnpm --filter rostfrei-tracer-studio test:ui",
-    "test:website": "node scripts/check_website_ui.mjs"
+    "test:website": "node scripts/check_website_ui.mjs",
+    "test:docs": "node --experimental-strip-types scripts/check_docs.mjs"
   }
 }

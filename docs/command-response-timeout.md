@@ -1,8 +1,8 @@
 # Bounded command-response waiting
 
 `NatsMessagingAdapter::new` waits up to **30 seconds** for a command response by
-default (`DEFAULT_COMMAND_RESPONSE_TIMEOUT`). Previously the default wait was
-unlimited. Applications with longer-running commands can set their own budget:
+default (`DEFAULT_COMMAND_RESPONSE_TIMEOUT`). Applications with longer-running
+commands can set their own budget:
 
 ```rust
 use std::time::Duration;
@@ -37,8 +37,7 @@ A worker can finish after the caller stops waiting. Recovery must preserve the
 original operation ID, command identity and canonical command evidence. An
 authorized completed-outcome lookup can return that original acceptance or
 rejection without executing the handler again, subject to current authorization
-and detail-expiry policy. See the [command service](design/modular-command-service.md)
-and [completed-outcome contract](adr/0044-completed-outcomes-and-envelope-ingress.md).
+and detail-expiry policy. See the [completed-outcome contract](command-runtime.md#identity-and-results).
 
 ## Quarantine and integration events
 
@@ -47,7 +46,7 @@ when trusted caller-context resolution refuses a delivery. The sender now stops
 waiting at its configured deadline. Quarantine remains inspection/recovery
 evidence; its existence does not prove that a command never committed. Repair and
 command redrive remain explicit, identity-preserving actions under the
-[technical-failure recovery procedure](adr/0043-typed-technical-command-failures.md).
+[technical-failure recovery procedure](command-failures.md).
 
 Ordinary integration-event publication waits for the broker's publication receipt,
 not subscriber completion, and uses its existing publish timeout. An integration

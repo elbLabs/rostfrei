@@ -1,13 +1,20 @@
-# Reference index
+# Rostfrei documentation
+
+This is the official documentation for developers and coding agents. The website
+renders these same files; read them here, in a checkout, or on the
+[documentation site](https://elblabs.github.io/rostfrei/docs).
+The published [machine index](https://elblabs.github.io/rostfrei/llms.txt) links to
+the same Markdown/MDX sources without requiring JavaScript.
 
 ## Guides
 
-- [Domain macros and project structure](https://elblabs.github.io/rostfrei/docs)
-- [Getting started](https://elblabs.github.io/rostfrei/docs/getting-started)
+- [Introduction](introduction.mdx)
+- [Getting started](getting-started.mdx)
+- [Domain macros](domain-macros/index.mdx) and [project structure](project-structure/index.mdx)
 - [Bike-rental setup and Tracer workflow](../examples/bike-rental/README.md)
 - [Tracer Studio](../studio/README.md)
 - [Agent Skills setup and use](agent-skills-install.md)
-- [Project terminology](../UBIQUITOUS_LANGUAGE.md)
+- [Project terminology](glossary.md)
 - [Release changes](../CHANGELOG.md)
 - [Migrating to 0.1](migration-0.1.md)
 - [Development and releases](development.md)
@@ -15,17 +22,23 @@
 ## Runtime and operations
 
 - [NATS authentication, event history, and command metadata](runtime.md)
+- [Command runtime and outcome lifecycle](command-runtime.md)
+- [Technical failures and redrive](command-failures.md)
+- [Original actor attribution](actor-attribution.md)
 - [Completed-outcome cutover](completed-outcome-cutover.md)
 - [Application-linked NATS host](nats-application-host.md)
 - [Worker concurrency and shared capacity](consumer-concurrency.md)
 - [Command-response timeouts](command-response-timeout.md)
-- [Subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
-  ([offline HTML guide](subjects.html))
-- [Event-driven read models](read-model-runtime.md) and [typed storage](read-models.md)
+- [Subjects and streams](messaging/subjects.mdx)
+- [Message schemas and subscription upgrades](messaging-upgrades.md)
+- [Event-driven read models](read-models/index.mdx), [NATS setup](read-models/nats.mdx),
+  [ordering and recovery](read-models/ordering.mdx), and [typed storage](read-models.md)
 - [Continuous observation](continuous-observation.md)
+- [Handler simulation](handler-simulation.md)
 - [Quarantine inspection](quarantine-inspection.md) and [example walkthrough](../examples/bike-rental/QUARANTINE.md)
-- [Domain-event worker pool](design/domain-event-worker-pool.md)
-- [Aggregate-loading benchmarks](benchmarks/aggregate-loading.md) and [read-model benchmarks](read-model-benchmark.md)
+- [Domain-event workers and durable migration](domain-event-workers.md)
+- [Aggregate-loading benchmarks](benchmarks/aggregate-loading.md) and [read-model benchmarks](benchmarks/read-models.md)
+- [Skills release qualification](release-01-kit.md)
 
 ## Workspace crates
 
@@ -53,22 +66,16 @@ and [`rostfrei-benchmarks`](../crates/rostfrei-benchmarks/README.md), a
 non-published tool for release workloads, comparisons, and disposable NATS
 orchestration.
 
-## Architecture and history
+## Architecture
 
-[Architecture decision records](adr) explain how the design evolved. Earlier
-records can contain APIs replaced by later decisions; use the guides and current
-source for implementation examples. Useful entry points:
+The [architectural maxims](adr/README.md) guide implementation and PR review:
+business meaning, durable decisions, authoritative history, explicit contracts,
+derived views, and evidence. Each ADR gives the principle, rationale, and tradeoff.
 
-- [Language and scope](adr/0001-ubiquitous-language-and-scope.md)
-- [Runtime layers](adr/0008-development-platform-layers.md)
-- [Compiled domain model](adr/0013-compiled-domain-model.md)
-- [Application-scoped NATS conventions](adr/0014-application-scoped-nats-conventions.md)
-- [Isolated test traffic](adr/0018-opinionated-test-traffic-scope.md)
-- [HTTP commands and queries](adr/0019-registered-queries-and-standard-http.md)
-- [MessageSeries fixtures](adr/0020-message-series-fixtures.md)
-- [Domain policies](adr/0036-domain-policy-vocabulary.md)
-- [Bounded-context commands and transactions](adr/0037-bounded-context-commands-and-unit-of-work.md)
+## Maintaining these docs
 
-The [10 September 2026 review](reviews/2026-09-10-project-review.md) records
-findings and checks against its stated commit, including open follow-ups. It is
-a historical review, not a release-readiness report for the current checkout.
+Update the relevant page when behavior changes. Keep concepts, examples, and
+operating instructions here; keep work logs in issues and PRs. Use relative links
+between source files—the website resolves them to its routes. MDX may add visual
+enhancements, but essential explanations and code must remain readable as text.
+Agent Skills describe workflows and use these same contracts.

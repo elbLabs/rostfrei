@@ -1,0 +1,21 @@
+# `EntityLifecycle`
+
+Declares lifecycle states on a fieldless enum used by an aggregate root or nested entity. Each state has an ID and label. One explicit initial state and the generated `LifecycleState` implementation support typed transition evaluation.
+
+**Placement:** [Lifecycle](../project-structure/entity-lifecycle.mdx) — `lifecycle.rs` in a lifecycle directory directly beneath the owning aggregate or nested entity.
+
+```rust
+#[derive(EntityLifecycle, Clone, Copy, Eq, PartialEq)]
+#[domain(id = "rental-status", label = "Bicycle rental status")]
+#[lifecycle(initial = Available)]
+pub enum BicycleStatus {
+    #[state(id = "available", label = "Available")]
+    Available,
+    #[state(id = "rented", label = "Rented")]
+    Rented,
+    #[state(id = "retired", label = "Retired")]
+    Retired,
+}
+```
+
+Pair it with [`StateTransition`](state-transition.mdx). Business guards and side effects remain in ordinary actions, policies, and event handling.

@@ -1,0 +1,18 @@
+# `DomainError`
+
+Declares an expected business rejection with a semantic ID, code, and message. The derive generates JSON rejection encoding; payload fields carry structured details. A rejection is distinct from a storage or transport failure.
+
+**Placement:** [Aggregate action](../project-structure/aggregate-action.mdx) — `rejection.rs`.
+
+```rust
+#[derive(DomainError, Clone, Debug)]
+#[domain(
+    id = "bicycle-unavailable",
+    label = "Bicycle unavailable",
+    code = "BICYCLE_UNAVAILABLE",
+    message = "The requested bicycle cannot currently be rented."
+)]
+pub struct BicycleUnavailable {
+    pub bicycle_id: BicycleId,
+}
+```

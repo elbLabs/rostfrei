@@ -1,3 +1,5 @@
+import { getMacroCode } from "@/docs/macro-code-data"
+
 export type MacroSlide = {
   name: string
   family: string
@@ -22,9 +24,7 @@ export const MACROS: MacroSlide[] = [
       "No per-type path configuration",
     ],
     file: "src/lib.rs",
-    authored: `rostfrei::install_macro_support!();
-
-pub mod domain;`,
+    authored: getMacroCode("install_macro_support!"),
     generated: `#[doc(hidden)]
 pub mod __rostfrei_macro_support {
     // Hygienic re-exports supplied by rostfrei.
@@ -43,9 +43,7 @@ pub mod __rostfrei_macro_support {
       "No runtime behavior",
     ],
     file: "src/domain/bike_rental/context.rs",
-    authored: `#[derive(BoundedContext)]
-#[domain(id = "bike-rental", label = "Bike Rental")]
-pub struct BikeRental;`,
+    authored: getMacroCode("BoundedContext"),
     generated: `impl BoundedContextType for BikeRental {
     const DESCRIPTOR: BoundedContextDescriptor =
         BoundedContextDescriptor {
@@ -66,15 +64,7 @@ pub struct BikeRental;`,
       "Runtime bridge generated",
     ],
     file: "src/domain/bike_rental/rental_fleet/aggregate.rs",
-    authored: `#[derive(Aggregate)]
-#[domain(id = "rental-fleet", label = "Rental fleet")]
-pub struct RentalFleetAggregate;
-
-impl AggregateDefinition for RentalFleetAggregate {
-    type Context = BikeRental;
-    type Root = RentalFleet;
-    type Event = RentalFleetEvent;
-}`,
+    authored: getMacroCode("Aggregate"),
     generated: `impl AggregateType for RentalFleetAggregate {
     const DESCRIPTOR: AggregateDescriptor =
         /* context-scoped ID and root metadata */;
@@ -98,13 +88,7 @@ impl rostfrei_core::Aggregate for RentalFleetAggregate {
       "Unregistered events fail to compile",
     ],
     file: "src/domain/bike_rental/rental_fleet/event_set.rs",
-    authored: `#[derive(AggregateEvents)]
-pub enum RentalFleetEvent {
-    BicycleAdded(BicycleAdded),
-    BicycleRented(BicycleRented),
-    BicycleReturned(BicycleReturned),
-    BicycleRetired(BicycleRetired),
-}`,
+    authored: getMacroCode("AggregateEvents"),
     generated: `impl From<BicycleRented> for RentalFleetEvent { /* … */ }
 impl EventVariant<BicycleRented> for RentalFleetEvent { /* … */ }
 
@@ -129,22 +113,7 @@ where A: AggregateDefinition<Event = Self>
       "Custom fields stay opaque",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/entity.rs",
-    authored: `#[derive(Entity)]
-#[domain(id = "bicycle", label = "Bicycle")]
-pub struct Bicycle {
-    bicycle_id: BicycleId,
-    status: BicycleStatus,
-    condition: BicycleCondition,
-}
-
-impl EntityDefinition for Bicycle {
-    type Owner = RentalFleetAggregate;
-    type Identity = BicycleId;
-
-    fn identity(&self) -> &Self::Identity {
-        &self.bicycle_id
-    }
-}`,
+    authored: getMacroCode("Entity"),
     generated: `impl EntityType for Bicycle {
     const LOCAL_ID: &str = "bicycle";
     const DESCRIPTOR: EntityDescriptor = EntityDescriptor {
@@ -167,8 +136,7 @@ impl EntityDefinition for Bicycle {
       "UUIDs and custom types work",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/identity.rs",
-    authored: `#[derive(DomainIdentity, Clone, Debug, Eq, PartialEq)]
-pub struct BicycleId(String);`,
+    authored: getMacroCode("DomainIdentity"),
     generated: `impl DomainIdentity for BicycleId {}
 
 // No owner, string conversion, scalar metadata,
@@ -186,12 +154,7 @@ pub struct BicycleId(String);`,
       "Always declared in value.rs",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/condition/value.rs",
-    authored: `#[derive(ValueObject, Clone, Copy, Debug)]
-#[domain(id = "bicycle-condition", label = "Bicycle condition")]
-pub enum BicycleCondition {
-    Serviceable,
-    MaintenanceRequired,
-}`,
+    authored: getMacroCode("ValueObject"),
     generated: `impl ValueObject for BicycleCondition {
     const DESCRIPTOR: ValueObjectDescriptor =
         ValueObjectDescriptor {
@@ -212,13 +175,7 @@ pub enum BicycleCondition {
       "Actions and policies are ordinary traits",
     ],
     file: "src/domain/bike_rental/bicycle_transfer/service.rs",
-    authored: `#[derive(DomainService)]
-#[domain(id = "bicycle-transfer", label = "Bicycle transfer")]
-pub struct BicycleTransfer;
-
-impl DomainServiceDefinition for BicycleTransfer {
-    type Context = BikeRental;
-}`,
+    authored: getMacroCode("DomainService"),
     generated: `impl DomainServiceType for BicycleTransfer {
     const DESCRIPTOR: DomainServiceDescriptor =
         DomainServiceDescriptor {
@@ -239,17 +196,7 @@ impl DomainServiceDefinition for BicycleTransfer {
       "Handler loads participating aggregates",
     ],
     file: "src/domain/bike_rental/rental_fleet/rent_bicycle/command.rs",
-    authored: `#[derive(Command, Clone, Debug)]
-#[domain(
-    id = "rent-bicycle",
-    label = "Rent bicycle",
-    context = BikeRental,
-    schema_version = 2
-)]
-pub struct RentBicycle {
-    pub fleet_id: FleetId,
-    pub bicycle_id: BicycleId,
-}`,
+    authored: getMacroCode("Command"),
     generated: `impl Command for RentBicycle {
     type Context = BikeRental;
     const LOCAL_ID: &str = "rent-bicycle";
@@ -275,12 +222,7 @@ impl JsonCommandPayload for RentBicycle {
       "Membership defined once",
     ],
     file: "src/domain/bike_rental/rental_fleet/rent_bicycle/event.rs",
-    authored: `#[derive(DomainEvent, Serialize, Deserialize)]
-#[domain(id = "bicycle-rented", label = "Bicycle rented")]
-pub struct BicycleRented {
-    pub fleet_id: FleetId,
-    pub bicycle_id: BicycleId,
-}`,
+    authored: getMacroCode("DomainEvent"),
     generated: `impl DomainEvent for BicycleRented {
     const LOCAL_ID: &str = "bicycle-rented";
     const LABEL: &str = "Bicycle rented";
@@ -300,16 +242,7 @@ pub struct BicycleRented {
       "JSON encoding by default",
     ],
     file: "src/domain/bike_rental/rental_fleet/rent_bicycle/rejection.rs",
-    authored: `#[derive(DomainError, Clone, Debug)]
-#[domain(
-    id = "bicycle-unavailable",
-    label = "Bicycle unavailable",
-    code = "BICYCLE_UNAVAILABLE",
-    message = "The requested bicycle cannot currently be rented."
-)]
-pub struct BicycleUnavailable {
-    pub bicycle_id: BicycleId,
-}`,
+    authored: getMacroCode("DomainError"),
     generated: `impl DomainError for BicycleUnavailable {
     const LOCAL_ID: &str = "bicycle-unavailable";
     const LABEL: &str = "Bicycle unavailable";
@@ -332,18 +265,7 @@ impl JsonErrorPayload for BicycleUnavailable { /* … */ }`,
       "Arbitrary Rust payloads",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/outcome.rs",
-    authored: `#[derive(PolicyOutcome, Clone, Copy, Debug)]
-pub enum RentalEligibilityOutcome {
-    #[outcome(id = "eligible", label = "Eligible")]
-    Eligible,
-    #[outcome(id = "unavailable-status", label = "Unavailable status")]
-    UnavailableStatus,
-    #[outcome(
-        id = "maintenance-required",
-        label = "Maintenance required"
-    )]
-    MaintenanceRequired,
-}`,
+    authored: getMacroCode("PolicyOutcome"),
     generated: `impl PolicyOutcomeType for RentalEligibilityOutcome {
     const OUTCOMES: &[PolicyOutcomeDescriptor] = &[
         PolicyOutcomeDescriptor {
@@ -366,17 +288,7 @@ pub enum RentalEligibilityOutcome {
       "LifecycleState implementation",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs",
-    authored: `#[derive(EntityLifecycle, Clone, Copy, Eq, PartialEq)]
-#[domain(id = "rental-status", label = "Bicycle rental status")]
-#[lifecycle(initial = Available)]
-pub enum BicycleStatus {
-    #[state(id = "available", label = "Available")]
-    Available,
-    #[state(id = "rented", label = "Rented")]
-    Rented,
-    #[state(id = "retired", label = "Retired")]
-    Retired,
-}`,
+    authored: getMacroCode("EntityLifecycle"),
     generated: `impl EntityLifecycleType for BicycleStatus {
     const DESCRIPTOR: EntityLifecycleDescriptor =
         EntityLifecycleDescriptor {
@@ -404,20 +316,7 @@ impl LifecycleState for BicycleStatus {
       "Pure rejection for illegal state",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/rental_status/transition.rs",
-    authored: `#[derive(StateTransition)]
-#[transition(state = BicycleStatus)]
-pub enum BicycleRentalTransition {
-    #[transition(id = "rent", label = "Rent")]
-    #[edge(from = Available, to = Rented)]
-    Rent,
-    #[transition(id = "return", label = "Return")]
-    #[edge(from = Rented, to = Available)]
-    Return,
-    #[transition(id = "retire", label = "Retire")]
-    #[edge(from = Available, to = Retired)]
-    #[edge(from = Rented, to = Retired)]
-    Retire,
-}`,
+    authored: getMacroCode("StateTransition"),
     generated: `impl StateTransition for BicycleRentalTransition {
     type State = BicycleStatus;
     const DESCRIPTORS: &'static [StateTransitionDescriptor<Self::State>] =
@@ -440,13 +339,7 @@ pub enum BicycleRentalTransition {
       "Checked implementation owner",
     ],
     file: "src/domain/bike_rental/rental_fleet/rent_bicycle/action.rs",
-    authored: `#[domain_action(id = "rent-bicycle", label = "Rent bicycle")]
-pub trait RentBicycleAction {
-    fn rent_bicycle(
-        &mut self,
-        input: BicycleId,
-    ) -> Result<(), BicycleUnavailable>;
-}`,
+    authored: getMacroCode("domain_action"),
     generated: `pub trait RentBicycleAction {
     fn rent_bicycle(
         &mut self,
@@ -470,16 +363,7 @@ pub trait RentBicycleAction {
       "Separate from HTTP query registration",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle_availability/query.rs",
-    authored: `#[domain_query(
-    id = "bicycle-availability",
-    label = "Bicycle availability"
-)]
-pub trait BicycleAvailabilityQuery {
-    fn bicycle_availability(
-        &self,
-        input: &BicycleId,
-    ) -> Option<BicycleAvailability>;
-}`,
+    authored: getMacroCode("domain_query"),
     generated: `pub trait BicycleAvailabilityQuery {
     fn bicycle_availability(
         &self,
@@ -503,13 +387,7 @@ pub trait BicycleAvailabilityQuery {
       "Optional PolicyOutcome enum",
     ],
     file: "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/policy.rs",
-    authored: `#[domain_policy(
-    id = "assess-rental-eligibility",
-    label = "Assess rental eligibility"
-)]
-pub trait RentalEligibilityPolicy {
-    fn assess_rental_eligibility(&self) -> RentalEligibilityOutcome;
-}`,
+    authored: getMacroCode("domain_policy"),
     generated: `pub trait RentalEligibilityPolicy {
     fn assess_rental_eligibility(&self) -> RentalEligibilityOutcome;
 
@@ -530,15 +408,7 @@ pub trait RentalEligibilityPolicy {
       "InvariantViolation stays explicit",
     ],
     file: "src/domain/bike_rental/rental_fleet/fleet_consistency/contract.rs",
-    authored: `#[domain_invariant(
-    id = "unique-bicycle-identities",
-    label = "Bicycle identities are unique"
-)]
-pub trait FleetConsistency {
-    fn unique_bicycle_identities(
-        candidate: &RentalFleet,
-    ) -> Option<InvariantViolation>;
-}`,
+    authored: getMacroCode("domain_invariant"),
     generated: `pub trait FleetConsistency {
     fn unique_bicycle_identities(
         candidate: &RentalFleet,
@@ -561,12 +431,7 @@ pub trait FleetConsistency {
       "Ignored discovery companion",
     ],
     file: "src/domain/tests/bike_rental/rental_fleet/fleet_consistency.rs",
-    authored: `#[domain_invariant_test(
-    <RentalFleetAggregate as FleetConsistency>::DESCRIPTOR
-)]
-fn exposes_owner_independent_invariant_metadata() {
-    // inspect the authored invariant descriptor
-}`,
+    authored: getMacroCode("domain_*_test"),
     generated: `#[test]
 fn exposes_owner_independent_invariant_metadata() {
     // authored body unchanged
@@ -592,14 +457,7 @@ const __DOMAIN_TEST_SUBJECT: DomainTestSubject =
       "Events and identities follow type relationships",
     ],
     file: "src/domain/model.rs",
-    authored: `domain_model! {
-    contexts: [BikeRental],
-    aggregates: [RentalFleetAggregate],
-    entities: [RentalFleet, Bicycle],
-    value_objects: [BicycleCondition, RegistrationNumber, BicycleTransferRejectionReason],
-    services: [BicycleTransfer],
-    errors: [BicycleUnavailable, BicycleNotRented, BicycleAlreadyInFleet, BicycleCannotBeRetired, BicycleTransferRejected],
-}`,
+    authored: getMacroCode("domain_model!"),
     generated: `try_build(|builder| {
     builder.add_bounded_context(BikeRental::DESCRIPTOR)?;
     builder.add_aggregate_type::<RentalFleetAggregate>()?;

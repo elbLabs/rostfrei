@@ -1,0 +1,16 @@
+# `domain_model!`
+
+Builds and validates a JSON description of the domain from an explicit inventory of contexts, aggregates, entities, value objects, services, and errors. Aggregate event sets and entity definitions supply event and identity metadata.
+
+**Placement:** [Domain root](../project-structure/domain-root.mdx) — `model.rs`.
+
+```rust
+domain_model! {
+    contexts: [BikeRental],
+    aggregates: [RentalFleetAggregate],
+    entities: [RentalFleet, Bicycle],
+    value_objects: [BicycleCondition, RegistrationNumber, BicycleTransferRejectionReason],
+    services: [BicycleTransfer],
+    errors: [BicycleUnavailable, BicycleNotRented, BicycleAlreadyInFleet, BicycleCannotBeRetired, BicycleTransferRejected],
+}
+```

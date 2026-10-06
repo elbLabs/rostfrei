@@ -71,17 +71,5 @@ Changing only local concurrency with a fixed explicit shared limit requires no
 durable-policy update, provided the local limit remains within the shared budget.
 Ordered domain-event/read-model workers retain their separate delivery contracts.
 
-## Validation
-
-The real-NATS tests in
-[`consumer_concurrency.rs`](../crates/rostfrei-nats/tests/consumer_concurrency.rs)
-use independent connections, a shared durable and blocked handlers to establish:
-
-- Two workers can each hold 16 active handlers simultaneously, while neither exceeds 16.
-- Workers with local limits 8 and 16 accept the same shared durable policy.
-- A shared limit of 16 still bounds unacknowledged work across both workers.
-- After releasing the handlers, every test message is acknowledged exactly once in
-  these fault-free scenarios, with no redelivery or duplicate invocation.
-
-These are local real-broker contract tests; they do not establish replicated-cluster
-throughput or Kubernetes scheduling fairness.
+See [consumer concurrency tests](../crates/rostfrei-nats/tests/consumer_concurrency.rs)
+for the executable shared-capacity contract.

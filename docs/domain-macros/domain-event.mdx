@@ -1,0 +1,17 @@
+# `DomainEvent`
+
+Declares a domain event's ID, label, fields, and schema version (1 by default). The payload describes a fact recorded in aggregate history. Derive serialization separately and include the type in the aggregate's [`AggregateEvents`](aggregate-events.mdx) enum.
+
+**Placement:** [Aggregate action](../project-structure/aggregate-action.mdx) — `event.rs`.
+
+```rust
+#[derive(DomainEvent, Serialize, Deserialize)]
+#[domain(id = "bicycle-rented", label = "Bicycle rented")]
+pub struct BicycleRented {
+    pub fleet_id: FleetId,
+    pub bicycle_id: BicycleId,
+}
+```
+
+Committed domain events can also update a [read model](../read-models/index.mdx). Register
+typed transformations and let the runtime load, checkpoint, and persist the query view.

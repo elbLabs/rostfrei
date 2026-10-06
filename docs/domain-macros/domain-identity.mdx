@@ -1,0 +1,10 @@
+# `DomainIdentity`
+
+Marks a struct or enum as a domain identity. `EntityDefinition::Identity` selects the type and `identity()` exposes its value. The application supplies its representation, constructors, and supporting traits.
+
+**Placement:** [Entity](../project-structure/entity.mdx) — `identity.rs`.
+
+```rust
+#[derive(DomainIdentity, Clone, Debug, Eq, PartialEq)]
+pub struct BicycleId(String);
+```

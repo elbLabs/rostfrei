@@ -1,0 +1,11 @@
+# `install_macro_support!`
+
+Installs the crate-local support module used by Rostfrei's macros. Call it once at the root of each crate declaring domain types, before exposing the domain modules. This also supports renamed dependencies without per-type path configuration.
+
+**Placement:** [Domain root](../project-structure/domain-root.mdx) — once at the crate root.
+
+```rust
+rostfrei::install_macro_support!();
+
+pub mod domain;
+```

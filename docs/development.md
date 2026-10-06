@@ -65,7 +65,7 @@ ROSTFREI_NATS_SERVER=/path/to/nats-server \
   cargo test --locked -p rostfrei-nats --test connection_integration -- --include-ignored --test-threads=1
 ```
 
-Run the [domain-event worker pool](design/domain-event-worker-pool.md) checks with:
+Run the [domain-event worker pool](domain-event-workers.md) checks with:
 
 ```sh
 python3 scripts/test_nats.py -- cargo test --locked -p rostfrei-nats --test domain_event_consumer_integration
@@ -82,6 +82,7 @@ is consumed by Vite directly; it does not require a separate publish/build step.
 ```sh
 pnpm lint
 pnpm build
+pnpm test:docs
 pnpm test:website
 pnpm test:studio
 ```

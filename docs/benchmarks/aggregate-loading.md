@@ -8,9 +8,6 @@ It also measures history-only loading, apply-only work, and an actual
 `CommandExecutor` write. These are distinct phases; history-read latency alone
 does not establish aggregate-readiness or command latency.
 
-The [initial measured baseline](aggregate-loading-baseline.md) includes complete
-1,000-event rehydration for both direct and command-generated histories.
-
 ## Run
 
 With the repository toolchain and Docker (no Python):
@@ -74,12 +71,9 @@ aggregate state may cost substantially more than this bounded inventory model.
 ## What each phase includes
 
 Read phases use ordinary trusted loads by default. Add `--audit-reads` to include
-deep historical transaction auditing in `history-load` and `rehydrate`, reproducing
-the previous read policy through `with_history_auditing(true)` on the benchmark's
-read handle. This flag does not change fixture writes or timed
-executor-command semantics. The original baseline report predates this separation.
-See the [trusted-versus-audited comparison](trusted-reads-experiment.md) for a
-controlled A/B measurement on the same 1,000-command history.
+deep historical transaction auditing in `history-load` and `rehydrate` through
+`with_history_auditing(true)` on the read handle. This flag does not change
+fixture writes or timed executor-command semantics.
 
 | Phase | Timed boundary |
 | --- | --- |

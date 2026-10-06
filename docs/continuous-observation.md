@@ -165,8 +165,3 @@ traffic. Browser failures and failed detail reads are displayed explicitly.
   reset. A failed or cancelled reset reports unavailable until a successful reset.
   Production observation is unaffected. Broker replay after recreation can include
   fixture domain events; those retain their actual fixture correlation identities.
-
-Correlation-specific capture sessions for external test runners are tracked in
-[#71](https://github.com/elbLabs/rostfrei/issues/71). Continuous observation and the
-Studio implementation are tracked in
-[#94](https://github.com/elbLabs/rostfrei/issues/94).

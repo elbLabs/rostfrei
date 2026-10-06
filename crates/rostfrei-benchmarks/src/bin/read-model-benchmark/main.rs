@@ -1,5 +1,5 @@
 //! Release-mode, real-NATS comparison of equivalent typed query handlers.
-//! See docs/read-model-benchmark.md for the measured boundary and commands.
+//! See docs/benchmarks/read-models.md for the measured boundary and commands.
 
 mod metrics;
 mod model;

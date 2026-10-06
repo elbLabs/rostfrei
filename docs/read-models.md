@@ -1,13 +1,11 @@
 # KV-backed read models
 
 For the high-level `#[derive(ReadModel)]` and event-handler builder, start with
-[event-driven read models](read-model-runtime.md). That runtime handles loading,
+[event-driven read models](read-models/index.mdx). That runtime handles loading,
 checkpointing, CAS retries, and persistence. This page documents the underlying
 storage contract and the lower-level, application-owned orchestration example.
 
-For measured query costs, see [KV versus two-aggregate replay](read-model-benchmark.md):
-a reproducible real-NATS benchmark with 100 total events and 100 events per aggregate,
-parallel replay, and an already-loaded-history baseline.
+For query-cost comparisons, see [KV versus two-aggregate replay](benchmarks/read-models.md).
 
 `ReadModelStore<T>` (exported by `rostfrei` and `rostfrei-core`) stores an
 application-owned, key-addressed snapshot. `NatsReadModelStore<T, C>` implements

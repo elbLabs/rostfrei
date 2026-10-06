@@ -22,16 +22,11 @@ your application's dependencies. Install the development CLI separately with
   inspect the model, start NATS, and open Tracer Studio.
 - [Bike-rental example](examples/bike-rental): run a NATS-backed application
   with rental, return, fleet-addition, and cross-fleet transfer commands.
-- [Documentation](https://elblabs.github.io/rostfrei/docs): domain macros and
-  project structure.
-- [Reference index](docs/README.md): workspace crates, terminology, and
-  architecture decisions.
-- [Runtime stack and checklist](docs/design/command-runtime-stack-and-consolidation.md):
-  command execution, persistence, validation, and measured consolidation results.
-- [Worker concurrency and shared delivery capacity](docs/consumer-concurrency.md):
-  configure workers across multiple pods.
-- [Bounded command-response waiting](docs/command-response-timeout.md):
-  set response budgets and recover after a timeout.
+- [Official documentation](docs/README.md): shared by developers and agents,
+  [published on the website](https://elblabs.github.io/rostfrei/docs) from the same
+  source. The [machine index](https://elblabs.github.io/rostfrei/llms.txt) exposes
+  the Markdown/MDX pages directly.
+- [Command runtime](docs/command-runtime.md): execution, persistence, and recovery.
 - [Tracer Studio](studio): inspect behavioral tests and their message graphs.
 - [Changelog](CHANGELOG.md): release changes and migration notes.
 
@@ -54,30 +49,14 @@ atomically appends the resulting domain events at the expected stream versions.
 A rejection appends no domain events. Accepted commands persist a receipt even
 when they emit no events. Queries read state without changing it.
 
-Completed business rejections now share that atomic operation authority across
-direct, local, NATS and HTTP execution. Retry a completed operation with unchanged
-evidence to replay it; a new attempt after repair needs a new operation ID. Permanent
-decisions outlive transport TTL/dedup caches; result details have an explicit expiry
-lifecycle, and unreadable completed results never permit reevaluation. Generic executors require an
-explicit rejection codec; processor bindings use their existing rejection mapper
-before persistence. **NATS defaults to fail-closed legacy/read-only processing.**
-New mutable namespaces require an explicit fresh outcome epoch and operator-enforced
-old-writer credential/ACL exclusion. Read the
-[completed-outcome contract](docs/adr/0044-completed-outcomes-and-envelope-ingress.md)
-and [cutover runbook](docs/completed-outcome-cutover.md); do not activate an old
-namespace just because its cached responses have expired.
-Journal and outcome-state streams form one incarnation-fenced authority pair;
-see the [native protocol](docs/design/modular-command-native.md).
+Accepted and rejected decisions are durable across local, NATS, and HTTP execution.
+Retry with the original operation ID and evidence to recover the same decision.
+Result-detail expiry never permits reevaluation. See the
+[command runtime](docs/command-runtime.md) for identity, authorization, and recovery.
 
-For an owned fresh bike-rental application, explicitly set
-`ROSTFREI_COMPLETED_OUTCOME_EPOCH` before starting
-`cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`.
-The epoch selects split authority for both isolated Test and Normal scopes;
-omitting it retains legacy/read-only semantics. See the
-[host configuration](docs/nats-application-host.md).
-
-For matched host, CLI and Skills artifacts, follow the
-[local candidate qualification recipe](docs/release-01-kit.md).
+Writable NATS startup requires a fresh outcome epoch. The example uses
+`ROSTFREI_COMPLETED_OUTCOME_EPOCH`; follow its [setup guide](examples/bike-rental/README.md).
+Existing deployments need the [cutover runbook](docs/completed-outcome-cutover.md).
 
 Domain events form private aggregate history. Integration events are separately
 versioned public contracts published after commit. NATS JetStream adapters
@@ -97,15 +76,9 @@ Tracer exposes two real command actions:
 | Test | Execute through the command pipeline against isolated test state. |
 | Production dispatch | Execute against the production target with a separate capability token. |
 
-Tracer retains operation status and traces in bounded memory. See the
-[example guide](examples/bike-rental/README.md#tracer) for setup and behavior.
-It also supports [continuous observation](docs/continuous-observation.md) of
-externally triggered flows and [quarantine inspection](docs/quarantine-inspection.md).
-
-For explicit rule debugging, **Simulate handler** computes the registered
-handler's decision, starting stream versions and proposed/uncommitted events.
-It has a distinct result, no observed trace or acceptance receipt, and does not
-automatically sandbox injected dependencies. See [the interface and limits](docs/tracer-preview-retirement.md).
+Tracer also supports [continuous observation](docs/continuous-observation.md),
+[quarantine inspection](docs/quarantine-inspection.md), and uncommitted
+[handler diagnostics](docs/handler-simulation.md).
 
 For saved query views, [read models](https://elblabs.github.io/rostfrei/docs/read-models)
 combine typed event transformations with KV persistence, checkpoints, and
@@ -113,16 +86,6 @@ concurrency retries. Queries use a read-only handle.
 
 See the [runtime reference](docs/runtime.md) for NATS authentication, history
 reads and audits, command correlation, and worker delivery.
-
-History reads validate local envelopes and commit structure. Deep historical checks
-remain available through `audit_history`, `audit_streams`, and
-`with_history_auditing(true)`; reads alone do not verify writable authority. See
-[read/audit trust boundaries](docs/adr/0040-trusted-event-store-reads-and-explicit-audits.md).
-
-Technical command failures expose typed source and recovery information through
-the processor, local/NATS command buses, and HTTP. They are not business
-rejections. See the [classification, response compatibility, and redrive contract](docs/adr/0043-typed-technical-command-failures.md)
-before upgrading response readers or replaying quarantined commands.
 
 ## HTTP API
 
@@ -152,12 +115,8 @@ rostfrei::install_macro_support!();
 - **`rostfrei-tracer`** discovers runtime capabilities and explains tests,
   recorded operations, observations and quarantine.
 
-Install the CLI separately from the library, then explicitly install skills
-matched to the application's locked dependency. The published `v0.0.5-alpha`
-starter predates skills support and reports that skills were not installed.
-
-The [Agent Skills guide](docs/agent-skills-install.md) covers setup, managed updates,
-application test execution and optional kits. It also serves as the kit's README.
+The [Agent Skills guide](docs/agent-skills-install.md) covers dependency-matched
+installation, updates, and application test execution.
 
 ## Development
 
@@ -168,16 +127,7 @@ The repository pins Rust 1.98, Clippy, rustfmt, and `rust-src` in
 git config core.hooksPath .githooks
 ```
 
-The hook runs:
-
-```sh
-cargo rostfrei check --workspace
-cargo clippy --workspace --all-targets --all-features
-```
-
-The structure check validates configured domain directories and runs each
-participating package's `rostfrei-domain-check` target. For frontend development,
-see [website](website/README.md) and [Studio](studio/README.md).
+The hook runs the workspace structure check and Clippy.
 
 The website and Tracer Studio share the Reference ’15 theme and components in
 [`@rostfrei/ui`](packages/ui/README.md). Use Node.js 24 (or 22.13+ on the 22.x line) and
@@ -190,10 +140,8 @@ pnpm dev:website
 pnpm dev:studio
 ```
 
-`pnpm build` checks the shared library and builds both apps; `pnpm lint` checks
-all frontend packages. `pnpm dev:ui` opens the local component gallery on port
-4177. See the [rollout plan](docs/design/reference-15-rollout.md) for the shared
-contract and verification checklist.
+`pnpm build` builds both apps; `pnpm lint` checks all frontend packages.
+`pnpm dev:ui` opens the shared component gallery on port 4177.
 
 The [development guide](docs/development.md) covers broker-backed tests,
 benchmarks, shared crate versions, release preparation, and the starter's pinned

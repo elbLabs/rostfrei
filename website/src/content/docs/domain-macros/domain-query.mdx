@@ -1,9 +1,0 @@
-# `domain_query`
-
-Adds metadata to a read-only trait implemented on the aggregate root. Inputs and outputs are ordinary Rust types. The structure checker checks the implementation in `execute.rs` against the root selected by `AggregateDefinition`.
-
-This domain query does not register an HTTP endpoint. Application query registration is a separate runtime concern.
-
-**Placement:** [Query](/docs/project-structure/query) — `query.rs`.
-
-<MacroExample name="domain_query" />

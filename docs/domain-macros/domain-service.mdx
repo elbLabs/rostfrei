@@ -1,0 +1,15 @@
+# `DomainService`
+
+Adds an ID and label to a stateless service marker. Implement `DomainServiceDefinition` to select its bounded context. Child action and policy traits express behavior over domain objects supplied by the caller; application handlers load and persist those objects.
+
+**Placement:** [Domain service](../project-structure/domain-service.mdx) — `service.rs`.
+
+```rust
+#[derive(DomainService)]
+#[domain(id = "bicycle-transfer", label = "Bicycle transfer")]
+pub struct BicycleTransfer;
+
+impl DomainServiceDefinition for BicycleTransfer {
+    type Context = BikeRental;
+}
+```

@@ -11,14 +11,16 @@ no domain events or load no aggregates. Event-free acceptance returns
 `CommandReceipt::AcceptedNoEvents`; retries return `ExactReplay` with an empty
 event list. Loaded read-only aggregates are guarded atomically with the receipt.
 Changed command content or provenance conflicts under the accepted operation
-identity. See [durable event-free acceptance](adr/0039-durable-event-free-acceptance.md)
-for concurrency and migration from transient no-op results.
+identity. Rejections are also durable, with read guards and no speculative events.
+See [command runtime](command-runtime.md) for outcome identity and lifecycle.
 
-Aggregate histories use native ordered, exact-subject ephemeral replay without advancing
-application durable consumers. Reader credentials need scoped replay-consumer
+Aggregate histories use native ordered, exact-subject ephemeral replay without
+advancing application durable consumers. Reader credentials need scoped replay-consumer
 create/pull/delete and inbox permissions, plus stream-info/raw-message access.
 The native iterator uses 500-message pulls without a batch byte cap; each
 next-message wait, including recovery, has a five-second deadline.
+Replay stops at a captured cutoff and validates complete local commits. Missing
+permissions or consumer capacity fail the read rather than selecting another path.
 
 By default, history loads trust committed writes and validate local envelopes,
 checksums, identities, ordering, and commit structure. `audit_history` and
@@ -26,7 +28,8 @@ checksums, identities, ordering, and commit structure. `audit_history` and
 `store.with_history_auditing(true)` to enable these checks on every load, or
 `false` for trusted reads. The setting also applies to session loads and
 discovery; local and operation-specific write/retry checks always run. See
-[the read/audit trust boundary](adr/0040-trusted-event-store-reads-and-explicit-audits.md).
+[the storage decision](adr/nats-storage.md) for the trust boundary. A successful
+history read does not itself verify writable authority.
 
 ## NATS authentication
 
@@ -82,14 +85,63 @@ supplied. `CommandExecutor::simulate` applies the same correlation default to
 handler metadata. An operation ID used as the default must satisfy
 `CorrelationId` validation; an invalid default fails before execution.
 
+## Application queries and HTTP
+
+An application request implements `QueryDefinition`: bounded context, stable query
+name, schema version, and response type. A [`domain_query`](domain-macros/domain-query.mdx)
+declares a synchronous domain read; it does not bind an application handler or
+expose a transport. Application handlers may read aggregates or saved read models
+but must not mutate application state.
+
+Register metadata and execution separately. Given a `FindProduct` request and its
+`QueryHandler`, the in-memory composition is:
+
+```rust
+use std::sync::Arc;
+use rostfrei::{DomainRegistry, InMemoryQueryAdapter, QueryBus, QueryProcessor};
+
+let mut queries = QueryProcessor::new();
+queries.register::<FindProduct>(Arc::new(FindProductHandler))?;
+let query_bus = QueryBus::new(
+    context,
+    Arc::new(InMemoryQueryAdapter::new(Arc::new(queries))),
+);
+let mut registry = DomainRegistry::new();
+registry.register_query::<FindProduct>()?;
+// command_bus is the application's bus for the same bounded context.
+let router = rostfrei_http::router(
+    Arc::new(registry), command_bus, query_bus, rostfrei_http::HttpApiConfig::default(),
+);
+```
+
+`QueryBus` supports typed and dynamic requests, preserving caller metadata and
+trace context. NATS requester/server adapters use request/reply, not durable
+command delivery. The optional HTTP adapter is mounted explicitly by the app:
+
+```text
+POST /contexts/{context}/queries/{query}/schemas/{schema_version}
+```
+
+Send the raw query JSON with `Content-Type: application/json`; nested inputs are
+preserved and success returns the raw result with `200 OK`. Missing registry
+metadata returns 404; metadata without a processor binding produces the normal
+unknown-query error. Register command metadata separately when using this router's
+[command routes](command-runtime.md#http-and-local-adapters).
+
+The app owns authentication/authorization middleware. Responses use
+`Cache-Control: private, no-store`; classified query errors map to HTTP statuses.
+Configure `HttpApiConfig::with_authentication_challenge` for a valid 401 challenge;
+without it an `Unauthorized` classification becomes 403.
+See the [complete HTTP composition and contract tests](../crates/rostfrei-http/tests/http.rs).
+
 ## Event delivery and read models
 
-The [domain-event worker pool](design/domain-event-worker-pool.md) lets overlapping
+The [domain-event worker pool](domain-event-workers.md) lets overlapping
 application instances share a durable with explicit ACKs, ordered transaction
 processing, and graceful shutdown. Existing `AckPolicy::All` durables need the
 documented one-time migration.
 
-[Event-driven read models](read-model-runtime.md) use typed event transformations
+[Event-driven read models](read-models/index.mdx) use typed event transformations
 to maintain saved query views. The runtime loads, checkpoints, retries CAS
 conflicts, and persists values. Integration inputs default to broker order,
 with optional business-version policies. The underlying

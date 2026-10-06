@@ -11,25 +11,37 @@ import remarkGfm from "remark-gfm"
 import tailwindcss from "@tailwindcss/vite"
 import { metadataPlugin } from "./metadata-plugin.ts"
 import { referenceTheme } from "@rostfrei/ui/vite"
+import { documentationPlugin, remarkDocumentationLinks } from "./docs-plugin.ts"
+
+const documentationMdx = mdx({
+  providerImportSource: "@mdx-js/react",
+  remarkPlugins: [remarkGfm, remarkDocumentationLinks],
+  rehypePlugins: [rehypeSlug, rehypeAutolinkHeadings],
+})
 
 const config = defineConfig({
   base: process.env.VITE_BASE_PATH ?? "/",
-  resolve: { tsconfigPaths: true },
+  resolve: {
+    tsconfigPaths: true,
+    dedupe: ["react", "react-dom", "@mdx-js/react"],
+  },
   plugins: [
     referenceTheme(),
     devtools(),
     tanstackRouter({ target: "react", autoCodeSplitting: true }),
     {
       enforce: "pre",
-      ...mdx({
-        providerImportSource: "@mdx-js/react",
-        remarkPlugins: [remarkGfm],
-        rehypePlugins: [rehypeSlug, rehypeAutolinkHeadings],
-      }),
+      ...documentationMdx,
+      transform(source, id) {
+        // The macro explorer reads source text rather than compiled components.
+        if (/[?&]raw(?:&|$)/.test(id)) return
+        return documentationMdx.transform(source, id)
+      },
     },
     viteReact({ include: /\.(js|jsx|md|mdx|ts|tsx)$/ }),
     tailwindcss(),
     metadataPlugin(),
+    documentationPlugin(),
   ],
 })
 

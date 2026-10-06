@@ -1,4 +1,16 @@
-import { MACROS } from "@/components/macro-explorer/macro-data"
+const sources = import.meta.glob<string>("../../../docs/domain-macros/*.mdx", {
+  eager: true,
+  query: "?raw",
+  import: "default",
+})
+
+const examples = new Map(
+  Object.values(sources).flatMap((source) => {
+    const name = /^# `([^`]+)`/m.exec(source)?.[1]
+    const code = /^```rust\n([\s\S]*?)\n```/m.exec(source)?.[1]
+    return name && code ? [[name, code] as const] : []
+  })
+)
 
 export const macroExampleNames = [
   "install_macro_support!",
@@ -26,11 +38,11 @@ export const macroExampleNames = [
 export type MacroExampleName = (typeof macroExampleNames)[number]
 
 export function getMacroCode(name: MacroExampleName) {
-  const macro = MACROS.find((candidate) => candidate.name === name)
+  const code = examples.get(name)
 
-  if (!macro) {
+  if (!code) {
     throw new Error(`Unknown macro example: ${name}`)
   }
 
-  return macro.authored
+  return code
 }
