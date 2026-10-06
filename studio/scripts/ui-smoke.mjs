@@ -15,6 +15,7 @@ import {
   SAMPLE_GRAPH,
   SAMPLE_FIXTURES,
 } from "./fixtures.mjs"
+import { checkContinuousObservation } from "./observation-smoke.mjs"
 
 const { server, url } = await startStudioServer({
   define: { "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api") },
@@ -747,6 +748,7 @@ try {
   assert.deepEqual(errors, [], "no browser runtime errors")
   await checkCommandExecution(browser, url)
   await checkCommandRefresh(browser, url)
+  await checkContinuousObservation()
   console.log(
     `PASS: explicit connection failures and read-only retry; no demo fallback; canonical bicycle-added fixtures; behavioral runs and offline history; layouts and hotkeys; inspector and causal edges; 6 responsive widths; Preview/Test command forms, exact numeric payloads, idempotency, input refresh and operation identities; failed expectations, ambiguous responses and storage failure. All API responses were mocked. Screenshots: ${path.join(tmpdir(), "rostfrei-studio-*.png")}`
   )

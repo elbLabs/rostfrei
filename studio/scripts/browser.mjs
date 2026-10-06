@@ -13,11 +13,12 @@ export const desktopViewport = {
   deviceScaleFactor: 1,
 }
 
-export async function startStudioServer({ define } = {}) {
+export async function startStudioServer({ define, configureServer } = {}) {
   const server = await createServer({
     root: studioRoot,
     logLevel: "error",
     define,
+    plugins: configureServer ? [{ name: "studio-test-backend", configureServer }] : [],
     server: { host: "127.0.0.1", port: 0, open: false },
   })
   try {
