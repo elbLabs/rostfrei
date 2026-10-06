@@ -114,7 +114,7 @@ expiry may finish; lifecycle checks are observations, not administrative locks.
 
 `InMemoryMessagingAdapter::with_service` calls the service for every invocation;
 `dispatch_as` supplies trusted caller context. It does not cache completion bodies.
-`rostfrei_http::context_command_router` accepts original envelope bytes when
+`rostfrei::http::context_command_router` (feature `http`) accepts original envelope bytes when
 `with_trusted_command_envelope_ingress` is enabled. Middleware supplies
 `Extension<TrustedCommandContext>`; route/schema and any supplied idempotency key
 must match. Recovery needs no current command binding.
@@ -126,6 +126,6 @@ See [technical failure recovery](command-failures.md) for delivery failures.
 
 ## Source entry points
 
-- [Service](../crates/rostfrei/src/command_service.rs) and [processor](../crates/rostfrei/src/command_bus/processing.rs)
+- [Service](../crates/rostfrei-runtime/src/command_service.rs) and [processor](../crates/rostfrei-runtime/src/command_bus/processing.rs)
 - [Executor](../crates/rostfrei-core/src/executor.rs) and [storage ports](../crates/rostfrei-core/src/execution_store.rs)
 - [Native outcomes](../crates/rostfrei-nats/src/event_store/outcomes.rs) and [transport](../crates/rostfrei-nats/src/messaging_adapter.rs)

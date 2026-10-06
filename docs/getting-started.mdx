@@ -4,6 +4,54 @@ Start with the bike-rental example: a small domain with enough behavior to show 
 
 Treat this as an exercise in understanding code you didn't write. The same path helps you review an AI agent's contribution: find the domain owner, read the rule, and observe the outcome.
 
+## One framework dependency
+
+Add `rostfrei` to your application's `Cargo.toml`. For a NATS application with
+Tracer and development test helpers:
+
+```toml
+[dependencies]
+rostfrei = { version = "0.1.3", features = ["nats", "tracer"] }
+
+[dev-dependencies]
+rostfrei = { version = "0.1.3", features = ["testing"] }
+```
+
+Domain macros, typed buses, execution, read models, and in-memory adapters are
+available at the crate root. Enable only the adapters you need:
+
+| Feature | Import path | Provides |
+| --- | --- | --- |
+| `nats` | `rostfrei::nats` | JetStream messaging, event stores, and KV read models |
+| `http` | `rostfrei::http` | HTTP command and query routes |
+| `tracer` | `rostfrei::tracer` | Diagnostics, observation, behavioral tests, Tracer HTTP, and fixtures |
+| `fixtures` | `rostfrei::fixtures` | Versioned aggregate fixtures |
+| `testing` | `rostfrei::testing` | Test harnesses and fixtures |
+
+No adapters are enabled by default. Combine `nats` and `tracer` for the managed
+application host; neither feature enables the other. Tracer's HTTP API lives at
+`rostfrei::tracer::http`, separate from the application's `http` routes.
+
+```rust
+use rostfrei::{CommandBus, CommandHandler};
+use rostfrei::nats::{NatsConnectionConfig, connect};
+use rostfrei::tracer::{ApplicationBindings, NatsApplication};
+
+rostfrei::install_macro_support!();
+```
+
+When upgrading from separate adapter dependencies, enable the corresponding
+feature and replace imports such as `rostfrei_nats` with `rostfrei::nats`.
+Lower-level contracts are available through `rostfrei::core`, `rostfrei::messaging`,
+and `rostfrei::registry`. Existing root imports and direct adapter crates remain
+supported; the facade re-exports the same types.
+
+Declare other libraries your code uses, such as Serde, Tokio, and Axum, separately.
+Install the [development CLI and Agent Skills](agent-skills-install.md) separately
+too. The [generated starter](development.md#starter-dependency-contract) documents
+its own release pin; the bike-rental checkout inherits dependencies with
+`workspace = true`.
+
 ## 1. Inspect the domain model
 
 Install [Rust through rustup](https://rustup.rs/) and Git. The repository pins its Rust toolchain in `rust-toolchain.toml`; rustup selects it when you run Cargo from the checkout.

@@ -1,12 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use rostfrei::{
+use rostfrei_core::{Aggregate, CommandExecution, CommandHandlingResult, Event};
+use rostfrei_fixtures::MessageSeriesEngine;
+use rostfrei_runtime::{
     CommandHandler, CommandProcessor, CommandRejectionMapper, DomainRegistry, EventHistory,
     ExecutionStore,
 };
-use rostfrei_core::{Aggregate, CommandExecution, CommandHandlingResult, Event};
-use rostfrei_fixtures::MessageSeriesEngine;
 use thiserror::Error;
 
 use crate::{
@@ -16,13 +16,13 @@ use crate::{
 #[derive(Debug, Error)]
 pub enum ApplicationBindingError {
     #[error(transparent)]
-    Registry(#[from] rostfrei::RegistrationError),
+    Registry(#[from] rostfrei_runtime::RegistrationError),
     #[error(transparent)]
     Metadata(#[from] RuntimeRegistrationError),
     #[error(transparent)]
     Fixture(#[from] rostfrei_fixtures::FixtureCodecRegistrationError),
     #[error(transparent)]
-    Command(#[from] rostfrei::CommandBindingRegistrationError),
+    Command(#[from] rostfrei_runtime::CommandBindingRegistrationError),
     #[error(transparent)]
     Codec(#[from] rostfrei_core::CodecRegistrationError),
     #[error(transparent)]
@@ -33,20 +33,21 @@ type ProcessorBinding =
     Box<dyn Fn(&mut CommandProcessor) -> Result<(), ApplicationBindingError> + Send + Sync>;
 type IntegrationBinding = Box<
     dyn Fn(
-            rostfrei::IntegrationEventBus,
-            &mut rostfrei::DomainEventDispatcher,
-        ) -> Result<(), rostfrei::DomainEventRegistrationError>
+            rostfrei_runtime::IntegrationEventBus,
+            &mut rostfrei_runtime::DomainEventDispatcher,
+        ) -> Result<(), rostfrei_runtime::DomainEventRegistrationError>
         + Send
         + Sync,
 >;
-type IntegrationDecoder =
-    fn(&rostfrei::EncodedIntegrationMessage) -> Result<crate::IntegrationEventObservation, String>;
+type IntegrationDecoder = fn(
+    &rostfrei_runtime::EncodedIntegrationMessage,
+) -> Result<crate::IntegrationEventObservation, String>;
 type IntegrationHandler = Arc<
     dyn rostfrei_messaging_core::MessageHandler<rostfrei_messaging_core::IntegrationEventAddress>,
 >;
 type IntegrationHandlerFactory = Box<
     dyn Fn(
-            rostfrei::CommandBus,
+            rostfrei_runtime::CommandBus,
             rostfrei_messaging_core::DurableName,
             rostfrei_messaging_core::RetryDelay,
         ) -> IntegrationHandler
@@ -71,7 +72,7 @@ pub struct IntegrationHandlerBinding {
 impl IntegrationHandlerBinding {
     pub fn address(
         &self,
-        consumer: &rostfrei::BoundedContext,
+        consumer: &rostfrei_runtime::BoundedContext,
     ) -> Result<
         rostfrei_messaging_core::IntegrationEventAddress,
         rostfrei_messaging_core::ContractError,
@@ -96,7 +97,7 @@ pub struct ApplicationBindings {
     pub(crate) codecs: Arc<rostfrei_core::AggregateCodecs>,
     shared_codecs: bool,
     processors: Vec<ProcessorBinding>,
-    pub(crate) commands: Vec<rostfrei::CommandRegistrationDescriptor>,
+    pub(crate) commands: Vec<rostfrei_runtime::CommandRegistrationDescriptor>,
     domain_model: Option<serde_json::Value>,
     pub(crate) integration_mappings: Vec<IntegrationBinding>,
     pub(crate) integration_decoders:
@@ -165,16 +166,16 @@ impl ApplicationBindings {
         mapper: impl CommandRejectionMapper<H::Rejection> + 'static,
     ) -> Result<&mut Self, ApplicationBindingError>
     where
-        C: rostfrei::JsonCommandPayload + Send + Sync + 'static,
+        C: rostfrei_runtime::JsonCommandPayload + Send + Sync + 'static,
         H: CommandHandler<C> + 'static,
-        H::Rejection: rostfrei::JsonErrorPayload + 'static,
+        H::Rejection: rostfrei_runtime::JsonErrorPayload + 'static,
     {
         let handler = SharedHandler(Arc::new(handler));
         self.metadata.registry.register_command::<C, H>()?;
         self.metadata
             .register_shared_json::<C, _>(handler.0.clone())?;
         self.commands
-            .push(<C as rostfrei::CommandDefinition<H>>::descriptor());
+            .push(<C as rostfrei_runtime::CommandDefinition<H>>::descriptor());
         let mapper = Arc::new(mapper);
         self.processors.push(Box::new(move |processor| {
             let mapper = mapper.clone();
@@ -191,7 +192,7 @@ impl ApplicationBindings {
         provider: P,
     ) -> Result<&mut Self, ApplicationBindingError>
     where
-        C: rostfrei::Command + Sync,
+        C: rostfrei_runtime::Command + Sync,
         P: CommandInputOptions<C> + 'static,
     {
         self.metadata.register_input_options::<C, P>(provider)?;
@@ -200,7 +201,7 @@ impl ApplicationBindings {
 
     pub fn command_processor(
         &self,
-        context: rostfrei::BoundedContextName,
+        context: rostfrei_runtime::BoundedContextName,
         store: Arc<dyn ExecutionStore>,
     ) -> Result<CommandProcessor, ApplicationBindingError> {
         let mut processor =
@@ -236,11 +237,11 @@ impl ApplicationBindings {
     pub fn register_integration_event<A, D, M>(&mut self, mapper: M) -> &mut Self
     where
         A: Aggregate + Send + Sync + 'static,
-        A::Event: Event + rostfrei::EventVariant<D> + Send + Sync + 'static,
-        D: rostfrei::DomainEvent + Send + Sync,
-        M: rostfrei::IntegrationEventMapper<D> + 'static,
+        A::Event: Event + rostfrei_runtime::EventVariant<D> + Send + Sync + 'static,
+        D: rostfrei_runtime::DomainEvent + Send + Sync,
+        M: rostfrei_runtime::IntegrationEventMapper<D> + 'static,
     {
-        use rostfrei::IntegrationEventDispatcherExt as _;
+        use rostfrei_runtime::IntegrationEventDispatcherExt as _;
         self.register_integration_codec::<M::Output>();
         let mapper = Arc::new(mapper);
         self.integration_mappings
@@ -252,7 +253,7 @@ impl ApplicationBindings {
 
     pub fn register_integration_handler<E, H>(&mut self, handler: H) -> &mut Self
     where
-        E: rostfrei::IntegrationEvent,
+        E: rostfrei_runtime::IntegrationEvent,
         H: rostfrei_messaging_core::MessageHandler<
                 rostfrei_messaging_core::IntegrationEventAddress,
             > + 'static,
@@ -272,8 +273,8 @@ impl ApplicationBindings {
     /// an undeclared producer falls back to the consuming runtime's context.
     pub fn register_integration_command<E, M>(&mut self, mapper: M) -> &mut Self
     where
-        E: rostfrei::IntegrationEvent,
-        M: rostfrei::IntegrationCommandMapper<E> + 'static,
+        E: rostfrei_runtime::IntegrationEvent,
+        M: rostfrei_runtime::IntegrationCommandMapper<E> + 'static,
         M::Error: Send,
     {
         self.register_integration_codec::<E>();
@@ -282,18 +283,20 @@ impl ApplicationBindings {
             producer: E::BOUNDED_CONTEXT,
             name: E::EVENT_NAME,
             handler: Box::new(move |bus, durable, retry| {
-                Arc::new(rostfrei::IntegrationEventCommandHandler::<E, _>::new(
-                    bus,
-                    durable,
-                    retry,
-                    SharedCommandMapper(mapper.clone()),
-                ))
+                Arc::new(
+                    rostfrei_runtime::IntegrationEventCommandHandler::<E, _>::new(
+                        bus,
+                        durable,
+                        retry,
+                        SharedCommandMapper(mapper.clone()),
+                    ),
+                )
             }),
         });
         self
     }
 
-    fn register_integration_codec<E: rostfrei::IntegrationEvent>(&mut self) {
+    fn register_integration_codec<E: rostfrei_runtime::IntegrationEvent>(&mut self) {
         self.integration_decoders.insert(
             (E::BOUNDED_CONTEXT, E::EVENT_NAME, E::SCHEMA_VERSION),
             decode_integration::<E>,
@@ -301,8 +304,8 @@ impl ApplicationBindings {
     }
 }
 
-fn decode_integration<E: rostfrei::IntegrationEvent>(
-    message: &rostfrei::EncodedIntegrationMessage,
+fn decode_integration<E: rostfrei_runtime::IntegrationEvent>(
+    message: &rostfrei_runtime::EncodedIntegrationMessage,
 ) -> Result<crate::IntegrationEventObservation, String> {
     let envelope = message.decode::<E>().map_err(|error| error.to_string())?;
     Ok(crate::IntegrationEventObservation::new(
@@ -322,8 +325,8 @@ fn decode_integration<E: rostfrei::IntegrationEvent>(
 
 struct SharedMapper<M>(Arc<M>);
 struct SharedCommandMapper<M>(Arc<M>);
-impl<E, M: rostfrei::IntegrationCommandMapper<E>> rostfrei::IntegrationCommandMapper<E>
-    for SharedCommandMapper<M>
+impl<E, M: rostfrei_runtime::IntegrationCommandMapper<E>>
+    rostfrei_runtime::IntegrationCommandMapper<E> for SharedCommandMapper<M>
 {
     type Command = M::Command;
     type Error = M::Error;
@@ -332,11 +335,11 @@ impl<E, M: rostfrei::IntegrationCommandMapper<E>> rostfrei::IntegrationCommandMa
     }
 }
 
-impl<D, M: rostfrei::IntegrationEventMapper<D>> rostfrei::IntegrationEventMapper<D>
+impl<D, M: rostfrei_runtime::IntegrationEventMapper<D>> rostfrei_runtime::IntegrationEventMapper<D>
     for SharedMapper<M>
 {
     type Output = M::Output;
-    fn map(&self, event: &rostfrei::CommittedDomainEvent<'_, D>) -> Self::Output {
+    fn map(&self, event: &rostfrei_runtime::CommittedDomainEvent<'_, D>) -> Self::Output {
         self.0.map(event)
     }
 }

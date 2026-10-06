@@ -63,17 +63,17 @@ fn serialized_vectors() -> serde_json::Value {
     let integration =
         IntegrationEventEnvelope::new(envelope_context, timestamp, serde_json::json!({"domain":1}))
             .unwrap();
-    let processor = Arc::new(rostfrei::CommandProcessor::new(
+    let processor = Arc::new(rostfrei_runtime::CommandProcessor::new(
         context.name().clone(),
         Arc::new(rostfrei_core::InMemoryEventStore::new()),
     ));
-    let bus = rostfrei::CommandBus::new(
+    let bus = rostfrei_runtime::CommandBus::new(
         context.clone(),
-        Arc::new(rostfrei::InMemoryMessagingAdapter::new(processor)),
+        Arc::new(rostfrei_runtime::InMemoryMessagingAdapter::new(processor)),
     );
     let encoded = bus
         .encode_dynamic(
-            rostfrei::DynamicCommandRequest::new(
+            rostfrei_runtime::DynamicCommandRequest::new(
                 op.clone(),
                 "open",
                 1,

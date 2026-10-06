@@ -12,7 +12,7 @@ use http_body_util::BodyExt;
 use modular_support::*;
 use service_fix_support::*;
 use tower::ServiceExt;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 fn app(
     service: Arc<dyn CommandProcessingService>,

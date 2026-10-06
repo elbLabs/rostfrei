@@ -14,13 +14,13 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use modular_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     AllowAllCommands, AttemptId, AuditDelivery, AuthorizationError, CommandAccess,
     CommandAuthorizer, CommandProcessingService, PrincipalId, ProcessedCommand, ServiceReport,
     TrustedCommandContext, ValidatedCommand,
 };
 use tower::ServiceExt;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 fn caller(scope: &str) -> TestResult<TrustedCommandContext> {
     Ok(TrustedCommandContext::new(
@@ -62,7 +62,7 @@ impl CommandProcessingService for WrongWinner {
         &self,
         _: &TrustedCommandContext,
         _: &EncodedCommand,
-    ) -> ServiceReport<OutcomeLookup<rostfrei::CommandResponse>> {
+    ) -> ServiceReport<OutcomeLookup<rostfrei_runtime::CommandResponse>> {
         ServiceReport::new(
             Ok(OutcomeLookup::Completed(self.0.outcome().clone())),
             AttemptId::generate(),

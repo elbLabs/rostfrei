@@ -17,10 +17,6 @@ use crate::{
     http::{self, HttpConfig},
 };
 use async_trait::async_trait;
-use rostfrei::{
-    CommandBus, CommandMessageAdapter, DomainEventDispatcher, IntegrationEventBus,
-    IntegrationMessageAdapter,
-};
 use rostfrei_fixtures::{Fixture, FixtureApplyReport, FixtureEventSet};
 use rostfrei_messaging_core::{
     BoundedContext, CommandAddress, ConsumerConfig, IntegrationEventAddress,
@@ -31,6 +27,10 @@ use rostfrei_nats::{
     NatsDomainEventConsumerConfig, NatsEventStore, NatsEventStoreConfig, NatsMessagingAdapter,
     provision_application_messaging, provision_domain_event_consumer, provision_durable_consumer,
     provision_event_store,
+};
+use rostfrei_runtime::{
+    CommandBus, CommandMessageAdapter, DomainEventDispatcher, IntegrationEventBus,
+    IntegrationMessageAdapter,
 };
 use std::{
     sync::{
@@ -50,7 +50,7 @@ pub enum NatsHostError {
     #[error(transparent)]
     Binding(#[from] crate::ApplicationBindingError),
     #[error(transparent)]
-    Processor(#[from] rostfrei::CommandProcessorError),
+    Processor(#[from] rostfrei_runtime::CommandProcessorError),
     #[error(transparent)]
     Registration(#[from] crate::RuntimeRegistrationError),
     #[error(transparent)]
@@ -58,13 +58,13 @@ pub enum NatsHostError {
     #[error(transparent)]
     Nats(#[from] rostfrei_nats::NatsError),
     #[error(transparent)]
-    Store(#[from] rostfrei::EventStoreError),
+    Store(#[from] rostfrei_runtime::EventStoreError),
     #[error(transparent)]
     Consumer(#[from] rostfrei_messaging_core::ConsumeError),
     #[error(transparent)]
     DomainConsumer(#[from] rostfrei_nats::DomainEventConsumerError),
     #[error(transparent)]
-    DomainRegistration(#[from] rostfrei::DomainEventRegistrationError),
+    DomainRegistration(#[from] rostfrei_runtime::DomainEventRegistrationError),
     #[error(transparent)]
     Fixture(#[from] rostfrei_fixtures::FixtureApplyError),
     #[error(transparent)]

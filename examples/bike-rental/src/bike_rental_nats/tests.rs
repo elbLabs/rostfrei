@@ -15,16 +15,16 @@ use crate::{
         TransferBicycle,
     },
 };
+use rostfrei::messaging::{
+    CallerMetadata, CausationId, CommandEnvelope, CommandRejectionClassification,
+    CommandResponseOutcome, CorrelationId, DeliveryDisposition, DeliveryInfo, MessageDelivery,
+    MessageHandler, MessageId,
+};
 use rostfrei::{
     Command, CommandBus, CommandMessageAdapter, CommandProcessor, CommandRequest,
     DomainEventDispatchOutcome, DomainEventDispatcher, DynamicCommandRequest, InMemoryEventStore,
     InMemoryMessagingAdapter, IntegrationEventBus, IntegrationEventDispatcherExt,
     IntegrationMessageAdapter, JsonDomainRejectionMapper, OperationId, RoutedCommand,
-};
-use rostfrei_messaging_core::{
-    CallerMetadata, CausationId, CommandEnvelope, CommandRejectionClassification,
-    CommandResponseOutcome, CorrelationId, DeliveryDisposition, DeliveryInfo, MessageDelivery,
-    MessageHandler, MessageId,
 };
 use serde_json::json;
 
@@ -32,7 +32,7 @@ type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 fn processor(store: InMemoryEventStore) -> TestResult<CommandProcessor> {
     let store: Arc<dyn rostfrei::ExecutionStore> = Arc::new(store);
-    let context = rostfrei_messaging_core::BoundedContextName::new("bike-rental")?;
+    let context = rostfrei::messaging::BoundedContextName::new("bike-rental")?;
     let mut processor = CommandProcessor::new(context, store);
     processor.register::<RentBicycle, _>(
         RentBicycleHandler,

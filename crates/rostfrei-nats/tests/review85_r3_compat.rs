@@ -256,7 +256,7 @@ async fn raw_storage_refuses_malformed_header_base64_status_payload_and_api_repl
     Ok(())
 }
 
-fn command(fixture: &Fixture, operation: &str) -> TestResult<rostfrei::EncodedCommand> {
+fn command(fixture: &Fixture, operation: &str) -> TestResult<rostfrei_runtime::EncodedCommand> {
     local_bus(
         &fixture.context,
         processor(
@@ -275,7 +275,7 @@ async fn public_reader_still_refuses_raw_payload_above_the_envelope_limit() -> T
     let fixture = Fixture::new("r3-response-size").await?;
     let command = command(&fixture, "oversize")?;
     let response = CommandResponse::accepted(
-        rostfrei::command_response_message_id(command.message_id())?,
+        rostfrei_runtime::command_response_message_id(command.message_id())?,
         command.message_id().clone(),
         command.address().clone(),
         command.operation_id().clone(),
@@ -403,10 +403,10 @@ async fn hold_actual_ack(
 }
 
 fn accepted(
-    command: &rostfrei::EncodedCommand,
+    command: &rostfrei_runtime::EncodedCommand,
 ) -> TestResult<OutboundMessage<CommandResponseAddress>> {
     let response = CommandResponse::accepted(
-        rostfrei::command_response_message_id(command.message_id())?,
+        rostfrei_runtime::command_response_message_id(command.message_id())?,
         command.message_id().clone(),
         command.address().clone(),
         command.operation_id().clone(),
@@ -427,7 +427,7 @@ async fn fresh_ack_validates_its_exact_sequence_even_after_unrelated_and_termina
     let other = command(&fixture, "other")?;
     let failure = ExecutionFailure::Store(StoreFailureKind::Unavailable);
     let response = CommandResponse::execution_failed(
-        rostfrei::command_technical_response_message_id(original.message_id(), failure)?,
+        rostfrei_runtime::command_technical_response_message_id(original.message_id(), failure)?,
         original.message_id().clone(),
         original.address().clone(),
         original.operation_id().clone(),
@@ -514,4 +514,4 @@ async fn fresh_ack_validates_its_exact_sequence_even_after_unrelated_and_termina
     Ok(())
 }
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

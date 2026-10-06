@@ -9,8 +9,10 @@ mod release_contract_support;
 use async_trait::async_trait;
 use modular_state_fault_support::StateProxy;
 use release_contract_support::*;
-use rostfrei::{CommandAccess, CommandProcessingService, PrincipalId, TrustedCommandContext};
-rostfrei::install_macro_support!();
+use rostfrei_runtime::{
+    CommandAccess, CommandProcessingService, PrincipalId, TrustedCommandContext,
+};
+rostfrei_runtime::install_macro_support!();
 
 static FIXTURE_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -96,14 +98,14 @@ fn batch(id: &StreamId, operation: &str) -> TestResult<EventBatch> {
         )?],
     )?)
 }
-fn rejection(f: &Fixture) -> TestResult<(rostfrei::EncodedCommand, CommandResponse)> {
+fn rejection(f: &Fixture) -> TestResult<(rostfrei_runtime::EncodedCommand, CommandResponse)> {
     let command = CommandBus::new(f.context.clone(), f.adapter.clone()).encode(request(
         "original-rejection",
         "missing",
         "add",
     )?)?;
     let response = CommandResponse::rejected(
-        rostfrei::command_response_message_id(command.message_id())?,
+        rostfrei_runtime::command_response_message_id(command.message_id())?,
         command.message_id().clone(),
         command.address().clone(),
         command.operation_id().clone(),
@@ -377,13 +379,13 @@ async fn stale_expiry_preserves_both_replacement_streams() -> TestResult {
 
 struct AccessLog(std::sync::Mutex<Vec<CommandAccess>>);
 #[async_trait]
-impl rostfrei::CommandAuthorizer for AccessLog {
+impl rostfrei_runtime::CommandAuthorizer for AccessLog {
     async fn authorize(
         &self,
         _: &TrustedCommandContext,
-        _: &rostfrei::ValidatedCommand,
+        _: &rostfrei_runtime::ValidatedCommand,
         access: CommandAccess,
-    ) -> Result<(), rostfrei::AuthorizationError> {
+    ) -> Result<(), rostfrei_runtime::AuthorizationError> {
         self.0.lock().unwrap().push(access);
         Ok(())
     }
@@ -626,7 +628,10 @@ async fn read_only_route(route: ReadOnlyRoute) -> TestResult {
             .await
             .into_result()?;
         assert_eq!(replay.admit(&caller()?, &command)?, &response);
-        assert_eq!(replay.origin(), rostfrei::CompletionOrigin::Replayed);
+        assert_eq!(
+            replay.origin(),
+            rostfrei_runtime::CompletionOrigin::Replayed
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert_eq!(*log.0.lock().unwrap(), vec![CommandAccess::ReadOutcome]);
         assert_eq!(readonly.load(&id).await?, writer.load(&id).await?);

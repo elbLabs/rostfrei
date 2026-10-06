@@ -42,11 +42,13 @@ the same Markdown/MDX sources without requiring JavaScript.
 
 ## Workspace crates
 
-Applications normally depend on `rostfrei` and the adapters they need.
+Applications normally depend on `rostfrei`, enabling features for the adapters
+they need. See [dependency setup and imports](getting-started.mdx#one-framework-dependency).
 
 | Crate | Responsibility |
 | --- | --- |
 | [`rostfrei`](../crates/rostfrei) | Application facade, typed buses, runtime, registry, and public macros. |
+| [`rostfrei-runtime`](../crates/rostfrei-runtime) | Transport-independent application runtime shared by the facade and adapters. |
 | [`rostfrei-http`](../crates/rostfrei-http) | Explicitly mounted HTTP command and query routes. |
 | [`rostfrei-tracer`](../crates/rostfrei-tracer) | Command discovery, real Test execution, production dispatch, behavioral tests, and bounded observation. |
 | [`rostfrei-core`](../crates/rostfrei-core) | Aggregate execution, event-store contracts, and the in-memory store. |

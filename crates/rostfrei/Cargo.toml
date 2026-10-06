@@ -10,21 +10,38 @@ homepage.workspace = true
 documentation.workspace = true
 readme.workspace = true
 
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+nats = ["dep:rostfrei-nats", "rostfrei-tracer?/nats-host"]
+http = ["dep:rostfrei-http"]
+tracer = ["dep:rostfrei-tracer", "rostfrei-tracer/http", "fixtures"]
+fixtures = ["dep:rostfrei-fixtures"]
+testing = ["dep:rostfrei-testing", "fixtures"]
+
 [dependencies]
-async-trait.workspace = true
 rostfrei-core.workspace = true
+rostfrei-messaging-core.workspace = true
+rostfrei-registry.workspace = true
+rostfrei-runtime.workspace = true
+rostfrei-fixtures = { workspace = true, optional = true }
+rostfrei-http = { workspace = true, optional = true }
+rostfrei-nats = { workspace = true, optional = true }
+rostfrei-testing = { workspace = true, optional = true }
+rostfrei-tracer = { workspace = true, optional = true }
+
+[dev-dependencies]
+async-trait.workspace = true
 rostfrei-domain.workspace = true
 rostfrei-domain-runtime.workspace = true
-rostfrei-messaging-core.workspace = true
 rostfrei-macros.workspace = true
-rostfrei-registry.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 uuid.workspace = true
-
-[dev-dependencies]
 trybuild.workspace = true
 
 [lints]

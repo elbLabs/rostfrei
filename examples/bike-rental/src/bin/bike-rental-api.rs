@@ -3,8 +3,8 @@ use bike_rental::{
     demo::{demo_fixture, no_rental_fleets_fixture, rented_demo_fixture},
     tracer,
 };
-use rostfrei_nats::{NatsConnectionConfig, ServerVersion, connect};
-use rostfrei_tracer::{
+use rostfrei::nats::{NatsConnectionConfig, ServerVersion, connect};
+use rostfrei::tracer::{
     ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, NatsApplication, NatsRuntime,
     ObservationFeed, ObservationScope, TracerConfig, http::HttpConfig,
 };

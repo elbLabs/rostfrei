@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rostfrei::{
+use rostfrei_runtime::{
     CommandBus, CommandBusErrorKind, CommandBusObserver, CommandPublication as BusPublication,
     CommandResponseOutcome, CorrelationId, DynamicCommandRequest,
 };
@@ -56,7 +56,7 @@ impl CommandTransport for CommandBusTransport {
             ));
         }
 
-        let expected_fingerprint = rostfrei::command_execution_fingerprint(
+        let expected_fingerprint = rostfrei_runtime::command_execution_fingerprint(
             invocation.context(),
             invocation.command(),
             invocation.schema_version(),
@@ -92,7 +92,7 @@ impl CommandTransport for CommandBusTransport {
         let response_message_id = response.message_id().as_str().to_owned();
         match response.into_outcome() {
             CommandResponseOutcome::ExecutionFailed(failure) => Err(command_bus_error(
-                &rostfrei::CommandBusError::execution_failed(failure),
+                &rostfrei_runtime::CommandBusError::execution_failed(failure),
             )),
             CommandResponseOutcome::Accepted => Ok(CommandReceipt::accepted(
                 command_message_id,
@@ -125,7 +125,7 @@ impl CommandTransport for CommandBusTransport {
     }
 }
 
-fn command_bus_error(error: &rostfrei::CommandBusError) -> CommandTransportError {
+fn command_bus_error(error: &rostfrei_runtime::CommandBusError) -> CommandTransportError {
     if let Some(failure) = error.execution_failure() {
         return CommandTransportError::execution_failed(failure);
     }
@@ -150,8 +150,10 @@ fn command_bus_error(error: &rostfrei::CommandBusError) -> CommandTransportError
 mod tests {
     use std::error::Error;
 
-    use rostfrei::{CommandBusError, CommandBusReceipt, CommandMessageAdapter, EncodedCommand};
     use rostfrei_messaging_core::ApplicationName;
+    use rostfrei_runtime::{
+        CommandBusError, CommandBusReceipt, CommandMessageAdapter, EncodedCommand,
+    };
 
     use super::*;
 
@@ -221,7 +223,7 @@ mod tests {
 
         assert_eq!(
             crate::command_execution_fingerprint("orders", "place-order", 2, &payload),
-            rostfrei::command_execution_fingerprint("orders", "place-order", 2, &payload)?
+            rostfrei_runtime::command_execution_fingerprint("orders", "place-order", 2, &payload)?
         );
         Ok(())
     }

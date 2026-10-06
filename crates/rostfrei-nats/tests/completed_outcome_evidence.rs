@@ -1,8 +1,8 @@
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
 mod release_contract_support;
 use release_contract_support::*;
-use rostfrei::EncodedCommand;
-rostfrei::install_macro_support!();
+use rostfrei_runtime::EncodedCommand;
+rostfrei_runtime::install_macro_support!();
 
 fn rebuild(
     original: &EncodedCommand,
@@ -31,7 +31,7 @@ fn rebuild(
             .and_then(serde_json::Value::as_str)
             .ok_or("operation absent")?,
     )?;
-    let id = rostfrei::command_message_id(
+    let id = rostfrei_runtime::command_message_id(
         &address,
         &operation,
         provisional.fingerprint(),

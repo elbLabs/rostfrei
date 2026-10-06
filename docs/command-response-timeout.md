@@ -6,7 +6,7 @@ commands can set their own budget:
 
 ```rust
 use std::time::Duration;
-use rostfrei_nats::{NatsCommandResponseReader, NatsMessagingAdapter, NatsPublisher};
+use rostfrei::nats::{NatsCommandResponseReader, NatsMessagingAdapter, NatsPublisher};
 
 fn adapter(publisher: NatsPublisher, reader: NatsCommandResponseReader) -> NatsMessagingAdapter {
     NatsMessagingAdapter::new(publisher, reader)

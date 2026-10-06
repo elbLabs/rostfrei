@@ -1,5 +1,5 @@
 use axum::Extension;
-use rostfrei::{
+use rostfrei_runtime::{
     AuthorizationError, BoundedContext, CommandProcessingService, CommandProcessorError,
     TrustedCommandContext,
 };
@@ -69,13 +69,13 @@ async fn submit(
             "Command envelopes require exactly one application/json content-type.",
         );
     }
-    let envelope: rostfrei::CommandEnvelope<RoutedCommand> = match serde_json::from_slice(&payload)
-    {
-        Ok(envelope) => envelope,
-        Err(error) => {
-            return bad_request("rostfrei.http.invalid-command-envelope", error.to_string());
-        }
-    };
+    let envelope: rostfrei_runtime::CommandEnvelope<RoutedCommand> =
+        match serde_json::from_slice(&payload) {
+            Ok(envelope) => envelope,
+            Err(error) => {
+                return bad_request("rostfrei.http.invalid-command-envelope", error.to_string());
+            }
+        };
     if envelope.payload().command() != command || envelope.payload().schema_version() != schema {
         return bad_request(
             "rostfrei.http.command-envelope-identity",
@@ -123,12 +123,12 @@ fn processor_error(error: &CommandProcessorError, challenge: Option<&HeaderValue
         return authorization_error(*error, challenge);
     }
     match error.kind() {
-        rostfrei::CommandProcessorErrorKind::IdentityConflict => error_response(
+        rostfrei_runtime::CommandProcessorErrorKind::IdentityConflict => error_response(
             StatusCode::CONFLICT,
             "rostfrei.command.identity-conflict",
             error.to_string(),
         ),
-        rostfrei::CommandProcessorErrorKind::InvalidMessage => {
+        rostfrei_runtime::CommandProcessorErrorKind::InvalidMessage => {
             bad_request("rostfrei.http.invalid-command-envelope", error.to_string())
         }
         _ => command_bus_error(&CommandBusError::from_processor(error)),

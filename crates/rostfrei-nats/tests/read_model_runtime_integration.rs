@@ -18,11 +18,6 @@ use std::{
 
 use application::{GetAccess, OrganizationAccess};
 use async_nats::jetstream;
-use rostfrei::{
-    ApplicationName, BoundedContext, IntegrationEventOrder, JsonReadModelCodec, QueryHandler,
-    QueryHandlerRequest, ReadModelKey, ReadModelProcessingError, ReadModelRuntime, ReadModelState,
-    ReadModelStore, ReadModels, TrafficScope,
-};
 use rostfrei_core::{
     AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore, ExpectedVersion,
     NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion, derive_commit_id,
@@ -39,9 +34,14 @@ use rostfrei_nats::{
     NatsReadModelWorker, provision_application_messaging, provision_event_store,
     provision_read_model, provision_read_model_consumers,
 };
+use rostfrei_runtime::{
+    ApplicationName, BoundedContext, IntegrationEventOrder, JsonReadModelCodec, QueryHandler,
+    QueryHandlerRequest, ReadModelKey, ReadModelProcessingError, ReadModelRuntime, ReadModelState,
+    ReadModelStore, ReadModels, TrafficScope,
+};
 use source::{DemoChanged, MemberJoined, Organization, OrganizationEvent, OrganizationRenamed};
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -52,13 +52,13 @@ struct BillingChanged {
     paid: bool,
 }
 
-impl rostfrei::IntegrationEvent for BillingChanged {
+impl rostfrei_runtime::IntegrationEvent for BillingChanged {
     const EVENT_NAME: &'static str = "versioned-billing-changed";
     const SCHEMA_VERSION: u32 = 1;
     const BOUNDED_CONTEXT: Option<&'static str> = Some("billing");
 }
 
-async fn register_business<B: rostfrei::ReadModelBackend>(
+async fn register_business<B: rostfrei_runtime::ReadModelBackend>(
     models: &ReadModels<B>,
     billing: BoundedContext,
 ) -> Result<ReadModelRuntime<OrganizationAccess>, ReadModelProcessingError> {
@@ -87,13 +87,13 @@ async fn register_business<B: rostfrei::ReadModelBackend>(
         .await
 }
 
-#[derive(Default, serde::Serialize, serde::Deserialize, rostfrei::ReadModel)]
+#[derive(Default, serde::Serialize, serde::Deserialize, rostfrei_runtime::ReadModel)]
 #[read_model(id = "organization-count", version = 1)]
 struct OrganizationCount {
     members: u64,
 }
 
-#[derive(Default, serde::Serialize, serde::Deserialize, rostfrei::ReadModel)]
+#[derive(Default, serde::Serialize, serde::Deserialize, rostfrei_runtime::ReadModel)]
 #[read_model(id = "organization-access-rebuilt", version = 1)]
 struct RebuiltAccess(OrganizationAccess);
 
@@ -247,7 +247,7 @@ fn fact(
     )?)
 }
 
-async fn deliver<M: rostfrei::ReadModel>(
+async fn deliver<M: rostfrei_runtime::ReadModel>(
     model: &ReadModelRuntime<M>,
     id: &str,
     version: u64,
@@ -465,7 +465,7 @@ async fn runtime_rejects_legacy_or_incompatible_checkpoint_envelopes() -> TestRe
         let revision = raw.put(key.as_str(), bytes.into()).await?;
         assert_eq!(
             model.reader().read(&key).await.unwrap_err().kind(),
-            rostfrei::ReadModelErrorKind::InvalidData
+            rostfrei_runtime::ReadModelErrorKind::InvalidData
         );
         assert!(matches!(
             deliver(&model, "invalid-state", 7, true).await?,
@@ -494,7 +494,7 @@ async fn unavailable_gap_history_does_not_persist_partial_state() -> TestResult 
         .unwrap_err();
     assert_eq!(
         error.kind(),
-        rostfrei::DomainEventHandlerErrorKind::Retryable
+        rostfrei_runtime::DomainEventHandlerErrorKind::Retryable
     );
     assert!(
         model
@@ -745,7 +745,7 @@ async fn worker_runs_both_event_families_and_materializes_before_ack() -> TestRe
             .publish_integration_event_with_ack(
                 OutboundMessage::json(
                     fixture.billing.integration_event_address(
-                        <BillingChanged as rostfrei::IntegrationEvent>::EVENT_NAME,
+                        <BillingChanged as rostfrei_runtime::IntegrationEvent>::EVENT_NAME,
                     )?,
                     fact.message_id().clone(),
                     &fact,

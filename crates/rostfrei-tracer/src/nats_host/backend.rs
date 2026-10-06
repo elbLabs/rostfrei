@@ -3,9 +3,9 @@ use super::{
     CommandMessageAdapter, Duration, MessageHandler, NatsConnection, NatsEventStore, NatsHostError,
     NatsMessagingAdapter, NatsRuntimeConfig, async_trait,
 };
-use rostfrei::{CommandProcessor, CommandProcessorBuilder, TrustedCommandContext};
 use rostfrei_core::{EventHistory, EventStore, StreamDirectory};
 use rostfrei_nats::TrustedCommandContextResolver;
+use rostfrei_runtime::{CommandProcessor, CommandProcessorBuilder, TrustedCommandContext};
 
 type ConfigureProcessor =
     Arc<dyn Fn(CommandProcessorBuilder) -> CommandProcessorBuilder + Send + Sync>;
@@ -143,7 +143,7 @@ impl StreamDirectory for CurrentBackend {
 impl EventStore for CurrentBackend {
     async fn load_completed_outcome_in_context(
         &self,
-        context: &rostfrei::BoundedContextName,
+        context: &rostfrei_runtime::BoundedContextName,
         id: &rostfrei_core::OperationId,
     ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, rostfrei_core::EventStoreError> {
         self.snapshot()
@@ -173,7 +173,7 @@ impl EventStore for CurrentBackend {
     }
     async fn load_transaction_receipt_in_context(
         &self,
-        context: &rostfrei::BoundedContextName,
+        context: &rostfrei_runtime::BoundedContextName,
         id: &rostfrei_core::OperationId,
     ) -> Result<Option<rostfrei_core::TransactionReceipt>, rostfrei_core::EventStoreError> {
         self.snapshot()

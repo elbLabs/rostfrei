@@ -10,10 +10,6 @@ use std::{
 use async_nats::jetstream::{self, consumer::PullConsumer};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use rostfrei::{
-    ApplicationName, JsonReadModelCodec, ReadModelEntry, ReadModelError, ReadModelErrorKind,
-    ReadModelKey, ReadModelRevision, ReadModelStore,
-};
 use rostfrei_messaging_core::{
     CallerMetadata, ConsumerConfig, CorrelationId, EnvelopeContext, IntegrationEventAddress,
     IntegrationEventEnvelope, MessageConsumerFactory, MessageId, MessageTimestamp, OutboundMessage,
@@ -23,6 +19,10 @@ use rostfrei_nats::{
     ApplicationMessagingConfig, NatsConsumerFactory, NatsPublishAck, NatsPublisher,
     NatsReadModelConfig, NatsReadModelStore, QuarantineRecord, provision_application_messaging,
     provision_durable_consumer, provision_read_model,
+};
+use rostfrei_runtime::{
+    ApplicationName, JsonReadModelCodec, ReadModelEntry, ReadModelError, ReadModelErrorKind,
+    ReadModelKey, ReadModelRevision, ReadModelStore,
 };
 
 use super::application::{BillingChanged, Entitlement, Entitlements, ExampleResult};

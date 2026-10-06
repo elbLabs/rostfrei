@@ -4,6 +4,8 @@ Read models reuse the application's managed NATS connection. Provision resources
 explicitly, register the transformations, and run the worker in your application
 lifecycle.
 
+Enable the `nats` feature on your `rostfrei` dependency for these adapters.
+
 ## Provision the resources
 
 This setup uses the `OrganizationAccess` declaration from the
@@ -11,7 +13,7 @@ This setup uses the `OrganizationAccess` declaration from the
 
 ```rust
 use rostfrei::{ApplicationName, ReadModels};
-use rostfrei_nats::{
+use rostfrei::nats::{
     ApplicationMessagingConfig, NatsConnectionConfig, NatsEventStoreConfig,
     NatsReadModelBackend, NatsReadModelConfig, connect,
     provision_application_messaging, provision_event_store, provision_read_model,
@@ -48,7 +50,7 @@ The limits above are small example limits, not a production sizing recommendatio
 ## Start the worker
 
 ```rust
-use rostfrei_nats::{
+use rostfrei::nats::{
     NatsReadModelConsumerOptions, NatsReadModelWorker,
     provision_read_model_consumers,
 };

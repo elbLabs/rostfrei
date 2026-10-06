@@ -3,7 +3,7 @@
 mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     CodecFailureKind, CommandBusErrorKind, CommandProcessorErrorKind, EncodedCommand,
     ExecutionFailure, ExecutionRecovery, IntegrationEventCommandHandler, StoreFailureKind,
 };
@@ -217,7 +217,7 @@ async fn processor_mapping_configuration_failure_is_typed_for_local_and_remote_c
     let local = local_bus(&fixture.context, processor.clone());
     let command = request("mapping-configuration", "missing", "add")?;
     let expected =
-        ExecutionFailure::Processor(rostfrei::ProcessorFailureKind::InvalidConfiguration);
+        ExecutionFailure::Processor(rostfrei_runtime::ProcessorFailureKind::InvalidConfiguration);
     let error = processor
         .process(&local.encode(command.clone())?)
         .await
@@ -556,8 +556,8 @@ fn diagnostic_message(
     encoded: &EncodedCommand,
     failure: ExecutionFailure,
 ) -> TestResult<OutboundMessage<rostfrei_messaging_core::CommandResponseAddress>> {
-    let diagnostic = rostfrei::CommandResponse::execution_failed(
-        rostfrei::command_technical_response_message_id(encoded.message_id(), failure)?,
+    let diagnostic = rostfrei_runtime::CommandResponse::execution_failed(
+        rostfrei_runtime::command_technical_response_message_id(encoded.message_id(), failure)?,
         encoded.message_id().clone(),
         encoded.address().clone(),
         encoded.operation_id().clone(),
@@ -999,4 +999,4 @@ async fn existing_quarantine_puback_before_term_sink_recovery_control() -> TestR
     sink_recovery(true).await
 }
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

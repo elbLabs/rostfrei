@@ -92,13 +92,13 @@ impl CommandHandler<Increment> for IncrementHandler {
 }
 
 pub fn bindings()
--> Result<std::sync::Arc<rostfrei_tracer::ApplicationBindings>, Box<dyn std::error::Error>> {
+-> Result<std::sync::Arc<rostfrei::tracer::ApplicationBindings>, Box<dyn std::error::Error>> {
     bindings_with_pause(None)
 }
 fn bindings_with_pause(
     pause: Option<Pause>,
-) -> Result<std::sync::Arc<rostfrei_tracer::ApplicationBindings>, Box<dyn std::error::Error>> {
-    let mut bindings = rostfrei_tracer::ApplicationBindings::new();
+) -> Result<std::sync::Arc<rostfrei::tracer::ApplicationBindings>, Box<dyn std::error::Error>> {
+    let mut bindings = rostfrei::tracer::ApplicationBindings::new();
     bindings.register_aggregate::<CounterAggregate>()?;
     bindings.register_command::<Increment, _>(
         IncrementHandler { step: 2, pause },
@@ -113,8 +113,8 @@ fn bindings_with_pause(
 async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
 -> Result<(), Box<dyn std::error::Error>> {
     use rostfrei::ApplicationName;
-    use rostfrei_nats::{NatsConnectionConfig, connect};
-    use rostfrei_tracer::{
+    use rostfrei::nats::{NatsConnectionConfig, connect};
+    use rostfrei::tracer::{
         ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, NatsApplication,
         TracerConfig, http::HttpConfig,
     };
@@ -128,8 +128,9 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
     let fixture = serde_json::from_str(include_str!("../fixture.json"))?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
-    let feed = rostfrei_tracer::ObservationFeed::new(
-        application.clone(), rostfrei_tracer::ObservationScope::Test,
+    let feed = rostfrei::tracer::ObservationFeed::new(
+        application.clone(),
+        rostfrei::tracer::ObservationScope::Test,
     );
     let config = TracerConfig::new(listener, HttpConfig::new("external-consumer-token")?)
         .with_continuous_observation(feed.clone())
@@ -163,7 +164,10 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
     assert_eq!(catalog["catalogVersion"], 1);
     assert_eq!(catalog["contexts"][0]["commands"][0]["id"], "increment");
     assert!(host.runtime().has_correlation_observer().await);
-    assert_eq!(feed.snapshot().status, rostfrei_tracer::ObservationStatus::Live);
+    assert_eq!(
+        feed.snapshot().status,
+        rostfrei::tracer::ObservationStatus::Live
+    );
     assert_eq!(catalog["observation"][0]["scope"], "test");
     let definitions: serde_json::Value = get(catalog["behavioralTest"]["definitionsHref"]
         .as_str()
@@ -186,7 +190,10 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
             .await?;
         assert_eq!(report["status"], "passed", "{report:#}");
         assert_eq!(report["comparison"]["status"], "passed", "{report:#}");
-        assert_eq!(feed.snapshot().status, rostfrei_tracer::ObservationStatus::Live);
+        assert_eq!(
+            feed.snapshot().status,
+            rostfrei::tracer::ObservationStatus::Live
+        );
         events_href = report["correlationEventsHref"].as_str().unwrap().to_owned();
         let stream = rostfrei::StreamId::new(
             rostfrei::StreamAggregateType::new("counter/counter")?,
@@ -212,9 +219,15 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
         );
     }
     // Retired clients cannot invoke the handler or fall back to real publication.
-    assert!(catalog["contexts"][0]["commands"][0]["versions"][0].get("simulateHrefTemplate").is_none());
+    assert!(
+        catalog["contexts"][0]["commands"][0]["versions"][0]
+            .get("simulateHrefTemplate")
+            .is_none()
+    );
     let response = client
-        .post(format!("http://{address}/contexts/counter/commands/increment/simulate"))
+        .post(format!(
+            "http://{address}/contexts/counter/commands/increment/simulate"
+        ))
         .bearer_auth("external-consumer-token")
         .json(&serde_json::json!({"schemaVersion":1,"payload":{"id":"one"}}))
         .send()
@@ -228,11 +241,16 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
     // Same registered handler and injected step (2), against persisted Test history.
     let before = host.runtime().store().load(&stream).await?;
     let observation_before = serde_json::to_value(feed.snapshot())?;
-    let href = catalog["contexts"][0]["commands"][0]["versions"][0]["simulateHandlerHrefTemplate"].as_str().unwrap();
-    let response = client.post(format!("http://{address}{href}"))
+    let href = catalog["contexts"][0]["commands"][0]["versions"][0]["simulateHandlerHrefTemplate"]
+        .as_str()
+        .unwrap();
+    let response = client
+        .post(format!("http://{address}{href}"))
         .bearer_auth("external-consumer-token")
         .json(&serde_json::json!({"schemaVersion":1,"payload":{"id":"one"}}))
-        .send().await?.error_for_status()?;
+        .send()
+        .await?
+        .error_for_status()?;
     assert!(response.headers().get("location").is_none());
     let simulation: serde_json::Value = response.json().await?;
     assert_eq!(simulation["kind"], "handlerSimulation");
@@ -249,7 +267,10 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
     tokio::time::timeout(std::time::Duration::from_secs(5), host.shutdown()).await??;
     tokio::time::timeout(std::time::Duration::from_secs(2), events.bytes()).await??;
     assert!(!runtime.has_correlation_observer().await);
-    assert_eq!(feed.snapshot().status, rostfrei_tracer::ObservationStatus::Unavailable);
+    assert_eq!(
+        feed.snapshot().status,
+        rostfrei::tracer::ObservationStatus::Unavailable
+    );
     assert!(get("/catalog").send().await.is_err());
     connection.drain().await?;
     Ok(())
@@ -257,28 +278,28 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
 
 struct Observer;
 #[async_trait]
-impl rostfrei_tracer::CommandTransportObserver for Observer {
-    async fn command_published(&self, _: rostfrei_tracer::CommandPublication) {}
+impl rostfrei::tracer::CommandTransportObserver for Observer {
+    async fn command_published(&self, _: rostfrei::tracer::CommandPublication) {}
 }
 
 async fn invoke(
-    runtime: &rostfrei_tracer::NatsRuntime,
+    runtime: &rostfrei::tracer::NatsRuntime,
     operation: &str,
-) -> Result<rostfrei_tracer::CommandReceipt, rostfrei_tracer::CommandTransportError> {
+) -> Result<rostfrei::tracer::CommandReceipt, rostfrei::tracer::CommandTransportError> {
     invoke_id(runtime, operation, "one").await
 }
 async fn invoke_id(
-    runtime: &rostfrei_tracer::NatsRuntime,
+    runtime: &rostfrei::tracer::NatsRuntime,
     operation: &str,
     id: &str,
-) -> Result<rostfrei_tracer::CommandReceipt, rostfrei_tracer::CommandTransportError> {
+) -> Result<rostfrei::tracer::CommandReceipt, rostfrei::tracer::CommandTransportError> {
     let payload = serde_json::json!({"id":id});
     let fingerprint =
-        rostfrei_tracer::command_execution_fingerprint("counter", "increment", 1, &payload);
+        rostfrei::tracer::command_execution_fingerprint("counter", "increment", 1, &payload);
     runtime
         .transport()
         .invoke(
-            rostfrei_tracer::CommandInvocation::new(
+            rostfrei::tracer::CommandInvocation::new(
                 rostfrei::OperationId::new(operation).unwrap(),
                 operation,
                 fingerprint,
@@ -296,8 +317,8 @@ async fn invoke_id(
 async fn disabled_commands_work_and_failed_test_reset_fails_closed_without_touching_normal()
 -> Result<(), Box<dyn std::error::Error>> {
     use rostfrei::ApplicationName;
-    use rostfrei_nats::{NatsConnectionConfig, connect};
-    use rostfrei_tracer::{NatsApplication, TestScenarioReset};
+    use rostfrei::nats::{NatsConnectionConfig, connect};
+    use rostfrei::tracer::{NatsApplication, TestScenarioReset};
     let connection = connect(&NatsConnectionConfig::new(
         "external-lifecycle",
         std::env::var("ROSTFREI_NATS_URL")?,
@@ -318,7 +339,7 @@ async fn disabled_commands_work_and_failed_test_reset_fails_closed_without_touch
     assert!(!normal.runtime().has_correlation_observer().await);
     assert!(matches!(
         invoke(normal.runtime(), "normal").await?.outcome(),
-        rostfrei_tracer::CommandOutcome::Accepted
+        rostfrei::tracer::CommandOutcome::Accepted
     ));
     let fixture = serde_json::from_str(include_str!("../fixture.json"))?;
     let test = NatsApplication::builder(
@@ -332,7 +353,7 @@ async fn disabled_commands_work_and_failed_test_reset_fails_closed_without_touch
     .await?;
     assert!(matches!(
         invoke(test.runtime(), "reusable").await?.outcome(),
-        rostfrei_tracer::CommandOutcome::Accepted
+        rostfrei::tracer::CommandOutcome::Accepted
     ));
     let mut invalid: serde_json::Value = serde_json::from_str(include_str!("../fixture.json"))?;
     invalid["messages"][0]["aggregate"]["type"] = "unknown/aggregate".into();
@@ -348,7 +369,7 @@ async fn disabled_commands_work_and_failed_test_reset_fails_closed_without_touch
     );
     assert_eq!(
         invoke(test.runtime(), "closed").await.unwrap_err().kind(),
-        rostfrei_tracer::CommandTransportErrorKind::Unavailable
+        rostfrei::tracer::CommandTransportErrorKind::Unavailable
     );
     test.runtime()
         .reset(&serde_json::from_str(include_str!("../fixture.json"))?)
@@ -362,7 +383,7 @@ async fn disabled_commands_work_and_failed_test_reset_fails_closed_without_touch
     test.shutdown().await?;
     assert!(matches!(
         invoke(normal.runtime(), "still-normal").await?.outcome(),
-        rostfrei_tracer::CommandOutcome::Accepted
+        rostfrei::tracer::CommandOutcome::Accepted
     ));
     normal.shutdown().await?;
     connection.drain().await?;
@@ -371,9 +392,9 @@ async fn disabled_commands_work_and_failed_test_reset_fails_closed_without_touch
 
 #[tokio::test]
 async fn reset_waits_for_active_submissions() -> Result<(), Box<dyn std::error::Error>> {
-    use rostfrei_tracer::{NatsApplication, TestScenarioReset};
+    use rostfrei::tracer::{NatsApplication, TestScenarioReset};
     use std::{sync::Arc, time::Duration};
-    let connection = rostfrei_nats::connect(&rostfrei_nats::NatsConnectionConfig::new(
+    let connection = rostfrei::nats::connect(&rostfrei::nats::NatsConnectionConfig::new(
         "reset-gate",
         std::env::var("ROSTFREI_NATS_URL")?,
     ))
@@ -407,7 +428,7 @@ async fn reset_waits_for_active_submissions() -> Result<(), Box<dyn std::error::
     pause.1.notify_one();
     assert!(matches!(
         active.await??.outcome(),
-        rostfrei_tracer::CommandOutcome::Accepted
+        rostfrei::tracer::CommandOutcome::Accepted
     ));
     reset.await??;
     let blocked = rostfrei::StreamId::new(
@@ -423,9 +444,9 @@ async fn reset_waits_for_active_submissions() -> Result<(), Box<dyn std::error::
 #[tokio::test]
 async fn worker_startup_failure_and_unexpected_exit_are_surfaced()
 -> Result<(), Box<dyn std::error::Error>> {
-    use rostfrei_tracer::{NatsApplication, NatsRuntimeConfig};
+    use rostfrei::tracer::{NatsApplication, NatsRuntimeConfig};
     use std::time::Duration;
-    let connection = rostfrei_nats::connect(&rostfrei_nats::NatsConnectionConfig::new(
+    let connection = rostfrei::nats::connect(&rostfrei::nats::NatsConnectionConfig::new(
         "worker-failure",
         std::env::var("ROSTFREI_NATS_URL")?,
     ))
@@ -456,7 +477,7 @@ async fn worker_startup_failure_and_unexpected_exit_are_surfaced()
     let runtime = host.runtime().clone();
     assert!(matches!(
         invoke(&runtime, "before-exit").await?.outcome(),
-        rostfrei_tracer::CommandOutcome::Accepted
+        rostfrei::tracer::CommandOutcome::Accepted
     ));
     stream.delete_consumer(durable).await?;
     let result = tokio::time::timeout(
@@ -467,7 +488,7 @@ async fn worker_startup_failure_and_unexpected_exit_are_surfaced()
     assert!(result.is_err());
     assert_eq!(
         invoke(&runtime, "after-exit").await.unwrap_err().kind(),
-        rostfrei_tracer::CommandTransportErrorKind::Unavailable
+        rostfrei::tracer::CommandTransportErrorKind::Unavailable
     );
     connection.drain().await?;
     Ok(())
@@ -476,9 +497,9 @@ async fn worker_startup_failure_and_unexpected_exit_are_surfaced()
 #[tokio::test]
 async fn observer_startup_failure_stops_previously_active_workers()
 -> Result<(), Box<dyn std::error::Error>> {
-    use rostfrei_tracer::{NatsApplication, OperationMode};
+    use rostfrei::tracer::{NatsApplication, OperationMode};
     use std::sync::Arc;
-    let connection = rostfrei_nats::connect(&rostfrei_nats::NatsConnectionConfig::new(
+    let connection = rostfrei::nats::connect(&rostfrei::nats::NatsConnectionConfig::new(
         "observer-failure",
         std::env::var("ROSTFREI_NATS_URL")?,
     ))
@@ -494,7 +515,7 @@ async fn observer_startup_failure_stops_previously_active_workers()
         .await?;
     assert!(matches!(
         invoke(host.runtime(), "before-observer").await?.outcome(),
-        rostfrei_tracer::CommandOutcome::Accepted
+        rostfrei::tracer::CommandOutcome::Accepted
     ));
     let tracer = bindings
         .tracer_builder(Arc::new(host.runtime().store().clone()))
@@ -520,7 +541,7 @@ async fn observer_startup_failure_stops_previously_active_workers()
             .await
             .unwrap_err()
             .kind(),
-        rostfrei_tracer::CommandTransportErrorKind::Unavailable
+        rostfrei::tracer::CommandTransportErrorKind::Unavailable
     );
     host.shutdown().await?;
     connection.drain().await?;

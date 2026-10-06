@@ -5,7 +5,9 @@ use std::{
 
 use async_nats::jetstream::consumer::{self, PullConsumer};
 use futures_util::TryStreamExt as _;
-use rostfrei::{IntegrationEvent, IntegrationEventOrder, ReadModel, ReadModelRuntime, ReadModels};
+use rostfrei_runtime::{
+    IntegrationEvent, IntegrationEventOrder, ReadModel, ReadModelRuntime, ReadModels,
+};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -223,7 +225,7 @@ async fn undeclared_producers_default_locally_and_allow_a_context_only_override(
         .await;
     assert!(matches!(
         wrong,
-        Err(rostfrei::ReadModelProcessingError::Configuration(_))
+        Err(rostfrei_runtime::ReadModelProcessingError::Configuration(_))
     ));
     fixture.cleanup().await
 }

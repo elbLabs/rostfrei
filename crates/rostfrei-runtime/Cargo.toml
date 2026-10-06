@@ -1,0 +1,31 @@
+[package]
+name = "rostfrei-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Transport-independent application runtime for Rostfrei adapters"
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+rostfrei-core.workspace = true
+rostfrei-domain.workspace = true
+rostfrei-domain-runtime.workspace = true
+rostfrei-messaging-core.workspace = true
+rostfrei-macros.workspace = true
+rostfrei-registry.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+trybuild.workspace = true
+
+[lints]
+workspace = true

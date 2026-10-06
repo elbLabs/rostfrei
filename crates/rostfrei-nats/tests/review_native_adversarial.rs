@@ -12,8 +12,10 @@ mod release_contract_support;
 mod review_native_support;
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{AllowAllCommands, CommandProcessingService, PrincipalId, TrustedCommandContext};
-rostfrei::install_macro_support!();
+use rostfrei_runtime::{
+    AllowAllCommands, CommandProcessingService, PrincipalId, TrustedCommandContext,
+};
+rostfrei_runtime::install_macro_support!();
 
 fn caller() -> TestResult<TrustedCommandContext> {
     Ok(TrustedCommandContext::new(
@@ -123,15 +125,15 @@ async fn explicit_read_only_profile_blocks_low_level_writes_in_unmarked_legacy_a
     Ok(())
 }
 
-struct AccessLog(std::sync::Mutex<Vec<rostfrei::CommandAccess>>);
+struct AccessLog(std::sync::Mutex<Vec<rostfrei_runtime::CommandAccess>>);
 #[async_trait]
-impl rostfrei::CommandAuthorizer for AccessLog {
+impl rostfrei_runtime::CommandAuthorizer for AccessLog {
     async fn authorize(
         &self,
         _: &TrustedCommandContext,
-        _: &rostfrei::ValidatedCommand,
-        access: rostfrei::CommandAccess,
-    ) -> Result<(), rostfrei::AuthorizationError> {
+        _: &rostfrei_runtime::ValidatedCommand,
+        access: rostfrei_runtime::CommandAccess,
+    ) -> Result<(), rostfrei_runtime::AuthorizationError> {
         self.0.lock().unwrap().push(access);
         Ok(())
     }
@@ -183,7 +185,7 @@ async fn absent_marker_does_not_claim_authoritative_missing_after_state_authorit
             .0
             .lock()
             .unwrap()
-            .contains(&rostfrei::CommandAccess::Execute)
+            .contains(&rostfrei_runtime::CommandAccess::Execute)
     );
     Ok(())
 }
@@ -366,17 +368,17 @@ async fn native_strict_proposal_replay_survives_expiry_without_using_command_ide
 }
 
 struct RejectPolicy {
-    failure: rostfrei::AuthorizationError,
-    phase: rostfrei::CommandAccess,
+    failure: rostfrei_runtime::AuthorizationError,
+    phase: rostfrei_runtime::CommandAccess,
 }
 #[async_trait]
-impl rostfrei::CommandAuthorizer for RejectPolicy {
+impl rostfrei_runtime::CommandAuthorizer for RejectPolicy {
     async fn authorize(
         &self,
         _: &TrustedCommandContext,
-        _: &rostfrei::ValidatedCommand,
-        access: rostfrei::CommandAccess,
-    ) -> Result<(), rostfrei::AuthorizationError> {
+        _: &rostfrei_runtime::ValidatedCommand,
+        access: rostfrei_runtime::CommandAccess,
+    ) -> Result<(), rostfrei_runtime::AuthorizationError> {
         if access == self.phase {
             Err(self.failure)
         } else {
@@ -387,7 +389,7 @@ impl rostfrei::CommandAuthorizer for RejectPolicy {
 #[tokio::test]
 async fn native_worker_authorization_failures_never_publish_shared_caller_specific_diagnostics()
 -> TestResult {
-    use rostfrei::{AuthorizationError, CommandAccess};
+    use rostfrei_runtime::{AuthorizationError, CommandAccess};
     for phase in [CommandAccess::ReadOutcome, CommandAccess::Execute] {
         for failure in [
             AuthorizationError::Denied,
@@ -632,7 +634,7 @@ async fn native_post_durable_corruption_is_outcome_recovery_for_acceptance_and_r
             .unwrap_err();
         assert_eq!(
             error.kind(),
-            rostfrei::CommandProcessorErrorKind::CompletedDetailsBlocked,
+            rostfrei_runtime::CommandProcessorErrorKind::CompletedDetailsBlocked,
             "{action}: {error:?}"
         );
         assert!(error.technical_response(&command)?.is_none());
@@ -651,7 +653,10 @@ async fn native_post_durable_corruption_is_outcome_recovery_for_acceptance_and_r
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         *proxy.faults.mutation.lock().unwrap() = None;
         let recovered = service.process(&caller()?, &command).await.into_result()?;
-        assert_eq!(recovered.origin(), rostfrei::CompletionOrigin::Replayed);
+        assert_eq!(
+            recovered.origin(),
+            rostfrei_runtime::CompletionOrigin::Replayed
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(
             store.load(&stream("target")?).await?.len(),
@@ -710,8 +715,8 @@ async fn actual_journal_capacity_with_open_response_sink_keeps_85_diagnostic_and
         .await?;
     assert_eq!(
         response.outcome(),
-        &CommandResponseOutcome::ExecutionFailed(rostfrei::ExecutionFailure::Store(
-            rostfrei::StoreFailureKind::CapacityExhausted
+        &CommandResponseOutcome::ExecutionFailed(rostfrei_runtime::ExecutionFailure::Store(
+            rostfrei_runtime::StoreFailureKind::CapacityExhausted
         ))
     );
     command.validate_response(&response)?;

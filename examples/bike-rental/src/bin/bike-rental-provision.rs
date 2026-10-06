@@ -4,7 +4,7 @@ use bike_rental::{
     APPLICATION_NAME, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
     demo::{apply_fixture, demo_fixture},
 };
-use rostfrei_nats::{NatsConnectionConfig, ServerVersion, connect};
+use rostfrei::nats::{NatsConnectionConfig, ServerVersion, connect};
 
 const DEFAULT_NATS_URL: &str = "nats://127.0.0.1:4222";
 

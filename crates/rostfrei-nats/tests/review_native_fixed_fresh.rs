@@ -10,8 +10,10 @@ mod release_contract_support;
 use async_trait::async_trait;
 use modular_state_fault_support::StateProxy;
 use release_contract_support::*;
-use rostfrei::{CommandAccess, CommandProcessingService, PrincipalId, TrustedCommandContext};
-rostfrei::install_macro_support!();
+use rostfrei_runtime::{
+    CommandAccess, CommandProcessingService, PrincipalId, TrustedCommandContext,
+};
+rostfrei_runtime::install_macro_support!();
 
 fn transaction(f: &Fixture, op: &str) -> TestResult<EventTransaction> {
     Ok(EventTransaction::new(
@@ -75,13 +77,13 @@ async fn snapshot(f: &Fixture, config: &NatsEventStoreConfig) -> TestResult<serd
 #[derive(Default)]
 struct AccessLog(std::sync::Mutex<Vec<CommandAccess>>);
 #[async_trait]
-impl rostfrei::CommandAuthorizer for AccessLog {
+impl rostfrei_runtime::CommandAuthorizer for AccessLog {
     async fn authorize(
         &self,
         _: &TrustedCommandContext,
-        _: &rostfrei::ValidatedCommand,
+        _: &rostfrei_runtime::ValidatedCommand,
         access: CommandAccess,
-    ) -> Result<(), rostfrei::AuthorizationError> {
+    ) -> Result<(), rostfrei_runtime::AuthorizationError> {
         self.0.lock().unwrap().push(access);
         Ok(())
     }
@@ -234,7 +236,7 @@ async fn challenge(fault: Fault) -> TestResult {
         "create",
     )?)?;
     let rejection = CommandResponse::rejected(
-        rostfrei::command_response_message_id(command.message_id())?,
+        rostfrei_runtime::command_response_message_id(command.message_id())?,
         command.message_id().clone(),
         command.address().clone(),
         command.operation_id().clone(),

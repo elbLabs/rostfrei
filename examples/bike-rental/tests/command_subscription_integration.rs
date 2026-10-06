@@ -8,13 +8,13 @@ use bike_rental::{
     BikeRentalNatsRuntime, rental_fleet::RentBicycle,
 };
 use futures_util::StreamExt as _;
-use rostfrei::{Command, CommandBus, DynamicCommandRequest, OperationId, RoutedCommand};
-use rostfrei_messaging_core::{CommandAddress, CommandEnvelope, ConsumerConfig};
-use rostfrei_nats::{
+use rostfrei::messaging::{CommandAddress, CommandEnvelope, ConsumerConfig};
+use rostfrei::nats::{
     NatsConnection, NatsConnectionConfig, NatsError, ServerVersion, connect,
     provision_application_messaging, provision_durable_consumer, provision_event_store,
 };
-use rostfrei_testing::integration::nats_url;
+use rostfrei::testing::integration::nats_url;
+use rostfrei::{Command, CommandBus, DynamicCommandRequest, OperationId, RoutedCommand};
 use serde_json::json;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;

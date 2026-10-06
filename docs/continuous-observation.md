@@ -17,8 +17,8 @@ With the reusable `nats-host`, explicitly enable each application traffic scope 
 readiness and observer lifetime:
 
 ```rust,ignore
-use rostfrei_messaging_core::ApplicationName;
-use rostfrei_tracer::{NatsApplication, ObservationFeed, ObservationScope, TracerConfig};
+use rostfrei::ApplicationName;
+use rostfrei::tracer::{NatsApplication, ObservationFeed, ObservationScope, TracerConfig};
 
 let application = ApplicationName::new("fast-inbox")?;
 let test_feed = ObservationFeed::new(application.clone(), ObservationScope::Test);

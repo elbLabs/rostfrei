@@ -92,15 +92,17 @@ async fn legacy_import_refuses_missing_actual_retained_response() -> TestResult<
     .with_max_bytes(64 * 1024 * 1024)?;
     rostfrei_nats::provision_application_messaging(&js, &messaging).await?;
     let memory = Arc::new(rostfrei_core::InMemoryEventStore::new());
-    let processor = Arc::new(rostfrei::CommandProcessor::new(
+    let processor = Arc::new(rostfrei_runtime::CommandProcessor::new(
         scope.name().clone(),
         memory,
     ));
-    let bus = rostfrei::CommandBus::new(
+    let bus = rostfrei_runtime::CommandBus::new(
         scope,
-        Arc::new(rostfrei::InMemoryMessagingAdapter::new(processor.clone())),
+        Arc::new(rostfrei_runtime::InMemoryMessagingAdapter::new(
+            processor.clone(),
+        )),
     );
-    let command = bus.encode_dynamic(rostfrei::DynamicCommandRequest::new(
+    let command = bus.encode_dynamic(rostfrei_runtime::DynamicCommandRequest::new(
         OperationId::new("missing-response-operation")?,
         "unregistered",
         1,

@@ -106,11 +106,11 @@ mod event_store {
 
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     AuthorizationError, CommandAccess, CommandAuthorizer, CommandProcessingService, PrincipalId,
     TrustedCommandContext, ValidatedCommand,
 };
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 type AccessRow = (String, Option<ActorRef>, CommandAccess);
 #[derive(Default)]
@@ -201,7 +201,7 @@ async fn review_actor_sender_reauthorizes_original_claim_and_never_admits_change
         assert_eq!(invalid.operation_id(), command.operation_id());
         assert_eq!(
             bus.dispatch_encoded(invalid).await.unwrap_err().kind(),
-            rostfrei::CommandBusErrorKind::InvalidMessage
+            rostfrei_runtime::CommandBusErrorKind::InvalidMessage
         );
     }
     let winner = service
@@ -222,7 +222,7 @@ async fn review_actor_sender_reauthorizes_original_claim_and_never_admits_change
             .await
             .unwrap_err()
             .kind(),
-        rostfrei::CommandBusErrorKind::CompletedDetailsExpired
+        rostfrei_runtime::CommandBusErrorKind::CompletedDetailsExpired
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(

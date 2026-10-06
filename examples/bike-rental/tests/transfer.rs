@@ -9,17 +9,17 @@ use bike_rental::{
         TransferBicycle, TransferBicycleHandler,
     },
 };
+use rostfrei::messaging::{CausationId, CommandResponseOutcome, CorrelationId};
+use rostfrei::nats::{
+    NatsConnection, NatsConnectionConfig, NatsEventStore, NatsEventStoreConfig, ServerVersion,
+    connect, provision_event_store,
+};
+use rostfrei::testing::integration::nats_url as required_nats_url;
 use rostfrei::{
     CommandBus, CommandDecision, CommandExecutionMetadata, CommandExecutor, CommandMessageAdapter,
     CommandOutcome, CommandReceipt, CommandRequest, ContentFingerprint, DomainEvent, EventStore,
     OperationId,
 };
-use rostfrei_messaging_core::{CausationId, CommandResponseOutcome, CorrelationId};
-use rostfrei_nats::{
-    NatsConnection, NatsConnectionConfig, NatsEventStore, NatsEventStoreConfig, ServerVersion,
-    connect, provision_event_store,
-};
-use rostfrei_testing::integration::nats_url as required_nats_url;
 use uuid::Uuid;
 
 const DESTINATION_FLEET_ID: &str = "harbor-fleet";

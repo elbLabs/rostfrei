@@ -9,12 +9,12 @@ use axum::{
     http::{Request, StatusCode},
 };
 use modular_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     AllowAllCommands, AttemptId, AuditDelivery, CommandProcessingService, PrincipalId,
     ProcessedCommand, ServiceReport, TrustedCommandContext,
 };
 use tower::ServiceExt;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 struct Injected {
     result: ProcessedCommand,
@@ -39,7 +39,7 @@ impl CommandProcessingService for Injected {
         &self,
         _: &TrustedCommandContext,
         _: &EncodedCommand,
-    ) -> ServiceReport<OutcomeLookup<rostfrei::CommandResponse>> {
+    ) -> ServiceReport<OutcomeLookup<rostfrei_runtime::CommandResponse>> {
         panic!("adapter unexpectedly performed service lookup")
     }
 }
@@ -87,7 +87,7 @@ async fn original_envelope_is_validated_before_injected_service_for_local_and_ht
     let bytes = serde_json::to_vec_pretty(&json)?;
     let inconsistent = EncodedCommand::from_delivery(
         command.address().clone(),
-        rostfrei::MessageId::new("noncanonical-identity")?,
+        rostfrei_runtime::MessageId::new("noncanonical-identity")?,
         bytes.clone(),
     )?;
     assert_eq!(
@@ -96,7 +96,7 @@ async fn original_envelope_is_validated_before_injected_service_for_local_and_ht
             .await
             .unwrap_err()
             .kind(),
-        rostfrei::CommandBusErrorKind::InvalidMessage
+        rostfrei_runtime::CommandBusErrorKind::InvalidMessage
     );
     let response = app.clone().oneshot(request(bytes)?).await?;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);

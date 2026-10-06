@@ -119,9 +119,10 @@ fn integration_observation(
     let causation = envelope
         .causation_id()
         .ok_or("integration event has no causation identity")?;
-    let source = rostfrei::EventId::new(causation.as_str()).map_err(|e| e.to_string())?;
-    let expected = rostfrei::integration_message_id(&address, envelope.schema_version(), &source)
-        .map_err(|e| e.to_string())?;
+    let source = rostfrei_runtime::EventId::new(causation.as_str()).map_err(|e| e.to_string())?;
+    let expected =
+        rostfrei_runtime::integration_message_id(&address, envelope.schema_version(), &source)
+            .map_err(|e| e.to_string())?;
     if message.message_id() != Some(envelope.message_id())
         || envelope.message_id() != &expected
         || envelope.correlation_id() != message.correlation_id()
@@ -151,7 +152,7 @@ fn integration_observation(
         })
         .copied()
         .ok_or("integration event codec is not registered")?;
-    let encoded = rostfrei::EncodedIntegrationMessage::from_delivery(
+    let encoded = rostfrei_runtime::EncodedIntegrationMessage::from_delivery(
         address,
         expected,
         message.payload().to_vec(),

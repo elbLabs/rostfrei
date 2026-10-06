@@ -1,25 +1,25 @@
 //! Domain fixture shared by the independent modular-runtime acceptance targets.
 #![allow(dead_code, unused_imports)]
 use async_trait::async_trait;
-pub use rostfrei::{
+pub use rostfrei_core::*;
+pub use rostfrei_runtime::{
     ApplicationErrorCode, ApplicationName, BoundedContext, CommandRejection,
     CommandRejectionClassification, CommandResponseOutcome,
 };
-pub use rostfrei::{
+pub use rostfrei_runtime::{
     CommandBus, CommandProcessor, CommandRequest, EncodedCommand, InMemoryMessagingAdapter,
 };
-pub use rostfrei_core::*;
 pub use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-#[derive(rostfrei::BoundedContext)]
+#[derive(rostfrei_runtime::BoundedContext)]
 #[domain(id = "modular", label = "Modular contract")]
 pub struct Modular;
 
-#[derive(Clone, Debug, rostfrei::Command)]
+#[derive(Clone, Debug, rostfrei_runtime::Command)]
 #[domain(context = Modular, id = "change", label = "Change")]
 pub struct Change {
     pub amount: i64,
@@ -144,7 +144,7 @@ pub fn stream() -> TestResult<StreamId> {
 pub fn request(id: &str, reject: bool) -> TestResult<CommandRequest<Change>> {
     Ok(
         CommandRequest::new(OperationId::new(id)?, Change { amount: 7, reject }).with_created_at(
-            rostfrei::MessageTimestamp::from_unix_milliseconds(1_700_000_000_000)?,
+            rostfrei_runtime::MessageTimestamp::from_unix_milliseconds(1_700_000_000_000)?,
         ),
     )
 }

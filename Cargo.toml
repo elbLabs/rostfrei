@@ -14,13 +14,14 @@ members = [
     "crates/rostfrei-messaging-core",
     "crates/rostfrei-nats",
     "crates/rostfrei-registry",
+    "crates/rostfrei-runtime",
     "crates/rostfrei-structure",
     "crates/rostfrei-testing",
     "examples/bike-rental",
 ]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.98"
 license = "EUPL-1.2"
@@ -30,20 +31,21 @@ documentation = "https://elblabs.github.io/rostfrei/docs"
 readme = "README.md"
 
 [workspace.dependencies]
-rostfrei = { path = "crates/rostfrei", version = "0.1.2" }
-rostfrei-core = { path = "crates/rostfrei-core", version = "0.1.2" }
-rostfrei-domain = { path = "crates/rostfrei-domain", version = "0.1.2" }
-rostfrei-domain-macros = { path = "crates/rostfrei-domain-macros", version = "0.1.2" }
-rostfrei-domain-runtime = { path = "crates/rostfrei-domain-runtime", version = "0.1.2" }
-rostfrei-fixtures = { path = "crates/rostfrei-fixtures", version = "0.1.2" }
-rostfrei-http = { path = "crates/rostfrei-http", version = "0.1.2" }
-rostfrei-macros = { path = "crates/rostfrei-macros", version = "0.1.2" }
-rostfrei-messaging-core = { path = "crates/rostfrei-messaging-core", version = "0.1.2" }
-rostfrei-nats = { path = "crates/rostfrei-nats", version = "0.1.2" }
-rostfrei-registry = { path = "crates/rostfrei-registry", version = "0.1.2" }
-rostfrei-testing = { path = "crates/rostfrei-testing", version = "0.1.2" }
-rostfrei-tracer = { path = "crates/rostfrei-tracer", version = "0.1.2" }
-zs-registry = { package = "rostfrei-registry", path = "crates/rostfrei-registry", version = "0.1.2" }
+rostfrei = { path = "crates/rostfrei", version = "0.1.3" }
+rostfrei-core = { path = "crates/rostfrei-core", version = "0.1.3" }
+rostfrei-domain = { path = "crates/rostfrei-domain", version = "0.1.3" }
+rostfrei-domain-macros = { path = "crates/rostfrei-domain-macros", version = "0.1.3" }
+rostfrei-domain-runtime = { path = "crates/rostfrei-domain-runtime", version = "0.1.3" }
+rostfrei-fixtures = { path = "crates/rostfrei-fixtures", version = "0.1.3" }
+rostfrei-http = { path = "crates/rostfrei-http", version = "0.1.3" }
+rostfrei-macros = { path = "crates/rostfrei-macros", version = "0.1.3" }
+rostfrei-messaging-core = { path = "crates/rostfrei-messaging-core", version = "0.1.3" }
+rostfrei-nats = { path = "crates/rostfrei-nats", version = "0.1.3" }
+rostfrei-registry = { path = "crates/rostfrei-registry", version = "0.1.3" }
+rostfrei-runtime = { path = "crates/rostfrei-runtime", version = "0.1.3" }
+rostfrei-testing = { path = "crates/rostfrei-testing", version = "0.1.3" }
+rostfrei-tracer = { path = "crates/rostfrei-tracer", version = "0.1.3" }
+zs-registry = { package = "rostfrei-registry", path = "crates/rostfrei-registry", version = "0.1.3" }
 
 async-nats = { version = "=0.50.0", default-features = false, features = ["jetstream", "kv", "nkeys", "ring", "server_2_10", "server_2_11", "server_2_12", "server_2_14"] }
 async-trait = "0.1"

@@ -11,12 +11,12 @@ Rostfrei provides two project-local skills for coding agents:
 
 Rostfrei is a Cargo library dependency. Install its setup CLI separately; adding
 the library, building it or starting an application does not install skills.
-Install the 0.1.2 CLI from crates.io with Rust 1.98+, Cargo and a native linker.
+Install the 0.1.3 CLI from crates.io with Rust 1.98+, Cargo and a native linker.
 Git dependencies also need Git and source access. Consumer setup and execution
 need no Python.
 
 ```sh
-cargo install --locked --version 0.1.2 rostfrei-structure
+cargo install --locked --version 0.1.3 rostfrei-structure
 # Inside your application, with its dependency resolved in Cargo.lock:
 cargo rostfrei skills install
 # After deliberately upgrading the application's dependency and Cargo.lock:
@@ -24,7 +24,7 @@ cargo rostfrei skills update
 ```
 
 The equivalent Git installation uses
-`cargo install --locked --git https://github.com/elbLabs/rostfrei --tag v0.1.2 rostfrei-structure`.
+`cargo install --locked --git https://github.com/elbLabs/rostfrei --tag v0.1.3 rostfrei-structure`.
 Use the CLI/kit matching the application's actual locked framework revision;
 the earlier 0.1.0 Git release and its kit retain their original identities.
 

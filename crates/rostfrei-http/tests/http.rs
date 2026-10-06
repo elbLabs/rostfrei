@@ -9,7 +9,8 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use http_body_util::BodyExt as _;
-use rostfrei::{
+use rostfrei_http::{HttpApiConfig, HttpApiConfigError, router};
+use rostfrei_runtime::{
     ApplicationErrorCode, ApplicationName, Command, CommandBus, CommandBusError,
     CommandBusErrorKind, CommandBusObserver, CommandBusReceipt, CommandDecision, CommandExecution,
     CommandHandler, CommandHandlingResult, CommandMessageAdapter, CommandPublication,
@@ -17,7 +18,6 @@ use rostfrei::{
     QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryHandlerRequest,
     QueryMessageAdapter, QueryOptions, QueryProcessor, TraceContext, command_response_message_id,
 };
-use rostfrei_http::{HttpApiConfig, HttpApiConfigError, router};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -28,7 +28,7 @@ type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 #[domain(context = Catalog, id = "update-product", label = "Update product")]
 struct UpdateProduct;
 
-#[derive(rostfrei::BoundedContext)]
+#[derive(rostfrei_runtime::BoundedContext)]
 #[domain(id = "catalog", label = "Catalog")]
 struct Catalog;
 
@@ -120,7 +120,7 @@ impl CommandMessageAdapter for AcceptCommandAdapter {
         observer
             .published(CommandPublication::new(command.message_id().clone(), false))
             .await;
-        let response = rostfrei::CommandResponse::accepted(
+        let response = rostfrei_runtime::CommandResponse::accepted(
             command_response_message_id(command.message_id()).map_err(|error| {
                 CommandBusError::new(CommandBusErrorKind::InvalidConfiguration, error.to_string())
             })?,
@@ -150,7 +150,7 @@ fn app_with_config(config: HttpApiConfig) -> TestResult<Router> {
     query_processor.register::<FindProduct>(Arc::new(FindProductHandler))?;
     let query_adapter = Arc::new(InMemoryQueryAdapter::new(Arc::new(query_processor)));
     let query_adapter: Arc<dyn QueryMessageAdapter> = query_adapter;
-    let query_bus = rostfrei::QueryBus::new(context, query_adapter);
+    let query_bus = rostfrei_runtime::QueryBus::new(context, query_adapter);
 
     let mut registry = DomainRegistry::new();
     registry.register_command::<UpdateProduct, ProductCommandHandler>()?;
@@ -481,4 +481,4 @@ fn invalid_authentication_challenge_is_rejected() {
         Err(HttpApiConfigError::InvalidAuthenticationChallenge)
     );
 }
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

@@ -430,4 +430,4 @@ async fn preserves_authentication_when_failing_over_to_a_discovered_server() {
     }
 }
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

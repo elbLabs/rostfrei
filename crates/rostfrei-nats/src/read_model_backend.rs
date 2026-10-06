@@ -2,11 +2,11 @@ use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
 
 use async_nats::jetstream;
 use async_trait::async_trait;
-use rostfrei::{ReadModel, ReadModelBackend, ReadModelState};
 use rostfrei_core::{
     EventHistory, JsonReadModelCodec, ReadModelError, ReadModelErrorKind, ReadModelStore,
 };
 use rostfrei_messaging_core::BoundedContext;
+use rostfrei_runtime::{ReadModel, ReadModelBackend, ReadModelState};
 
 use crate::{NatsEventStore, NatsEventStoreConfig, NatsReadModelConfig, NatsReadModelStore};
 

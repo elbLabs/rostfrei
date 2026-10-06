@@ -1,4 +1,4 @@
-error[E0277]: the trait bound `support::ChangeAccess: IntegrationEvent` is not satisfied
+error[E0277]: the trait bound `support::ChangeAccess: rostfrei::IntegrationEvent` is not satisfied
  --> tests/ui/fail/read_model_non_events.rs:9:33
   |
 9 |         .on_integration_event::<ChangeAccess>(|_| "org-1".to_owned(), |_, _| {});
@@ -6,23 +6,23 @@ error[E0277]: the trait bound `support::ChangeAccess: IntegrationEvent` is not s
   |          |
   |          required by a bound introduced by this call
   |
-help: the trait `IntegrationEvent` is not implemented for `support::ChangeAccess`
+help: the trait `rostfrei::IntegrationEvent` is not implemented for `support::ChangeAccess`
  --> tests/ui/fail/../read_model_support.rs
   |
   | pub struct ChangeAccess;
   | ^^^^^^^^^^^^^^^^^^^^^^^
-help: the trait `IntegrationEvent` is implemented for `PublicChanged`
+help: the trait `rostfrei::IntegrationEvent` is implemented for `PublicChanged`
  --> tests/ui/fail/../read_model_support.rs
   |
   | impl rostfrei::IntegrationEvent for PublicChanged {
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `ReadModelBuilder::<M, B, A>::on_integration_event`
- --> src/read_model/builder.rs
+ --> $WORKSPACE/crates/rostfrei-runtime/src/read_model/builder.rs
   |
   |     pub fn on_integration_event<E: IntegrationEvent>(
   |                                    ^^^^^^^^^^^^^^^^ required by this bound in `ReadModelBuilder::<M, B, A>::on_integration_event`
 
-error[E0277]: the trait bound `support::GetAccess: IntegrationEvent` is not satisfied
+error[E0277]: the trait bound `support::GetAccess: rostfrei::IntegrationEvent` is not satisfied
   --> tests/ui/fail/read_model_non_events.rs:11:33
    |
 11 |         .on_integration_event::<GetAccess>(|_| "org-1".to_owned(), |_, _| {});
@@ -30,18 +30,18 @@ error[E0277]: the trait bound `support::GetAccess: IntegrationEvent` is not sati
    |          |
    |          required by a bound introduced by this call
    |
-help: the trait `IntegrationEvent` is not implemented for `support::GetAccess`
+help: the trait `rostfrei::IntegrationEvent` is not implemented for `support::GetAccess`
   --> tests/ui/fail/../read_model_support.rs
    |
    | pub struct GetAccess;
    | ^^^^^^^^^^^^^^^^^^^^
-help: the trait `IntegrationEvent` is implemented for `PublicChanged`
+help: the trait `rostfrei::IntegrationEvent` is implemented for `PublicChanged`
   --> tests/ui/fail/../read_model_support.rs
    |
    | impl rostfrei::IntegrationEvent for PublicChanged {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `ReadModelBuilder::<M, B, A>::on_integration_event`
-  --> src/read_model/builder.rs
+  --> $WORKSPACE/crates/rostfrei-runtime/src/read_model/builder.rs
    |
    |     pub fn on_integration_event<E: IntegrationEvent>(
    |                                    ^^^^^^^^^^^^^^^^ required by this bound in `ReadModelBuilder::<M, B, A>::on_integration_event`
@@ -68,7 +68,7 @@ help: the following other types implement trait `rostfrei::DomainEvent`
    | #[derive(Deserialize, Serialize, rostfrei::DomainEvent)]
    |                                  ^^^^^^^^^^^^^^^^^^^^^ `ForeignEvent`
 note: required by a bound in `ReadModelBuilder::<M, B, A>::on_domain_event`
-  --> src/read_model/builder.rs
+  --> $WORKSPACE/crates/rostfrei-runtime/src/read_model/builder.rs
    |
    |     pub fn on_domain_event<E>(
    |            --------------- required by a bound in this associated function
@@ -91,7 +91,7 @@ help: the trait `EventVariant<support::ChangeAccess>` is not implemented for `Ev
    |          ^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `Changed`, found `support::ChangeAccess`
 note: required by a bound in `ReadModelBuilder::<M, B, A>::on_domain_event`
-  --> src/read_model/builder.rs
+  --> $WORKSPACE/crates/rostfrei-runtime/src/read_model/builder.rs
    |
    |     pub fn on_domain_event<E>(
    |            --------------- required by a bound in this associated function
@@ -122,7 +122,7 @@ help: the following other types implement trait `rostfrei::DomainEvent`
    | #[derive(Deserialize, Serialize, rostfrei::DomainEvent)]
    |                                  ^^^^^^^^^^^^^^^^^^^^^ `ForeignEvent`
 note: required by a bound in `ReadModelBuilder::<M, B, A>::on_domain_event`
-  --> src/read_model/builder.rs
+  --> $WORKSPACE/crates/rostfrei-runtime/src/read_model/builder.rs
    |
    |     pub fn on_domain_event<E>(
    |            --------------- required by a bound in this associated function
@@ -145,7 +145,7 @@ help: the trait `EventVariant<support::GetAccess>` is not implemented for `Event
    |          ^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `Changed`, found `support::GetAccess`
 note: required by a bound in `ReadModelBuilder::<M, B, A>::on_domain_event`
-  --> src/read_model/builder.rs
+  --> $WORKSPACE/crates/rostfrei-runtime/src/read_model/builder.rs
    |
    |     pub fn on_domain_event<E>(
    |            --------------- required by a bound in this associated function

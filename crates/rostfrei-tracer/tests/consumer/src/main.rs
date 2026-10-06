@@ -1,6 +1,6 @@
 use rostfrei::ApplicationName;
-use rostfrei_nats::{NatsConnectionConfig, connect};
-use rostfrei_tracer::{
+use rostfrei::nats::{NatsConnectionConfig, connect};
+use rostfrei::tracer::{
     ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, NatsApplication,
     TracerConfig, http::HttpConfig,
 };

@@ -23,7 +23,6 @@ use async_nats::{
 };
 use async_trait::async_trait;
 use base64::Engine as _;
-use rostfrei::{Aggregate as RuntimeAggregate, Apply, Initialize};
 use rostfrei_core::{
     AggregateId, AggregateType, CommittedDomainEvent, ContentFingerprint, DomainEventDispatcher,
     DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind, EventBatch,
@@ -35,26 +34,27 @@ use rostfrei_nats::{
     NatsDomainEventConsumer, NatsDomainEventConsumerConfig, NatsEventStore, NatsEventStoreConfig,
     provision_domain_event_consumer, provision_event_store,
 };
+use rostfrei_runtime::{Aggregate as RuntimeAggregate, Apply, Initialize};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, watch};
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-#[derive(rostfrei::BoundedContext)]
+#[derive(rostfrei_runtime::BoundedContext)]
 #[rostfrei(id = "domain-event-consumer", label = "Domain event consumer")]
 struct TestContext;
 
-#[derive(rostfrei::DomainIdentity)]
+#[derive(rostfrei_runtime::DomainIdentity)]
 struct TestId(String);
 
-#[derive(rostfrei::Entity)]
+#[derive(rostfrei_runtime::Entity)]
 #[rostfrei(id = "consumer", label = "Consumer")]
 struct TestRoot {
     id: TestId,
 }
 
-impl rostfrei::EntityDefinition for TestRoot {
+impl rostfrei_runtime::EntityDefinition for TestRoot {
     type Owner = TestAggregate;
     type Identity = TestId;
 
@@ -63,22 +63,22 @@ impl rostfrei::EntityDefinition for TestRoot {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, rostfrei::DomainEvent)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, rostfrei_runtime::DomainEvent)]
 #[rostfrei(id = "test-event", label = "Test event")]
 struct TestEvent {
     value: String,
 }
 
-#[derive(rostfrei::AggregateEvents)]
+#[derive(rostfrei_runtime::AggregateEvents)]
 enum TestEvents {
     TestEvent(TestEvent),
 }
 
-#[derive(rostfrei::Aggregate)]
+#[derive(rostfrei_runtime::Aggregate)]
 #[rostfrei(id = "consumer", label = "Consumer")]
 struct TestAggregate;
 
-impl rostfrei::AggregateDefinition for TestAggregate {
+impl rostfrei_runtime::AggregateDefinition for TestAggregate {
     type Context = TestContext;
     type Root = TestRoot;
     type Event = TestEvents;
@@ -1029,4 +1029,4 @@ fn unique_suffix() -> TestResult<String> {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     Ok(format!("{}-{nanos}", std::process::id()))
 }
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

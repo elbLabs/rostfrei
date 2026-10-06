@@ -208,4 +208,4 @@ async fn completed_rejection_and_acceptance_survive_process_and_broker_restart()
     child(&directory, &url, &application, "replay")?;
     Ok(())
 }
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

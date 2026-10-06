@@ -12,12 +12,12 @@ use std::{
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use rostfrei_messaging_core::{
+use rostfrei::messaging::{
     ApplicationName, CallerMetadata, CommandAddress, ConsumerConfig, DeliveryDisposition,
     MessageConsumerFactory, MessageDelivery, MessageHandler, MessageId, OutboundMessage,
     QuarantineFailureKind, QuarantineReason, RetryDelay, TrafficScope,
 };
-use rostfrei_nats::{
+use rostfrei::nats::{
     ApplicationMessagingConfig, NatsConnection, NatsConnectionConfig, QuarantineRecord,
     ServerVersion, connect, provision_application_messaging, provision_durable_consumer,
 };
@@ -432,7 +432,7 @@ async fn main() -> DemoResult {
 mod tests {
     #[tokio::test]
     async fn quarantine_walkthrough() -> super::DemoResult {
-        let url = rostfrei_testing::integration::nats_url()?;
+        let url = rostfrei::testing::integration::nats_url()?;
         super::run(url, false).await
     }
 }

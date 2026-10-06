@@ -69,11 +69,14 @@ class CandidateGates(unittest.TestCase):
                     if isinstance(dependency, dict):
                         self.assertNotIn("workspace", dependency)
                         if dependency.get("package", name).startswith("rostfrei"):
+                            self.assertEqual(name, "rostfrei")
                             count += 1
                             self.assertNotIn("path", dependency)
                             self.assertEqual(dependency["rev"], revision)
                             self.assertEqual(dependency["git"], ROOT.as_uri())
-            self.assertGreater(count, 3)
+            self.assertEqual(count, 2, "One facade dependency in each dependency section")
+            self.assertEqual(manifest["dependencies"]["rostfrei"]["features"], ["nats", "tracer"])
+            self.assertEqual(manifest["dev-dependencies"]["rostfrei"]["features"], ["testing"])
             self.assertEqual((app / "src/bin/bike-rental-api.rs").read_bytes(),
                              (ROOT / "examples/bike-rental/src/bin/bike-rental-api.rs").read_bytes())
             self.assertFalse((app / ".agents").exists(), "Copy must not implicitly install skills")

@@ -9,14 +9,14 @@ mod release_contract_support;
 
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     AuthorizationError, CommandAccess, CommandAuthorizer, CommandBusErrorKind, CommandBusObserver,
     CommandProcessingService, CommandPublication, EncodedCommand, ExecutionFailure, PrincipalId,
     StoreFailureKind, TrustedCommandContext, ValidatedCommand,
 };
 use tokio::sync::{Mutex, Semaphore};
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 #[derive(Default)]
 struct Policy {
@@ -476,7 +476,10 @@ async fn opt_in_preserves_execution_failed_mapping_without_a_business_winner() -
     let replay = Replay::new("create").await?;
     let failure = ExecutionFailure::Store(StoreFailureKind::CorruptHistory);
     let response = CommandResponse::execution_failed(
-        rostfrei::command_technical_response_message_id(replay.command.message_id(), failure)?,
+        rostfrei_runtime::command_technical_response_message_id(
+            replay.command.message_id(),
+            failure,
+        )?,
         replay.command.message_id().clone(),
         replay.command.address().clone(),
         replay.command.operation_id().clone(),

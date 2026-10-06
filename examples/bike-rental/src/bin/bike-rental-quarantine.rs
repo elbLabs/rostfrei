@@ -1,13 +1,13 @@
 //! An inspection-only host: connects to existing resources and runs independently of workers.
 use std::{env, sync::Arc};
 
-use rostfrei::{DomainRegistry, InMemoryEventStore};
-use rostfrei_messaging_core::ApplicationName;
-use rostfrei_nats::{MessagingTopology, NatsConnectionConfig, NatsQuarantineReader, connect};
-use rostfrei_tracer::{
+use rostfrei::messaging::ApplicationName;
+use rostfrei::nats::{MessagingTopology, NatsConnectionConfig, NatsQuarantineReader, connect};
+use rostfrei::tracer::{
     TracerBuilder,
     http::{HttpConfig, router},
 };
+use rostfrei::{DomainRegistry, InMemoryEventStore};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

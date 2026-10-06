@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use rostfrei::tracer::{ApplicationBindingError, ApplicationBindings};
+use rostfrei::tracer::{CommandInputField, CommandInputOption, CommandInputOptions, TracerBuilder};
 use rostfrei::{CommandRejectionClassification, EventHistory, JsonDomainRejectionMapper};
-use rostfrei_tracer::{ApplicationBindingError, ApplicationBindings};
-use rostfrei_tracer::{CommandInputField, CommandInputOption, CommandInputOptions, TracerBuilder};
 
 use crate::rental_fleet::{
     AddBicycle, AddBicycleHandler, RentBicycle, RentBicycleHandler, RentalFleetAggregate,

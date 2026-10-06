@@ -73,3 +73,31 @@ fn assert_generated_contracts() {
     aggregate::<CatalogAggregate>();
     let _ = <CatalogStatus as rf::QueryDefinition>::descriptor();
 }
+
+// This consumer has only one (renamed) framework dependency. Each feature is
+// checked independently so workspace feature unification cannot hide a missing edge.
+fn assert_facade_contracts() {
+    fn event_store<S: rf::EventStore>() {}
+    fn message_adapter<A: rf::CommandMessageAdapter>() {}
+    let _ = rf::core::JsonEventCodec;
+    let _: Option<rf::messaging::ConsumerConfig<rf::CommandAddress>> = None;
+    let _ = rf::registry::DomainRegistry::default();
+    #[cfg(feature = "nats")]
+    {
+        event_store::<rf::nats::NatsEventStore>();
+        message_adapter::<rf::nats::NatsMessagingAdapter>();
+    }
+    #[cfg(feature = "http")]
+    let _ = rf::http::HttpApiConfig::default();
+    #[cfg(feature = "tracer")]
+    {
+        let _ = rf::tracer::ApplicationBindings::new();
+        let _ = rf::tracer::http::HttpConfig::new("test-token");
+    }
+    #[cfg(all(feature = "nats", feature = "tracer"))]
+    let _ = rf::tracer::NatsApplication::builder;
+    #[cfg(any(feature = "fixtures", feature = "tracer", feature = "testing"))]
+    let _: Option<rf::fixtures::Fixture> = None;
+    #[cfg(feature = "testing")]
+    let _ = rf::testing::given::<CatalogAggregate, Vec<CatalogEvents>>;
+}

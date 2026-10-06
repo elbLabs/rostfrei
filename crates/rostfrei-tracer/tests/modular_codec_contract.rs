@@ -13,7 +13,7 @@ use rostfrei_fixtures::{Fixture, MessageSeriesEngine};
 use rostfrei_registry::DomainRegistry;
 use rostfrei_tracer::{SimulationRequest, TracerBuilder};
 use serde_json::json;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 /// Historical JSON object differs semantically from the generated JSON integer.
 /// Current v2 output is deliberately non-JSON.
@@ -155,7 +155,7 @@ async fn historical_meaning_and_original_facts_are_shared_across_all_consumers()
     );
     let mut processor = CommandProcessor::builder(context()?, store.clone())
         .event_codecs(codecs.clone())
-        .authorizer(Arc::new(rostfrei::AllowAllCommands))
+        .authorizer(Arc::new(rostfrei_runtime::AllowAllCommands))
         .build()?;
     assert!(
         processor
@@ -172,11 +172,11 @@ async fn historical_meaning_and_original_facts_are_shared_across_all_consumers()
         Arc::new(AtomicUsize::new(0)),
     )?)?
     .encode(request("write-current-cents", false)?)?;
-    let caller = rostfrei::TrustedCommandContext::new(
-        rostfrei::PrincipalId::new("service")?,
-        rostfrei::SecurityScope::new("scope")?,
+    let caller = rostfrei_runtime::TrustedCommandContext::new(
+        rostfrei_runtime::PrincipalId::new("service")?,
+        rostfrei_runtime::SecurityScope::new("scope")?,
     );
-    rostfrei::CommandProcessingService::process(&processor, &caller, &command)
+    rostfrei_runtime::CommandProcessingService::process(&processor, &caller, &command)
         .await
         .into_result()?;
     let history = store.load(&stream()?).await?;

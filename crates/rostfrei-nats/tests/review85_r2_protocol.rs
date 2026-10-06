@@ -2,7 +2,7 @@
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
 mod release_contract_support;
 use release_contract_support::*;
-use rostfrei::EncodedCommand;
+use rostfrei_runtime::EncodedCommand;
 
 fn command(f: &Fixture, operation: &str) -> TestResult<EncodedCommand> {
     local_bus(
@@ -23,7 +23,7 @@ fn diagnostic(
 ) -> TestResult<OutboundMessage<CommandResponseAddress>> {
     let failure = ExecutionFailure::Store(kind);
     let response = CommandResponse::execution_failed(
-        rostfrei::command_technical_response_message_id(c.message_id(), failure)?,
+        rostfrei_runtime::command_technical_response_message_id(c.message_id(), failure)?,
         c.message_id().clone(),
         c.address().clone(),
         c.operation_id().clone(),
@@ -337,7 +337,7 @@ async fn prepared_business_response_keeps_schema_one_and_cannot_be_misrouted_or_
     let f = Fixture::new("r2-business-scope").await?;
     let c = command(&f, "business")?;
     let response = CommandResponse::accepted(
-        rostfrei::command_response_message_id(c.message_id())?,
+        rostfrei_runtime::command_response_message_id(c.message_id())?,
         c.message_id().clone(),
         c.address().clone(),
         c.operation_id().clone(),
@@ -543,4 +543,4 @@ async fn recreation_after_epoch_check_must_not_acknowledge_an_unreadable_diagnos
     Ok(())
 }
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

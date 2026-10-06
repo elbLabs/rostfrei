@@ -4,12 +4,12 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
-use rostfrei::{
+use rostfrei_core::EventHistory;
+use rostfrei_runtime::{
     BoundedContext, ReadModel, ReadModelBackend, ReadModelEntry, ReadModelError,
     ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelState, ReadModelStore,
     ReadModels,
 };
-use rostfrei_core::EventHistory;
 
 use super::{
     BillingChanged, DeliveryDisposition, Fixture, IntegrationEventOrder, NatsReadModelBackend,

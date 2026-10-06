@@ -2,7 +2,7 @@
 #![allow(dead_code, unused_imports)]
 use crate::modular_support::*;
 use async_trait::async_trait;
-pub use rostfrei::{
+pub use rostfrei_runtime::{
     AllowAllCommands, AttemptId, AuditDelivery, AuthorizationError, CommandAccess,
     CommandAuthorizer, CommandProcessingService, CommandProcessorErrorKind, CommandResponse,
     CompletionOrigin, PrincipalId, ProcessedCommand, ServiceReport, TrustedCommandContext,

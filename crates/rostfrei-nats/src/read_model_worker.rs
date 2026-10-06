@@ -2,8 +2,8 @@ use std::{future::Future, pin::Pin, time::Duration};
 
 use async_nats::jetstream;
 use futures_util::{StreamExt as _, stream::FuturesUnordered};
-use rostfrei::{ReadModel, ReadModelRuntime};
 use rostfrei_messaging_core::{ConsumeError, RetryDelay};
+use rostfrei_runtime::{ReadModel, ReadModelRuntime};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::watch;

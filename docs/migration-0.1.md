@@ -6,16 +6,10 @@ It includes Rust API and native-authority changes from `v0.0.5-alpha`.
 
 ## Dependencies and tooling
 
-Use Rust 1.98 or newer and pin every Rostfrei dependency to the same release.
-The original 0.1.0 release uses Git distribution. The packaging-only 0.1.1 release
-also supports crates.io dependencies:
-
-```toml
-[dependencies]
-rostfrei = "0.1.2"
-rostfrei-nats = "0.1.2"
-rostfrei-tracer = { version = "0.1.2", features = ["nats-host"] }
-```
+Use Rust 1.98 or newer. Rostfrei 0.1.3 exposes adapters through a single framework
+dependency; follow [dependency setup and imports](getting-started.mdx#one-framework-dependency).
+Existing separate adapter dependencies remain supported; keep them on the same
+release as `rostfrei`.
 
 Resolve and commit the application's new `Cargo.lock`; inspect `cargo tree` or
 `cargo metadata --locked` for mixed framework sources. NATS 2.12.15 is the tested
@@ -24,7 +18,7 @@ broker version. Native atomic transactions require NATS 2.12.1 or newer.
 Install the matching setup CLI separately:
 
 ```sh
-cargo install --locked --version 0.1.2 rostfrei-structure
+cargo install --locked --version 0.1.3 rostfrei-structure
 cargo rostfrei skills install
 # Use skills update for an existing managed installation after the dependency upgrade.
 ```

@@ -3,7 +3,7 @@
 mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{CommandBusObserver, CommandBusReceipt, CommandPublication};
+use rostfrei_runtime::{CommandBusObserver, CommandBusReceipt, CommandPublication};
 
 struct ConcurrencyGate {
     published: tokio::sync::Semaphore,
@@ -422,7 +422,7 @@ async fn technical_failure_does_not_cache_a_completed_business_rejection() -> Te
     let submission = request("technical", "bad-target", "create")?;
     assert_eq!(
         local.dispatch(submission.clone()).await.unwrap_err().kind(),
-        rostfrei::CommandBusErrorKind::Unavailable
+        rostfrei_runtime::CommandBusErrorKind::Unavailable
     );
     assert!(
         store
@@ -657,4 +657,4 @@ async fn rejection_read_guard_is_validated_before_outcome_becomes_authoritative(
     Ok(())
 }
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

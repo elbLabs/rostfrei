@@ -8,12 +8,12 @@ use axum::{
     http::{Request, StatusCode},
 };
 use modular_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     AuthorizationError, CommandAccess, CommandAuthorizer, CommandProcessingService, PrincipalId,
     TrustedCommandContext, ValidatedCommand,
 };
 use tower::ServiceExt;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 type Row = (String, Option<ActorRef>, Vec<u8>);
 #[derive(Default)]

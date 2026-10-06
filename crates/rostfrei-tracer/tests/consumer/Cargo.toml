@@ -6,9 +6,7 @@ edition = "2024"
 [workspace]
 
 [dependencies]
-rostfrei = { path = "../../../rostfrei" }
-rostfrei-nats = { path = "../../../rostfrei-nats" }
-rostfrei-tracer = { path = "../..", features = ["nats-host"] }
+rostfrei = { path = "../../../rostfrei", features = ["nats", "tracer"] }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

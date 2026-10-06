@@ -1,0 +1,132 @@
+//! Transport-independent application runtime shared by Rostfrei adapters.
+//!
+//! Applications normally use the `rostfrei` facade, which re-exports these APIs.
+//! This lower layer owns typed buses, command processing, and read-model execution
+//! so adapters can share the runtime without depending on the application facade.
+
+extern crate self as rostfrei;
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __rostfrei_macro_support_runtime {
+    ($($tokens:tt)*) => {
+        $($tokens)*
+    };
+}
+
+/// Installs the crate-local support bridge used by Rostfrei procedural macros.
+///
+/// Invoke this exactly once in the root of every crate that declares Rostfrei
+/// domain types or derives an application `QueryDefinition`.
+#[macro_export]
+macro_rules! install_macro_support {
+    () => {
+        #[doc(hidden)]
+        pub mod __rostfrei_macro_support {
+            pub use $crate::__rostfrei_macro_support_runtime as __runtime;
+            pub use $crate::*;
+
+            pub mod __private {
+                pub use $crate::__private::domain_runtime::__private::{
+                    assert_unique_event_ids, core,
+                };
+                pub use $crate::__private::*;
+            }
+        }
+    };
+}
+
+mod command_bus;
+mod command_rejection_codec;
+mod command_service;
+pub use command_bus::processing::CommandProcessorBuilder;
+pub use command_service::{
+    AllowAllCommands, AttemptId, AuditDelivery, AuditError, AuditPhase, AuditTerminal,
+    AuthorizationError, CommandAccess, CommandAuditRecord, CommandAuditSink, CommandAuthorizer,
+    CommandProcessingService, CompletionOrigin, InMemoryCommandAuditSink, PrincipalId,
+    ProcessedCommand, ServiceReport, TrustedCommandContext, ValidatedCommand,
+};
+mod in_memory_messaging;
+mod integration_event;
+mod integration_event_bus;
+mod query_bus;
+mod read_model;
+pub use command_rejection_codec::MappedCommandRejectionCodec;
+
+pub use command_bus::{
+    CommandBindingRegistrationError, CommandBus, CommandBusError, CommandBusErrorKind,
+    CommandBusObserver, CommandBusReceipt, CommandMessageAdapter, CommandProcessor,
+    CommandProcessorError, CommandProcessorErrorKind, CommandPublication, CommandRejectionMapper,
+    CommandRequest, DynamicCommandRequest, EncodedCommand, InfallibleCommandRejectionMapper,
+    InvalidCommandResponse, JsonDomainRejectionMapper, RoutedCommand, RoutedCommandError,
+    command_execution_fingerprint, command_message_id, command_response_message_id,
+    command_technical_response_message_id,
+};
+pub use domain::*;
+pub use in_memory_messaging::InMemoryMessagingAdapter;
+pub use integration_event::{
+    CompletedIntegrationCommand, IntegrationCommandMapper, IntegrationEventCommandHandler,
+    IntegrationEventProcessingError, IntegrationEventProcessor,
+};
+pub use integration_event_bus::{
+    CommittedEventContext, EncodedIntegrationMessage, IntegrationEvent, IntegrationEventBus,
+    IntegrationEventBusError, IntegrationEventBusErrorKind, IntegrationEventDispatcherExt,
+    IntegrationEventMapper, IntegrationEventPublication, IntegrationMessageAdapter,
+    integration_message_id,
+};
+pub use query_bus::{
+    DynamicQueryRequest, EncodedQuery, InMemoryQueryAdapter, QueryBindingRegistrationError,
+    QueryBus, QueryBusError, QueryBusErrorKind, QueryMessageAdapter, QueryProcessor,
+    QueryProcessorHandler, QueryRequest, RoutedQuery, RoutedQueryError,
+};
+pub use read_model::{
+    IntegrationEventOrder, NoDomainSource, ReadModelBackend, ReadModelBuilder,
+    ReadModelDomainEvent, ReadModelIntegrationBinding, ReadModelProcessingError, ReadModelReader,
+    ReadModelRuntime, ReadModelState, ReadModels,
+};
+pub use rostfrei_core::{
+    ActorRef, Aggregate, AggregateCodecs, AggregateId as StreamAggregateId, AggregateInstance,
+    AggregateType as StreamAggregateType, AppendOutcome, AppendSession, BoundedConflictRetries,
+    CommandAuthority, CommandCommitSession, CommandCompletion, CommandDecision, CommandExecution,
+    CommandExecutionError, CommandExecutionMetadata, CommandExecutor, CommandHandler,
+    CommandHandlingResult, CommandOutcome, CommandReceipt, CommandResult, CommittedDomainEvent,
+    CompletedAppendOutcome, CompletedCommit, CompletedOutcome, ConflictRetry,
+    ConflictRetryDecision, ConflictRetryPolicy, ContentFingerprint, DomainEventDispatchOutcome,
+    DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
+    DomainEventHandlerErrorKind, DomainEventRegistrationError, EncodedOutcomeDetails,
+    EncodedRejection, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind, EventHistory,
+    EventId, EventStore, EventStoreError, EventStoreErrorKind, EventStoreErrorOrigin,
+    EventTransaction, EventVariant, ExecutionStore, ExpectedVersion, InMemoryEventStore,
+    InlineCompletedOutcome, JsonReadModelCodec, JsonRejectionCodec, LoadedAggregate,
+    MAX_ACTOR_ID_BYTES, MAX_ACTOR_NAMESPACE_BYTES, MAX_REJECTION_BYTES, MAX_TRANSACTION_ITEMS,
+    NewEvent, OperationId, OutcomeDetails, OutcomeEvidence, OutcomeExpiry, OutcomeKey,
+    OutcomeLifecycle, OutcomeLookup, OutcomeReader, OutcomeRecoveryError, OutcomeRevision,
+    ReadModel, ReadModelCodec, ReadModelEntry, ReadModelError, ReadModelErrorKind, ReadModelKey,
+    ReadModelRevision, ReadModelStore, ReclamationStatus, RecordedEvent, RejectionCodec,
+    SecurityScope, SimulatedParticipant, SimulationError, SimulationOutcome, StreamId,
+    StreamVersion, TransactionAppendOutcome, TransactionParticipant, TransactionReceipt,
+    TransactionStreamReceipt,
+};
+pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};
+pub use rostfrei_macros::{QueryDefinition, ReadModel};
+pub use rostfrei_messaging_core::{
+    ApplicationErrorCode, ApplicationName, BoundedContext, BoundedContextName, CallerMetadata,
+    CausationId, CodecFailureKind, CommandAddress, CommandEnvelope, CommandPublisher,
+    CommandRejection, CommandRejectionClassification, CommandResponse, CommandResponseOutcome,
+    CommandResponseReader, CorrelationId, DurableName, ExecutionFailure, ExecutionRecovery,
+    IntegrationEventEnvelope, MessageId, MessageTimestamp, ProcessorFailureKind, QueryAddress,
+    QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryOptions, QueryOutcome,
+    QueryRequest as QueryHandlerRequest, QueryRequestError, QueryRequestErrorKind, QueryResponse,
+    QueryResult, QueryServer, StoreFailureKind, TraceContext, TrafficScope,
+};
+pub use rostfrei_registry::{
+    CommandDefinition, CommandDescriptor as CommandRegistrationDescriptor, DomainRegistry,
+    QueryDefinition, QueryDescriptor as QueryRegistrationDescriptor, RegistrationError,
+};
+
+#[doc(hidden)]
+pub mod __private {
+    pub use domain::__private::{emit_domain_test_descriptor, serde, serde_json};
+    pub use rostfrei_domain_runtime as domain_runtime;
+    pub use rostfrei_registry as registry;
+}

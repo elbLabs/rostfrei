@@ -2,7 +2,7 @@
 mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 fn decode_domain_rejection(rejection: &CommandRejection) -> Result<&'static str, String> {
     if rejection.code().as_str() == "contract.target-not-found" {
@@ -38,7 +38,8 @@ async fn generic_processor_interop(direct_first: bool) -> TestResult {
         action: "add".to_owned(),
         item: "I".to_owned(),
     };
-    let codec = rostfrei::MappedCommandRejectionCodec::new(map_rejection, decode_domain_rejection);
+    let codec =
+        rostfrei_runtime::MappedCommandRejectionCodec::new(map_rejection, decode_domain_rejection);
     let executor = CommandExecutor::new(store.clone());
     if direct_first {
         assert!(matches!(

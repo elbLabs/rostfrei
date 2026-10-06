@@ -7,11 +7,11 @@ mod modular_state_fault_support;
 mod release_contract_support;
 use modular_state_fault_support::StateProxy;
 use release_contract_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     AllowAllCommands, CommandProcessingService, CommandProcessorErrorKind, PrincipalId,
     TrustedCommandContext,
 };
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 fn caller(scope: &str) -> TestResult<TrustedCommandContext> {
     Ok(TrustedCommandContext::new(

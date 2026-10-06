@@ -7,13 +7,13 @@ use std::{
 };
 
 use async_nats::jetstream;
-use rostfrei::{
-    ApplicationName, JsonReadModelCodec, ReadModelCodec, ReadModelErrorKind, ReadModelKey,
-    ReadModelStore, TrafficScope,
-};
 use rostfrei_nats::{
     NatsConnectionConfig, NatsReadModelConfig, NatsReadModelStore, connect, provision_read_model,
     update_read_model, verify_read_model,
+};
+use rostfrei_runtime::{
+    ApplicationName, JsonReadModelCodec, ReadModelCodec, ReadModelErrorKind, ReadModelKey,
+    ReadModelStore, TrafficScope,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
