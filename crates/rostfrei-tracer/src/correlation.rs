@@ -262,9 +262,28 @@ pub struct CorrelationObserver {
     hub: Arc<CorrelationHub>,
     trace_payload_policy: Arc<dyn TracePayloadPolicy>,
     mode: OperationMode,
+    observation: Option<Arc<crate::ObservationFeed>>,
 }
 
 impl CorrelationObserver {
+    pub(crate) fn with_continuous_observation(
+        mut self,
+        feed: Option<Arc<crate::ObservationFeed>>,
+    ) -> Self {
+        self.observation = feed;
+        self
+    }
+
+    pub fn observation_source(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::ObservationSource>, crate::ObservationError> {
+        self.observation
+            .as_ref()
+            .map(|feed| feed.source(name))
+            .transpose()
+    }
+
     pub async fn record_observation_failure(
         &self,
         correlation_id: &str,
@@ -273,6 +292,9 @@ impl CorrelationObserver {
     ) -> Result<(), CorrelationError> {
         let identity = identity.into();
         let message = message.into();
+        if let Some(feed) = &self.observation {
+            feed.discard();
+        }
         self.hub
             .record_observation_failure_for_mode(
                 correlation_id,
@@ -307,13 +329,16 @@ impl CorrelationObserver {
             aggregate,
             observation.payload.clone(),
         );
-        if self
+        self.observe_continuously(&raw);
+        match self
             .hub
             .observe_message_for_mode(correlation_id, self.mode, raw)
-            .await?
-            .is_duplicate()
+            .await
         {
-            return Ok(());
+            Ok(inserted) if inserted.is_duplicate() => return Ok(()),
+            Err(CorrelationError::NotFound) if self.observation.is_some() => return Ok(()),
+            Err(error) => return Err(error),
+            Ok(_) => {}
         }
         let payload = observation
             .payload
@@ -349,13 +374,16 @@ impl CorrelationObserver {
             observation.schema_version,
             observation.payload.clone(),
         );
-        if self
+        self.observe_continuously(&raw);
+        match self
             .hub
             .observe_message_for_mode(correlation_id, self.mode, raw)
-            .await?
-            .is_duplicate()
+            .await
         {
-            return Ok(());
+            Ok(inserted) if inserted.is_duplicate() => return Ok(()),
+            Err(CorrelationError::NotFound) if self.observation.is_some() => return Ok(()),
+            Err(error) => return Err(error),
+            Ok(_) => {}
         }
         let payload = observation
             .payload
@@ -374,6 +402,12 @@ impl CorrelationObserver {
                 },
             )
             .await
+    }
+    fn observe_continuously(&self, message: &ObservedMessageNode) {
+        let Some(feed) = &self.observation else {
+            return;
+        };
+        feed.observe(message.clone(), self.trace_payload_policy.as_ref());
     }
 }
 
@@ -488,6 +522,7 @@ impl CorrelationHub {
             hub: Arc::clone(self),
             trace_payload_policy,
             mode,
+            observation: None,
         }
     }
 

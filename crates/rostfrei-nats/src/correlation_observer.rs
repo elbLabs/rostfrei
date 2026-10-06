@@ -58,6 +58,9 @@ impl CorrelatedMessage {
 #[async_trait]
 pub trait CorrelatedMessageHandler: Send + Sync {
     async fn handle(&self, message: CorrelatedMessage);
+
+    /// Reports interruptions and recovery of broker observation coverage.
+    async fn availability(&self, _available: bool) {}
 }
 
 #[derive(Clone)]
@@ -199,6 +202,7 @@ impl NatsCorrelationSubscription {
                         return Err(NatsError::Consumer);
                     };
                     let Ok(message) = message else {
+                        handler.availability(false).await;
                         continue;
                     };
                     if family_matches(&self.application, self.traffic_scope, message.subject.as_str(), CorrelatedMessageFamily::DomainEvent)
@@ -213,6 +217,7 @@ impl NatsCorrelationSubscription {
                         return Err(NatsError::Consumer);
                     };
                     let Ok(message) = message else {
+                        handler.availability(false).await;
                         continue;
                     };
                     if family_matches(&self.application, self.traffic_scope, message.subject.as_str(), CorrelatedMessageFamily::IntegrationEvent)
@@ -223,8 +228,9 @@ impl NatsCorrelationSubscription {
                     }
                 }
                 _ = generation_poll.tick() => {
-                    let _ = self.domain_events.refresh_if_recreated(&self.context).await;
-                    let _ = self.integration_events.refresh_if_recreated(&self.context).await;
+                    let domain = self.domain_events.refresh_if_recreated(&self.context).await;
+                    let integration = self.integration_events.refresh_if_recreated(&self.context).await;
+                    handler.availability(domain.is_ok() && integration.is_ok()).await;
                 }
             }
         }

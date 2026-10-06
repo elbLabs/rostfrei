@@ -31,6 +31,15 @@ Start with the [bike-rental walkthrough](https://elblabs.github.io/rostfrei/docs
 for a connected application. Studio requires a reachable Tracer API; synthetic
 responses are limited to the browser-test and visual-inspection fixtures below.
 
+The **Observe** panel continuously follows application-originated domain and
+integration events. It supports Test/Production scope discovery, filtering,
+flow selection, pause/resume, reconnect, and explicit partial/retention status.
+See [continuous observation](../docs/continuous-observation.md) for backend wiring
+and the optional `VITE_TRACER_INSPECTION_TOKEN` used for production observation.
+It uses the same Canvas/Workbench message cards and inspector as command and
+test execution. **Executions** returns to the previous execution view; closing
+the observation sidebar does not stop capture.
+
 ## Run locally
 
 From `studio/`:
@@ -70,7 +79,7 @@ The inspector starts Vite on an available port and launches a fresh Chrome
 session. Named scenarios intercept every API request and label their synthetic
 responses as visual fixtures. They cover the workbench overview, command form,
 accepted/rejected Preview, pending and indeterminate results, a 25-message
-branching graph, long payloads, and the narrow-screen inspector. Unknown API
+branching graph, long payloads, continuous observation, and the narrow-screen inspector. Unknown API
 requests fail rather than reaching a backend.
 
 Each capture writes `screenshot.png`, `state.json`, `accessibility.json`, and

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict"
 
 import { settlePage } from "./browser.mjs"
+import {
+  observationCapability,
+  observationFlow,
+  observationSnapshot,
+} from "./observation-fixture.mjs"
 
 export const scenarios = {
   overview: "Expected rental flow in the Workbench layout",
@@ -12,6 +17,7 @@ export const scenarios = {
   branching: "A 25-message synthetic branching flow after Fit graph to view",
   "long-payload": "Nested, long payload values in the message inspector",
   narrow: "Accepted command details at 390 × 844",
+  observation: "Externally initiated flow in the continuous Observe panel",
 }
 
 const commandPath = "/contexts/bike-rental/commands/rent-bicycle"
@@ -50,6 +56,33 @@ const catalog = {
 }
 
 export async function installScenario(page, scene, samples, diagnostics) {
+  if (scene === "observation") {
+    await page.evaluateOnNewDocument((snapshot) => {
+      const fetch = window.fetch.bind(window)
+      window.fetch = (input, options) => {
+        if (
+          new URL(String(input), location.origin).pathname ===
+          "/api/observation/test/events"
+        ) {
+          const body = new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  `event: observation\ndata: ${JSON.stringify(snapshot)}\n\n`
+                )
+              )
+            },
+          })
+          return Promise.resolve(
+            new Response(body, {
+              headers: { "content-type": "text/event-stream" },
+            })
+          )
+        }
+        return fetch(input, options)
+      }
+    }, observationSnapshot())
+  }
   if (scene === "indeterminate") {
     diagnostics.expectedHttpErrors.push({
       method: "POST",
@@ -97,7 +130,16 @@ export async function installScenario(page, scene, samples, diagnostics) {
     let body
     let status = 200
     let headers = {}
-    if (method === "GET" && pathname === "/catalog") body = catalog
+    if (method === "GET" && pathname === "/catalog")
+      body =
+        scene === "observation"
+          ? { ...catalog, observation: [observationCapability] }
+          : catalog
+    else if (
+      scene === "observation" &&
+      pathname === observationFlow().detailHref
+    )
+      body = observationFlow()
     else if (method === "GET" && pathname === "/behavior-tests")
       body = { items: tests }
     else if (method === "GET" && pathname.startsWith("/tests/")) {
@@ -184,6 +226,27 @@ export async function prepareScenario(page, scene) {
   if (scene === "overview") {
     await page.click('[data-layout="workbench"]')
     await settlePage(page)
+    return
+  }
+  if (scene === "observation") {
+    if (page.viewport().width >= 768)
+      await page.click('[data-layout="workbench"]')
+    await page.click('[aria-label="Open observation panel"]')
+    await page.waitForSelector('[data-observation-status="live"]')
+    await page.click('[data-observed-flow="test-external-flow"]')
+    await page.waitForSelector('[data-message-id="published"]')
+    if (page.viewport().width >= 768)
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll("[data-graph-node]")].every((node) => {
+          const bounds = node.getBoundingClientRect()
+          return node.contains(
+            document.elementFromPoint(
+              bounds.x + bounds.width / 2,
+              bounds.y + bounds.height / 2
+            )
+          )
+        })
+      )
     return
   }
   await setPanel(page, "tests", false)
