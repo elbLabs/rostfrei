@@ -40,7 +40,11 @@ export function launchStudioBrowser({ headless = true } = {}) {
   ].filter(Boolean)
   const executablePath = candidates.find((candidate) => existsSync(candidate))
   if (!executablePath) throw new Error("Set CHROME_BIN to a Chrome executable")
-  return puppeteer.launch({ executablePath, headless })
+  return puppeteer.launch({
+    executablePath,
+    headless,
+    args: process.env.CHROME_NO_SANDBOX === "1" ? ["--no-sandbox"] : [],
+  })
 }
 
 export async function closeStudioBrowser(browser) {
@@ -103,7 +107,7 @@ export async function settlePage(page) {
       JSON.stringify(
         [
           ...document.querySelectorAll(
-            "[data-graph-node], .studio-sidebar, [data-node-popup]"
+            "[data-graph-node], .studio-sidebar, .studio-floating-panel, .message-inspector"
           ),
         ].map((element) => {
           const rect = element.getBoundingClientRect()
@@ -138,7 +142,8 @@ export async function capturePage(
         ])
       )
     }
-    const popup = document.querySelector("[data-node-popup]")
+    const inspector = document.querySelector(".message-inspector")
+    const popup = inspector?.checkVisibility() ? inspector : null
     return {
       title: document.title,
       viewport: { width: innerWidth, height: innerHeight },
@@ -146,7 +151,7 @@ export async function capturePage(
         width: document.documentElement.scrollWidth,
         height: document.documentElement.scrollHeight,
       },
-      heading: text(document.querySelector(".studio-topbar")),
+      heading: text(document.querySelector(".execution-header h1")),
       badges: [...document.querySelectorAll("[data-slot=badge]")].map(text),
       caption: text(document.querySelector(".graph-caption")),
       graphTransform: document.querySelector(".react-flow__viewport")?.style
@@ -163,14 +168,17 @@ export async function capturePage(
           bounds: panel ? bounds(panel) : undefined,
         }
       }),
-      nodes: [...document.querySelectorAll("[data-graph-node]")].map((node) => {
-        const button = node.querySelector(".message-node")
+      nodes: [
+        ...document.querySelectorAll("[data-graph-node], .message-list > li"),
+      ].map((node) => {
+        const button = node.querySelector(".message-card")
         const rect = button.getBoundingClientRect()
         const centerX = rect.x + rect.width / 2
         const centerY = rect.y + rect.height / 2
         const top = document.elementFromPoint(centerX, centerY)
         return {
           ...node.dataset,
+          nodeId: button.dataset.messageId,
           label: button.getAttribute("aria-label"),
           bounds: bounds(button),
           inViewport:
@@ -179,7 +187,7 @@ export async function capturePage(
             rect.bottom > 0 &&
             rect.top < innerHeight,
           centerUncovered: Boolean(top && button.contains(top)),
-          expanded: button.getAttribute("aria-expanded") === "true",
+          selected: button.getAttribute("aria-pressed") === "true",
         }
       }),
       edges: [...document.querySelectorAll("[data-graph-edge]")].map(
@@ -189,7 +197,7 @@ export async function capturePage(
           relationship: edge.dataset.edgeRelationship,
         })
       ),
-      popup: popup
+      inspector: popup
         ? {
             text: text(popup),
             bounds: bounds(popup),

@@ -123,7 +123,7 @@ async function main() {
       })
       server = started.server
       url = started.url
-      samples = await server.ssrLoadModule("/src/lib/sample-data.ts")
+      samples = await server.ssrLoadModule("/scripts/fixtures.mjs")
     }
     browser = await launchStudioBrowser({ headless: !values.headed })
     for (const name of scene === "all" ? Object.keys(scenarios) : [scene]) {

@@ -28,8 +28,11 @@ export interface GraphLayout {
   edges: GraphEdge[]
 }
 
-const HORIZONTAL_GAP = 280
-const LANE_GAP = 140
+export const MESSAGE_WIDTH = 240
+export const MESSAGE_HEIGHT = 136
+export const FIXTURE_WIDTH = 168
+const HORIZONTAL_GAP = 48
+const LANE_GAP = 176
 
 export function layoutMessageGraph(nodes: MessageGraphNode[]): GraphLayout {
   const byId = new Map(nodes.map((node) => [node.id, node]))
@@ -64,7 +67,11 @@ export function layoutMessageGraph(nodes: MessageGraphNode[]): GraphLayout {
       ...node,
       depth,
       lane,
-      x: depth * HORIZONTAL_GAP,
+      x: parent
+        ? parent.x +
+          (parent.context ? FIXTURE_WIDTH : MESSAGE_WIDTH) +
+          HORIZONTAL_GAP
+        : 0,
       y: lane * LANE_GAP,
     })
   }
@@ -165,6 +172,7 @@ export function expectedGraph(
         payload: node.payload,
         boundedContext: node.kind === "command" ? node.context : undefined,
         status: "idle",
+        expectedOutcome: node.kind === "command" ? node.outcome : undefined,
       }
     }),
   ]
@@ -217,8 +225,13 @@ export function reportGraph(
       return {
         id: message.messageId,
         parentId: exactParent ? message.causationId : fallbackParent,
-        edgeFidelity: exactParent ? "exact" : "grouped",
-        edgeRelationship: isSubject && context.anchorId ? "context" : undefined,
+        hideIncomingEdge: !exactParent && !isSubject,
+        edgeFidelity:
+          exactParent || (isSubject && !message.causationId)
+            ? "exact"
+            : "grouped",
+        edgeRelationship:
+          isSubject && context.anchorId && !exactParent ? "context" : undefined,
         subject: message.kind === "command" ? isSubject : undefined,
         kind: message.kind,
         name: message.name,

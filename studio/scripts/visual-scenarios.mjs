@@ -3,14 +3,14 @@ import assert from "node:assert/strict"
 import { settlePage } from "./browser.mjs"
 
 export const scenarios = {
-  overview: "Expected rental flow with the Tests panel open",
+  overview: "Expected rental flow in the Workbench layout",
   command: "Populated catalog-driven Command panel",
   accepted: "Accepted Preview with command details open",
   rejected: "Business rejection with command details open",
   loading: "Pending Preview with observing indicator",
   indeterminate: "Unconfirmed Test submission with retry details",
   branching: "A 25-message synthetic branching flow after Fit graph to view",
-  "long-payload": "Nested, long payload values in a message popup",
+  "long-payload": "Nested, long payload values in the message inspector",
   narrow: "Accepted command details at 390 × 844",
 }
 
@@ -167,7 +167,7 @@ export async function installScenario(page, scene, samples, diagnostics) {
 export async function prepareScenario(page, scene) {
   await page.waitForFunction(() =>
     document
-      .querySelector(".studio-topbar")
+      .querySelector(".execution-header")
       ?.textContent?.includes("Visual fixture:")
   )
   await page.addStyleTag({
@@ -181,7 +181,11 @@ export async function prepareScenario(page, scene) {
   `,
   })
   await settlePage(page)
-  if (scene === "overview") return
+  if (scene === "overview") {
+    await page.click('[data-layout="workbench"]')
+    await settlePage(page)
+    return
+  }
   await setPanel(page, "tests", false)
   await setPanel(page, "command", true)
   const select = 'select[aria-label="Command and schema"]'
@@ -204,8 +208,8 @@ export async function prepareScenario(page, scene) {
     await page.waitForSelector('[data-graph-node][data-status="running"]')
     await page.waitForFunction(() =>
       document
-        .querySelector(".studio-topbar")
-        ?.textContent?.includes("observing")
+        .querySelector(".command-execution-header")
+        ?.textContent?.includes("Execution in progress")
     )
     await setPanel(page, "command", false)
     return
@@ -224,9 +228,10 @@ export async function prepareScenario(page, scene) {
     scene === "branching" ? 25 : scene === "rejected" ? 1 : 3
   await page.waitForFunction(
     (count) =>
-      document.querySelectorAll("[data-graph-node]").length === count &&
-      document.querySelector('[data-node-id="visual-command"]')?.dataset
-        .status === (count === 1 ? "rejected" : "accepted"),
+      document.querySelectorAll(".message-card").length === count &&
+      document.querySelector(
+        '[data-message-id="visual-command"] .message-card-footer'
+      )?.dataset.status === (count === 1 ? "rejected" : "accepted"),
     {},
     expectedCount
   )
@@ -236,10 +241,10 @@ export async function prepareScenario(page, scene) {
     await page.click('button[aria-label="Fit graph to view"]')
     return
   }
-  await page.click('[data-node-id="visual-command"] .message-node')
+  await page.click('[data-message-id="visual-command"]')
   await page.waitForSelector("[data-command-response]", { visible: true })
   await settlePage(page)
-  const popup = await page.$eval("[data-node-popup]", (element) => {
+  const popup = await page.$eval(".inspector-scroll", (element) => {
     const rect = element.getBoundingClientRect()
     const maximumScroll = element.scrollHeight - element.clientHeight
     element.scrollTop = maximumScroll
@@ -260,16 +265,19 @@ export async function prepareScenario(page, scene) {
   })
   assert.ok(
     popup.scrollable &&
-      popup.top >= 61 &&
-      popup.left >= 7 &&
-      popup.right <= popup.viewportWidth - 7 &&
-      popup.bottom <= popup.viewportHeight - 63,
-    `The ${scene} popup must fit between the topbar and dock: ${JSON.stringify(popup)}`
+      popup.top >= 46 &&
+      popup.left >= 0 &&
+      popup.right <= popup.viewportWidth &&
+      popup.bottom <= popup.viewportHeight,
+    `The ${scene} inspector must remain within the viewport and allow scrolling: ${JSON.stringify(popup)}`
   )
 }
 
 async function setPanel(page, name, open) {
-  const selector = `button[aria-controls="studio-${name}-panel"]`
+  const selector =
+    name === "tests"
+      ? 'button[aria-controls="studio-navigation"]'
+      : `button[aria-controls="studio-${name}-panel"]`
   const current = await page.$eval(
     selector,
     (button) => button.getAttribute("aria-expanded") === "true"
