@@ -6,6 +6,8 @@ mod event_store;
 mod event_store_config;
 #[path = "../src/hex.rs"]
 mod hex;
+#[path = "event_store/history_reads.rs"]
+mod history_reads;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
 
@@ -309,17 +311,39 @@ async fn directory_excludes_appends_after_its_snapshot() {
 }
 
 #[tokio::test]
-async fn directory_rejects_transaction_events_without_a_valid_receipt() {
+async fn ordinary_reads_trust_recorded_transactions_and_explicit_audits_check_receipts() {
     let (context, store) = directory_fixture("directory-corrupt")
         .await
         .expect("directory fixture");
-    schema_four_event_with_filler_is_not_loadable(&store, &context, store.config())
+    schema_four_event_with_filler_is_detected_by_audit(&store, &context, store.config())
         .await
         .expect("corrupt receipt fixture");
-    let result = store
-        .list_streams(&AggregateType::new("IntegrationAggregate").expect("aggregate type"))
-        .await;
-    let error = result.expect_err("directory must validate transaction provenance");
+    let aggregate_type = AggregateType::new("IntegrationAggregate").expect("aggregate type");
+    let summaries = store
+        .list_streams(&aggregate_type)
+        .await
+        .expect("trusted directory");
+    assert_eq!(summaries.len(), 1);
+    let aggregate = summaries.first().expect("recorded stream").stream_id();
+    let session = store.append_session().await.expect("append session");
+    assert_eq!(
+        session
+            .load(aggregate)
+            .await
+            .expect("trusted session load")
+            .len(),
+        1
+    );
+    assert_eq!(
+        session
+            .load(aggregate)
+            .await
+            .expect("cached session load")
+            .len(),
+        1
+    );
+    let result = store.audit_streams(&aggregate_type).await;
+    let error = result.expect_err("directory audit must validate transaction provenance");
     assert_eq!(error.kind(), EventStoreErrorKind::CorruptHistory);
     assert!(
         error.message().contains("transaction receipt"),
@@ -592,7 +616,7 @@ async fn directory_snapshot_excludes_later_malformed_participant_history() {
         let directory = store
             .clone()
             .with_directory_snapshot_barriers(Arc::clone(&reached), Arc::clone(&release));
-        let listing = directory.list_streams(primary.aggregate_type());
+        let listing = directory.audit_streams(primary.aggregate_type());
         let append = async {
             let _ = reached.wait().await;
             context
@@ -615,7 +639,7 @@ async fn directory_snapshot_excludes_later_malformed_participant_history() {
         .await
         .expect("bounded snapshot race");
         let latest_history = store.load(&participant).await;
-        let latest_directory = store.list_streams(primary.aggregate_type()).await;
+        let latest_directory = store.audit_streams(primary.aggregate_type()).await;
         context
             .delete_stream(store.config().stream_name())
             .await
@@ -709,7 +733,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     reused_batch_id_and_filler_guard_are_rejected(&store, &context, &config)
         .await
         .expect("reused batch identity and filler guard corruption");
-    schema_four_event_with_filler_is_not_loadable(&store, &context, &config)
+    schema_four_event_with_filler_is_detected_by_audit(&store, &context, &config)
         .await
         .expect("schema-4 history receipt validation");
 
@@ -1353,6 +1377,10 @@ async fn primary_scoped_transaction_history_remains_readable(
 
     let loaded = store.load(&legacy_primary).await?;
     check(
+        store.audit_history(&legacy_primary).await? == loaded,
+        "legacy audit differs from normal load",
+    )?;
+    check(
         loaded.len() == 1
             && loaded
                 .first()
@@ -1450,7 +1478,7 @@ async fn primary_scoped_transaction_history_remains_readable(
     .await?;
     check(
         matches!(
-            store.load(&mismatched_primary).await,
+            store.audit_history(&mismatched_primary).await,
             Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory
         ),
         "legacy receipt accepted an operation-scoped guard",
@@ -2564,16 +2592,20 @@ async fn publish_raw_atomic_batch(
     Ok(())
 }
 
-async fn schema_four_event_with_filler_is_not_loadable(
+async fn schema_four_event_with_filler_is_detected_by_audit(
     store: &NatsEventStore,
     context: &async_nats::jetstream::Context,
     config: &NatsEventStoreConfig,
 ) -> TestResult<()> {
     let aggregate = publish_schema_four_event_without_receipt(context, config).await?;
-    let loaded = store.load(&aggregate).await;
+    check(
+        store.load(&aggregate).await?.len() == 1,
+        "ordinary load did not trust the recorded event",
+    )?;
+    let loaded = store.audit_history(&aggregate).await;
     check(
         matches!(loaded, Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory),
-        "schema-4 history was exposed without a valid transaction receipt",
+        "schema-4 audit accepted history without a valid transaction receipt",
     )
 }
 
