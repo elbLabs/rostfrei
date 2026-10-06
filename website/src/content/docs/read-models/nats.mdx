@@ -1,0 +1,162 @@
+# NATS setup for read models
+
+Read models reuse the application's managed NATS connection. Provision resources
+explicitly, register the transformations, and run the worker in your application
+lifecycle.
+
+## Provision the resources
+
+This setup uses the `OrganizationAccess` declaration from the
+[read-model guide](/docs/read-models):
+
+```rust
+use rostfrei::{ApplicationName, ReadModels};
+use rostfrei_nats::{
+    ApplicationMessagingConfig, NatsConnectionConfig, NatsEventStoreConfig,
+    NatsReadModelBackend, NatsReadModelConfig, connect,
+    provision_application_messaging, provision_event_store, provision_read_model,
+};
+
+let connection = connect(&NatsConnectionConfig::new(
+    "read-model-example",
+    std::env::var("ROSTFREI_NATS_URL")?,
+))
+.await?;
+
+let application = ApplicationName::new("my-application")?;
+let context = application.bounded_context("access")?;
+let events = NatsEventStoreConfig::for_bounded_context(&context)?
+    .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
+let messaging = ApplicationMessagingConfig::new(&application)?
+    .with_max_bytes(8 * 1024 * 1024)?;
+let policy = NatsReadModelConfig::for_model::<OrganizationAccess>(&context)?;
+
+provision_event_store(connection.jetstream(), &events).await?;
+provision_application_messaging(connection.jetstream(), &messaging).await?;
+provision_read_model(connection.jetstream(), &policy).await?;
+
+let backend = NatsReadModelBackend::new(connection.jetstream().clone())
+    .with_model_config(policy)
+    .with_event_store_config(events.clone());
+let read_models = ReadModels::new(context, backend);
+```
+
+Use the [registration builder](/docs/read-models) to create `model` next. Its
+`.build().await?` call opens and verifies the resources; it does not provision them.
+The limits above are small example limits, not a production sizing recommendation.
+
+## Start the worker
+
+```rust
+use rostfrei_nats::{
+    NatsReadModelConsumerOptions, NatsReadModelWorker,
+    provision_read_model_consumers,
+};
+
+let options = NatsReadModelConsumerOptions::default();
+provision_read_model_consumers(
+    connection.jetstream(),
+    &model,
+    &events,
+    messaging.topology(),
+    &options,
+)
+.await?;
+
+let worker = NatsReadModelWorker::connect(
+    connection.jetstream().clone(),
+    &model,
+    &events,
+    messaging.topology(),
+    &options,
+)
+.await?;
+
+worker.run_until_shutdown(shutdown_receiver).await?;
+```
+
+Supply a `tokio::sync::watch::Receiver<bool>` from the application's shutdown
+coordination and supervise the worker future alongside the other application tasks.
+The future owns its consumers. Shutdown or worker failure cancels them; persisted
+checkpoints handle redelivery after an uncertain in-flight write.
+
+Each model has its own domain durable when it registers domain handlers, and one
+ordered integration durable when it registers integration handlers. That integration
+consumer filters exactly the registered subjects with one outstanding delivery.
+Multiple read models can consume the same events with independent progress.
+
+## Scope and bucket policy
+
+Resource identity includes application, bounded context, model ID, and traffic scope:
+
+```plaintext
+Normal bucket: MY_APPLICATION__ACCESS__ORGANIZATION_ACCESS_READ_MODEL
+Test bucket:   MY_APPLICATION__TEST__ACCESS__ORGANIZATION_ACCESS_READ_MODEL
+Stream:        KV_<bucket>
+Keys:          $KV.<bucket>.<key>
+```
+
+Use `application.test_bounded_context("access")` and a matching Test messaging
+topology for isolated traffic. Declared integration producer contexts inherit that
+same application and traffic scope.
+
+| Policy | Default | Configuration |
+| --- | --- | --- |
+| Bucket capacity | 64 MiB | `with_storage_limits` |
+| Encoded value limit | 256 KiB | `with_storage_limits` |
+| Storage | File | `with_storage` |
+| Replicas | 1 | `with_replicas`, from 1 to 5 |
+| History per key | 1 | `with_history`, from 1 to 64 |
+| TTL | None | `with_ttl` |
+
+The value limit includes the runtime's checkpoint envelope. The stream reserves
+additional header space, and total capacity includes broker overhead. At capacity,
+writes are rejected rather than evicting unrelated keys.
+
+`provision_read_model` creates a missing bucket or verifies an existing policy.
+`verify_read_model` only verifies. Deliberate policy changes use `update_read_model`;
+lowering capacity, history, or TTL can remove retained data.
+
+TTL controls retention, not business freshness. Expiring a joined model removes
+all its source contributions and checkpoints. Reconstruct every contributing source
+before treating a recreated value as complete.
+
+## Storage behavior
+
+The runtime uses the transport-neutral `ReadModelStore<T>` contract:
+
+| Operation | Result |
+| --- | --- |
+| Read | Typed value and opaque revision, or an explicit missing result |
+| Create | Succeeds only when the key is absent or tombstoned |
+| Update | Succeeds only if the expected revision still matches |
+| Delete | Revision-protected tombstone |
+
+Compare-and-set, or **CAS**, means “save only if nobody changed this value since
+the read.” On a conflict, the runtime reloads and reapplies the transformation,
+with eight attempts per delivery. Acknowledged writes have received persistence
+confirmation; a timeout can still mean the write committed.
+
+Errors distinguish conflicts, unavailability, invalid data, incompatible schema,
+encoding failures, payload limits, exhausted bucket/account capacity, and policy
+mismatches. The built-in JSON codec uses a versioned envelope. Leader-served reads
+avoid direct reads from potentially stale replicas.
+
+## Permissions and lifecycle
+
+KV reads require stream inspection and leader message-get requests; writes publish
+to the scoped `$KV` subjects and receive replies on the client's inboxes. Provisioning
+and policy updates require their corresponding JetStream APIs.
+
+The event-driven worker additionally needs the existing event-history and durable
+consumer permissions, source delivery/ACK access, and quarantine publication access.
+Scope credentials separately for Normal and Test traffic. See the
+[storage guide's permission details](https://github.com/elbLabs/rostfrei/blob/main/docs/read-models.md#resource-policy-and-permissions).
+
+Recreating source history or a read-model bucket is a coordinated lifecycle change:
+stop its users and rebuild/reset the associated state and consumer progress. Startup
+verification does not continuously reconcile operator policy changes.
+
+For custom persistence orchestration, see the
+[low-level storage example](https://github.com/elbLabs/rostfrei/tree/main/crates/rostfrei-nats/examples/read_model_storage).
+For normal event-driven use, continue with [ordering and recovery](/docs/read-models/ordering).
