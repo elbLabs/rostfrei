@@ -1,14 +1,82 @@
-# rostfrei
+# Rostfrei
 
-<img width="160" height="160" alt="raccoon_smith" src="https://github.com/user-attachments/assets/498043fe-2f24-4ba8-b61e-04c7bb2fbb13" />
+**Understand your code. Even when AI wrote it.**
 
-rostfrei is a Rust domain-modeling, event-sourcing, and messaging platform. It
-keeps domain aggregates independent from persistence, serialization, and brokers
-while providing a compiled domain model, strict execution, developer tooling,
-and NATS JetStream adapters at the application edge.
+<img width="160" height="160" alt="Rostfrei's raccoon blacksmith mascot" src="https://github.com/user-attachments/assets/498043fe-2f24-4ba8-b61e-04c7bb2fbb13" />
 
-The workspace contains fourteen framework crates plus the bike-rental example
-Cargo package:
+Rostfrei is a Rust framework for domain modeling, event sourcing, and messaging.
+It helps humans and AI agents work from a shared model of the business: explicit
+ownership, typed contracts, event history, and behavior you can inspect. A compiled
+domain model connects your declarations to the runtime and developer tools while
+keeping persistence, serialization, and brokers outside your aggregates.
+
+[Website](https://elblabs.github.io/rostfrei/) ·
+[Documentation](https://elblabs.github.io/rostfrei/docs) ·
+[Getting started](https://elblabs.github.io/rostfrei/docs/getting-started) ·
+[Bike-rental example](examples/bike-rental) ·
+[Changelog](CHANGELOG.md)
+
+**Status: alpha.** APIs are evolving. The runnable example and architecture
+decisions are the best starting points for evaluating the framework.
+
+## Why Rostfrei?
+
+An agent can implement a feature. Your team still needs to understand where its
+rules live, what they can change, and how the system behaves. Rostfrei connects
+the code's structure to its business meaning and runtime evidence:
+
+- **Model the business.** Give commands, policies, and invariants explicit
+  owners. Typed declarations and checked project structure help both developers
+  and coding agents navigate the model and find the implementation of a rule.
+- **Keep the history.** Rebuild aggregate state from domain events. Execute
+  commands with atomic commits, expected stream versions, and exact retries,
+  including transactions across aggregate streams in the same event store.
+- **Connect the application.** Use typed command, query, and integration-event
+  buses, with NATS JetStream adapters for durable messaging and event storage.
+  Public integration contracts stay separate from private aggregate history.
+- **Inspect the behavior.** Use Tracer for read-only Preview, isolated Test
+  publication, and behavioral tests. Explore commands and message flows visually
+  in [Tracer Studio](studio), or through Tracer's agent-facing HTTP API.
+
+Rostfrei is aimed at applications where business rules, consistency boundaries,
+and the history of change are central to the design—especially when teams want
+to keep an agent-assisted codebase understandable as it grows.
+
+## Start with a bicycle rental
+
+In the example, `RentBicycle` asks the fleet to make a decision. An accepted
+rental commits a private `BicycleRented` domain event. Application code then maps
+it to the public `BicycleRentalStarted` integration event. An unavailable bicycle
+produces a rejection and no new domain events.
+
+With Git and [rustup](https://rustup.rs/) installed, inspect that model without a
+broker:
+
+```sh
+git clone https://github.com/elbLabs/rostfrei.git
+cd rostfrei
+cargo run --locked -p bike-rental --bin bike-rental-model
+```
+
+The repository selects its pinned Rust toolchain automatically through rustup.
+The command prints the compiled domain model. Continue with the
+[getting-started guide](https://elblabs.github.io/rostfrei/docs/getting-started)
+to run the NATS-backed application and explore its behavior in Studio.
+
+## Find your way
+
+| Goal | Guide |
+| --- | --- |
+| Understand the model and its vocabulary | [Documentation introduction](https://elblabs.github.io/rostfrei/docs) and [ubiquitous language](UBIQUITOUS_LANGUAGE.md) |
+| Follow a command through NATS | [Subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects) |
+| Declare domain types and behavior | [Domain macros](https://elblabs.github.io/rostfrei/docs/domain-macros) |
+| Organize a domain and check ownership | [Project structure](https://elblabs.github.io/rostfrei/docs/project-structure) |
+| Understand architectural tradeoffs | [Architecture decisions](docs/adr) |
+| Contribute or run the test suite | [Development](#development) |
+
+## Workspace components
+
+The workspace contains fourteen framework crates plus the bike-rental example:
 
 - `rostfrei`: application facade for the compiled domain model, typed command,
   query, and integration-event buses, event-sourcing runtime, registry, and
@@ -40,6 +108,8 @@ Cargo package:
   and authoritative JetStream event storage.
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
 
+## Runtime and messaging
+
 Messaging is application-scoped. An application name such as `fast-inbox`
 derives its command, command-response, integration-event, and quarantine streams
 and prefixes all rostfrei business subjects. Bounded contexts derive typed
@@ -48,6 +118,10 @@ canonical namespace; Test automatically inserts a reserved `.test` subject
 scope and uses separate derived streams without inventing another application.
 See
 [`docs/adr`](docs/adr) for the messaging conventions and provisioning decisions.
+For a visual walkthrough using the bike-rental example, read
+[Subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
+on the docs website, or open [`docs/subjects.html`](docs/subjects.html) for the
+standalone offline guide.
 
 [`examples/bike-rental`](examples/bike-rental) is a self-contained public
 example with rental, return, and fleet-addition commands plus their decisions,
@@ -60,6 +134,10 @@ uses resettable isolated state, and Dispatch requires separate production
 authorization. The aggregate identity in the API is qualified by its bounded
 context. Command and rejection derives supply their canonical JSON codecs,
 while aggregate event JSON comes from the compiled aggregate codec.
+
+The example also includes a self-checking [quarantine walkthrough](examples/bike-rental/QUARANTINE.md)
+covering retry exhaustion, quarantine inspection, repair and republication, and
+invalid-message handling against real NATS JetStream.
 
 A Tracer instance receives an explicit test `EventHistory` for discovery,
 dynamic inputs, and read-only Simulate. Test and Dispatch instead use separately
@@ -83,6 +161,14 @@ Authoritative NATS event storage requires NATS Server 2.12.1 or newer. In
 addition to atomic multi-event commits, one event transaction can atomically
 append commits to multiple aggregate streams in the same bounded-context event
 store.
+
+Successful command execution always persists an acceptance receipt, including
+commands that emit no domain events or load no aggregates. Event-free acceptance
+returns `CommandReceipt::AcceptedNoEvents`; retries return `ExactReplay` with an
+empty event list. Loaded read-only aggregates are guarded atomically with the
+receipt, and changed command content or provenance conflicts under the accepted
+operation identity. See [Durable event-free acceptance](docs/adr/0039-durable-event-free-acceptance.md)
+for concurrency, storage compatibility, and migration from transient no-op results.
 
 The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual architecture
@@ -146,6 +232,21 @@ representation. Query responses use `Cache-Control: private, no-store`.
 
 Commands continue to use their existing POST route, JSON body, and mandatory
 `Idempotency-Key` header.
+
+## Command execution metadata
+
+`CommandExecutor::execute` and `CommandBus` share the correlation rule
+`correlation_id = supplied_correlation_id ?? operation_id`. Direct execution
+establishes this default before invoking a handler, checking an existing receipt,
+or persisting events. Every committed event and its transaction receipt carry the
+same correlation. Retrying the same operation retains that identity; a follow-up
+operation can supply the earlier operation's correlation to continue its flow.
+
+Supplied causation is preserved independently. Direct execution leaves omitted
+causation absent; the bus processor uses the command message ID when no causation
+was supplied. `CommandExecutor::simulate` applies the same correlation default to
+the metadata visible to its handler. An operation ID used as the default must
+satisfy `CorrelationId` validation; invalid defaults fail before execution.
 
 ## Macro setup
 
@@ -228,7 +329,10 @@ check or Clippy reports an error.
 
 The NATS authentication acceptance suite starts isolated Docker containers and
 tests correct, missing, and wrong credentials, percent-encoded URL credentials,
-server restart, pool failover, and discovered-server failover:
+server restart, pool failover, and discovered-server failover. Its authenticated
+JetStream scenarios also exercise command delivery and durable responses, then
+recreate the managed connection to verify aggregate/command replay and durable
+post-commit consumption with both explicit and URL credentials:
 
 ```sh
 cargo test --locked -p rostfrei-nats --test authentication_integration

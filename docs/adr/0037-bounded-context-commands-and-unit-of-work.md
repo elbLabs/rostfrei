@@ -73,7 +73,10 @@ upcasting, Protobuf, or other representations without forcing heterogeneous
 participants through one codec. A loaded aggregate with events is a writer. A loaded aggregate without
 events is a read guard when another participant writes. Failed loads enlist
 nothing, and a loaded aggregate that escapes its command-handling attempt fails
-closed. Mutation uses the direct `aggregate_mut()` API. Tracking belongs to the aggregate instance
+closed. Loaded handles dereference to their tracked aggregate instances, so handlers invoke
+domain actions directly, such as `fleet.rent_bicycle(bicycle_id)`, with the action trait in scope.
+Shared and mutable handle references also coerce to aggregate-instance references for
+multi-aggregate actions. Tracking belongs to the aggregate instance
 returned by `load`, not to arbitrary aggregate instances manually constructed by application code.
 When the loaded handle leaves the handler, its load lease verifies that the tracked instance is
 attached before the unit of work can commit. A handle that finishes with a replacement or swapped
@@ -86,6 +89,12 @@ For automatically tracked aggregates, each raised event opens its journal entry 
 is applied and completes it after synchronous encoding. Returned encoding failures are
 reported when the accepted unit of work finishes; a caught encoding panic leaves
 an incomplete journal and also fails closed before persistence.
+
+Within configured domain roots, `cargo rostfrei-dev check --workspace` reserves event raising
+for validated domain action implementations and reports violations as `RF011`. Handlers load
+aggregates and invoke actions; the action implementations call `raise`. This is a source-level
+architectural rule, not Rust visibility: the runtime method remains public. See
+[ADR 0025](0025-aggregate-event-sets-authorize-raising.md) for the rule's scope.
 
 Every event-producing command is committed as one `EventTransaction`, whether
 it has one participant or many. There is no distinguished primary participant;
@@ -101,6 +110,16 @@ and places that trusted context in `CommandExecutionMetadata`. Every
 store. Direct executor callers must bind the context with
 `CommandExecutionMetadata::with_bounded_context`; metadata without a context may
 still be used by non-command infrastructure but cannot load command participants.
+
+Both direct execution and the command bus use the same correlation rule:
+`correlation_id = supplied_correlation_id ?? operation_id`. The executor normalizes
+metadata before invoking the handler, looking up receipts, or persisting events;
+simulation exposes the same normalized metadata to handlers. Explicit correlation,
+including an earlier operation's root correlation, and supplied causation are
+preserved independently. Transaction receipts and their events carry the same
+correlation and causation across retries. If an omitted correlation cannot be
+derived as a valid correlation ID from the operation ID, execution fails before
+invoking the handler or writing events.
 
 Transaction receipts are addressed by `(bounded context, OperationId)`. The context
 is persisted in `EventTransaction` and `TransactionReceipt`, participates in exact
@@ -123,10 +142,12 @@ The operation-only lookup and contextless transaction values remain available
 solely for legacy migration and low-level store tooling; `CommandExecutor` never
 uses them.
 
-An accepted command with no emitted events has no durable event-store receipt.
-Its `CommandReceipt::NoEvents` result may therefore rerun on retry. Domain
-rejections are likewise not persisted by the event store; durable command
-transport may retain their command response separately.
+As extended by [ADR 0039](0039-durable-event-free-acceptance.md), an accepted command
+with no emitted events persists a durable receipt and all loaded read guards before
+returning `CommandReceipt::AcceptedNoEvents`. Commands loading no aggregates persist
+only the receipt. Exact retries return `ExactReplay` with an empty event list.
+Domain rejections are not persisted by the event store; durable command transport
+may retain their command response separately.
 
 Command registration is keyed by bounded context, command name, and schema
 version. Aggregate inventory used for stream discovery is registered explicitly

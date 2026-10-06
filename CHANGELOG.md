@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (command acceptance):** successful event-free commands now persist a
+  context-scoped acceptance receipt by default. `CommandReceipt::AcceptedNoEvents`
+  replaces transient `NoEvents`; exact retries return `ExactReplay` with no events.
+  Empty/read-only transactions are supported by memory and NATS stores, with atomic
+  read guards and normal fingerprint/provenance conflicts. NATS uses receipt schema
+  2 for event-free acceptance and continues reading existing receipts and histories.
+  Past transient no-op acceptances cannot be reconstructed retroactively. See
+  [ADR 0039](docs/adr/0039-durable-event-free-acceptance.md).
+
+### Fixed
+
+- Direct command execution now defaults missing correlation to the operation ID,
+  using the same metadata rule as `CommandBus`. Explicit correlation and causation
+  are preserved, transaction receipts and events agree across retries, and mapped
+  integration events can be published from directly executed commands without
+  caller-supplied correlation.
+
 ## [0.0.5-alpha] - 2026-09-16
 
 ### Added

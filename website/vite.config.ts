@@ -9,6 +9,7 @@ import rehypeAutolinkHeadings from "rehype-autolink-headings"
 import rehypeSlug from "rehype-slug"
 import remarkGfm from "remark-gfm"
 import tailwindcss from "@tailwindcss/vite"
+import { metadataPlugin } from "./metadata-plugin.ts"
 
 const config = defineConfig({
   base: process.env.VITE_BASE_PATH ?? "/",
@@ -26,6 +27,7 @@ const config = defineConfig({
     },
     viteReact({ include: /\.(js|jsx|md|mdx|ts|tsx)$/ }),
     tailwindcss(),
+    metadataPlugin(),
   ],
 })
 

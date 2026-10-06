@@ -1,0 +1,84 @@
+# Getting started
+
+Start with the bike-rental example: a small domain with enough behavior to show what Rostfrei connects. You can inspect the compiled model without NATS, then run the application to follow commands through decisions, event history, and integrations.
+
+Treat this as an exercise in understanding code you didn't write. The same path helps you review an AI agent's contribution: find the domain owner, read the rule, and observe the outcome.
+
+## 1. Inspect the domain model
+
+Install [Rust through rustup](https://rustup.rs/) and Git. The repository pins its Rust toolchain in `rust-toolchain.toml`; rustup selects it when you run Cargo from the checkout.
+
+```sh
+git clone https://github.com/elbLabs/rostfrei.git
+cd rostfrei
+cargo run --locked -p bike-rental --bin bike-rental-model
+```
+
+This builds the example and prints its compiled domain model as JSON. No broker is needed for this step. Look for the Bike Rental bounded context, the rental fleet aggregate, its entities, and its domain-event and rejection contracts. The running application's Tracer catalog exposes the registered commands in a later step.
+
+The model is assembled from the same Rust declarations the application uses. It gives tools a structured description of the domain while your implementations remain ordinary Rust.
+
+## 2. Read one business flow
+
+Browse the [example source](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental) with these questions in mind:
+
+| Question | Concept to look for |
+| --- | --- |
+| What is the customer asking for? | The `RentBicycle` command |
+| Which business facts determine eligibility? | `RentalEligibilityPolicy` and the bicycle lifecycle |
+| What happened when the rental was accepted? | The private `BicycleRented` domain event |
+| What can other parts of the application consume? | The public `BicycleRentalStarted` integration event |
+| What happens when a bicycle cannot be rented? | A business rejection, with no appended domain events |
+
+The example also includes adding, returning, and transferring bicycles. `TransferBicycle` coordinates two fleet aggregate streams in a single atomic event-store transaction.
+
+Use [Project structure](/docs/project-structure) to understand where those concepts live, and [Domain macros](/docs/domain-macros) to understand how their contracts are declared.
+
+## 3. Run the application with NATS
+
+For the full flow, you need Docker with Compose and the NATS-backed example. Follow the [example's local startup instructions](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental#nats-backed-tracer) for the supplied broker, resource limits, and local Tracer configuration.
+
+The example starts Tracer at `http://127.0.0.1:1309` by default. It creates separate normal and isolated Test resources for the same application and seeds a demonstration fleet.
+
+There are three distinct ways to exercise a command:
+
+| Mode | What it does |
+| --- | --- |
+| **Preview** | Evaluates a decision against isolated Test history without appending events or publishing the command. |
+| **Test** | Publishes through the isolated command pipeline. It can append events and trigger Test-scoped integrations. |
+| **Production dispatch** | Publishes to the normal application pipeline using a separately authorized capability. |
+
+Start with Preview to understand a decision, then use Test to observe the transported flow. [Subjects and streams](/docs/messaging/subjects) explains the routing and storage behind these modes.
+
+## 4. Explore the flow in Tracer Studio
+
+With the local Tracer running, open a second terminal at the repository root. Install Node.js 24 and pnpm, then start Studio:
+
+```sh
+cd studio
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+Open the local URL printed by Vite. Studio proxies its API requests to the local Tracer. If you configured a different target or control token, use the [Studio connection instructions](https://github.com/elbLabs/rostfrei/tree/main/studio#tracer-connection).
+
+Choose `RentBicycle` and an isolated Test instance. Preview the decision, then use Test to inspect the committed domain event and subsequent integration event. The seeded example includes a serviceable bicycle and one that requires maintenance, so you can explore both acceptance and rejection.
+
+Studio displays clearly labeled demo data when Tracer is unavailable. Check the connection state when you want to observe the running application.
+
+## Explore with a coding agent
+
+The compiled model and predictable source structure give an agent concrete places to start. Try asking:
+
+> Explain how `RentBicycle` works. Identify its bounded context, find the rental eligibility rule and its implementation, and describe the accepted and rejected outcomes. Cite the source files you used.
+
+Compare that explanation with the contracts and behavior you explored above. For a connected workflow, the [example's agent-first Tracer guide](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental#agent-first-tracer-workflow) shows how to discover commands and inspect their outcomes through Tracer. Use Preview to explore a decision; Test publication changes isolated Test state.
+
+## Keep exploring
+
+- [Subjects and streams](/docs/messaging/subjects): trace a command through the NATS-backed runtime.
+- [Domain macros](/docs/domain-macros): declare types, behavior contracts, and model composition.
+- [Project structure](/docs/project-structure): give each concept and capability a predictable home.
+- [Development guide](https://github.com/elbLabs/rostfrei#development): run the full test suite and work on the framework.
+
+Rostfrei is currently **alpha**. This guide follows the repository checkout so the code, example, and documentation can be evaluated together.

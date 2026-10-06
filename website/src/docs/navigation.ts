@@ -17,11 +17,18 @@ export interface DocsNavigationSection {
 
 export const docsNavigation = [
   {
-    title: "Overview",
-    items: [{ title: "Introduction", slug: "" }],
+    title: "Start here",
+    items: [
+      { title: "Introduction", slug: "" },
+      { title: "Getting started", slug: "getting-started" },
+    ],
   },
   {
-    title: "Domain Macros",
+    title: "Messaging",
+    items: [{ title: "Subjects and streams", slug: "messaging/subjects" }],
+  },
+  {
+    title: "Domain macros",
     items: [
       { title: "Overview", slug: "domain-macros" },
       {
@@ -63,7 +70,7 @@ export const docsNavigation = [
         ],
       },
       {
-        title: "Behaviour",
+        title: "Behavior",
         items: [
           { title: "domain_action", slug: "domain-macros/domain-action" },
           { title: "domain_query", slug: "domain-macros/domain-query" },
@@ -81,7 +88,7 @@ export const docsNavigation = [
     ],
   },
   {
-    title: "Project Structure",
+    title: "Project structure",
     items: [
       { title: "Overview", slug: "project-structure" },
       { title: "Domain root", slug: "project-structure/domain-root" },

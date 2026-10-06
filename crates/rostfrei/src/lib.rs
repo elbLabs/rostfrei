@@ -1,3 +1,18 @@
+//! Domain modeling, event sourcing, and typed messaging for Rust applications.
+//!
+//! Rostfrei connects business rules written in ordinary Rust to a compiled domain
+//! model, event-store execution, and typed command, query, and integration-event
+//! buses. Aggregates stay independent of persistence, serialization, and brokers.
+//!
+//! Explicit ownership, typed contracts, and inspectable command flows help humans
+//! and coding agents understand the same codebase, including agent-written code.
+//!
+//! Start with the [getting-started guide](https://elblabs.github.io/rostfrei/docs/getting-started)
+//! and the [bike-rental example](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental).
+//! The [documentation](https://elblabs.github.io/rostfrei/docs) covers domain
+//! declarations, project structure, and NATS messaging. Rostfrei is currently
+//! alpha and its APIs are evolving.
+
 extern crate self as rostfrei;
 
 #[doc(hidden)]

@@ -13,7 +13,8 @@ pub(super) fn check(
     directories: &[PathBuf],
     facts: &BTreeMap<PathBuf, SourceFileFacts>,
     diagnostics: &mut Vec<Diagnostic>,
-) {
+) -> BTreeMap<PathBuf, (usize, usize)> {
+    let mut approved_implementations = BTreeMap::new();
     let tests_root = root.join("tests");
     for directory in directories
         .iter()
@@ -32,8 +33,11 @@ pub(super) fn check(
         let Some(owner) = expected_owner(parent, facts) else {
             continue;
         };
-        check_execute(directory, action, &owner, facts, diagnostics);
+        if let Some(position) = check_execute(directory, action, &owner, facts, diagnostics) {
+            approved_implementations.insert(directory.join("execute.rs"), position);
+        }
     }
+    approved_implementations
 }
 
 fn check_execute(
@@ -42,7 +46,7 @@ fn check_execute(
     owner: &ExpectedOwner,
     facts: &BTreeMap<PathBuf, SourceFileFacts>,
     diagnostics: &mut Vec<Diagnostic>,
-) {
+) -> Option<(usize, usize)> {
     let execute_path = directory.join("execute.rs");
     let Some(execute) = facts.get(&execute_path) else {
         if !execute_path.is_file() {
@@ -53,7 +57,7 @@ fn check_execute(
                 "action directory requires `execute.rs`",
             ));
         }
-        return;
+        return None;
     };
     for line in &execute.glob_import_lines {
         diagnostics.push(
@@ -100,7 +104,7 @@ fn check_execute(
                 implementations.len()
             ),
         ));
-        return;
+        return None;
     };
     if implementation.trait_is_direct
         && !execute.aliases.iter().any(|alias| alias == action)
@@ -114,6 +118,14 @@ fn check_execute(
             &execute.aliases,
         ));
     }
+    (implementation.trait_is_direct
+        && !execute.aliases.iter().any(|alias| alias == action)
+        && owner.matches(&implementation.implementor, &execute.aliases)
+        && execute.glob_import_lines.is_empty()
+        && execute.top_level_items.iter().any(|item| {
+            item.line == implementation.line && item.trait_name.as_deref() == Some(action)
+        }))
+    .then_some((implementation.line, implementation.column))
 }
 
 fn wrong_owner(

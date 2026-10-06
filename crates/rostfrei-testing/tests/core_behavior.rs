@@ -1051,7 +1051,10 @@ async fn command_execution_uses_the_registered_aggregate_codec_for_write_and_rep
         )
         .await
         .expect("custom codec should decode its non-JSON-default schema during command replay");
-    assert_eq!(replayed, CommandOutcome::Accepted(CommandReceipt::NoEvents));
+    assert_eq!(
+        replayed,
+        CommandOutcome::Accepted(CommandReceipt::AcceptedNoEvents)
+    );
 }
 
 #[tokio::test]
@@ -1182,7 +1185,7 @@ async fn executor_returns_an_accepted_no_events_receipt_without_appending() {
 
     assert_eq!(
         result.expect("no-op execution should complete"),
-        CommandOutcome::Accepted(CommandReceipt::NoEvents)
+        CommandOutcome::Accepted(CommandReceipt::AcceptedNoEvents)
     );
     assert!(
         executor

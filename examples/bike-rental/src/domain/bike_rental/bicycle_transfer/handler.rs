@@ -21,17 +21,13 @@ impl CommandHandler<TransferBicycle> for TransferBicycleHandler {
         let mut source = execution
             .load::<RentalFleetAggregate>(command.from_fleet_id.as_str())
             .await?;
-        if let Err(rejection) = BicycleTransfer::validate_route(source.aggregate(), command) {
+        if let Err(rejection) = BicycleTransfer::validate_route(&source, command) {
             return Ok(CommandDecision::Rejected(rejection));
         }
         let mut destination = execution
             .load::<RentalFleetAggregate>(command.to_fleet_id.as_str())
             .await?;
-        match BicycleTransfer::transfer(
-            source.aggregate_mut(),
-            destination.aggregate_mut(),
-            command,
-        ) {
+        match BicycleTransfer::transfer(&mut source, &mut destination, command) {
             Ok(()) => Ok(CommandDecision::Accepted),
             Err(rejection) => Ok(CommandDecision::Rejected(rejection)),
         }

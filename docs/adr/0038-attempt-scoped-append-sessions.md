@@ -25,9 +25,11 @@ attempt; it does not reserve a version or lock aggregates against other writers.
 
 `CommandExecutor` opens a new session for every handler attempt. The unit of work
 loads through that session and consumes it when persisting its transaction.
-Conflicts discard the session and rerun the handler with fresh history. Rejection,
-no-event decisions, and handler errors drop it without persistence. Simulation
-continues to use the read-only history API without opening an append session.
+Conflicts discard the session and rerun the handler with fresh history. Accepted
+no-event decisions consume the session to persist acceptance and read guards (see
+[ADR 0039](0039-durable-event-free-acceptance.md)). Rejection and handler errors drop
+it without persistence. Simulation continues to use the read-only history API
+without opening an append session.
 
 Existing adapters remain source-compatible through a forwarding implementation.
 `Arc<Store>` forwards session creation to the underlying adapter, including when

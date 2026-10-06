@@ -7,6 +7,8 @@ export type DocsPageLoader = () => Promise<DocsPageModule>
 
 export const docsRegistry = {
   "": () => import("@/content/docs/introduction.mdx"),
+  "getting-started": () => import("@/content/docs/getting-started.mdx"),
+  "messaging/subjects": () => import("@/content/docs/messaging/subjects.mdx"),
   "domain-macros": () => import("@/content/docs/domain-macros/index.mdx"),
   "domain-macros/install-macro-support": () =>
     import("@/content/docs/domain-macros/install-macro-support.mdx"),
