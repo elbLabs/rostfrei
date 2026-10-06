@@ -310,6 +310,7 @@ pub enum CommandInputError {
 }
 
 pub struct TracerBuilder {
+    observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
     history: Arc<dyn EventHistory>,
     test_event_store: Option<Arc<dyn EventStore>>,
     test_transport: Option<Arc<dyn CommandTransport>>,
@@ -333,6 +334,7 @@ pub struct TracerBuilder {
 impl TracerBuilder {
     pub fn new(history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
         Self {
+            observation: BTreeMap::new(),
             history,
             test_event_store: None,
             test_transport: None,
@@ -352,6 +354,12 @@ impl TracerBuilder {
             production_quarantine_reader: None,
             quarantine_payload_policy: Arc::new(DefaultQuarantinePayloadPolicy),
         }
+    }
+
+    #[must_use]
+    pub fn with_continuous_observation(mut self, feed: Arc<crate::ObservationFeed>) -> Self {
+        self.observation.insert(feed.scope(), feed);
+        self
     }
 
     #[must_use]
@@ -588,8 +596,14 @@ impl TracerBuilder {
             .min(self.maximum_operations)
             .min(Semaphore::MAX_PERMITS);
         let maximum_operation_payload_bytes = operation_payload_budget(self.maximum_operations);
+        catalog.observation = self
+            .observation
+            .values()
+            .map(|feed| feed.catalog())
+            .collect();
         Ok(Tracer {
             inner: Arc::new(TracerInner {
+                observation: self.observation,
                 history: self.history,
                 test_backing_configured: self.test_event_store.is_some(),
                 test_transport: self.test_transport,
@@ -743,6 +757,7 @@ fn test_transport_payload_limit(transport: Option<&dyn CommandTransport>) -> usi
 }
 
 struct TracerInner {
+    observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
     history: Arc<dyn EventHistory>,
     test_backing_configured: bool,
     test_transport: Option<Arc<dyn CommandTransport>>,
@@ -1529,11 +1544,20 @@ impl Tracer {
             .await
             .retain_dispatch_operations();
         self.inner.correlations.retain_dispatch_correlations();
+        let observation = self.inner.observation.get(&crate::ObservationScope::Test);
+        if let Some(feed) = observation {
+            feed.reset(true);
+        }
         let result = reset.reset(fixture).await;
         if result.is_ok() {
+            if let Some(feed) = observation {
+                feed.reset(false);
+            }
             self.inner
                 .test_scenario_healthy
                 .store(true, Ordering::Release);
+        } else if let Some(feed) = observation {
+            feed.fail_reset();
         }
         result
     }
@@ -2070,6 +2094,30 @@ impl Tracer {
         self.inner
             .correlations
             .observer(mode, Arc::clone(&self.inner.trace_payload_policy))
+            .with_continuous_observation(match mode {
+                OperationMode::Simulate => None,
+                OperationMode::Test => self
+                    .inner
+                    .observation
+                    .get(&crate::ObservationScope::Test)
+                    .cloned(),
+                OperationMode::Dispatch => self
+                    .inner
+                    .observation
+                    .get(&crate::ObservationScope::Production)
+                    .cloned(),
+            })
+    }
+
+    pub fn observation(
+        &self,
+        scope: crate::ObservationScope,
+    ) -> Result<Arc<crate::ObservationFeed>, crate::ObservationError> {
+        self.inner
+            .observation
+            .get(&scope)
+            .cloned()
+            .ok_or(crate::ObservationError::Unavailable)
     }
 
     pub fn correlation_mode(

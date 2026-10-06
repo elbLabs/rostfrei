@@ -154,6 +154,11 @@ succeeds. Operation status and traces are retained only in bounded memory,
 payloads are redacted by default, and local deployments must opt in explicitly
 to expose them.
 
+Tracer also supports opt-in [continuous application observation](docs/continuous-observation.md).
+Studio's Observe panel discovers externally triggered event flows and updates a
+selected flow continuously. Test and production use separate bounded windows;
+production observation uses the read-only inspection capability.
+
 rostfrei does not implicitly provision infrastructure. Operators use explicit
 provisioning APIs with bounded, application-scoped defaults; the local
 bike-rental example invokes them during startup for demonstration.

@@ -4,6 +4,7 @@ mod command_bus;
 mod correlation;
 mod input;
 mod message_series;
+mod observation;
 mod operation;
 mod quarantine;
 mod runtime;
@@ -42,6 +43,11 @@ pub use message_series::{
     MessageSeriesMatch, MessageSeriesValidationIssue, ObservedCommandOutcome, ObservedMessageNode,
     ObservedMessageSeries, ObservedMessageSeriesError, ObservedMessageSeriesOutcomeIssue,
     compare_message_series, message_series_definition_schema, observed_message_series_schema,
+};
+pub use observation::{
+    CatalogObservation, ObservationError, ObservationFeed, ObservationScope, ObservationSnapshot,
+    ObservationSource, ObservationStatus, ObservationSubscription, ObservedFlow,
+    ObservedFlowSummary,
 };
 pub use operation::{
     CompletedDecision, OperationEvent, OperationEventEvidence, OperationEventEvidenceKind,

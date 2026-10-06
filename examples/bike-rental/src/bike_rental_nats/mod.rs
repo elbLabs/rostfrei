@@ -67,6 +67,8 @@ const EVENT_STORE_MAX_EVENT_BYTES_ENV: &str = "ROSTFREI_NATS_EVENT_STORE_MAX_EVE
 
 #[derive(Debug, Error)]
 pub enum BikeRentalNatsError {
+    #[error("continuous observation failed: {0}")]
+    Observation(String),
     #[error(transparent)]
     CommandBinding(#[from] CommandBindingRegistrationError),
     #[error(transparent)]
@@ -554,10 +556,21 @@ pub struct BikeRentalNatsRuntime {
 struct TracerCorrelationHandler {
     observer: CorrelationObserver,
     store: NatsEventStore,
+    source: Option<rostfrei_tracer::ObservationSource>,
 }
 
 #[async_trait]
 impl CorrelatedMessageHandler for TracerCorrelationHandler {
+    async fn availability(&self, available: bool) {
+        if let Some(source) = &self.source {
+            if available {
+                source.ready();
+            } else {
+                source.unavailable();
+            }
+        }
+    }
+
     async fn handle(&self, message: CorrelatedMessage) {
         let identity = message
             .message_id()
@@ -869,6 +882,9 @@ impl BikeRentalNatsRuntime {
         &self,
         observer: CorrelationObserver,
     ) -> Result<JoinHandle<()>, BikeRentalNatsError> {
+        let source = observer
+            .observation_source("bike-rental")
+            .map_err(|error| BikeRentalNatsError::Observation(error.to_string()))?;
         let nats_observer = NatsCorrelationObserver::new_in_scope(
             self.connection.client().clone(),
             self.config.application().clone(),
@@ -884,10 +900,17 @@ impl BikeRentalNatsRuntime {
                 .as_str(),
         );
         let subscription = nats_observer.subscribe().await?;
+        if let Some(source) = &source {
+            source.ready();
+        }
         let store = self.store.clone();
         Ok(tokio::spawn(async move {
             if let Err(error) = subscription
-                .run(Arc::new(TracerCorrelationHandler { observer, store }))
+                .run(Arc::new(TracerCorrelationHandler {
+                    observer,
+                    store,
+                    source,
+                }))
                 .await
             {
                 tracing::error!(%error, "bike-rental correlation observer stopped");

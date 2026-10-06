@@ -23,6 +23,16 @@ All notable changes to this project are documented in this file.
   integration events can be published from directly executed commands without
   caller-supplied correlation.
 
+### Added
+
+- Opt-in continuous observation of application-originated domain and integration
+  events, with bounded scope-isolated retention, observer health, redacted
+  canonical message series, and read-only list/detail/SSE discovery.
+- Studio Observe panel with Test/Production selection, live flow updates,
+  filtering, pause/resume, reconnection, and partial/retention diagnostics.
+- Bike-rental observer wiring and real-NATS coverage of externally submitted
+  commands and their integration-triggered reactions.
+
 ## [0.0.5-alpha] - 2026-09-16
 
 ### Added

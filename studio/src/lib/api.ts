@@ -208,23 +208,34 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-async function request(path: string, init?: RequestInit): Promise<Response> {
+export async function request(
+  path: string,
+  init?: RequestInit,
+  capability: "control" | "inspection" = "control",
+  streaming = false
+): Promise<Response> {
   const label = requestLabel(path, init?.method)
-  const timeout = AbortSignal.timeout(init?.method === "POST" ? 60_000 : 10_000)
-  const signal = init?.signal
-    ? AbortSignal.any([init.signal, timeout])
-    : timeout
+  const timeout = streaming
+    ? undefined
+    : AbortSignal.timeout(init?.method === "POST" ? 60_000 : 10_000)
+  const signal =
+    init?.signal && timeout
+      ? AbortSignal.any([init.signal, timeout])
+      : (init?.signal ?? timeout)
   let response: Response
   try {
     response = await fetch(apiUrl(path), {
       ...init,
       signal,
       redirect: "error",
-      headers: { ...requestHeaders("application/json"), ...init?.headers },
+      headers: {
+        ...requestHeaders("application/json", capability),
+        ...init?.headers,
+      },
     })
   } catch {
     throw new Error(
-      `${label}: ${timeout.aborted ? "Tracer did not respond before the request timed out." : signal.aborted ? "Request cancelled or timed out." : "Could not reach the Tracer API. Check the server, proxy target, and network connection."}`
+      `${label}: ${timeout?.aborted ? "Tracer did not respond before the request timed out." : signal?.aborted ? "Request cancelled or timed out." : "Could not reach the Tracer API. Check the server, proxy target, and network connection."}`
     )
   }
   if (!response.ok) {
@@ -240,10 +251,19 @@ function requestLabel(path: string, method = "GET"): string {
   return `${method} ${new URL(apiUrl(path), window.location.origin).pathname}`
 }
 
-function requestHeaders(accept: string): HeadersInit {
+function requestHeaders(
+  accept: string,
+  capability: "control" | "inspection"
+): HeadersInit {
+  const token =
+    capability === "inspection"
+      ? import.meta.env.VITE_TRACER_INSPECTION_TOKEN
+      : CONTROL_TOKEN
+  if (!token)
+    throw new Error("Production inspection credential is not configured")
   return {
     accept,
-    authorization: `Bearer ${CONTROL_TOKEN}`,
+    authorization: `Bearer ${token}`,
   }
 }
 
@@ -252,7 +272,7 @@ function apiUrl(path: string): string {
   return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`
 }
 
-function advertisedHref(href: string): string {
+export function advertisedHref(href: string): string {
   if (
     !href.startsWith("/") ||
     href.startsWith("//") ||
