@@ -291,6 +291,18 @@ compile-failure test diagnostics consistent across local machines and CI.
 
 ### Tests
 
+Check that a new application builds outside this checkout, using the exact public
+dependencies delivered by the generator (GitHub and crates.io access required):
+
+```sh
+python3 scripts/check_new_project.py
+```
+
+This generates a hyphenated starter in a temporary directory, runs `cargo check`
+and `cargo test --locked` without changing its manifest, and verifies that all
+Rostfrei crates resolve from the pinned Git release. The **Tests** workflow runs
+this acceptance check on every PR and `main` push; it needs no broker.
+
 With Python 3.11+ and a running local Docker engine, run the complete Rust suite:
 
 ```sh
@@ -418,6 +430,38 @@ python3 scripts/versions.py check --tag v0.0.6-alpha
 ```
 
 The workflow creates a draft GitHub release; it does not publish crates.
+
+### Starter dependency contract
+
+`cargo rostfrei new` pins both `rostfrei` and `rostfrei-nats` to the same full Git
+commit from an available GitHub release while the crates are unpublished. The
+current starter targets `v0.0.5-alpha` (`c9f5516ddc324265916b60e1eb7300dad9acac9d`).
+This pin is intentionally independent of the generator's package version and
+`main`: a newer CLI can generate a starter using an older, tested release.
+Existing generated projects retain their pin; commit their `Cargo.lock` too.
+
+`scripts/versions.py bump` only bumps the shared workspace versions and lockfiles;
+it does **not** advance the starter pin. Thus version-bump PRs and their external
+acceptance checks can pass before the new tag exists. Keep templates compatible
+with the selected release. After publishing a release, advance `SCAFFOLD_RELEASE`
+and `SCAFFOLD_REVISION` in `crates/rostfrei-structure/src/scaffold.rs`, update the
+pin regression expectation and this documentation, and run the external acceptance
+check in a follow-up PR. Template changes requiring new runtime APIs must wait for
+that available release and pin update. Do not point the starter at an unpublished
+future tag or silently fall back to a local checkout.
+
+To generate from this checkout:
+
+```sh
+cargo rostfrei-dev new ../my-application
+cd ../my-application
+cargo check
+cargo test
+```
+
+Names `model` and `tests` are reserved for generated domain modules. Choose a
+different name such as `model-app` or `tests-app`. The generated README describes
+the release pin, broker-free checks, and Docker Compose startup.
 
 ## License
 

@@ -43,6 +43,11 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- New projects build outside the repository with unmodified manifests by pinning
+  Rostfrei dependencies to the available `v0.0.5-alpha` Git release commit.
+  The starter pin is independent of CLI version bumps and advances after release
+  publication. Names `model` and `tests` now fail before project creation with a
+  suggested alternative. CI checks and tests an external, unpatched starter.
 - Direct command execution now defaults missing correlation to the operation ID,
   using the same metadata rule as `CommandBus`. Explicit correlation and causation
   are preserved, transaction receipts and events agree across retries, and mapped
