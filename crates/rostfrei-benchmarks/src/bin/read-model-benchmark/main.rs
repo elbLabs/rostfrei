@@ -207,7 +207,7 @@ async fn main() -> BenchResult {
     let options = Options::parse();
     options.validate()?;
     if cfg!(debug_assertions) {
-        eprintln!("Debug build: use --release for publishable timings.");
+        return Err("build rostfrei-benchmarks with --release for publishable timings".into());
     }
     let connection = connect(&NatsConnectionConfig::new(
         "read-model-benchmark",

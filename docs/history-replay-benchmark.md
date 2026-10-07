@@ -48,7 +48,8 @@ options, versions, payload/result sizes and sample counts before comparing.
 
 ## Reproduce
 
-Build the current `read_model_benchmark` harness against the baseline adapter in
+The workloads and Rust-only runner now live in `rostfrei-benchmarks`.
+Build the current read-model harness against the baseline adapter in
 a separate checkout/target directory and save its release executable as `before`.
 Only copy the benchmark harness into that baseline checkout; do not copy the new
 adapter. Build the same harness against the new adapter as `after`:
@@ -56,18 +57,18 @@ adapter. Build the same harness against the new adapter as `after`:
 ```sh
 git worktree add --detach ../rostfrei-history-baseline \
   254869e8b26e58cbd8893a9f2d0812b354544486
-cp crates/rostfrei-nats/examples/read_model_benchmark/main.rs \
-  ../rostfrei-history-baseline/crates/rostfrei-nats/examples/read_model_benchmark/main.rs
+cp crates/rostfrei-benchmarks/src/bin/read-model-benchmark/{main.rs,model.rs,metrics.rs} \
+  ../rostfrei-history-baseline/crates/rostfrei-nats/examples/read_model_benchmark/
 cargo build --locked --release \
   --manifest-path ../rostfrei-history-baseline/Cargo.toml \
   --target-dir ../rostfrei-history-baseline/target \
   -p rostfrei-nats --example read_model_benchmark
 
-cargo build --locked --release -p rostfrei-nats --example read_model_benchmark
+cargo build --locked --release -p rostfrei-benchmarks --bins
 
-python3 scripts/test_nats.py -- python3 scripts/benchmark_history.py \
+target/release/rostfrei-benchmarks compare-history \
   --before ../rostfrei-history-baseline/target/release/examples/read_model_benchmark \
-  --after target/release/examples/read_model_benchmark \
+  --after target/release/read-model-benchmark \
   --baseline-revision 254869e8b26e58cbd8893a9f2d0812b354544486 \
   --output docs/benchmarks/history-replay-main-2026-10-07.json
 ```
@@ -77,6 +78,12 @@ building the new adapter. Seeding uses ordinary reads regardless of the measured
 policy, avoiding quadratic historical audits during setup. Seeding, provisioning,
 connection and cleanup are outside query timing, except for the new reader's
 replay-consumer creation/deletion, which are deliberately included.
+
+The baseline checkout retains its old Cargo example target solely to link the
+identical harness against the old adapter. Current workloads, Docker lifecycle,
+comparison logic and comparison tests all belong to `rostfrei-benchmarks`; the
+Python benchmark scripts have been removed. The recorded JSON below is preserved
+unchanged, and Rust tests reproduce every original comparison from those inputs.
 
 ## Results against main including #89 — 2026-10-07
 

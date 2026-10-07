@@ -76,7 +76,8 @@ to run the NATS-backed application and explore its behavior in Studio.
 
 ## Workspace components
 
-The workspace contains fourteen framework crates plus the bike-rental example:
+The workspace contains fourteen framework crates, a benchmark tool, and the
+bike-rental example:
 
 - `rostfrei`: application facade for the compiled domain model, typed command,
   query, and integration-event buses, event-sourcing runtime, registry, and
@@ -107,6 +108,8 @@ The workspace contains fourteen framework crates plus the bike-rental example:
 - `rostfrei-nats`: command and integration-event bus adapters, NATS messaging,
   authoritative JetStream event storage, and typed KV-backed read-model storage.
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
+- `rostfrei-benchmarks`: non-published release workloads, paired comparisons,
+  and Rust-only disposable NATS orchestration.
 
 ## Runtime and messaging
 
@@ -335,22 +338,26 @@ backend. The runner's own lifecycle tests need no Docker:
 python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
-### Aggregate benchmarks
+### Benchmarks
 
 Measure the time until an aggregate is fully rehydrated and ready to use, along
 with history-only loading, event application, and a new executor command:
 
 ```sh
-python3 scripts/test_nats.py -- cargo bench --locked \
-  -p rostfrei-nats --bench aggregate_loading -- \
+cargo build --locked --release -p rostfrei-benchmarks --bins
+target/release/rostfrei-benchmarks aggregate-loading -- \
   --events 0,100,1000 --samples 5 \
-  --output /tmp/rostfrei-aggregate-loading.json
+  --output target/benchmarks/aggregate-loading.json
 ```
 
 The release-mode suite creates both direct-appended and actual command-generated
 histories, verifies the resulting state, and writes raw samples and summaries as
 JSON. Fixture creation is excluded from sample timings and may take time for
 large command histories. See [benchmark methodology and options](docs/benchmarks/aggregate-loading.md).
+The dedicated [rostfrei-benchmarks package](crates/rostfrei-benchmarks/README.md)
+also owns the read-model query and paired before/after workloads, including
+disposable broker orchestration and comparison tests. Benchmarking requires Rust
+and Docker, not Python.
 
 ### Git hooks
 
