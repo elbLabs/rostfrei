@@ -14,8 +14,10 @@ The NATS event store writes one JetStream message per domain event. Each message
 contains one bounded, checksummed event envelope plus the commit identity,
 operation identity, operation fingerprint, event ordinal, and event count. A
 deterministic opaque subject identifies one aggregate stream. Reads walk only
-that subject using JetStream direct raw-message APIs and never depend on
-consumer ACK state.
+that subject and never depend on application-consumer ACK state. As extended by
+[ADR 0042](0042-batched-aggregate-history-replay.md), initial histories use bounded
+ephemeral replay instead of one raw-message request per event; individual raw
+lookups remain for receipts and append-suffix verification.
 
 A single-stream, multi-event `EventBatch` is published with the NATS ADR-50 atomic batch
 protocol. Every event carries one shared `Nats-Batch-Id` and a one-based
