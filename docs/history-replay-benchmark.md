@@ -6,6 +6,8 @@ Issue [#97](https://github.com/elbLabs/rostfrei/issues/97) replaces the initial
 per-event raw-message loop with bounded, exact-subject ephemeral JetStream replay.
 See [ADR 0042](adr/0042-batched-aggregate-history-replay.md) for read cutoffs,
 validation, cleanup, permissions and retained operational trade-offs.
+The implementation is rebased onto PR #89: trusted reads remain the default,
+and strict handles/explicit historical audits keep their existing evidence checks.
 
 The benchmark uses the same four typed query paths as the
 [original read-model benchmark](read-model-benchmark.md): a KV read, sequential
@@ -14,10 +16,13 @@ of already-loaded history. Each path returns and serializes the same result;
 every warmup and sample must match byte-for-byte. Network replay includes history
 retrieval and integrity/transaction validation, not just event application.
 
-The before adapter is revision `ef0f4e8079322268d263e5ae6a65c62631f1449a`.
-Both binaries use the same expanded benchmark harness; `--transactional` is a
-harness-only addition so receipt-bearing command histories can be compared as
-well as the original low-level single-stream append workload.
+The current before adapter is revision
+`254869e8b26e58cbd8893a9f2d0812b354544486` (main including PR #89).
+Both binaries use the same expanded benchmark harness: `--transactional` seeds
+receipt-bearing command histories and `--history-auditing` enables historical
+checks during measured reads. Both sides use the same read policy for every case.
+The older pre-#89 comparison is retained below as historical evidence, not as a
+claim of improvement over current main.
 
 ## Workloads
 
@@ -25,14 +30,16 @@ well as the original low-level single-stream append workload.
 | --- | --- | --- | --- | --- |
 | Original single-event commits | 10, 50, 100 | 1 | 100 × 3 rounds | 10 |
 | Long histories | 500, 1,000 | 99 | 20 × 2 rounds | 5 |
-| Command-style transactions | 10, 50, 100 | 1 plus acceptance receipt | 30 × 2 rounds | 5 |
+| Command-style transactions, trusted | 10, 50, 100 | 1 plus acceptance receipt | 30 × 2 rounds | 5 |
+| Long command histories, trusted | 500, 1,000 | 1 plus acceptance receipt | 20 × 2 rounds | 5 |
+| Command-style transactions, audited | 10, 50, 100 | 1 plus acceptance receipt | 30 × 2 rounds | 5 |
 
 Each case has two aggregates. All cases add 256 padding bytes per event.
 Long-history commits are grouped to keep fixture preparation tractable on the
 old reader; they are a distinct workload, not an extrapolation of single-event
-commands. Transactional cases use `append_transaction`, exercising historical
-receipt/provenance verification. They measure query rehydration of command-style
-histories, not end-to-end command throughput.
+commands. Transactional cases use `append_transaction`; only audited cases
+exercise historical receipt/provenance verification. They measure query
+rehydration of command-style histories, not end-to-end command throughput.
 
 Both release binaries run sequentially against the same disposable, pinned NATS
 2.12.1 server. The harness alternates before/after order between workloads and
@@ -48,7 +55,7 @@ adapter. Build the same harness against the new adapter as `after`:
 
 ```sh
 git worktree add --detach ../rostfrei-history-baseline \
-  ef0f4e8079322268d263e5ae6a65c62631f1449a
+  254869e8b26e58cbd8893a9f2d0812b354544486
 cp crates/rostfrei-nats/examples/read_model_benchmark/main.rs \
   ../rostfrei-history-baseline/crates/rostfrei-nats/examples/read_model_benchmark/main.rs
 cargo build --locked --release \
@@ -61,18 +68,82 @@ cargo build --locked --release -p rostfrei-nats --example read_model_benchmark
 python3 scripts/test_nats.py -- python3 scripts/benchmark_history.py \
   --before ../rostfrei-history-baseline/target/release/examples/read_model_benchmark \
   --after target/release/examples/read_model_benchmark \
-  --baseline-revision ef0f4e8079322268d263e5ae6a65c62631f1449a \
-  --output docs/benchmarks/history-replay-2026-10-06.json
+  --baseline-revision 254869e8b26e58cbd8893a9f2d0812b354544486 \
+  --output docs/benchmarks/history-replay-main-2026-10-07.json
 ```
 
-The baseline must support `--transactional`. For the recorded run, the expanded
-harness was compiled at optimization level 3 against the unchanged baseline
-release libraries, before rebuilding the adapter. The original unmodified
-benchmark executable was also preserved. Seeding, provisioning, connection and
-cleanup are outside query timing, except for the new reader's replay-consumer
-creation/deletion, which are deliberately included.
+The baseline must support both added harness flags. Build and preserve it before
+building the new adapter. Seeding uses ordinary reads regardless of the measured
+policy, avoiding quadratic historical audits during setup. Seeding, provisioning,
+connection and cleanup are outside query timing, except for the new reader's
+replay-consumer creation/deletion, which are deliberately included.
 
-## Recorded results — 2026-10-06
+## Results against main including #89 — 2026-10-07
+
+Baseline: `254869e8b26e58cbd8893a9f2d0812b354544486`. This comparison measures
+the additional batching benefit over #89's parallel raw windows and trusted-read
+default, not the older serial/audit-every-load baseline. Both release binaries
+were built with Cargo from byte-identical benchmark sources; only the event-store
+implementation differs. The baseline checkout changed only the benchmark harness.
+
+Environment: Rust 1.98.0, Linux x86-64 (`6.8.0-142-generic`, glibc 2.39), 16 exposed
+logical CPUs, two Tokio workers, pinned NATS 2.12.1 in local Docker, file storage,
+one replica. Tests and compilation finished before the measured run. Full reports,
+run timestamp, binary SHA-256 hashes and all four query paths:
+[history-replay-main-2026-10-07.json](benchmarks/history-replay-main-2026-10-07.json).
+
+**Two-aggregate sequential replay, milliseconds p50 / p95:**
+
+| Workload / policy | Total events | Main (#89) | Batched | Median ratio | Requests before → after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Direct single-event commits | 20 | 19.820 / 30.049 | 18.024 / 28.959 | 1.10× | 24 → 10 |
+| Direct single-event commits | 100 | 43.100 / 63.769 | 22.649 / 36.222 | 1.90× | 104 → 10 |
+| Direct single-event commits | 200 | 68.866 / 107.472 | 29.830 / 49.762 | 2.31× | 204 → 10 |
+| Direct, 99-event commits | 1,000 | 347.743 / 662.120 | 47.722 / 54.227 | 7.29× | 1,004 → 12 |
+| Direct, 99-event commits | 2,000 | 618.245 / 1,152.875 | 73.405 / 98.591 | 8.42× | 2,004 → 16 |
+| Transactions, trusted | 20 | 29.689 / 90.358 | 20.101 / 30.618 | 1.48× | 30 → 10 |
+| Transactions, trusted | 100 | 63.466 / 97.374 | 28.374 / 52.087 | 2.24× | 110 → 10 |
+| Transactions, trusted | 200 | 75.034 / 117.296 | 33.141 / 47.833 | 2.26× | 210 → 10 |
+| Transactions, trusted | 1,000 | 343.937 / 487.409 | 62.478 / 80.484 | 5.50× | 1,010 → 12 |
+| Transactions, trusted | 2,000 | 643.223 / 1,296.574 | 117.302 / 244.134 | 5.48× | 2,032 → 16 |
+| Transactions, audited | 20 | 38.501 / 58.409 | 39.734 / 57.539 | 0.97× | 72 → 52 |
+| Transactions, audited | 100 | 103.421 / 160.326 | 84.591 / 114.470 | 1.22× | 312 → 212 |
+| Transactions, audited | 200 | 159.484 / 230.425 | 155.075 / 224.765 | 1.03× | 612 → 412 |
+
+The command-style rows use one transaction and receipt per event, including the
+1,000/2,000-event cases; they do not group 99 commands into one commit. These are
+still query-replay measurements, not end-to-end `CommandExecutor` write timings.
+
+Trusted command-history loads now benefit from both optimizations: #89 removes
+deep evidence rereads from ordinary loads, while batching removes the per-event
+retrieval requests. At 2,000 transactional events, received bytes fall from
+5,072,669 to 3,746,671. The final query still transfers and applies every event.
+For the measured workloads the page count is determined by the 256-message limit,
+giving `2 × (4 + ceil(events_per_aggregate / 256))` requests, regardless of whether
+events were published directly or transactionally. The old window reader can add
+subject lookahead probes, hence slightly higher transactional request counts.
+
+Strict loads still perform #89's receipt audits: at 200 events, 400 receipt
+lookups and two audit metadata requests remain in addition to the 10 history
+requests. Reducing 612 to 412 requests therefore does not remove the main audit
+cost; the median gain is only 1.03×, and the 20-event audited case slightly regresses.
+Audit checks and their eight-lookup pipeline are preserved, not disabled to
+produce the trusted-read gain.
+
+Unchanged KV control medians vary by 0.73–1.45×, and already-loaded replay also
+varies, so the exact timing ratios are not production guarantees. All replay
+paths check equivalent output; broker request counts provide the strongest
+structural evidence. In this run both sequential and parallel trusted replay
+improve across all measured history sizes, but fixed consumer setup/deletion
+overhead means very short histories need not benefit on every deployment.
+
+## Historical pre-#89 results — 2026-10-06
+
+Baseline: `ef0f4e8079322268d263e5ae6a65c62631f1449a`, before the trusted-read
+policy and parallel raw-reader changes. Transaction cases below audited history
+on every load, as that baseline required. The expanded harness was compiled at
+optimization level 3 against unchanged baseline release libraries before
+rebuilding the adapter. These numbers are not comparisons against current main.
 
 Environment: Linux x86-64 (`6.8.0-142-generic`, glibc 2.39), 16 exposed logical
 CPUs, Rust 1.98 release optimization, two Tokio workers, pinned NATS 2.12.1 in
@@ -102,19 +173,18 @@ also decrease: at 200 events, about 497 kB → 375 kB in decimal units
 (496,651 → 375,232 bytes); at 2,000 events, 4,541,446 → 3,395,261 bytes. This removes
 raw API response wrapping, not the need to transfer stored event envelopes.
 
-### The remaining command-history bottleneck
+### The historical command-history bottleneck
 
-The transaction workload shows why the change is not a general 40× command
-speedup. For these one-event, one-writer transactions, validation still sends
+The old transaction workload shows why the original change was not a general 40×
+command speedup. For these one-event, one-writer transactions, validation sent
 six requests per historical transaction: a global-first-event lookup, legacy
 receipt stream-info/lookup, current receipt stream-info/lookup, and stream-info
 for receipt materialization. With 200 transactions, these contribute 1,200 of
 the new path's 1,212 requests. Guards/other participants can add more work.
 
-The next optimization should batch/cache validated receipt reads and reuse
-stream handles while preserving legacy fallback and exact provenance checks.
-This patch intentionally does not remove those checks to improve benchmark
-numbers.
+PR #89 subsequently removed historical audits from ordinary loads and reduced
+redundant evidence lookups within audits. This rebased patch preserves that policy;
+its trusted and audited results must be compared separately against #89's reader.
 
 Timing variability is visible in the controls: transactional KV medians vary by
 1.03–2.28× despite unchanged KV code, and the 20-event transactional parallel
@@ -138,7 +208,7 @@ payloads. Consumer setup/deletion has fixed overhead and can be more expensive
 than raw reads for very short histories. Full history still transfers/replays;
 the API's returned `Vec` and append-session caches remain history-sized.
 
-Transaction receipt/guard validation remains raw-request-based. A large speedup
-for independently appended histories must not be presented as the same speedup
-for command-style transactional histories. KV queries still provide a separate
+Strict/explicit transaction receipt/guard auditing remains raw-request-based.
+Trusted command-history gains must not be presented as equivalent gains for deep
+historical audits or end-to-end writes. KV queries still provide a separate
 freshness/consistency trade-off rather than being interchangeable with replay.

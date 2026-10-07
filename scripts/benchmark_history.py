@@ -3,10 +3,12 @@
 
 Run through scripts/test_nats.py. Build/copy the before binary before changing
 the adapter; both binaries must use the current benchmark harness (including
---transactional), with only the linked event-store implementation differing.
+--transactional and --history-auditing), with only the linked implementation differing.
 """
 
 import argparse
+from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +21,8 @@ WORKLOADS = [
     ("single_event_commits", ["--events-per-aggregate", "10,50,100", "--samples", "100", "--rounds", "3", "--warmup", "10"]),
     ("long_histories", ["--events-per-aggregate", "500,1000", "--events-per-commit", "99", "--samples", "20", "--rounds", "2", "--warmup", "5"]),
     ("transactional", ["--transactional", "--events-per-aggregate", "10,50,100", "--samples", "30", "--rounds", "2", "--warmup", "5"]),
+    ("transactional_long", ["--transactional", "--events-per-aggregate", "500,1000", "--samples", "20", "--rounds", "2", "--warmup", "5"]),
+    ("transactional_audited", ["--transactional", "--history-auditing", "--events-per-aggregate", "10,50,100", "--samples", "30", "--rounds", "2", "--warmup", "5"]),
 ]
 
 
@@ -69,6 +73,9 @@ def main():
     binaries = {"before": args.before.resolve(strict=True), "after": args.after.resolve(strict=True)}
     report = {
         "baseline_revision": args.baseline_revision,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "binary_sha256": {version: hashlib.sha256(binary.read_bytes()).hexdigest()
+                          for version, binary in binaries.items()},
         "platform": platform.platform(),
         "logical_cpus": os.cpu_count(),
         "workloads": [],

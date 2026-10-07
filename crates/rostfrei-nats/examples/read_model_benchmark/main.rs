@@ -52,9 +52,12 @@ struct Options {
     /// Padding in each domain-event payload, beyond event fields/JSON framing.
     #[arg(long, default_value_t = 256)]
     extra_event_bytes: usize,
-    /// Seed through command-style transactions, including receipt/provenance validation on reads.
+    /// Seed through command-style transactions with durable acceptance receipts.
     #[arg(long)]
     transactional: bool,
+    /// Audit historical transaction evidence during measured reads (off by default).
+    #[arg(long)]
+    history_auditing: bool,
 }
 
 impl Options {
@@ -359,7 +362,11 @@ async fn prepare(
         )
         .await?;
     Ok(Fixture {
-        history: history.clone(),
+        // Seed and check the fixture with ordinary reads; only measured query reads adopt
+        // this policy, avoiding quadratic historical audits during fixture preparation.
+        history: history
+            .clone()
+            .with_history_auditing(options.history_auditing),
         snapshots,
         organization,
         billing,

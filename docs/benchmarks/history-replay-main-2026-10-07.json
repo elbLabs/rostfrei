@@ -1,0 +1,2233 @@
+{
+  "baseline_revision": "254869e8b26e58cbd8893a9f2d0812b354544486",
+  "recorded_at": "2026-10-07T06:31:19.369164+00:00",
+  "binary_sha256": {
+    "before": "a19c13649efde50a2e50d330dd06b788cd9bffea48ef6ed40582314d48213861",
+    "after": "60baa5bbf187ad934172d1beeaa3b963cc6259298175051aec1a8662ca866b46"
+  },
+  "platform": "Linux-6.8.0-142-generic-x86_64-with-glibc2.39",
+  "logical_cpus": 16,
+  "workloads": [
+    {
+      "name": "single_event_commits",
+      "execution_order": [
+        "before",
+        "after"
+      ],
+      "before": {
+        "release_build": true,
+        "nats_server_version": "2.12.1",
+        "architecture": "x86_64",
+        "os": "linux",
+        "runtime_workers": 2,
+        "options": {
+          "events_per_aggregate": [
+            10,
+            50,
+            100
+          ],
+          "samples": 100,
+          "rounds": 3,
+          "warmup": 10,
+          "events_per_commit": 1,
+          "extra_event_bytes": 256,
+          "transactional": false,
+          "history_auditing": false
+        },
+        "cases": [
+          {
+            "events_per_aggregate": 10,
+            "total_events": 20,
+            "source_payload_bytes": 6383,
+            "encoded_snapshot_bytes": 205,
+            "encoded_response_bytes": 120,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 300,
+                "mean_us": 1916.3858766666667,
+                "p50_us": 1689.49,
+                "p95_us": 3419.072,
+                "p99_us": 6178.702,
+                "serial_queries_per_second": 521.8155759629085,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 300,
+                "mean_us": 23.897513333333332,
+                "p50_us": 20.671,
+                "p95_us": 39.281,
+                "p99_us": 82.27300000000001,
+                "serial_queries_per_second": 41845.357968904435,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 300,
+                "mean_us": 11899.689743333332,
+                "p50_us": 11291.942,
+                "p95_us": 17716.790999999997,
+                "p99_us": 25669.134,
+                "serial_queries_per_second": 84.03580442592957,
+                "published_messages_per_query": 24.0,
+                "received_bytes_per_query": 56127.746666666666
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 300,
+                "mean_us": 20512.845686666664,
+                "p50_us": 19819.931999999997,
+                "p95_us": 30048.793,
+                "p99_us": 35941.009000000005,
+                "serial_queries_per_second": 48.74994017285467,
+                "published_messages_per_query": 24.0,
+                "received_bytes_per_query": 56127.746666666666
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 50,
+            "total_events": 100,
+            "source_payload_bytes": 31903,
+            "encoded_snapshot_bytes": 207,
+            "encoded_response_bytes": 122,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 300,
+                "mean_us": 1855.0463466666665,
+                "p50_us": 1681.69,
+                "p95_us": 3047.59,
+                "p99_us": 4451.321,
+                "serial_queries_per_second": 539.0700894330216,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 300,
+                "mean_us": 92.85276333333333,
+                "p50_us": 84.012,
+                "p95_us": 130.624,
+                "p99_us": 383.342,
+                "serial_queries_per_second": 10769.73871429208,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 300,
+                "mean_us": 27852.205003333333,
+                "p50_us": 26650.696,
+                "p95_us": 40484.845,
+                "p99_us": 53958.409,
+                "serial_queries_per_second": 35.90380007185502,
+                "published_messages_per_query": 104.0,
+                "received_bytes_per_query": 251685.77
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 300,
+                "mean_us": 44370.75077,
+                "p50_us": 43099.693,
+                "p95_us": 63769.181,
+                "p99_us": 79974.13,
+                "serial_queries_per_second": 22.53736938515183,
+                "published_messages_per_query": 104.0,
+                "received_bytes_per_query": 251685.75666666665
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 100,
+            "total_events": 200,
+            "source_payload_bytes": 63805,
+            "encoded_snapshot_bytes": 212,
+            "encoded_response_bytes": 125,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 300,
+                "mean_us": 1937.7130433333334,
+                "p50_us": 1702.3410000000001,
+                "p95_us": 3338.499,
+                "p99_us": 5283.106,
+                "serial_queries_per_second": 516.0722860593223,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 651.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 300,
+                "mean_us": 193.82715666666667,
+                "p50_us": 188.226,
+                "p95_us": 260.677,
+                "p99_us": 340.081,
+                "serial_queries_per_second": 5159.23577066007,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 300,
+                "mean_us": 44847.61545,
+                "p50_us": 42886.779,
+                "p95_us": 65621.30500000001,
+                "p99_us": 84894.54000000001,
+                "serial_queries_per_second": 22.29772954405762,
+                "published_messages_per_query": 204.0,
+                "received_bytes_per_query": 496645.75666666665
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 300,
+                "mean_us": 72936.39913333333,
+                "p50_us": 68865.927,
+                "p95_us": 107472.237,
+                "p99_us": 148164.56,
+                "serial_queries_per_second": 13.710575403810699,
+                "published_messages_per_query": 204.0,
+                "received_bytes_per_query": 496645.79333333333
+              }
+            ]
+          }
+        ]
+      },
+      "after": {
+        "release_build": true,
+        "nats_server_version": "2.12.1",
+        "architecture": "x86_64",
+        "os": "linux",
+        "runtime_workers": 2,
+        "options": {
+          "events_per_aggregate": [
+            10,
+            50,
+            100
+          ],
+          "samples": 100,
+          "rounds": 3,
+          "warmup": 10,
+          "events_per_commit": 1,
+          "extra_event_bytes": 256,
+          "transactional": false,
+          "history_auditing": false
+        },
+        "cases": [
+          {
+            "events_per_aggregate": 10,
+            "total_events": 20,
+            "source_payload_bytes": 6383,
+            "encoded_snapshot_bytes": 205,
+            "encoded_response_bytes": 120,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 300,
+                "mean_us": 1576.4251866666668,
+                "p50_us": 1309.6080000000002,
+                "p95_us": 3075.6009999999997,
+                "p99_us": 5778.872,
+                "serial_queries_per_second": 634.3466270762196,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 300,
+                "mean_us": 33.09945666666667,
+                "p50_us": 24.971,
+                "p95_us": 55.013000000000005,
+                "p99_us": 300.989,
+                "serial_queries_per_second": 30211.97628923818,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 300,
+                "mean_us": 10741.970133333334,
+                "p50_us": 9912.333,
+                "p95_us": 16695.766,
+                "p99_us": 20234.780000000002,
+                "serial_queries_per_second": 93.09279281059504,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 45957.33
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 300,
+                "mean_us": 19207.648706666667,
+                "p50_us": 18023.725000000002,
+                "p95_us": 28959.069,
+                "p99_us": 43242.744,
+                "serial_queries_per_second": 52.062593150868906,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 45957.43666666667
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 50,
+            "total_events": 100,
+            "source_payload_bytes": 31903,
+            "encoded_snapshot_bytes": 207,
+            "encoded_response_bytes": 122,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 300,
+                "mean_us": 1937.5047566666667,
+                "p50_us": 1552.335,
+                "p95_us": 3855.005,
+                "p99_us": 6924.235,
+                "serial_queries_per_second": 516.1277651366523,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 300,
+                "mean_us": 124.78726333333333,
+                "p50_us": 98.113,
+                "p95_us": 216.396,
+                "p99_us": 726.6510000000001,
+                "serial_queries_per_second": 8013.638357696708,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 300,
+                "mean_us": 14384.503846666667,
+                "p50_us": 13027.487000000001,
+                "p95_us": 25524.589,
+                "p99_us": 38130.765,
+                "serial_queries_per_second": 69.51925562811337,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 192008.42333333334
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 300,
+                "mean_us": 24319.999333333333,
+                "p50_us": 22649.043,
+                "p95_us": 36221.716,
+                "p99_us": 53199.053,
+                "serial_queries_per_second": 41.11842217978131,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 192008.3
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 100,
+            "total_events": 200,
+            "source_payload_bytes": 63805,
+            "encoded_snapshot_bytes": 212,
+            "encoded_response_bytes": 125,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 300,
+                "mean_us": 2314.6987599999998,
+                "p50_us": 1909.247,
+                "p95_us": 5015.298,
+                "p99_us": 8421.672,
+                "serial_queries_per_second": 432.0216596996838,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 651.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 300,
+                "mean_us": 229.29434999999998,
+                "p50_us": 199.49599999999998,
+                "p95_us": 452.593,
+                "p99_us": 702.542,
+                "serial_queries_per_second": 4361.2064579872995,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 300,
+                "mean_us": 19956.61085,
+                "p50_us": 18135.399999999998,
+                "p95_us": 31208.078,
+                "p99_us": 53791.503,
+                "serial_queries_per_second": 50.10870871393476,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 375235.31333333335
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 300,
+                "mean_us": 31610.877073333333,
+                "p50_us": 29829.708,
+                "p95_us": 49762.292,
+                "p99_us": 67242.303,
+                "serial_queries_per_second": 31.634680609466272,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 375235.3466666667
+              }
+            ]
+          }
+        ]
+      },
+      "comparison": [
+        {
+          "total_events": 20,
+          "path": "kv_snapshot",
+          "p50_speedup": 1.2900730600301769,
+          "before_p50_us": 1689.49,
+          "after_p50_us": 1309.6080000000002,
+          "before_p95_us": 3419.072,
+          "after_p95_us": 3075.6009999999997,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 20,
+          "path": "replay_loaded_history",
+          "p50_speedup": 0.827800248288014,
+          "before_p50_us": 20.671,
+          "after_p50_us": 24.971,
+          "before_p95_us": 39.281,
+          "after_p95_us": 55.013000000000005,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 20,
+          "path": "replay_parallel",
+          "p50_speedup": 1.1391810585863085,
+          "before_p50_us": 11291.942,
+          "after_p50_us": 9912.333,
+          "before_p95_us": 17716.790999999997,
+          "after_p95_us": 16695.766,
+          "before_requests": 24.0,
+          "after_requests": 10.0
+        },
+        {
+          "total_events": 20,
+          "path": "replay_sequential",
+          "p50_speedup": 1.0996579230985823,
+          "before_p50_us": 19819.931999999997,
+          "after_p50_us": 18023.725000000002,
+          "before_p95_us": 30048.793,
+          "after_p95_us": 28959.069,
+          "before_requests": 24.0,
+          "after_requests": 10.0
+        },
+        {
+          "total_events": 100,
+          "path": "kv_snapshot",
+          "p50_speedup": 1.0833293071405334,
+          "before_p50_us": 1681.69,
+          "after_p50_us": 1552.335,
+          "before_p95_us": 3047.59,
+          "after_p95_us": 3855.005,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 100,
+          "path": "replay_loaded_history",
+          "p50_speedup": 0.856277965203388,
+          "before_p50_us": 84.012,
+          "after_p50_us": 98.113,
+          "before_p95_us": 130.624,
+          "after_p95_us": 216.396,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 100,
+          "path": "replay_parallel",
+          "p50_speedup": 2.0457280824766895,
+          "before_p50_us": 26650.696,
+          "after_p50_us": 13027.487000000001,
+          "before_p95_us": 40484.845,
+          "after_p95_us": 25524.589,
+          "before_requests": 104.0,
+          "after_requests": 10.0
+        },
+        {
+          "total_events": 100,
+          "path": "replay_sequential",
+          "p50_speedup": 1.9029366053126393,
+          "before_p50_us": 43099.693,
+          "after_p50_us": 22649.043,
+          "before_p95_us": 63769.181,
+          "after_p95_us": 36221.716,
+          "before_requests": 104.0,
+          "after_requests": 10.0
+        },
+        {
+          "total_events": 200,
+          "path": "kv_snapshot",
+          "p50_speedup": 0.8916295272429393,
+          "before_p50_us": 1702.3410000000001,
+          "after_p50_us": 1909.247,
+          "before_p95_us": 3338.499,
+          "after_p95_us": 5015.298,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 200,
+          "path": "replay_loaded_history",
+          "p50_speedup": 0.9435076392509124,
+          "before_p50_us": 188.226,
+          "after_p50_us": 199.49599999999998,
+          "before_p95_us": 260.677,
+          "after_p95_us": 452.593,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 200,
+          "path": "replay_parallel",
+          "p50_speedup": 2.3648102054545257,
+          "before_p50_us": 42886.779,
+          "after_p50_us": 18135.399999999998,
+          "before_p95_us": 65621.30500000001,
+          "after_p95_us": 31208.078,
+          "before_requests": 204.0,
+          "after_requests": 10.0
+        },
+        {
+          "total_events": 200,
+          "path": "replay_sequential",
+          "p50_speedup": 2.3086356393431675,
+          "before_p50_us": 68865.927,
+          "after_p50_us": 29829.708,
+          "before_p95_us": 107472.237,
+          "after_p95_us": 49762.292,
+          "before_requests": 204.0,
+          "after_requests": 10.0
+        }
+      ]
+    },
+    {
+      "name": "long_histories",
+      "execution_order": [
+        "after",
+        "before"
+      ],
+      "after": {
+        "release_build": true,
+        "nats_server_version": "2.12.1",
+        "architecture": "x86_64",
+        "os": "linux",
+        "runtime_workers": 2,
+        "options": {
+          "events_per_aggregate": [
+            500,
+            1000
+          ],
+          "samples": 20,
+          "rounds": 2,
+          "warmup": 5,
+          "events_per_commit": 99,
+          "extra_event_bytes": 256,
+          "transactional": false,
+          "history_auditing": false
+        },
+        "cases": [
+          {
+            "events_per_aggregate": 500,
+            "total_events": 1000,
+            "source_payload_bytes": 319405,
+            "encoded_snapshot_bytes": 214,
+            "encoded_response_bytes": 127,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 40,
+                "mean_us": 2012.316675,
+                "p50_us": 1973.008,
+                "p95_us": 2924.606,
+                "p99_us": 3660.079,
+                "serial_queries_per_second": 496.93967774729094,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 655.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 40,
+                "mean_us": 1018.2713,
+                "p50_us": 914.208,
+                "p95_us": 1650.84,
+                "p99_us": 2485.8940000000002,
+                "serial_queries_per_second": 982.0565501551503,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 40,
+                "mean_us": 36441.384825,
+                "p50_us": 35977.122,
+                "p95_us": 41821.217000000004,
+                "p99_us": 75698.228,
+                "serial_queries_per_second": 27.441328171314904,
+                "published_messages_per_query": 12.0,
+                "received_bytes_per_query": 1698390.175
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 40,
+                "mean_us": 48351.901325,
+                "p50_us": 47722.174,
+                "p95_us": 54226.647000000004,
+                "p99_us": 78723.028,
+                "serial_queries_per_second": 20.681709976169174,
+                "published_messages_per_query": 12.0,
+                "received_bytes_per_query": 1698377.65
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 1000,
+            "total_events": 2000,
+            "source_payload_bytes": 638907,
+            "encoded_snapshot_bytes": 219,
+            "encoded_response_bytes": 130,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 40,
+                "mean_us": 1944.8637000000003,
+                "p50_us": 1846.2450000000001,
+                "p95_us": 2859.306,
+                "p99_us": 3829.894,
+                "serial_queries_per_second": 514.1748493737633,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 661.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 40,
+                "mean_us": 1907.571775,
+                "p50_us": 1839.484,
+                "p95_us": 2701.81,
+                "p99_us": 3091.283,
+                "serial_queries_per_second": 524.226670317556,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 40,
+                "mean_us": 59114.522699999994,
+                "p50_us": 57141.655999999995,
+                "p95_us": 72265.63699999999,
+                "p99_us": 95931.784,
+                "serial_queries_per_second": 16.91631691039603,
+                "published_messages_per_query": 16.0,
+                "received_bytes_per_query": 3395261.2
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 40,
+                "mean_us": 76257.04735,
+                "p50_us": 73405.23999999999,
+                "p95_us": 98591.224,
+                "p99_us": 120247.939,
+                "serial_queries_per_second": 13.113542088907014,
+                "published_messages_per_query": 16.0,
+                "received_bytes_per_query": 3395261.3
+              }
+            ]
+          }
+        ]
+      },
+      "before": {
+        "release_build": true,
+        "nats_server_version": "2.12.1",
+        "architecture": "x86_64",
+        "os": "linux",
+        "runtime_workers": 2,
+        "options": {
+          "events_per_aggregate": [
+            500,
+            1000
+          ],
+          "samples": 20,
+          "rounds": 2,
+          "warmup": 5,
+          "events_per_commit": 99,
+          "extra_event_bytes": 256,
+          "transactional": false,
+          "history_auditing": false
+        },
+        "cases": [
+          {
+            "events_per_aggregate": 500,
+            "total_events": 1000,
+            "source_payload_bytes": 319405,
+            "encoded_snapshot_bytes": 214,
+            "encoded_response_bytes": 127,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 40,
+                "mean_us": 2346.36705,
+                "p50_us": 2192.046,
+                "p95_us": 4613.029,
+                "p99_us": 5248.657,
+                "serial_queries_per_second": 426.190778633718,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 655.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 40,
+                "mean_us": 1042.5581,
+                "p50_us": 1043.5819999999999,
+                "p95_us": 1383.9309999999998,
+                "p99_us": 1525.965,
+                "serial_queries_per_second": 959.1791574973136,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 40,
+                "mean_us": 227412.45717499996,
+                "p50_us": 214236.872,
+                "p95_us": 292174.43700000003,
+                "p99_us": 615090.067,
+                "serial_queries_per_second": 4.397296491240465,
+                "published_messages_per_query": 1004.0,
+                "received_bytes_per_query": 2271053.7
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 40,
+                "mean_us": 384856.8501,
+                "p50_us": 347743.005,
+                "p95_us": 662120.457,
+                "p99_us": 935727.194,
+                "serial_queries_per_second": 2.5983687174599157,
+                "published_messages_per_query": 1004.0,
+                "received_bytes_per_query": 2271053.85
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 1000,
+            "total_events": 2000,
+            "source_payload_bytes": 638907,
+            "encoded_snapshot_bytes": 219,
+            "encoded_response_bytes": 130,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 40,
+                "mean_us": 2038.8997749999999,
+                "p50_us": 1825.485,
+                "p95_us": 3417.113,
+                "p99_us": 4163.814,
+                "serial_queries_per_second": 490.4605965734633,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 661.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 40,
+                "mean_us": 2334.0127,
+                "p50_us": 2255.979,
+                "p95_us": 3311.11,
+                "p99_us": 5744.642000000001,
+                "serial_queries_per_second": 428.4466832592642,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 40,
+                "mean_us": 437663.010625,
+                "p50_us": 402665.07800000004,
+                "p95_us": 752564.348,
+                "p99_us": 1133882.9340000001,
+                "serial_queries_per_second": 2.2848629555693103,
+                "published_messages_per_query": 2004.0,
+                "received_bytes_per_query": 4541412.825
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 40,
+                "mean_us": 714979.8277749999,
+                "p50_us": 618245.382,
+                "p95_us": 1152874.878,
+                "p99_us": 2026023.1900000002,
+                "serial_queries_per_second": 1.3986408583190046,
+                "published_messages_per_query": 2004.0,
+                "received_bytes_per_query": 4541412.75
+              }
+            ]
+          }
+        ]
+      },
+      "comparison": [
+        {
+          "total_events": 1000,
+          "path": "kv_snapshot",
+          "p50_speedup": 1.1110172893368906,
+          "before_p50_us": 2192.046,
+          "after_p50_us": 1973.008,
+          "before_p95_us": 4613.029,
+          "after_p95_us": 2924.606,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 1000,
+          "path": "replay_loaded_history",
+          "p50_speedup": 1.141514841261507,
+          "before_p50_us": 1043.5819999999999,
+          "after_p50_us": 914.208,
+          "before_p95_us": 1383.9309999999998,
+          "after_p95_us": 1650.84,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 1000,
+          "path": "replay_parallel",
+          "p50_speedup": 5.954808503025895,
+          "before_p50_us": 214236.872,
+          "after_p50_us": 35977.122,
+          "before_p95_us": 292174.43700000003,
+          "after_p95_us": 41821.217000000004,
+          "before_requests": 1004.0,
+          "after_requests": 12.0
+        },
+        {
+          "total_events": 1000,
+          "path": "replay_sequential",
+          "p50_speedup": 7.286822368989309,
+          "before_p50_us": 347743.005,
+          "after_p50_us": 47722.174,
+          "before_p95_us": 662120.457,
+          "after_p95_us": 54226.647000000004,
+          "before_requests": 1004.0,
+          "after_requests": 12.0
+        },
+        {
+          "total_events": 2000,
+          "path": "kv_snapshot",
+          "p50_speedup": 0.9887555551944621,
+          "before_p50_us": 1825.485,
+          "after_p50_us": 1846.2450000000001,
+          "before_p95_us": 3417.113,
+          "after_p95_us": 2859.306,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 2000,
+          "path": "replay_loaded_history",
+          "p50_speedup": 1.226419474156883,
+          "before_p50_us": 2255.979,
+          "after_p50_us": 1839.484,
+          "before_p95_us": 3311.11,
+          "after_p95_us": 2701.81,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 2000,
+          "path": "replay_parallel",
+          "p50_speedup": 7.0467869884624985,
+          "before_p50_us": 402665.07800000004,
+          "after_p50_us": 57141.655999999995,
+          "before_p95_us": 752564.348,
+          "after_p95_us": 72265.63699999999,
+          "before_requests": 2004.0,
+          "after_requests": 16.0
+        },
+        {
+          "total_events": 2000,
+          "path": "replay_sequential",
+          "p50_speedup": 8.422360338308275,
+          "before_p50_us": 618245.382,
+          "after_p50_us": 73405.23999999999,
+          "before_p95_us": 1152874.878,
+          "after_p95_us": 98591.224,
+          "before_requests": 2004.0,
+          "after_requests": 16.0
+        }
+      ]
+    },
+    {
+      "name": "transactional",
+      "execution_order": [
+        "before",
+        "after"
+      ],
+      "before": {
+        "release_build": true,
+        "nats_server_version": "2.12.1",
+        "architecture": "x86_64",
+        "os": "linux",
+        "runtime_workers": 2,
+        "options": {
+          "events_per_aggregate": [
+            10,
+            50,
+            100
+          ],
+          "samples": 30,
+          "rounds": 2,
+          "warmup": 5,
+          "events_per_commit": 1,
+          "extra_event_bytes": 256,
+          "transactional": true,
+          "history_auditing": false
+        },
+        "cases": [
+          {
+            "events_per_aggregate": 10,
+            "total_events": 20,
+            "source_payload_bytes": 6383,
+            "encoded_snapshot_bytes": 205,
+            "encoded_response_bytes": 120,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 3520.597133333333,
+                "p50_us": 2476.364,
+                "p95_us": 8913.798,
+                "p99_us": 23363.703,
+                "serial_queries_per_second": 284.04272404016615,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 20.982683333333334,
+                "p50_us": 20.15,
+                "p95_us": 28.070999999999998,
+                "p99_us": 35.792,
+                "serial_queries_per_second": 47658.346843150815,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 26415.84533333334,
+                "p50_us": 18630.541,
+                "p95_us": 52492.9,
+                "p99_us": 189717.968,
+                "serial_queries_per_second": 37.85606659114297,
+                "published_messages_per_query": 30.0,
+                "received_bytes_per_query": 71971.7
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 39384.28321666666,
+                "p50_us": 29689.283,
+                "p95_us": 90358.16900000001,
+                "p99_us": 170508.581,
+                "serial_queries_per_second": 25.390839145114096,
+                "published_messages_per_query": 30.0,
+                "received_bytes_per_query": 71971.88333333333
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 50,
+            "total_events": 100,
+            "source_payload_bytes": 31903,
+            "encoded_snapshot_bytes": 207,
+            "encoded_response_bytes": 122,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 2890.671516666667,
+                "p50_us": 2381.382,
+                "p95_us": 6375.4220000000005,
+                "p99_us": 14035.793,
+                "serial_queries_per_second": 345.94037898610304,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 95.36285,
+                "p50_us": 85.494,
+                "p95_us": 157.815,
+                "p99_us": 225.74499999999998,
+                "serial_queries_per_second": 10486.263780916783,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 39061.8593,
+                "p50_us": 33948.391,
+                "p95_us": 65421.130999999994,
+                "p99_us": 84175.04400000001,
+                "serial_queries_per_second": 25.600419896039103,
+                "published_messages_per_query": 110.0,
+                "received_bytes_per_query": 271142.81666666665
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 65955.86953333333,
+                "p50_us": 63465.74100000001,
+                "p95_us": 97374.083,
+                "p99_us": 130326.215,
+                "serial_queries_per_second": 15.16165289117463,
+                "published_messages_per_query": 110.0,
+                "received_bytes_per_query": 271142.76666666666
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 100,
+            "total_events": 200,
+            "source_payload_bytes": 63805,
+            "encoded_snapshot_bytes": 212,
+            "encoded_response_bytes": 125,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 1949.6000166666665,
+                "p50_us": 1654.57,
+                "p95_us": 3426.902,
+                "p99_us": 5177.597,
+                "serial_queries_per_second": 512.9257239696543,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 651.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 201.61933333333334,
+                "p50_us": 184.055,
+                "p95_us": 286.308,
+                "p99_us": 877.805,
+                "serial_queries_per_second": 4959.841814111743,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 49466.99203333333,
+                "p50_us": 45745.36,
+                "p95_us": 78211.599,
+                "p99_us": 98421.598,
+                "serial_queries_per_second": 20.215500455862568,
+                "published_messages_per_query": 210.0,
+                "received_bytes_per_query": 520474.85
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 80333.89121666666,
+                "p50_us": 75034.294,
+                "p95_us": 117295.997,
+                "p99_us": 148357.163,
+                "serial_queries_per_second": 12.44804633330811,
+                "published_messages_per_query": 210.0,
+                "received_bytes_per_query": 520474.8
+              }
+            ]
+          }
+        ]
+      },
+      "after": {
+        "release_build": true,
+        "nats_server_version": "2.12.1",
+        "architecture": "x86_64",
+        "os": "linux",
+        "runtime_workers": 2,
+        "options": {
+          "events_per_aggregate": [
+            10,
+            50,
+            100
+          ],
+          "samples": 30,
+          "rounds": 2,
+          "warmup": 5,
+          "events_per_commit": 1,
+          "extra_event_bytes": 256,
+          "transactional": true,
+          "history_auditing": false
+        },
+        "cases": [
+          {
+            "events_per_aggregate": 10,
+            "total_events": 20,
+            "source_payload_bytes": 6383,
+            "encoded_snapshot_bytes": 205,
+            "encoded_response_bytes": 120,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 2261.484483333333,
+                "p50_us": 1705.441,
+                "p95_us": 5111.954,
+                "p99_us": 18127.178,
+                "serial_queries_per_second": 442.1874248396531,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 26.378933333333332,
+                "p50_us": 23.680999999999997,
+                "p95_us": 33.542,
+                "p99_us": 75.393,
+                "serial_queries_per_second": 37909.03852569222,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 12213.683616666667,
+                "p50_us": 10546.567,
+                "p95_us": 19967.943,
+                "p99_us": 39729.689,
+                "serial_queries_per_second": 81.87538103864179,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 46682.85
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 21258.327999999998,
+                "p50_us": 20101.106,
+                "p95_us": 30618.213,
+                "p99_us": 47224.964,
+                "serial_queries_per_second": 47.04038812459757,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 46683.13333333333
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 50,
+            "total_events": 100,
+            "source_payload_bytes": 31903,
+            "encoded_snapshot_bytes": 207,
+            "encoded_response_bytes": 122,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 4212.1356,
+                "p50_us": 1889.127,
+                "p95_us": 9021.882,
+                "p99_us": 93644.397,
+                "serial_queries_per_second": 237.40926099340203,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 127.50928333333333,
+                "p50_us": 100.93400000000001,
+                "p95_us": 210.476,
+                "p99_us": 804.565,
+                "serial_queries_per_second": 7842.566234066357,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 22489.180216666668,
+                "p50_us": 16286.3,
+                "p95_us": 46730.27099999999,
+                "p99_us": 137734.327,
+                "serial_queries_per_second": 44.46582713846114,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 195297.3
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 30251.551466666668,
+                "p50_us": 28373.756999999998,
+                "p95_us": 52086.792,
+                "p99_us": 59957.089,
+                "serial_queries_per_second": 33.05615585044859,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 195297.36666666667
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 100,
+            "total_events": 200,
+            "source_payload_bytes": 63805,
+            "encoded_snapshot_bytes": 212,
+            "encoded_response_bytes": 125,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 2106.991016666667,
+                "p50_us": 1849.735,
+                "p95_us": 3876.5879999999997,
+                "p99_us": 6683.142000000001,
+                "serial_queries_per_second": 474.6104715633932,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 651.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 286.30511666666666,
+                "p50_us": 205.706,
+                "p95_us": 468.674,
+                "p99_us": 2136.9840000000004,
+                "serial_queries_per_second": 3492.7772568041773,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 21979.344050000003,
+                "p50_us": 19754.767,
+                "p95_us": 37194.283,
+                "p99_us": 48725.022,
+                "serial_queries_per_second": 45.49726314512102,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 381609.48333333334
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 35072.78325,
+                "p50_us": 33140.509999999995,
+                "p95_us": 47832.824,
+                "p99_us": 79839.75,
+                "serial_queries_per_second": 28.51213697162172,
+                "published_messages_per_query": 10.0,
+                "received_bytes_per_query": 381611.13333333336
+              }
+            ]
+          }
+        ]
+      },
+      "comparison": [
+        {
+          "total_events": 20,
+          "path": "kv_snapshot",
+          "p50_speedup": 1.4520373322794515,
+          "before_p50_us": 2476.364,
+          "after_p50_us": 1705.441,
+          "before_p95_us": 8913.798,
+          "after_p95_us": 5111.954,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 20,
+          "path": "replay_loaded_history",
+          "p50_speedup": 0.8508931210675226,
+          "before_p50_us": 20.15,
+          "after_p50_us": 23.680999999999997,
+          "before_p95_us": 28.070999999999998,
+          "after_p95_us": 33.542,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 20,
+          "path": "replay_parallel",
+          "p50_speedup": 1.7665028819330502,
+          "before_p50_us": 18630.541,
+          "after_p50_us": 10546.567,
+          "before_p95_us": 52492.9,
+          "after_p95_us": 19967.943,
+          "before_requests": 30.0,
+          "after_requests": 10.0
+        },
+        {
+          "total_events": 20,
+          "path": "replay_sequential",
+          "p50_speedup": 1.4769974846160205,
+          "before_p50_us": 29689.283,
+          "after_p50_us": 20101.106,
+          "before_p95_us": 90358.16900000001,
+          "after_p95_us": 30618.213,
+          "before_requests": 30.0,
+          "after_requests": 10.0
+        },
+        {
+          "total_events": 100,
+          "path": "kv_snapshot",
+          "p50_speedup": 1.2605727407421523,
+          "before_p50_us": 2381.382,
+          "after_p50_us": 1889.127,
+          "before_p95_us": 6375.4220000000005,
+          "after_p95_us": 9021.882,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 100,
+          "path": "replay_loaded_history",
+          "p50_speedup": 0.8470287514613509,
+          "before_p50_us": 85.494,
+          "after_p50_us": 100.93400000000001,
+          "before_p95_us": 157.815,
+          "after_p95_us": 210.476,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 100,
+          "path": "replay_parallel",
+          "p50_speedup": 2.0844753565880527,
+          "before_p50_us": 33948.391,
+          "after_p50_us": 16286.3,
+          "before_p95_us": 65421.130999999994,
+          "after_p95_us": 46730.27099999999,
+          "before_requests": 110.0,
+          "after_requests": 10.0
+        },
+        {
+          "total_events": 100,
+          "path": "replay_sequential",
+          "p50_speedup": 2.2367760815037645,
+          "before_p50_us": 63465.74100000001,
+          "after_p50_us": 28373.756999999998,
+          "before_p95_us": 97374.083,
+          "after_p95_us": 52086.792,
+          "before_requests": 110.0,
+          "after_requests": 10.0
+        },
+        {
+          "total_events": 200,
+          "path": "kv_snapshot",
+          "p50_speedup": 0.8944902918526167,
+          "before_p50_us": 1654.57,
+          "after_p50_us": 1849.735,
+          "before_p95_us": 3426.902,
+          "after_p95_us": 3876.5879999999997,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 200,
+          "path": "replay_loaded_history",
+          "p50_speedup": 0.8947478440103839,
+          "before_p50_us": 184.055,
+          "after_p50_us": 205.706,
+          "before_p95_us": 286.308,
+          "after_p95_us": 468.674,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 200,
+          "path": "replay_parallel",
+          "p50_speedup": 2.315661834938372,
+          "before_p50_us": 45745.36,
+          "after_p50_us": 19754.767,
+          "before_p95_us": 78211.599,
+          "after_p95_us": 37194.283,
+          "before_requests": 210.0,
+          "after_requests": 10.0
+        },
+        {
+          "total_events": 200,
+          "path": "replay_sequential",
+          "p50_speedup": 2.264126110310312,
+          "before_p50_us": 75034.294,
+          "after_p50_us": 33140.509999999995,
+          "before_p95_us": 117295.997,
+          "after_p95_us": 47832.824,
+          "before_requests": 210.0,
+          "after_requests": 10.0
+        }
+      ]
+    },
+    {
+      "name": "transactional_long",
+      "execution_order": [
+        "after",
+        "before"
+      ],
+      "after": {
+        "release_build": true,
+        "nats_server_version": "2.12.1",
+        "architecture": "x86_64",
+        "os": "linux",
+        "runtime_workers": 2,
+        "options": {
+          "events_per_aggregate": [
+            500,
+            1000
+          ],
+          "samples": 20,
+          "rounds": 2,
+          "warmup": 5,
+          "events_per_commit": 1,
+          "extra_event_bytes": 256,
+          "transactional": true,
+          "history_auditing": false
+        },
+        "cases": [
+          {
+            "events_per_aggregate": 500,
+            "total_events": 1000,
+            "source_payload_bytes": 319405,
+            "encoded_snapshot_bytes": 214,
+            "encoded_response_bytes": 127,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 40,
+                "mean_us": 2298.1159500000003,
+                "p50_us": 2025.9430000000002,
+                "p95_us": 4272.45,
+                "p99_us": 6125.3949999999995,
+                "serial_queries_per_second": 435.13905379752487,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 655.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 40,
+                "mean_us": 1068.4187,
+                "p50_us": 1031.351,
+                "p95_us": 1399.003,
+                "p99_us": 2119.965,
+                "serial_queries_per_second": 935.9626520951009,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 40,
+                "mean_us": 49245.498349999994,
+                "p50_us": 45071.155,
+                "p95_us": 72918.23,
+                "p99_us": 117593.814,
+                "serial_queries_per_second": 20.306424617591468,
+                "published_messages_per_query": 12.0,
+                "received_bytes_per_query": 1874499.125
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 40,
+                "mean_us": 63988.34237499999,
+                "p50_us": 62477.813,
+                "p95_us": 80483.599,
+                "p99_us": 82602.283,
+                "serial_queries_per_second": 15.627846618366164,
+                "published_messages_per_query": 12.0,
+                "received_bytes_per_query": 1874499.275
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 1000,
+            "total_events": 2000,
+            "source_payload_bytes": 638907,
+            "encoded_snapshot_bytes": 219,
+            "encoded_response_bytes": 130,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 40,
+                "mean_us": 2853.65305,
+                "p50_us": 2250.358,
+                "p95_us": 5609.981,
+                "p99_us": 11233.303,
+                "serial_queries_per_second": 350.42802417764136,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 661.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 40,
+                "mean_us": 2373.36715,
+                "p50_us": 2240.909,
+                "p95_us": 3589.96,
+                "p99_us": 4170.2880000000005,
+                "serial_queries_per_second": 421.34231107058173,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 40,
+                "mean_us": 92504.804625,
+                "p50_us": 86451.56599999999,
+                "p95_us": 128602.13100000001,
+                "p99_us": 201199.09399999998,
+                "serial_queries_per_second": 10.810249306010034,
+                "published_messages_per_query": 16.0,
+                "received_bytes_per_query": 3746671.225
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 40,
+                "mean_us": 134695.979775,
+                "p50_us": 117301.637,
+                "p95_us": 244134.413,
+                "p99_us": 299388.997,
+                "serial_queries_per_second": 7.424126552777807,
+                "published_messages_per_query": 16.0,
+                "received_bytes_per_query": 3746671.375
+              }
+            ]
+          }
+        ]
+      },
+      "before": {
+        "release_build": true,
+        "nats_server_version": "2.12.1",
+        "architecture": "x86_64",
+        "os": "linux",
+        "runtime_workers": 2,
+        "options": {
+          "events_per_aggregate": [
+            500,
+            1000
+          ],
+          "samples": 20,
+          "rounds": 2,
+          "warmup": 5,
+          "events_per_commit": 1,
+          "extra_event_bytes": 256,
+          "transactional": true,
+          "history_auditing": false
+        },
+        "cases": [
+          {
+            "events_per_aggregate": 500,
+            "total_events": 1000,
+            "source_payload_bytes": 319405,
+            "encoded_snapshot_bytes": 214,
+            "encoded_response_bytes": 127,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 40,
+                "mean_us": 2496.326275,
+                "p50_us": 1738.633,
+                "p95_us": 4091.785,
+                "p99_us": 19044.753,
+                "serial_queries_per_second": 400.58866103149916,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 655.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 40,
+                "mean_us": 1101.2145500000001,
+                "p50_us": 1024.522,
+                "p95_us": 1549.6480000000001,
+                "p99_us": 3244.319,
+                "serial_queries_per_second": 908.0882558262601,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 40,
+                "mean_us": 236720.31735,
+                "p50_us": 231224.823,
+                "p95_us": 309479.942,
+                "p99_us": 449009.981,
+                "serial_queries_per_second": 4.22439447190104,
+                "published_messages_per_query": 1010.0,
+                "received_bytes_per_query": 2516834.825
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 40,
+                "mean_us": 363212.369675,
+                "p50_us": 343936.891,
+                "p95_us": 487409.282,
+                "p99_us": 509920.93100000004,
+                "serial_queries_per_second": 2.7532101973696363,
+                "published_messages_per_query": 1010.0,
+                "received_bytes_per_query": 2516834.8
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 1000,
+            "total_events": 2000,
+            "source_payload_bytes": 638907,
+            "encoded_snapshot_bytes": 219,
+            "encoded_response_bytes": 130,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 40,
+                "mean_us": 2123.868575,
+                "p50_us": 1735.5529999999999,
+                "p95_us": 3999.374,
+                "p99_us": 6565.734,
+                "serial_queries_per_second": 470.83892655646076,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 661.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 40,
+                "mean_us": 2588.84455,
+                "p50_us": 2501.428,
+                "p95_us": 3651.9120000000003,
+                "p99_us": 4129.677,
+                "serial_queries_per_second": 386.27270996244255,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 40,
+                "mean_us": 450165.30250000005,
+                "p50_us": 388671.101,
+                "p95_us": 708622.762,
+                "p99_us": 1013537.1150000001,
+                "serial_queries_per_second": 2.221406213332046,
+                "published_messages_per_query": 2032.0,
+                "received_bytes_per_query": 5072668.825
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 40,
+                "mean_us": 720907.254925,
+                "p50_us": 643223.015,
+                "p95_us": 1296574.277,
+                "p99_us": 1428135.328,
+                "serial_queries_per_second": 1.3871409854295829,
+                "published_messages_per_query": 2032.0,
+                "received_bytes_per_query": 5072668.85
+              }
+            ]
+          }
+        ]
+      },
+      "comparison": [
+        {
+          "total_events": 1000,
+          "path": "kv_snapshot",
+          "p50_speedup": 0.8581845589930219,
+          "before_p50_us": 1738.633,
+          "after_p50_us": 2025.9430000000002,
+          "before_p95_us": 4091.785,
+          "after_p95_us": 4272.45,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 1000,
+          "path": "replay_loaded_history",
+          "p50_speedup": 0.9933785878910282,
+          "before_p50_us": 1024.522,
+          "after_p50_us": 1031.351,
+          "before_p95_us": 1549.6480000000001,
+          "after_p95_us": 1399.003,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 1000,
+          "path": "replay_parallel",
+          "p50_speedup": 5.130217386264008,
+          "before_p50_us": 231224.823,
+          "after_p50_us": 45071.155,
+          "before_p95_us": 309479.942,
+          "after_p95_us": 72918.23,
+          "before_requests": 1010.0,
+          "after_requests": 12.0
+        },
+        {
+          "total_events": 1000,
+          "path": "replay_sequential",
+          "p50_speedup": 5.504944467246316,
+          "before_p50_us": 343936.891,
+          "after_p50_us": 62477.813,
+          "before_p95_us": 487409.282,
+          "after_p95_us": 80483.599,
+          "before_requests": 1010.0,
+          "after_requests": 12.0
+        },
+        {
+          "total_events": 2000,
+          "path": "kv_snapshot",
+          "p50_speedup": 0.7712341769620655,
+          "before_p50_us": 1735.5529999999999,
+          "after_p50_us": 2250.358,
+          "before_p95_us": 3999.374,
+          "after_p95_us": 5609.981,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 2000,
+          "path": "replay_loaded_history",
+          "p50_speedup": 1.1162559479211336,
+          "before_p50_us": 2501.428,
+          "after_p50_us": 2240.909,
+          "before_p95_us": 3651.9120000000003,
+          "after_p95_us": 3589.96,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 2000,
+          "path": "replay_parallel",
+          "p50_speedup": 4.4958248760930495,
+          "before_p50_us": 388671.101,
+          "after_p50_us": 86451.56599999999,
+          "before_p95_us": 708622.762,
+          "after_p95_us": 128602.13100000001,
+          "before_requests": 2032.0,
+          "after_requests": 16.0
+        },
+        {
+          "total_events": 2000,
+          "path": "replay_sequential",
+          "p50_speedup": 5.483495639536557,
+          "before_p50_us": 643223.015,
+          "after_p50_us": 117301.637,
+          "before_p95_us": 1296574.277,
+          "after_p95_us": 244134.413,
+          "before_requests": 2032.0,
+          "after_requests": 16.0
+        }
+      ]
+    },
+    {
+      "name": "transactional_audited",
+      "execution_order": [
+        "before",
+        "after"
+      ],
+      "before": {
+        "release_build": true,
+        "nats_server_version": "2.12.1",
+        "architecture": "x86_64",
+        "os": "linux",
+        "runtime_workers": 2,
+        "options": {
+          "events_per_aggregate": [
+            10,
+            50,
+            100
+          ],
+          "samples": 30,
+          "rounds": 2,
+          "warmup": 5,
+          "events_per_commit": 1,
+          "extra_event_bytes": 256,
+          "transactional": true,
+          "history_auditing": true
+        },
+        "cases": [
+          {
+            "events_per_aggregate": 10,
+            "total_events": 20,
+            "source_payload_bytes": 6383,
+            "encoded_snapshot_bytes": 205,
+            "encoded_response_bytes": 120,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 1945.642,
+                "p50_us": 1530.318,
+                "p95_us": 3323.7219999999998,
+                "p99_us": 11143.415,
+                "serial_queries_per_second": 513.969168017549,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 27.906600000000005,
+                "p50_us": 23.182,
+                "p95_us": 49.061,
+                "p99_us": 183.226,
+                "serial_queries_per_second": 35833.817089864046,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 23106.62095,
+                "p50_us": 22851.058,
+                "p95_us": 32318.62,
+                "p99_us": 38636.917,
+                "serial_queries_per_second": 43.27763900069517,
+                "published_messages_per_query": 72.0,
+                "received_bytes_per_query": 107090.71666666666
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 40092.460816666666,
+                "p50_us": 38500.542,
+                "p95_us": 58408.649,
+                "p99_us": 78945.74399999999,
+                "serial_queries_per_second": 24.942345259692672,
+                "published_messages_per_query": 72.0,
+                "received_bytes_per_query": 107090.48333333334
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 50,
+            "total_events": 100,
+            "source_payload_bytes": 31903,
+            "encoded_snapshot_bytes": 207,
+            "encoded_response_bytes": 122,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 1666.9608999999998,
+                "p50_us": 1547.408,
+                "p95_us": 3063.764,
+                "p99_us": 4135.748,
+                "serial_queries_per_second": 599.8940946965223,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 105.33558333333333,
+                "p50_us": 94.142,
+                "p95_us": 161.295,
+                "p99_us": 408.063,
+                "serial_queries_per_second": 9493.468098387139,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 66210.5034,
+                "p50_us": 62989.522000000004,
+                "p95_us": 93580.718,
+                "p99_us": 202138.95,
+                "serial_queries_per_second": 15.103343860092144,
+                "published_messages_per_query": 312.0,
+                "received_bytes_per_query": 437224.6
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 108038.36193333333,
+                "p50_us": 103420.923,
+                "p95_us": 160325.696,
+                "p99_us": 195109.063,
+                "serial_queries_per_second": 9.255971509611232,
+                "published_messages_per_query": 312.0,
+                "received_bytes_per_query": 437224.76666666666
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 100,
+            "total_events": 200,
+            "source_payload_bytes": 63805,
+            "encoded_snapshot_bytes": 212,
+            "encoded_response_bytes": 125,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 1575.05175,
+                "p50_us": 1392.053,
+                "p95_us": 2607.321,
+                "p99_us": 3692.075,
+                "serial_queries_per_second": 634.8997739280629,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 651.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 201.20739999999998,
+                "p50_us": 185.837,
+                "p95_us": 329.139,
+                "p99_us": 519.8069999999999,
+                "serial_queries_per_second": 4969.996133343008,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 96046.84654999999,
+                "p50_us": 91464.915,
+                "p95_us": 120460.42199999999,
+                "p99_us": 149309.476,
+                "serial_queries_per_second": 10.41158596997165,
+                "published_messages_per_query": 612.0,
+                "received_bytes_per_query": 850673.6666666666
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 170485.33008333333,
+                "p50_us": 159484.091,
+                "p95_us": 230425.01,
+                "p99_us": 345657.631,
+                "serial_queries_per_second": 5.86560731947552,
+                "published_messages_per_query": 612.0,
+                "received_bytes_per_query": 850673.5666666667
+              }
+            ]
+          }
+        ]
+      },
+      "after": {
+        "release_build": true,
+        "nats_server_version": "2.12.1",
+        "architecture": "x86_64",
+        "os": "linux",
+        "runtime_workers": 2,
+        "options": {
+          "events_per_aggregate": [
+            10,
+            50,
+            100
+          ],
+          "samples": 30,
+          "rounds": 2,
+          "warmup": 5,
+          "events_per_commit": 1,
+          "extra_event_bytes": 256,
+          "transactional": true,
+          "history_auditing": true
+        },
+        "cases": [
+          {
+            "events_per_aggregate": 10,
+            "total_events": 20,
+            "source_payload_bytes": 6383,
+            "encoded_snapshot_bytes": 205,
+            "encoded_response_bytes": 120,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 1819.9519166666664,
+                "p50_us": 1770.015,
+                "p95_us": 3062.895,
+                "p99_us": 5655.016,
+                "serial_queries_per_second": 549.4650659955622,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 26.5598,
+                "p50_us": 23.432,
+                "p95_us": 53.872,
+                "p99_us": 64.46199999999999,
+                "serial_queries_per_second": 37650.88592534582,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 25858.89243333333,
+                "p50_us": 23558.059999999998,
+                "p95_us": 32637.711,
+                "p99_us": 138777.65899999999,
+                "serial_queries_per_second": 38.67141651863453,
+                "published_messages_per_query": 52.0,
+                "received_bytes_per_query": 81800.5
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 41589.59171666667,
+                "p50_us": 39734.141,
+                "p95_us": 57538.913,
+                "p99_us": 75986.825,
+                "serial_queries_per_second": 24.04447744552536,
+                "published_messages_per_query": 52.0,
+                "received_bytes_per_query": 81800.78333333334
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 50,
+            "total_events": 100,
+            "source_payload_bytes": 31903,
+            "encoded_snapshot_bytes": 207,
+            "encoded_response_bytes": 122,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 1709.1406166666668,
+                "p50_us": 1586.6280000000002,
+                "p95_us": 3243.129,
+                "p99_us": 4262.783,
+                "serial_queries_per_second": 585.0893661109627,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 641.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 101.59515000000002,
+                "p50_us": 92.203,
+                "p95_us": 185.77599999999998,
+                "p99_us": 272.34,
+                "serial_queries_per_second": 9842.989552158739,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 51738.914333333334,
+                "p50_us": 50078.191,
+                "p95_us": 68383.749,
+                "p99_us": 99760.822,
+                "serial_queries_per_second": 19.32781181988853,
+                "published_messages_per_query": 212.0,
+                "received_bytes_per_query": 361371.0333333333
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 87159.78586666666,
+                "p50_us": 84590.582,
+                "p95_us": 114469.537,
+                "p99_us": 219771.581,
+                "serial_queries_per_second": 11.47318100952838,
+                "published_messages_per_query": 212.0,
+                "received_bytes_per_query": 361371.13333333336
+              }
+            ]
+          },
+          {
+            "events_per_aggregate": 100,
+            "total_events": 200,
+            "source_payload_bytes": 63805,
+            "encoded_snapshot_bytes": 212,
+            "encoded_response_bytes": 125,
+            "results": [
+              {
+                "path": "kv_snapshot",
+                "samples": 60,
+                "mean_us": 2090.7460333333333,
+                "p50_us": 1914.5,
+                "p95_us": 3993.125,
+                "p99_us": 6485.861,
+                "serial_queries_per_second": 478.2981691973716,
+                "published_messages_per_query": 1.0,
+                "received_bytes_per_query": 651.0
+              },
+              {
+                "path": "replay_loaded_history",
+                "samples": 60,
+                "mean_us": 197.88219999999998,
+                "p50_us": 189.166,
+                "p95_us": 290.108,
+                "p99_us": 458.09499999999997,
+                "serial_queries_per_second": 5053.511634699837,
+                "published_messages_per_query": 0.0,
+                "received_bytes_per_query": 0.0
+              },
+              {
+                "path": "replay_parallel",
+                "samples": 60,
+                "mean_us": 90856.65423333333,
+                "p50_us": 87141.711,
+                "p95_us": 122903.45,
+                "p99_us": 149579.817,
+                "serial_queries_per_second": 11.006348499603034,
+                "published_messages_per_query": 412.0,
+                "received_bytes_per_query": 711796.4
+              },
+              {
+                "path": "replay_sequential",
+                "samples": 60,
+                "mean_us": 158453.4581833333,
+                "p50_us": 155074.838,
+                "p95_us": 224764.508,
+                "p99_us": 313035.104,
+                "serial_queries_per_second": 6.311001422531171,
+                "published_messages_per_query": 412.0,
+                "received_bytes_per_query": 711798.0
+              }
+            ]
+          }
+        ]
+      },
+      "comparison": [
+        {
+          "total_events": 20,
+          "path": "kv_snapshot",
+          "p50_speedup": 0.8645791137363242,
+          "before_p50_us": 1530.318,
+          "after_p50_us": 1770.015,
+          "before_p95_us": 3323.7219999999998,
+          "after_p95_us": 3062.895,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 20,
+          "path": "replay_loaded_history",
+          "p50_speedup": 0.9893308296346877,
+          "before_p50_us": 23.182,
+          "after_p50_us": 23.432,
+          "before_p95_us": 49.061,
+          "after_p95_us": 53.872,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 20,
+          "path": "replay_parallel",
+          "p50_speedup": 0.9699889549479033,
+          "before_p50_us": 22851.058,
+          "after_p50_us": 23558.059999999998,
+          "before_p95_us": 32318.62,
+          "after_p95_us": 32637.711,
+          "before_requests": 72.0,
+          "after_requests": 52.0
+        },
+        {
+          "total_events": 20,
+          "path": "replay_sequential",
+          "p50_speedup": 0.9689536763862593,
+          "before_p50_us": 38500.542,
+          "after_p50_us": 39734.141,
+          "before_p95_us": 58408.649,
+          "after_p95_us": 57538.913,
+          "before_requests": 72.0,
+          "after_requests": 52.0
+        },
+        {
+          "total_events": 100,
+          "path": "kv_snapshot",
+          "p50_speedup": 0.9752809102070553,
+          "before_p50_us": 1547.408,
+          "after_p50_us": 1586.6280000000002,
+          "before_p95_us": 3063.764,
+          "after_p95_us": 3243.129,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 100,
+          "path": "replay_loaded_history",
+          "p50_speedup": 1.0210296845005042,
+          "before_p50_us": 94.142,
+          "after_p50_us": 92.203,
+          "before_p95_us": 161.295,
+          "after_p95_us": 185.77599999999998,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 100,
+          "path": "replay_parallel",
+          "p50_speedup": 1.2578234305628173,
+          "before_p50_us": 62989.522000000004,
+          "after_p50_us": 50078.191,
+          "before_p95_us": 93580.718,
+          "after_p95_us": 68383.749,
+          "before_requests": 312.0,
+          "after_requests": 212.0
+        },
+        {
+          "total_events": 100,
+          "path": "replay_sequential",
+          "p50_speedup": 1.2226056442075313,
+          "before_p50_us": 103420.923,
+          "after_p50_us": 84590.582,
+          "before_p95_us": 160325.696,
+          "after_p95_us": 114469.537,
+          "before_requests": 312.0,
+          "after_requests": 212.0
+        },
+        {
+          "total_events": 200,
+          "path": "kv_snapshot",
+          "p50_speedup": 0.727110472708279,
+          "before_p50_us": 1392.053,
+          "after_p50_us": 1914.5,
+          "before_p95_us": 2607.321,
+          "after_p95_us": 3993.125,
+          "before_requests": 1.0,
+          "after_requests": 1.0
+        },
+        {
+          "total_events": 200,
+          "path": "replay_loaded_history",
+          "p50_speedup": 0.9824017000940972,
+          "before_p50_us": 185.837,
+          "after_p50_us": 189.166,
+          "before_p95_us": 329.139,
+          "after_p95_us": 290.108,
+          "before_requests": 0.0,
+          "after_requests": 0.0
+        },
+        {
+          "total_events": 200,
+          "path": "replay_parallel",
+          "p50_speedup": 1.0496111902140641,
+          "before_p50_us": 91464.915,
+          "after_p50_us": 87141.711,
+          "before_p95_us": 120460.42199999999,
+          "after_p95_us": 122903.45,
+          "before_requests": 612.0,
+          "after_requests": 412.0
+        },
+        {
+          "total_events": 200,
+          "path": "replay_sequential",
+          "p50_speedup": 1.0284330653306888,
+          "before_p50_us": 159484.091,
+          "after_p50_us": 155074.838,
+          "before_p95_us": 230425.01,
+          "after_p95_us": 224764.508,
+          "before_requests": 612.0,
+          "after_requests": 412.0
+        }
+      ]
+    }
+  ]
+}
