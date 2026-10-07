@@ -18,6 +18,11 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- NATS aggregate histories now replay in bounded, exact-subject batches instead of
+  issuing one broker request per event. Reads preserve snapshot cutoffs and integrity
+  checks and do not advance application durable consumers. Reader credentials now
+  also require event-stream-scoped ephemeral consumer create/pull/delete permissions;
+  no stream-policy update is required. See [ADR 0042](docs/adr/0042-batched-aggregate-history-replay.md).
 - **Breaking (command acceptance):** successful event-free commands now persist a
   context-scoped acceptance receipt by default. `CommandReceipt::AcceptedNoEvents`
   replaces transient `NoEvents`; exact retries return `ExactReplay` with no events.
