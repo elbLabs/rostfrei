@@ -511,9 +511,11 @@ fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
           </article>
           <article class="card">
             <h3>A durable name is a different identifier</h3>
-            <p>The rental command’s Normal durable is <code>bike-rental--bike-rental--rent-bicycle--v2</code>.
-              Test inserts <code>--test</code> after the application. The version belongs to the consumer identity and message schema;
-              the subject still ends in <code>rent-bicycle</code>.</p>
+            <p>The rental command’s Normal durable remains <code>bike-rental--bike-rental--rent-bicycle--v2</code>.
+              Test inserts <code>--test</code> after the application. This legacy suffix is frozen independently of payload schemas;
+              the subject still ends in <code>rent-bicycle</code>. Preserve the exact durable name across deployments.
+              Renaming it creates an overlapping WorkQueue consumer and requires an explicit cutover with pending work handled first.
+              It does not migrate payloads or replay acknowledged commands.</p>
           </article>
         </div>
       </section>

@@ -155,6 +155,8 @@ impl BoundedContext {
         )
     }
 
+    /// Derives a subscription identity. `major_version` is the subscription generation,
+    /// independent of payload schema versions; changing it requires an explicit cutover/replay plan.
     pub fn consumer_name(
         &self,
         purpose: &str,
@@ -169,6 +171,8 @@ impl BoundedContext {
         )
     }
 
+    /// Derives the identity that retains delivery progress. Keep `major_version` stable
+    /// across compatible payload/handler updates; it is not a payload schema version.
     pub fn durable_name(
         &self,
         purpose: &str,

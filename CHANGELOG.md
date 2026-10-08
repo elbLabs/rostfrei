@@ -48,6 +48,11 @@ All notable changes to this project are documented in this file.
   are preserved, transaction receipts and events agree across retries, and mapped
   integration events can be published from directly executed commands without
   caller-supplied correlation.
+- Bike-rental command consumer and durable names now freeze the existing `--v2`
+  identities independently of payload schema versions, preserving durable progress
+  and pending work across schema changes. Documentation treats subscription names
+  as stable identities and distinguishes command cutover from event replay.
+  Startup does not delete or migrate conflicting durables or queued payloads.
 
 ## [0.0.5-alpha] - 2026-09-16
 

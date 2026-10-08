@@ -163,6 +163,36 @@ limits that disagree with already-provisioned streams.
 Runtime startup verifies the operator-provisioned NATS topology and exits if a
 durable command, domain-event, or integration-event consumer stops.
 
+### Stable command subscription identities
+
+Command consumer and durable names use the explicitly named
+`COMMAND_SUBSCRIPTION_GENERATION = 2`, independently of `Command::SCHEMA_VERSION`.
+This freezes the released example's existing names, such as
+`bike-rental--bike-rental--rent-bicycle--v2` (or
+`bike-rental--test--bike-rental--rent-bicycle--v2` in Test). The suffix is a retained
+identity, not a payload or handler upgrade version. Do not increment, reset, or
+remove it when deploying a new payload schema or handler. Existing domain-event
+and integration-event subscriptions retain their `--v1` names.
+
+When adopting this pattern in an application, pin each subscription to its exact
+deployed identity. If it already uses `--v1`, keep that name rather than copying
+the example's `2`. Renaming a command durable creates an overlapping WorkQueue
+subscription and provisioning fails even if no messages are queued. Normal
+startup does not delete or migrate conflicting durables or their messages.
+
+Deliberate subscription replacement is a separate operator action: quiesce the
+affected producers, drain or otherwise handle pending work, then stop the old
+workers and retire their durable before provisioning its replacement. A new
+command durable cannot replay commands already removed by acknowledgement.
+
+Stable identities preserve acknowledgement progress and pending work, but do not
+make incompatible payloads readable. Register compatibility handlers for schemas
+you support; unsupported command versions can receive a permanent rejection.
+The example registers only the current schemas and does not convert old payloads.
+See [ADR 0014](../../docs/adr/0014-application-scoped-nats-conventions.md#durable-consumer-versions).
+
+### Traffic scopes
+
 The example uses one canonical application with two disjoint traffic scopes:
 
 - `bike-rental.test.>` is recreated and its default `demo-fleet` MessageSeries
