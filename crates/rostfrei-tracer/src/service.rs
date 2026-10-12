@@ -1534,6 +1534,11 @@ impl Tracer {
         let _scenario = Arc::clone(&self.inner.test_scenario_gate)
             .write_owned()
             .await;
+        let observation_reset = self
+            .inner
+            .observation
+            .get(&crate::ObservationScope::Test)
+            .map(|feed| feed.reset_guard());
         self.inner
             .test_scenario_healthy
             .store(false, Ordering::Release);
@@ -1544,20 +1549,14 @@ impl Tracer {
             .await
             .retain_dispatch_operations();
         self.inner.correlations.retain_dispatch_correlations();
-        let observation = self.inner.observation.get(&crate::ObservationScope::Test);
-        if let Some(feed) = observation {
-            feed.reset(true);
-        }
         let result = reset.reset(fixture).await;
+        if let Some(guard) = observation_reset {
+            guard.finish(result.is_ok());
+        }
         if result.is_ok() {
-            if let Some(feed) = observation {
-                feed.reset(false);
-            }
             self.inner
                 .test_scenario_healthy
                 .store(true, Ordering::Release);
-        } else if let Some(feed) = observation {
-            feed.fail_reset();
         }
         result
     }

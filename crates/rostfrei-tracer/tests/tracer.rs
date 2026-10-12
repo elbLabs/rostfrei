@@ -2618,6 +2618,62 @@ async fn test_generation_is_selected_after_an_in_progress_reset() {
     assert_ne!(first.operation_id, second.operation_id);
 }
 
+#[tokio::test]
+#[allow(
+    clippy::panic_in_result_fn,
+    reason = "test assertions report failures while setup errors use Result"
+)]
+async fn canceled_test_reset_reports_unavailable_observation_until_recovery()
+-> Result<(), Box<dyn std::error::Error>> {
+    use rostfrei_messaging_core::ApplicationName;
+    use rostfrei_tracer::{ObservationFeed, ObservationScope, ObservationStatus};
+
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let feed = ObservationFeed::new(
+        ApplicationName::new("reset-observation")?,
+        ObservationScope::Test,
+    );
+    let source = feed.source("events")?;
+    source.ready();
+    let store = Arc::new(InMemoryEventStore::new());
+    let history: Arc<dyn EventHistory> = store.clone();
+    let mut configured = builder(history)
+        .with_test_event_store(store)
+        .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
+        .with_test_scenario_reset(Arc::new(BlockingReset {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+        }))
+        .with_default_test_fixture(empty_fixture("default-fixture"))
+        .with_continuous_observation(Arc::clone(&feed));
+    configured.register_json::<TestCommand, _>(TestCommandHandler)?;
+    let tracer = configured.build()?;
+    let resetting = tracer.clone();
+    let reset = tokio::spawn(async move { resetting.reset_test_scenario().await });
+    tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified()).await?;
+    assert_eq!(feed.snapshot().status, ObservationStatus::Resetting);
+    reset.abort();
+    assert!(reset.await.is_err());
+    assert_eq!(feed.snapshot().status, ObservationStatus::Unavailable);
+    tracer
+        .correlation_observer(OperationMode::Test)
+        .observe_domain_event(
+            "after-cancellation",
+            rostfrei_tracer::DomainEventObservation::new("event", "created", 1),
+        )
+        .await?;
+    assert!(feed.snapshot().items.is_empty());
+
+    let resetting = tracer.clone();
+    let reset = tokio::spawn(async move { resetting.reset_test_scenario().await });
+    tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified()).await?;
+    release.notify_one();
+    reset.await??;
+    assert_eq!(feed.snapshot().status, ObservationStatus::Live);
+    Ok(())
+}
+
 #[test]
 fn reset_requires_test_backing_and_test_transport() {
     let reset: Arc<dyn TestScenarioReset> = Arc::new(NoopReset);
