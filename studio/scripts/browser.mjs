@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs"
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -14,19 +14,37 @@ export const desktopViewport = {
 }
 
 export async function startStudioServer({ define, configureServer } = {}) {
-  const server = await createServer({
-    root: studioRoot,
-    logLevel: "error",
-    define,
-    plugins: configureServer ? [{ name: "studio-test-backend", configureServer }] : [],
-    server: { host: "127.0.0.1", port: 0, open: false },
-  })
+  // Different fixtures use different defines. Sharing Vite's optimized-dependency
+  // cache lets one server invalidate another server's still-open browser pages.
+  const cacheDir = await mkdtemp(
+    path.join(studioRoot, "node_modules/.vite-browser-")
+  )
+  let server
   try {
+    server = await createServer({
+      root: studioRoot,
+      cacheDir,
+      logLevel: "error",
+      define,
+      plugins: configureServer
+        ? [{ name: "studio-test-backend", configureServer }]
+        : [],
+      server: { host: "127.0.0.1", port: 0, open: false },
+    })
+    const close = server.close.bind(server)
+    server.close = async () => {
+      try {
+        await close()
+      } finally {
+        await rm(cacheDir, { recursive: true, force: true })
+      }
+    }
     await server.listen()
     const address = server.httpServer.address()
     return { server, url: `http://127.0.0.1:${address.port}` }
   } catch (error) {
-    await server.close()
+    if (server) await server.close()
+    else await rm(cacheDir, { recursive: true, force: true })
     throw error
   }
 }
