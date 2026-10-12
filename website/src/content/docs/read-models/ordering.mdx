@@ -1,0 +1,134 @@
+# Ordering, recovery, and rebuilds
+
+The runtime stores source progress with each read-model value. That makes normal
+redelivery safe, while the ordering contract determines which new events may update it.
+
+## Four different versions
+
+| Value | Meaning |
+| --- | --- |
+| KV revision | Opaque compare-and-set token for one stored value |
+| Aggregate stream version | Position in one aggregate's authoritative domain history |
+| Broker source sequence | Position of a stored message in its broker stream |
+| Schema version | Format of a payload or saved model |
+
+A business source may also supply its own per-entity version. Integration events
+do not need one for the default broker-order policy.
+
+## Domain events
+
+For each model key, the runtime tracks bounded context, aggregate type, and aggregate
+ID independently. Already-applied versions are no-ops.
+
+When a delivered version jumps ahead, the runtime loads authoritative history and
+applies relevant registered events in stream-version order through that version.
+It skips events without a handler and events routed to another key. The caught-up
+value and checkpoint commit in one CAS update.
+
+This covers filtered events and out-of-order concurrent dispatch without checkpoint
+fields or no-op handlers in the application. An unavailable or incomplete history
+prevents the write. A large history gap can increase materialization latency even
+though queries remain a single KV read.
+
+## Default: broker order
+
+All registered integration subjects for one model share a durable consumer with
+`MaxAckPending=1`. The worker processes them sequentially, including across event
+types and producing contexts. A message waiting for retry prevents a later message
+from overtaking it. Startup rejects incompatible consumer settings.
+
+Each key's broker checkpoint is saved atomically with its value. A redelivered
+stored message has the same source sequence, so a write that committed before its
+acknowledgement was lost is not applied twice. Consumer delivery-attempt sequences
+and schema versions do not determine that checkpoint.
+
+Broker order follows arrival at the broker. A late business fact published as a
+new message can still update the view. Republishing after the broker's duplicate
+window, or redriving quarantine with a new message ID, can apply again. Use
+idempotent transformations, reconciliation, or business versions when logical
+duplication or business chronology matters.
+
+There is no total order between the separate domain and integration streams.
+Custom adapters invoking the handlers must preserve the same ordered, stable,
+single-in-flight integration-source contract; independent concurrent deliveries
+cannot safely share a broker high-water mark.
+
+## Optional: business order
+
+If a publisher supplies an authoritative per-key version, override the default:
+
+```rust
+.integration_source::<VersionedBillingChanged>(
+    billing_context,
+    rostfrei::IntegrationEventOrder::<VersionedBillingChanged>::latest(
+        "billing-account",
+        |event| event.source_version,
+    ),
+)
+```
+
+| Policy | Use when |
+| --- | --- |
+| `latest("source", position)` | Each fact completely supersedes smaller versions for the fields it updates |
+| `consecutive("source", position)` | Every delta must be applied, starting at version 1 without gaps |
+| `broker()` | Explicitly selecting the default broker policy |
+
+With `latest`, a version-8 billing fact followed by a version-7 fact keeps version 8.
+With `consecutive`, receiving version 8 when version 7 is missing rejects the update.
+
+The source name identifies a logical checkpoint per model key and producer context;
+it is not the bucket name or an entity ID. Multiple event types can share it only
+when their positions describe the same sequence with compatible semantics. Broker
+and business checkpoints use separate namespaces. Timestamps or webhook IDs are
+not automatically authoritative business versions.
+
+## Failure and quarantine
+
+Successful materialization returns ACK after persistence, or after confirming the
+source position is already applied. Failed transformations do not save partial state.
+Uncertain writes are resolved through the saved checkpoint on redelivery.
+
+Domain failures use the existing domain-consumer retry/blocking contract. Integration
+failures can be quarantined immediately or after retry exhaustion. A persisted
+quarantine record leads to a terminal ACK, so consumer progress can advance while
+the model is still missing that change.
+
+**Fixing storage does not automatically replay a quarantined event.** After repairing
+the cause, the application must either redrive the complete validated event with a
+fresh delivery ID or refresh the current facts from their authoritative source.
+
+In broker mode, a redrive is a new, later publication. Order-sensitive deltas may
+require rebuilding or reconciliation instead. With business ordering, preserve the
+logical source version when redriving. Retain the original quarantine record and
+link the recovery delivery to it.
+
+A republication PubAck confirms enqueueing, not materialization. Verify the resulting
+model before declaring recovery complete. Consumer progress alone is not a freshness
+or authorization guarantee.
+
+## Rebuild into a new generation
+
+1. Provision a new named model generation with the desired schema and handlers.
+2. Load committed domain events through `EventHistory` and pass them to
+   `model.dispatch_domain` in order.
+3. Refresh integration-source facts through the registered bindings or consumers.
+4. Catch up to an explicit handoff point, verify the result, and switch queries.
+
+External authorities such as billing providers remain necessary for reconstructing
+their facts. Domain history alone cannot recreate those contributions.
+
+Changing handler semantics, adding handlers for earlier events, changing ordering
+policies, or resetting source history requires a deliberate rebuild/reset. Existing
+checkpoints intentionally prevent already-applied events from being reevaluated.
+Broker positions and business versions cannot be translated into one another.
+
+Runtime records contain a required `ReadModelState<M>` envelope and are incompatible
+with older value-only or manually checkpointed records. Use a fresh bucket and rebuild
+when adopting the runtime. If migrating from per-integration-type consumers, stop
+the old workers and retire their durables during cutover to the ordered worker.
+
+Each update is atomic for one key. A multi-key workflow needs its own idempotency,
+reconciliation, or staged-generation protocol.
+
+Return to [NATS setup](/docs/read-models/nats), or inspect the
+[tested runtime example](https://github.com/elbLabs/rostfrei/tree/main/crates/rostfrei-nats/examples/read_model).

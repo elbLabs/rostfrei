@@ -88,6 +88,15 @@ export const docsNavigation = [
     ],
   },
   {
+    title: "Read models",
+    items: [
+      { title: "Declare and query", slug: "read-models" },
+      { title: "NATS setup", slug: "read-models/nats" },
+      { title: "Ordering and recovery", slug: "read-models/ordering" },
+      { title: "Benchmarks", slug: "read-models/benchmarks" },
+    ],
+  },
+  {
     title: "Project structure",
     items: [
       { title: "Overview", slug: "project-structure" },

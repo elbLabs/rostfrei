@@ -5,6 +5,7 @@ mod envelope;
 mod executor;
 mod identity;
 mod memory;
+mod read_model;
 mod store;
 
 pub use aggregate::{
@@ -30,6 +31,10 @@ pub use identity::{
     IdentityError, OperationId, StreamId, derive_commit_id, derive_event_id,
 };
 pub use memory::InMemoryEventStore;
+pub use read_model::{
+    JsonReadModelCodec, ReadModel, ReadModelCodec, ReadModelEntry, ReadModelError,
+    ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelStore,
+};
 pub use store::{
     AppendOutcome, EventHistory, EventStore, EventStoreError, EventStoreErrorKind,
     EventTransaction, MAX_TRANSACTION_ITEMS, StreamDirectory, StreamSummary,

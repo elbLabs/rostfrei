@@ -105,7 +105,7 @@ The workspace contains fourteen framework crates plus the bike-rental example:
 - `rostfrei-messaging-core`: transport-neutral commands, integration events,
   queries, envelopes, and delivery contracts.
 - `rostfrei-nats`: command and integration-event bus adapters, NATS messaging,
-  and authoritative JetStream event storage.
+  authoritative JetStream event storage, and typed KV-backed read-model storage.
 - `rostfrei-testing`: reusable event-store contracts and aggregate scenarios.
 
 ## Runtime and messaging
@@ -170,9 +170,32 @@ receipt, and changed command content or provenance conflicts under the accepted
 operation identity. See [Durable event-free acceptance](docs/adr/0039-durable-event-free-acceptance.md)
 for concurrency, storage compatibility, and migration from transient no-op results.
 
+By default, NATS history loads trust committed event-store writes and validate local
+envelopes, checksums, identities, ordering, and commit structure. Deep historical
+receipt/participant/guard checks are available through `audit_history` and
+`audit_streams`. Enable them for every load on a handle with
+`store.with_history_auditing(true)`, or select trusted reads with `false`.
+The setting also applies to session loads and discovery; local and
+operation-specific write/retry checks always run. See
+[the read/audit trust boundary](docs/adr/0040-trusted-event-store-reads-and-explicit-audits.md).
+
 The canonical project terminology is in
 [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and individual architecture
 decisions are recorded in [`docs/adr`](docs/adr).
+
+## KV-backed read models
+
+For application-owned snapshots maintained by multiple domain/integration event
+handlers, see [event-driven read models](docs/read-model-runtime.md): derive
+`ReadModel`, register typed event transformations, and let the runtime load,
+checkpoint, CAS-retry, and persist each value. Queries use a read-only handle.
+Integration inputs default to broker order, with optional business-version policies.
+The underlying [typed storage API](docs/read-models.md)
+provides revision-aware reads, CAS writes, versioned codecs, and explicitly
+provisioned Normal/Test-scoped buckets.
+
+The [read-model benchmark](docs/read-model-benchmark.md) compares a KV query with
+replaying two connected aggregates, including measured latency and broker traffic.
 
 ## NATS authentication
 
@@ -268,6 +291,18 @@ compile-failure test diagnostics consistent across local machines and CI.
 
 ### Tests
 
+Check that a new application builds outside this checkout, using the exact public
+dependencies delivered by the generator (GitHub and crates.io access required):
+
+```sh
+python3 scripts/check_new_project.py
+```
+
+This generates a hyphenated starter in a temporary directory, runs `cargo check`
+and `cargo test --locked` without changing its manifest, and verifies that all
+Rostfrei crates resolve from the pinned Git release. The **Tests** workflow runs
+this acceptance check on every PR and `main` push; it needs no broker.
+
 With Python 3.11+ and a running local Docker engine, run the complete Rust suite:
 
 ```sh
@@ -305,6 +340,23 @@ backend. The runner's own lifecycle tests need no Docker:
 ```sh
 python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
+
+### Aggregate benchmarks
+
+Measure the time until an aggregate is fully rehydrated and ready to use, along
+with history-only loading, event application, and a new executor command:
+
+```sh
+python3 scripts/test_nats.py -- cargo bench --locked \
+  -p rostfrei-nats --bench aggregate_loading -- \
+  --events 0,100,1000 --samples 5 \
+  --output /tmp/rostfrei-aggregate-loading.json
+```
+
+The release-mode suite creates both direct-appended and actual command-generated
+histories, verifies the resulting state, and writes raw samples and summaries as
+JSON. Fixture creation is excluded from sample timings and may take time for
+large command histories. See [benchmark methodology and options](docs/benchmarks/aggregate-loading.md).
 
 ### Git hooks
 
@@ -378,6 +430,38 @@ python3 scripts/versions.py check --tag v0.0.6-alpha
 ```
 
 The workflow creates a draft GitHub release; it does not publish crates.
+
+### Starter dependency contract
+
+`cargo rostfrei new` pins both `rostfrei` and `rostfrei-nats` to the same full Git
+commit from an available GitHub release while the crates are unpublished. The
+current starter targets `v0.0.5-alpha` (`c9f5516ddc324265916b60e1eb7300dad9acac9d`).
+This pin is intentionally independent of the generator's package version and
+`main`: a newer CLI can generate a starter using an older, tested release.
+Existing generated projects retain their pin; commit their `Cargo.lock` too.
+
+`scripts/versions.py bump` only bumps the shared workspace versions and lockfiles;
+it does **not** advance the starter pin. Thus version-bump PRs and their external
+acceptance checks can pass before the new tag exists. Keep templates compatible
+with the selected release. After publishing a release, advance `SCAFFOLD_RELEASE`
+and `SCAFFOLD_REVISION` in `crates/rostfrei-structure/src/scaffold.rs`, update the
+pin regression expectation and this documentation, and run the external acceptance
+check in a follow-up PR. Template changes requiring new runtime APIs must wait for
+that available release and pin update. Do not point the starter at an unpublished
+future tag or silently fall back to a local checkout.
+
+To generate from this checkout:
+
+```sh
+cargo rostfrei-dev new ../my-application
+cd ../my-application
+cargo check
+cargo test
+```
+
+Names `model` and `tests` are reserved for generated domain modules. Choose a
+different name such as `model-app` or `tests-app`. The generated README describes
+the release pin, broker-free checks, and Docker Compose startup.
 
 ## License
 

@@ -1,0 +1,163 @@
+# Read models
+
+A read model keeps a ready-made answer to a query. Domain-event and integration-event
+handlers update it as facts arrive; queries read the saved value in one KV lookup.
+
+You define the data, select the key each event affects, and describe the changes.
+Rostfrei handles loading, initialization, source checkpoints, compare-and-set
+retries, and persistence.
+
+```plaintext
+MemberJoined ──────┐
+DemoChanged ───────┼──→ OrganizationAccess[org-123] ←── query
+BillingChanged ───┘
+```
+
+The read model is application-owned query data. Aggregate history stays authoritative
+in the EventStore, and external systems retain authority over their own facts.
+An aggregate snapshot used to accelerate replay is a separate concept.
+
+## Declare the data
+
+Install [macro support](/docs/domain-macros/install-macro-support) once at your crate root:
+
+```rust
+rostfrei::install_macro_support!();
+```
+
+Then declare an ordinary serializable struct:
+
+```rust
+#[derive(Default, serde::Serialize, serde::Deserialize, rostfrei::ReadModel)]
+#[read_model(id = "organization-access", version = 1)]
+pub struct OrganizationAccess {
+    pub members: u64,
+    pub demo: bool,
+    pub paid: bool,
+}
+```
+
+The ID is a lowercase kebab-case name of 1–64 bytes. The schema version must be
+positive. `Default` initializes a missing key. The runtime stores revisions and
+source checkpoints outside your business fields.
+
+The derive declares metadata. [NATS setup](/docs/read-models/nats) explicitly binds
+storage and starts the event consumers.
+
+## Register event handlers
+
+In this example, `Organization`, `MemberJoined`, and `DemoChanged` are existing
+domain types. `BillingChanged` is a public integration contract.
+
+```rust
+let model = read_models
+    .register::<OrganizationAccess>()
+    .from_aggregate::<Organization>()
+    .try_on_domain_event::<MemberJoined>(
+        |event| event.organization_id.clone(),
+        |view, _event| {
+            view.members = view.members.checked_add(1).ok_or_else(|| {
+                rostfrei::ReadModelProcessingError::Transformation(
+                    "member count overflow".to_owned(),
+                )
+            })?;
+            Ok(())
+        },
+    )
+    .on_domain_event::<DemoChanged>(
+        |event| event.organization_id.clone(),
+        |view, event| view.demo = event.active,
+    )
+    .on_integration_event::<BillingChanged>(
+        |event| event.organization_id.clone(),
+        |view, event| view.paid = event.paid,
+    )
+    .build()
+    .await?;
+```
+
+The first closure selects the read-model key. The second changes that key's value.
+Use `on_domain_event` and `on_integration_event` for infallible transformations;
+the `try_on_*` variants return `ReadModelProcessingError` when validation fails.
+
+`from_aggregate` selects the owner of subsequent domain registrations. Switch it
+to combine events from another aggregate in the same bounded context. If the payload
+does not repeat the aggregate ID, the key selector can use committed metadata:
+
+```rust
+|event| event.recorded().stream_id().aggregate_id().as_str().to_owned()
+```
+
+Handlers are synchronous and repeatable. Keep external calls outside the transformation:
+the runtime can invoke it again after a concurrency conflict or during a rebuild.
+
+## Declare the integration producer once
+
+An ordinary integration event needs no business-version field:
+
+```rust
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct BillingChanged {
+    pub organization_id: String,
+    pub paid: bool,
+}
+
+impl rostfrei::IntegrationEvent for BillingChanged {
+    const EVENT_NAME: &'static str = "billing-changed";
+    const SCHEMA_VERSION: u32 = 1;
+    const BOUNDED_CONTEXT: Option<&'static str> = Some("billing");
+}
+```
+
+The declared producer is checked by the typed publisher and read-model registration.
+Without `BOUNDED_CONTEXT`, subscriptions default to the model's context. For an
+existing unannotated contract, `integration_context::<E>(producer_context)` overrides
+routing while retaining broker ordering.
+
+**Broker ordering is the default.** The optional business-version policies are
+explained in [ordering and recovery](/docs/read-models/ordering).
+
+## Query the saved view
+
+```rust
+let reader = model.reader();
+let key = rostfrei::ReadModelKey::new("org-123")?;
+let access = reader.read(&key).await?;
+```
+
+`ReadModelReader<OrganizationAccess>` is cloneable and returns
+`Option<OrganizationAccess>`. Pass it into an application query handler. It exposes
+no write methods or KV revision tokens.
+
+Queries can observe a model that is still catching up. Freshness and authorization
+deadlines belong in the application's contract.
+
+## What the framework checks
+
+- Domain inputs must be `DomainEvent` types in the selected aggregate's event set.
+- Integration inputs must implement `IntegrationEvent`.
+- Commands and queries cannot be registered as event inputs through these APIs.
+- Registration rejects duplicate bindings, duplicate model IDs in one registry,
+  incompatible bounded contexts, and cross-Normal/Test sources.
+- Value and source progress are saved together. A failed transformation does not
+  persist its partial in-memory changes.
+
+## Run the complete example
+
+From the repository root, with Docker available:
+
+```sh
+python3 scripts/test_nats.py -- cargo run --locked -p rostfrei-nats --example read_model
+```
+
+The example starts real consumers, combines domain and billing events, and queries:
+
+```plaintext
+Some(OrganizationAccess { members: 1, demo: true, paid: true })
+```
+
+[Example source](https://github.com/elbLabs/rostfrei/tree/main/crates/rostfrei-nats/examples/read_model)
+contains the declaration, registration, source events, and runnable setup.
+
+Next: [bind NATS and start the worker](/docs/read-models/nats), or explore the
+[KV versus replay benchmark](/docs/read-models/benchmarks).

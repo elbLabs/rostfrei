@@ -24,10 +24,16 @@ rostfrei-fixtures.workspace = true
 rostfrei-messaging-core.workspace = true
 
 [dev-dependencies]
+clap.workspace = true
 nkeys.workspace = true
 tempfile.workspace = true
 rostfrei.workspace = true
 rostfrei-testing.workspace = true
+
+[[bench]]
+name = "aggregate_loading"
+harness = false
+test = false
 
 [lints]
 workspace = true

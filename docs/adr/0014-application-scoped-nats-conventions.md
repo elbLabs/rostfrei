@@ -104,18 +104,30 @@ attempts, including reconnects, and are bounded by the connection timeout.
 Consumer and durable names follow
 `<application>[--test]--<context>--<purpose>--v<major>`. This version identifies the
 consumer and its delivery progress; it is independent of a message's payload
-schema version. Subjects do not route messages by either version.
+schema version. Treat it as an explicitly named subscription generation, never
+derive it from `Command::SCHEMA_VERSION`. Subjects do not route messages by either
+version. The suffix is a Rostfrei naming convention, not a NATS requirement or an
+application upgrade version. Preserve the exact deployed identity, including any
+existing suffix, across payload and handler changes.
 
 A newly provisioned durable consumer uses `DeliverPolicy::All`, so it receives
-matching retained history. Integration-event processing also includes the durable
-name when deriving command operation IDs. Changing the durable version can
-therefore replay an already processed event under a new operation ID. Earlier
+matching retained history. This enables deliberate event-consumer replay on
+streams that allow overlapping consumers; command work queues remove acknowledged
+commands and do not support this replay pattern. Integration-event processing also
+includes the durable name when deriving command operation IDs. Changing the durable
+version can therefore replay an already processed event under a new operation ID. Earlier
 operation IDs do not deduplicate those commands, and business actions may repeat
 unless the command's own semantics prevent them.
 
 Keep the existing durable identity when deploying a compatible handler or adding
 support for a new payload schema. Change it only as an explicit consumer migration
 or replay decision, accounting for retained history and repeated business effects.
+Before a generation change, decide how to drain or handle pending work and retire
+the old subscription. Command streams use work-queue retention: an old durable's
+filter prevents provisioning an overlapping replacement even when its queue is
+empty. Startup must not resolve that conflict by deleting consumers or messages.
+Stable subscription names do not migrate incompatible queued payloads. Command
+handlers can support old schemas or explicitly reject unsupported versions.
 The payload rollout sequence is documented in
 [ADR 0004](0004-private-and-integration-events.md#schema-upgrades).
 

@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Typed, revision-aware `ReadModelStore<T>` and NATS KV adapter with versioned
+  codecs, CAS create/update/delete, application/context/model/traffic isolation,
+  and explicit provisioning, verification, and policy updates. Includes a
+  multi-handler query/rebuild example and migration/operations documentation.
+- `ReadModel` declarations and event-only registration builders with automatic
+  persistence, source checkpoints, bounded CAS retries, authoritative domain-gap
+  catch-up, broker-default integration ordering with optional business versions,
+  read-only query handles, and
+  managed NATS consumer workers.
+
 ### Changed
 
 - **Breaking (command acceptance):** successful event-free commands now persist a
@@ -14,14 +26,38 @@ All notable changes to this project are documented in this file.
   2 for event-free acceptance and continues reading existing receipts and histories.
   Past transient no-op acceptances cannot be reconstructed retroactively. See
   [ADR 0039](docs/adr/0039-durable-event-free-acceptance.md).
+- **NATS read policy:** ordinary aggregate/session reads and stream discovery now
+  trust committed writes after local history checks, instead of rereading every
+  historical transaction receipt. Use `NatsEventStore::audit_history` or
+  `audit_streams` for deep historical receipt, participant, and guard verification.
+  Missing or inconsistent historical receipts inserted outside the supported
+  store API are no longer detected by every ordinary load. Atomic writes,
+  operation-specific replay/reconciliation, and stored wire formats are preserved.
+
+### Added
+
+- `NatsEventStore::with_history_auditing(bool)` enables or disables historical
+  auditing per handle. It defaults to off, applies consistently to loads,
+  discovery and append-session histories, and never disables local integrity or
+  operation-specific write/retry checks. Explicit audit methods always audit.
 
 ### Fixed
 
+- New projects build outside the repository with unmodified manifests by pinning
+  Rostfrei dependencies to the available `v0.0.5-alpha` Git release commit.
+  The starter pin is independent of CLI version bumps and advances after release
+  publication. Names `model` and `tests` now fail before project creation with a
+  suggested alternative. CI checks and tests an external, unpatched starter.
 - Direct command execution now defaults missing correlation to the operation ID,
   using the same metadata rule as `CommandBus`. Explicit correlation and causation
   are preserved, transaction receipts and events agree across retries, and mapped
   integration events can be published from directly executed commands without
   caller-supplied correlation.
+- Bike-rental command consumer and durable names now freeze the existing `--v2`
+  identities independently of payload schema versions, preserving durable progress
+  and pending work across schema changes. Documentation treats subscription names
+  as stable identities and distinguishes command cutover from event replay.
+  Startup does not delete or migrate conflicting durables or queued payloads.
 
 ## [0.0.5-alpha] - 2026-09-16
 

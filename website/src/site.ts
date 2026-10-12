@@ -45,6 +45,26 @@ const introductions: Record<
     description:
       "Give every domain concept a predictable home. Learn how Rostfrei's checked project structure connects declarations, ownership, and behavior implementations.",
   },
+  "read-models": {
+    title: "Read models · Rostfrei docs",
+    description:
+      "Declare saved query views in Rust and register domain and integration event handlers. Rostfrei handles KV persistence, checkpoints, and concurrency retries.",
+  },
+  "read-models/nats": {
+    title: "Read-model NATS setup · Rostfrei docs",
+    description:
+      "Provision scoped NATS KV storage, configure the read-model backend, and run ordered event consumers using the application's managed connection.",
+  },
+  "read-models/ordering": {
+    title: "Read-model ordering and recovery · Rostfrei docs",
+    description:
+      "Understand default broker ordering, optional business versions, duplicate delivery, quarantine recovery, and rebuilding read-model generations.",
+  },
+  "read-models/benchmarks": {
+    title: "Read-model query benchmarks · Rostfrei docs",
+    description:
+      "Compare KV queries with replaying two connected aggregates. Explore recorded latency, broker request counts, timing boundaries, and reproduction commands.",
+  },
 }
 
 function pagesForEntries(

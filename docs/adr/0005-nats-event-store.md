@@ -5,6 +5,8 @@
 Accepted; deployment naming policy partially superseded by ADR 0014 and primary
 transaction receipt addressing superseded by
 [ADR 0037](0037-bounded-context-commands-and-unit-of-work.md).
+Historical receipt auditing is separated from ordinary reads by
+[ADR 0040](0040-trusted-event-store-reads-and-explicit-audits.md).
 
 ## Decision
 
@@ -98,6 +100,12 @@ all events in one commit become visible atomically. NATS KV is not used and
 histories are never rewritten. Incomplete commits, inconsistent atomic-batch
 headers, missing events, version gaps, duplicate identities, checksum failures,
 and incompatible wire schemas fail closed.
+
+As refined by ADR 0040, ordinary loads enforce local envelope and stream checks
+while trusting committed writes. Explicit `audit_history` and `audit_streams`
+perform the historical receipt/participant/guard verification. Missing or
+inconsistent receipt evidence from out-of-band modifications is detected by those
+audits or operation-specific reconciliation, rather than every ordinary load.
 
 Atomic event transactions cannot cross JetStream streams. Aggregates that must
 commit together therefore belong to one bounded-context event-store stream;
