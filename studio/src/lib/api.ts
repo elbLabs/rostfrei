@@ -26,6 +26,10 @@ interface AggregateInstanceCollection {
   items: AggregateInstance[]
 }
 
+interface RequestOptions extends RequestInit {
+  timeoutMs?: number
+}
+
 export async function getCatalog(signal?: AbortSignal): Promise<TracerCatalog> {
   const catalog = await requestJson<TracerCatalog>("/catalog", {
     signal,
@@ -189,7 +193,8 @@ export async function submitCommand(
     const query = messageSeriesHref.includes("?") ? "&" : "?"
     const series = await requestJson<OperationMessageSeries>(
       `${messageSeriesHref}${query}within=10s&settleFor=500ms`,
-      { signal: AbortSignal.timeout(12_000) }
+      // Allow the full capture window plus time to return partial evidence.
+      { timeoutMs: 12_000 }
     )
     return { operation: latest, series }
   } catch (error) {
@@ -197,7 +202,7 @@ export async function submitCommand(
   }
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function requestJson<T>(path: string, init?: RequestOptions): Promise<T> {
   const response = await request(path, init)
   try {
     return (await response.json()) as T
@@ -208,10 +213,15 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-async function request(path: string, init?: RequestInit): Promise<Response> {
-  const label = requestLabel(path, init?.method)
-  const timeout = AbortSignal.timeout(init?.method === "POST" ? 60_000 : 10_000)
-  const signal = init?.signal
+async function request(
+  path: string,
+  { timeoutMs, ...init }: RequestOptions = {}
+): Promise<Response> {
+  const label = requestLabel(path, init.method)
+  const timeout = AbortSignal.timeout(
+    timeoutMs ?? (init.method === "POST" ? 60_000 : 10_000)
+  )
+  const signal = init.signal
     ? AbortSignal.any([init.signal, timeout])
     : timeout
   let response: Response
@@ -220,7 +230,7 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
       ...init,
       signal,
       redirect: "error",
-      headers: { ...requestHeaders("application/json"), ...init?.headers },
+      headers: { ...requestHeaders("application/json"), ...init.headers },
     })
   } catch {
     throw new Error(
