@@ -126,6 +126,12 @@ both. It does not separately quantify their CPU or allocation benefit.
 
 ## Controlled benchmark
 
+This section records the pre-batched-reader implementation. Since
+[ADR 0042](../adr/0042-batched-aggregate-history-replay.md), the diagnostic is named
+`compare_serial_raw_and_batched_history_replay` and compares serial raw reads
+against replay instead. The original window algorithm remains test-only; use
+the historical revision to reproduce the serial/parallel results below.
+
 An ignored diagnostic integration test provides a test-only serial strategy:
 
 ```sh

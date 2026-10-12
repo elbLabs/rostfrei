@@ -89,8 +89,8 @@ The process log is `/tmp/opencode/rostfrei-deep-review-aggregate-loading.log`.
 Both are local artifacts; this document preserves the result summary.
 
 ```sh
-python3 scripts/test_nats.py -- cargo bench --locked \
-  -p rostfrei-nats --bench aggregate_loading -- \
+cargo build --locked --release -p rostfrei-benchmarks --bins
+target/release/rostfrei-benchmarks aggregate-loading -- \
   --events 0,100,1000 --samples 5 \
   --output /tmp/rostfrei-aggregate-loading.json
 ```

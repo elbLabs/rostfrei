@@ -1,0 +1,29 @@
+[package]
+name = "rostfrei-benchmarks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+default-run = "rostfrei-benchmarks"
+
+[dependencies]
+async-nats.workspace = true
+async-trait.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["process", "signal", "io-util"] }
+rostfrei.workspace = true
+rostfrei-core.workspace = true
+rostfrei-messaging-core.workspace = true
+rostfrei-nats.workspace = true
+
+[dev-dependencies]
+rostfrei-testing.workspace = true
+
+[lints]
+workspace = true

@@ -13,13 +13,13 @@ The [initial measured baseline](aggregate-loading-baseline.md) includes complete
 
 ## Run
 
-With the repository toolchain, Python 3.11+, and Docker:
+With the repository toolchain and Docker (no Python):
 
 ```sh
-python3 scripts/test_nats.py -- cargo bench --locked \
-  -p rostfrei-nats --bench aggregate_loading -- \
+cargo build --locked --release -p rostfrei-benchmarks --bins
+target/release/rostfrei-benchmarks aggregate-loading -- \
   --events 0,100,1000 --samples 5 \
-  --output /tmp/rostfrei-aggregate-loading.json
+  --output target/benchmarks/aggregate-loading.json
 ```
 
 This starts a fresh pinned NATS 2.12.1 broker with file storage and one replica,
@@ -35,20 +35,18 @@ samples. Setup time is reported separately and excluded from sample timings.
 For a quick check or a larger payload:
 
 ```sh
-python3 scripts/test_nats.py -- cargo bench --locked \
-  -p rostfrei-nats --bench aggregate_loading -- \
-  --events 0,10 --samples 3 --output /tmp/rostfrei-quick.json
+target/release/rostfrei-benchmarks aggregate-loading -- \
+  --events 0,10 --samples 3 --output target/benchmarks/aggregate-quick.json
 
-python3 scripts/test_nats.py -- cargo bench --locked \
-  -p rostfrei-nats --bench aggregate_loading -- \
+target/release/rostfrei-benchmarks aggregate-loading -- \
   --history commands --events 1000 --note-bytes 1024 --samples 20 \
-  --output /tmp/rostfrei-1k-command-history.json
+  --output target/benchmarks/aggregate-1k-command-history.json
 ```
 
-`cargo bench` builds an optimized executable. Actual broker measurements reject
-debug builds. The default artifact is the checkout's
+The `rostfrei-benchmarks` package owns the suite and Rust broker runner.
+Actual broker measurements reject debug builds. The default artifact is the checkout's
 `target/benchmarks/aggregate-loading.json`; `--output` can select another path.
-Cargo's working-directory behavior does not affect the default artifact location.
+The runner's working-directory behavior does not affect the default artifact location.
 
 ## Workload
 
@@ -146,20 +144,10 @@ Schema version 1 includes:
 - A nearest-rank `p95_ns` only when at least 20 samples are available. Small runs
   intentionally do not report a misleading percentile.
 
-Example extraction:
-
-```python
-import json
-
-with open("/tmp/rostfrei-aggregate-loading.json") as source:
-    report = json.load(source)
-
-for case in report["cases"]:
-    ready = next(s for s in case["summaries"] if s["phase"] == "rehydrate")
-    print(case["history"], case["seeded_events"],
-          f"ready median: {ready['median_ns'] / 1_000_000:.3f} ms",
-          f"after history: {ready['median_after_history_ns'] / 1_000_000:.3f} ms")
-```
+Each run prints phase medians and the paired after-history median to stderr.
+For full readiness in the JSON report, select the `rehydrate` entry in each
+case's `summaries`; `median_ns` is the total and `median_after_history_ns` is
+the remaining runtime work. Divide nanoseconds by 1,000,000 for milliseconds.
 
 Keep raw reports from both revisions, use the same payload/history/runtime
 settings, avoid concurrent builds, and compare repeated runs on a controlled
@@ -191,12 +179,11 @@ thresholds should be added only for a controlled benchmark environment.
 The fixture and reporting contracts run without a broker:
 
 ```sh
-cargo test --locked -p rostfrei-nats --test aggregate_benchmark
+cargo test --locked -p rostfrei-benchmarks --test aggregate_benchmark
 ```
 
 They cover direct/command fixture equivalence, usable reconstructed state,
 idempotent replay, large-event batch boundaries, CLI validation, sample counts,
 history growth, and quantile definitions. The actual NATS suite is exercised by
-the benchmark command above. A normal debug-profile Cargo test invocation of the custom benchmark
-runs the in-memory fixture smoke checks rather than publishing misleading debug
-timings.
+the release benchmark command above; ordinary Cargo tests exercise the in-memory
+fixtures instead of publishing misleading debug timings.
