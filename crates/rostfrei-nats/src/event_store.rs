@@ -18,6 +18,7 @@ use async_nats::{
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use futures_util::{TryStreamExt as _, stream::FuturesOrdered};
 use rostfrei_core::{
     AggregateId, AggregateType, AppendOutcome, AppendSession, CommitId, ContentFingerprint,
     EventBatch, EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind,
@@ -34,6 +35,9 @@ use crate::event_store_config::{MAX_SUPPORTED_EVENT_BYTES, NatsEventStoreConfig}
 use crate::hex::encode_lower_hex;
 use crate::stream_policy::{is_stream_not_found, stream_config_mismatches};
 
+#[path = "event_store/history_reads.rs"]
+mod history_reads;
+
 const LEGACY_EVENT_SCHEMA_VERSION: u16 = 1;
 const CORRELATION_EVENT_SCHEMA_VERSION: u16 = 2;
 const EVENT_SCHEMA_VERSION: u16 = 3;
@@ -45,10 +49,11 @@ const MINIMUM_ATOMIC_BATCH_SERVER_VERSION: (i64, i64, i64) = (2, 12, 1);
 const NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT: &str =
     "Nats-Expected-Last-Subject-Sequence-Subject";
 const CORRELATION_ID_HEADER: &str = "rostfrei-Control-Correlation-Id";
+const MAX_CONCURRENT_HISTORY_RECEIPT_READS: usize = 8;
 
 struct NatsAppendSession<'a> {
     store: &'a NatsEventStore,
-    histories: tokio::sync::Mutex<ValidatedHistories>,
+    histories: tokio::sync::Mutex<LoadedHistories>,
     incarnation: String,
 }
 
@@ -70,7 +75,7 @@ impl EventHistory for NatsAppendSession<'_> {
         let mut histories = self.histories.lock().await;
         let history = self
             .store
-            .load_validated_history(stream_id, &mut histories)
+            .load_session_history(stream_id, &mut histories)
             .await?;
         drop(histories);
         self.validate_incarnation().await?;
@@ -88,7 +93,7 @@ impl AppendSession for NatsAppendSession<'_> {
     ) -> Result<AppendOutcome, EventStoreError> {
         let history = self
             .store
-            .load_validated_history(stream_id, self.histories.get_mut())
+            .load_session_history(stream_id, self.histories.get_mut())
             .await?;
         self.validate_incarnation().await?;
         self.store
@@ -111,10 +116,13 @@ impl AppendSession for NatsAppendSession<'_> {
 pub struct NatsEventStore {
     context: jetstream::Context,
     config: NatsEventStoreConfig,
+    history_auditing: bool,
     #[cfg(test)]
     transaction_receipt_miss_hook: Option<ReadBarrierHook>,
     #[cfg(test)]
     directory_snapshot_hook: Option<ReadBarrierHook>,
+    #[cfg(test)]
+    serial_history_reads: bool,
 }
 
 #[cfg(test)]
@@ -150,15 +158,44 @@ impl NatsEventStore {
         Ok(Self {
             context,
             config,
+            history_auditing: false,
             #[cfg(test)]
             transaction_receipt_miss_hook: None,
             #[cfg(test)]
             directory_snapshot_hook: None,
+            #[cfg(test)]
+            serial_history_reads: false,
         })
     }
 
     pub const fn config(&self) -> &NatsEventStoreConfig {
         &self.config
+    }
+
+    /// Enables or disables historical receipt/participant/guard auditing for this handle.
+    ///
+    /// Defaults to `false`. The policy applies to ordinary loads, discovery, and
+    /// histories loaded by append sessions and writes. Local history checks and
+    /// operation-specific write/retry checks always run. Explicit audit methods
+    /// always audit, regardless of this setting.
+    ///
+    /// Configure before sharing the handle. Clones inherit the policy, but changing
+    /// one clone does not change other handles or their existing sessions.
+    #[must_use]
+    pub const fn with_history_auditing(mut self, enabled: bool) -> Self {
+        self.history_auditing = enabled;
+        self
+    }
+
+    pub const fn history_auditing_enabled(&self) -> bool {
+        self.history_auditing
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) const fn with_serial_history_reads(mut self) -> Self {
+        self.serial_history_reads = true;
+        self
     }
 
     #[allow(
@@ -205,8 +242,35 @@ impl NatsEventStore {
         }
     }
 
+    /// Loads an aggregate's recorded events using this handle's audit policy.
+    ///
+    /// Envelopes, checksums, identities, ordering, and local commit coordinates are
+    /// always checked. Historical evidence is reread only when enabled with
+    /// [`Self::with_history_auditing`]. Use [`Self::audit_history`] for a one-off audit.
     pub async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         <Self as EventHistory>::load(self, stream_id).await
+    }
+
+    /// Loads and audits this history's transaction receipts, participants, and guards.
+    ///
+    /// This read-only diagnostic retains legacy receipt selection and is intended
+    /// for explicit integrity checks, imports, and recovery verification. It does
+    /// not recursively audit unrelated transactions in participant histories.
+    pub async fn audit_history(
+        &self,
+        stream_id: &StreamId,
+    ) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        Ok(Arc::unwrap_or_clone(self.load_history_with_audit(stream_id, true).await?).events)
+    }
+
+    /// Lists aggregate versions while auditing their historical transaction evidence.
+    ///
+    /// Discovery and related participant reads share the captured directory cutoff.
+    pub async fn audit_streams(
+        &self,
+        aggregate_type: &AggregateType,
+    ) -> Result<Vec<StreamSummary>, EventStoreError> {
+        Box::pin(self.list_streams_inner(aggregate_type, true)).await
     }
 
     async fn load_raw_history(&self, stream_id: &StreamId) -> Result<History, EventStoreError> {
@@ -247,92 +311,48 @@ impl NatsEventStore {
             limit.min(last_subject_sequence)
         });
         let truncated_at_snapshot = last_sequence < last_subject_sequence;
-
-        let mut history = HistoryBuilder::default();
-        let mut next_stream_sequence = 1_u64;
-        let mut last_commit_stream_sequence = 0_u64;
-        let mut last_seen_sequence = 0_u64;
-
-        while next_stream_sequence <= last_sequence {
-            let message = match stream
-                .get_first_raw_message_by_subject(&subject, next_stream_sequence)
-                .await
-            {
-                Ok(message) => message,
-                Err(error)
-                    if truncated_at_snapshot
-                        && error.kind() == LastRawMessageErrorKind::NoMessageFound =>
-                {
-                    break;
-                }
-                Err(error) => {
-                    return Err(match error.kind() {
-                        LastRawMessageErrorKind::NoMessageFound => {
-                            corrupt("aggregate history disappeared while loading")
-                        }
-                        _ => unavailable(format!("failed to read aggregate history: {error}")),
-                    });
-                }
-            };
-            if message.sequence > last_sequence && truncated_at_snapshot {
-                // Related participants must use the directory's snapshot too,
-                // including an empty read-guard history with only later events.
-                break;
-            }
-            if message.subject.as_str() != subject {
-                return Err(corrupt("aggregate history contains the wrong subject"));
-            }
-            if message.sequence < next_stream_sequence || message.sequence > last_sequence {
-                return Err(corrupt(
-                    "aggregate history returned an invalid stream sequence",
-                ));
-            }
-
-            let decoded = decode_event(
+        #[cfg(test)]
+        if self.serial_history_reads {
+            return history_reads::load_prefix_serial(
+                &stream,
                 &self.config,
-                &subject,
                 stream_id,
-                Some(last_commit_stream_sequence),
-                message.sequence,
-                &message.headers,
-                message.payload.as_ref(),
-            )?;
-            let next_event_ordinal = decoded
-                .event_ordinal
-                .checked_add(1)
-                .ok_or_else(|| corrupt("stored event has invalid commit coordinates"))?;
-            if next_event_ordinal == decoded.event_count {
-                last_commit_stream_sequence = message.sequence;
-            }
-            history.push(decoded)?;
-            last_seen_sequence = message.sequence;
-
-            if message.sequence == last_sequence {
-                break;
-            }
-            next_stream_sequence = message
-                .sequence
-                .checked_add(1)
-                .ok_or_else(|| corrupt("JetStream sequence space overflowed"))?;
+                &subject,
+                last_sequence,
+                truncated_at_snapshot,
+            )
+            .await;
         }
-
-        if !truncated_at_snapshot && last_seen_sequence != last_sequence {
-            return Err(corrupt("aggregate history ended before its last message"));
-        }
-        if last_seen_sequence == 0 && truncated_at_snapshot {
-            return Ok(History::default());
-        }
-        history.finish(last_seen_sequence)
+        history_reads::load_prefix(
+            &stream,
+            &self.config,
+            stream_id,
+            &subject,
+            last_sequence,
+            truncated_at_snapshot,
+        )
+        .await
     }
 
     async fn load_history(&self, stream_id: &StreamId) -> Result<Arc<History>, EventStoreError> {
+        self.load_history_with_audit(stream_id, self.history_auditing)
+            .await
+    }
+
+    async fn load_history_with_audit(
+        &self,
+        stream_id: &StreamId,
+        audit: bool,
+    ) -> Result<Arc<History>, EventStoreError> {
         let history = Arc::new(self.load_raw_history(stream_id).await?);
-        let mut raw_histories = RawHistoryCache {
-            histories: HashMap::from([(stream_id.clone(), Arc::clone(&history))]),
-            maximum_stream_sequence: None,
-        };
-        self.validate_transaction_history(&history, &mut raw_histories)
-            .await?;
+        if audit {
+            let mut raw_histories = RawHistoryCache {
+                histories: HashMap::from([(stream_id.clone(), Arc::clone(&history))]),
+                maximum_stream_sequence: None,
+            };
+            self.validate_transaction_history(&history, &mut raw_histories)
+                .await?;
+        }
         Ok(history)
     }
 
@@ -354,10 +374,10 @@ impl NatsEventStore {
         Ok(history)
     }
 
-    async fn load_validated_history(
+    async fn load_session_history(
         &self,
         stream_id: &StreamId,
-        histories: &mut ValidatedHistories,
+        histories: &mut LoadedHistories,
     ) -> Result<Arc<History>, EventStoreError> {
         if let Some(history) = histories.by_stream.get(stream_id) {
             return Ok(Arc::clone(history));
@@ -390,39 +410,99 @@ impl NatsEventStore {
                 unavailable(format!("failed to verify transaction history: {error}"))
             })?;
         let mut validated_batches = HashMap::new();
-        for commit in &history.commits {
-            let Some(provenance) = commit.transaction.as_ref() else {
-                continue;
-            };
-            if let Some(materialized) = validated_batches.get(&provenance.batch_id) {
-                if !transaction_receipt_covers_commit(materialized, commit) {
-                    return Err(corrupt(
-                        "transaction receipt does not cover an aggregate commit with exact provenance",
-                    ));
+        let mut requested_batches = HashSet::new();
+        let mut transactions = history.commits.iter();
+        // Only independent, leader-routed lookups are pipelined. Materialization
+        // stays ordered and shares the read's raw-history cache and cutoff.
+        let mut receipts = FuturesOrdered::new();
+        loop {
+            while receipts.len() < MAX_CONCURRENT_HISTORY_RECEIPT_READS {
+                let Some(commit) = transactions.next() else {
+                    break;
+                };
+                let Some(provenance) = commit.transaction.as_ref() else {
+                    continue;
+                };
+                if requested_batches.insert(&provenance.batch_id) {
+                    receipts
+                        .push_back(self.locate_transaction_receipt(&stream, commit, provenance));
                 }
-                continue;
             }
+            let Some((commit, located)) = receipts.try_next().await? else {
+                break;
+            };
+            let layout = located.legacy_primary.as_ref().map_or(
+                TransactionSubjectLayout::Operation,
+                TransactionSubjectLayout::LegacyPrimary,
+            );
             let materialized = self
-                .materialize_transaction_batch(&stream, commit, provenance, raw_histories)
+                .materialize_transaction_receipt(&stream, located.decoded, raw_histories, layout)
                 .await?;
             if !transaction_receipt_covers_commit(&materialized, commit) {
                 return Err(corrupt(
                     "transaction receipt does not cover an aggregate commit with exact provenance",
                 ));
             }
-            validated_batches.insert(provenance.batch_id.clone(), materialized);
+            validated_batches.insert(materialized.batch_id.clone(), materialized);
+        }
+        for commit in &history.commits {
+            let Some(provenance) = commit.transaction.as_ref() else {
+                continue;
+            };
+            if !validated_batches
+                .get(&provenance.batch_id)
+                .is_some_and(|receipt| transaction_receipt_covers_commit(receipt, commit))
+            {
+                return Err(corrupt(
+                    "transaction receipt does not cover an aggregate commit with exact provenance",
+                ));
+            }
         }
         Ok(())
     }
 
-    async fn materialize_transaction_batch(
+    async fn locate_transaction_receipt<'a>(
         &self,
         stream: &jetstream::stream::Stream,
-        commit: &StoredCommit,
+        commit: &'a StoredCommit,
         provenance: &StoredTransactionProvenance,
-        raw_histories: &mut RawHistoryCache,
-    ) -> Result<MaterializedTransactionReceipt, EventStoreError> {
+    ) -> Result<(&'a StoredCommit, LocatedTransactionReceipt), EventStoreError> {
         let batch_start_stream_sequence = transaction_batch_start_sequence(commit, provenance)?;
+        let primary_stream_id = if provenance.event_ordinals.start == 0 {
+            // This commit already contains the transaction's first event. Its envelope,
+            // batch coordinates, and global sequence were checked while loading history.
+            commit
+                .events
+                .first()
+                .ok_or_else(|| corrupt("transactional commit has no first event"))?
+                .stream_id()
+                .clone()
+        } else {
+            self.load_transaction_first_stream(
+                stream,
+                batch_start_stream_sequence,
+                provenance,
+                commit.batch.operation_id(),
+            )
+            .await?
+        };
+        let located = self
+            .load_transaction_receipt_for_history(
+                stream,
+                primary_stream_id,
+                commit.batch.operation_id(),
+            )
+            .await?;
+        Ok((commit, located))
+    }
+
+    async fn load_transaction_first_stream(
+        &self,
+        stream: &jetstream::stream::Stream,
+        batch_start_stream_sequence: u64,
+        provenance: &StoredTransactionProvenance,
+        operation_id: &OperationId,
+    ) -> Result<StreamId, EventStoreError> {
         let message = stream
             .get_raw_message(batch_start_stream_sequence)
             .await
@@ -446,6 +526,7 @@ impl NatsEventStore {
         )?;
         if !first.is_transactional
             || first.batch_id != provenance.batch_id
+            || &first.operation_id != operation_id
             || first.transaction_event_ordinal != 0
             || first.transaction_event_count != provenance.transaction_event_count
         {
@@ -453,24 +534,7 @@ impl NatsEventStore {
                 "transaction's global first event has incompatible provenance",
             ));
         }
-        let primary_stream_id = first.recorded.stream_id().clone();
-        let materialized = self
-            .load_transaction_receipt_for_history(
-                &primary_stream_id,
-                &first.operation_id,
-                raw_histories,
-            )
-            .await?
-            .ok_or_else(|| corrupt("transaction receipt is absent from committed history"))?;
-        if materialized.batch_id != provenance.batch_id
-            || materialized.batch_start_stream_sequence != batch_start_stream_sequence
-            || materialized.transaction_event_count != provenance.transaction_event_count
-        {
-            return Err(corrupt(
-                "transaction receipt has incompatible atomic batch provenance",
-            ));
-        }
-        Ok(materialized)
+        Ok(first.recorded.stream_id().clone())
     }
 
     fn resolve_existing(
@@ -669,28 +733,37 @@ impl NatsEventStore {
 
     async fn load_transaction_receipt_for_history(
         &self,
-        legacy_primary_stream_id: &StreamId,
+        stream: &jetstream::stream::Stream,
+        legacy_primary_stream_id: StreamId,
         operation_id: &OperationId,
-        raw_histories: &mut RawHistoryCache,
-    ) -> Result<Option<MaterializedTransactionReceipt>, EventStoreError> {
+    ) -> Result<LocatedTransactionReceipt, EventStoreError> {
         if let Some(receipt) = self
-            .load_transaction_receipt_materialized_with_raw_histories(
+            .read_transaction_receipt(
+                stream,
                 operation_id,
                 false,
-                raw_histories,
-                TransactionSubjectLayout::LegacyPrimary(legacy_primary_stream_id),
+                TransactionSubjectLayout::LegacyPrimary(&legacy_primary_stream_id),
             )
             .await?
         {
-            return Ok(Some(receipt));
+            return Ok(LocatedTransactionReceipt {
+                decoded: receipt,
+                legacy_primary: Some(legacy_primary_stream_id),
+            });
         }
-        self.load_transaction_receipt_materialized_with_raw_histories(
-            operation_id,
-            true,
-            raw_histories,
-            TransactionSubjectLayout::Operation,
-        )
-        .await
+        let decoded = self
+            .read_transaction_receipt(
+                stream,
+                operation_id,
+                true,
+                TransactionSubjectLayout::Operation,
+            )
+            .await?
+            .ok_or_else(|| corrupt("transaction receipt is absent from committed history"))?;
+        Ok(LocatedTransactionReceipt {
+            decoded,
+            legacy_primary: None,
+        })
     }
 
     async fn load_transaction_receipt_materialized_with_raw_histories(
@@ -700,12 +773,48 @@ impl NatsEventStore {
         raw_histories: &mut RawHistoryCache,
         layout: TransactionSubjectLayout<'_>,
     ) -> Result<Option<MaterializedTransactionReceipt>, EventStoreError> {
-        let subject = layout.receipt_subject(&self.config, operation_id.as_str());
         let stream = self
             .context
             .get_stream(self.config.stream_name())
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
+        self.load_transaction_receipt_from_stream(
+            &stream,
+            operation_id,
+            required,
+            raw_histories,
+            layout,
+        )
+        .await
+    }
+
+    async fn load_transaction_receipt_from_stream(
+        &self,
+        stream: &jetstream::stream::Stream,
+        operation_id: &OperationId,
+        required: bool,
+        raw_histories: &mut RawHistoryCache,
+        layout: TransactionSubjectLayout<'_>,
+    ) -> Result<Option<MaterializedTransactionReceipt>, EventStoreError> {
+        let Some(decoded) = self
+            .read_transaction_receipt(stream, operation_id, required, layout)
+            .await?
+        else {
+            return Ok(None);
+        };
+        self.materialize_transaction_receipt(stream, decoded, raw_histories, layout)
+            .await
+            .map(Some)
+    }
+
+    async fn read_transaction_receipt(
+        &self,
+        stream: &jetstream::stream::Stream,
+        operation_id: &OperationId,
+        required: bool,
+        layout: TransactionSubjectLayout<'_>,
+    ) -> Result<Option<DecodedTransactionReceipt>, EventStoreError> {
+        let subject = layout.receipt_subject(&self.config, operation_id.as_str());
         let message = match stream.get_last_raw_message_by_subject(&subject).await {
             Ok(message) => message,
             Err(error) if required => {
@@ -754,15 +863,13 @@ impl NatsEventStore {
                 ));
             }
         }
-        let receipt = self
-            .materialize_transaction_receipt(decoded, raw_histories, layout)
-            .await?;
-        Ok(Some(receipt))
+        Ok(Some(decoded))
     }
 
     #[allow(clippy::too_many_lines)]
     async fn materialize_transaction_receipt(
         &self,
+        stream: &jetstream::stream::Stream,
         decoded: DecodedTransactionReceipt,
         raw_histories: &mut RawHistoryCache,
         layout: TransactionSubjectLayout<'_>,
@@ -825,12 +932,6 @@ impl NatsEventStore {
             ));
         }
 
-        let stream = self
-            .context
-            .get_stream(self.config.stream_name())
-            .await
-            .map_err(|error| unavailable(format!("failed to verify transaction batch: {error}")))?;
-
         let mut seen = HashSet::with_capacity(content.participants.len());
         let mut streams = Vec::with_capacity(content.participants.len());
         let mut transaction_event_ordinal = 0_usize;
@@ -859,7 +960,7 @@ impl NatsEventStore {
             )?;
             if events.is_empty() {
                 verify_transaction_guard(
-                    &stream,
+                    stream,
                     &self.config,
                     &stream_id,
                     &history,
@@ -987,7 +1088,7 @@ impl NatsEventStore {
 #[async_trait]
 impl EventHistory for NatsEventStore {
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
-        Ok(self.load_history(stream_id).await?.events.clone())
+        Ok(Arc::unwrap_or_clone(self.load_history(stream_id).await?).events)
     }
 }
 
@@ -995,11 +1096,25 @@ impl EventHistory for NatsEventStore {
 impl StreamDirectory for NatsEventStore {
     /// Lists committed aggregate versions at the stream position captured at entry.
     /// Later appends are excluded; receipt and guard subjects do not create entries.
-    /// Discovered transactional histories receive the same provenance validation as `load`.
-    /// Related participant histories are loaded only through the same captured position.
+    /// Checks match this handle's `load` policy; `audit_streams` always audits.
     async fn list_streams(
         &self,
         aggregate_type: &AggregateType,
+    ) -> Result<Vec<StreamSummary>, EventStoreError> {
+        self.list_streams_inner(aggregate_type, self.history_auditing)
+            .await
+    }
+}
+
+impl NatsEventStore {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "ordinary and audited discovery share one snapshot scan"
+    )]
+    async fn list_streams_inner(
+        &self,
+        aggregate_type: &AggregateType,
+        audit_transactions: bool,
     ) -> Result<Vec<StreamSummary>, EventStoreError> {
         let stream = self
             .context
@@ -1092,11 +1207,15 @@ impl StreamDirectory for NatsEventStore {
                 Ok((stream_id, Arc::new(history.finish(last_sequence)?)))
             })
             .collect::<Result<BTreeMap<_, _>, EventStoreError>>()?;
-        let mut raw_histories = RawHistoryCache::at_snapshot(&histories, last_sequence);
+        if audit_transactions {
+            let mut raw_histories = RawHistoryCache::at_snapshot(&histories, last_sequence);
+            for history in histories.values() {
+                self.validate_transaction_history(history, &mut raw_histories)
+                    .await?;
+            }
+        }
         let mut summaries = Vec::with_capacity(histories.len());
         for (stream_id, history) in histories {
-            self.validate_transaction_history(&history, &mut raw_histories)
-                .await?;
             let stream_version = history
                 .events
                 .last()
@@ -1113,7 +1232,7 @@ impl EventStore for NatsEventStore {
     async fn append_session(&self) -> Result<Box<dyn AppendSession + '_>, EventStoreError> {
         Ok(Box::new(NatsAppendSession {
             store: self,
-            histories: tokio::sync::Mutex::new(ValidatedHistories::default()),
+            histories: tokio::sync::Mutex::new(LoadedHistories::default()),
             incarnation: self.stream_incarnation().await?,
         }))
     }
@@ -1155,7 +1274,7 @@ impl EventStore for NatsEventStore {
         &self,
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
-        self.append_transaction_with_histories(transaction, ValidatedHistories::default())
+        self.append_transaction_with_histories(transaction, LoadedHistories::default())
             .await
     }
 }
@@ -1289,7 +1408,7 @@ impl NatsEventStore {
     async fn append_transaction_with_histories(
         &self,
         transaction: EventTransaction,
-        mut histories: ValidatedHistories,
+        mut histories: LoadedHistories,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
         if transaction
             .bounded_context()
@@ -1320,7 +1439,7 @@ impl NatsEventStore {
         let mut staged = Vec::with_capacity(transaction.participants().len());
         for participant in transaction.participants() {
             let history = self
-                .load_validated_history(participant.stream_id(), &mut histories)
+                .load_session_history(participant.stream_id(), &mut histories)
                 .await?;
             if Self::transaction_participant_has_conflicting_identity(&history, participant)? {
                 let receipt = self
@@ -1669,7 +1788,9 @@ impl RawHistoryCache {
 }
 
 #[derive(Default)]
-struct ValidatedHistories {
+// Attempt-local histories checked according to the borrowed store handle's
+// immutable policy. Failures in local checks or enabled audits never populate this cache.
+struct LoadedHistories {
     by_stream: HashMap<StreamId, Arc<History>>,
 }
 
@@ -1851,6 +1972,11 @@ struct DecodedTransactionReceipt {
     batch_sequence: usize,
     stream_sequence: u64,
     content: TransactionReceiptContentWire,
+}
+
+struct LocatedTransactionReceipt {
+    decoded: DecodedTransactionReceipt,
+    legacy_primary: Option<StreamId>,
 }
 
 #[derive(Clone, Copy)]
@@ -2188,13 +2314,6 @@ fn decode_event_inner(
     let payload = STANDARD
         .decode(wire.event.payload_base64)
         .map_err(|error| corrupt(format!("invalid stored event payload: {error}")))?;
-    let new_event = NewEvent::new(
-        event_id.clone(),
-        wire.event.event_type,
-        wire.event.event_schema_version,
-        payload.clone(),
-    )
-    .map_err(|error| corrupt(format!("invalid stored event envelope: {error}")))?;
     let expected_commit_id = derive_commit_id(&stream_id, &operation_id);
     if expected_commit_id != commit_id
         || derive_event_id(&expected_commit_id, wire.event.commit_event_ordinal) != event_id
@@ -2210,8 +2329,8 @@ fn decode_event_inner(
         operation_fingerprint,
         wire.event.commit_event_ordinal,
         wire.event.commit_event_count,
-        new_event.event_type(),
-        new_event.schema_version(),
+        wire.event.event_type,
+        wire.event.event_schema_version,
         payload,
     )
     .map_err(|error| corrupt(format!("invalid recorded event: {error}")))?;
@@ -2463,12 +2582,36 @@ impl PendingCommit {
         if let Some(causation_id) = causation_id {
             batch = batch.with_causation_id(causation_id);
         }
-        Ok(StoredCommit {
+        let commit = StoredCommit {
             batch,
             events: self.events,
             global_stream_sequences: self.global_stream_sequences,
             transaction: self.transaction,
-        })
+        };
+        let first_sequence = commit
+            .global_stream_sequences
+            .first()
+            .copied()
+            .ok_or_else(|| corrupt("stored commit has no global stream sequence"))?;
+        if !commit
+            .global_stream_sequences
+            .iter()
+            .enumerate()
+            .all(|(index, sequence)| {
+                u64::try_from(index)
+                    .ok()
+                    .and_then(|index| first_sequence.checked_add(index))
+                    == Some(*sequence)
+            })
+        {
+            return Err(corrupt(
+                "stored commit events are not contiguous in their atomic batch",
+            ));
+        }
+        if let Some(provenance) = &commit.transaction {
+            transaction_batch_start_sequence(&commit, provenance)?;
+        }
+        Ok(commit)
     }
 }
 
@@ -3067,13 +3210,14 @@ fn materialize_transaction_participant(
         .ok_or_else(|| corrupt("transaction receipt stream version overflowed"))?;
     let stored = history
         .commits
-        .iter()
-        .find(|commit| {
+        .binary_search_by_key(&first_version, |commit| {
             commit
                 .events
                 .first()
-                .is_some_and(|event| event.stream_version().value() == first_version)
+                .map_or(0, |event| event.stream_version().value())
         })
+        .ok()
+        .and_then(|index| history.commits.get(index))
         .ok_or_else(|| corrupt("transaction receipt commit is absent from aggregate history"))?;
     let provenance = stored.transaction.as_ref().ok_or_else(|| {
         corrupt("transaction receipt commit has no atomic transaction provenance")
@@ -3584,6 +3728,62 @@ mod tests {
         headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
         headers.insert(NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL);
         headers
+    }
+
+    #[test]
+    fn local_commit_coordinates_are_checked_without_receipt_reads() {
+        let stream = stream_id();
+        let operation = OperationId::new("local-coordinates").unwrap();
+        let commit = derive_commit_id(&stream, &operation);
+        let fingerprint = ContentFingerprint::digest("local-coordinates");
+        let batch = EventBatch::new(
+            commit.clone(),
+            operation.clone(),
+            fingerprint,
+            (0..2)
+                .map(|ordinal| {
+                    NewEvent::new(
+                        derive_event_id(&commit, ordinal),
+                        "Created",
+                        1,
+                        b"{}".to_vec(),
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        )
+        .unwrap();
+        let recorded = record_batch(&stream, StreamVersion::ZERO, &batch).unwrap();
+        for (positions, offset, valid) in [
+            (vec![5, 6], Some(3_usize), true),
+            (vec![5, 7], Some(3), false),
+            (vec![2, 3], Some(2), false),
+            (vec![5, 7], None, false),
+        ] {
+            let pending = PendingCommit {
+                batch_id: "coordinates".to_owned(),
+                commit_id: commit.clone(),
+                operation_id: operation.clone(),
+                operation_fingerprint: fingerprint,
+                event_count: 2,
+                events: recorded.events.clone(),
+                global_stream_sequences: positions,
+                transaction: offset.map(|start| StoredTransactionProvenance {
+                    batch_id: "coordinates".to_owned(),
+                    event_ordinals: start..start.saturating_add(2),
+                    transaction_event_count: start.saturating_add(2),
+                }),
+            };
+            let result = pending.finish();
+            if valid {
+                assert!(result.is_ok());
+            } else {
+                assert_eq!(
+                    result.err().unwrap().kind(),
+                    EventStoreErrorKind::CorruptHistory
+                );
+            }
+        }
     }
 
     fn transaction_receipt_fixture() -> TransactionReceiptContentWire {

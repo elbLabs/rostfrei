@@ -50,6 +50,12 @@ export const docsRegistry = {
     import("@/content/docs/domain-macros/domain-tests.mdx"),
   "domain-macros/domain-model": () =>
     import("@/content/docs/domain-macros/domain-model.mdx"),
+  "read-models": () => import("@/content/docs/read-models/index.mdx"),
+  "read-models/nats": () => import("@/content/docs/read-models/nats.mdx"),
+  "read-models/ordering": () =>
+    import("@/content/docs/read-models/ordering.mdx"),
+  "read-models/benchmarks": () =>
+    import("@/content/docs/read-models/benchmarks.mdx"),
   "project-structure": () =>
     import("@/content/docs/project-structure/index.mdx"),
   "project-structure/domain-root": () =>

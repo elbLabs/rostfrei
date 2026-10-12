@@ -23,6 +23,10 @@ use crate::command_bus::{canonical_serialize, framed_fingerprint};
 pub trait IntegrationEvent: Serialize + DeserializeOwned + Send + Sync + Sized + 'static {
     const EVENT_NAME: &'static str;
     const SCHEMA_VERSION: u32;
+    /// Optional producing context, declared once with the public contract.
+    /// When absent, publishers use their configured context and read-model
+    /// subscriptions default to the model's context or an explicit override.
+    const BOUNDED_CONTEXT: Option<&'static str> = None;
 }
 
 /// Maps a private committed domain event to its public integration event.
@@ -259,6 +263,12 @@ impl IntegrationEventBus {
     where
         E: IntegrationEvent,
     {
+        if E::BOUNDED_CONTEXT.is_some_and(|context| context != self.context.name().as_str()) {
+            return Err(IntegrationEventBusError::new(
+                IntegrationEventBusErrorKind::InvalidConfiguration,
+                "integration event belongs to another producing bounded context",
+            ));
+        }
         let address = self
             .context
             .integration_event_address(E::EVENT_NAME)
@@ -403,4 +413,56 @@ fn current_timestamp() -> Result<MessageTimestamp, IntegrationEventBusError> {
     })?;
     MessageTimestamp::from_unix_milliseconds(milliseconds)
         .map_err(|error| IntegrationEventBusError::encoding(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Serialize, serde::Deserialize)]
+    struct BillingChanged;
+
+    impl IntegrationEvent for BillingChanged {
+        const EVENT_NAME: &'static str = "billing-changed";
+        const SCHEMA_VERSION: u32 = 1;
+        const BOUNDED_CONTEXT: Option<&'static str> = Some("billing");
+    }
+
+    struct NoPublish;
+
+    #[async_trait]
+    impl IntegrationMessageAdapter for NoPublish {
+        async fn publish(
+            &self,
+            _message: EncodedIntegrationMessage,
+        ) -> Result<PublishReceipt, IntegrationEventBusError> {
+            Err(IntegrationEventBusError::new(
+                IntegrationEventBusErrorKind::Unavailable,
+                "encoding-only adapter",
+            ))
+        }
+    }
+
+    #[test]
+    fn declared_producer_context_is_checked_before_publication() {
+        let application = rostfrei_messaging_core::ApplicationName::new("app").unwrap();
+        let committed = CommittedEventContext {
+            source_event_id: EventId::new("source-event").unwrap(),
+            correlation_id: CorrelationId::new("correlation").unwrap(),
+            occurred_at: Some(MessageTimestamp::from_unix_milliseconds(1).unwrap()),
+        };
+        let correct = IntegrationEventBus::new(
+            application.bounded_context("billing").unwrap(),
+            Arc::new(NoPublish),
+        );
+        assert!(correct.encode(committed.clone(), BillingChanged).is_ok());
+        let wrong = IntegrationEventBus::new(
+            application.bounded_context("access").unwrap(),
+            Arc::new(NoPublish),
+        );
+        assert_eq!(
+            wrong.encode(committed, BillingChanged).unwrap_err().kind(),
+            IntegrationEventBusErrorKind::InvalidConfiguration
+        );
+    }
 }
