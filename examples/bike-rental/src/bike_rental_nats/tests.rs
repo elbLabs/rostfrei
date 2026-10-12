@@ -5,9 +5,10 @@ use std::{error::Error, sync::Arc};
 use super::{
     APPLICATION_NAME, BicycleRentalStarted, BicycleRentalStartedHandler,
     BicycleRentedIntegrationMapper, BikeRentalCommand, BikeRentalNatsConfig,
-    BikeRentalNatsResourceLimits, integration_event_observation,
+    BikeRentalNatsResourceLimits, command_route, integration_event_observation,
 };
 use crate::{
+    BikeRental,
     demo::{apply_demo_fixture, demo_stream},
     rental_fleet::{
         BicycleId, BicycleRented, FleetId, RentBicycle, RentBicycleHandler, RentalFleetAggregate,
@@ -19,11 +20,12 @@ use rostfrei::{
     DomainEventDispatchOutcome, DomainEventDispatcher, DynamicCommandRequest, EventStore,
     InMemoryEventStore, InMemoryMessagingAdapter, IntegrationEventBus,
     IntegrationEventDispatcherExt, IntegrationMessageAdapter, JsonDomainRejectionMapper,
-    OperationId,
+    OperationId, RoutedCommand,
 };
 use rostfrei_messaging_core::{
-    CallerMetadata, CausationId, CommandRejectionClassification, CommandResponseOutcome,
-    CorrelationId, DeliveryDisposition, DeliveryInfo, MessageDelivery, MessageHandler, MessageId,
+    CallerMetadata, CausationId, CommandEnvelope, CommandRejectionClassification,
+    CommandResponseOutcome, CorrelationId, DeliveryDisposition, DeliveryInfo, MessageDelivery,
+    MessageHandler, MessageId,
 };
 use serde_json::json;
 
@@ -180,6 +182,57 @@ fn nats_configuration_derives_normal_and_test_resources_from_one_application() -
             .as_str(),
         "bike-rental--test--bike-rental--rent-bicycle--v2"
     );
+    Ok(())
+}
+
+#[test]
+fn command_subscription_identity_is_independent_of_payload_schema() -> TestResult {
+    // Compatible payloads with different schema metadata simulate a rollout or reset.
+    #[derive(Command)]
+    #[domain(id = "rent-bicycle", label = "Rent bicycle", context = BikeRental, schema_version = 1)]
+    struct RentBicycleV1 {
+        fleet_id: FleetId,
+        bicycle_id: BicycleId,
+    }
+
+    for config in [
+        BikeRentalNatsConfig::new(APPLICATION_NAME)?,
+        BikeRentalNatsConfig::new_test(APPLICATION_NAME)?,
+    ] {
+        let old = command_route::<RentBicycleV1>(config.context(), BikeRentalCommand::RentBicycle)?;
+        let current = config.command_route(BikeRentalCommand::RentBicycle);
+        assert_eq!(old.consumer().name(), current.consumer().name());
+        assert_eq!(
+            old.consumer().durable_name(),
+            current.consumer().durable_name()
+        );
+        assert_eq!(old.address(), current.address());
+        assert!(current.consumer().durable_name().as_str().ends_with("--v2"));
+
+        let adapter = Arc::new(InMemoryMessagingAdapter::new(Arc::new(processor(
+            InMemoryEventStore::new(),
+        )?)));
+        let bus = command_bus(&config, adapter);
+        let old_message = bus.encode(CommandRequest::new(
+            OperationId::new("schema-one")?,
+            RentBicycleV1 {
+                fleet_id: FleetId::new("city-fleet").ok_or("invalid fleet")?,
+                bicycle_id: BicycleId::new("bike-42").ok_or("invalid bicycle")?,
+            },
+        ))?;
+        let current_message = bus.encode(request("schema-two", "bike-42")?)?;
+        assert_eq!(old_message.address(), current_message.address());
+        assert_eq!(current_message.address(), current.address());
+        let old_envelope: CommandEnvelope<RoutedCommand> =
+            serde_json::from_slice(old_message.payload())?;
+        let current_envelope: CommandEnvelope<RoutedCommand> =
+            serde_json::from_slice(current_message.payload())?;
+        assert_eq!(old_envelope.payload().schema_version(), 1);
+        assert_eq!(current_envelope.payload().schema_version(), 2);
+        assert_eq!(RentBicycleV1::DESCRIPTOR.schema_version, 1);
+        assert_eq!(RentBicycle::DESCRIPTOR.schema_version, 2);
+        assert_eq!(current.command().schema_version(), 2);
+    }
     Ok(())
 }
 

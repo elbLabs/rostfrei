@@ -13,8 +13,9 @@ publish = false
 name = "{{module_name}}"
 
 [dependencies]
-rostfrei = "{{rostfrei_version}}"
-rostfrei-nats = "{{rostfrei_version}}"
+# Git release {{rostfrei_release}}; crates are not yet published to crates.io.
+rostfrei = { git = "https://github.com/elbLabs/rostfrei", rev = "{{rostfrei_revision}}" }
+rostfrei-nats = { git = "https://github.com/elbLabs/rostfrei", rev = "{{rostfrei_revision}}" }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 

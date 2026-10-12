@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Check or bump the shared Rust crate version (Python 3.11+)."""
+"""Check or bump the shared Rust crate version (Python 3.11+).
+
+The starter's published Git dependency pin is independent of workspace versions.
+Advance it separately after publication; see README's starter dependency contract.
+"""
 
 import argparse
 import re
