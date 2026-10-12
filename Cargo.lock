@@ -181,9 +181,11 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 name = "bike-rental"
 version = "0.0.5-alpha"
 dependencies = [
+ "async-nats",
  "async-trait",
  "axum",
  "base64",
+ "futures-util",
  "http-body-util",
  "rostfrei",
  "rostfrei-core",
