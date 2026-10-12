@@ -100,6 +100,8 @@ fn run_new(arguments: NewArgs) -> Result<bool, String> {
     );
     println!("\nNext steps:");
     println!("  cd {}", project.destination.display());
+    println!("  cargo check");
+    println!("  cargo test");
     println!("  docker compose up -d");
     println!("  cargo run");
     Ok(true)
