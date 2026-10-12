@@ -24,6 +24,7 @@ interface Props {
   onClose: () => void
   onSelect: () => void
   onFlow: (flow: ObservedFlow | undefined) => void
+  onExpired: (expired: boolean) => void
   onStatus: (status: ObservationConnection) => void
 }
 
@@ -34,6 +35,7 @@ export function ObservationPanel({
   onClose,
   onSelect,
   onFlow,
+  onExpired,
   onStatus,
 }: Props) {
   const [production, setProduction] = useState<ObservationCapability[]>([])
@@ -55,11 +57,17 @@ export function ObservationPanel({
     capabilities.find((entry) => entry.scope === scope) ?? capabilities[0]
   const { application, scope: effectiveScope, eventsHref } = capability ?? {}
   const selected = snapshot?.items.find((item) => item.id === selectedId)
+  const expired = Boolean(selectedId && snapshot && !selected)
   const detailHref = selected?.detailHref
   const detailRevision = selected?.revision
+  const correlationId = selected?.correlationId
   const generation = snapshot?.generation
   const status = paused ? "paused" : connection
   const latestDetailRevision = useEffectEvent(() => detailRevision)
+
+  useEffect(() => {
+    if (active) onExpired(expired)
+  }, [active, expired, onExpired])
 
   useEffect(() => {
     if (!active) return
@@ -133,7 +141,13 @@ export function ObservationPanel({
             controller.signal
           )
           if (controller.signal.aborted) return
-          if (flow.scope !== effectiveScope || flow.generation !== generation)
+          if (
+            flow.application !== application ||
+            flow.scope !== effectiveScope ||
+            flow.generation !== generation ||
+            flow.id !== selectedId ||
+            flow.correlationId !== correlationId
+          )
             throw new Error("Observed flow changed; select it again")
           fetchedRevision = revision
           setDetailError(undefined)
@@ -151,9 +165,18 @@ export function ObservationPanel({
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [active, paused, effectiveScope, detailHref, generation, onFlow])
+  }, [
+    active,
+    paused,
+    application,
+    effectiveScope,
+    selectedId,
+    correlationId,
+    detailHref,
+    generation,
+    onFlow,
+  ])
 
-  const expired = Boolean(selectedId && snapshot && !selected)
   const items = (snapshot?.items ?? []).filter((item) =>
     `${item.name} ${item.correlationId}`
       .toLowerCase()

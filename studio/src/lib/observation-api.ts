@@ -62,6 +62,7 @@ export async function followObservation(
       !response.headers.get("content-type")?.includes("text/event-stream") ||
       !response.body
     ) {
+      await response.body?.cancel().catch(() => undefined)
       throw new Error("Tracer did not return an observation stream")
     }
     reader = response.body.getReader()

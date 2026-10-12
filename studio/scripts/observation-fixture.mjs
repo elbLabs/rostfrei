@@ -48,7 +48,7 @@ export function observationFlow(count = 2, scope = "test") {
     revision: String(count),
     correlationId,
     name: "message-received",
-    messageCount: count,
+    messageCount: messages.length,
     truncated: false,
     conflicted: false,
     detailHref: `/observation/${scope}/flows/${scope}-external-flow`,
@@ -59,12 +59,10 @@ export function observationFlow(count = 2, scope = "test") {
 }
 
 export function observationSnapshot(flow = observationFlow()) {
-  const {
-    messageSeries: _series,
-    fidelity: _fidelity,
-    partial: _partial,
-    ...summary
-  } = flow
+  const summary = { ...flow }
+  delete summary.messageSeries
+  delete summary.fidelity
+  delete summary.partial
   return {
     application: flow.application,
     scope: flow.scope,
@@ -88,6 +86,9 @@ export function observationBackend() {
     production: observationFlow(1, "production"),
   }
   let failing = false
+  let eventsRedirect
+  let detailOverride
+  let controlDiscoveryUnavailable = false
   const frame = (scope) =>
     `event: observation\ndata: ${JSON.stringify(observationSnapshot(flows[scope]))}\n\n`
   return {
@@ -106,6 +107,11 @@ export function observationBackend() {
           response.end(JSON.stringify(value))
         }
         if (path === "/catalog") {
+          if (
+            controlDiscoveryUnavailable &&
+            token !== "Bearer observation-inspection"
+          )
+            return json(401, { message: "Control discovery is not configured" })
           const discoveryScope =
             token === "Bearer observation-inspection" ? "production" : "test"
           return json(200, {
@@ -128,6 +134,10 @@ export function observationBackend() {
         if (token !== expected)
           return json(403, { message: "Wrong observation capability" })
         if (path.endsWith("/events")) {
+          if (eventsRedirect) {
+            response.writeHead(302, { location: eventsRedirect })
+            return response.end()
+          }
           if (failing)
             return json(503, { message: "Observer fixture disconnected" })
           response.writeHead(200, {
@@ -138,7 +148,7 @@ export function observationBackend() {
           clients.set(response, scope)
           request.on("close", () => clients.delete(response))
         } else if (path === flows[scope].detailHref) {
-          json(200, flows[scope])
+          json(200, { ...flows[scope], ...detailOverride })
         } else json(501, { message: `Unexpected observation fixture: ${path}` })
       })
     },
@@ -160,6 +170,15 @@ export function observationBackend() {
     },
     recover() {
       failing = false
+    },
+    redirectEvents(location) {
+      eventsRedirect = location
+    },
+    overrideDetail(value) {
+      detailOverride = value
+    },
+    inspectionOnly(enabled) {
+      controlDiscoveryUnavailable = enabled
     },
     close() {
       for (const response of clients.keys()) response.end()
