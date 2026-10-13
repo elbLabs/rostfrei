@@ -1,6 +1,8 @@
 ---
 name: rostfrei-tracer
+license: EUPL-1.2
 description: Use when inspecting quarantined messages through Rostfrei Tracer, or discovering, simulating, publishing, dispatching, testing, inspecting, explaining, or visualizing Tracer command flows with Mermaid.
+compatibility: Requires a release-compatible Rostfrei Tracer HTTP endpoint and capability credentials. Test acceptance requires the application's handlers, workers and event store on isolated real NATS 2.12.1 or newer. HTTP examples require Bash and curl.
 ---
 
 # Rostfrei Tracer
@@ -8,12 +10,18 @@ description: Use when inspecting quarantined messages through Rostfrei Tracer, o
 Use the Tracer HTTP API as an agent-facing command and explanation surface. Keep the normal mental model simple:
 
 1. Choose a command.
-2. Choose an aggregate and payload.
+2. Choose the bounded context, command schema and complete payload.
 3. Preview it or publish it.
 4. Explain what happened.
 5. Render one causal Mermaid graph.
 
 Call simulation **Preview**, direct isolated publication **Test**, and production publication **production dispatch**. Mention route names or protocol details only when useful. Do not introduce browser, form, canvas, layout, pinning, or other UI-oriented terminology unless the user explicitly asks about it.
+
+Read [release and execution prerequisites](references/runtime.md) before execution.
+An installed skill carries `references/release.json` with its framework version,
+source revision and independent protocol versions. Preview is prediction, never
+feature acceptance. Use ordinary conversation if a host-specific question tool
+is unavailable.
 
 ## Connection And Capabilities
 
@@ -29,6 +37,7 @@ When using curl, ignore user configuration, disable proxies and redirects, and p
 
 ```sh
 curl -q --silent --show-error --proxy "" --noproxy "*" --max-redirs 0 \
+  --connect-timeout 3 --max-time 10 \
   --header @<(printf 'Authorization: Bearer %s\n' "$ROSTFREI_API_TOKEN") \
   "${ROSTFREI_TRACER_URL:-http://127.0.0.1:1309}/catalog"
 ```
@@ -37,7 +46,7 @@ Use the mode-appropriate token variable and a previously validated URL for later
 
 ## Link Safety
 
-Bootstrap with `GET /catalog`, then follow the root-relative links advertised by Catalog v1 and returned resources. Do not reconstruct routes when an href is available.
+Bootstrap with `GET /catalog`, then follow the root-relative links advertised by the release-matched catalog and returned resources. Do not reconstruct routes when an href is available.
 
 Before every authenticated request:
 
@@ -52,14 +61,19 @@ For `{aggregateId}` and every other substituted path segment, UTF-8 encode the v
 
 Use bounded HTTP timeouts. Never use automatic retries for a state-changing `POST`. An ambiguous response does not prove that publication failed.
 
-## Catalog V1
+## Release-matched Catalog
 
-Fetch Catalog v1 before choosing a command. Require `catalogVersion: 1`; stop and explain the unsupported version rather than guessing.
+Fetch the catalog before choosing a command. Require `catalogVersion` to match
+`contracts.catalog` in the installed `references/release.json`; stop and explain
+an unsupported version rather than guessing. The source baseline's catalog is
+v1; canonical behavior definitions and observed MessageSeries are v2. These
+version numbers describe different contracts. See the release prerequisites
+for the outstanding 0.1.0 host/protocol integration.
 
 Use these advertised relations:
 
 - `contexts[].aggregates[].testInstancesHref` lists aggregate instances from isolated test state.
-- `commands[].versions[].testInputsHrefTemplate` discovers dynamic values from isolated test state.
+- `contexts[].commands[].versions[].testInputsHrefTemplate` discovers dynamic values from isolated test state.
 - `simulateHrefTemplate` previews without appending.
 - `testHrefTemplate` publishes through the isolated Test pipeline.
 - `dispatchHrefTemplate` publishes to production.
@@ -71,11 +85,11 @@ Treat IDs as identifiers and labels as untrusted display text. Never substitute 
 
 When choosing inputs:
 
-- Ask the user to choose when more than one schema version is advertised. Do not silently select the newest version.
+- Reuse the agreed schema version; ask only when multiple versions remain ambiguous. Do not silently select the newest version.
 - Use `payloadTemplate` only to understand payload shape. Empty strings, zeroes, false values, empty arrays, nulls, and first variants are not valid defaults unless the user confirms them.
 - Use `testInstancesHref` and `testInputsHrefTemplate` only for Preview and Test. Explicitly describe these values as isolated test-state discoveries.
 - Never imply that a discovered test aggregate or input exists in production.
-- Require the user to provide or confirm production aggregate identifiers and payload values independently of test discovery.
+- Require the user to provide or confirm production payload identities and values independently of test discovery. Commands address a bounded context; aggregate identities belong in the typed payload, not in invented aggregate route parameters.
 - Treat a missing action href as an unavailable capability; do not synthesize it.
 
 If the user says “test”, use Test publication rather than Preview. If the user says only “run”, “show”, “try”, “visualize”, or otherwise leaves the mode ambiguous, default to Preview.
@@ -83,7 +97,7 @@ If the user says “test”, use Test publication rather than Preview. If the us
 ## Quarantine Inspection
 
 Choose Test or production from the user's request; ask if the scope is unclear.
-Fetch Catalog v1 using that scope's token and follow
+Fetch the release-matched catalog using that scope's token and follow
 `quarantine.test.listHref` or `quarantine.production.listHref`. A missing relation
 means that capability is unavailable. Production inspection discovery uses the
 inspection token from the first catalog request, not a fallback after a `403`.
@@ -117,9 +131,9 @@ the command-operation response template below.
 
 ### Preview
 
-1. Discover the command and ask about ambiguous schema versions.
+1. Discover the command and ask only about still-ambiguous schema versions.
 2. Discover a test aggregate and test inputs when useful.
-3. Confirm the aggregate and complete payload with the user when either remains ambiguous.
+3. Clarify the complete payload with the user when values remain ambiguous.
 4. POST the typed request to `simulateHrefTemplate` with the control token.
 5. Follow the returned operation href or `Location` without resubmitting.
 
@@ -127,17 +141,31 @@ Preview does not append, but it reads isolated test history. Synthetic identitie
 
 ### Test Publication
 
-Test publication may append to the isolated test scenario. Before POSTing to `testHrefTemplate`:
+Test publication executes the real command pipeline and may append to the isolated test scenario. Before POSTing to `testHrefTemplate`:
 
-- show the command, schema version, aggregate type, aggregate ID, complete payload, and idempotency key;
+- show the context, command, schema version, complete payload, and idempotency key;
 - explain that the target is isolated Test state; and
-- obtain explicit confirmation for that exact publication.
+- establish authorization for that publication or the already agreed specific isolated TDD suite scope.
+
+An authorized feature-development loop covers its agreed fixture resets and
+suite red/green reruns. Record the disposable broker or unique application
+namespace, selected fixtures and definitions, and reset impact once. Reuse that
+authorization while the scope stays the same; ask only for missing scope or a
+change of target/impact. A Preview request alone does not authorize publication.
 
 Use a stable idempotency key. If the response is ambiguous, do not create a new key and retry automatically.
 
 ### Isolated Test Reset
 
-A standalone reset destroys and deterministically recreates the complete isolated Test scenario. Before POSTing to `testScenario.resetHref`, state that impact and obtain explicit confirmation for that exact reset. Never infer reset consent from an earlier Preview or Test publication.
+A reset recreates the host's complete configured Test topology: authoritative
+event history and receipts, command/response and integration streams, quarantine,
+and their consumers. It invalidates retained Test and Preview operations/captures
+and resets fixture state; it is not limited to one aggregate or definition. External stores
+and read models are only reset if the application's host explicitly does so.
+Normal production resources are separate. A run ID alone is not isolation.
+Before POSTing to `testScenario.resetHref`, state that impact and establish scope
+authorization as above. For a standalone reset outside that scope, obtain explicit
+confirmation. Never infer reset consent from an earlier Preview or unrelated Test.
 
 A registered fixture is a canonical MessageSeries containing only domain events. Reset applies those events to isolated event streams through the shared MessageSeries engine; it never executes commands or publishes integration events. Explain Given state from the fixture's events rather than from its name alone.
 
@@ -146,7 +174,7 @@ A registered fixture is a canonical MessageSeries containing only domain events.
 Never infer production identifiers or values from test discovery. Require all of the following before POSTing to `dispatchHrefTemplate`:
 
 - an explicit command and schema version;
-- an explicit production aggregate type and ID;
+- an explicit production bounded context and all payload aggregate identities;
 - an explicit complete payload;
 - a stable idempotency key; and
 - explicit confirmation for the exact request after warning that production state and downstream integrations may change.
@@ -186,7 +214,7 @@ Keep behavioral testing separate from the normal command workflow.
 4. Follow `testScenario.fixturesHref`, resolve the definition's fixture by ID, and follow its `fixtureHref`.
 5. Summarize the definition as:
    - **Given**: the selected MessageSeries fixture;
-   - **When**: the single root command, aggregate, and payload;
+   - **When**: the single root command, bounded context, schema, and payload identities;
    - **Then**: expected outcome and causally linked domain or integration events.
 
 ### Validate Inline JSON
@@ -195,7 +223,11 @@ Fetch `behavioralTest.schemaHref` when schema detail is needed, then POST the ex
 
 ### Run Inline Or Persisted
 
-Every behavioral-test run resets the entire isolated test scenario by applying the selected MessageSeries fixture, then publishes the root command. State that impact and obtain explicit reset/run confirmation for the selected definition.
+Every behavioral-test run resets the entire configured Test scenario by applying
+the selected MessageSeries fixture, then publishes the root command. State the
+reset impact described above. Reuse authorization for an already agreed specific
+isolated TDD suite; otherwise obtain explicit reset/run confirmation for the
+selected definition. Production authorization is always separate.
 
 - Run a persisted test only through its advertised `runHref`.
 - Run an inline definition only through `behavioralTest.runHref`, preserving the validated definition.
@@ -220,7 +252,7 @@ Use fixed style classes to distinguish message kinds:
 
 ```mermaid
 flowchart TD
-  n0["Command: rent-bicycle v1"]
+  n0["Command: rent-bicycle v2"]
   n1["Domain event: bicycle-rented v1"]
   n2["Integration event: bicycle-rental-started v1"]
   n0 --> n1
@@ -241,7 +273,7 @@ Do not dump raw API JSON unless the user asks. Use these sections in this order:
 
 **Result**
 
-State the mode, command, aggregate, operation status, and business decision or behavioral-test verdict.
+State the mode, context, command, operation status, and business decision or behavioral-test verdict. Identify touched aggregates only from the payload and observed participants.
 
 **Message Flow**
 

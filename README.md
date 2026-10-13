@@ -206,6 +206,14 @@ provisioned Normal/Test-scoped buckets.
 The [read-model benchmark](docs/read-model-benchmark.md) compares a KV query with
 replaying two connected aggregates, including measured latency and broker traffic.
 
+## Agent Skills development kit
+
+Install the release-matched `rostfrei-develop-feature` and `rostfrei-tracer`
+skills with the [portable kit guide](docs/agent-skills-install.md). The shared
+repository discovery/source directory is `.agents/skills/`; each skill has one
+authoritative copy. See [qualification evidence and trial scenarios](docs/agent-skills-qualification.md)
+for observed checks and remaining 0.1.0 integration work.
+
 ## NATS authentication
 
 `rostfrei_nats::NatsConnectionConfig` supports username/password authentication

@@ -33,6 +33,7 @@ class InstalledKitTests(unittest.TestCase):
         digest, name = self.archive.with_suffix(self.archive.suffix + ".sha256").read_text().split()
         self.assertEqual(name, self.archive.name)
         self.assertEqual(digest, hashlib.sha256(self.archive.read_bytes()).hexdigest())
+        self.archive_digest = digest
         with tarfile.open(self.archive) as archive:
             for item in archive.getmembers():
                 self.assertFalse(item.issym() or item.islnk())
@@ -60,6 +61,9 @@ class InstalledKitTests(unittest.TestCase):
         release = json.loads((self.kit / "release.json").read_text())
         self.assertEqual(release["frameworkVersion"], version)
         self.assertRegex(release["sourceRevision"], r"^[0-9a-f]{40}$")
+        self.assertEqual(release["sourceRevision"], subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
+        ).strip())
         self.assertEqual(release["contracts"]["behavioralTest"], 2)
         self.assertEqual(release["contracts"]["messageSeries"], 2)
         catalog_source = (ROOT / "crates/rostfrei-tracer/src/catalog.rs").read_text()
@@ -71,6 +75,7 @@ class InstalledKitTests(unittest.TestCase):
                 skill = self.destination / name
                 self.assertEqual(validate(skill), [])
                 self.assertEqual(json.loads((skill / "references/release.json").read_text()), release)
+                self.assertEqual((skill / "LICENSE").read_bytes(), (ROOT / "LICENSE").read_bytes())
                 for path in skill.rglob("*"):
                     self.assertFalse(path.is_symlink())
                     if path.is_file():
@@ -88,6 +93,13 @@ class InstalledKitTests(unittest.TestCase):
         definition = json.loads((self.destination / NAMES[0] / "assets/add-first-bicycle.json").read_text())
         self.assertEqual(definition["schemaVersion"], 2)
         self.assertEqual(definition["setup"]["fixture"], "no-rental-fleets")
+
+    def test_same_source_build_is_reproducible(self):
+        result = self.command(ROOT / "scripts/package_agent_skills.py", "--output", self.output)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        archive, = self.output.glob("*.tar.gz")
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), self.archive_digest)
+        self.assertFalse((ROOT / ".opencode/skills/rostfrei-tracer/SKILL.md").exists())
 
     def test_preserves_consumer_edits_and_unrelated_instructions(self):
         self.destination.mkdir(parents=True)

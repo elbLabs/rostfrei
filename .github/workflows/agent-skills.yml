@@ -1,0 +1,41 @@
+name: Agent Skills kit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-skills-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kit:
+    name: External install, reference format and live NATS protocol
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Qualify the external installed artifact
+        run: python3 scripts/check_agent_skills.py
+      - name: Install the repository Rust toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: agent-skills
+      - name: Build the current application-linked host
+        run: cargo build --locked -p bike-rental --bin bike-rental-api
+      - name: Execute installed JSON v2 example through real NATS
+        run: python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --output "$RUNNER_TEMP/skills-evidence"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-skills-live-evidence
+          path: ${{ runner.temp }}/skills-evidence/
+          if-no-files-found: ignore
