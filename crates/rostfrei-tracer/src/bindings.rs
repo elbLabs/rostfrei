@@ -50,12 +50,20 @@ type IntegrationHandlerFactory = Box<
         + Sync,
 >;
 
-pub(crate) struct IntegrationHandlerBinding {
+#[cfg_attr(
+    not(feature = "nats-host"),
+    allow(
+        dead_code,
+        reason = "retained typed registrations are consumed by the optional host"
+    )
+)]
+pub struct IntegrationHandlerBinding {
     pub producer: Option<&'static str>,
     pub name: &'static str,
     pub handler: IntegrationHandlerFactory,
 }
 
+#[cfg(feature = "nats-host")]
 impl IntegrationHandlerBinding {
     pub fn address(
         &self,

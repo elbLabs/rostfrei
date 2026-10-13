@@ -76,3 +76,33 @@ Test reset use that single plan; bike-rental's duplicate provisioning step is
 removed. The regression checks independent/idempotent provisioning, a mapped
 command's committed event and published integration event with real provenance,
 and verification-only connect after deliberately deleting the required durable.
+
+Green: the complete split-lifecycle test passes against disposable NATS.
+
+## Combined verification (2026-10-13)
+
+Commands used a process-local Cargo PATH and the repository disposable NATS 2.12.1
+runner. Each broker and application namespace belonged to these checks.
+
+| Check | Result |
+| --- | --- |
+| `python3 scripts/test_nats.py -- cargo test --locked -p rostfrei-tracer -p rostfrei-nats -p bike-rental --all-features -- --test-threads=1` | **469 reported passes, 0 failures, 12 ignored** across 40 Cargo summaries; includes all new regressions and current-main observation/reset tests |
+| `python3 scripts/test_nats.py -- python3 scripts/check_tracer_host.py` | **5 standalone tests passed**, plus executable discovery/suite/shutdown; every Rostfrei dependency resolved from committed Git revision `03706adf67353f1181b0f2f4407f07346235af87` |
+| `python3 scripts/test_nats.py -- python3 scripts/check_bike_rental_host.py --studio` | **5 real HTTP and 5 real Studio cases passed**, Test/Production Observe discovery and readiness passed, Normal state survived Test resets, clean supervised shutdown |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | Passed; final feature-gating cleanup also passed targeted all-feature Tracer Clippy |
+| `cargo check --locked -p rostfrei-tracer --no-default-features` | Passed without warnings after marking host-only metadata appropriately |
+| `cargo rostfrei-dev check --workspace` | Passed |
+| `cargo fmt --all --check`, `git diff --check` | Passed |
+| `python3 -m unittest discover -s scripts -p 'test_*.py'` | **21 passed** |
+| Studio `pnpm lint`, `pnpm build`, `pnpm test:ui` | Passed, including existing continuous-observation and credential/reset/SSE regressions |
+
+The 12 ignored cases are five metadata companions, five opt-in native NATS
+authentication/TLS cases, one subprocess entry point and one diagnostic benchmark.
+They are not counted as passes. The external pinned qualification preceded only
+lint/feature-gating cleanup, documentation and the live-checker's exact optional
+favicon-404 allowance; the latter keeps all application/API HTTP errors fatal.
+
+Browser checks used Node 24 and Chrome 146 with locally extracted shared libraries
+and the existing `CHROME_NO_SANDBOX=1` runner option. Missing browser libraries and
+sandbox support blocked initial launches; those attempts are not test passes.
+The UI suite emitted its existing non-fatal ResizeObserver development warning.

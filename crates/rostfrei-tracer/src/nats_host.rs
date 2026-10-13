@@ -386,6 +386,10 @@ impl NatsRuntime {
         self.start_in_scope().await
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "prepare every worker before spawning the owned group"
+    )]
     async fn start_in_scope(&self) -> Result<(), NatsHostError> {
         if self.shutting_down.load(Ordering::Acquire) {
             return Err(NatsHostError::Configuration(
@@ -443,9 +447,7 @@ impl NatsRuntime {
             );
             integrations.push((factory.create(config.clone())?, handler));
         }
-        let domain = if !self.config.domain_events_required {
-            None
-        } else {
+        let domain = if self.config.domain_events_required {
             let adapter: Arc<dyn IntegrationMessageAdapter> = self.messaging.clone();
             let bus = IntegrationEventBus::new(self.config.context.clone(), adapter);
             let mut dispatcher = DomainEventDispatcher::new();
@@ -462,6 +464,8 @@ impl NatsRuntime {
                 )
                 .await?,
             )
+        } else {
+            None
         };
         let observer = self.observer.lock().await.clone();
         let observation = match observer {
@@ -656,7 +660,8 @@ impl TestScenarioReset for NatsRuntime {
     }
 }
 
-/// HTTP capability/listener configuration; enabling it never selects Normal state for Test.
+/// HTTP capabilities, listener and observation feeds for the optional Tracer.
+/// Enabling it never selects Normal state for Test.
 pub struct TracerConfig {
     listener: tokio::net::TcpListener,
     http: HttpConfig,
@@ -688,6 +693,7 @@ impl TracerConfig {
     }
     /// Enable continuous observation for the matching application/scope runtime.
     /// Replaces any previously configured feed for that scope, like `TracerBuilder`.
+    /// Production requires `with_dispatch_runtime`; feed/runtime applications must match.
     #[must_use]
     pub fn with_continuous_observation(mut self, feed: Arc<crate::ObservationFeed>) -> Self {
         self.observation.insert(feed.scope(), feed);

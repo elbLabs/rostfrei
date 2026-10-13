@@ -33,7 +33,11 @@ try {
     console.log(`Studio passed: ${name}`)
   }
   assert.deepEqual(diagnostics.pageErrors, [])
-  assert.deepEqual(diagnostics.httpErrors, [])
+  // Chrome may request an unadvertised optional icon. Keep every application/API
+  // failure fatal while allowing that browser-generated request on the live host.
+  assert.deepEqual(diagnostics.httpErrors.filter(error =>
+    !(error.method === "GET" && error.path === "/favicon.ico" && error.status === 404)
+  ), [])
 } finally {
   await closeStudioBrowser(browser)
   await server.close()

@@ -18,7 +18,7 @@ readiness and observer lifetime:
 
 ```rust,ignore
 use rostfrei_messaging_core::ApplicationName;
-use rostfrei_tracer::{ObservationFeed, ObservationScope};
+use rostfrei_tracer::{NatsApplication, ObservationFeed, ObservationScope, TracerConfig};
 
 let application = ApplicationName::new("fast-inbox")?;
 let test_feed = ObservationFeed::new(application.clone(), ObservationScope::Test);

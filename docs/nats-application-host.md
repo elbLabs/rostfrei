@@ -187,13 +187,13 @@ Physical Rust lines, including imports, comments and blanks:
 
 | Application-owned file | Before (`1d7d861`) | After |
 | --- | ---: | ---: |
-| `bike_rental_nats/mod.rs` | 1,061 | 515 |
+| `bike_rental_nats/mod.rs` | 1,061 | 516 |
 | `bin/bike-rental-api.rs` | 119 | 94 |
 | `tracer.rs` | 34 | 59 |
-| **Total** | **1,214** | **668** |
+| **Total** | **1,214** | **669** |
 
-Reduction: **546 lines (45%)**, including both continuous-observation feeds.
-Against the issue's v0.0.5-alpha baseline of 1,211 lines, the reduction is 543 lines.
+Reduction: **545 lines (45%)**, including both continuous-observation feeds.
+Against the issue's v0.0.5-alpha baseline of 1,211 lines, the reduction is 542 lines.
 The retained code includes business
 integration mappings, resource/environment policy and compatibility accessors
 used by existing integration/inspection tests; it is not all host boilerplate.
