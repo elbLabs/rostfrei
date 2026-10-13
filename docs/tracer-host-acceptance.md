@@ -66,3 +66,29 @@ canonical 35-second real-NATS budget and still requires an accepted root, actual
 accepted response, failed comparison, and exact structured payload-mismatch
 diagnostic. Transport retry/timeout policy and the behavior engine are unchanged.
 Temporary broker/worker instrumentation was removed after investigation.
+
+## Verification results (2026-10-13)
+
+| Check | Actual outcome |
+| --- | --- |
+| `python3 scripts/test_nats.py` | Passed: 816 reported passes, 0 failures, 21 ignored across Cargo/subprocess summaries |
+| Focused bike-rental behavioral integration regression after retaining the canonical budget | Passed: 1 test; accepted root and exact failed payload comparison verified |
+| `python3 scripts/test_nats.py -- python3 scripts/check_tracer_host.py` | Passed: 5 standalone tests plus actual executable discovery, suite execution and clean shutdown; all Rostfrei dependencies resolved at `385c8fcb07caa4436676dc24badd10d4f8ab61de` |
+| `python3 scripts/test_nats.py -- python3 scripts/check_bike_rental_host.py --studio` | Passed: 5 HTTP cases, 5 real-browser cases, production rent/rejection/return across Test resets, clean shutdown |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | Passed |
+| `cargo fmt --all --check` and `git diff --check` | Passed |
+| `cargo rostfrei-dev check --workspace` | Passed |
+| `cargo check --locked -p rostfrei-tracer --no-default-features` | Passed |
+| `python3 -m unittest discover -s scripts -p 'test_*.py'` | Passed: 21 tests |
+
+The full workspace run included temporary diagnostic logging; the final focused
+regression, Clippy and Git-installed external qualification ran after its removal.
+The ignored tests comprise generated metadata companions, opt-in benchmarks and
+Docker lifecycle tests, a subprocess entry point, and five native authentication/
+TLS tests. They are not claimed as local passes. The live Studio run emitted a
+ResizeObserver-loop development warning while its case, browser-error and HTTP-error
+assertions passed.
+
+No local #69 acceptance blocker remains. Remote PR CI is additional evidence;
+#68 cross-process run identity, #101's full compatibility diagnostics, and
+crates.io publication are outside this implementation's completion claim.
