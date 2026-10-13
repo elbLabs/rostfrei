@@ -47,6 +47,10 @@ export async function checkContinuousObservation() {
     await page.waitForSelector('[data-graph-node][data-node-id="received"]')
     backend.publish(2)
     await page.waitForSelector('[data-graph-node][data-node-id="published"]')
+    // Node DOM precedes React Flow's handle measurement and edge rendering.
+    await page.waitForSelector(
+      '[data-graph-edge][data-source-id="received"][data-target-id="published"][data-edge-relationship="causation"]'
+    )
     assert.equal(
       await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
       2
