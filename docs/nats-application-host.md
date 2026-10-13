@@ -121,7 +121,13 @@ HTTP and correlation-observer workers are absent and HTTP tokens are unnecessary
   consumers from registrations. Its explicit resource/consumer fields support
   application policies and retention of legacy names and delivery settings.
 - `NatsRuntimeConfig::provision` / `NatsRuntime::provision` are explicit operator
-  operations. `connect` / `connect_and_start` verify existing resources without
+  operations. The configuration derives a complete resource plan from the supplied
+  bindings, including the domain-event durable when integration mappings need it.
+  Independent `config.provision(&connection)` followed by
+  `builder.with_runtime_config(config).connect_and_start()` uses the same plan as
+  combined provisioning and Test reset. Rebuild the configuration when changing
+  bindings; its public resource policies remain adjustable.
+  `connect` / `connect_and_start` verify existing resources without
   provisioning or resetting. `with_initial_fixture` is explicit idempotent
   initialization, distinct from Test reset.
 - `provision_and_start` with a default Test fixture explicitly resets that Test
@@ -181,13 +187,13 @@ Physical Rust lines, including imports, comments and blanks:
 
 | Application-owned file | Before (`1d7d861`) | After |
 | --- | ---: | ---: |
-| `bike_rental_nats/mod.rs` | 1,061 | 523 |
+| `bike_rental_nats/mod.rs` | 1,061 | 515 |
 | `bin/bike-rental-api.rs` | 119 | 94 |
 | `tracer.rs` | 34 | 59 |
-| **Total** | **1,214** | **676** |
+| **Total** | **1,214** | **668** |
 
-Reduction: **538 lines (44%)**, including both continuous-observation feeds.
-Against the issue's v0.0.5-alpha baseline of 1,211 lines, the reduction is 535 lines.
+Reduction: **546 lines (45%)**, including both continuous-observation feeds.
+Against the issue's v0.0.5-alpha baseline of 1,211 lines, the reduction is 543 lines.
 The retained code includes business
 integration mappings, resource/environment policy and compatibility accessors
 used by existing integration/inspection tests; it is not all host boilerplate.

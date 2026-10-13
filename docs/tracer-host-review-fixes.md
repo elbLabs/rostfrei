@@ -63,3 +63,16 @@ consumer-owned distinct durables, same-context fallback, duplicate publication,
 actual committed/response identities and correlation, and two producers sharing
 an event name/schema with different observation codecs. Applications no longer
 assemble the mapper's command bus, durable or subject.
+
+## Complete split provisioning (triage 4)
+
+Behavioral red on real NATS: `split_runtime_provisioning` called
+`NatsRuntimeConfig::provision` twice then `connect_and_start`, and failed with
+**failed to get durable consumer: consumer not found**.
+
+The bindings-derived resource plan now includes the domain-event durable required
+by integration mappings. Config provisioning, runtime convenience provisioning and
+Test reset use that single plan; bike-rental's duplicate provisioning step is
+removed. The regression checks independent/idempotent provisioning, a mapped
+command's committed event and published integration event with real provenance,
+and verification-only connect after deliberately deleting the required durable.

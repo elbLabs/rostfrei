@@ -286,14 +286,7 @@ impl BikeRentalNatsConfig {
         &self.integration_event_route
     }
     pub async fn provision(&self, connection: &NatsConnection) -> Result<(), BikeRentalNatsError> {
-        Box::pin(self.runtime.provision(connection)).await?;
-        rostfrei_nats::provision_domain_event_consumer(
-            connection.jetstream(),
-            &self.runtime.event_store,
-            &self.runtime.domain_events,
-        )
-        .await?;
-        Ok(())
+        Box::pin(self.runtime.provision(connection)).await
     }
     pub async fn connect_store(
         &self,

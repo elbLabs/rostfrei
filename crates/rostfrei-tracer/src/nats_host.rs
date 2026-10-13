@@ -84,6 +84,7 @@ pub struct NatsRuntimeConfig {
     /// Retry policy for typed integration-event-to-command handlers.
     pub integration_retry_delay: RetryDelay,
     pub domain_events: NatsDomainEventConsumerConfig,
+    domain_events_required: bool,
 }
 
 impl NatsRuntimeConfig {
@@ -184,6 +185,7 @@ impl NatsRuntimeConfig {
             integrations,
             integration_retry_delay: RetryDelay::new(Duration::from_secs(1))?,
             domain_events,
+            domain_events_required: !bindings.integration_mappings.is_empty(),
         })
     }
 
@@ -191,6 +193,14 @@ impl NatsRuntimeConfig {
         self.validate()?;
         provision_application_messaging(connection.jetstream(), &self.messaging).await?;
         provision_event_store(connection.jetstream(), &self.event_store).await?;
+        if self.domain_events_required {
+            provision_domain_event_consumer(
+                connection.jetstream(),
+                &self.event_store,
+                &self.domain_events,
+            )
+            .await?;
+        }
         for consumer in &self.commands {
             provision_durable_consumer(connection.jetstream(), self.messaging.topology(), consumer)
                 .await?;
@@ -265,15 +275,8 @@ impl NatsRuntime {
         config: NatsRuntimeConfig,
         bindings: Arc<ApplicationBindings>,
     ) -> Result<Self, NatsHostError> {
+        Self::validate_resource_plan(&config, &bindings)?;
         config.provision(&connection).await?;
-        if !bindings.integration_mappings.is_empty() {
-            provision_domain_event_consumer(
-                connection.jetstream(),
-                &config.event_store,
-                &config.domain_events,
-            )
-            .await?;
-        }
         Self::connect(connection, config, bindings).await
     }
 
@@ -282,7 +285,7 @@ impl NatsRuntime {
         config: NatsRuntimeConfig,
         bindings: Arc<ApplicationBindings>,
     ) -> Result<Self, NatsHostError> {
-        config.validate()?;
+        Self::validate_resource_plan(&config, &bindings)?;
         connection
             .verify_application_messaging(&config.messaging)
             .await?;
@@ -323,6 +326,19 @@ impl NatsRuntime {
 
     pub const fn config(&self) -> &NatsRuntimeConfig {
         &self.config
+    }
+
+    fn validate_resource_plan(
+        config: &NatsRuntimeConfig,
+        bindings: &ApplicationBindings,
+    ) -> Result<(), NatsHostError> {
+        config.validate()?;
+        if config.domain_events_required == bindings.integration_mappings.is_empty() {
+            return Err(NatsHostError::Configuration(
+                "runtime resource plan must match its registered integration mappings".into(),
+            ));
+        }
+        Ok(())
     }
     pub const fn store(&self) -> &NatsEventStore {
         &self.store
@@ -427,7 +443,7 @@ impl NatsRuntime {
             );
             integrations.push((factory.create(config.clone())?, handler));
         }
-        let domain = if self.bindings.integration_mappings.is_empty() {
+        let domain = if !self.config.domain_events_required {
             None
         } else {
             let adapter: Arc<dyn IntegrationMessageAdapter> = self.messaging.clone();
@@ -616,14 +632,6 @@ impl NatsRuntime {
             self.connection.delete_stream_if_exists(stream).await?;
         }
         self.config.provision(&self.connection).await?;
-        if !self.bindings.integration_mappings.is_empty() {
-            provision_domain_event_consumer(
-                self.connection.jetstream(),
-                &self.config.event_store,
-                &self.config.domain_events,
-            )
-            .await?;
-        }
         self.apply_fixture_in_scope(fixture).await?;
         self.start_in_scope().await?;
         self.reset_required.store(false, Ordering::Release);
