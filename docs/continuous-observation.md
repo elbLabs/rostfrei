@@ -12,7 +12,9 @@ the application. Messages without valid correlation metadata cannot form a flow.
 
 ## Application integration
 
-Explicitly enable each application traffic scope in the host:
+With the reusable `nats-host`, explicitly enable each application traffic scope on
+`TracerConfig`. The host owns subscriptions, validated event decoding, source
+readiness and observer lifetime:
 
 ```rust,ignore
 use rostfrei_messaging_core::ApplicationName;
@@ -22,13 +24,21 @@ let application = ApplicationName::new("fast-inbox")?;
 let test_feed = ObservationFeed::new(application.clone(), ObservationScope::Test);
 let production_feed = ObservationFeed::new(application, ObservationScope::Production);
 
-let tracer = builder
+let tracer = TracerConfig::new(listener, http)
+    .with_dispatch_runtime(normal_runtime)
     .with_continuous_observation(test_feed)
-    .with_continuous_observation(production_feed)
-    .build()?;
+    .with_continuous_observation(production_feed);
+let host = NatsApplication::builder(test_context, connection, bindings)?
+    .with_default_test_fixture(fixture)
+    .with_tracer(Some(tracer))
+    .provision_and_start().await?;
 ```
 
-Connect the normal NATS event observer to
+The feed application must match its runtime; Production requires the separately
+attached Normal runtime. See [host configuration](nats-application-host.md).
+
+For custom adapters built directly with `TracerBuilder`, its existing
+`with_continuous_observation` accepts the same feeds. Connect the normal NATS event observer to
 `tracer.correlation_observer(OperationMode::Dispatch)` and the isolated Test
 observer to `OperationMode::Test`. Configuring a feed does not start a broker
 subscription. Each adapter must validate the envelope and supply real message,
@@ -57,9 +67,10 @@ cancellation, makes that coverage unavailable. A stopped source can be restarted
 under the same name. The NATS correlation handler's `availability` callback reports
 broker interruption and recovery; an adapter must propagate it to its source guard.
 
-The bike-rental host includes this wiring in
-[`bike-rental-api.rs`](../examples/bike-rental/src/bin/bike-rental-api.rs) and
-[`bike_rental_nats/mod.rs`](../examples/bike-rental/src/bike_rental_nats/mod.rs).
+Bike-rental enables the feeds in
+[`bike-rental-api.rs`](../examples/bike-rental/src/bin/bike-rental-api.rs) with
+`cargo run --locked -p bike-rental -- --tracer`; the reusable framework host owns
+the observer wiring.
 Its real-NATS integration test publishes outside Tracer, observes a rental and its
 integration-triggered return under one correlation, and retrieves the evidence
 through the read-only HTTP API.

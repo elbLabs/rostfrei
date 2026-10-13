@@ -128,7 +128,11 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
     let fixture = serde_json::from_str(include_str!("../fixture.json"))?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
+    let feed = rostfrei_tracer::ObservationFeed::new(
+        application.clone(), rostfrei_tracer::ObservationScope::Test,
+    );
     let config = TracerConfig::new(listener, HttpConfig::new("external-consumer-token")?)
+        .with_continuous_observation(feed.clone())
         .with_test_repository(Arc::new(FilesystemTestRepository::load(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests"
@@ -158,6 +162,8 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
     assert_eq!(catalog["catalogVersion"], 1);
     assert_eq!(catalog["contexts"][0]["commands"][0]["id"], "increment");
     assert!(host.runtime().has_correlation_observer().await);
+    assert_eq!(feed.snapshot().status, rostfrei_tracer::ObservationStatus::Live);
+    assert_eq!(catalog["observation"][0]["scope"], "test");
     let definitions: serde_json::Value = get(catalog["behavioralTest"]["definitionsHref"]
         .as_str()
         .unwrap())
@@ -179,6 +185,7 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
             .await?;
         assert_eq!(report["status"], "passed", "{report:#}");
         assert_eq!(report["comparison"]["status"], "passed", "{report:#}");
+        assert_eq!(feed.snapshot().status, rostfrei_tracer::ObservationStatus::Live);
         events_href = report["correlationEventsHref"].as_str().unwrap().to_owned();
         let stream = rostfrei::StreamId::new(
             rostfrei::StreamAggregateType::new("counter/counter")?,
@@ -249,6 +256,7 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
     tokio::time::timeout(std::time::Duration::from_secs(5), host.shutdown()).await??;
     tokio::time::timeout(std::time::Duration::from_secs(2), events.bytes()).await??;
     assert!(!runtime.has_correlation_observer().await);
+    assert_eq!(feed.snapshot().status, rostfrei_tracer::ObservationStatus::Unavailable);
     assert!(get("/catalog").send().await.is_err());
     connection.drain().await?;
     Ok(())

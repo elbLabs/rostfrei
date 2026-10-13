@@ -28,10 +28,12 @@ def main():
         port = listener.getsockname()[1]
     token = secrets.token_urlsafe(32)
     dispatch_token = secrets.token_urlsafe(32)
+    inspection_token = secrets.token_urlsafe(32)
     origin = f"http://127.0.0.1:{port}"
     environment = {**os.environ, "ROSTFREI_APPLICATION": f"host-{uuid4().hex}",
                    "ROSTFREI_API_ADDR": f"127.0.0.1:{port}", "ROSTFREI_API_TOKEN": token,
-                   "ROSTFREI_DISPATCH_TOKEN": dispatch_token}
+                   "ROSTFREI_DISPATCH_TOKEN": dispatch_token,
+                   "ROSTFREI_INSPECTION_TOKEN": inspection_token}
     opener = build_opener(ProxyHandler({}))
 
     def request(path, method="GET", *, payload=None, capability=token, key=None, location=False):
@@ -78,6 +80,12 @@ def main():
                     raise RuntimeError("host did not become ready")
                 time.sleep(0.1)
         assert catalog["catalogVersion"] == 1
+        for capability, scope in [(token, "test"), (inspection_token, "production")]:
+            observation, = request("/catalog", capability=capability)["observation"]
+            assert observation["scope"] == scope
+            assert observation["application"] == environment["ROSTFREI_APPLICATION"]
+            assert request(observation["listHref"], capability=capability)["status"] == "live"
+        print("Test and Production Observe discovery/readiness passed", flush=True)
         dispatch(catalog, "rent-bicycle", "normal-before-test-reset", "accepted")
         definitions = request(catalog["behavioralTest"]["definitionsHref"])["items"]
         assert len(definitions) == 5

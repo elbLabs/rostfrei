@@ -1,5 +1,6 @@
 use crate::{
     CorrelationError, CorrelationObserver, DomainEventObservation, IntegrationEventObservation,
+    ObservationSource,
 };
 use async_trait::async_trait;
 use rostfrei_messaging_core::{IntegrationEventAddress, IntegrationEventEnvelope};
@@ -12,10 +13,21 @@ pub(super) struct TracerCorrelationHandler {
     pub observer: CorrelationObserver,
     pub store: NatsEventStore,
     pub bindings: std::sync::Arc<crate::ApplicationBindings>,
+    pub source: Option<ObservationSource>,
 }
 
 #[async_trait]
 impl CorrelatedMessageHandler for TracerCorrelationHandler {
+    async fn availability(&self, available: bool) {
+        if let Some(source) = &self.source {
+            if available {
+                source.ready();
+            } else {
+                source.unavailable();
+            }
+        }
+    }
+
     async fn handle(&self, message: CorrelatedMessage) {
         let result = match message.family() {
             CorrelatedMessageFamily::DomainEvent => match domain_observation(&self.store, &message)

@@ -29,6 +29,40 @@ configuration. Payloads are redacted unless a policy is explicitly supplied.
 Catalog v1 advertises fixture v1 and behavioral-definition v2 discovery links.
 Repository validation, execution and evidence use the existing Tracer engines.
 
+### Continuous external-flow observation
+
+Use the same feed API as `TracerBuilder` on the host's `TracerConfig`:
+
+```rust,ignore
+let tracer = TracerConfig::new(listener, http)
+    .with_dispatch_runtime(normal_runtime)
+    .with_continuous_observation(ObservationFeed::new(
+        application.clone(), ObservationScope::Test,
+    ))
+    .with_continuous_observation(ObservationFeed::new(
+        application, ObservationScope::Production,
+    ));
+```
+
+Feeds are opt-in; configuring a scope again replaces its previous feed. The host
+checks each feed's application against its runtime. Production observation requires
+the explicitly attached Normal runtime. HTTP discovery and access retain the
+existing control (Test) and read-only inspection (Production) capabilities.
+
+The framework registers a source named for each runtime's bounded context,
+establishes both broker subscriptions before reporting Live, forwards interruption
+and recovery notifications, and keeps the source guard in the observer task.
+Failed startup, stop, cancellation and shutdown release the guard and report
+Unavailable. Restart/reset reuses the same source name. Tracer Test reset clears
+only the Test window and suppresses collection during replay; a failed reset keeps
+Test unavailable until recovery. Applications supply feeds, not observer handlers
+or duplicate binding registrations. The compatibility `start_correlation_observer`
+entry point uses the same source handling; its returned task is caller-supervised.
+
+See [continuous observation](continuous-observation.md) for retention, payload
+policy, HTTP/SSE and Studio semantics. These observers capture externally initiated
+domain/integration events as well as evidence for Tracer-created operations.
+
 ## Bike rental: one entry point, one flag
 
 With JetStream NATS 2.12.1 or newer available:
@@ -46,6 +80,8 @@ fixture to Normal state in both modes, as its former API entry point did.
 Set `ROSTFREI_NATS_URL`. For Tracer also set `ROSTFREI_API_TOKEN` and the separately
 configured `ROSTFREI_DISPATCH_TOKEN`; optional `ROSTFREI_INSPECTION_TOKEN` enables
 production inspection. `ROSTFREI_API_ADDR` defaults to `127.0.0.1:1309`.
+With `--tracer`, bike-rental configures both Test and Production observation feeds;
+Production Observe requires the inspection token.
 Existing `ROSTFREI_NATS_*_MAX_BYTES` limits remain supported. With Tracer disabled,
 HTTP and correlation-observer workers are absent and HTTP tokens are unnecessary.
 
@@ -100,12 +136,13 @@ Physical Rust lines, including imports, comments and blanks:
 | Application-owned file | Before (`1d7d861`) | After |
 | --- | ---: | ---: |
 | `bike_rental_nats/mod.rs` | 1,061 | 523 |
-| `bin/bike-rental-api.rs` | 119 | 86 |
+| `bin/bike-rental-api.rs` | 119 | 94 |
 | `tracer.rs` | 34 | 59 |
-| **Total** | **1,214** | **668** |
+| **Total** | **1,214** | **676** |
 
-Reduction: **546 lines (45%)**. Against the issue's v0.0.5-alpha baseline of
-1,211 lines, the reduction is 543 lines. The retained code includes business
+Reduction: **538 lines (44%)**, including both continuous-observation feeds.
+Against the issue's v0.0.5-alpha baseline of 1,211 lines, the reduction is 535 lines.
+The retained code includes business
 integration mappings, resource/environment policy and compatibility accessors
 used by existing integration/inspection tests; it is not all host boilerplate.
 

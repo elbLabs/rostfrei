@@ -63,6 +63,8 @@ pub enum NatsHostError {
     #[error(transparent)]
     Fixture(#[from] rostfrei_fixtures::FixtureApplyError),
     #[error(transparent)]
+    Observation(#[from] crate::ObservationError),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Configuration(String),
@@ -406,7 +408,7 @@ impl NatsRuntime {
         };
         let observer = self.observer.lock().await.clone();
         let observation = match observer {
-            Some(observer) => Some((self.observation_subscription().await?, observer)),
+            Some(observer) => Some(self.prepare_observation(observer).await?),
             None => None,
         };
         for consumer in commands {
@@ -429,12 +431,7 @@ impl NatsRuntime {
                     .map_err(Into::into)
             }));
         }
-        if let Some((subscription, observer)) = observation {
-            let handler = Arc::new(observation::TracerCorrelationHandler {
-                observer,
-                store: self.store.clone(),
-                bindings: self.bindings.clone(),
-            });
+        if let Some((subscription, handler)) = observation {
             workers.push(tokio::spawn(async move {
                 subscription.run(handler).await.map_err(Into::into)
             }));
@@ -444,10 +441,18 @@ impl NatsRuntime {
         Ok(())
     }
 
-    async fn observation_subscription(
+    async fn prepare_observation(
         &self,
-    ) -> Result<rostfrei_nats::NatsCorrelationSubscription, NatsHostError> {
-        Ok(NatsCorrelationObserver::new_in_scope(
+        observer: CorrelationObserver,
+    ) -> Result<
+        (
+            rostfrei_nats::NatsCorrelationSubscription,
+            Arc<observation::TracerCorrelationHandler>,
+        ),
+        NatsHostError,
+    > {
+        let source = observer.observation_source(self.config.context.name().as_str())?;
+        let subscription = NatsCorrelationObserver::new_in_scope(
             self.connection.client().clone(),
             self.config.context.application().clone(),
             self.config.context.traffic_scope(),
@@ -462,7 +467,21 @@ impl NatsRuntime {
                 .as_str(),
         )
         .subscribe()
-        .await?)
+        .await?;
+        // Both subscriptions are established before callers can publish. The
+        // handler owns the guard through failures, cancellation and shutdown.
+        if let Some(source) = &source {
+            source.ready();
+        }
+        Ok((
+            subscription,
+            Arc::new(observation::TracerCorrelationHandler {
+                observer,
+                store: self.store.clone(),
+                bindings: self.bindings.clone(),
+                source,
+            }),
+        ))
     }
 
     pub async fn attach_observer(
@@ -481,16 +500,12 @@ impl NatsRuntime {
     }
 
     /// Compatibility entry point for applications owning their own supervisor.
+    /// The returned task owns source readiness/unavailability, including on abort.
     pub async fn start_correlation_observer(
         &self,
         observer: CorrelationObserver,
     ) -> Result<Worker, NatsHostError> {
-        let subscription = self.observation_subscription().await?;
-        let handler = Arc::new(observation::TracerCorrelationHandler {
-            observer,
-            store: self.store.clone(),
-            bindings: self.bindings.clone(),
-        });
+        let (subscription, handler) = self.prepare_observation(observer).await?;
         Ok(tokio::spawn(async move {
             subscription.run(handler).await.map_err(Into::into)
         }))
@@ -590,6 +605,7 @@ pub struct TracerConfig {
     repository: Option<Arc<dyn TestRepository>>,
     payload_policy: Arc<dyn TracePayloadPolicy>,
     dispatch: Option<Arc<NatsRuntime>>,
+    observation: std::collections::BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
 }
 impl TracerConfig {
     pub fn new(listener: tokio::net::TcpListener, http: HttpConfig) -> Self {
@@ -599,6 +615,7 @@ impl TracerConfig {
             repository: None,
             payload_policy: Arc::new(crate::RedactTracePayloads),
             dispatch: None,
+            observation: std::collections::BTreeMap::new(),
         }
     }
     #[must_use]
@@ -611,11 +628,43 @@ impl TracerConfig {
         self.payload_policy = policy;
         self
     }
+    /// Enable continuous observation for the matching application/scope runtime.
+    /// Replaces any previously configured feed for that scope, like `TracerBuilder`.
+    #[must_use]
+    pub fn with_continuous_observation(mut self, feed: Arc<crate::ObservationFeed>) -> Self {
+        self.observation.insert(feed.scope(), feed);
+        self
+    }
     /// The host supervises and stops this explicitly supplied Normal runtime too.
     #[must_use]
     pub fn with_dispatch_runtime(mut self, runtime: Arc<NatsRuntime>) -> Self {
         self.dispatch = Some(runtime);
         self
+    }
+
+    fn validate_observation(&self, test: &NatsRuntimeConfig) -> Result<(), NatsHostError> {
+        for feed in self.observation.values() {
+            let runtime = match feed.scope() {
+                crate::ObservationScope::Test => test,
+                crate::ObservationScope::Production => {
+                    &self
+                        .dispatch
+                        .as_ref()
+                        .ok_or_else(|| {
+                            NatsHostError::Configuration(
+                                "production observation requires a Normal dispatch runtime".into(),
+                            )
+                        })?
+                        .config
+                }
+            };
+            if feed.catalog().application != runtime.context.application().as_str() {
+                return Err(NatsHostError::Configuration(
+                    "observation feed must belong to its runtime's application".into(),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -676,6 +725,9 @@ impl NatsApplicationBuilder {
         if !provision && self.fixture.is_some() {
             return Err(NatsHostError::Configuration("connect does not reset fixtures; use explicit provision_and_start for the Test host".into()));
         }
+        if let Some(tracer) = &self.tracer {
+            tracer.validate_observation(&self.config)?;
+        }
         let runtime = Arc::new(if provision {
             NatsRuntime::provision(self.connection, self.config, self.bindings.clone()).await?
         } else {
@@ -708,6 +760,9 @@ impl NatsApplicationBuilder {
                     .with_test_scenario_reset(runtime.clone())
                     .with_default_test_fixture(fixture)
                     .with_trace_payload_policy(config.payload_policy);
+                for feed in config.observation.into_values() {
+                    builder = builder.with_continuous_observation(feed);
+                }
                 for fixture in self.fixtures {
                     builder = builder.with_test_fixture(fixture);
                 }

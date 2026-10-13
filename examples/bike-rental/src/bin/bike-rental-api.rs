@@ -6,7 +6,7 @@ use bike_rental::{
 use rostfrei_nats::{NatsConnectionConfig, ServerVersion, connect};
 use rostfrei_tracer::{
     ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, NatsApplication, NatsRuntime,
-    TracerConfig, http::HttpConfig,
+    ObservationFeed, ObservationScope, TracerConfig, http::HttpConfig,
 };
 use std::{env, path::PathBuf, sync::Arc};
 
@@ -55,6 +55,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         let tracer = TracerConfig::new(listener, http)
             .with_dispatch_runtime(dispatch)
+            .with_continuous_observation(ObservationFeed::new(
+                test.application().clone(),
+                ObservationScope::Test,
+            ))
+            .with_continuous_observation(ObservationFeed::new(
+                normal.application().clone(),
+                ObservationScope::Production,
+            ))
             .with_test_repository(Arc::new(FilesystemTestRepository::load(
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer"),
             )?))
