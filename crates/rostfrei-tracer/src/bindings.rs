@@ -37,6 +37,44 @@ type IntegrationBinding = Box<
 >;
 type IntegrationDecoder =
     fn(&rostfrei::EncodedIntegrationMessage) -> Result<crate::IntegrationEventObservation, String>;
+type IntegrationHandler = Arc<
+    dyn rostfrei_messaging_core::MessageHandler<rostfrei_messaging_core::IntegrationEventAddress>,
+>;
+type IntegrationHandlerFactory = Box<
+    dyn Fn(
+            rostfrei::CommandBus,
+            rostfrei_messaging_core::DurableName,
+            rostfrei_messaging_core::RetryDelay,
+        ) -> IntegrationHandler
+        + Send
+        + Sync,
+>;
+
+pub(crate) struct IntegrationHandlerBinding {
+    pub producer: Option<&'static str>,
+    pub name: &'static str,
+    pub handler: IntegrationHandlerFactory,
+}
+
+impl IntegrationHandlerBinding {
+    pub fn address(
+        &self,
+        consumer: &rostfrei::BoundedContext,
+    ) -> Result<
+        rostfrei_messaging_core::IntegrationEventAddress,
+        rostfrei_messaging_core::ContractError,
+    > {
+        let producer = self.producer.map_or_else(
+            || Ok(consumer.clone()),
+            |name| {
+                consumer
+                    .application()
+                    .bounded_context_in_scope(consumer.traffic_scope(), name)
+            },
+        )?;
+        producer.integration_event_address(self.name)
+    }
+}
 
 /// Executable application composition shared by Preview and transported execution.
 /// Handler instances (and their dependencies) are retained, not reconstructed.
@@ -47,15 +85,9 @@ pub struct ApplicationBindings {
     pub(crate) commands: Vec<rostfrei::CommandRegistrationDescriptor>,
     domain_model: Option<serde_json::Value>,
     pub(crate) integration_mappings: Vec<IntegrationBinding>,
-    pub(crate) integration_decoders: HashMap<(&'static str, u32), IntegrationDecoder>,
-    pub(crate) integration_handlers: Vec<(
-        &'static str,
-        Arc<
-            dyn rostfrei_messaging_core::MessageHandler<
-                    rostfrei_messaging_core::IntegrationEventAddress,
-                >,
-        >,
-    )>,
+    pub(crate) integration_decoders:
+        HashMap<(Option<&'static str>, &'static str, u32), IntegrationDecoder>,
+    pub(crate) integration_handlers: Vec<IntegrationHandlerBinding>,
 }
 
 impl Default for ApplicationBindings {
@@ -183,14 +215,46 @@ impl ApplicationBindings {
             > + 'static,
     {
         self.register_integration_codec::<E>();
-        self.integration_handlers
-            .push((E::EVENT_NAME, Arc::new(handler)));
+        let handler = Arc::new(handler);
+        self.integration_handlers.push(IntegrationHandlerBinding {
+            producer: E::BOUNDED_CONTEXT,
+            name: E::EVENT_NAME,
+            handler: Box::new(move |_, _, _| handler.clone()),
+        });
+        self
+    }
+
+    /// Map a typed integration event to a command using host-owned bus, durable
+    /// identity and retry policy. The event contract selects the producer context;
+    /// an undeclared producer falls back to the consuming runtime's context.
+    pub fn register_integration_command<E, M>(&mut self, mapper: M) -> &mut Self
+    where
+        E: rostfrei::IntegrationEvent,
+        M: rostfrei::IntegrationCommandMapper<E> + 'static,
+        M::Error: Send,
+    {
+        self.register_integration_codec::<E>();
+        let mapper = Arc::new(mapper);
+        self.integration_handlers.push(IntegrationHandlerBinding {
+            producer: E::BOUNDED_CONTEXT,
+            name: E::EVENT_NAME,
+            handler: Box::new(move |bus, durable, retry| {
+                Arc::new(rostfrei::IntegrationEventCommandHandler::<E, _>::new(
+                    bus,
+                    durable,
+                    retry,
+                    SharedCommandMapper(mapper.clone()),
+                ))
+            }),
+        });
         self
     }
 
     fn register_integration_codec<E: rostfrei::IntegrationEvent>(&mut self) {
-        self.integration_decoders
-            .insert((E::EVENT_NAME, E::SCHEMA_VERSION), decode_integration::<E>);
+        self.integration_decoders.insert(
+            (E::BOUNDED_CONTEXT, E::EVENT_NAME, E::SCHEMA_VERSION),
+            decode_integration::<E>,
+        );
     }
 }
 
@@ -214,6 +278,17 @@ fn decode_integration<E: rostfrei::IntegrationEvent>(
 }
 
 struct SharedMapper<M>(Arc<M>);
+struct SharedCommandMapper<M>(Arc<M>);
+impl<E, M: rostfrei::IntegrationCommandMapper<E>> rostfrei::IntegrationCommandMapper<E>
+    for SharedCommandMapper<M>
+{
+    type Command = M::Command;
+    type Error = M::Error;
+    fn map(&self, event: &E) -> Result<Self::Command, Self::Error> {
+        self.0.map(event)
+    }
+}
+
 impl<D, M: rostfrei::IntegrationEventMapper<D>> rostfrei::IntegrationEventMapper<D>
     for SharedMapper<M>
 {

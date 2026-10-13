@@ -40,7 +40,11 @@ impl CorrelatedMessageHandler for TracerCorrelationHandler {
                 Err(error) => Err(CorrelationError::InvalidId(error)),
             },
             CorrelatedMessageFamily::IntegrationEvent => {
-                match integration_observation(&self.bindings, &message) {
+                match integration_observation(
+                    &self.bindings,
+                    self.store.config().bounded_context().as_str(),
+                    &message,
+                ) {
                     Ok(event) => {
                         self.observer
                             .observe_integration_event(message.correlation_id().as_str(), event)
@@ -103,6 +107,7 @@ fn domain_observation(
 
 fn integration_observation(
     bindings: &crate::ApplicationBindings,
+    consumer_context: &str,
     message: &CorrelatedMessage,
 ) -> Result<IntegrationEventObservation, String> {
     let address: IntegrationEventAddress = message
@@ -128,7 +133,22 @@ fn integration_observation(
     }
     let decoder = bindings
         .integration_decoders
-        .get(&(address.name(), envelope.schema_version().get()))
+        .get(&(
+            Some(address.context()),
+            address.name(),
+            envelope.schema_version().get(),
+        ))
+        .or_else(|| {
+            (address.context() == consumer_context)
+                .then(|| {
+                    bindings.integration_decoders.get(&(
+                        None,
+                        address.name(),
+                        envelope.schema_version().get(),
+                    ))
+                })
+                .flatten()
+        })
         .copied()
         .ok_or("integration event codec is not registered")?;
     let encoded = rostfrei::EncodedIntegrationMessage::from_delivery(

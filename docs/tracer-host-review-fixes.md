@@ -46,3 +46,20 @@ shutdown/Drop/supervised failure. Raw runtime Drop closes retained senders too.
 Tests check `Unavailable`, an unchanged durable command-stream sequence, and an
 accepted outcome for the already admitted command. Host coverage includes explicit
 shutdown, Drop, and `run_until` shutdown signals with Tracer and Normal attached.
+
+Green: all three `shared_host_admission` tests pass against disposable NATS.
+
+## Typed producer routing (triage 3)
+
+Behavioral red: `producer_context_routing::typed_handler_subscribes_to_declared_producer`
+compiled, printed a declared `...test.integration.producer.producer-changed`
+address against the host's incorrect `...test.integration.bike-rental.producer-changed`
+subscription, and timed out waiting for delivery on real NATS.
+
+Green: both routing tests pass. A typed handler receives the declared producer
+subject; the new `register_integration_command::<Event, _>(mapper)` path dispatches
+and commits the mapped command in Test and Normal independently. Tests verify
+consumer-owned distinct durables, same-context fallback, duplicate publication,
+actual committed/response identities and correlation, and two producers sharing
+an event name/schema with different observation codecs. Applications no longer
+assemble the mapper's command bus, durable or subject.

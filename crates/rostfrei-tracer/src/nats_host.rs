@@ -81,6 +81,8 @@ pub struct NatsRuntimeConfig {
     pub event_store: NatsEventStoreConfig,
     pub commands: Vec<ConsumerConfig<CommandAddress>>,
     pub integrations: Vec<ConsumerConfig<IntegrationEventAddress>>,
+    /// Retry policy for typed integration-event-to-command handlers.
+    pub integration_retry_delay: RetryDelay,
     pub domain_events: NatsDomainEventConsumerConfig,
 }
 
@@ -101,7 +103,7 @@ impl NatsRuntimeConfig {
             || self.integrations.iter().any(|c| {
                 c.address().application() != application.as_str()
                     || c.address().traffic_scope() != scope
-                    || c.address().context() != self.context.name().as_str()
+                    || c.name().context() != self.context.name().as_str()
             })
         {
             return Err(NatsHostError::Configuration(
@@ -148,12 +150,19 @@ impl NatsRuntimeConfig {
             )?);
         }
         let mut integrations = Vec::new();
-        for (name, _) in &bindings.integration_handlers {
-            let purpose = format!("{name}-consumer");
+        for binding in &bindings.integration_handlers {
+            let address = binding.address(&context)?;
+            let purpose = if address.context() == context.name().as_str() {
+                format!("{}-consumer", binding.name)
+            } else {
+                // Foreign producer names may overlap. Frame the producer/event
+                // identity through its canonical address, independently of schema.
+                rostfrei_core::ContentFingerprint::digest(address.as_str().as_bytes()).to_hex()
+            };
             integrations.push(ConsumerConfig::new(
                 context.consumer_name(&purpose, 1)?,
                 context.durable_name(&purpose, 1)?,
-                context.integration_event_address(name)?,
+                address,
                 Duration::from_secs(45),
                 Duration::from_secs(30),
                 4,
@@ -173,6 +182,7 @@ impl NatsRuntimeConfig {
             event_store,
             commands,
             integrations,
+            integration_retry_delay: RetryDelay::new(Duration::from_secs(1))?,
             domain_events,
         })
     }
@@ -396,14 +406,26 @@ impl NatsRuntime {
                 "integration consumers and handlers differ".into(),
             ));
         }
-        for (config, (_, handler)) in self
+        for (config, binding) in self
             .config
             .integrations
             .iter()
             .zip(&self.bindings.integration_handlers)
         {
+            if config.address() != &binding.address(&self.config.context)? {
+                return Err(NatsHostError::Configuration(
+                    "integration subscription must match its typed producer contract".into(),
+                ));
+            }
             factory.verify_consumer(config).await?;
-            integrations.push((factory.create(config.clone())?, handler.clone()));
+            let adapter: Arc<dyn CommandMessageAdapter> = self.messaging.clone();
+            let bus = CommandBus::new(self.config.context.clone(), adapter);
+            let handler = (binding.handler)(
+                bus,
+                config.durable_name().clone(),
+                self.config.integration_retry_delay,
+            );
+            integrations.push((factory.create(config.clone())?, handler));
         }
         let domain = if self.bindings.integration_mappings.is_empty() {
             None

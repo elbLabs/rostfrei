@@ -63,6 +63,36 @@ See [continuous observation](continuous-observation.md) for retention, payload
 policy, HTTP/SSE and Studio semantics. These observers capture externally initiated
 domain/integration events as well as evidence for Tracer-created operations.
 
+### Typed cross-context integration commands
+
+```rust,ignore
+impl IntegrationEvent for ProducerChanged {
+    const EVENT_NAME: &'static str = "producer-changed";
+    const SCHEMA_VERSION: u32 = 1;
+    const BOUNDED_CONTEXT: Option<&'static str> = Some("producer");
+}
+// RentAfterChange implements IntegrationCommandMapper<ProducerChanged>.
+bindings.register_integration_command::<ProducerChanged, _>(RentAfterChange);
+```
+
+The event type supplies producer identity once. Both `register_integration_handler`
+and `register_integration_command` derive its address through the existing
+`BoundedContext::integration_event_address` API, retaining the consumer runtime's
+application and Test/Normal scope. `BOUNDED_CONTEXT: None` falls back to the
+consumer context, preserving the existing bike-rental contracts.
+
+The mapper convenience supplies the runtime command bus, consumer-owned durable
+identity and `NatsRuntimeConfig::integration_retry_delay` (one second by default)
+to the existing `IntegrationEventCommandHandler`. Its decoding, deterministic
+operation identity, correlation/causation and retry/quarantine semantics are reused.
+The mapped command still needs its normal typed command-handler registration.
+
+Consumer identities remain consumer-context-owned and independent of event schema
+version. Same-context names retain their existing identities. Foreign-producer
+subscriptions use a bounded hash of the canonical address as their purpose, so
+different producers with the same event name do not share a durable. Observation
+codecs are keyed by producer, event name and schema version as well.
+
 ## Bike rental: one entry point, one flag
 
 With JetStream NATS 2.12.1 or newer available:
