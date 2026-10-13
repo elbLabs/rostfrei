@@ -26,6 +26,10 @@ jobs:
         run: python3 scripts/check_agent_skills.py
       - name: Check source-discovery preparation and revision refresh
         run: python3 scripts/test_agent_skill_source.py
+      - name: Check typed HTTP response failures
+        run: python3 scripts/test_agent_skill_http.py
+      - name: Check truncated response evidence and verdict classification
+        run: python3 scripts/test_agent_skill_responses.py
       - name: Install the repository Rust toolchain
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2

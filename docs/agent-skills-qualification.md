@@ -118,6 +118,42 @@ Observed verification (2026-10-13):
 This fixes source-discovery plumbing; combined #107/`--tracer` integration and
 fresh-session/human-feedback qualification remain outstanding as below.
 
+### Review item 6 — typed incomplete-response errors
+
+Wrote the fault-server regression before changing the runner. Actual plumbing
+red: `python3 scripts/test_agent_skill_responses.py ResponseFailureTests.test_partial_run_is_typed_incomplete_response_and_unknown_outcome`
+failed because the subprocess exited **1**, with an uncaught
+`http.client.IncompleteRead` (29 bytes received, 100 additional bytes expected),
+instead of **2**. One run was submitted and the retained state was unknown. This
+tests client error handling, not application feature-behavior red/green.
+
+The runner now uses `RunnerError` with an `ErrorKind` enum, including explicit
+`incomplete_response`. HTTP/transport, invalid-response and setup errors share
+this typed boundary; only supported reported verdicts produce exit 0/1 after
+evidence retrieval. Structured `error.kind`, explanation, phase and controlled
+details are emitted as JSON and retained in an opened evidence file. Partial
+run responses keep `submission-outcome-unknown`; partial later captures preserve
+the complete passed/failed report with `captureState: incomplete` and capture
+error context. No automatic submission retries, response-body error dumps or
+new server-side error protocol were introduced.
+
+Observed verification (2026-10-13):
+
+- `python3 -m unittest discover -s scripts -p 'test_agent_skill_*.py'`: **12 passed**
+  (7 fault-server cases, 3 HTTP boundary cases, 2 source preparation cases).
+- `python3 scripts/check_agent_skills.py`: **4 passed**, including both pinned
+  reference validations and relocation. One earlier attempt failed downloading
+  a truncated reference-validator dependency; a read-only rerun passed.
+- `python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --output /tmp/rostfrei-skills-review6-installed`:
+  passed with an externally installed kit and disposable NATS 2.12.1 on port
+  33232. Existing example passed, intentional comparison mismatch failed, then
+  original example passed after reset. Broker removed; captures settled/exact.
+  This exercised `e62fcb7` plus the working item-6 changes, recorded as a dirty
+  source build in evidence. `$HOME/.cargo/bin` was added to the local `PATH`.
+
+Combined #107/`--tracer` and independent fresh-session qualification remain
+pending. Review item 7 (ignored-file packaging policy) is outside these fixes.
+
 ## Ready-to-run fresh-session trials
 
 The parent integration session arranges independent agents/human feedback; do not

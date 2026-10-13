@@ -70,6 +70,23 @@ Exit **0** means the report passed; **1** means the report failed (inspect wheth
 the diagnostics show the agreed behavioral mismatch); **2** means the run was
 blocked or evidence incomplete. Existing evidence files are preserved.
 
+Runner failures use a typed local `RunnerError` and machine-readable stderr JSON:
+`{"error":{"kind":"incomplete_response","message":"...","phase":"run","details":{...}}}`.
+The kinds are `incomplete_response` (truncated HTTP body), `request_failed`
+(HTTP/transport failure), `invalid_response` (invalid JSON/protocol fields), and
+`setup_failed` (configuration, input or local evidence I/O). These client errors
+exit **2**; they are not new server-side error contracts or failed assertions.
+Error fields contain controlled explanations/context, not response bodies or tokens.
+
+When evidence has been opened, it also retains this structured `error`. A
+truncated run response leaves `runState: submission-outcome-unknown`; never retry
+the POST automatically. If a complete report was received but its later message
+series fails, `runState: reported` and the original `report.status` stay intact,
+with `captureState: incomplete`, error phase `capture`, and `reportedVerdict` in
+error details. Exit 2 then describes incomplete evidence, not an unknown or
+changed business verdict. Only a complete reported `passed`/`failed` result with
+successful evidence retrieval returns 0/1 respectively.
+
 Do not print tokens, put them in argv/URLs or write them to files. Evidence can
 contain application payloads; keep it local or redact before sharing. An
 ambiguous request can have executed: inspect existing operations before deciding
