@@ -27,18 +27,41 @@ def main():
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     token = secrets.token_urlsafe(32)
+    dispatch_token = secrets.token_urlsafe(32)
     origin = f"http://127.0.0.1:{port}"
     environment = {**os.environ, "ROSTFREI_APPLICATION": f"host-{uuid4().hex}",
                    "ROSTFREI_API_ADDR": f"127.0.0.1:{port}", "ROSTFREI_API_TOKEN": token,
-                   "ROSTFREI_DISPATCH_TOKEN": secrets.token_urlsafe(32)}
+                   "ROSTFREI_DISPATCH_TOKEN": dispatch_token}
     opener = build_opener(ProxyHandler({}))
 
-    def request(path, method="GET"):
+    def request(path, method="GET", *, payload=None, capability=token, key=None, location=False):
         if not path.startswith("/") or path.startswith("//"):
             raise RuntimeError("host advertised a non-local link")
+        headers = {"Authorization": f"Bearer {capability}"}
+        if key:
+            headers["Idempotency-Key"] = key
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
         with opener.open(Request(origin + path, method=method,
-                                 headers={"Authorization": f"Bearer {token}"}), timeout=45) as response:
-            return json.load(response)
+                                 data=json.dumps(payload).encode() if payload is not None else None,
+                                 headers=headers), timeout=45) as response:
+            value = json.load(response)
+            return (value, response.headers["Location"]) if location else value
+
+    def dispatch(catalog, name, key, expected):
+        command = next(command for context in catalog["contexts"] for command in context["commands"] if command["id"] == name)
+        version, = command["versions"]
+        _, href = request(version["dispatchHrefTemplate"], "POST", capability=dispatch_token,
+                          payload={"schemaVersion": version["schemaVersion"], "payload": {"fleet_id": "city-fleet", "bicycle_id": "bike-42"}}, key=key, location=True)
+        deadline = time.monotonic() + 35
+        while True:
+            operation = request(href, capability=dispatch_token)
+            if operation["status"] == "completed":
+                assert operation["result"]["decision"] == expected, operation
+                return
+            if operation["status"] in ("failed", "indeterminate") or time.monotonic() > deadline:
+                raise RuntimeError(f"production dispatch did not complete: {operation}")
+            time.sleep(0.05)
 
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
     process = subprocess.Popen([str(target / "debug/bike-rental-api"), "--tracer"], cwd=ROOT, env=environment)
@@ -55,6 +78,7 @@ def main():
                     raise RuntimeError("host did not become ready")
                 time.sleep(0.1)
         assert catalog["catalogVersion"] == 1
+        dispatch(catalog, "rent-bicycle", "normal-before-test-reset", "accepted")
         definitions = request(catalog["behavioralTest"]["definitionsHref"])["items"]
         assert len(definitions) == 5
         for definition in definitions:
@@ -62,6 +86,9 @@ def main():
             assert report["status"] == "passed", report
             assert report["comparison"]["status"] == "passed", report
             print(f"HTTP passed: {definition['id']}", flush=True)
+        dispatch(catalog, "rent-bicycle", "normal-after-test-reset", "rejected")
+        dispatch(catalog, "return-bicycle", "normal-return", "accepted")
+        print("Production dispatch survived all Test resets", flush=True)
         if args.studio:
             subprocess.run(["node", str(ROOT / "scripts/check_tracer_studio.mjs")], cwd=ROOT / "studio",
                            env={**environment, "VITE_TRACER_TARGET": origin, "VITE_TRACER_TOKEN": token}, check=True)

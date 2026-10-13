@@ -806,7 +806,7 @@ impl NatsApplication {
         let watched = runtime.clone();
         let supervisor = tokio::spawn(async move {
             let mut tasks = OwnedTasks(tasks);
-            let result = loop {
+            let mut result = loop {
                 tokio::select! {
                     _ = receiver.changed() => break Ok(()),
                     () = tokio::time::sleep(Duration::from_millis(20)) => {}
@@ -820,12 +820,19 @@ impl NatsApplication {
             };
             let _ = stop_tasks.send(true);
             for mut task in tasks.0.drain(..) {
-                if tokio::time::timeout(Duration::from_secs(45), &mut task)
-                    .await
-                    .is_err()
-                {
-                    task.abort();
-                    let _ = task.await;
+                let stopped = match tokio::time::timeout(Duration::from_secs(45), &mut task).await {
+                    Ok(Ok(outcome)) => outcome,
+                    Ok(Err(error)) => Err(NatsHostError::Worker(error.to_string())),
+                    Err(_) => {
+                        task.abort();
+                        let _ = task.await;
+                        Err(NatsHostError::Worker(
+                            "HTTP shutdown exceeded 45 seconds".into(),
+                        ))
+                    }
+                };
+                if result.is_ok() {
+                    result = stopped;
                 }
             }
             watched.stop_workers().await;
