@@ -197,6 +197,19 @@ struct ScopedTransport {
     inner: CommandBusTransport,
     gate: Arc<RwLock<()>>,
     available: Arc<AtomicBool>,
+    shutting_down: Arc<AtomicBool>,
+}
+impl ScopedTransport {
+    fn ensure_available(&self) -> Result<(), CommandTransportError> {
+        if self.available.load(Ordering::Acquire) && !self.shutting_down.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err(CommandTransportError::new(
+                CommandTransportErrorKind::Unavailable,
+                "runtime unavailable during startup, stop, shutdown or failed Test reset",
+            ))
+        }
+    }
 }
 #[async_trait]
 impl CommandTransport for ScopedTransport {
@@ -208,13 +221,10 @@ impl CommandTransport for ScopedTransport {
         invocation: CommandInvocation,
         observer: Arc<dyn CommandTransportObserver>,
     ) -> Result<CommandReceipt, CommandTransportError> {
+        // Reject immediately while teardown waits for already admitted readers.
+        self.ensure_available()?;
         let _scope = self.gate.read().await;
-        if !self.available.load(Ordering::Acquire) {
-            return Err(CommandTransportError::new(
-                CommandTransportErrorKind::Unavailable,
-                "runtime unavailable until startup or Test reset succeeds",
-            ));
-        }
+        self.ensure_available()?;
         self.inner.invoke(invocation, observer).await
     }
 }
@@ -232,6 +242,7 @@ pub struct NatsRuntime {
     transport: Arc<ScopedTransport>,
     gate: Arc<RwLock<()>>,
     available: Arc<AtomicBool>,
+    shutting_down: Arc<AtomicBool>,
     fixture_events: Arc<RwLock<FixtureEventSet>>,
     reset_required: AtomicBool,
     workers: Mutex<Vec<Worker>>,
@@ -276,10 +287,12 @@ impl NatsRuntime {
         let adapter: Arc<dyn CommandMessageAdapter> = messaging.clone();
         let gate = Arc::new(RwLock::new(()));
         let available = Arc::new(AtomicBool::new(false));
+        let shutting_down = Arc::new(AtomicBool::new(false));
         let transport = Arc::new(ScopedTransport {
             inner: CommandBusTransport::new(CommandBus::new(config.context.clone(), adapter)),
             gate: gate.clone(),
             available: available.clone(),
+            shutting_down: shutting_down.clone(),
         });
         Ok(Self {
             connection,
@@ -290,6 +303,7 @@ impl NatsRuntime {
             transport,
             gate,
             available,
+            shutting_down,
             fixture_events: Arc::new(RwLock::new(FixtureEventSet::default())),
             reset_required: AtomicBool::new(false),
             workers: Mutex::new(Vec::new()),
@@ -347,6 +361,11 @@ impl NatsRuntime {
     }
 
     async fn start_in_scope(&self) -> Result<(), NatsHostError> {
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err(NatsHostError::Configuration(
+                "runtime is shutting down".into(),
+            ));
+        }
         let mut workers = self.workers.lock().await;
         if !workers.is_empty() {
             if workers.iter().all(|w| !w.is_finished()) {
@@ -532,8 +551,16 @@ impl NatsRuntime {
     }
 
     pub async fn stop_workers(&self) {
+        self.available.store(false, Ordering::Release);
         let _scope = self.gate.write().await;
         self.stop_in_scope().await;
+    }
+
+    fn begin_shutdown(&self) {
+        // Permanent for this runtime: even an overlapping reset cannot reopen
+        // a retained sender after its owning application starts shutdown.
+        self.shutting_down.store(true, Ordering::Release);
+        self.available.store(false, Ordering::Release);
     }
     async fn stop_in_scope(&self) {
         self.available.store(false, Ordering::Release);
@@ -584,6 +611,7 @@ impl NatsRuntime {
 
 impl Drop for NatsRuntime {
     fn drop(&mut self) {
+        self.begin_shutdown();
         for worker in self.workers.get_mut().drain(..) {
             worker.abort();
         }
@@ -845,6 +873,7 @@ impl NatsApplicationBuilder {
 /// Dropping it cancels owned HTTP/supervision tasks; `shutdown` awaits cleanup.
 pub struct NatsApplication {
     runtime: Arc<NatsRuntime>,
+    dispatch: Option<Arc<NatsRuntime>>,
     tracer: Option<Tracer>,
     shutdown: watch::Sender<bool>,
     supervisor: Option<Worker>,
@@ -859,6 +888,7 @@ impl NatsApplication {
     ) -> Self {
         let (shutdown, mut receiver) = watch::channel(false);
         let watched = runtime.clone();
+        let watched_dispatch = dispatch.clone();
         let supervisor = tokio::spawn(async move {
             let mut tasks = OwnedTasks(tasks);
             let mut result = loop {
@@ -873,6 +903,10 @@ impl NatsApplication {
                     };
                 }
             };
+            watched.begin_shutdown();
+            if let Some(dispatch) = &watched_dispatch {
+                dispatch.begin_shutdown();
+            }
             let _ = stop_tasks.send(true);
             for mut task in tasks.0.drain(..) {
                 let stopped = match tokio::time::timeout(Duration::from_secs(45), &mut task).await {
@@ -891,13 +925,14 @@ impl NatsApplication {
                 }
             }
             watched.stop_workers().await;
-            if let Some(dispatch) = dispatch {
+            if let Some(dispatch) = watched_dispatch {
                 dispatch.stop_workers().await;
             }
             result
         });
         Self {
             runtime,
+            dispatch,
             tracer,
             shutdown,
             supervisor: Some(supervisor),
@@ -925,6 +960,13 @@ impl NatsApplication {
     pub const fn tracer(&self) -> Option<&Tracer> {
         self.tracer.as_ref()
     }
+    fn request_shutdown(&self) {
+        self.runtime.begin_shutdown();
+        if let Some(dispatch) = &self.dispatch {
+            dispatch.begin_shutdown();
+        }
+        let _ = self.shutdown.send(true);
+    }
     pub async fn run_until(
         mut self,
         shutdown: impl std::future::Future<Output = ()>,
@@ -933,12 +975,12 @@ impl NatsApplication {
             return Ok(());
         };
         tokio::select! {
-            () = shutdown => { let _ = self.shutdown.send(true); supervisor.await.map_err(|e| NatsHostError::Worker(e.to_string()))? },
+            () = shutdown => { self.request_shutdown(); supervisor.await.map_err(|e| NatsHostError::Worker(e.to_string()))? },
             result = &mut supervisor => result.map_err(|e| NatsHostError::Worker(e.to_string()))?,
         }
     }
     pub async fn shutdown(mut self) -> Result<(), NatsHostError> {
-        let _ = self.shutdown.send(true);
+        self.request_shutdown();
         if let Some(supervisor) = self.supervisor.take() {
             supervisor
                 .await
@@ -949,7 +991,7 @@ impl NatsApplication {
 }
 impl Drop for NatsApplication {
     fn drop(&mut self) {
-        let _ = self.shutdown.send(true);
+        self.request_shutdown();
     }
 }
 struct OwnedTasks(Vec<Worker>);

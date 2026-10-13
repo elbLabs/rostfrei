@@ -32,3 +32,17 @@ Public API: `TracerConfig::with_continuous_observation(Arc<ObservationFeed>)`,
 matching `TracerBuilder`'s replace-per-scope semantics. Bike-rental's `--tracer`
 startup configures both feeds; Production Observe uses the inspection capability.
 The standalone consumer and live host checker exercise this public configuration.
+
+## Teardown admission (triage 2)
+
+Behavioral red: `shared_host_admission` compiled and all three real-NATS tests
+failed because **new submission waited for a response after teardown began**.
+The explicit stop/host tests first block a genuinely admitted command in its
+handler, begin teardown, and then attempt a new submission.
+
+The fix checks admission before and after the submission gate, closes it at stop
+initiation, and permanently closes both owned runtime scopes at application
+shutdown/Drop/supervised failure. Raw runtime Drop closes retained senders too.
+Tests check `Unavailable`, an unchanged durable command-stream sequence, and an
+accepted outcome for the already admitted command. Host coverage includes explicit
+shutdown, Drop, and `run_until` shutdown signals with Tracer and Normal attached.

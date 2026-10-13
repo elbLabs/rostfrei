@@ -116,6 +116,22 @@ HTTP and correlation-observer workers are absent and HTTP tokens are unnecessary
   supervises that runtime too. Test reset cannot select Normal resources.
 - Shutdown retains broker data. Reset is the explicit destructive operation.
 
+### Submission admission during teardown
+
+`NatsRuntime::stop_workers` closes runtime-scoped transport admission before
+waiting for active submissions. Explicit application `shutdown`, a `run_until`
+shutdown signal, application Drop and supervised failure close both Test and
+attached Normal admission before HTTP/task cleanup. Raw runtime Drop also closes
+retained transports before aborting workers. New invocations return `Unavailable`
+without publishing a command, even when another owner retains the transport.
+
+Already admitted invocations continue through the existing response wait during
+graceful stop/shutdown. A command already published to NATS can still execute if
+its caller stops waiting; teardown does not retract durable messages. Raw runtime
+Drop cannot await graceful completion; use explicit shutdown for that. A stopped
+raw runtime can be explicitly restarted; application shutdown is terminal for its
+owned runtimes. Reset retains its exclusive submission gate and Test-only scope.
+
 ## Current isolation boundary and related issues
 
 One host owns the Test messaging namespace for its application and one bounded
