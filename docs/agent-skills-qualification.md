@@ -90,6 +90,34 @@ Human feedback and token/time-use measurements were not collected; no
 fresh-session effectiveness claim is made. CI retains equivalent JSON/log
 evidence as the `agent-skills-live-evidence` artifact.
 
+### Review item 5 — source-discovered resource preparation
+
+Regression written before the fix: a fresh Git checkout with no generated skill
+resources follows `python3 scripts/package_agent_skills.py --prepare-source`.
+Actual plumbing red: the command exited 2 because the old packager required
+`--output`; `SourceSkillTests.test_discovered_source_bootstrap_and_runner_refresh_revision`
+failed (test exit 1). This is not feature-behavior red.
+
+The shared generator now prepares source metadata, schema and licenses using the
+same authoritative inputs as the release archive. Both skills explain preparation;
+the source runner automatically refreshes before execution. Ownership hashes
+prevent replacing modified/unowned resources. Installed clients stay standalone.
+
+Observed verification (2026-10-13):
+
+- `python3 scripts/test_agent_skill_source.py`: 2 passed (fresh resources and
+  automatic revision refresh after HEAD changes; modified-resource preservation).
+- `python3 scripts/check_agent_skills.py`: all 4 extracted-kit checks passed.
+- `python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --source-checkout --output /tmp/rostfrei-skills-review5-source`:
+  passed using a fresh source copy and disposable NATS 2.12.1 on port 33217.
+  Actual JSON v2 execution passed, with a settled, exact capture; live schema
+  matches the generated source schema. Evidence: `example-passed.json` in that
+  output directory. Broker removed by the runner. Local Cargo required
+  `$HOME/.cargo/bin` in `PATH`.
+
+This fixes source-discovery plumbing; combined #107/`--tracer` integration and
+fresh-session/human-feedback qualification remain outstanding as below.
+
 ## Ready-to-run fresh-session trials
 
 The parent integration session arranges independent agents/human feedback; do not

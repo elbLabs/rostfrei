@@ -11,6 +11,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -64,8 +65,28 @@ class Tracer:
             raise RuntimeError("Tracer unreachable or timed out; a submitted run may have occurred; no retry performed") from error
 
 
+def prepare_source_resources(skill):
+    # Installed kits have no source prerequisite. Source mode requires this exact
+    # canonical runner and the packager to be tracked in the enclosing Git repo.
+    if len(skill.parents) < 3:
+        return
+    root = skill.parents[2]
+    packager = root / "scripts/package_agent_skills.py"
+    if not (root / ".git").exists() or not packager.is_file():
+        return
+    tracked = subprocess.run([
+        "git", "ls-files", "--error-unmatch", "--",
+        str((skill / "scripts/run_behavior.py").relative_to(root)), "scripts/package_agent_skills.py",
+    ], cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if tracked.returncode == 0:
+        result = subprocess.run([sys.executable, "-I", str(packager), "--prepare-source"], cwd=root)
+        if result.returncode:
+            raise RuntimeError("Source skill preparation failed; resolve the reported resource conflict before running")
+
+
 def run(definition, output):
     skill = Path(__file__).resolve().parent.parent
+    prepare_source_resources(skill)
     release = json.loads((skill / "references/release.json").read_text())
     tracer = Tracer()
     catalog = tracer.request("/catalog")

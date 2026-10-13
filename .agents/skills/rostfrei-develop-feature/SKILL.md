@@ -44,6 +44,15 @@ useful scenario; add further scenarios as the agreed feature requires them.
 
 ## 2. Build the behavior test first
 
+When using this repository's directly discovered source skill, first run
+`python3 scripts/package_agent_skills.py --prepare-source` from the framework
+checkout root (requires Git and Python 3.11+). Do this before reading generated
+resources, and repeat after switching revision or changing framework inputs.
+It generates both skills' relative release metadata/licenses and this skill's
+schema from the same inputs as packaging, preserving edits to generated files.
+The source runner also refreshes them before each execution. Installed release
+skills already contain these resources and require no source checkout/bootstrap.
+
 Locate the application's behavior suite, fixtures and NATS-backed Tracer runtime.
 Read [the worked JSON v2 example](references/worked-example.md) and
 [execution instructions](references/execution.md). An installed skill includes

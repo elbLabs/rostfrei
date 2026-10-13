@@ -98,8 +98,25 @@ runtime. The kit records the actual source contract rather than relabeling it.
 The only authoritative skill sources are `.agents/skills/<name>/`. This is
 discovered directly by OpenCode V2 and Codex, without symlinks, duplicate copies
 or configuration. The earlier `.opencode/skills/rostfrei-tracer` source moved
-there. Release metadata and the JSON schema are generated into the bundle;
-there is no second hand-maintained version source or schema copy.
+there. Before using a directly discovered source skill, prepare its generated
+resources from the framework root (Python 3.11+ and Git):
+
+```sh
+python3 scripts/package_agent_skills.py --prepare-source
+SKILL="$PWD/.agents/skills/rostfrei-develop-feature"
+python3 "$SKILL/scripts/run_behavior.py" \
+  "$SKILL/assets/add-first-bicycle.json" --output behavior-evidence.json
+```
+
+Use the documented isolated runtime and authorization scope above. Preparation
+creates the relative release metadata, schema and licenses using the **same
+generator as the archive builder**. Repeat it before reading resources after a
+revision/input change; the source runner also prepares automatically each run.
+These generated files and their ownership hashes are Git-ignored. Modified or
+unowned conflicting resources stop preparation before writes: move your edited
+file aside deliberately before regenerating. Skill instructions are never
+overwritten. There is no second hand-maintained metadata/schema copy or duplicate
+discovery tree. Installed artifacts need no source paths, Git or preparation.
 
 From the framework repository:
 

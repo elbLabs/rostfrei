@@ -1,5 +1,11 @@
 # Release and execution prerequisites
 
+For repository-discovered source skills, first run
+`python3 scripts/package_agent_skills.py --prepare-source` from the framework root
+(Git and Python 3.11+). Repeat after checkout/input changes before using metadata.
+This generates the relative resources from the packager's authoritative inputs
+and preserves modified files. Installed skills need no source preparation.
+
 An installed skill includes `references/release.json` relative to its root. It
 records the framework release/source revision, whether the build tree was dirty,
 and independent Catalog, behavior-definition, MessageSeries and fixture formats.

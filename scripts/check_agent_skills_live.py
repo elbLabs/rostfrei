@@ -31,20 +31,28 @@ def checked(command, cwd, env=None, expected=0):
         raise RuntimeError(f"Expected exit {expected}, observed {result.returncode}: {command[0]}")
 
 
-def qualify(output):
+def qualify(output, source_checkout=False):
     if not os.environ.get("ROSTFREI_NATS_URL"):
         raise ValueError("Run through scripts/test_nats.py with a disposable NATS broker")
     with tempfile.TemporaryDirectory(prefix="rostfrei-skills-live-") as temporary:
         consumer = Path(temporary)
-        artifacts = consumer / "artifacts"
-        checked([sys.executable, str(ROOT / "scripts/package_agent_skills.py"), "--output", str(artifacts)], ROOT)
-        archive, = artifacts.glob("*.tar.gz")
-        with tarfile.open(archive) as bundle:
-            bundle.extractall(consumer / "extracted", filter="data")
-        kit, = (consumer / "extracted").iterdir()
-        destination = consumer / "application/.agents/skills"
-        checked([sys.executable, "-I", str(kit / "install.py"), "--destination", str(destination)], consumer)
-        skill = destination / "rostfrei-develop-feature"
+        if source_checkout:
+            from test_agent_skill_source import fresh_source_checkout
+            source = fresh_source_checkout(consumer / "checkout")
+            skill = source / ".agents/skills/rostfrei-develop-feature"
+            if (skill / "references/release.json").exists():
+                raise ValueError("Source regression must start without generated resources")
+            checked([sys.executable, "-I", str(source / "scripts/package_agent_skills.py"), "--prepare-source"], source)
+        else:
+            artifacts = consumer / "artifacts"
+            checked([sys.executable, str(ROOT / "scripts/package_agent_skills.py"), "--output", str(artifacts)], ROOT)
+            archive, = artifacts.glob("*.tar.gz")
+            with tarfile.open(archive) as bundle:
+                bundle.extractall(consumer / "extracted", filter="data")
+            kit, = (consumer / "extracted").iterdir()
+            destination = consumer / "application/.agents/skills"
+            checked([sys.executable, "-I", str(kit / "install.py"), "--destination", str(destination)], consumer)
+            skill = destination / "rostfrei-develop-feature"
         with socket.socket() as address:
             address.bind(("127.0.0.1", 0))
             port = address.getsockname()[1]
@@ -86,6 +94,9 @@ def qualify(output):
                 capture = passed["messageSeries"]["capture"]
                 if not capture["settled"] or capture["fidelity"] != "exact":
                     raise ValueError("Expected a settled, exact real-NATS capture")
+                if source_checkout:
+                    print(f"Fresh source bootstrap and real-NATS execution passed; evidence: {output}")
+                    return
                 wrong = json.loads(definition.read_text())
                 wrong["expected"]["graphs"][0]["nodes"][1]["payload"]["bicycle_id"] = "negative-control-wrong-id"
                 negative = consumer / "negative-control.json"
@@ -115,12 +126,13 @@ def qualify(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="new or empty evidence directory")
+    parser.add_argument("--source-checkout", action="store_true", help="qualify fresh source bootstrap and one real execution")
     args = parser.parse_args()
     output = args.output.resolve()
     if output.exists() and any(output.iterdir()):
         parser.error("Preserving existing evidence: choose a new or empty output directory")
     try:
-        qualify(output)
+        qualify(output, args.source_checkout)
     except (OSError, ValueError, RuntimeError) as error:
         parser.exit(1, f"Live qualification failed: {error}\n")
 

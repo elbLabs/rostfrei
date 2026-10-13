@@ -18,6 +18,12 @@ Use the Tracer HTTP API as an agent-facing command and explanation surface. Keep
 Call simulation **Preview**, direct isolated publication **Test**, and production publication **production dispatch**. Mention route names or protocol details only when useful. Do not introduce browser, form, canvas, layout, pinning, or other UI-oriented terminology unless the user explicitly asks about it.
 
 Read [release and execution prerequisites](references/runtime.md) before execution.
+For a directly discovered source skill, first run
+`python3 scripts/package_agent_skills.py --prepare-source` from the framework
+checkout root (Git and Python 3.11+). Repeat before reading metadata after revision
+or framework-input changes. This shares packaging's resource generation and
+preserves modified generated files; do not hand-maintain release metadata.
+Installed release skills already contain their resources and need no bootstrap.
 An installed skill carries `references/release.json` with its framework version,
 source revision and independent protocol versions. Preview is prediction, never
 feature acceptance. Use ordinary conversation if a host-specific question tool

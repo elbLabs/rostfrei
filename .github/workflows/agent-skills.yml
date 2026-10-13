@@ -24,6 +24,8 @@ jobs:
           python-version: '3.12'
       - name: Qualify the external installed artifact
         run: python3 scripts/check_agent_skills.py
+      - name: Check source-discovery preparation and revision refresh
+        run: python3 scripts/test_agent_skill_source.py
       - name: Install the repository Rust toolchain
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
@@ -33,9 +35,17 @@ jobs:
         run: cargo build --locked -p bike-rental --bin bike-rental-api
       - name: Execute installed JSON v2 example through real NATS
         run: python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --output "$RUNNER_TEMP/skills-evidence"
+      - name: Execute fresh source-discovered skill through real NATS
+        run: python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --source-checkout --output "$RUNNER_TEMP/skills-source-evidence"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: agent-skills-live-evidence
           path: ${{ runner.temp }}/skills-evidence/
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-skills-source-evidence
+          path: ${{ runner.temp }}/skills-source-evidence/
           if-no-files-found: ignore

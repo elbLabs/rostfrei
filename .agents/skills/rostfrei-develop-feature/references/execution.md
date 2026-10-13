@@ -1,5 +1,12 @@
 # Execute against real NATS
 
+For repository-discovered source skills, prepare before reading release metadata
+or the generated schema: run `python3 scripts/package_agent_skills.py --prepare-source`
+from the framework root. Repeat after checkout/input changes. The source runner
+also performs this preparation before execution, preventing stale revision claims.
+Generated-file edits are preserved: move a conflicting file aside deliberately
+before preparing again. Installed kits remain self-contained without this step.
+
 Prerequisites: the application's Rust toolchain and actual application-linked
 Tracer, NATS Server **2.12.1+ with JetStream**, registered fixtures, supervised
 Test workers, NATS event store, and the control capability. Read the installed
