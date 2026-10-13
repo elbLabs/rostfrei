@@ -332,6 +332,11 @@ pub struct TracerBuilder {
 }
 
 impl TracerBuilder {
+    pub(crate) fn with_bindings(mut self, bindings: RuntimeBindings) -> Self {
+        self.bindings = bindings;
+        self
+    }
+
     pub fn new(history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
         Self {
             observation: BTreeMap::new(),

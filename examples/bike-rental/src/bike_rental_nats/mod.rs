@@ -1,48 +1,27 @@
-use std::{env, sync::Arc, time::Duration};
-
+use crate::rental_fleet::{
+    AddBicycle, BicycleId, BicycleRented, FleetId, RentBicycle, ReturnBicycle, TransferBicycle,
+};
 use async_trait::async_trait;
 use rostfrei::{
-    Command, CommandBindingRegistrationError, CommandBus, CommandMessageAdapter, CommandProcessor,
-    CommittedDomainEvent, DomainEventDispatcher, DomainEventRegistrationError,
-    EncodedIntegrationMessage, EventStore, EventStoreError, IntegrationEvent, IntegrationEventBus,
-    IntegrationEventDispatcherExt, IntegrationEventMapper, IntegrationMessageAdapter,
-    JsonDomainRejectionMapper,
+    Command, CommittedDomainEvent, EncodedIntegrationMessage, IntegrationEvent,
+    IntegrationEventMapper,
 };
-use rostfrei_fixtures::{Fixture, FixtureApplyReport, FixtureEventSet};
+use rostfrei_fixtures::{Fixture, FixtureApplyReport};
 use rostfrei_messaging_core::{
-    ApplicationName, BoundedContext, CommandAddress, CommandRejectionClassification, ConsumeError,
-    ConsumerConfig, ContractError, CorrelationId, DeliveryDisposition, IntegrationEventAddress,
-    MessageDelivery, MessageHandler, MessageId, QuarantineReason, RetryDelay, TrafficScope,
+    ApplicationName, BoundedContext, CommandAddress, ConsumerConfig, ContractError,
+    DeliveryDisposition, IntegrationEventAddress, MessageDelivery, MessageHandler,
+    QuarantineReason, RetryDelay, TrafficScope,
 };
 use rostfrei_nats::{
-    ApplicationMessagingConfig, CorrelatedMessage, CorrelatedMessageFamily,
-    CorrelatedMessageHandler, DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
-    DEFAULT_EVENT_STORE_MAX_STREAM_BYTES, DomainEventConsumerError, NatsConnection,
-    NatsCorrelationObserver, NatsDomainEventConsumer, NatsDomainEventConsumerConfig, NatsError,
-    NatsEventStore, NatsEventStoreConfig, NatsMessagingAdapter, provision_application_messaging,
-    provision_domain_event_consumer, provision_durable_consumer, provision_event_store,
+    ApplicationMessagingConfig, NatsConnection, NatsDomainEventConsumerConfig, NatsEventStore,
+    NatsEventStoreConfig,
 };
 use rostfrei_tracer::{
-    CommandBusTransport, CommandInvocation, CommandTransport, CommandTransportError,
-    CommandTransportObserver, CorrelationError, CorrelationObserver, DomainEventObservation,
-    IntegrationEventObservation, TestScenarioReset, TestScenarioResetError,
+    CommandTransport, CorrelationObserver, NatsRuntime, NatsRuntimeConfig, TestScenarioReset,
+    TestScenarioResetError,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use thiserror::Error;
-use tokio::{
-    sync::{Mutex, RwLock, watch},
-    task::JoinHandle,
-};
-
-use crate::{
-    demo::{DemoFixtureError, apply_fixture as apply_message_series_fixture},
-    rental_fleet::{
-        AddBicycle, AddBicycleHandler, BicycleId, BicycleRented, FleetId, RentBicycle,
-        RentBicycleHandler, RentalFleetAggregate, ReturnBicycle, ReturnBicycleHandler,
-        TransferBicycle, TransferBicycleHandler,
-    },
-};
+use std::{env, sync::Arc, time::Duration};
 
 #[cfg(test)]
 mod tests;
@@ -50,50 +29,8 @@ mod tests;
 pub const BOUNDED_CONTEXT_NAME: &str = "bike-rental";
 pub const APPLICATION_NAME: &str = "bike-rental";
 pub const BICYCLE_RENTAL_STARTED_EVENT_NAME: &str = "bicycle-rental-started";
-const BICYCLE_RENTAL_STARTED_SCHEMA_VERSION: u32 = 1;
-const DOMAIN_EVENT_PUBLISHER_PURPOSE: &str = "bicycle-rental-started-publisher";
-const INTEGRATION_EVENT_CONSUMER_PURPOSE: &str = "bicycle-rental-started-consumer";
-const RETRY_DELAY: Duration = Duration::from_secs(1);
-const CONSUMER_ACK_WAIT: Duration = Duration::from_secs(45);
-const CONSUMER_PROCESSING_TIMEOUT: Duration = Duration::from_secs(30);
-const CONSUMER_CONCURRENCY: usize = 4;
-const COMMAND_CONSUMER_CONCURRENCY: usize = 1;
-// Freeze the existing --v2 identities from the released example. This is a legacy
-// naming suffix, not a payload/handler version: changing or removing it creates a
-// different WorkQueue subscription and requires an explicit operator cutover.
 const COMMAND_SUBSCRIPTION_GENERATION: u32 = 2;
-const MAXIMUM_DELIVERY_ATTEMPTS: u32 = 5;
-const COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
-const DEFAULT_MESSAGING_STREAM_MAX_BYTES: i64 = 64 * 1024 * 1024;
-const MESSAGING_STREAM_MAX_BYTES_ENV: &str = "ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES";
-const EVENT_STORE_MAX_STREAM_BYTES_ENV: &str = "ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES";
-const EVENT_STORE_MAX_EVENT_BYTES_ENV: &str = "ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES";
-
-#[derive(Debug, Error)]
-pub enum BikeRentalNatsError {
-    #[error("continuous observation failed: {0}")]
-    Observation(String),
-    #[error(transparent)]
-    CommandBinding(#[from] CommandBindingRegistrationError),
-    #[error(transparent)]
-    Consume(#[from] ConsumeError),
-    #[error(transparent)]
-    Contract(#[from] ContractError),
-    #[error(transparent)]
-    DomainEventConsumer(#[from] DomainEventConsumerError),
-    #[error(transparent)]
-    DomainEventRegistration(#[from] DomainEventRegistrationError),
-    #[error(transparent)]
-    EventStore(#[from] EventStoreError),
-    #[error(transparent)]
-    Nats(#[from] NatsError),
-    #[error("environment variable `{name}` must be a positive integer byte count, got `{value}`")]
-    ResourceLimitEnvironment { name: &'static str, value: String },
-    #[error("only a test-scoped NATS runtime can be reset")]
-    ResetRequiresTestScope,
-    #[error(transparent)]
-    Fixture(#[from] DemoFixtureError),
-}
+pub type BikeRentalNatsError = rostfrei_tracer::NatsHostError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BikeRentalNatsResourceLimits {
@@ -101,7 +38,6 @@ pub struct BikeRentalNatsResourceLimits {
     event_store_stream: i64,
     event_store_event: usize,
 }
-
 impl BikeRentalNatsResourceLimits {
     pub const fn new(
         messaging_stream_max_bytes: i64,
@@ -114,69 +50,60 @@ impl BikeRentalNatsResourceLimits {
             event_store_event: event_store_max_event_bytes,
         }
     }
-
     pub fn from_env() -> Result<Self, BikeRentalNatsError> {
         let defaults = Self::default();
         Ok(Self::new(
-            env_i64(MESSAGING_STREAM_MAX_BYTES_ENV, defaults.messaging_stream)?,
-            env_i64(
-                EVENT_STORE_MAX_STREAM_BYTES_ENV,
+            env_limit(
+                "ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES",
+                defaults.messaging_stream,
+            )?,
+            env_limit(
+                "ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES",
                 defaults.event_store_stream,
             )?,
-            env_usize(EVENT_STORE_MAX_EVENT_BYTES_ENV, defaults.event_store_event)?,
+            env_limit(
+                "ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES",
+                defaults.event_store_event,
+            )?,
         ))
     }
-
     pub const fn messaging_stream_max_bytes(self) -> i64 {
         self.messaging_stream
     }
-
     pub const fn event_store_max_stream_bytes(self) -> i64 {
         self.event_store_stream
     }
-
     pub const fn event_store_max_event_bytes(self) -> usize {
         self.event_store_event
     }
 }
-
 impl Default for BikeRentalNatsResourceLimits {
     fn default() -> Self {
         Self::new(
-            DEFAULT_MESSAGING_STREAM_MAX_BYTES,
-            DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
-            DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
+            64 * 1024 * 1024,
+            rostfrei_nats::DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
+            rostfrei_nats::DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
         )
     }
 }
-
-fn env_i64(name: &'static str, default: i64) -> Result<i64, BikeRentalNatsError> {
+fn env_limit<T: std::str::FromStr + PartialOrd + Default>(
+    name: &str,
+    default: T,
+) -> Result<T, BikeRentalNatsError> {
     match env::var(name) {
         Ok(value) => value
-            .parse::<i64>()
+            .parse::<T>()
             .ok()
-            .filter(|value| *value > 0)
-            .ok_or(BikeRentalNatsError::ResourceLimitEnvironment { name, value }),
+            .filter(|value| *value > T::default())
+            .ok_or_else(|| {
+                BikeRentalNatsError::Configuration(format!(
+                    "{name} must be a positive integer byte count"
+                ))
+            }),
         Err(env::VarError::NotPresent) => Ok(default),
-        Err(env::VarError::NotUnicode(_)) => Err(BikeRentalNatsError::ResourceLimitEnvironment {
-            name,
-            value: "<non-Unicode>".to_owned(),
-        }),
-    }
-}
-
-fn env_usize(name: &'static str, default: usize) -> Result<usize, BikeRentalNatsError> {
-    match env::var(name) {
-        Ok(value) => value
-            .parse::<usize>()
-            .ok()
-            .filter(|value| *value > 0)
-            .ok_or(BikeRentalNatsError::ResourceLimitEnvironment { name, value }),
-        Err(env::VarError::NotPresent) => Ok(default),
-        Err(env::VarError::NotUnicode(_)) => Err(BikeRentalNatsError::ResourceLimitEnvironment {
-            name,
-            value: "<non-Unicode>".to_owned(),
-        }),
+        Err(error) => Err(BikeRentalNatsError::Configuration(format!(
+            "{name}: {error}"
+        ))),
     }
 }
 
@@ -187,7 +114,6 @@ pub enum BikeRentalCommand {
     AddBicycle,
     TransferBicycle,
 }
-
 impl BikeRentalCommand {
     pub const fn command_name(self) -> &'static str {
         match self {
@@ -197,7 +123,6 @@ impl BikeRentalCommand {
             Self::TransferBicycle => TransferBicycle::LOCAL_ID,
         }
     }
-
     pub const fn schema_version(self) -> u32 {
         match self {
             Self::RentBicycle => RentBicycle::SCHEMA_VERSION,
@@ -207,107 +132,101 @@ impl BikeRentalCommand {
         }
     }
 }
-
 #[derive(Clone)]
 pub struct BikeRentalCommandRoute {
     command: BikeRentalCommand,
     address: CommandAddress,
     consumer: ConsumerConfig<CommandAddress>,
 }
-
 impl BikeRentalCommandRoute {
     pub const fn command(&self) -> BikeRentalCommand {
         self.command
     }
-
     pub const fn address(&self) -> &CommandAddress {
         &self.address
     }
-
     pub const fn consumer(&self) -> &ConsumerConfig<CommandAddress> {
         &self.consumer
     }
 }
-
 #[derive(Clone)]
 pub struct BikeRentalIntegrationEventRoute {
     address: IntegrationEventAddress,
     consumer: ConsumerConfig<IntegrationEventAddress>,
 }
-
 impl BikeRentalIntegrationEventRoute {
     pub const fn address(&self) -> &IntegrationEventAddress {
         &self.address
     }
-
     pub const fn consumer(&self) -> &ConsumerConfig<IntegrationEventAddress> {
         &self.consumer
     }
 }
 
+/// Released resource identities remain explicit policy, including the legacy
+/// command subscription generation 2 (independent of command schema versions).
 #[derive(Clone)]
 pub struct BikeRentalNatsConfig {
-    application: ApplicationName,
-    context: BoundedContext,
+    runtime: NatsRuntimeConfig,
     resource_limits: BikeRentalNatsResourceLimits,
-    messaging: ApplicationMessagingConfig,
-    event_store: NatsEventStoreConfig,
-    domain_event_consumer: NatsDomainEventConsumerConfig,
     command_routes: [BikeRentalCommandRoute; 4],
     integration_event_route: BikeRentalIntegrationEventRoute,
 }
-
 impl BikeRentalNatsConfig {
     pub fn new(application: &str) -> Result<Self, BikeRentalNatsError> {
-        Self::new_in_scope(
-            application,
-            TrafficScope::Normal,
-            BikeRentalNatsResourceLimits::default(),
-        )
+        Self::new_with_resource_limits(application, BikeRentalNatsResourceLimits::default())
     }
-
     pub fn new_test(application: &str) -> Result<Self, BikeRentalNatsError> {
-        Self::new_in_scope(
-            application,
-            TrafficScope::Test,
-            BikeRentalNatsResourceLimits::default(),
-        )
+        Self::new_test_with_resource_limits(application, BikeRentalNatsResourceLimits::default())
     }
-
     pub fn new_with_resource_limits(
         application: &str,
-        resource_limits: BikeRentalNatsResourceLimits,
+        limits: BikeRentalNatsResourceLimits,
     ) -> Result<Self, BikeRentalNatsError> {
-        Self::new_in_scope(application, TrafficScope::Normal, resource_limits)
+        Self::new_in_scope(application, TrafficScope::Normal, limits)
     }
-
     pub fn new_test_with_resource_limits(
         application: &str,
-        resource_limits: BikeRentalNatsResourceLimits,
+        limits: BikeRentalNatsResourceLimits,
     ) -> Result<Self, BikeRentalNatsError> {
-        Self::new_in_scope(application, TrafficScope::Test, resource_limits)
+        Self::new_in_scope(application, TrafficScope::Test, limits)
     }
-
     fn new_in_scope(
         application: &str,
-        traffic_scope: TrafficScope,
-        resource_limits: BikeRentalNatsResourceLimits,
+        scope: TrafficScope,
+        limits: BikeRentalNatsResourceLimits,
     ) -> Result<Self, BikeRentalNatsError> {
-        let application = ApplicationName::new(application)?;
-        let context = application.bounded_context_in_scope(traffic_scope, BOUNDED_CONTEXT_NAME)?;
-        let messaging = ApplicationMessagingConfig::new_in_scope(&application, traffic_scope)?
-            .with_max_bytes(resource_limits.messaging_stream_max_bytes())?;
-        let event_store = NatsEventStoreConfig::for_bounded_context(&context)?
+        Self::for_bindings(
+            application,
+            scope,
+            limits,
+            &crate::tracer::command_bindings()?,
+        )
+    }
+
+    pub fn for_bindings(
+        application: &str,
+        scope: TrafficScope,
+        limits: BikeRentalNatsResourceLimits,
+        bindings: &rostfrei_tracer::ApplicationBindings,
+    ) -> Result<Self, BikeRentalNatsError> {
+        let context = ApplicationName::new(application)?
+            .bounded_context_in_scope(scope, BOUNDED_CONTEXT_NAME)?;
+        let mut runtime =
+            NatsRuntimeConfig::new(context.clone(), bindings, COMMAND_SUBSCRIPTION_GENERATION)?;
+        runtime.messaging = ApplicationMessagingConfig::new_in_scope(context.application(), scope)?
+            .with_max_bytes(limits.messaging_stream_max_bytes())?;
+        runtime.event_store = NatsEventStoreConfig::for_bounded_context(&context)?
             .with_storage_limits(
-                resource_limits.event_store_max_stream_bytes(),
-                resource_limits.event_store_max_event_bytes(),
+                limits.event_store_max_stream_bytes(),
+                limits.event_store_max_event_bytes(),
             )?;
-        let domain_event_consumer = NatsDomainEventConsumerConfig::new(
-            context.consumer_name(DOMAIN_EVENT_PUBLISHER_PURPOSE, 1)?,
-            context.durable_name(DOMAIN_EVENT_PUBLISHER_PURPOSE, 1)?,
-            CONSUMER_ACK_WAIT,
-            CONSUMER_PROCESSING_TIMEOUT,
-            RetryDelay::new(RETRY_DELAY)?,
+        runtime.domain_events = NatsDomainEventConsumerConfig::new(
+            context.consumer_name("bicycle-rental-started-publisher", 1)?,
+            context.durable_name("bicycle-rental-started-publisher", 1)?,
+            Duration::from_secs(45),
+            Duration::from_secs(30),
+            RetryDelay::new(Duration::from_secs(1))?,
         )?;
         let command_routes = [
             command_route::<RentBicycle>(&context, BikeRentalCommand::RentBicycle)?,
@@ -315,47 +234,45 @@ impl BikeRentalNatsConfig {
             command_route::<AddBicycle>(&context, BikeRentalCommand::AddBicycle)?,
             command_route::<TransferBicycle>(&context, BikeRentalCommand::TransferBicycle)?,
         ];
-        let integration_event_route = integration_event_route(&context)?;
+        let address = context.integration_event_address(BICYCLE_RENTAL_STARTED_EVENT_NAME)?;
+        let consumer = runtime
+            .integrations
+            .first()
+            .ok_or_else(|| {
+                BikeRentalNatsError::Configuration("missing rental integration consumer".into())
+            })?
+            .clone();
         Ok(Self {
-            application,
-            context,
-            resource_limits,
-            messaging,
-            event_store,
-            domain_event_consumer,
+            runtime,
+            resource_limits: limits,
             command_routes,
-            integration_event_route,
+            integration_event_route: BikeRentalIntegrationEventRoute { address, consumer },
         })
     }
-
+    pub const fn host_config(&self) -> &NatsRuntimeConfig {
+        &self.runtime
+    }
     pub const fn application(&self) -> &ApplicationName {
-        &self.application
+        self.runtime.context.application()
     }
-
     pub const fn context(&self) -> &BoundedContext {
-        &self.context
+        &self.runtime.context
     }
-
     pub const fn resource_limits(&self) -> BikeRentalNatsResourceLimits {
         self.resource_limits
     }
-
     pub const fn messaging(&self) -> &ApplicationMessagingConfig {
-        &self.messaging
+        &self.runtime.messaging
     }
-
     pub const fn event_store(&self) -> &NatsEventStoreConfig {
-        &self.event_store
+        &self.runtime.event_store
     }
-
     pub const fn domain_event_consumer(&self) -> &NatsDomainEventConsumerConfig {
-        &self.domain_event_consumer
+        &self.runtime.domain_events
     }
-
     pub const fn command_routes(&self) -> &[BikeRentalCommandRoute; 4] {
         &self.command_routes
     }
-
     pub const fn command_route(&self, command: BikeRentalCommand) -> &BikeRentalCommandRoute {
         let [rent, returned, added, transferred] = &self.command_routes;
         match command {
@@ -365,83 +282,49 @@ impl BikeRentalNatsConfig {
             BikeRentalCommand::TransferBicycle => transferred,
         }
     }
-
     pub const fn integration_event_route(&self) -> &BikeRentalIntegrationEventRoute {
         &self.integration_event_route
     }
-
     pub async fn provision(&self, connection: &NatsConnection) -> Result<(), BikeRentalNatsError> {
-        provision_application_messaging(connection.jetstream(), &self.messaging).await?;
-        provision_event_store(connection.jetstream(), &self.event_store).await?;
-        provision_domain_event_consumer(
+        Box::pin(self.runtime.provision(connection)).await?;
+        rostfrei_nats::provision_domain_event_consumer(
             connection.jetstream(),
-            &self.event_store,
-            &self.domain_event_consumer,
-        )
-        .await?;
-        for route in &self.command_routes {
-            provision_durable_consumer(
-                connection.jetstream(),
-                self.messaging.topology(),
-                &route.consumer,
-            )
-            .await?;
-        }
-        provision_durable_consumer(
-            connection.jetstream(),
-            self.messaging.topology(),
-            &self.integration_event_route.consumer,
+            &self.runtime.event_store,
+            &self.runtime.domain_events,
         )
         .await?;
         Ok(())
     }
-
     pub async fn connect_store(
         &self,
         connection: &NatsConnection,
     ) -> Result<NatsEventStore, BikeRentalNatsError> {
-        NatsEventStore::connect(connection.jetstream().clone(), self.event_store.clone())
-            .await
-            .map_err(Into::into)
+        Ok(NatsEventStore::connect(
+            connection.jetstream().clone(),
+            self.runtime.event_store.clone(),
+        )
+        .await?)
     }
 }
-
 fn command_route<C: Command>(
     context: &BoundedContext,
     command: BikeRentalCommand,
 ) -> Result<BikeRentalCommandRoute, ContractError> {
-    let name = C::LOCAL_ID;
-    let address = context.command_address(name)?;
+    let address = context.command_address(C::LOCAL_ID)?;
     let consumer = ConsumerConfig::new(
-        context.consumer_name(name, COMMAND_SUBSCRIPTION_GENERATION)?,
-        context.durable_name(name, COMMAND_SUBSCRIPTION_GENERATION)?,
+        context.consumer_name(C::LOCAL_ID, COMMAND_SUBSCRIPTION_GENERATION)?,
+        context.durable_name(C::LOCAL_ID, COMMAND_SUBSCRIPTION_GENERATION)?,
         address.clone(),
-        CONSUMER_ACK_WAIT,
-        CONSUMER_PROCESSING_TIMEOUT,
-        COMMAND_CONSUMER_CONCURRENCY,
-        MAXIMUM_DELIVERY_ATTEMPTS,
+        Duration::from_secs(45),
+        Duration::from_secs(30),
+        1,
+        5,
     )?;
     Ok(BikeRentalCommandRoute {
         command,
         address,
         consumer,
     })
-}
-
-fn integration_event_route(
-    context: &BoundedContext,
-) -> Result<BikeRentalIntegrationEventRoute, ContractError> {
-    let address = context.integration_event_address(BICYCLE_RENTAL_STARTED_EVENT_NAME)?;
-    let consumer = ConsumerConfig::new(
-        context.consumer_name(INTEGRATION_EVENT_CONSUMER_PURPOSE, 1)?,
-        context.durable_name(INTEGRATION_EVENT_CONSUMER_PURPOSE, 1)?,
-        address.clone(),
-        CONSUMER_ACK_WAIT,
-        CONSUMER_PROCESSING_TIMEOUT,
-        CONSUMER_CONCURRENCY,
-        MAXIMUM_DELIVERY_ATTEMPTS,
-    )?;
-    Ok(BikeRentalIntegrationEventRoute { address, consumer })
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -451,31 +334,24 @@ pub struct BicycleRentalStarted {
     fleet_id: FleetId,
     bicycle_id: BicycleId,
 }
-
 impl BicycleRentalStarted {
     pub fn source_event_id(&self) -> &str {
         &self.source_event_id
     }
-
     pub const fn fleet_id(&self) -> &FleetId {
         &self.fleet_id
     }
-
     pub const fn bicycle_id(&self) -> &BicycleId {
         &self.bicycle_id
     }
 }
-
 impl IntegrationEvent for BicycleRentalStarted {
     const EVENT_NAME: &'static str = BICYCLE_RENTAL_STARTED_EVENT_NAME;
-    const SCHEMA_VERSION: u32 = BICYCLE_RENTAL_STARTED_SCHEMA_VERSION;
+    const SCHEMA_VERSION: u32 = 1;
 }
-
 pub struct BicycleRentedIntegrationMapper;
-
 impl IntegrationEventMapper<BicycleRented> for BicycleRentedIntegrationMapper {
     type Output = BicycleRentalStarted;
-
     fn map(&self, event: &CommittedDomainEvent<'_, BicycleRented>) -> Self::Output {
         BicycleRentalStarted {
             source_event_id: event.recorded().event_id().as_str().to_owned(),
@@ -484,9 +360,7 @@ impl IntegrationEventMapper<BicycleRented> for BicycleRentedIntegrationMapper {
         }
     }
 }
-
 pub struct BicycleRentalStartedHandler;
-
 #[async_trait]
 impl MessageHandler<IntegrationEventAddress> for BicycleRentalStartedHandler {
     async fn handle(
@@ -506,579 +380,144 @@ impl MessageHandler<IntegrationEventAddress> for BicycleRentalStartedHandler {
                 DeliveryDisposition::Quarantine,
             );
         };
-        tracing::info!(
-            message_id = %envelope.message_id(),
-            correlation_id = %envelope.correlation_id(),
-            source_event_id = envelope.payload().source_event_id(),
-            fleet_id = envelope.payload().fleet_id().as_str(),
-            bicycle_id = envelope.payload().bicycle_id().as_str(),
-            "bicycle rental integration event consumed"
-        );
+        tracing::info!(message_id = %envelope.message_id(), correlation_id = %envelope.correlation_id(), source_event_id = envelope.payload().source_event_id(), fleet_id = envelope.payload().fleet_id().as_str(), bicycle_id = envelope.payload().bicycle_id().as_str(), "bicycle rental integration event consumed");
         DeliveryDisposition::Acknowledge
     }
 }
 
-struct ScopedCommandTransport {
-    inner: Arc<dyn CommandTransport>,
-    scope_gate: Arc<RwLock<()>>,
-}
-
-impl ScopedCommandTransport {
-    const fn new(inner: Arc<dyn CommandTransport>, scope_gate: Arc<RwLock<()>>) -> Self {
-        Self { inner, scope_gate }
-    }
-}
-
-#[async_trait]
-impl CommandTransport for ScopedCommandTransport {
-    fn maximum_payload_len(&self) -> usize {
-        self.inner.maximum_payload_len()
-    }
-
-    async fn invoke(
-        &self,
-        invocation: CommandInvocation,
-        observer: Arc<dyn CommandTransportObserver>,
-    ) -> Result<rostfrei_tracer::CommandReceipt, CommandTransportError> {
-        let _scope = Arc::clone(&self.scope_gate).read_owned().await;
-        self.inner.invoke(invocation, observer).await
-    }
-}
-
+/// Compatibility facade for the example's inspection and integration tests.
+/// All runtime lifecycle and Tracer adapters are supplied by the framework.
 pub struct BikeRentalNatsRuntime {
-    connection: NatsConnection,
     config: BikeRentalNatsConfig,
-    store: NatsEventStore,
-    messaging: Arc<NatsMessagingAdapter>,
-    transport: Arc<ScopedCommandTransport>,
-    scope_gate: Arc<RwLock<()>>,
-    fixture_events: Arc<RwLock<FixtureEventSet>>,
-    workers: Mutex<Vec<JoinHandle<()>>>,
+    inner: Arc<NatsRuntime>,
 }
-
-struct TracerCorrelationHandler {
-    observer: CorrelationObserver,
-    store: NatsEventStore,
-    source: Option<rostfrei_tracer::ObservationSource>,
-}
-
-#[async_trait]
-impl CorrelatedMessageHandler for TracerCorrelationHandler {
-    async fn availability(&self, available: bool) {
-        if let Some(source) = &self.source {
-            if available {
-                source.ready();
-            } else {
-                source.unavailable();
-            }
-        }
-    }
-
-    async fn handle(&self, message: CorrelatedMessage) {
-        let identity = message
-            .message_id()
-            .map_or_else(|| message.subject().to_owned(), |id| id.as_str().to_owned());
-        let result = match message.family() {
-            CorrelatedMessageFamily::DomainEvent => {
-                observe_domain_message(&self.observer, &self.store, &message).await
-            }
-            CorrelatedMessageFamily::IntegrationEvent => {
-                observe_integration_message(&self.observer, &message).await
-            }
-        };
-        if let Err(error) = result
-            && !matches!(error, CorrelationError::NotFound)
-        {
-            if let Err(retain_error) = self
-                .observer
-                .record_observation_failure(
-                    message.correlation_id().as_str(),
-                    identity,
-                    error.to_string(),
-                )
-                .await
-                && !matches!(retain_error, CorrelationError::NotFound)
-            {
-                tracing::warn!(%retain_error, "correlated NATS observation failure could not be retained");
-            }
-            tracing::warn!(%error, "correlated NATS message could not be observed");
-        }
-    }
-}
-
 impl BikeRentalNatsRuntime {
     pub async fn provision(
         connection: NatsConnection,
         application: &str,
     ) -> Result<Self, BikeRentalNatsError> {
-        Self::provision_in_scope(
+        Self::provision_with_resource_limits(
             connection,
             application,
-            TrafficScope::Normal,
             BikeRentalNatsResourceLimits::default(),
         )
         .await
     }
-
     pub async fn provision_test(
         connection: NatsConnection,
         application: &str,
     ) -> Result<Self, BikeRentalNatsError> {
-        Self::provision_in_scope(
+        Self::provision_test_with_resource_limits(
             connection,
             application,
-            TrafficScope::Test,
             BikeRentalNatsResourceLimits::default(),
         )
         .await
     }
-
     pub async fn provision_with_resource_limits(
         connection: NatsConnection,
         application: &str,
-        resource_limits: BikeRentalNatsResourceLimits,
+        limits: BikeRentalNatsResourceLimits,
     ) -> Result<Self, BikeRentalNatsError> {
-        Self::provision_in_scope(
+        Self::from_config(
             connection,
-            application,
-            TrafficScope::Normal,
-            resource_limits,
+            BikeRentalNatsConfig::new_with_resource_limits(application, limits)?,
         )
         .await
     }
-
     pub async fn provision_test_with_resource_limits(
         connection: NatsConnection,
         application: &str,
-        resource_limits: BikeRentalNatsResourceLimits,
+        limits: BikeRentalNatsResourceLimits,
     ) -> Result<Self, BikeRentalNatsError> {
-        Self::provision_in_scope(connection, application, TrafficScope::Test, resource_limits).await
-    }
-
-    async fn provision_in_scope(
-        connection: NatsConnection,
-        application: &str,
-        traffic_scope: TrafficScope,
-        resource_limits: BikeRentalNatsResourceLimits,
-    ) -> Result<Self, BikeRentalNatsError> {
-        let config = match traffic_scope {
-            TrafficScope::Normal => {
-                BikeRentalNatsConfig::new_with_resource_limits(application, resource_limits)?
-            }
-            TrafficScope::Test => {
-                BikeRentalNatsConfig::new_test_with_resource_limits(application, resource_limits)?
-            }
-        };
-        config.provision(&connection).await?;
-        let store = config.connect_store(&connection).await?;
-        let messaging = Arc::new(
-            connection
-                .messaging_adapter(config.messaging.topology().clone())
-                .with_response_timeout(COMMAND_RESPONSE_TIMEOUT),
-        );
-        let command_adapter: Arc<dyn CommandMessageAdapter> = messaging.clone();
-        let command_bus = CommandBus::new(config.context.clone(), command_adapter);
-        let bus_transport: Arc<dyn CommandTransport> =
-            Arc::new(CommandBusTransport::new(command_bus));
-        let scope_gate = Arc::new(RwLock::new(()));
-        let transport = Arc::new(ScopedCommandTransport::new(
-            bus_transport,
-            Arc::clone(&scope_gate),
-        ));
-        Ok(Self {
+        Self::from_config(
             connection,
-            config,
-            store,
-            messaging,
-            transport,
-            scope_gate,
-            fixture_events: Arc::new(RwLock::new(FixtureEventSet::default())),
-            workers: Mutex::new(Vec::new()),
-        })
+            BikeRentalNatsConfig::new_test_with_resource_limits(application, limits)?,
+        )
+        .await
     }
-
+    async fn from_config(
+        connection: NatsConnection,
+        config: BikeRentalNatsConfig,
+    ) -> Result<Self, BikeRentalNatsError> {
+        let inner = Arc::new(
+            Box::pin(NatsRuntime::provision(
+                connection,
+                config.runtime.clone(),
+                Arc::new(crate::tracer::command_bindings()?),
+            ))
+            .await?,
+        );
+        Ok(Self { config, inner })
+    }
     pub const fn config(&self) -> &BikeRentalNatsConfig {
         &self.config
     }
-
-    pub const fn store(&self) -> &NatsEventStore {
-        &self.store
+    pub fn store(&self) -> &NatsEventStore {
+        self.inner.store()
     }
-
     pub fn transport(&self) -> Arc<dyn CommandTransport> {
-        self.transport.clone()
+        self.inner.transport()
     }
-
     pub fn quarantine_reader(&self) -> Arc<dyn rostfrei_messaging_core::QuarantineReader> {
-        Arc::new(rostfrei_nats::NatsQuarantineReader::new(
-            self.connection.jetstream().clone(),
-            self.config.messaging.topology().clone(),
-        ))
+        self.inner.quarantine_reader()
     }
-
     pub async fn apply_fixture(
         &self,
         fixture: &Fixture,
     ) -> Result<FixtureApplyReport, BikeRentalNatsError> {
-        let new_fixture_events =
-            FixtureEventSet::new(std::slice::from_ref(fixture)).map_err(DemoFixtureError::from)?;
-        let mut fixture_events = self.fixture_events.write().await;
-        // Fixture application is not globally atomic. Register the validated plan
-        // first so a persisted prefix remains side-effect free if a later append fails.
-        fixture_events.extend(new_fixture_events);
-        let result = apply_message_series_fixture(&self.store, fixture)
-            .await
-            .map_err(Into::into);
-        drop(fixture_events);
-        result
+        self.inner.apply_fixture(fixture).await
     }
-
     pub async fn start_workers(&self) -> Result<(), BikeRentalNatsError> {
-        let _scope = Arc::clone(&self.scope_gate).write_owned().await;
-        self.start_workers_in_scope().await
+        self.inner.start_workers().await
     }
-
+    pub async fn stop_workers(&self) {
+        self.inner.stop_workers().await;
+    }
     pub async fn wait_for_worker_exit(&self) {
-        loop {
-            if self
-                .workers
-                .lock()
-                .await
-                .iter()
-                .any(JoinHandle::is_finished)
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        let _ = self.inner.wait_for_worker_exit().await;
     }
-
-    fn command_processor(&self) -> Result<Arc<CommandProcessor>, BikeRentalNatsError> {
-        let event_store: Arc<dyn EventStore> = Arc::new(self.store.clone());
-        let mut processor =
-            CommandProcessor::new(self.config.context().name().clone(), event_store);
-        processor.register::<RentBicycle, _>(
-            RentBicycleHandler,
-            JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
-        )?;
-        processor.register::<ReturnBicycle, _>(
-            ReturnBicycleHandler,
-            JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
-        )?;
-        processor.register::<AddBicycle, _>(
-            AddBicycleHandler,
-            JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
-        )?;
-        processor.register::<TransferBicycle, _>(
-            TransferBicycleHandler,
-            JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict),
-        )?;
-        Ok(Arc::new(processor))
-    }
-
-    #[allow(
-        clippy::too_many_lines,
-        reason = "worker preparation is kept together so startup remains atomic"
-    )]
-    async fn start_workers_in_scope(&self) -> Result<(), BikeRentalNatsError> {
-        let mut workers = self.workers.lock().await;
-        if !workers.is_empty() {
-            if workers.iter().all(|worker| !worker.is_finished()) {
-                return Ok(());
-            }
-            let stale = std::mem::take(&mut *workers);
-            for worker in &stale {
-                worker.abort();
-            }
-            for worker in stale {
-                let _ = worker.await;
-            }
-        }
-
-        let factory = self
-            .connection
-            .consumer_factory(self.config.messaging.topology().clone());
-        let command_handler: Arc<dyn MessageHandler<CommandAddress>> =
-            Arc::new(self.messaging.command_handler(self.command_processor()?));
-        let mut command_consumers = Vec::with_capacity(self.config.command_routes.len());
-        for route in &self.config.command_routes {
-            factory.verify_consumer(&route.consumer).await?;
-            let consumer = rostfrei_messaging_core::MessageConsumerFactory::create(
-                &factory,
-                route.consumer.clone(),
-            )?;
-            command_consumers.push((route.command, consumer));
-        }
-
-        let integration_route = self.config.integration_event_route();
-        factory.verify_consumer(&integration_route.consumer).await?;
-        let integration_consumer = rostfrei_messaging_core::MessageConsumerFactory::create(
-            &factory,
-            integration_route.consumer.clone(),
-        )?;
-        let integration_handler: Arc<dyn MessageHandler<IntegrationEventAddress>> =
-            Arc::new(BicycleRentalStartedHandler);
-
-        let integration_adapter: Arc<dyn IntegrationMessageAdapter> = self.messaging.clone();
-        let integration_bus =
-            IntegrationEventBus::new(self.config.context.clone(), integration_adapter);
-        let mut dispatcher = DomainEventDispatcher::new();
-        dispatcher.register_integration_event::<RentalFleetAggregate, BicycleRented, _>(
-            integration_bus,
-            BicycleRentedIntegrationMapper,
-        )?;
-        let domain_consumer = NatsDomainEventConsumer::connect_with_fixture_events(
-            self.connection.jetstream().clone(),
-            self.config.event_store.clone(),
-            self.config.domain_event_consumer.clone(),
-            Arc::new(dispatcher),
-            Arc::clone(&self.fixture_events),
-        )
-        .await?;
-
-        let (domain_shutdown, domain_shutdown_receiver) = watch::channel(false);
-        let domain_durable = self
-            .config
-            .domain_event_consumer
-            .durable_name()
-            .as_str()
-            .to_owned();
-        workers.push(tokio::spawn(async move {
-            let _shutdown_keepalive = domain_shutdown;
-            if let Err(error) = domain_consumer
-                .run_until_shutdown(domain_shutdown_receiver)
-                .await
-            {
-                tracing::error!(
-                    durable = domain_durable,
-                    %error,
-                    "bike-rental domain-event worker stopped"
-                );
-            }
-        }));
-        workers.push(tokio::spawn(async move {
-            if let Err(error) = integration_consumer.run(integration_handler).await {
-                tracing::error!(
-                    event = BICYCLE_RENTAL_STARTED_EVENT_NAME,
-                    %error,
-                    "bike-rental integration-event worker stopped"
-                );
-            }
-        }));
-        for (command, consumer) in command_consumers {
-            let handler = Arc::clone(&command_handler);
-            workers.push(tokio::spawn(async move {
-                if let Err(error) = consumer.run(handler).await {
-                    tracing::error!(
-                        command = command.command_name(),
-                        %error,
-                        "bike-rental command worker stopped"
-                    );
-                }
-            }));
-        }
-        drop(workers);
-        Ok(())
-    }
-
     pub async fn start_correlation_observer(
         &self,
         observer: CorrelationObserver,
-    ) -> Result<JoinHandle<()>, BikeRentalNatsError> {
-        let source = observer
-            .observation_source("bike-rental")
-            .map_err(|error| BikeRentalNatsError::Observation(error.to_string()))?;
-        let nats_observer = NatsCorrelationObserver::new_in_scope(
-            self.connection.client().clone(),
-            self.config.application().clone(),
-            self.config.context().traffic_scope(),
-            self.config.event_store().subject_filter(),
-        )
-        .with_streams(
-            self.config.event_store().stream_name(),
-            self.config
-                .messaging()
-                .topology()
-                .integration_event_stream()
-                .as_str(),
-        );
-        let subscription = nats_observer.subscribe().await?;
-        if let Some(source) = &source {
-            source.ready();
-        }
-        let store = self.store.clone();
-        Ok(tokio::spawn(async move {
-            if let Err(error) = subscription
-                .run(Arc::new(TracerCorrelationHandler {
-                    observer,
-                    store,
-                    source,
-                }))
-                .await
-            {
-                tracing::error!(%error, "bike-rental correlation observer stopped");
-            }
-        }))
+    ) -> Result<tokio::task::JoinHandle<Result<(), BikeRentalNatsError>>, BikeRentalNatsError> {
+        self.inner.start_correlation_observer(observer).await
     }
-
-    pub async fn stop_workers(&self) {
-        let _scope = Arc::clone(&self.scope_gate).write_owned().await;
-        self.stop_workers_in_scope().await;
-    }
-
-    async fn stop_workers_in_scope(&self) {
-        let workers = {
-            let mut workers = self.workers.lock().await;
-            std::mem::take(&mut *workers)
-        };
-        for worker in &workers {
-            worker.abort();
-        }
-        for worker in workers {
-            let _ = worker.await;
-        }
-    }
-
-    async fn delete_resources(&self) -> Result<(), BikeRentalNatsError> {
-        let topology = self.config.messaging.topology();
-        let streams = [
-            topology.command_stream().as_str(),
-            topology.command_response_stream().as_str(),
-            topology.integration_event_stream().as_str(),
-            topology.quarantine_stream().as_str(),
-            self.config.event_store.stream_name(),
-        ];
-        for stream in streams {
-            self.connection.delete_stream_if_exists(stream).await?;
-        }
-        Ok(())
-    }
-
-    async fn reset_scope(&self, fixture: &Fixture) -> Result<(), BikeRentalNatsError> {
-        if self.config.context().traffic_scope() != TrafficScope::Test {
-            return Err(BikeRentalNatsError::ResetRequiresTestScope);
-        }
-        let _scope = Arc::clone(&self.scope_gate).write_owned().await;
-        self.stop_workers_in_scope().await;
-        *self.fixture_events.write().await = FixtureEventSet::default();
-        self.delete_resources().await?;
-        self.config.provision(&self.connection).await?;
-        self.apply_fixture(fixture).await?;
-        self.start_workers_in_scope().await
+}
+#[async_trait]
+impl TestScenarioReset for BikeRentalNatsRuntime {
+    async fn reset(&self, fixture: &Fixture) -> Result<(), TestScenarioResetError> {
+        self.inner.reset(fixture).await
     }
 }
 
-async fn observe_domain_message(
-    observer: &CorrelationObserver,
-    store: &NatsEventStore,
-    message: &CorrelatedMessage,
-) -> Result<(), CorrelationError> {
-    let observation =
-        domain_event_observation(store, message).map_err(CorrelationError::InvalidId)?;
-    observer
-        .observe_domain_event(message.correlation_id().as_str(), observation)
-        .await
-}
-
-fn domain_event_observation(
-    store: &NatsEventStore,
-    message: &CorrelatedMessage,
-) -> Result<DomainEventObservation, String> {
-    let event = store
-        .decode_observed_event(message.subject(), message.headers(), message.payload())
-        .map_err(|error| error.to_string())?;
-    if event.correlation_id() != Some(message.correlation_id()) {
-        return Err("stored event correlation does not match its delivery header".to_owned());
-    }
-    let message_id = message
-        .message_id()
-        .ok_or_else(|| "stored event has no message identity".to_owned())?;
-    if message_id.as_str() != event.event_id().as_str() {
-        return Err("stored event identity does not match its delivery header".to_owned());
-    }
-    let payload = serde_json::from_slice::<Value>(event.payload())
-        .map_err(|error| format!("stored event payload is not valid JSON: {error}"))?;
-    let mut observation = DomainEventObservation::new(
-        event.event_id().as_str(),
-        event.event_type(),
-        event.schema_version(),
-    )
-    .with_aggregate(
-        event.stream_id().aggregate_type().as_str(),
-        event.stream_id().aggregate_id().as_str(),
-    )
-    .with_stream_version(event.stream_version().value())
-    .with_payload(payload);
-    if let Some(causation_id) = event.causation_id() {
-        observation = observation.with_causation_id(causation_id.as_str());
-    }
-    Ok(observation)
-}
-
-async fn observe_integration_message(
-    observer: &CorrelationObserver,
-    message: &CorrelatedMessage,
-) -> Result<(), CorrelationError> {
-    let observation = integration_event_observation(
-        message.subject(),
-        message.message_id(),
-        message.correlation_id(),
-        message.payload(),
-    )
-    .map_err(CorrelationError::InvalidId)?;
-    observer
-        .observe_integration_event(message.correlation_id().as_str(), observation)
-        .await
-}
-
+#[cfg(test)]
 fn integration_event_observation(
     subject: &str,
-    message_id: Option<&MessageId>,
-    correlation_id: &CorrelationId,
+    message_id: Option<&rostfrei::MessageId>,
+    correlation_id: &rostfrei::CorrelationId,
     payload: &[u8],
-) -> Result<IntegrationEventObservation, String> {
+) -> Result<rostfrei_tracer::IntegrationEventObservation, String> {
     let address = subject
         .parse::<IntegrationEventAddress>()
-        .map_err(|error| format!("invalid integration-event subject: {error}"))?;
-    let message_id = message_id
-        .cloned()
-        .ok_or_else(|| "integration event has no message identity".to_owned())?;
-    let transport_message_id = message_id.as_str().to_owned();
+        .map_err(|e| e.to_string())?;
+    let message_id = message_id.cloned().ok_or("missing identity")?;
     let message = EncodedIntegrationMessage::from_delivery(
         address,
         message_id,
         payload.to_vec(),
         Some(correlation_id.clone()),
     )
-    .map_err(|error| format!("invalid integration-event delivery: {error}"))?;
+    .map_err(|e| e.to_string())?;
     let envelope = message
         .decode::<BicycleRentalStarted>()
-        .map_err(|error| format!("invalid integration-event envelope: {error}"))?;
-    if envelope.message_id().as_str() != transport_message_id {
-        return Err("integration-event identity does not match its delivery header".to_owned());
-    }
-    let causation_id = envelope
-        .causation_id()
-        .ok_or_else(|| "integration event has no causation identity".to_owned())?
-        .as_str()
-        .to_owned();
-    let payload = serde_json::to_value(envelope.payload())
-        .map_err(|error| format!("integration-event payload could not be encoded: {error}"))?;
-    Ok(IntegrationEventObservation::new(
+        .map_err(|e| e.to_string())?;
+    Ok(rostfrei_tracer::IntegrationEventObservation::new(
         envelope.message_id().as_str(),
-        BICYCLE_RENTAL_STARTED_EVENT_NAME,
+        BicycleRentalStarted::EVENT_NAME,
         envelope.schema_version().get(),
         subject,
     )
-    .with_causation_id(causation_id)
-    .with_payload(payload))
-}
-
-#[async_trait]
-impl TestScenarioReset for BikeRentalNatsRuntime {
-    async fn reset(&self, fixture: &Fixture) -> Result<(), TestScenarioResetError> {
-        self.reset_scope(fixture)
-            .await
-            .map_err(|error| TestScenarioResetError::Failed(error.to_string()))
-    }
+    .with_causation_id(envelope.causation_id().ok_or("missing causation")?.as_str())
+    .with_payload(serde_json::to_value(envelope.payload()).map_err(|e| e.to_string())?))
 }
