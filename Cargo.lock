@@ -1266,6 +1266,7 @@ version = "0.0.5-alpha"
 dependencies = [
  "async-nats",
  "async-trait",
+ "axum",
  "base64",
  "futures-util",
  "nkeys",
@@ -1273,6 +1274,7 @@ dependencies = [
  "rostfrei",
  "rostfrei-core",
  "rostfrei-fixtures",
+ "rostfrei-http",
  "rostfrei-messaging-core",
  "rostfrei-testing",
  "serde",

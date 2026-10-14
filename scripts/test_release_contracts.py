@@ -39,7 +39,7 @@ def main():
     if not command:
         parser.error("supply the exact command after --")
     run = args.evidence_dir.resolve() / ("run-" + uuid4().hex)
-    run.mkdir(parents=True)
+    run.mkdir(parents=True, mode=0o700)
     channel = tomllib.loads((ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
     rustup_home = Path(os.environ.get("RUSTUP_HOME", str(Path.home() / ".rustup")))
     toolchain = rustup_home / "toolchains" / f"{channel}-x86_64-unknown-linux-gnu" / "bin"
@@ -65,6 +65,8 @@ jetstream {{ store_dir: "{run / 'jetstream'}" }}
                    "ROSTFREI_NATS_URL": f"nats://{user}:{password}@127.0.0.1:{nats_port}",
                    "ROSTFREI_CONTRACT_NATS_USER": user,
                    "ROSTFREI_CONTRACT_NATS_PASSWORD": password,
+                   "ROSTFREI_CONTRACT_NATS_BINARY": str(args.nats_binary.resolve()),
+                   "ROSTFREI_CONTRACT_EVIDENCE_DIR": str(run),
                    "ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES": "67108864",
                    "ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES": "268435456",
                    "ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES": "524288",
