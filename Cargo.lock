@@ -1230,6 +1230,7 @@ dependencies = [
  "axum",
  "http-body-util",
  "rostfrei",
+ "rostfrei-core",
  "serde",
  "serde_json",
  "thiserror",
