@@ -17,7 +17,8 @@ from uuid import uuid4
 
 
 ROOT = Path(__file__).resolve().parent.parent
-IMAGE = "nats:2.12.1-alpine@sha256:b3f2bd84176ae7bd0afa9c48a00f06d7d0818ff4aaee898e4172e0b8340e5816"
+# 2.12.5+ fixes pinned-consumer handoff of existing backlog after UNPIN.
+IMAGE = "nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6"
 DEFAULT_COMMAND = [
     "cargo", "test", "--locked", "--workspace", "--all-features",
     "--", "--test-threads=1",
@@ -118,7 +119,7 @@ def run(command, ready_timeout=30):
         wait_ready(mapped_port(ports, 8222), ready_timeout)
         environment = {**os.environ, **LIMITS, "ROSTFREI_NATS_URL": f"nats://127.0.0.1:{nats_port}"}
         environment.setdefault("RUST_BACKTRACE", "1")
-        print(f"NATS 2.12.1 ready on isolated port {nats_port}; running tests", flush=True)
+        print(f"{IMAGE.split('@', 1)[0]} ready on isolated port {nats_port}; running tests", flush=True)
         result = run_command(command, environment)
         succeeded = result == 0
         return result
