@@ -2325,6 +2325,110 @@ mod tests {
         ));
     }
 
+    async fn assert_rejected_tracking_before_concurrent_winner<Handler>(
+        handler: &Handler,
+        aggregate: &str,
+        accepted: bool,
+    ) where
+        Handler: CommandHandler<(), Rejection = &'static str>,
+    {
+        let inner = InMemoryEventStore::new();
+        let executor = CommandExecutor::new(inner.clone());
+        if accepted {
+            executor
+                .execute(&EmptyHandler, metadata(), &())
+                .await
+                .unwrap();
+        } else {
+            executor
+                .execute_with_rejection_codec(
+                    &RejectingHandler,
+                    metadata(),
+                    &(),
+                    &TestRejectionCodec,
+                )
+                .await
+                .unwrap();
+        }
+        let before = inner
+            .load_completed_outcome_in_context(
+                metadata().bounded_context().unwrap(),
+                metadata().operation_id(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let store = Arc::new(ReceiptAfterDecisionStore {
+            inner: inner.clone(),
+            receipt_lookups: AtomicUsize::new(0),
+        });
+        let error = CommandExecutor::new(store.clone())
+            .execute_with_rejection_codec(handler, metadata(), &(), &TestRejectionCodec)
+            .await
+            .expect_err("a concurrent winner must not hide invalid rejected tracking");
+        assert!(matches!(error, CommandExecutionError::Store(error)
+            if error.kind() == EventStoreErrorKind::InvalidRequest));
+        assert_eq!(store.receipt_lookups.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            inner
+                .load_completed_outcome_in_context(
+                    metadata().bounded_context().unwrap(),
+                    metadata().operation_id()
+                )
+                .await
+                .unwrap()
+                .unwrap(),
+            before
+        );
+        assert!(
+            inner
+                .load(&stream_id_for::<TestAggregate>(aggregate).unwrap())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn accepted_winner_cannot_bypass_rejected_forgotten_tracking() {
+        assert_rejected_tracking_before_concurrent_winner(
+            &RejectedForgottenHandler,
+            "rejected-forgotten",
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn rejected_winner_cannot_bypass_rejected_forgotten_tracking() {
+        assert_rejected_tracking_before_concurrent_winner(
+            &RejectedForgottenHandler,
+            "rejected-forgotten",
+            false,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn accepted_winner_cannot_bypass_rejected_replaced_tracking() {
+        assert_rejected_tracking_before_concurrent_winner(
+            &RejectedReplacingHandler,
+            "rejected-replaced",
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn rejected_winner_cannot_bypass_rejected_replaced_tracking() {
+        assert_rejected_tracking_before_concurrent_winner(
+            &RejectedReplacingHandler,
+            "rejected-replaced",
+            false,
+        )
+        .await;
+    }
+
     struct OtherContextAggregate;
 
     impl Aggregate for OtherContextAggregate {
