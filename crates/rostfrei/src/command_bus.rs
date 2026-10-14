@@ -860,7 +860,7 @@ impl CommandHandler<()> for FixedRejection {
     type Rejection = CommandRejection;
     async fn handle(
         &self,
-        _: &(),
+        (): &(),
         _: &mut rostfrei_core::CommandExecution<'_>,
     ) -> rostfrei_core::CommandHandlingResult<Self::Rejection> {
         Ok(rostfrei_core::CommandDecision::Rejected(self.0.clone()))
@@ -880,7 +880,25 @@ where
         command: &C,
         execution: &mut rostfrei_core::CommandExecution<'_>,
     ) -> rostfrei_core::CommandHandlingResult<Self::Rejection> {
-        Ok(match self.handler.handle(command, execution).await? {
+        let decision = match self.handler.handle(command, execution).await {
+            Ok(decision) => decision,
+            Err(CommandExecutionError::Store(error))
+                if error.kind() == EventStoreErrorKind::InvalidRequest =>
+            {
+                // Translate request refusal while the original execution still owns every
+                // successful read. A separate zero-read handler would lose these guards.
+                let rejection = framework_rejection(
+                    CommandRejectionClassification::InvalidRequest,
+                    INVALID_COMMAND_CODE,
+                    "The command cannot be executed for the requested unit of work.",
+                    Some(serde_json::json!({ "reason": error.message() })),
+                )
+                .map_err(|error| CommandExecutionError::RejectionMapping(error.to_string()))?;
+                return Ok(rostfrei_core::CommandDecision::Rejected(rejection));
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(match decision {
             rostfrei_core::CommandDecision::Accepted => rostfrei_core::CommandDecision::Accepted,
             rostfrei_core::CommandDecision::Rejected(rejection) => {
                 rostfrei_core::CommandDecision::Rejected(
@@ -1189,12 +1207,13 @@ impl CommandProcessor {
                 Err(BindingError::Execution(CommandExecutionError::Store(error)))
                     if error.kind() == EventStoreErrorKind::InvalidRequest =>
                 {
-                    CommandResponseOutcome::Rejected(framework_rejection(
-                        CommandRejectionClassification::InvalidRequest,
-                        INVALID_COMMAND_CODE,
-                        "The command cannot be executed for the requested unit of work.",
-                        Some(serde_json::json!({ "reason": error.message() })),
-                    )?)
+                    // Request errors from the handler were mapped inside the guarded
+                    // attempt. A remaining error is malformed tracking/persistence, not
+                    // a completed business decision whose guards can be reconstructed.
+                    return Err(CommandProcessorError::new(
+                        CommandProcessorErrorKind::InvalidConfiguration,
+                        error.to_string(),
+                    ));
                 }
                 Err(BindingError::Execution(error)) => {
                     return Err(CommandProcessorError::execution(&error));

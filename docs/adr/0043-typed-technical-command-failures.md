@@ -1,7 +1,8 @@
 # Typed technical command failures (#85)
 
 Status: implemented for current source kinds; deployment requires upgraded readers.
-This does **not** implement shared business-rejection outcomes (#92).
+Shared business-rejection outcomes and the stricter deployment/cutover policy are
+specified separately in ADR 0044; this ADR's source/recovery contract is preserved.
 
 ## Classification
 
@@ -24,7 +25,8 @@ NATS/HTTP. Business rejection remains `CommandResponseOutcome::Rejected`.
 | Invalid event envelope | codec / invalid_envelope | blocked: investigated repair, then redrive | durable quarantine | 500 |
 | Event encoding failed | codec / encoding_failed | blocked: correct deterministic codec, then redrive | durable quarantine | 500 |
 | Operation identity conflict | existing framework Conflict rejection | correct request identity | ordinary rejection ACK | 409 |
-| Invalid unit-of-work/request | existing framework InvalidRequest rejection | correct caller/handler contract | ordinary rejection ACK | 400 |
+| Handler request refusal | existing framework InvalidRequest rejection, guarded within the original attempt | correct caller/handler contract | ordinary rejection ACK after outcome durability | 400 |
+| Invalid tracking/finalization or malformed persistence request | processor / invalid_configuration | blocked: repair handler/store contract | durable quarantine | 500 |
 | Expected domain rejection | application-mapped rejection | new business attempt uses a new operation ID | ordinary rejection ACK | mapped status |
 | Invalid transport envelope | existing InvalidMessage | fix producer; never run handler | durable quarantine | transport error |
 | Missing binding / invalid payload | existing framework InvalidRequest rejection | fix request | ordinary rejection ACK | 400 |

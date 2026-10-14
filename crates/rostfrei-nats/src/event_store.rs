@@ -27,7 +27,9 @@ use rostfrei_core::{
     TransactionParticipant, TransactionReceipt, TransactionStreamReceipt, derive_commit_id,
     derive_event_id, validate_transaction_item_limit,
 };
-use rostfrei_messaging_core::{BoundedContextName, CausationId, CorrelationId};
+use rostfrei_messaging_core::{
+    BoundedContextName, CausationId, CommandResponseReader as _, CorrelationId,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -111,6 +113,7 @@ impl AppendSession for NatsAppendSession<'_> {
         transaction: EventTransaction,
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
         rostfrei_core::validate_completed_transaction(&transaction)?;
+        self.store.validate_completed_scope(&transaction)?;
         self.store.require_completed_outcome_writer().await?;
         self.validate_incarnation().await?;
         self.store
@@ -180,6 +183,7 @@ impl NatsEventStore {
         &self,
         command: &rostfrei::EncodedCommand,
         response: &rostfrei_messaging_core::CommandResponse,
+        topology: &crate::MessagingTopology,
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
         if self.config.completed_outcome_epoch().is_some()
             || command.address().application() != self.config.application().as_str()
@@ -207,6 +211,27 @@ impl NatsEventStore {
         let transaction = command
             .legacy_rejection_transaction(response)
             .map_err(|error| invalid(error.to_string()))?;
+        let retained =
+            crate::NatsCommandResponseReader::new(self.context.clone(), topology.clone())
+                .read_command_response(
+                    &command
+                        .response_address()
+                        .map_err(|error| invalid(error.to_string()))?,
+                    command.operation_id(),
+                    command.message_id(),
+                    self.config.puback_timeout(),
+                )
+                .await
+                .map_err(|error| {
+                    unavailable(format!(
+                        "original retained legacy rejection is unavailable: {error}"
+                    ))
+                })?;
+        if &retained != response {
+            return Err(identity_conflict(
+                "supplied legacy response differs from retained authority",
+            ));
+        }
         rostfrei_core::validate_completed_transaction(&transaction)?;
         self.append_transaction_with_histories(transaction, LoadedHistories::default())
             .await
@@ -257,6 +282,32 @@ impl NatsEventStore {
             .contains_key("rostfrei.completed-outcomes.epoch")
         {
             self.require_completed_outcome_writer().await?;
+        }
+        Ok(())
+    }
+
+    fn validate_completed_scope(
+        &self,
+        transaction: &EventTransaction,
+    ) -> Result<(), EventStoreError> {
+        let expected = format!(
+            "{}:{}",
+            self.config.application().as_str(),
+            self.config
+                .traffic_scope()
+                .subject_segment()
+                .unwrap_or("normal")
+        );
+        if transaction
+            .completion()
+            .and_then(|completion| completion.evidence.as_ref())
+            .and_then(|evidence| evidence.authority_scope.as_ref())
+            .is_some_and(|scope| scope != &expected)
+        {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::ConfigurationMismatch,
+                "completed evidence belongs to another application/traffic authority",
+            ));
         }
         Ok(())
     }
@@ -1469,6 +1520,14 @@ impl EventStore for NatsEventStore {
             return Err(invalid("completed outcome context does not match store"));
         }
         if let Some(receipt) = self.load_transaction_receipt_inner(operation).await? {
+            if self.config.completed_outcome_epoch().is_none() && receipt.completion().is_none() {
+                // A legacy acceptance can coexist with a contradictory transport-only
+                // rejection. Do not choose between them without an audited migration.
+                return Err(EventStoreError::new(
+                    EventStoreErrorKind::ConfigurationMismatch,
+                    "legacy acceptance/cache authority is unaudited; command replay blocked",
+                ));
+            }
             return Ok(Some(rostfrei_core::CompletedOutcome::new(receipt)));
         }
         self.require_completed_outcome_writer().await?;
@@ -1480,6 +1539,7 @@ impl EventStore for NatsEventStore {
         transaction: EventTransaction,
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
         rostfrei_core::validate_completed_transaction(&transaction)?;
+        self.validate_completed_scope(&transaction)?;
         self.require_completed_outcome_writer().await?;
         self.append_transaction_with_histories(transaction, LoadedHistories::default())
             .await
@@ -3952,6 +4012,11 @@ fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventS
         ));
     }
     let mut compatible = expected.clone();
+    if expected.metadata.is_empty() {
+        // A new reader may inspect/replay a fresh epoch in explicit default read-only
+        // mode. Every mutable API independently requires its configured durable epoch.
+        compatible.metadata.clone_from(&actual.metadata);
+    }
     if actual.max_message_size == -1 || actual.max_message_size > expected.max_message_size {
         compatible.max_message_size = actual.max_message_size;
     }

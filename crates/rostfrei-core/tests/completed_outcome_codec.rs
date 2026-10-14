@@ -7,7 +7,7 @@ struct Reject(AtomicUsize);
 #[async_trait]
 impl CommandHandler<()> for Reject {
     type Rejection = String;
-    async fn handle(&self, _: &(), _: &mut CommandExecution<'_>) -> CommandHandlingResult<String> {
+    async fn handle(&self, (): &(), _: &mut CommandExecution<'_>) -> CommandHandlingResult<String> {
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(CommandDecision::Rejected("prerequisite missing".to_owned()))
     }
@@ -101,4 +101,113 @@ fn codec_refuses_oversize_unknown_identity_version_and_malformed_bytes() {
     ] {
         assert!(<JsonRejectionCodec as RejectionCodec<String>>::decode(&codec, &changed).is_err());
     }
+}
+
+#[tokio::test]
+async fn rejection_capacity_failure_is_technical_and_same_identity_recovers() {
+    let store = InMemoryEventStore::new().with_outcome_capacity(0);
+    let handler = Reject(AtomicUsize::new(0));
+    let codec = JsonRejectionCodec::new("app.generic-rejection", 1);
+    let error = CommandExecutor::new(store.clone())
+        .execute_with_rejection_codec(&handler, metadata(), &(), &codec)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, CommandExecutionError::RejectedOutcomePersistence(ref error) if error.kind() == EventStoreErrorKind::CapacityExhausted)
+    );
+    assert!(
+        store
+            .load_completed_outcome_in_context(
+                metadata().bounded_context().unwrap(),
+                metadata().operation_id()
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let recovered = store.with_outcome_capacity(1);
+    assert!(matches!(
+        CommandExecutor::new(recovered)
+            .execute_with_rejection_codec(&handler, metadata(), &(), &codec)
+            .await
+            .unwrap(),
+        CommandOutcome::Rejected(_)
+    ));
+    assert_eq!(handler.0.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn stored_malformed_rejection_blocks_replay_before_handler() {
+    let store = InMemoryEventStore::new();
+    let encoded = EncodedRejection {
+        codec_id: "app.generic-rejection".to_owned(),
+        codec_version: 1,
+        bytes: b"not-json".to_vec(),
+    };
+    let transaction = EventTransaction::new(
+        metadata().operation_id().clone(),
+        metadata().operation_fingerprint(),
+        Vec::new(),
+    )
+    .with_bounded_context(metadata().bounded_context().unwrap().clone())
+    .with_correlation_id(
+        rostfrei_messaging_core::CorrelationId::new(metadata().operation_id().as_str()).unwrap(),
+    )
+    .with_completion(CommandCompletion::new(None, Some(encoded)));
+    store.commit_outcome(transaction).await.unwrap();
+    let handler = Reject(AtomicUsize::new(0));
+    let error = CommandExecutor::new(store)
+        .execute_with_rejection_codec(
+            &handler,
+            metadata(),
+            &(),
+            &JsonRejectionCodec::new("app.generic-rejection", 1),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, CommandExecutionError::Codec(error) if error.kind() == EventCodecErrorKind::MalformedPayload)
+    );
+    assert_eq!(handler.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn rejected_identity_is_context_scoped_like_acceptance() {
+    let store = InMemoryEventStore::new();
+    let first = metadata();
+    let codec = JsonRejectionCodec::new("app.generic-rejection", 1);
+    CommandExecutor::new(store.clone())
+        .execute_with_rejection_codec(&Reject(AtomicUsize::new(0)), first.clone(), &(), &codec)
+        .await
+        .unwrap();
+    let other_context = rostfrei_messaging_core::BoundedContextName::new("other-context").unwrap();
+    let other = EventTransaction::new(
+        first.operation_id().clone(),
+        first.operation_fingerprint(),
+        Vec::new(),
+    )
+    .with_bounded_context(other_context.clone())
+    .with_completion(CommandCompletion::new(None, None));
+    store.commit_outcome(other).await.unwrap();
+    assert!(
+        store
+            .load_completed_outcome_in_context(
+                first.bounded_context().unwrap(),
+                first.operation_id()
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .rejection()
+            .is_some()
+    );
+    assert!(
+        store
+            .load_completed_outcome_in_context(&other_context, first.operation_id())
+            .await
+            .unwrap()
+            .unwrap()
+            .acceptance()
+            .is_some()
+    );
 }

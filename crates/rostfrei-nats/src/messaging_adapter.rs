@@ -374,7 +374,7 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
                         Ok(Some(authoritative)) if authoritative == response => {
                             DeliveryDisposition::Acknowledge
                         }
-                        Ok(Some(_)) | Ok(None) => quarantine(
+                        Ok(Some(_) | None) => quarantine(
                             "retained business response lacks matching shared authority; migration required",
                         ),
                         Err(error) if error.is_retryable() => retry(),

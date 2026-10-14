@@ -43,6 +43,18 @@ atomically appends the resulting domain events at the expected stream versions.
 A rejection appends no domain events. Accepted commands persist a receipt even
 when they emit no events. Queries read state without changing it.
 
+Completed business rejections now share that atomic operation authority across
+direct, local, NATS and HTTP execution. Retry a completed operation with unchanged
+evidence to replay it; a new attempt after repair needs a new operation ID. Outcomes
+are append-only and outlive transport TTL/dedup caches. Generic executors require an
+explicit rejection codec; processor bindings use their existing rejection mapper
+before persistence. **NATS defaults to fail-closed legacy/read-only processing.**
+New mutable namespaces require an explicit fresh outcome epoch and operator-enforced
+old-writer credential/ACL exclusion. Read the
+[completed-outcome contract](docs/adr/0044-completed-outcomes-and-envelope-ingress.md)
+and [cutover runbook](docs/completed-outcome-cutover.md); do not activate an old
+namespace just because its cached responses have expired.
+
 Domain events form private aggregate history. Integration events are separately
 versioned public contracts published after commit. NATS JetStream adapters
 provide durable command delivery, integration-event messaging, and event storage.

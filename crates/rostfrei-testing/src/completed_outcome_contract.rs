@@ -31,6 +31,12 @@ fn transaction(
 }
 
 pub async fn run(store: &dyn EventStore, context: &BoundedContextName) -> TestResult {
+    rejected_winner(store, context).await?;
+    stale_missing_guard(store, context).await?;
+    contenders_and_versions(store, context).await
+}
+
+async fn rejected_winner(store: &dyn EventStore, context: &BoundedContextName) -> TestResult {
     let missing = StreamId::new(AggregateType::new("guarded")?, AggregateId::new("missing")?);
     let mut rejected = transaction(context, "conformance-rejected", true)?;
     let (operation, fingerprint) = (
@@ -73,7 +79,8 @@ pub async fn run(store: &dyn EventStore, context: &BoundedContextName) -> TestRe
         store
             .load_transaction_receipt_in_context(context, &operation)
             .await
-            .expect_err("rejection must not decode as acceptance")
+            .err()
+            .ok_or("rejection must not decode as acceptance")?
             .kind(),
         EventStoreErrorKind::IdentityConflict
     );
@@ -85,11 +92,82 @@ pub async fn run(store: &dyn EventStore, context: &BoundedContextName) -> TestRe
         store
             .commit_outcome(changed)
             .await
-            .expect_err("cannot replace rejection")
+            .err()
+            .ok_or("cannot replace rejection")?
             .kind(),
         EventStoreErrorKind::IdentityConflict
     );
 
+    Ok(())
+}
+
+async fn stale_missing_guard(store: &dyn EventStore, context: &BoundedContextName) -> TestResult {
+    let stale_stream = StreamId::new(
+        AggregateType::new("guarded")?,
+        AggregateId::new("stale-missing")?,
+    );
+    let stale_session = store.append_session().await?;
+    assert!(stale_session.load(&stale_stream).await?.is_empty());
+    let prerequisite = OperationId::new("conformance-prerequisite")?;
+    let commit = rostfrei_core::derive_commit_id(&stale_stream, &prerequisite);
+    let event = rostfrei_core::NewEvent::new(
+        rostfrei_core::derive_event_id(&commit, 0),
+        "created",
+        1,
+        b"{}".to_vec(),
+    )?;
+    store
+        .append(
+            &stale_stream,
+            ExpectedVersion::NoStream,
+            rostfrei_core::EventBatch::new(
+                commit,
+                prerequisite,
+                ContentFingerprint::digest("prerequisite"),
+                vec![event],
+            )?,
+        )
+        .await?;
+    let stale_rejection = transaction(context, "conformance-stale-rejection", true)?;
+    let stale_rejection = EventTransaction::new(
+        stale_rejection.operation_id().clone(),
+        stale_rejection.operation_fingerprint(),
+        vec![TransactionParticipant::new(
+            stale_stream,
+            ExpectedVersion::NoStream,
+            None,
+        )],
+    )
+    .with_bounded_context(context.clone())
+    .with_completion(
+        stale_rejection
+            .completion()
+            .ok_or("missing stale completion")?
+            .clone(),
+    );
+    assert_eq!(
+        stale_session
+            .commit_outcome(stale_rejection.clone())
+            .await
+            .err()
+            .ok_or("missing-read guard must fence prerequisite creation")?
+            .kind(),
+        EventStoreErrorKind::Conflict
+    );
+    assert!(
+        store
+            .load_completed_outcome_in_context(context, stale_rejection.operation_id())
+            .await?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+async fn contenders_and_versions(
+    store: &dyn EventStore,
+    context: &BoundedContextName,
+) -> TestResult {
     let accepted = transaction(context, "conformance-arbitration", false)?;
     let rejected = transaction(context, "conformance-arbitration", true)?;
     let (a, b) = tokio::join!(
@@ -108,7 +186,7 @@ pub async fn run(store: &dyn EventStore, context: &BoundedContextName) -> TestRe
     assert_eq!(winner.rejection().is_none(), a.is_ok());
     let loser = if a.is_ok() { b } else { a };
     assert_eq!(
-        loser.expect_err("loser must conflict").kind(),
+        loser.err().ok_or("loser must conflict")?.kind(),
         EventStoreErrorKind::IdentityConflict
     );
     let mut bad = transaction(context, "conformance-version", true)?;
@@ -119,7 +197,8 @@ pub async fn run(store: &dyn EventStore, context: &BoundedContextName) -> TestRe
         store
             .commit_outcome(bad)
             .await
-            .expect_err("unknown schema must fail")
+            .err()
+            .ok_or("unknown schema must fail")?
             .kind(),
         EventStoreErrorKind::InvalidRequest
     );

@@ -1,116 +1,165 @@
 # Completed outcomes and trusted envelope ingress (#92)
 
-Status: **INCOMPLETE**. Only validated full-envelope ingress is implemented here.
-Shared durable rejected outcomes, migration enforcement, and outcome-expiry policy
-are not implemented. Do not deploy this as a fix for contradictory rejected replay.
-The existing #92 acceptance tests remain RED rather than being weakened.
+Status: implemented, initial **append-only / fail-closed cutover** contract.
+Mutable legacy/new writer coexistence and mutable rollback are not supported.
+See [the operator runbook](../completed-outcome-cutover.md) before deployment.
 
-## Implemented: preserve a retry's complete HTTP envelope
+## Operation identity and durable horizon
 
-Applications may opt in with
-`HttpApiConfig::default().with_trusted_command_envelope_ingress()` to:
+An operation is `(authority namespace, bounded context, operation ID)`. The NATS
+authority namespace is its isolated account/application/traffic namespace, not a
+transport response stream. Never recycle that namespace or retarget an old retry
+to a newly bootstrapped epoch. A technical retry preserves namespace, ID and
+canonical evidence. A new attempt after a completed rejection uses a **new ID**.
+
+Execution fingerprint v2 covers context, command type, command schema, canonical
+payload and command-provenance mode. Correlation, effective event causation and
+original envelope causation are also immutable identity dimensions. New outcomes
+record these dimensions, fingerprint version and application/traffic scope.
+`created_at` is **audit-only**: the first timestamp is retained, but changing it
+does not authorize another evaluation. JSON whitespace/key order is not identity.
+Different contexts have separate operation namespaces. Trace headers are not
+identity or authentication. Generic direct callers must provide a complete stable
+fingerprint; optional `OutcomeEvidence` makes their codec/command identity explicit.
+
+Accepted and rejected outcomes have **no expiry and no ID reuse**. They share the
+authoritative event store's append-only retention, deny-delete/purge and capacity
+policy. Broker dedup windows and command-response TTL do not expire operations.
+Capacity refusal requires capacity restoration, not deletion of outcomes. Memory
+store lifetime is its shared state lifetime; it does not claim process durability.
+
+Technical failures are not business rejections and are never cached as completed
+outcomes. They prove neither commit nor non-commit. Reconcile the same ID/evidence
+after an uncertain result; do not use a fresh ID to bypass it. ADR 0043's typed
+source/recovery matrix still applies.
+
+## Core codec, store and session contract
+
+`CommandCompletion` v1 is protocol-neutral: evidence plus acceptance or
+`EncodedRejection { codec_id, codec_version, bytes }`. Rejection bytes are bounded
+to 64 KiB; codec IDs/evidence are bounded and validated. A `CompletedOutcome`
+contains that decision and its transaction record/read guards. Only acceptance
+exposes an acceptance receipt. No rejection is a fictitious domain event or an
+accepted no-event receipt.
+
+Arbitrary rejection types use `RejectionCodec<R>` through
+`CommandExecutor::execute_with_rejection_codec`. `JsonRejectionCodec` is an explicit
+opt-in bridge, not a transport cache. Encode, validate and round-trip decode finish
+**before persistence**. Unsupported codec/version or malformed replay is a typed
+blocked codec failure; the handler is not rerun. The compatibility `execute`
+method can execute acceptance, but **fails closed** if a rejection needs an
+unconfigured codec. It never silently returns an undurable rejection. This is an
+intentional behavioral API change for direct generic users.
+
+`CommandProcessor` maps the handler rejection into `CommandRejection` *before*
+persistence using its existing mapper and the explicit stable
+`rostfrei.command-rejection` v1 codec. Replay does not call the mapper again.
+Mapping failure remains processor/invalid_configuration, not a domain rejection.
+Handler `InvalidRequest` refusals are mapped inside the original guarded attempt.
+An invalid tracking/finalization/persistence contract is instead blocked processor
+configuration failure: its missing guards cannot be reconstructed by inventing a
+zero-read rejection transaction.
+Validated unknown-command/invalid-payload responses are durably recorded too;
+identity-conflict responses never replace the existing operation winner.
+
+`EventStore::{load_completed_outcome_in_context,commit_outcome}` and consuming
+`AppendSession::commit_outcome` are required trait methods. Custom stores/wrappers
+must implement actual atomic durability/forwarding; there is no skipping default.
+Existing acceptance-only lookup methods fail with `IdentityConflict` for a
+rejected operation, never return an accepted receipt. Low-level append retries
+still require exact participant/decision content; executor reconciliation compares
+operation evidence and returns the recorded winner even if speculative decisions
+differ. Existing accepted receipt schemas remain readable in an active fresh
+authority; unaudited legacy authorities have the additional cutover block below.
+
+Acceptance commits its domain events, read guards and outcome atomically. Rejection
+discards speculative events but guards **every successful aggregate load**, including
+an absent stream, at the atomic decision point. Stale guards reconcile a winner or
+rerun the entire handler with the existing bounded conflict budget. Later state
+changes do not invalidate a completed rejection. Store refusal cannot return/ACK a
+completed rejection. Rejection-write failure retains its typed source but publishes
+no response projection; native handling retries or durably quarantines the technical
+failure under the existing policy, never acknowledges a completed rejection.
+
+Memory uses the same state lock for version checks and winner insertion. Its
+optional outcome capacity independently bounds receipt count. NATS uses the existing
+operation-derived transaction subject with expected last subject sequence **zero**,
+in the **same atomic batch** as aggregate events/guards. No second decision ledger
+or additional unused capacity sink is introduced. Rejections have only guard items
+and the final decision item. The existing 100-item limit still applies.
+
+NATS event/legacy acceptance schemas 1–4 / 1–2 are unchanged. New completed decisions
+use checksummed transaction schema **3**, including both accepted and rejected
+decisions. Old acceptance readers reject this version; they cannot decode rejection
+as acceptance. New readers verify checksum, scope, decision/version, participant
+shape and atomic provenance. Business response schema 1 remains immutable; schema 2
+technical diagnostics and generation-bound publication/CAS are preserved.
+
+## Adapters, uncertainty and migration
+
+Direct generic execution, direct `CommandProcessor`, local, NATS and HTTP consult
+the same store authority. `NatsEventStore` needs no command queue for direct replay.
+The native response cache is a projection: a worker only ACKs a retained business
+response after shared authority agrees. Legacy-only/mismatching responses block;
+they are never silently deleted or overwritten. Blocked diagnostics retain ADR
+0043's explicit repair/redrive behavior.
+
+`NatsEventStoreConfig` defaults to a **legacy/read-only outcome namespace**. Missing
+outcomes and unaudited old acceptance receipts block command evaluation. A new,
+isolated namespace explicitly uses `with_fresh_completed_outcome_epoch(...)` at
+initial provisioning. Stream metadata durably binds its epoch/version. Connect,
+sessions and write APIs verify it. Normal policy update cannot activate an existing
+legacy stream or change the epoch. Updated readers without the write epoch may
+replay new outcomes but cannot write new decisions or low-level events there.
+
+Quiesced legacy maintenance can call `import_legacy_rejected_outcome` with the
+original validated full `EncodedCommand`, expected schema-1 rejection and its
+messaging topology. The importer reads and compares the actual retained response
+on the **same broker**, then atomically claims the original operation subject.
+Payload/causation cannot be inferred from a response hash. Missing, contradictory or
+invisible/expired evidence stays blocked. Conflicting legacy acceptance is never
+overwritten and remains blocked to command replay. Importing one rejection does
+not activate unknown identities. This initial release deliberately provides no
+mutable in-place legacy activation or general legacy-acceptance audit tool.
+
+Old binaries cannot be made to honor a new ledger. Operators must quiesce them and
+enforce broker credentials/ACLs (or an isolated new account **and new application
+namespace**) that exclude old/rollback writers, including direct publishers and
+stream-management APIs. A new epoch label alone is not a security fence. Readers
+upgrade first. Read-only rollback requires a schema-3-capable reader; arbitrary old
+binary mutable rollback is forbidden. Exact responsibilities and native ACL fixture
+are in the runbook. Authentication of HTTP callers remains application-owned.
+
+## Trusted full-envelope HTTP ingress
+
+The ordinary payload-only endpoint is unchanged. To preserve original retry bytes,
+applications may opt in with
+`HttpApiConfig::default().with_trusted_command_envelope_ingress()`:
 
 ```
-POST /contexts/{context}/commands/{command}/schemas/{schema_version}/envelope
+POST /contexts/{context}/commands/{command}/schemas/{version}/envelope
 Content-Type: application/json
 Idempotency-Key: <original operation ID>
 
 <original CommandEnvelope<RoutedCommand> JSON bytes>
 ```
 
-The ordinary payload-only endpoint is unchanged. Full-envelope ingress is disabled
-by default (404); it does not silently honor metadata on the ordinary endpoint.
-The application **must** authenticate and authorize this route using middleware.
-The router provides neither authentication nor authority to impersonate another
-actor. Correlation, causation, timestamp, and internal command-provenance flags
-are client evidence, never authentication credentials or proof of authorization.
-Only expose this capability to callers trusted to preserve original evidence.
+Disabled by default (404). Authenticate/authorize this route using application
+middleware. Metadata/provenance is evidence, not authority. Configured application/
+traffic scope and URL determine the address; route, registration, ID, schema,
+correlation/causation, fingerprint, content type and size checks precede dispatch.
+Raw envelope bytes are preserved. `CommandBus::dispatch_encoded[_observed]` is the
+protocol-independent equivalent; invalid evidence fails before publication/handler.
 
-The configured application/traffic scope and URL derive the command address;
-clients cannot select another application's subject. Command registration,
-schema, route, operation header, envelope identity, correlation/causation,
-fingerprint, and adapter payload-size checks precede publication or handler
-invocation. Exact `application/json` and a single idempotency header are required.
-Existing HTTP operation-ID ASCII restrictions still apply. Size-limited raw bytes
-are passed through unchanged; no created_at/correlation/causation regeneration
-occurs. Invalid evidence is HTTP 400, not a business rejection.
+## Verification and bounded scope
 
-`CommandBus::dispatch_encoded[_observed]` is the supported protocol-independent
-ingress API. It validates complete evidence before dispatch and validates the
-response identity. Ordinary typed/dynamic dispatch now uses the same checks.
-The HTTP socket tests compare the adapter-observed **entire EncodedCommand** to
-the original NATS command. A separate accepted-no-event socket control proves
-this new path can replay existing acceptance without invoking the handler.
-
-## Required shared-outcome design, NOT yet implemented
-
-Recording rejection as an accepted event-free transaction would be unsound: legacy
-receipt readers would report acceptance, and a fresh processor could not recover
-the arbitrary rejection value. A transport cache or process mutex is also not a
-durable authority. The current generic executor only persists acceptance and
-returns an ordinary rejection without guarded persistence. That behavior is still
-present; the capacity and deterministic rejection read-guard tests still fail.
-
-A complete implementation needs a versioned core outcome contract:
-
-* A generic rejection codec/mapping API usable with arbitrary handler rejection
-  types; encoding must finish before persistence. Mapping/decoding refusal is a
-  typed technical failure, not successful business processing.
-* Atomic session/store persistence of a completed accepted **or rejected** outcome,
-  separate from domain events. Rejection enlists all successfully loaded aggregate
-  versions as read guards and commits no speculative events. A guard conflict must
-  reconcile an existing winner or re-evaluate with the normal conflict budget.
-* One context-scoped operation/evidence winner, with changed evidence rejected
-  before invoking the handler. Acceptance-only receipt APIs must never reinterpret
-  rejection as acceptance; existing accepted receipt schemas/readers must keep
-  their original meaning. New wire/store versions and conformance tests are needed.
-* Reconciliation below every adapter, including direct execution against
-  `NatsEventStore`; recreating processors and restarting the broker must not lose
-  outcomes. Refused outcome writes must not return/ACK completed rejection.
-
-## Identity and retention gaps
-
-Today's execution fingerprint v2 covers context, command, schema, canonical payload,
-and command-provenance mode. Correlation and effective causation are checked
-separately by acceptance receipts. Operation IDs are scoped to bounded context;
-NATS store configuration supplies application/traffic isolation. `created_at` is
-preserved envelope evidence but currently excluded from execution identity. Trace
-headers are not operation identity. The new ingress preserves all dimensions; it
-does not secretly change the acceptance identity policy to get tests green.
-
-The completed-outcome implementation must explicitly settle whether timestamp is
-immutable identity or audit-only, and test every dimension against accepted and
-rejected outcomes. It must define a durable horizon independently of broker
-publication deduplication and response retention. Existing authoritative acceptance
-receipts are append-only; there is currently no shared rejected-outcome expiry or
-reuse policy. Expiring a transport response is not permission to reevaluate a
-completed operation. Delayed replay after response expiry and consistent identity
-refusal/reuse after outcome expiry remain unimplemented acceptance gaps.
-
-## Legacy and deployment gaps
-
-Old NATS retained rejection responses may be the only rejection authority. Ignoring
-or deleting them while new direct execution runs can recreate #92. Safe import
-requires retained original command evidence, not inventing payload/causation from
-a response hash. If source evidence or historical rejection has expired, its
-absence cannot establish that an operation was never completed.
-
-Migration must therefore reconcile/import visible legacy evidence or fail closed,
-and explicitly handle invisible history with a fenced identity epoch/namespace.
-A supported cutover must quiesce old writers, verify import/blocked identities,
-enforce old-writer exclusion (for example tested broker ACL/credentials), and
-prevent rollback binaries from writing against the new authority. Documentation
-alone cannot make old binaries consult a ledger. Neither that deployment fence
-nor legacy import/blocking is implemented by this change. Arbitrary rolling
-old/new workers and rollback are **unsupported and unproven**, not repaired.
-
-## Remaining acceptance work
-
-Shared rejected replay in both transport directions; mixed-adapter concurrency;
-changed-evidence conflicts; real rejection persistence refusal; rejection read
-guards; generic core/store conformance; legacy cached rejection reconciliation;
-durable horizon/expiry; enforced rolling/rollback restrictions; rejected replay
-across independent processes and broker restart; and actual lost-response/PubAck
-injection remain incomplete. The original native capacity fixture still exhausts
-the real event-store sink because no new ledger sink was introduced. It has not
-been changed to test an unused resource or converted into a passing known-bug test.
+Enabled tests cover original cross-adapter rejection/restart/capacity/read-guard
+regressions; shared memory/NATS store/session arbitration; generic codecs and
+fail-closed defaults; accepted/rejected evidence matrices; actual response TTL and
+dedup expiry; legacy valid/conflicting/missing evidence; real credential ACL old-
+writer/rollback refusal; competing direct acceptance/native rejection; actual atomic
+outcome PubAck loss; and actual HTTP response loss for acceptance and rejection.
+The independent-process/broker-crash fixture retains file storage. No Docker,
+read-model or Studio result is implied by these native tests. Final measured
+commands/results and remaining validation limits belong to the development report,
+not an assertion that tests prove arbitrary deployment policy or operator behavior.

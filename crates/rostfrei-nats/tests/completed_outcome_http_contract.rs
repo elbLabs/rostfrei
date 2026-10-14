@@ -198,6 +198,90 @@ async fn accepted_no_event_replay_preserves_full_nats_envelope_through_actual_ht
     Ok(())
 }
 
+async fn lost_http_response(accepted: bool) -> TestResult {
+    use tokio::io::AsyncReadExt;
+    let fixture = Fixture::new(if accepted {
+        "92-http-lost-accepted"
+    } else {
+        "92-http-lost-rejected"
+    })
+    .await?;
+    let store = fixture.event_store().await?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let first = processor(&fixture.context, store.clone(), calls.clone(), None)?;
+    let original = local_bus(&fixture.context, first.clone()).encode(request(
+        "http-uncertain-outcome",
+        "target",
+        if accepted { "create" } else { "add" },
+    )?)?;
+    let (_server, server_address, captured) = http_config(
+        &fixture,
+        first,
+        rostfrei_http::HttpApiConfig::default().with_trusted_command_envelope_ingress(),
+    )
+    .await?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let proxy = tokio::spawn(async move {
+        let (client, _) = listener.accept().await?;
+        let upstream = tokio::net::TcpStream::connect(server_address).await?;
+        let (mut incoming, _outgoing) = client.into_split();
+        let (mut response, mut request) = upstream.into_split();
+        let upload = tokio::io::copy(&mut incoming, &mut request);
+        let download = async {
+            let mut discarded = Vec::new();
+            response.read_to_end(&mut discarded).await?;
+            std::io::Result::Ok(discarded)
+        };
+        tokio::select! { result = download => result, result = upload => { result?; Err(std::io::Error::other("client ended before response")) } }
+    });
+    assert!(
+        submit_envelope(
+            address,
+            original.operation_id().as_str().to_owned(),
+            original.payload().to_vec()
+        )
+        .await
+        .is_err(),
+        "client must actually lose the HTTP reply"
+    );
+    let discarded = proxy.await??;
+    assert!(
+        discarded.starts_with(if accepted {
+            b"HTTP/1.1 200"
+        } else {
+            b"HTTP/1.1 404"
+        }),
+        "the completed server response, not just the request, was intercepted"
+    );
+    assert_eq!(captured.lock().await.as_ref(), Some(&original));
+    let recreated = processor(&fixture.context, store.clone(), calls.clone(), None)?;
+    if !accepted {
+        local_bus(&fixture.context, recreated.clone())
+            .dispatch(request("http-uncertain-repair", "target", "create")?)
+            .await?;
+    }
+    let before = calls.load(Ordering::SeqCst);
+    let _worker = fixture.command_worker(recreated).await?;
+    let replay = CommandBus::new(fixture.context.clone(), fixture.adapter.clone())
+        .dispatch_encoded(original)
+        .await?;
+    assert_eq!(rejected(replay.response().outcome()), !accepted);
+    assert_eq!(calls.load(Ordering::SeqCst), before);
+    assert_eq!(store.load(&stream("target")?).await?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn actual_http_accepted_response_loss_replays_over_nats_without_second_effect() -> TestResult
+{
+    lost_http_response(true).await
+}
+#[tokio::test]
+async fn actual_http_rejected_response_loss_replays_over_nats_without_reevaluation() -> TestResult {
+    lost_http_response(false).await
+}
+
 #[tokio::test]
 async fn full_http_envelope_ingress_is_opt_in_and_rejects_changed_identity_before_dispatch()
 -> TestResult {

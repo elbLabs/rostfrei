@@ -40,7 +40,11 @@ impl OutcomeEvidence {
             || self
                 .original_causation
                 .as_ref()
-                .is_some_and(|id| id.is_empty() || id.len() > 256)
+                .is_some_and(|id| rostfrei_messaging_core::CausationId::new(id).is_err())
+            || self.created_at_millis.is_some_and(|timestamp| {
+                rostfrei_messaging_core::MessageTimestamp::from_unix_milliseconds(timestamp)
+                    .is_err()
+            })
             || self.authority_scope.as_ref().is_some_and(|scope| {
                 scope.is_empty() || scope.len() > 256 || scope.chars().any(char::is_control)
             })
@@ -201,7 +205,7 @@ impl<R: Serialize + DeserializeOwned> RejectionCodec<R> for JsonRejectionCodec {
     }
 }
 
-pub(crate) struct UnconfiguredRejectionCodec;
+pub struct UnconfiguredRejectionCodec;
 impl<R> RejectionCodec<R> for UnconfiguredRejectionCodec {
     fn encode(&self, _: &R) -> Result<EncodedRejection, EventCodecError> {
         Err(codec_error(

@@ -563,9 +563,9 @@ pub enum SimulationError {
 impl From<CommandExecutionError> for SimulationError {
     fn from(error: CommandExecutionError) -> Self {
         match error {
-            CommandExecutionError::RejectedOutcomePersistence(error) => Self::Store(error),
             CommandExecutionError::RejectionMapping(message) => Self::RejectionMapping(message),
-            CommandExecutionError::Store(error) => Self::Store(error),
+            CommandExecutionError::Store(error)
+            | CommandExecutionError::RejectedOutcomePersistence(error) => Self::Store(error),
             CommandExecutionError::Codec(error) => Self::Codec(error),
         }
     }
@@ -765,7 +765,7 @@ where
 }
 
 enum PersistenceAttempt {
-    Completed(crate::CompletedAppendOutcome),
+    Completed(Box<crate::CompletedAppendOutcome>),
     Conflict(EventStoreError),
 }
 
@@ -805,7 +805,7 @@ async fn append_transaction(
         rejection,
     ));
     match session.commit_outcome(transaction).await {
-        Ok(outcome) => Ok(PersistenceAttempt::Completed(outcome)),
+        Ok(outcome) => Ok(PersistenceAttempt::Completed(Box::new(outcome))),
         Err(error)
             if matches!(
                 error.kind(),
