@@ -71,7 +71,19 @@ fn source_metadata(directory: &Path) -> (String, bool) {
         }
         (
             git(directory, &["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".to_owned()),
-            git(directory, &["status", "--porcelain"]).is_none_or(|status| !status.is_empty()),
+            // Cargo's Git-cache completion marker is not a source change.
+            // Retain all other tracked and untracked changes in provenance.
+            git(
+                directory,
+                &[
+                    "status",
+                    "--porcelain",
+                    "--",
+                    ":/",
+                    ":(top,exclude).cargo-ok",
+                ],
+            )
+            .is_none_or(|status| !status.is_empty()),
         )
     } else {
         ("unknown".to_owned(), true)

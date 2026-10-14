@@ -80,6 +80,17 @@ via the live driver's explicit `--host-command` option. Evidence is in
 `/tmp/rostfrei-skills-rust-packaged`: pass → deliberate comparison failure →
 unchanged pass, with consumer tools absent from PATH and kit/build source removed.
 
+An exact-revision Git installation was also executed successfully with
+`cargo install --locked --git https://github.com/elbLabs/rostfrei --rev
+bbc688056af223c25fcd15be2a6eeee8046fd122 rostfrei-structure` (local verification
+added `--debug`, an external `--root`, and a separate `--target-dir`). This exposed
+Cargo's untracked `.cargo-ok` cache marker incorrectly setting the CLI's dirty
+flag. A source-fixture regression first failed with `True is not false`; the
+build-provenance check now excludes only that marker while still detecting real
+source modifications. This is provenance plumbing, not behavioral red.
+The new focused regression passed after the fix, as did focused all-target
+clippy; CI runs all four source checks together.
+
 Historical evidence below records earlier implementations, not current commands.
 
 ### Historical packaging test-first record

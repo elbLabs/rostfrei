@@ -111,6 +111,21 @@ class SourceSkillTests(unittest.TestCase):
         self.assertIn("release or protocol mismatch", result.stderr)
         self.assertEqual(self.release.read_bytes(), edited)
 
+    def test_cargo_git_marker_does_not_make_clean_revision_dirty(self):
+        # Cargo writes this cache-completeness marker into --git checkouts.
+        (self.root / ".cargo-ok").write_text("{}")
+        cli = self.build_cli()
+        command = [str(cli), "rostfrei", "skills", "info"]
+        metadata = json.loads(subprocess.check_output(command, env={**os.environ, "PATH": ""}))
+        self.assertFalse(metadata["sourceTreeDirty"], "Cargo's marker is not a source modification")
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
+        self.assertEqual(metadata["sourceRevision"], head)
+        source = self.root / "crates/rostfrei-structure/src/main.rs"
+        source.write_text(source.read_text() + "\n// consumer modification\n")
+        self.build_cli()
+        metadata = json.loads(subprocess.check_output(command, env={**os.environ, "PATH": ""}))
+        self.assertTrue(metadata["sourceTreeDirty"], "Actual source modifications must remain visible")
+
 
 if __name__ == "__main__":
     unittest.main()
