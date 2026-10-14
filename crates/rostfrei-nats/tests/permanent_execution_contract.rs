@@ -8,7 +8,7 @@ use rostfrei::{
     ExecutionRecovery, IntegrationEventCommandHandler, StoreFailureKind,
 };
 
-fn expected_failure(codec: Option<BadCodec>) -> ExecutionFailure {
+const fn expected_failure(codec: Option<BadCodec>) -> ExecutionFailure {
     match codec {
         None => ExecutionFailure::Store(StoreFailureKind::CorruptHistory),
         Some(BadCodec::Decode) => ExecutionFailure::Codec(CodecFailureKind::MalformedPayload),
@@ -540,7 +540,7 @@ async fn remote_transient_diagnostic_does_not_prevent_automatic_recovery() -> Te
             match remote.dispatch(command.clone()).await {
                 Ok(receipt) => break TestResult::Ok(receipt),
                 Err(error) if error.is_retryable() => {
-                    tokio::time::sleep(Duration::from_millis(20)).await
+                    tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -549,6 +549,38 @@ async fn remote_transient_diagnostic_does_not_prevent_automatic_recovery() -> Te
     .await??;
     assert_eq!(store.inner.load(&stream("bad-target")?).await?.len(), 1);
     assert!(fixture.quarantine().await?.is_empty());
+    Ok(())
+}
+
+fn diagnostic_message(
+    encoded: &EncodedCommand,
+    failure: ExecutionFailure,
+) -> TestResult<OutboundMessage<rostfrei_messaging_core::CommandResponseAddress>> {
+    let diagnostic = rostfrei::CommandResponse::execution_failed(
+        rostfrei::command_technical_response_message_id(encoded.message_id(), failure)?,
+        encoded.message_id().clone(),
+        encoded.address().clone(),
+        encoded.operation_id().clone(),
+        encoded.correlation_id().clone(),
+        failure,
+    )?;
+    Ok(OutboundMessage::json(
+        encoded.response_address()?,
+        diagnostic.message_id().clone(),
+        &diagnostic,
+    )?)
+}
+
+async fn wait_quarantine_count(fixture: &Fixture, count: usize) -> TestResult {
+    tokio::time::timeout(WAIT, async {
+        loop {
+            if fixture.quarantine().await?.len() == count {
+                return TestResult::Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await??;
     Ok(())
 }
 
@@ -576,15 +608,7 @@ async fn blocked_diagnostic_redrive_is_explicit_and_cannot_delete_a_business_out
             .execution_failure(),
         Some(expected_failure(None))
     );
-    tokio::time::timeout(Duration::from_secs(8), async {
-        loop {
-            if fixture.quarantine().await?.len() == 1 {
-                break TestResult::Ok(());
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await??;
+    wait_quarantine_count(&fixture, 1).await?;
     let source = fixture
         .js
         .get_stream(fixture.messaging.topology().command_stream().as_str())
@@ -598,19 +622,7 @@ async fn blocked_diagnostic_redrive_is_explicit_and_cannot_delete_a_business_out
     // A second worker can observe a different technical source. Neither diagnostic is a
     // completed business authority; clearing only the latest must not expose a stale block.
     let later_failure = ExecutionFailure::Store(StoreFailureKind::ConfigurationMismatch);
-    let later_diagnostic = rostfrei::CommandResponse::execution_failed(
-        rostfrei::command_technical_response_message_id(encoded.message_id(), later_failure)?,
-        encoded.message_id().clone(),
-        encoded.address().clone(),
-        encoded.operation_id().clone(),
-        encoded.correlation_id().clone(),
-        later_failure,
-    )?;
-    let later_message = OutboundMessage::json(
-        encoded.response_address()?,
-        later_diagnostic.message_id().clone(),
-        &later_diagnostic,
-    )?;
+    let later_message = diagnostic_message(&encoded, later_failure)?;
     fixture
         .publisher()
         .publish_command_response(later_message.clone())
