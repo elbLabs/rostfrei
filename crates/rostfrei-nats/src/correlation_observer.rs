@@ -509,7 +509,13 @@ mod integration_tests {
         let application = ApplicationName::new(format!("delivery-health-{suffix}"))?;
         let name = format!("DELIVERY_HEALTH_{suffix}");
         let filter = format!("{}.domain.test.aggregate.*", application.as_str());
-        let client = async_nats::connect(rostfrei_testing::integration::nats_url()?).await?;
+        let client = crate::connect(&crate::NatsConnectionConfig::new(
+            "native-regression-fixture",
+            rostfrei_testing::integration::nats_url()?,
+        ))
+        .await?
+        .client()
+        .clone();
         let context = jetstream::new(client.clone());
         let config = jetstream::stream::Config {
             name: name.clone(),

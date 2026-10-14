@@ -8,6 +8,7 @@ mod event_store_config;
 mod hex;
 #[path = "event_store/history_reads.rs"]
 mod history_reads;
+mod native_connection_support;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
 
@@ -2870,7 +2871,7 @@ async fn capacity_observations(
 }
 
 async fn connect_context(url: &str) -> TestResult<async_nats::jetstream::Context> {
-    let client = async_nats::connect(url).await?;
+    let client = native_connection_support::client(url).await?;
     Ok(async_nats::jetstream::new(client))
 }
 
