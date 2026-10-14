@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::{fmt, time::Duration};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
@@ -249,7 +249,7 @@ struct CommandResponseWire {
     correlation_id: CorrelationId,
     outcome: CommandResponseOutcomeWire,
     #[serde(flatten)]
-    extensions: BTreeMap<String, serde::de::IgnoredAny>,
+    extensions: ResponseExtensions,
 }
 
 #[derive(Deserialize)]
@@ -260,7 +260,41 @@ struct CommandResponseOutcomeWire {
     #[serde(flatten)]
     outcome: CommandResponseOutcome,
     #[serde(flatten)]
-    extensions: BTreeMap<String, serde::de::IgnoredAny>,
+    extensions: ResponseExtensions,
+}
+
+// Only presence matters for conditional v2 strictness. Known fields have already been
+// consumed by typed visitors; skip unknown values without storing or normalizing them.
+struct ResponseExtensions {
+    present: bool,
+}
+
+impl<'de> Deserialize<'de> for ResponseExtensions {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ExtensionsVisitor;
+        impl<'de> serde::de::Visitor<'de> for ExtensionsVisitor {
+            type Value = ResponseExtensions;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("response extension fields")
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> Result<Self::Value, M::Error> {
+                let mut present = false;
+                while map
+                    .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+                    .is_some()
+                {
+                    present = true;
+                }
+                Ok(ResponseExtensions { present })
+            }
+        }
+        deserializer.deserialize_map(ExtensionsVisitor)
+    }
 }
 
 impl<'de> Deserialize<'de> for CommandResponse {
@@ -272,7 +306,7 @@ impl<'de> Deserialize<'de> for CommandResponse {
         // protocol layer. Only unknown extensions may be ignored for legacy schema 1.
         let wire = CommandResponseWire::deserialize(deserializer)?;
         if wire.schema_version.get() == TECHNICAL_RESPONSE_SCHEMA_VERSION
-            && (!wire.extensions.is_empty() || !wire.outcome.extensions.is_empty())
+            && (wire.extensions.present || wire.outcome.extensions.present)
         {
             return Err(D::Error::custom("unknown technical response field"));
         }
