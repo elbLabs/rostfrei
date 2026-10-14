@@ -65,7 +65,7 @@ export function StructureDetails({ node }: StructureDetailsProps) {
           />
           <div>
             <h4 className="text-sm font-semibold text-[#eee6da]">
-              Structural guarantee
+              Ownership and checks
             </h4>
             <p className="mt-2 text-sm leading-6 text-[#91897d]">
               {node.guarantee}

@@ -1,10 +1,8 @@
 # `domain_query`
 
-Read state through a normal trait. A query stays a normal method on the aggregate root. The checker proves that execute.rs implements the correct trait for that root.
+Adds metadata to a read-only trait implemented on the aggregate root. Inputs and outputs are ordinary Rust types. The structure checker checks the implementation in `execute.rs` against the root selected by `AggregateDefinition`.
 
-- Root is the receiver
-- Inputs and outputs are ordinary Rust
-- No model group
+This domain query does not register an HTTP endpoint. Application query registration is a separate runtime concern.
 
 **Placement:** [Query](/docs/project-structure/query) — `query.rs`.
 

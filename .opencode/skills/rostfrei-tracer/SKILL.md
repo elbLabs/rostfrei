@@ -8,7 +8,7 @@ description: Use when inspecting quarantined messages through Rostfrei Tracer, o
 Use the Tracer HTTP API as an agent-facing command and explanation surface. Keep the normal mental model simple:
 
 1. Choose a command.
-2. Choose an aggregate and payload.
+2. Confirm the bounded context and payload, including all required aggregate IDs.
 3. Preview it or publish it.
 4. Explain what happened.
 5. Render one causal Mermaid graph.
@@ -48,18 +48,18 @@ Before every authenticated request:
 5. Disable redirects with `curl --max-redirs 0`; treat every `3xx` response as an error and never follow it.
 6. Permit only HTTP and HTTPS. Permit plain HTTP only for a loopback Tracer unless the user explicitly configured another trusted local endpoint.
 
-For `{aggregateId}` and every other substituted path segment, UTF-8 encode the value and percent-encode it once as an RFC 3986 path segment. Leave only `A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, and `~` unescaped. Never interpolate raw identifiers containing `/`, `%`, `?`, `#`, or whitespace. Prefer returned hrefs such as `messageSeriesHref`, `definitionHref`, and `runHref` over substitution.
+For any substituted path segment, UTF-8 encode the value and percent-encode it once as an RFC 3986 path segment. Leave only `A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, and `~` unescaped. Never interpolate raw identifiers containing `/`, `%`, `?`, `#`, or whitespace. Prefer returned hrefs such as `messageSeriesHref`, `definitionHref`, and `runHref` over substitution. Command aggregate IDs belong in the payload, not in command routes.
 
 Use bounded HTTP timeouts. Never use automatic retries for a state-changing `POST`. An ambiguous response does not prove that publication failed.
 
-## Catalog V1
+## Catalog v1
 
-Fetch Catalog v1 before choosing a command. Require `catalogVersion: 1`; stop and explain the unsupported version rather than guessing.
+Fetch Catalog v1 before choosing a command. Require `catalogVersion: 1`; stop and explain the unsupported version rather than guessing. Catalog, command-payload, and behavioral-test schema versions are independent.
 
 Use these advertised relations:
 
 - `contexts[].aggregates[].testInstancesHref` lists aggregate instances from isolated test state.
-- `commands[].versions[].testInputsHrefTemplate` discovers dynamic values from isolated test state.
+- `contexts[].commands[].versions[].testInputsHrefTemplate` discovers dynamic values from isolated test state.
 - `simulateHrefTemplate` previews without appending.
 - `testHrefTemplate` publishes through the isolated Test pipeline.
 - `dispatchHrefTemplate` publishes to production.
@@ -118,8 +118,8 @@ the command-operation response template below.
 ### Preview
 
 1. Discover the command and ask about ambiguous schema versions.
-2. Discover a test aggregate and test inputs when useful.
-3. Confirm the aggregate and complete payload with the user when either remains ambiguous.
+2. Discover test aggregate instances and test inputs when useful.
+3. Confirm the context and complete payload, including every required aggregate ID, when ambiguous.
 4. POST the typed request to `simulateHrefTemplate` with the control token.
 5. Follow the returned operation href or `Location` without resubmitting.
 
@@ -129,7 +129,7 @@ Preview does not append, but it reads isolated test history. Synthetic identitie
 
 Test publication may append to the isolated test scenario. Before POSTing to `testHrefTemplate`:
 
-- show the command, schema version, aggregate type, aggregate ID, complete payload, and idempotency key;
+- show the context, command, schema version, complete payload with required aggregate IDs, and idempotency key;
 - explain that the target is isolated Test state; and
 - obtain explicit confirmation for that exact publication.
 
@@ -146,8 +146,8 @@ A registered fixture is a canonical MessageSeries containing only domain events.
 Never infer production identifiers or values from test discovery. Require all of the following before POSTing to `dispatchHrefTemplate`:
 
 - an explicit command and schema version;
-- an explicit production aggregate type and ID;
-- an explicit complete payload;
+- an explicit production bounded context;
+- an explicit complete payload, including every required production aggregate ID;
 - a stable idempotency key; and
 - explicit confirmation for the exact request after warning that production state and downstream integrations may change.
 
@@ -186,7 +186,7 @@ Keep behavioral testing separate from the normal command workflow.
 4. Follow `testScenario.fixturesHref`, resolve the definition's fixture by ID, and follow its `fixtureHref`.
 5. Summarize the definition as:
    - **Given**: the selected MessageSeries fixture;
-   - **When**: the single root command, aggregate, and payload;
+   - **When**: the single root command, bounded context, and payload;
    - **Then**: expected outcome and causally linked domain or integration events.
 
 ### Validate Inline JSON
@@ -220,7 +220,7 @@ Use fixed style classes to distinguish message kinds:
 
 ```mermaid
 flowchart TD
-  n0["Command: rent-bicycle v1"]
+  n0["Command: rent-bicycle v2"]
   n1["Domain event: bicycle-rented v1"]
   n2["Integration event: bicycle-rental-started v1"]
   n0 --> n1
@@ -241,7 +241,7 @@ Do not dump raw API JSON unless the user asks. Use these sections in this order:
 
 **Result**
 
-State the mode, command, aggregate, operation status, and business decision or behavioral-test verdict.
+State the mode, bounded context, command, operation status, and business decision or behavioral-test verdict. Include participating aggregate IDs when useful.
 
 **Message Flow**
 

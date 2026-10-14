@@ -1,11 +1,11 @@
 # Entity policy
 
-An entity policy keeps pure business interpretation next to the Entity whose facts it evaluates. Its contract, exhaustive outcomes, and evaluator remain separate from state mutation and persistence.
+An entity policy evaluates facts from one entity without changing its state. The trait, outcome enum, and implementation live in the same capability directory.
 
 - Declare the trait in `policy.rs`.
 - Define exhaustive outcomes in `outcome.rs`.
-- Implement the policy directly for the Entity in `evaluate.rs`.
-- Compose lifecycle evaluation with other policy instead of duplicating transition topology.
+- Implement the policy directly for the entity in `evaluate.rs`.
+- Use lifecycle evaluation to check whether a transition is legal.
 
 Path: `src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility`
 

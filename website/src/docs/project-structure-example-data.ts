@@ -46,15 +46,16 @@ export const projectStructureExamples = {
     ],
   },
   "domain-service": {
-    root: "fleet_planning",
+    root: "bicycle_transfer",
     activeFile: "service.rs",
     files: [
       "mod.rs",
       "service.rs",
-      "rebalance_fleet/action.rs",
-      "rebalance_fleet/execute.rs",
-      "assess_demand/policy.rs",
-      "assess_demand/evaluate.rs",
+      "command.rs",
+      "handler.rs",
+      "rejection.rs",
+      "transfer/action.rs",
+      "transfer/execute.rs",
     ],
   },
   "aggregate-action": {
