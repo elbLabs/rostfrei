@@ -20,7 +20,11 @@ record these dimensions, fingerprint version and application/traffic scope.
 does not authorize another evaluation. JSON whitespace/key order is not identity.
 Different contexts have separate operation namespaces. Trace headers are not
 identity or authentication. Generic direct callers must provide a complete stable
-fingerprint; optional `OutcomeEvidence` makes their codec/command identity explicit.
+fingerprint. Every new completed decision requires `OutcomeEvidence`. Direct Rust
+execution supplies a conservative `rust:<type_name>` / schema-1 / caller-fingerprint-v1
+descriptor if none is given. Renaming that Rust type changes identity. Applications
+with a durable external protocol should supply a stable explicit descriptor; direct
+execution of an existing envelope can use `EncodedCommand::validated_execution_metadata`.
 
 Accepted and rejected outcomes have **no expiry and no ID reuse**. They share the
 authoritative event store's append-only retention, deny-delete/purge and capacity
@@ -50,6 +54,17 @@ blocked codec failure; the handler is not rerun. The compatibility `execute`
 method can execute acceptance, but **fails closed** if a rejection needs an
 unconfigured codec. It never silently returns an undurable rejection. This is an
 intentional behavioral API change for direct generic users.
+
+For arbitrary domain rejection types shared with processor bindings,
+`MappedCommandRejectionCodec` explicitly combines the existing forward rejection
+mapper with an application-provided reverse decoder for stored codes/details. It
+uses the SAME `rostfrei.command-rejection` v1 format as the processor. Use the
+validated envelope metadata with its matching typed command. This supports generic
+executor → processor and processor → generic executor replay without serde bounds
+on the domain rejection and without requiring a command queue. A one-way mapper
+cannot magically reconstruct an arbitrary domain value: retain reverse readers for
+old codes. An unrelated custom codec is refused as an unsupported codec, not
+silently interpreted as another business outcome.
 
 `CommandProcessor` maps the handler rejection into `CommandRejection` *before*
 persistence using its existing mapper and the explicit stable

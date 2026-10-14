@@ -9,6 +9,18 @@ use rostfrei_messaging_core::BoundedContextName;
 
 type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
+fn evidence() -> rostfrei_core::OutcomeEvidence {
+    rostfrei_core::OutcomeEvidence {
+        authority_scope: None,
+        created_at_millis: None,
+        fingerprint_version: 1,
+        command_type: "conformance.binary-command".to_owned(),
+        command_schema: 1,
+        events_caused_by_command: false,
+        original_causation: None,
+    }
+}
+
 fn transaction(
     context: &BoundedContextName,
     operation: &str,
@@ -21,7 +33,7 @@ fn transaction(
     )
     .with_bounded_context(context.clone())
     .with_completion(CommandCompletion::new(
-        None,
+        Some(evidence()),
         rejected.then(|| EncodedRejection {
             codec_id: "conformance.binary".to_owned(),
             codec_version: 1,
@@ -87,7 +99,7 @@ async fn rejected_winner(store: &dyn EventStore, context: &BoundedContextName) -
     let changed =
         EventTransaction::new(operation, ContentFingerprint::digest("changed"), Vec::new())
             .with_bounded_context(context.clone())
-            .with_completion(CommandCompletion::new(None, None));
+            .with_completion(CommandCompletion::new(Some(evidence()), None));
     assert_eq!(
         store
             .commit_outcome(changed)
@@ -168,6 +180,30 @@ async fn contenders_and_versions(
     store: &dyn EventStore,
     context: &BoundedContextName,
 ) -> TestResult {
+    let unspecified = EventTransaction::new(
+        OperationId::new("conformance-unspecified")?,
+        ContentFingerprint::digest("unspecified"),
+        Vec::new(),
+    )
+    .with_bounded_context(context.clone());
+    assert_eq!(
+        store
+            .commit_outcome(unspecified.clone())
+            .await
+            .err()
+            .ok_or("missing decision accepted")?
+            .kind(),
+        EventStoreErrorKind::InvalidRequest
+    );
+    assert_eq!(
+        store
+            .commit_outcome(unspecified.with_completion(CommandCompletion::new(None, None)))
+            .await
+            .err()
+            .ok_or("missing command evidence accepted")?
+            .kind(),
+        EventStoreErrorKind::InvalidRequest
+    );
     let accepted = transaction(context, "conformance-arbitration", false)?;
     let rejected = transaction(context, "conformance-arbitration", true)?;
     let (a, b) = tokio::join!(

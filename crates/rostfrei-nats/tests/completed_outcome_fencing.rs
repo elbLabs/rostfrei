@@ -115,6 +115,26 @@ async fn assert_raw_writer_refused(
     Ok(())
 }
 
+async fn old_reader(
+    url: &str,
+    collected: Arc<tokio::sync::Mutex<Vec<String>>>,
+) -> TestResult<async_nats::Client> {
+    Ok(async_nats::ConnectOptions::with_user_and_password(
+        "old-writer".to_owned(),
+        "private-old-writer".to_owned(),
+    )
+    .event_callback(move |event| {
+        let collected = collected.clone();
+        async move {
+            if let async_nats::Event::ServerError(error) = event {
+                collected.lock().await.push(format!("{error:?}"));
+            }
+        }
+    })
+    .connect(url)
+    .await?)
+}
+
 #[tokio::test]
 async fn native_acl_excludes_old_mutable_writer_and_rollback_but_allows_read_only_replay()
 -> TestResult {
@@ -140,21 +160,7 @@ async fn native_acl_excludes_old_mutable_writer_and_rollback_but_allows_read_onl
     assert!(release_contract_support::rejected(rejected.outcome()));
     let mut stream_info = js.get_stream(config.stream_name()).await?;
     let errors = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    let collected = errors.clone();
-    let old_client = async_nats::ConnectOptions::with_user_and_password(
-        "old-writer".to_owned(),
-        "private-old-writer".to_owned(),
-    )
-    .event_callback(move |event| {
-        let collected = collected.clone();
-        async move {
-            if let async_nats::Event::ServerError(error) = event {
-                collected.lock().await.push(format!("{error:?}"));
-            }
-        }
-    })
-    .connect(&url)
-    .await?;
+    let old_client = old_reader(&url, errors.clone()).await?;
     let old_js = async_nats::jetstream::new(old_client.clone());
     // Native ACL limits old credentials to reads. Even raw old-protocol publication is
     // refused; this does not rely on an old binary understanding new ledger metadata.

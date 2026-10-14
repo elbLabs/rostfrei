@@ -4,6 +4,105 @@ use async_trait::async_trait;
 use release_contract_support::*;
 rostfrei::install_macro_support!();
 
+fn decode_domain_rejection(rejection: &CommandRejection) -> Result<&'static str, String> {
+    if rejection.code().as_str() == "contract.target-not-found" {
+        Ok("target-not-found")
+    } else {
+        Err("unknown stored domain rejection code".to_owned())
+    }
+}
+
+async fn generic_processor_interop(direct_first: bool) -> TestResult {
+    let fixture = Fixture::new("92-generic-processor-shared-authority").await?;
+    let store = fixture.event_store().await?;
+    fixture
+        .js
+        .delete_stream(fixture.messaging.topology().command_stream().as_str())
+        .await?;
+    fixture
+        .js
+        .delete_stream(
+            fixture
+                .messaging
+                .topology()
+                .command_response_stream()
+                .as_str(),
+        )
+        .await?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let processor = processor(&fixture.context, store.clone(), calls.clone(), None)?;
+    let local = local_bus(&fixture.context, processor.clone());
+    let encoded = local.encode(request("generic-interop-rejected", "target", "add")?)?;
+    let command = Act {
+        target: "target".to_owned(),
+        action: "add".to_owned(),
+        item: "I".to_owned(),
+    };
+    let codec = rostfrei::MappedCommandRejectionCodec::new(map_rejection, decode_domain_rejection);
+    let executor = CommandExecutor::new(store.clone());
+    if direct_first {
+        assert!(matches!(
+            executor
+                .execute_with_rejection_codec(
+                    &Handler(calls.clone()),
+                    encoded.validated_execution_metadata()?,
+                    &command,
+                    &codec
+                )
+                .await?,
+            CommandOutcome::Rejected("target-not-found")
+        ));
+    } else {
+        assert!(rejected(processor.process(&encoded).await?.outcome()));
+    }
+    let response = processor.process(&encoded).await?;
+    assert!(rejected(response.outcome()));
+    assert!(matches!(
+        executor
+            .execute_with_rejection_codec(
+                &Handler(calls.clone()),
+                encoded.validated_execution_metadata()?,
+                &command,
+                &codec
+            )
+            .await?,
+        CommandOutcome::Rejected("target-not-found")
+    ));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "both typed surfaces must decode one shared result without another handler call"
+    );
+    local
+        .dispatch(request("generic-interop-repair", "target", "create")?)
+        .await?;
+    assert_eq!(processor.process(&encoded).await?, response);
+    assert!(matches!(
+        executor
+            .execute_with_rejection_codec(
+                &Handler(calls.clone()),
+                encoded.validated_execution_metadata()?,
+                &command,
+                &codec
+            )
+            .await?,
+        CommandOutcome::Rejected("target-not-found")
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(store.load(&stream("target")?).await?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn generic_domain_rejection_replays_in_processor_with_explicit_mapping_codec() -> TestResult {
+    generic_processor_interop(true).await
+}
+#[tokio::test]
+async fn processor_rejection_replays_in_generic_executor_with_explicit_mapping_codec() -> TestResult
+{
+    generic_processor_interop(false).await
+}
+
 #[tokio::test]
 async fn real_nats_completed_outcome_store_and_session_conformance() -> TestResult {
     let fixture = Fixture::new("92-store-conformance").await?;

@@ -251,6 +251,25 @@ impl CommandExecutionMetadata {
         self
     }
 
+    /// A conservative identity for the direct Rust API when no external command
+    /// descriptor exists. Refactoring the Rust type changes this identity; durable
+    /// application protocols should supply a stable explicit `OutcomeEvidence`.
+    #[must_use]
+    pub fn with_default_outcome_evidence<Command>(mut self) -> Self {
+        if self.outcome_evidence.is_none() {
+            self.outcome_evidence = Some(crate::OutcomeEvidence {
+                authority_scope: None,
+                created_at_millis: None,
+                fingerprint_version: 1,
+                command_type: format!("rust:{}", std::any::type_name::<Command>()),
+                command_schema: 1,
+                events_caused_by_command: false,
+                original_causation: self.causation_id.as_ref().map(|id| id.as_str().to_owned()),
+            });
+        }
+        self
+    }
+
     pub const fn outcome_evidence(&self) -> Option<&crate::OutcomeEvidence> {
         self.outcome_evidence.as_ref()
     }

@@ -227,6 +227,16 @@ pub struct EncodedCommand {
 }
 
 impl EncodedCommand {
+    /// Pure, full-envelope execution evidence for direct generic execution against
+    /// the same authority as a processor. Supply its matching typed command and a
+    /// compatible rejection codec; this does not dispatch or authorize the command.
+    pub fn validated_execution_metadata(
+        &self,
+    ) -> Result<CommandExecutionMetadata, CommandProcessorError> {
+        let context = BoundedContextName::new(self.address().context())
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+        validate_command(self, &context).map(|(_, metadata, _)| metadata)
+    }
     /// Maintenance-only evidence-bound legacy import. No authority is inferred from hashes.
     pub fn legacy_rejection_transaction(
         &self,

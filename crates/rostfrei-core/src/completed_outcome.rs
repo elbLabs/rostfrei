@@ -111,9 +111,15 @@ impl CommandCompletion {
                 "unsupported completed outcome version",
             ));
         }
-        if let Some(evidence) = &self.evidence {
-            evidence.validate()?;
-        }
+        self.evidence
+            .as_ref()
+            .ok_or_else(|| {
+                codec_error(
+                    EventCodecErrorKind::InvalidEnvelope,
+                    "completed decision requires command type/schema/fingerprint evidence",
+                )
+            })?
+            .validate()?;
         if let Some(rejection) = &self.rejection {
             rejection.validate()?;
         }
@@ -224,6 +230,12 @@ impl<R> RejectionCodec<R> for UnconfiguredRejectionCodec {
 pub fn validate_completed_transaction(
     transaction: &EventTransaction,
 ) -> Result<(), EventStoreError> {
+    if transaction.completion().is_none() {
+        return Err(EventStoreError::new(
+            EventStoreErrorKind::InvalidRequest,
+            "commit_outcome requires an explicit completed decision; use append_transaction for legacy acceptance",
+        ));
+    }
     if let Some(completion) = transaction.completion() {
         completion.validate().map_err(|error| {
             EventStoreError::new(EventStoreErrorKind::InvalidRequest, error.to_string())

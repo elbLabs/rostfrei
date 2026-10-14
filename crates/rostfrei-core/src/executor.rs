@@ -629,6 +629,7 @@ where
         Command: Sync,
     {
         let metadata = metadata
+            .with_default_outcome_evidence::<Command>()
             .normalized()
             .map_err(|error| invalid_request(error.to_string()))?;
         let mut execution =
@@ -704,6 +705,7 @@ where
         Command: Sync,
     {
         let metadata = metadata
+            .with_default_outcome_evidence::<Command>()
             .normalized()
             .map_err(|error| invalid_request(error.to_string()))?;
         if let Some(evidence) = metadata.outcome_evidence() {
@@ -1519,6 +1521,7 @@ mod tests {
                 metadata.with_correlation_id(CorrelationId::new("earlier-operation").unwrap()),
             ),
         ] {
+            let expected = expected.with_default_outcome_evidence::<CommandExecutionMetadata>();
             let store = InMemoryEventStore::new();
             let executor = CommandExecutor::new(store.clone());
             let outcome = executor

@@ -46,11 +46,13 @@ macro_rules! install_macro_support {
 }
 
 mod command_bus;
+mod command_rejection_codec;
 mod in_memory_messaging;
 mod integration_event;
 mod integration_event_bus;
 mod query_bus;
 mod read_model;
+pub use command_rejection_codec::MappedCommandRejectionCodec;
 
 pub use command_bus::{
     CommandBindingRegistrationError, CommandBus, CommandBusError, CommandBusErrorKind,

@@ -77,6 +77,14 @@ For direct generic handlers, replace rejection-capable `execute(...)` calls with
 `execute_with_rejection_codec(..., &your_codec)`; codec IDs/versions are durable
 contracts and upgrades must retain readers for stored versions. Processor bindings
 use their existing rejection mapper and the framework's explicit v1 mapped codec.
+For direct generic execution of the same externally encoded command, use
+`encoded.validated_execution_metadata()` and `MappedCommandRejectionCodec::new(
+forward_mapper, reverse_decoder)`. That bridge is compatible with the processor's
+stored mapped rejection, in both directions. Without explicit metadata the direct
+Rust API records a `rust:<type_name>` schema-1 identity; type refactoring changes
+that identity, so use stable explicit evidence for long-lived application protocols.
+`commit_outcome` refuses missing decision/command evidence; legacy acceptance uses
+its separate `append_transaction` API and old receipt representation.
 Update exhaustive execution/simulation error matches for rejection-mapping and
 rejected-persistence errors; technical failures still expose the #85 typed source.
 
