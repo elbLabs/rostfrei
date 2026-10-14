@@ -8,15 +8,15 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 
 | Term | Definition | Aliases to avoid |
 | --- | --- | --- |
-| **Aggregate** | A business consistency boundary whose state is reconstructed from its own history and whose command handlers make deterministic decisions. | Entity, record, model |
-| **Aggregate identity** | The pair of aggregate type and aggregate ID that uniquely identifies one aggregate. | Key, record ID |
+| **Aggregate** | A business consistency boundary whose state is reconstructed from its own history and whose domain behavior makes deterministic decisions. | Entity, record, model |
+| **Aggregate identity** | A bounded-context-qualified aggregate type and aggregate ID that identify one aggregate within an application. | Key, record ID |
 | **Aggregate state** | The transient state produced by replaying an aggregate stream to a selected version. | Stored row, source record |
 | **Command** | A self-contained request for a bounded-context use case to make a business decision. | Event, message, action |
-| **Decision** | The deterministic outcome of handling a command: a rejection or an ordered set of new domain events. | Side effect, transaction |
+| **Decision** | The deterministic outcome of handling a command: rejection or acceptance with zero or more new domain events. | Side effect, transaction |
 | **Domain policy** | A reusable, pure interpretation of domain facts that returns a business outcome without recording events or changing state. | Decision, rule service |
 | **Rejection** | An expected business outcome that declines a command and appends no domain events. | Error, exception, failure |
 | **Domain event** | A private, meaningful fact that occurred in one aggregate and forms part of its authoritative history. | Message, notification, integration event |
-| **Query** | A request to read state that never appends to an aggregate stream. | Read command, lookup command |
+| **Query** | A read-only request that does not mutate application state. | Read command, lookup command |
 
 ## Operational scope
 
@@ -33,8 +33,8 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | --- | --- | --- |
 | **Aggregate stream** | The permanent, ordered history of one aggregate identity. | Topic, queue, KV record, JetStream stream |
 | **Stream version** | The one-based position of a domain event in an aggregate stream, with version zero representing no stream. | Revision, broker sequence |
-| **Commit** | The atomic, non-empty ordered set of domain events produced by one accepted operation. | Message batch, transaction record |
-| **Event transaction** | One atomic operation containing ordered writing or read-only participants from one or more aggregate streams in the same event store; at least one participant writes. | Distributed transaction, message batch |
+| **Commit** | The non-empty ordered set of domain events appended atomically to one aggregate stream by an accepted operation. | Message batch, transaction record |
+| **Event transaction** | One atomic command acceptance containing a receipt and zero or more writing or read-only aggregate participants in the same event store. | Distributed transaction, message batch |
 | **Operation** | One identified request to execute a bounded-context command, including the stable identity used for exact retry. | Delivery attempt, consumer attempt |
 | **Replay** | Reconstruction of aggregate state by applying its domain events in stream-version order. | Load row, restore snapshot |
 | **EventStore** | The port that loads aggregate streams and atomically appends a commit or supported event transaction at expected versions. | Repository, KV store, message publisher |
@@ -59,15 +59,15 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | **Domain catalog** | A versioned description of the commands, domain events, errors, and schemas exposed by a target application. | Registry, domain model |
 | **Test definition** | A portable specification of setup, commands, and expectations independent of any particular runner or UI. | Test case, script |
 | **Test repository** | The filesystem-backed, normally source-controlled collection of test definitions available to Tracer. | Test database, run history |
-| **Test revision** | A source-controlled version of a test definition identified by its repository revision. | Database revision, draft event |
+| **Test revision** | An identified version of a test definition; the filesystem repository uses a content fingerprint. | Database revision, draft event |
 | **Test run** | One execution of a test revision against one target environment. | Test, operation |
 | **Expectation** | A condition that correlated evidence must satisfy before a deadline. | Assertion, predicted event |
 | **Test report** | The result returned by a test run, optionally exported as a CI artifact rather than retained by Tracer. | Operation result, trace history |
 | **Correlation** | The identity shared by commands and events belonging to one business flow. | Test ID, operation ID |
 | **Causation** | The direct parent relationship explaining which message caused another message. | Correlation, ordering |
-| **Correlation trace** | The ordered commands, domain events, integration events, and outcomes observed for one correlation. | Event log, aggregate stream |
+| **Correlation trace** | The commands, domain events, integration events, and outcomes observed for one correlation. Observation order alone does not establish causality. | Event log, aggregate stream |
 | **Test environment** | An isolated target system in which test runs may append state without affecting production. | Test mode, simulation |
-| **Simulation** | A local command decision evaluated without appending its resulting domain events. | Test run, dry-run dispatch |
+| **Simulation (Preview)** | A command decision evaluated against test history without appending its resulting domain events. | Test run, dry-run dispatch |
 | **Production dispatch** | An explicitly authorized command execution against the production target system. | Test, simulation |
 
 ## Relationships
@@ -79,55 +79,23 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 - A **command** asks one **bounded context** to execute one use case and may coordinate one or more **aggregates**.
 - A **decision** may consult one or more **domain policies**, but a policy does not itself accept or reject a command or record domain events.
 - A **rejection** produces no **commit**.
-- An accepted **operation** that produces domain events creates exactly one **event transaction**.
+- An accepted **operation** persists an **event transaction**, including when it produces no domain events.
 - Each writing participant in an **event transaction** contributes one **commit**.
 - A **commit** contains one or more ordered **domain events**.
-- An **event transaction** contains one or more **commits** and may guard other participating **aggregate streams** without appending to them.
+- An **event transaction** contains zero or more **commits** and may guard participating **aggregate streams** without appending to them. A receipt-only transaction loads no aggregates.
 - **Replay** reconstructs **aggregate state** at a selected **stream version**.
 - A **query** reads state and never appends a **commit**.
 - An **integration event** is a public contract separate from the private **domain events** from which it may be derived.
 - An **integration-command mapping** produces exactly one **command**; independent mappings use independent durable identities.
 - A **projection** may consume committed **domain events**, but it does not replace the **aggregate stream** as authoritative history.
-- A **test repository** contains zero or more **test definitions**, whose **test revisions** are supplied by source control.
+- A **test repository** contains zero or more **test definitions** and identifies their **test revisions**.
 - One **test run** executes exactly one **test revision** against one **test environment**.
 - One **test run** produces exactly one terminal **test report**.
 - A **test report** evaluates its **expectations** against a **correlation trace**.
 - A **correlation** groups a business flow, while **causation** identifies direct parent-child relationships within that flow.
 - The **domain catalog** describes possible contracts; a **correlation trace** records behavior that actually occurred.
 
-## Example dialogue
-
-> **Developer:** "When `ApproveInvoice` arrives, do we publish an event directly?"
->
-> **Domain expert:** "No. `ApproveInvoice` is a **command** asking the invoice
-> **aggregate** to make a **decision**. If accepted, the decision records an
-> `InvoiceApproved` **domain event** in one **commit**."
->
-> **Developer:** "What do we call a reusable eligibility rule used by that
-> decision and by a query?"
->
-> **Domain expert:** "That is a **domain policy**. It interprets domain facts
-> without making the command decision or changing state."
->
-> **Developer:** "How do we know the invoice's state after that commit?"
->
-> **Domain expert:** "We **replay** its **aggregate stream** through the new
-> **stream version**. We do not load aggregate state from a KV record."
->
-> **Developer:** "Can another bounded context consume `InvoiceApproved`?"
->
-> **Domain expert:** "Not as a public contract. Application code derives a
-> separately versioned **integration event** after the private domain event has
-> committed."
->
-> **Developer:** "Can I keep that complete behavior as a regression test?"
->
-> **Domain expert:** "Yes. Save a **test definition** from the **correlation
-> trace**, publish an immutable **test revision**, and execute a **test run** in
-> the **test environment**. Its **test report** records which **expectations**
-> the observed flow satisfied."
-
-## Flagged ambiguities
+## Terms to distinguish
 
 - **Event** is ambiguous. Use **domain event** for aggregate history and
   **integration event** for a public message contract.

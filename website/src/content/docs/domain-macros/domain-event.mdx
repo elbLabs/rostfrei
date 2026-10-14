@@ -1,10 +1,6 @@
 # `DomainEvent`
 
-Events describe facts, not owners. An event owns intrinsic wire metadata. AggregateEvents supplies its aggregate membership and runtime codec. Keep the payload focused on the fact that occurred.
-
-- Schema version 1 by default
-- Serializable Rust payload
-- Membership defined once
+Declares a domain event's ID, label, fields, and schema version (1 by default). The payload describes a fact recorded in aggregate history. Derive serialization separately and include the type in the aggregate's [`AggregateEvents`](/docs/domain-macros/aggregate-events) enum.
 
 **Placement:** [Aggregate action](/docs/project-structure/aggregate-action) — `event.rs`.
 

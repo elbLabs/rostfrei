@@ -37,7 +37,7 @@ export function ProjectStructureSection() {
       <div className="mx-auto max-w-7xl">
         <div className="mb-8 max-w-3xl sm:mb-10">
           <p className="mb-3 font-mono text-xs font-semibold tracking-[0.18em] text-[#9a5729] uppercase">
-            A model you can navigate
+            Project structure
           </p>
           <h2
             id="project-structure-title"
@@ -46,10 +46,10 @@ export function ProjectStructureSection() {
             Make ownership visible. Keep it checked.
           </h2>
           <p className="mt-5 max-w-2xl text-base leading-7 text-[#625b51] sm:text-lg">
-            Find the rule where you expect it. Every domain concept and behavior
-            has a predictable home, and the structure checker validates those
-            ownership relationships alongside the compiled model. Explore a
-            representative project below.
+            Explore the directory conventions for declarations and behavior.
+            <code>cargo rostfrei check</code> validates their placement and
+            implementation targets. This tree shows selected modules from the
+            bike-rental example.
           </p>
         </div>
 

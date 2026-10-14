@@ -48,7 +48,7 @@ const rentalStatus = directory(
   "src/domain/bike_rental/rental_fleet/bicycle/rental_status",
   {
     role: "Lifecycle",
-    summary: "Keeps executable state topology beside Bicycle.",
+    summary: "Declares Bicycle states and legal transitions.",
     allowed: ["lifecycle.rs", "transition.rs", "mod.rs"],
     guarantee:
       "Lifecycle state and transition IDs remain stable without mixing business policy into the Entity file.",
@@ -64,7 +64,7 @@ const rentalStatus = directory(
           "Declares the owner-independent lifecycle, initial state, and state metadata.",
         allowed: ["One EntityLifecycle enum", "State metadata", "Imports"],
         guarantee:
-          "The authoritative stored state and its initial value are reviewable together.",
+          "The lifecycle enum declares one initial state and an ID for each state.",
       }
     ),
     file(
@@ -218,7 +218,7 @@ const chooseRegistrationNumberFormat = directory(
   {
     role: "Value Object policy",
     summary: "Chooses one closed Registration Number format outcome.",
-    allowed: ["policy.rs", "evaluate.rs", "mod.rs"],
+    allowed: ["policy.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
     guarantee:
       "The policy implementation must directly target RegistrationNumber.",
   },
@@ -317,7 +317,7 @@ const eligibilityPolicy = directory(
   {
     role: "Entity policy capability",
     summary:
-      "Composes lifecycle topology and condition policy into one business outcome.",
+      "Evaluates rental status and bicycle condition to determine eligibility.",
     allowed: ["policy.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
     guarantee:
       "Eligibility remains pure and reusable by commands and queries without duplicating lifecycle rules.",
@@ -329,7 +329,7 @@ const eligibilityPolicy = directory(
       "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/policy.rs",
       {
         role: "Policy contract",
-        summary: "Declares a parameter-free policy query on Bicycle.",
+        summary: "Declares the rental-eligibility policy on Bicycle.",
         allowed: [
           "One #[domain_policy] trait",
           "Its method signature",
@@ -345,15 +345,13 @@ const eligibilityPolicy = directory(
       "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/outcome.rs",
       {
         role: "Policy outcome",
-        summary:
-          "Declares the closed, ordered vocabulary returned by the policy.",
+        summary: "Declares the possible rental-eligibility outcomes.",
         allowed: [
           "One PolicyOutcome enum",
           "Tagged variants",
           "Ordinary payload fields",
         ],
-        guarantee:
-          "Outcome IDs and labels stay stable while every result remains exhaustively handled.",
+        guarantee: "The enum lets callers match every outcome exhaustively.",
       }
     ),
     file(
@@ -367,7 +365,7 @@ const eligibilityPolicy = directory(
         allowed: [
           "One matching trait implementation",
           "Pure lifecycle evaluation",
-          "Condition policy",
+          "Bicycle condition checks",
           "Imports",
         ],
         guarantee:
@@ -487,10 +485,10 @@ const rentBicycle = directory(
       "src/domain/bike_rental/rental_fleet/rent_bicycle/command.rs",
       {
         role: "Command",
-        summary: "Defines the serializable application-boundary request.",
+        summary: "Declares a Bike Rental command with fleet and bicycle IDs.",
         allowed: ["One Command declaration", "Payload fields", "Imports"],
         guarantee:
-          "Runtime registration, not authored owner metadata, connects the Command to its handler.",
+          "The command declares its bounded context; runtime registration selects its handler.",
       }
     ),
     file(
@@ -499,10 +497,10 @@ const rentBicycle = directory(
       "src/domain/bike_rental/rental_fleet/rent_bicycle/handler.rs",
       {
         role: "Command handler",
-        summary: "Routes the Command into the aggregate action implementation.",
+        summary: "Loads the fleet and calls its rental action.",
         allowed: ["One CommandHandler implementation", "Imports"],
         guarantee:
-          "Aggregate and rejection relationships are compiler-enforced by the handler trait.",
+          "The handler declares its rejection type and loads participants through CommandExecution.",
       }
     ),
     file(
@@ -577,7 +575,7 @@ const availabilityQuery = directory(
           "Imports",
         ],
         guarantee:
-          "Read behavior remains callable Rust without group or model inventory plumbing.",
+          "The query is a directly callable trait on the aggregate root.",
       }
     ),
     file(
@@ -604,7 +602,8 @@ const availabilityQuery = directory(
         role: "Query view",
         summary: "Defines the ordinary Rust view returned by the Query.",
         allowed: ["Ordinary output DTOs", "View-specific helpers"],
-        guarantee: "A returned view is not mislabeled as a Value Object.",
+        guarantee:
+          "Output types describe the query result without domain-value metadata.",
       }
     ),
   ]
@@ -635,7 +634,7 @@ const fleetInvariant = directory(
           "Imports",
         ],
         guarantee:
-          "The rule has one stable name without plural reference plumbing.",
+          "The invariant has a semantic ID and an application-defined validation signature.",
       }
     ),
     file(
@@ -703,8 +702,7 @@ const rentalFleet = directory(
     ),
     file("root", "root.rs", "src/domain/bike_rental/rental_fleet/root.rs", {
       role: "Aggregate root Entity",
-      summary:
-        "Defines persisted Rental Fleet state and its identity accessor.",
+      summary: "Defines Rental Fleet state reconstructed from domain events.",
       allowed: [
         "One Entity declaration",
         "Its EntityDefinition implementation",
@@ -759,26 +757,26 @@ const rentalFleet = directory(
   ]
 )
 
-const rebalanceFleet = directory(
-  "rebalance-fleet",
-  "rebalance_fleet",
-  "src/domain/bike_rental/fleet_planning/rebalance_fleet",
+const transferBicycle = directory(
+  "transfer-bicycle",
+  "transfer",
+  "src/domain/bike_rental/bicycle_transfer/transfer",
   {
     role: "Domain service action",
     summary:
-      "Coordinates a fleet-rebalancing operation over domain objects supplied by the caller.",
+      "Transfers a bicycle between source and destination fleets supplied by the handler.",
     allowed: ["action.rs", "execute.rs", "mod.rs"],
     guarantee:
-      "The action implementation targets FleetPlanning without introducing infrastructure into the service.",
+      "The handler loads both fleets; the domain service validates and changes them.",
   },
   [
     file(
-      "rebalance-fleet-action",
+      "transfer-bicycle-action",
       "action.rs",
-      "src/domain/bike_rental/fleet_planning/rebalance_fleet/action.rs",
+      "src/domain/bike_rental/bicycle_transfer/transfer/action.rs",
       {
         role: "Domain service action contract",
-        summary: "Declares RebalanceFleetAction and its semantic ID.",
+        summary: "Declares BicycleTransferAction and its semantic ID.",
         allowed: [
           "One #[domain_action] trait",
           "Its method signature",
@@ -789,12 +787,12 @@ const rebalanceFleet = directory(
       }
     ),
     file(
-      "rebalance-fleet-execute",
+      "transfer-bicycle-execute",
       "execute.rs",
-      "src/domain/bike_rental/fleet_planning/rebalance_fleet/execute.rs",
+      "src/domain/bike_rental/bicycle_transfer/transfer/execute.rs",
       {
         role: "Domain service action implementation",
-        summary: "Implements rebalancing directly for FleetPlanning.",
+        summary: "Implements validation and transfer for BicycleTransfer.",
         allowed: [
           "One matching trait implementation",
           "Private helpers",
@@ -807,76 +805,28 @@ const rebalanceFleet = directory(
   ]
 )
 
-const assessDemand = directory(
-  "assess-demand",
-  "assess_demand",
-  "src/domain/bike_rental/fleet_planning/assess_demand",
-  {
-    role: "Domain service policy",
-    summary:
-      "Assesses supplied demand facts without mutating state or accessing infrastructure.",
-    allowed: ["policy.rs", "outcome.rs", "evaluate.rs", "mod.rs"],
-    guarantee:
-      "The policy implementation targets FleetPlanning and remains independently reusable.",
-  },
-  [
-    file(
-      "assess-demand-policy",
-      "policy.rs",
-      "src/domain/bike_rental/fleet_planning/assess_demand/policy.rs",
-      {
-        role: "Domain service policy contract",
-        summary: "Declares AssessDemandPolicy and its semantic ID.",
-        allowed: [
-          "One #[domain_policy] trait",
-          "Its method signature",
-          "Imports",
-        ],
-        guarantee:
-          "The policy contract stays separate from its outcome vocabulary.",
-      }
-    ),
-    file(
-      "assess-demand-evaluate",
-      "evaluate.rs",
-      "src/domain/bike_rental/fleet_planning/assess_demand/evaluate.rs",
-      {
-        role: "Domain service policy implementation",
-        summary: "Evaluates supplied demand facts directly for FleetPlanning.",
-        allowed: [
-          "One matching trait implementation",
-          "Private helpers",
-          "Imports",
-        ],
-        guarantee:
-          "The evaluator remains pure and cannot silently attach to another domain owner.",
-      }
-    ),
-  ]
-)
-
-const fleetPlanning = directory(
-  "fleet-planning",
-  "fleet_planning",
-  "src/domain/bike_rental/fleet_planning",
+const bicycleTransfer = directory(
+  "bicycle-transfer",
+  "bicycle_transfer",
+  "src/domain/bike_rental/bicycle_transfer",
   {
     role: "Domain service",
-    summary:
-      "Represents stateless domain behavior that does not belong to one Entity or Aggregate.",
+    summary: "Coordinates a bicycle transfer between two fleet aggregates.",
     allowed: [
       "service.rs",
+      "command.rs, handler.rs, and rejection.rs",
       "Action directories",
       "Policy directories",
       "mod.rs",
     ],
     guarantee:
-      "DomainServiceDefinition binds the service to Bike Rental while its capabilities remain explicit ordinary traits.",
+      "DomainServiceDefinition binds the service to Bike Rental; the runtime commits both fleets atomically.",
   },
   [
     file(
       "service",
       "service.rs",
-      "src/domain/bike_rental/fleet_planning/service.rs",
+      "src/domain/bike_rental/bicycle_transfer/service.rs",
       {
         role: "Domain service declaration",
         summary:
@@ -889,8 +839,7 @@ const fleetPlanning = directory(
           "Context ownership is compiler-checked without implicit behavior attachments.",
       }
     ),
-    rebalanceFleet,
-    assessDemand,
+    transferBicycle,
   ]
 )
 
@@ -919,7 +868,7 @@ const bikeRental = directory(
       guarantee: "The bounded context has one semantic source of truth.",
     }),
     rentalFleet,
-    fleetPlanning,
+    bicycleTransfer,
   ]
 )
 

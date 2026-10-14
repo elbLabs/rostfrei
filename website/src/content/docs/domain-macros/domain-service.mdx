@@ -1,10 +1,6 @@
 # `DomainService`
 
-Give stateless cross-object domain behavior an explicit owner. The derive names the service marker; `DomainServiceDefinition` connects it to one bounded context. Focused Actions and Domain Policies remain ordinary traits in child capability directories.
-
-- Non-generic unit struct
-- Context relationship is explicit
-- No implicit capabilities or infrastructure
+Adds an ID and label to a stateless service marker. Implement `DomainServiceDefinition` to select its bounded context. Child action and policy traits express behavior over domain objects supplied by the caller; application handlers load and persist those objects.
 
 **Placement:** [Domain service](/docs/project-structure/domain-service) — `service.rs`.
 

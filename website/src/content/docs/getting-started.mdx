@@ -36,7 +36,7 @@ Use [Project structure](/docs/project-structure) to understand where those conce
 
 ## 3. Run the application with NATS
 
-For the full flow, you need Docker with Compose and the NATS-backed example. Follow the [example's local startup instructions](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental#nats-backed-tracer) for the supplied broker, resource limits, and local Tracer configuration.
+For the full flow, you need Docker with Compose and the NATS-backed example. Follow the [example's local startup instructions](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental#run-locally) for the supplied broker, resource limits, and local Tracer configuration.
 
 The example starts Tracer at `http://127.0.0.1:1309` by default. It creates separate normal and isolated Test resources for the same application and seeds a demonstration fleet.
 
@@ -64,7 +64,7 @@ Open the local URL printed by Vite. Studio proxies its API requests to the local
 
 Choose `RentBicycle` and an isolated Test instance. Preview the decision, then use Test to inspect the committed domain event and subsequent integration event. The seeded example includes a serviceable bicycle and one that requires maintenance, so you can explore both acceptance and rejection.
 
-Studio displays clearly labeled demo data when Tracer is unavailable. Check the connection state when you want to observe the running application.
+Studio requires a running Tracer backend. If it cannot connect, check the target URL and token in the connection instructions above.
 
 ## Explore with a coding agent
 
@@ -72,13 +72,13 @@ The compiled model and predictable source structure give an agent concrete place
 
 > Explain how `RentBicycle` works. Identify its bounded context, find the rental eligibility rule and its implementation, and describe the accepted and rejected outcomes. Cite the source files you used.
 
-Compare that explanation with the contracts and behavior you explored above. For a connected workflow, the [example's agent-first Tracer guide](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental#agent-first-tracer-workflow) shows how to discover commands and inspect their outcomes through Tracer. Use Preview to explore a decision; Test publication changes isolated Test state.
+Compare that explanation with the contracts and behavior you explored above. For a connected workflow, the [example's agent workflow](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental#agent-workflow) shows how to discover commands and inspect their outcomes through Tracer. Use Preview to explore a decision; Test publication changes isolated Test state.
 
 ## Keep exploring
 
 - [Subjects and streams](/docs/messaging/subjects): trace a command through the NATS-backed runtime.
 - [Domain macros](/docs/domain-macros): declare types, behavior contracts, and model composition.
 - [Project structure](/docs/project-structure): give each concept and capability a predictable home.
-- [Development guide](https://github.com/elbLabs/rostfrei#development): run the full test suite and work on the framework.
+- [Development guide](https://github.com/elbLabs/rostfrei/blob/main/docs/development.md): run the full test suite and work on the framework.
 
 Rostfrei is currently **alpha**. This guide follows the repository checkout so the code, example, and documentation can be evaluated together.
