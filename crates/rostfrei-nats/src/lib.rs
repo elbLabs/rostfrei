@@ -54,6 +54,7 @@ pub use provisioning::{
 };
 pub use publish::{CORRELATION_ID_HEADER, NatsPublishAck, NatsPublisher};
 mod response_publication;
+mod response_storage;
 pub use quarantine::NatsQuarantineReader;
 pub use query::{NatsQueryRequester, NatsQueryServer, NatsQueryServerConfig};
 pub use read_model::NatsReadModelStore;

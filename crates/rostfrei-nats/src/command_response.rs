@@ -73,9 +73,9 @@ impl NatsCommandResponseReader {
                 .await.map_err(|_| read_error(CommandResponseReadErrorKind::Unavailable))?;
             let mut removed = false;
             loop {
-            let stored = match stream.get_last_raw_message_by_subject(address.as_str()).await {
-                Ok(stored) => stored,
-                Err(error) if matches!(error.kind(), jetstream::stream::LastRawMessageErrorKind::NoMessageFound) => return Ok(removed),
+            let stored = match crate::response_storage::latest(&self.context, self.topology.command_response_stream().as_str(), address.as_str()).await {
+                Ok(Some(stored)) => stored,
+                Ok(None) => return Ok(removed),
                 Err(_) => return Err(read_error(CommandResponseReadErrorKind::Unavailable)),
             };
             let response = decode_validated_stored_response(
@@ -114,11 +114,14 @@ impl CommandResponseReader for NatsCommandResponseReader {
                 .get_stream(self.topology.command_response_stream().as_str())
                 .await
                 .map_err(|_| read_error(CommandResponseReadErrorKind::Unavailable))?;
-            match stream
-                .get_last_raw_message_by_subject(address.as_str())
-                .await
+            match crate::response_storage::latest(
+                &self.context,
+                self.topology.command_response_stream().as_str(),
+                address.as_str(),
+            )
+            .await
             {
-                Ok(stored) => decode_validated_stored_response(
+                Ok(Some(stored)) => decode_validated_stored_response(
                     &stored,
                     self.topology.command_response_stream().as_str(),
                     stream.cached_info().created.unix_timestamp_nanos(),
@@ -127,14 +130,7 @@ impl CommandResponseReader for NatsCommandResponseReader {
                     expected_command_message_id,
                 )
                 .map(Some),
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        jetstream::stream::LastRawMessageErrorKind::NoMessageFound
-                    ) =>
-                {
-                    Ok(None)
-                }
+                Ok(None) => Ok(None),
                 Err(_) => Err(read_error(CommandResponseReadErrorKind::Unavailable)),
             }
         })
@@ -159,11 +155,14 @@ impl CommandResponseReader for NatsCommandResponseReader {
                 .map_err(|_| read_error(CommandResponseReadErrorKind::Unavailable))?;
             let mut poll_interval = self.poll_interval;
             loop {
-                match stream
-                    .get_last_raw_message_by_subject(address.as_str())
-                    .await
+                match crate::response_storage::latest(
+                    &self.context,
+                    self.topology.command_response_stream().as_str(),
+                    address.as_str(),
+                )
+                .await
                 {
-                    Ok(stored) => {
+                    Ok(Some(stored)) => {
                         return decode_validated_stored_response(
                             &stored,
                             self.topology.command_response_stream().as_str(),
@@ -173,12 +172,7 @@ impl CommandResponseReader for NatsCommandResponseReader {
                             expected_command_message_id,
                         );
                     }
-                    Err(error)
-                        if matches!(
-                            error.kind(),
-                            jetstream::stream::LastRawMessageErrorKind::NoMessageFound
-                        ) =>
-                    {
+                    Ok(None) => {
                         sleep(poll_interval).await;
                         poll_interval = next_poll_interval(poll_interval);
                     }

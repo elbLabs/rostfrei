@@ -286,4 +286,109 @@ async fn legacy_business_reader_still_allows_absent_outer_correlation() -> TestR
     Ok(())
 }
 
+#[tokio::test]
+async fn invalid_technical_correlation_is_refused_by_reads_redrive_and_publication_reconciliation()
+-> TestResult {
+    let f = Fixture::new("protocol-correlation-common").await?;
+    let reader = NatsCommandResponseReader::new(f.js.clone(), f.messaging.topology().clone());
+    for mode in ["absent", "contradictory", "duplicate"] {
+        let c = encoded(&f, mode, "target")?;
+        let failure = ExecutionFailure::Store(StoreFailureKind::CorruptHistory);
+        let response = CommandResponse::execution_failed(
+            rostfrei::command_technical_response_message_id(c.message_id(), failure)?,
+            c.message_id().clone(),
+            c.address().clone(),
+            c.operation_id().clone(),
+            c.correlation_id().clone(),
+            failure,
+        )?;
+        let message = OutboundMessage::json(
+            c.response_address()?,
+            response.message_id().clone(),
+            &response,
+        )?;
+        let prepared = f
+            .publisher()
+            .prepare_command_response(message.clone(), Duration::from_secs(2))
+            .await?;
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Content-Type", "application/json");
+        headers.insert("Nats-Msg-Id", prepared.publication_message_id().as_str());
+        headers.insert(
+            DIAGNOSTIC_TRANSITION_HEADER,
+            serde_json::to_string(prepared.transition().ok_or("missing token")?)?,
+        );
+        if mode != "absent" {
+            headers.insert(
+                CORRELATION_ID_HEADER,
+                if mode == "contradictory" {
+                    "other-correlation"
+                } else {
+                    c.correlation_id().as_str()
+                },
+            );
+        }
+        if mode == "duplicate" {
+            headers.append(CORRELATION_ID_HEADER, c.correlation_id().as_str());
+        }
+        let ack =
+            f.js.publish_with_headers(
+                c.response_address()?.to_string(),
+                headers,
+                message.payload().to_vec().into(),
+            )
+            .await?
+            .await?;
+        let found = reader
+            .find_command_response(
+                &c.response_address()?,
+                c.operation_id(),
+                c.message_id(),
+                Duration::from_secs(2),
+            )
+            .await;
+        println!("technical correlation common validation mode={mode}: {found:?}");
+        assert!(found.is_err());
+        assert!(
+            reader
+                .read_command_response(
+                    &c.response_address()?,
+                    c.operation_id(),
+                    c.message_id(),
+                    Duration::from_secs(2)
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            reader
+                .remove_blocked_diagnostic_for_redrive(&c, Duration::from_secs(2))
+                .await
+                .is_err()
+        );
+        assert!(
+            f.publisher()
+                .prepare_command_response(message.clone(), Duration::from_secs(2))
+                .await
+                .is_err()
+        );
+        assert!(
+            f.publisher()
+                .publish_prepared_command_response(&prepared, Duration::from_secs(2))
+                .await
+                .is_err()
+        );
+        let stream =
+            f.js.get_stream(f.messaging.topology().command_response_stream().as_str())
+                .await?;
+        let retained = stream.get_raw_message(ack.sequence).await?;
+        assert_eq!(retained.payload.as_ref(), message.payload());
+        assert_eq!(
+            retained.sequence, ack.sequence,
+            "invalid evidence was retained, never deleted during validation"
+        );
+    }
+    Ok(())
+}
+
 rostfrei::install_macro_support!();

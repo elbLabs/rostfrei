@@ -131,6 +131,11 @@ pub fn validate_stored_publication(
         }
         return Ok(None);
     }
+    // The new technical protocol requires one matching outer correlation value.
+    // Legacy business readers keep their historical optional-header contract.
+    if one_header(headers, CORRELATION_ID_HEADER)? != Some(response.correlation_id().as_str()) {
+        return Err(NatsError::IdentityConflict);
+    }
     validate_technical_logical_identity(response)?;
     let encoded =
         one_header(headers, DIAGNOSTIC_TRANSITION_HEADER)?.ok_or(NatsError::InvalidMessage)?;
@@ -179,7 +184,12 @@ pub async fn prepare(
             .map_err(|_| NatsError::StreamNotFound)?;
         let info = stream.cached_info();
         let created = info.created.unix_timestamp_nanos();
-        let stored = find(&stream, message.address().as_str()).await?;
+        let stored = crate::response_storage::latest(
+            context,
+            stream_name.as_str(),
+            message.address().as_str(),
+        )
+        .await?;
         let predecessor = stored.as_ref().map_or(0, |value| value.sequence);
         let generation = info.state.last_sequence.max(predecessor);
         let mut publication_id = message.message_id().clone();
@@ -272,7 +282,7 @@ pub async fn publish(
             return Err(NatsError::IdentityConflict);
         }
         if prepared.observed_exact {
-            return reconcile(&stream, prepared).await;
+            return reconcile(context, prepared).await;
         }
         let request = PublishMessage::build()
             .payload(prepared.message.payload().to_vec().into())
@@ -303,7 +313,7 @@ pub async fn publish(
                     duplicate: false,
                 })
             }
-            Ok(_) | Err(NatsError::PublishExpectation) => reconcile(&stream, prepared).await,
+            Ok(_) | Err(NatsError::PublishExpectation) => reconcile(context, prepared).await,
             Err(error) => Err(error),
         }
     })
@@ -312,12 +322,16 @@ pub async fn publish(
 }
 
 async fn reconcile(
-    stream: &jetstream::stream::Stream,
+    context: &jetstream::Context,
     prepared: &PreparedCommandResponse,
 ) -> Result<NatsPublishAck, NatsError> {
-    let stored = find(stream, prepared.message.address().as_str())
-        .await?
-        .ok_or(NatsError::PublishExpectation)?;
+    let stored = crate::response_storage::latest(
+        context,
+        prepared.stream.as_str(),
+        prepared.message.address().as_str(),
+    )
+    .await?
+    .ok_or(NatsError::PublishExpectation)?;
     let previous = decode_existing(
         &stored,
         prepared.stream.as_str(),
@@ -346,24 +360,6 @@ async fn reconcile(
         sequence: stored.sequence,
         duplicate: true,
     })
-}
-
-async fn find(
-    stream: &jetstream::stream::Stream,
-    subject: &str,
-) -> Result<Option<jetstream::message::StreamMessage>, NatsError> {
-    match stream.get_last_raw_message_by_subject(subject).await {
-        Ok(stored) => Ok(Some(stored)),
-        Err(error)
-            if matches!(
-                error.kind(),
-                jetstream::stream::LastRawMessageErrorKind::NoMessageFound
-            ) =>
-        {
-            Ok(None)
-        }
-        Err(_) => Err(NatsError::Publish),
-    }
 }
 
 fn decode_existing(
