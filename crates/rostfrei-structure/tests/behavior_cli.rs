@@ -14,7 +14,10 @@ use std::{
     net::{TcpListener, TcpStream},
     path::Path,
     process::{Command, Output},
-    sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -26,7 +29,19 @@ const TOKEN: &str = "test-only-rust-client-capability";
 const UNTRUSTED: &str = "untrusted-response-body";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Mode { Pass, Fail, PartialRun, PartialCapture, PartialFailedCapture, Malformed, Unknown, Redirect, UnsafeLink }
+enum Mode {
+    Pass,
+    Fail,
+    PartialRun,
+    PartialCapture,
+    PartialFailedCapture,
+    Malformed,
+    Unknown,
+    DisconnectRun,
+    HttpFailure,
+    Redirect,
+    UnsafeLink(&'static str),
+}
 
 struct Server {
     url: String,
@@ -54,12 +69,20 @@ impl Server {
                         total.fetch_add(1, Ordering::Relaxed);
                         respond(socket, mode, &count);
                     }
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(5)),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
                     Err(error) => panic!("fault server: {error}"),
                 }
             }
         });
-        Self { url, submissions, requests, stop, thread: Some(thread) }
+        Self {
+            url,
+            submissions,
+            requests,
+            stop,
+            thread: Some(thread),
+        }
     }
 }
 
@@ -71,30 +94,66 @@ impl Drop for Server {
 }
 
 fn respond(mut socket: TcpStream, mode: Mode, submissions: &AtomicUsize) {
-    socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
     let mut reader = BufReader::new(&mut socket);
     let mut first = String::new();
     reader.read_line(&mut first).unwrap();
     let path = first.split_whitespace().nth(1).unwrap().to_owned();
     let mut length = 0;
+    let mut authorization = None;
     loop {
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
-        if line == "\r\n" { break; }
+        if line == "\r\n" {
+            break;
+        }
         if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
             length = value.trim().parse().unwrap();
+        }
+        if line.to_ascii_lowercase().starts_with("authorization:") {
+            authorization = line
+                .split_once(':')
+                .map(|(_, value)| value.trim().to_owned());
         }
     }
     let mut payload = vec![0; length];
     reader.read_exact(&mut payload).unwrap();
+    assert_eq!(authorization, Some(format!("Bearer {TOKEN}")));
+    assert!(!first.contains(TOKEN));
+    if matches!(path.as_str(), "/validate" | "/run") {
+        assert!(first.starts_with("POST "));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&payload).unwrap(),
+            json!({"schemaVersion":2,"setup":{"fixture":"no-rental-fleets"}})
+        );
+    }
+    if path == "/run" && matches!(mode, Mode::DisconnectRun | Mode::HttpFailure) {
+        submissions.fetch_add(1, Ordering::Relaxed);
+        if mode == Mode::HttpFailure {
+            let body = format!("{TOKEN} {UNTRUSTED}");
+            write!(
+                socket,
+                "HTTP/1.1 503 Unavailable\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+        return;
+    }
     if mode == Mode::Redirect {
         write!(socket, "HTTP/1.1 302 Found\r\nLocation: http://untrusted.invalid/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
         return;
     }
-    let verdict = if matches!(mode, Mode::Fail | Mode::PartialFailedCapture) { "failed" } else { "passed" };
+    let verdict = if matches!(mode, Mode::Fail | Mode::PartialFailedCapture) {
+        "failed"
+    } else {
+        "passed"
+    };
     let value = match path.as_str() {
         "/catalog" => json!({"catalogVersion":1,"behavioralTest":{
-            "schemaHref":if mode == Mode::UnsafeLink { "//untrusted.invalid/schema" } else { "/schema" },
+            "schemaHref": match mode { Mode::UnsafeLink(link) => link, _ => "/schema" },
             "validateHref":"/validate","runHref":"/run"},"testScenario":{"fixturesHref":"/fixtures"}}),
         "/schema" => json!({"type":"object"}),
         "/validate" => json!({"valid":true}),
@@ -109,30 +168,54 @@ fn respond(mut socket: TcpStream, mode: Mode, submissions: &AtomicUsize) {
         _ => panic!("unexpected request {path}"),
     };
     let partial = (path == "/run" && mode == Mode::PartialRun)
-        || (path.starts_with("/series?") && matches!(mode, Mode::PartialCapture | Mode::PartialFailedCapture));
-    let body = if partial || (path == "/run" && mode == Mode::Malformed) { UNTRUSTED.to_owned() } else { value.to_string() };
+        || (path.starts_with("/series?")
+            && matches!(mode, Mode::PartialCapture | Mode::PartialFailedCapture));
+    let body = if partial || (path == "/run" && mode == Mode::Malformed) {
+        UNTRUSTED.to_owned()
+    } else {
+        value.to_string()
+    };
     let declared = body.len() + if partial { 100 } else { 0 };
     write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {declared}\r\nConnection: close\r\n\r\n{body}").unwrap();
 }
 
 fn invoke(server: &Server, directory: &Path) -> Output {
     let definition = directory.join("definition.json");
-    fs::write(&definition, json!({"schemaVersion":2,"setup":{"fixture":"no-rental-fleets"}}).to_string()).unwrap();
+    fs::write(
+        &definition,
+        json!({"schemaVersion":2,"setup":{"fixture":"no-rental-fleets"}}).to_string(),
+    )
+    .unwrap();
     Command::new(env!("CARGO_BIN_EXE_cargo-rostfrei"))
-        .args(["rostfrei", "test"]).arg(definition).arg("--output").arg(directory.join("evidence.json"))
-        .current_dir(directory).env("PATH", "")
-        .env("ROSTFREI_TRACER_URL", &server.url).env("ROSTFREI_API_TOKEN", TOKEN)
-        .output().unwrap()
+        .args(["rostfrei", "test"])
+        .arg(definition)
+        .arg("--output")
+        .arg(directory.join("evidence.json"))
+        .current_dir(directory)
+        .env("PATH", "")
+        .env("ROSTFREI_TRACER_URL", &server.url)
+        .env("ROSTFREI_API_TOKEN", TOKEN)
+        .output()
+        .unwrap()
 }
 
 fn check(mode: Mode, code: i32) -> (Output, Value) {
     let temporary = TempDir::new().unwrap();
     let server = Server::start(mode);
     let result = invoke(&server, temporary.path());
-    assert_eq!(result.status.code(), Some(code), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(
+        result.status.code(),
+        Some(code),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     assert_eq!(server.submissions.load(Ordering::Relaxed), 1);
     let text = fs::read_to_string(temporary.path().join("evidence.json")).unwrap();
-    for output in [text.as_str(), &String::from_utf8_lossy(&result.stderr), &String::from_utf8_lossy(&result.stdout)] {
+    for output in [
+        text.as_str(),
+        &String::from_utf8_lossy(&result.stderr),
+        &String::from_utf8_lossy(&result.stdout),
+    ] {
         assert!(!output.contains(TOKEN));
         assert!(!output.contains(UNTRUSTED));
     }
@@ -161,7 +244,10 @@ fn truncated_run_is_typed_unknown_outcome_and_never_retried() {
 
 #[test]
 fn incomplete_capture_keeps_either_received_verdict() {
-    for (mode, status) in [(Mode::PartialCapture, "passed"), (Mode::PartialFailedCapture, "failed")] {
+    for (mode, status) in [
+        (Mode::PartialCapture, "passed"),
+        (Mode::PartialFailedCapture, "failed"),
+    ] {
         let (_, evidence) = check(mode, 2);
         assert_eq!(evidence["runState"], "reported");
         assert_eq!(evidence["captureState"], "incomplete");
@@ -181,13 +267,30 @@ fn malformed_or_unknown_report_is_not_behavioral_red() {
 
 #[test]
 fn redirects_and_cross_origin_links_are_not_followed() {
-    for mode in [Mode::Redirect, Mode::UnsafeLink] {
+    for mode in [
+        Mode::Redirect,
+        Mode::UnsafeLink("//untrusted.invalid/schema"),
+        Mode::UnsafeLink("https://other.invalid/schema"),
+        Mode::UnsafeLink("/\\other"),
+        Mode::UnsafeLink("/path#fragment"),
+        Mode::UnsafeLink("/path\nheader"),
+        Mode::UnsafeLink("/path/{unresolved}"),
+    ] {
         let directory = TempDir::new().unwrap();
         let server = Server::start(mode);
         let result = invoke(&server, directory.path());
         assert_eq!(result.status.code(), Some(2));
         assert_eq!(server.requests.load(Ordering::Relaxed), 1);
         assert_eq!(server.submissions.load(Ordering::Relaxed), 0);
+    }
+}
+
+#[test]
+fn failed_or_disconnected_submission_is_not_retried_and_diagnostics_are_redacted() {
+    for mode in [Mode::DisconnectRun, Mode::HttpFailure] {
+        let (_, evidence) = check(mode, 2);
+        assert_eq!(evidence["runState"], "submission-outcome-unknown");
+        assert_eq!(evidence["error"]["kind"], "request_failed");
     }
 }
 

@@ -1,56 +1,69 @@
 # Release and execution prerequisites
 
-For repository-discovered source skills, first run
-`python3 scripts/package_agent_skills.py --prepare-source` from the framework root
-(Git and Python 3.11+). Repeat after checkout/input changes before using metadata.
-This generates the relative resources from the packager's authoritative inputs
-and preserves modified files. Installed skills need no source preparation.
-
-An installed skill includes `references/release.json` relative to its root. It
-records the framework release/source revision, whether the build tree was dirty,
-and independent Catalog, behavior-definition, MessageSeries and fixture formats.
-Check the application's dependency revision as well as the live catalog.
-
-At the issue #105 base (`1d7d861`), `catalogVersion` is **1**, behavior definitions
-and observed MessageSeries are **2**, and registered fixtures are **1**. The issue
-requested Catalog v2, but `CHANGELOG.md` explicitly records discovery reverting
-from v2 to v1 while behavior definitions stay v2. ADR 0037 predates that change.
-Do not call Catalog v1 v2 or confuse it with command payload schema versions.
-Reconcile the issue wording with this recorded release change and verify #69's
-final host/protocol before the 0.1.0 rehearsal. Stop on an unsupported catalog.
-
-Commands address bounded contexts. For example, `add-bicycle` schema 2 contains
-`fleet_id`, `bicycle_id` and `condition` in its JSON payload. The typed HTTP
-submission wraps it as `{"schemaVersion":2,"payload":{...}}`. No aggregate ID is
-added to the command route. Use actual advertised relations and schema versions.
-
-## Start a real isolated runtime
-
-The consumer must supply its real handlers, supervised workers, fixtures and
-NATS event store with JetStream on NATS Server 2.12.1 or newer. Use its documented
-binary and dependencies. A Tracer endpoint without a Test/reset relation does
-not provide behavior acceptance. Preview is not a substitute.
-
-For the matching framework's current bike-rental example, set distinct control
-and dispatch tokens in the environment, then from the framework checkout run:
+Use the release-matched Rust CLI. Read the installed skill's
+`references/release.json` and install `rostfrei-structure` from that exact revision:
 
 ```sh
-python3 scripts/test_nats.py -- cargo run --locked -p bike-rental --bin bike-rental-api
+cargo install --locked --git https://github.com/elbLabs/rostfrei \
+  --rev <sourceRevision> rostfrei-structure
+cargo rostfrei skills info
 ```
 
-The Python 3.11+/Docker runner starts a disposable pinned JetStream broker and
-cleans it up when the application exits. Rust is required to build the host.
-`ROSTFREI_API_ADDR` defaults to `127.0.0.1:1309`. Configure
-`ROSTFREI_TRACER_URL` to this origin for client requests. The current example
-requires both `ROSTFREI_API_TOKEN` and `ROSTFREI_DISPATCH_TOKEN` at startup and
-provisions both traffic scopes; client Test requests use only the control token.
-There is no generic `cargo rostfrei dev` in this baseline. #69's final
-application-linked startup path remains an explicit integration handoff.
+Initial compilation requires Rust 1.98+, Cargo, Git, a native linker and network
+access. Consumer installation/execution needs no Python. After installation the
+native `cargo-rostfrei` binary needs neither Git nor a source checkout and does
+not contact package registries. The kit contains platform-neutral skills/resources;
+Cargo builds the executable for the local platform.
 
-Do not reset unknown shared NATS resources. A disposable broker or uniquely
-owned `ROSTFREI_APPLICATION` isolates the current example. A correlation/run ID
-does not isolate Test resources, and separate Test runs must be serialized until
-#68 supplies independent isolation. Reset covers the host's complete Test
-topology, not just a named fixture or aggregate. External stores/read models are
-only covered by explicit application reset support. Production capabilities
-remain separate even when a TDD loop has authorized repeated isolated runs.
+In the framework checkout use `cargo rostfrei-dev skills info` and
+`cargo rostfrei-dev test <definition.json> --output <new-evidence.json>`. Source
+skills need no generated resources or bootstrap. Cargo refreshes the CLI's build
+revision after checkout changes; the CLI fetches the actual live schema.
+
+Installed example execution:
+
+```sh
+cargo rostfrei test /path/to/rostfrei-develop-feature/assets/add-first-bicycle.json \
+  --output behavior-evidence.json
+```
+
+For an application-owned definition add
+`--release /path/to/rostfrei-tracer/references/release.json`. The CLI checks the
+kit/framework version, source revision and protocol versions. Match the
+application dependency revision too; the live catalog does not identify a release.
+
+## Contracts
+
+At the specified baseline, Catalog is **v1**, behavior definitions and observed
+MessageSeries are **v2**, and fixtures are **v1**. The release changelog explicitly
+records discovery changing from v2 to v1; ADR 0037 retains older wording.
+Never relabel a live catalog to satisfy an outdated issue description.
+
+Commands address bounded contexts. For example, `add-bicycle` schema 2 contains
+`fleet_id`, `bicycle_id` and `condition`. Direct typed HTTP submission wraps it as
+`{"schemaVersion":2,"payload":{...}}`. No aggregate ID is added to the command
+route. Follow advertised links and actual registered payload versions.
+
+## Real isolated runtime
+
+Use the application's handlers, supervised Test workers, fixtures and NATS event
+store on NATS Server 2.12.1+ with JetStream. Preview is not a substitute for an
+unavailable Test/reset capability. Use a disposable broker or uniquely owned
+application namespace; never reset unknown shared resources. Run suites serially
+until independent Test-run isolation is available.
+
+The baseline example runs with
+`cargo run --locked -p bike-rental --bin bike-rental-api`, with
+`ROSTFREI_NATS_URL` pointing to the disposable broker and distinct
+`ROSTFREI_API_TOKEN` / `ROSTFREI_DISPATCH_TOKEN` available in the host environment.
+It provisions both Normal and Test topology and resets Test on startup. Default
+bind: `127.0.0.1:1309`, configurable via `ROSTFREI_API_ADDR`.
+#107's separate standard host revision uses
+`cargo run --locked -p bike-rental -- --tracer`; final combined release and
+fresh-session qualification are still integration gates.
+
+Reset recreates the configured Test topology, including event history/receipts,
+messaging/quarantine streams and consumers, and invalidates Test/Preview evidence.
+It is not limited to a named fixture or aggregate. External stores/read models
+are covered only by explicit application reset support. Production capabilities
+remain separate from authorization for a specific isolated TDD loop.

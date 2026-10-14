@@ -4,6 +4,8 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use rostfrei_structure::{CheckOptions, check_workspace, create_project};
 
+mod agent_tools;
+
 #[derive(Debug, Parser)]
 #[command(name = "cargo", bin_name = "cargo")]
 enum CargoCli {
@@ -24,6 +26,39 @@ enum Command {
     Check(CheckArgs),
     /// Creates a new Rostfrei project.
     New(NewArgs),
+    /// Executes one JSON v2 behavior definition through an isolated real Tracer suite.
+    Test(TestArgs),
+    /// Installs and identifies release-matched portable Agent Skills.
+    Skills(SkillsArgs),
+}
+
+#[derive(Args, Debug)]
+struct TestArgs {
+    definition: PathBuf,
+    #[arg(long)]
+    output: PathBuf,
+    /// Kit release metadata; otherwise discovered beside installed example assets.
+    #[arg(long)]
+    release: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+struct SkillsArgs {
+    #[command(subcommand)]
+    command: SkillsCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum SkillsCommand {
+    /// Prints the CLI build revision, framework version and supported contracts as JSON.
+    Info,
+    /// Installs both skills from an extracted kit, preserving existing consumer work.
+    Install {
+        #[arg(long)]
+        kit: PathBuf,
+        #[arg(long)]
+        destination: PathBuf,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -44,6 +79,20 @@ struct NewArgs {
 
 fn main() -> ExitCode {
     let CargoCli::Rostfrei(arguments) = CargoCli::parse();
+    if let Command::Test(test) = arguments.command {
+        return match agent_tools::run_test(&agent_tools::TestOptions {
+            definition: test.definition,
+            output: test.output,
+            release: test.release,
+        }) {
+            Ok(true) => ExitCode::SUCCESS,
+            Ok(false) => ExitCode::FAILURE,
+            Err(error) => {
+                eprintln!("{}", serde_json::json!({"error": error}));
+                ExitCode::from(2)
+            }
+        };
+    }
     match run(arguments.command) {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
@@ -58,6 +107,24 @@ fn run(command: Command) -> Result<bool, String> {
     match command {
         Command::Check(arguments) => run_check(arguments),
         Command::New(arguments) => run_new(arguments),
+        Command::Skills(arguments) => match arguments.command {
+            SkillsCommand::Info => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&agent_tools::Release::current())
+                        .map_err(|error| error.to_string())?
+                );
+                Ok(true)
+            }
+            SkillsCommand::Install { kit, destination } => {
+                agent_tools::install_skills(&kit, &destination)
+                    .map_err(|error| error.to_string())?;
+                Ok(true)
+            }
+        },
+        Command::Test(_) => {
+            Err("Test execution must use its dedicated exit-code boundary".to_owned())
+        }
     }
 }
 

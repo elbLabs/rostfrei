@@ -1,18 +1,16 @@
-"""Source-discovered skills prepare current resources without replacing edits."""
+"""Source-discovered skills use the Rust CLI without generating skill resources."""
 
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
-SKILLS = ("rostfrei-develop-feature", "rostfrei-tracer")
 
 
 def fresh_source_checkout(destination):
@@ -59,10 +57,14 @@ class SourceSkillTests(unittest.TestCase):
         self.release = self.skill / "references/release.json"
         self.assertFalse(self.release.exists())
 
-    def prepare(self):
-        return subprocess.run([
-            sys.executable, "-I", str(self.root / "scripts/package_agent_skills.py"), "--prepare-source",
-        ], cwd=self.root, capture_output=True, text=True)
+    def build_cli(self):
+        target = ROOT / "target/skills-source"
+        subprocess.run([
+            "cargo", "build", "--locked", "--offline", "--manifest-path",
+            str(self.root / "crates/rostfrei-structure/Cargo.toml"),
+            "--bin", "cargo-rostfrei", "--target-dir", str(target),
+        ], cwd=self.root, check=True)
+        return target / "debug/cargo-rostfrei"
 
     def test_fixture_does_not_launch_background_git_maintenance(self):
         commit(self.root)
@@ -74,50 +76,40 @@ class SourceSkillTests(unittest.TestCase):
         ]
         self.assertEqual(writers, [], "Fixture commits must not leave writers racing temporary-directory cleanup")
 
-    def test_discovered_source_bootstrap_and_runner_refresh_revision(self):
-        result = self.prepare()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    def test_discovered_source_uses_current_cli_without_generated_resources(self):
+        cli = self.build_cli()
+        environment = {**os.environ, "PATH": ""}
+        metadata = json.loads(subprocess.check_output([str(cli), "rostfrei", "skills", "info"], env=environment))
         head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
-        for name in SKILLS:
-            skill = self.root / ".agents/skills" / name
-            metadata = json.loads((skill / "references/release.json").read_text())
-            self.assertEqual(metadata["sourceRevision"], head)
-            self.assertFalse(metadata["sourceTreeDirty"])
-            self.assertEqual(metadata["contracts"], {
-                "catalog": 1, "behavioralTest": 2, "messageSeries": 2, "fixture": 1,
-            })
-            self.assertEqual((skill / "LICENSE").read_bytes(), (self.root / "LICENSE").read_bytes())
-        schema = self.skill / "assets/behavioral-test-v2.schema.json"
-        self.assertEqual(schema.read_bytes(), (self.root / "crates/rostfrei-tracer/schema/behavioral-test-v2.schema.json").read_bytes())
+        self.assertEqual(metadata["sourceRevision"], head)
+        self.assertFalse(metadata["sourceTreeDirty"])
+        self.assertFalse(self.release.exists())
+        self.assertFalse((self.skill / "assets/behavioral-test-v2.schema.json").exists())
+        self.assertEqual(metadata["contracts"], {"catalog": 1, "behavioralTest": 2, "messageSeries": 2, "fixture": 1})
         self.assertEqual(subprocess.check_output(["git", "status", "--porcelain"], cwd=self.root), b"")
 
         # Merely changing HEAD must not leave a silently stale generated revision.
         commit(self.root)
         new_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
         self.assertNotEqual(head, new_head)
-        result = subprocess.run([
-            sys.executable, "-I", str(self.skill / "scripts/run_behavior.py"),
-            str(self.skill / "assets/add-first-bicycle.json"), "--output", "unused-evidence.json",
-        ], cwd=self.root, capture_output=True, text=True,
-            env={**os.environ, "ROSTFREI_TRACER_URL": "unsupported://source-regression"})
-        # Deliberately stop before networking, after the automatic source refresh.
-        self.assertIn("must be an HTTP(S) origin", result.stderr)
-        self.assertEqual(json.loads(self.release.read_text())["sourceRevision"], new_head)
-        self.assertFalse((self.root / "unused-evidence.json").exists())
+        cli = self.build_cli()
+        metadata = json.loads(subprocess.check_output([str(cli), "rostfrei", "skills", "info"], env=environment))
+        self.assertEqual(metadata["sourceRevision"], new_head)
+        self.assertFalse(self.release.exists())
 
-    def test_bootstrap_preserves_modified_generated_resources(self):
-        result = self.prepare()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        other = self.root / ".agents/skills/rostfrei-tracer/references/release.json"
-        original = other.read_bytes()
-        edited = self.release.read_bytes() + b"\nconsumer note\n"
+    def test_stale_legacy_metadata_is_preserved_and_rejected(self):
+        cli = os.environ.get("ROSTFREI_CLI", str(ROOT / "target/debug/cargo-rostfrei"))
+        environment = {**os.environ, "PATH": "", "ROSTFREI_TRACER_URL": "unsupported://source-regression"}
+        metadata = json.loads(subprocess.check_output([cli, "rostfrei", "skills", "info"], env=environment))
+        metadata["sourceRevision"] = "0" * 40
+        edited = json.dumps(metadata).encode()
+        self.release.parent.mkdir(exist_ok=True)
         self.release.write_bytes(edited)
-        commit(self.root)
-        result = self.prepare()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Preserving", result.stderr)
+        result = subprocess.run([cli, "rostfrei", "test", str(self.skill / "assets/add-first-bicycle.json"),
+                                 "--output", "unused.json"], cwd=self.root, env=environment, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("release or protocol mismatch", result.stderr)
         self.assertEqual(self.release.read_bytes(), edited)
-        self.assertEqual(other.read_bytes(), original)  # preflight before all writes
 
 
 if __name__ == "__main__":

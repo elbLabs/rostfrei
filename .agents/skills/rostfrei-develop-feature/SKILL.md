@@ -2,7 +2,7 @@
 name: rostfrei-develop-feature
 license: EUPL-1.2
 description: Develops Rostfrei application features with a human teammate through Given/When/Then and test-first implementation. Use when adding or changing application behavior; writes and explains behavior-suite tests executed against real NATS before implementing to green.
-compatibility: Requires a Rostfrei application repository, its Rust toolchain, and an isolated real NATS-backed behavior-test runtime. Installed release compatibility is recorded in references/release.json. Ordinary conversation works without host-specific tools.
+compatibility: Requires the release-matched cargo-rostfrei Rust CLI and an isolated real NATS-backed application test runtime. Building the CLI requires Rust 1.98 or newer. Ordinary conversation works without host-specific tools; consumer installation and execution need no Python.
 ---
 
 # Develop a feature
@@ -44,20 +44,19 @@ useful scenario; add further scenarios as the agreed feature requires them.
 
 ## 2. Build the behavior test first
 
-When using this repository's directly discovered source skill, first run
-`python3 scripts/package_agent_skills.py --prepare-source` from the framework
-checkout root (requires Git and Python 3.11+). Do this before reading generated
-resources, and repeat after switching revision or changing framework inputs.
-It generates both skills' relative release metadata/licenses and this skill's
-schema from the same inputs as packaging, preserving edits to generated files.
-The source runner also refreshes them before each execution. Installed release
-skills already contain these resources and require no source checkout/bootstrap.
+Use `cargo rostfrei skills info` to identify the CLI's compiled revision and
+contracts. In the framework checkout, use `cargo rostfrei-dev skills info` and
+`cargo rostfrei-dev test ...`; Cargo rebuilds the local Rust CLI after revision
+changes. Source discovery requires no generated skill files or preparation step.
+Installed kits include `references/release.json`; the CLI checks it when running
+their bundled example. For an application-owned definition, pass that metadata
+explicitly with `--release <installed-skill>/references/release.json`.
 
 Locate the application's behavior suite, fixtures and NATS-backed Tracer runtime.
 Read [the worked JSON v2 example](references/worked-example.md) and
-[execution instructions](references/execution.md). An installed skill includes
-`references/release.json` and the runtime's generated
-`assets/behavioral-test-v2.schema.json`. Match the application framework revision
+[execution instructions](references/execution.md). Read the schema through the
+live catalog's `behavioralTest.schemaHref`; installed kits also bundle a snapshot
+as `assets/behavioral-test-v2.schema.json`. Match the application framework revision
 and live schema before authoring canonical **JSON version 2**; YAML is not an
 accepted runner encoding.
 

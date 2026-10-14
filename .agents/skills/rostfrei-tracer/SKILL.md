@@ -2,7 +2,7 @@
 name: rostfrei-tracer
 license: EUPL-1.2
 description: Use when inspecting quarantined messages through Rostfrei Tracer, or discovering, simulating, publishing, dispatching, testing, inspecting, explaining, or visualizing Tracer command flows with Mermaid.
-compatibility: Requires a release-compatible Rostfrei Tracer HTTP endpoint and capability credentials. Test acceptance requires the application's handlers, workers and event store on isolated real NATS 2.12.1 or newer. HTTP examples require Bash and curl.
+compatibility: Requires the release-matched cargo-rostfrei Rust CLI, a Tracer HTTP endpoint and capability credentials. Test acceptance needs application handlers, workers and event store on isolated real NATS 2.12.1 or newer. Direct HTTP examples require Bash and curl; no Python is required.
 ---
 
 # Rostfrei Tracer
@@ -18,12 +18,11 @@ Use the Tracer HTTP API as an agent-facing command and explanation surface. Keep
 Call simulation **Preview**, direct isolated publication **Test**, and production publication **production dispatch**. Mention route names or protocol details only when useful. Do not introduce browser, form, canvas, layout, pinning, or other UI-oriented terminology unless the user explicitly asks about it.
 
 Read [release and execution prerequisites](references/runtime.md) before execution.
-For a directly discovered source skill, first run
-`python3 scripts/package_agent_skills.py --prepare-source` from the framework
-checkout root (Git and Python 3.11+). Repeat before reading metadata after revision
-or framework-input changes. This shares packaging's resource generation and
-preserves modified generated files; do not hand-maintain release metadata.
-Installed release skills already contain their resources and need no bootstrap.
+Use `cargo rostfrei skills info` for the CLI's compiled framework revision and
+contracts. For source discovery in the framework checkout, use
+`cargo rostfrei-dev skills info`; Cargo rebuilds the Rust CLI as revisions change.
+No generated source resources or preparation command are required. Installed
+release skills contain their own metadata and schema resources.
 An installed skill carries `references/release.json` with its framework version,
 source revision and independent protocol versions. Preview is prediction, never
 feature acceptance. Use ordinary conversation if a host-specific question tool
@@ -70,7 +69,8 @@ Use bounded HTTP timeouts. Never use automatic retries for a state-changing `POS
 ## Release-matched Catalog
 
 Fetch the catalog before choosing a command. Require `catalogVersion` to match
-`contracts.catalog` in the installed `references/release.json`; stop and explain
+`contracts.catalog` from `cargo rostfrei skills info` (and the installed
+`references/release.json`, when present); stop and explain
 an unsupported version rather than guessing. The source baseline's catalog is
 v1; canonical behavior definitions and observed MessageSeries are v2. These
 version numbers describe different contracts. See the release prerequisites
@@ -228,6 +228,12 @@ Keep behavioral testing separate from the normal command workflow.
 Fetch `behavioralTest.schemaHref` when schema detail is needed, then POST the exact inline JSON definition to `behavioralTest.validateHref`. Validation is read-only and needs no reset confirmation. Report structured issue codes and JSON Pointer paths without dumping the complete document unless requested.
 
 ### Run Inline Or Persisted
+
+For a JSON file, the supported Rust client command is
+`cargo rostfrei test <definition.json> --output <new-evidence.json>`.
+Use `--release <installed-skill>/references/release.json` for an application-owned
+definition. Bundled examples discover that metadata automatically. The command
+performs this discovery/validation/fixture/run/capture workflow without Python.
 
 Every behavioral-test run resets the entire configured Test scenario by applying
 the selected MessageSeries fixture, then publishes the root command. State the

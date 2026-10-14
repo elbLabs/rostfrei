@@ -209,7 +209,9 @@ replaying two connected aggregates, including measured latency and broker traffi
 ## Agent Skills development kit
 
 Install the release-matched `rostfrei-develop-feature` and `rostfrei-tracer`
-skills with the [portable kit guide](docs/agent-skills-install.md). The shared
+skills with the [portable kit guide](docs/agent-skills-install.md). The
+release-matched Rust CLI provides `cargo rostfrei skills install` and
+`cargo rostfrei test`; consumer installation/execution needs no Python. The shared
 repository discovery/source directory is `.agents/skills/`; each skill has one
 authoritative copy. See [qualification evidence and trial scenarios](docs/agent-skills-qualification.md)
 for observed checks and remaining 0.1.0 integration work.

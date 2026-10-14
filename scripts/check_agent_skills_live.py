@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -31,18 +32,26 @@ def checked(command, cwd, env=None, expected=0):
         raise RuntimeError(f"Expected exit {expected}, observed {result.returncode}: {command[0]}")
 
 
-def qualify(output, source_checkout=False):
+def qualify(output, source_checkout=False, host_command=None):
     if not os.environ.get("ROSTFREI_NATS_URL"):
         raise ValueError("Run through scripts/test_nats.py with a disposable NATS broker")
     with tempfile.TemporaryDirectory(prefix="rostfrei-skills-live-") as temporary:
         consumer = Path(temporary)
+        no_tools = consumer / "no-tools"
+        no_tools.mkdir()
+        native = consumer / "cargo-rostfrei"
+        cli = os.environ.get("ROSTFREI_CLI", str(ROOT / "target/debug/cargo-rostfrei"))
         if source_checkout:
             from test_agent_skill_source import fresh_source_checkout
             source = fresh_source_checkout(consumer / "checkout")
             skill = source / ".agents/skills/rostfrei-develop-feature"
             if (skill / "references/release.json").exists():
                 raise ValueError("Source regression must start without generated resources")
-            checked([sys.executable, "-I", str(source / "scripts/package_agent_skills.py"), "--prepare-source"], source)
+            target = ROOT / "target/skills-source"
+            checked(["cargo", "build", "--locked", "--offline", "--manifest-path", str(source / "crates/rostfrei-structure/Cargo.toml"),
+                     "--bin", "cargo-rostfrei", "--target-dir", str(target)], source)
+            cli = target / "debug/cargo-rostfrei"
+            shutil.copy2(cli, native)
         else:
             artifacts = consumer / "artifacts"
             checked([sys.executable, str(ROOT / "scripts/package_agent_skills.py"), "--output", str(artifacts)], ROOT)
@@ -51,8 +60,12 @@ def qualify(output, source_checkout=False):
                 bundle.extractall(consumer / "extracted", filter="data")
             kit, = (consumer / "extracted").iterdir()
             destination = consumer / "application/.agents/skills"
-            checked([sys.executable, "-I", str(kit / "install.py"), "--destination", str(destination)], consumer)
+            shutil.copy2(cli, native)
+            checked([str(native), "rostfrei", "skills", "install", "--kit", str(kit), "--destination", str(destination)],
+                    consumer, {**os.environ, "PATH": str(no_tools)})
             skill = destination / "rostfrei-develop-feature"
+            shutil.rmtree(kit)
+            shutil.rmtree(artifacts)
         with socket.socket() as address:
             address.bind(("127.0.0.1", 0))
             port = address.getsockname()[1]
@@ -65,7 +78,8 @@ def qualify(output, source_checkout=False):
             "ROSTFREI_API_TOKEN": secrets.token_hex(24),
             "ROSTFREI_DISPATCH_TOKEN": secrets.token_hex(24),
         }
-        command = ["cargo", "run", "--locked", "-p", "bike-rental", "--bin", "bike-rental-api"]
+        command = host_command or ["cargo", "run", "--locked", "-p", "bike-rental", "--bin", "bike-rental-api"]
+        client_environment = {**environment, "PATH": str(no_tools)}
         output.mkdir(parents=True, exist_ok=True)
         with (output / "host.log").open("w") as log:
             host = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT)
@@ -86,23 +100,24 @@ def qualify(output, source_checkout=False):
                             raise RuntimeError("Application startup exceeded 300 seconds")
                         time.sleep(0.2)
                 definition = skill / "assets/add-first-bicycle.json"
-                runner = [sys.executable, "-I", str(skill / "scripts/run_behavior.py")]
-                checked([*runner, str(definition), "--output", str(output / "example-passed.json")], consumer, environment)
+                runner = [str(native), "rostfrei", "test"]
+                checked([*runner, str(definition), "--output", str(output / "example-passed.json")], consumer, client_environment)
                 passed = json.loads((output / "example-passed.json").read_text())
-                if passed["schema"] != json.loads((skill / "assets/behavioral-test-v2.schema.json").read_text()):
+                schema = ROOT / "crates/rostfrei-tracer/schema/behavioral-test-v2.schema.json" if source_checkout else skill / "assets/behavioral-test-v2.schema.json"
+                if passed["schema"] != json.loads(schema.read_text()):
                     raise ValueError("Packaged schema differs from live schema")
                 capture = passed["messageSeries"]["capture"]
                 if not capture["settled"] or capture["fidelity"] != "exact":
                     raise ValueError("Expected a settled, exact real-NATS capture")
                 if source_checkout:
-                    print(f"Fresh source bootstrap and real-NATS execution passed; evidence: {output}")
+                    print(f"Fresh source Rust CLI and real-NATS execution passed without generated resources; evidence: {output}")
                     return
                 wrong = json.loads(definition.read_text())
                 wrong["expected"]["graphs"][0]["nodes"][1]["payload"]["bicycle_id"] = "negative-control-wrong-id"
                 negative = consumer / "negative-control.json"
                 negative.write_text(json.dumps(wrong))
-                checked([*runner, str(negative), "--output", str(output / "negative-control-failed.json")], consumer, environment, expected=1)
-                checked([*runner, str(definition), "--output", str(output / "example-rerun-passed.json")], consumer, environment)
+                checked([*runner, str(negative), "--output", str(output / "negative-control-failed.json")], consumer, client_environment, expected=1)
+                checked([*runner, str(definition), "--output", str(output / "example-rerun-passed.json")], consumer, client_environment)
                 summary = {
                     "release": passed["release"], "catalogVersion": catalog["catalogVersion"],
                     "application": application, "applicationCommand": command,
@@ -111,6 +126,8 @@ def qualify(output, source_checkout=False):
                     "exampleAfterReset": "passed", "capture": capture,
                     "freshSessionTrial": "unexecuted", "humanFeedback": "not-collected",
                     "brokerCleanup": "owned by scripts/test_nats.py caller",
+                    "consumerPath": "empty tools directory; Python/Cargo/Git unavailable",
+                    "extractedKitRemovedBeforeExecution": True,
                 }
                 (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
                 print(f"Installed-kit live qualification passed; evidence: {output}")
@@ -126,13 +143,14 @@ def qualify(output, source_checkout=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="new or empty evidence directory")
-    parser.add_argument("--source-checkout", action="store_true", help="qualify fresh source bootstrap and one real execution")
+    parser.add_argument("--source-checkout", action="store_true", help="qualify fresh source Rust CLI and one real execution")
+    parser.add_argument("--host-command", nargs=argparse.REMAINDER, help="explicit already-built host command (last option)")
     args = parser.parse_args()
     output = args.output.resolve()
     if output.exists() and any(output.iterdir()):
         parser.error("Preserving existing evidence: choose a new or empty output directory")
     try:
-        qualify(output, args.source_checkout)
+        qualify(output, args.source_checkout, args.host_command)
     except (OSError, ValueError, RuntimeError) as error:
         parser.exit(1, f"Live qualification failed: {error}\n")
 

@@ -3,9 +3,3 @@
 /.vscode
 .DS_Store
 __pycache__/
-/.agents/.generated-skill-resources.json
-/.agents/skills/rostfrei-develop-feature/references/release.json
-/.agents/skills/rostfrei-develop-feature/assets/behavioral-test-v2.schema.json
-/.agents/skills/rostfrei-develop-feature/LICENSE
-/.agents/skills/rostfrei-tracer/references/release.json
-/.agents/skills/rostfrei-tracer/LICENSE

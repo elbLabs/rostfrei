@@ -9,6 +9,10 @@ complete inline definition accepted by the bike-rental application's actual
 suite. Use its shape with your application's registrations; these are example
 business identities, not inferred application defaults.
 
+Execute with `cargo rostfrei test <skill>/assets/add-first-bicycle.json --output
+<new-evidence.json>`. In the framework checkout use `cargo rostfrei-dev test`
+with `.agents/skills/rostfrei-develop-feature/assets/add-first-bicycle.json`.
+
 | JSON | Meaning |
 | --- | --- |
 | `setup.fixture: no-rental-fleets` | Registered fixture revision `1`: an empty domain-event history. Reset creates an empty Test event store. |

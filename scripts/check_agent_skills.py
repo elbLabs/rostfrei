@@ -111,6 +111,19 @@ class InstalledKitTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), self.archive_digest)
         self.assertFalse((ROOT / ".opencode/skills/rostfrei-tracer/SKILL.md").exists())
 
+    def test_untracked_resources_and_caches_are_not_shipped(self):
+        with tempfile.TemporaryDirectory(prefix=".package-regression-", dir=ROOT / ".agents/skills/rostfrei-develop-feature") as local:
+            work = Path(local)
+            (work / "__pycache__").mkdir()
+            (work / "__pycache__/cache.pyc").write_bytes(b"local cache")
+            (work / "local.md").write_text("consumer work")
+            result = self.command(ROOT / "scripts/package_agent_skills.py", "--output", self.output)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            archive, = self.output.glob("*.tar.gz")
+            with tarfile.open(archive) as bundle:
+                self.assertFalse(any(work.name in name or "__pycache__" in name for name in bundle.getnames()))
+            self.assertEqual((work / "local.md").read_text(), "consumer work")
+
     def test_preserves_consumer_edits_and_unrelated_instructions(self):
         self.destination.mkdir(parents=True)
         instructions = self.destination.parent.parent / "AGENTS.md"

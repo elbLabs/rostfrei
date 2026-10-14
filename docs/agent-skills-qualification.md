@@ -9,7 +9,80 @@ the eventual 0.1.0 release-version bump is separate release preparation.
 Implementation branch: `feat/agent-skills-kit`. Agent/client: GPT-6 Astra in
 OpenCode V2. This implementation session is not a fresh-session workflow trial.
 
-### Packaging test-first record
+### Rust consumer migration (2026-10-14)
+
+The supported consumer commands are now `cargo rostfrei skills install`,
+`cargo rostfrei skills info`, and `cargo rostfrei test`. The Python runner and
+installer were removed. Python remains repository-only packaging/CI orchestration.
+See [installation](agent-skills-install.md) for the exact matching-revision
+`cargo install` path and Rust-only host/source-use commands.
+
+Test-first commit `a30c461` records two actual capability reds:
+
+- External extracted-kit install with an empty tools PATH failed with
+  `unrecognized subcommand 'skills'` (child exit 2).
+- Rust CLI fault-server acceptance failed with `unrecognized subcommand 'test'`
+  (observed exit 2 instead of expected 0). An initial test compile error was
+  corrected before recording this capability red.
+
+These are missing-CLI plumbing reds, not application behavioral red. The Rust
+client reuses the live discovery, validation, fixture, suite-run and finite
+message-series HTTP API. The suite engine remains in `rostfrei-tracer`.
+
+Source-discovered skills need no generated files: the Rust CLI identifies its
+compiled framework revision and obtains the live schema. Cargo rebuilds metadata
+after HEAD changes. Stale legacy metadata is preserved and rejected. The source
+fixture's local Git maintenance isolation and aggressive-GC cleanup regression
+from `60576f3` remain in place.
+
+The CLI package includes its build-provenance logic and implementation modules;
+it does not depend on files outside its Cargo package at build/runtime. A Cargo
+package obtains revision metadata from `.cargo_vcs_info.json`, while Git builds
+record their checkout revision. Both paths avoid a runtime Git/Python dependency.
+Kit generation checks CLI revision against the checkout and takes the schema
+from the authoritative runtime input. Archive resource selection now explicitly
+uses tracked Markdown/JSON/licenses, excluding caches and untracked user work.
+This narrow selection change is part of the user-directed Rust migration.
+
+Rust migration checks observed locally:
+
+| Check | Result |
+| --- | --- |
+| `cargo test --locked -p rostfrei-structure` | 69 passed, including 7 HTTP fault/boundary tests and 4 installer tests. |
+| `python3 scripts/test_agent_skill_source.py` | 3 passed: fresh source build/revision refresh without generated resources, preserved stale metadata, isolated Git fixture maintenance. |
+| `python3 scripts/check_agent_skills.py` with an externally installed `ROSTFREI_CLI` | 5 passed, including relocation, pinned reference validation, exact-revision compatibility, no-clobber/idempotency and deterministic intended resource selection. Consumer installation uses an empty tools PATH. |
+| `cargo install --locked --offline --path crates/rostfrei-structure --debug --root /tmp/rostfrei-skills-rust-cli` | Native executable installed outside the workspace. |
+| `cargo package --locked --offline --allow-dirty -p rostfrei-structure` | 63-file Cargo package built and verified independently of workspace resource paths. `--allow-dirty` was used only for pre-commit local qualification; CI packages the clean revision. |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | Passed. |
+| `cargo fmt --all --check`, `cargo rostfrei-dev check --workspace`, `python3 scripts/versions.py check`, `git diff --check HEAD` | Passed. |
+| `python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --output /tmp/rostfrei-skills-rust-installed` | Passed on disposable NATS 2.12.1, port 33249, using the externally installed native CLI. |
+| Same live command with `--source-checkout --output /tmp/rostfrei-skills-rust-source` | Passed on disposable NATS 2.12.1, port 33251: fresh source copy, locally built Rust CLI, no generated skill resources. |
+
+Both live runs used an empty tools PATH for consumer commands (no Python, Cargo
+or Git) and a separately running real application host. The installed case
+removed the extracted kit and archive before execution. Its accepted command and
+committed `bicycle-added` passed, a deliberately wrong expected payload failed
+with exit 1, and the unchanged example passed after reset. All four captures
+including source execution were settled/exact. Both owned brokers were cleaned
+up. Local installed evidence records `a30c461` plus dirty implementation changes;
+fresh-source evidence records its clean, disposable fixture commit.
+
+CI additionally installs the verified `.crate` from a separate external build
+directory, deletes that build source, then performs all consumer install/live
+checks with the resulting native executable. This covers package include rules
+and the absence of runtime source-checkout dependencies.
+
+That package-install/source-removal path was also exercised locally with
+`/tmp/rostfrei-skills-rust-packaged-cli/bin/cargo-rostfrei`. After deleting its
+external build source, installed-kit real-NATS verification passed again on
+port 33253 using the already-built baseline `target/debug/bike-rental-api` host
+via the live driver's explicit `--host-command` option. Evidence is in
+`/tmp/rostfrei-skills-rust-packaged`: pass → deliberate comparison failure →
+unchanged pass, with consumer tools absent from PATH and kit/build source removed.
+
+Historical evidence below records earlier implementations, not current commands.
+
+### Historical packaging test-first record
 
 1. Wrote `scripts/check_agent_skills.py` before the builder or installer.
 2. Ran `python3 scripts/check_agent_skills.py InstalledKitTests.test_external_install_is_self_contained_and_release_matched`.
@@ -52,7 +125,7 @@ Do not make a v2 compatibility claim until the final protocol is implemented and
 qualified. Reconcile the issue wording with the intentional release change.
 This branch does not change framework/runtime ownership.
 
-### Executed verification
+### Historical executed verification
 
 Observed on 2026-10-13:
 
@@ -90,7 +163,7 @@ Human feedback and token/time-use measurements were not collected; no
 fresh-session effectiveness claim is made. CI retains equivalent JSON/log
 evidence as the `agent-skills-live-evidence` artifact.
 
-### Review item 5 — source-discovered resource preparation
+### Historical review item 5 — source-discovered resource preparation
 
 Regression written before the fix: a fresh Git checkout with no generated skill
 resources follows `python3 scripts/package_agent_skills.py --prepare-source`.
@@ -98,7 +171,7 @@ Actual plumbing red: the command exited 2 because the old packager required
 `--output`; `SourceSkillTests.test_discovered_source_bootstrap_and_runner_refresh_revision`
 failed (test exit 1). This is not feature-behavior red.
 
-The shared generator now prepares source metadata, schema and licenses using the
+The shared generator then prepared source metadata, schema and licenses using the
 same authoritative inputs as the release archive. Both skills explain preparation;
 the source runner automatically refreshes before execution. Ownership hashes
 prevent replacing modified/unowned resources. Installed clients stay standalone.
@@ -118,7 +191,7 @@ Observed verification (2026-10-13):
 This fixes source-discovery plumbing; combined #107/`--tracer` integration and
 fresh-session/human-feedback qualification remain outstanding as below.
 
-### Review item 6 — typed incomplete-response errors
+### Historical review item 6 — typed incomplete-response errors
 
 Wrote the fault-server regression before changing the runner. Actual plumbing
 red: `python3 scripts/test_agent_skill_responses.py ResponseFailureTests.test_partial_run_is_typed_incomplete_response_and_unknown_outcome`
@@ -127,7 +200,7 @@ failed because the subprocess exited **1**, with an uncaught
 instead of **2**. One run was submitted and the retained state was unknown. This
 tests client error handling, not application feature-behavior red/green.
 
-The runner now uses `RunnerError` with an `ErrorKind` enum, including explicit
+The Python runner then used `RunnerError` with an `ErrorKind` enum, including explicit
 `incomplete_response`. HTTP/transport, invalid-response and setup errors share
 this typed boundary; only supported reported verdicts produce exit 0/1 after
 evidence retrieval. Structured `error.kind`, explanation, phase and controlled
@@ -152,7 +225,8 @@ Observed verification (2026-10-13):
   source build in evidence. `$HOME/.cargo/bin` was added to the local `PATH`.
 
 Combined #107/`--tracer` and independent fresh-session qualification remain
-pending. Review item 7 (ignored-file packaging policy) is outside these fixes.
+pending. Review item 7 was outside those two fixes; the later user-directed Rust
+migration narrows archive selection as documented above.
 
 ## Ready-to-run fresh-session trials
 
@@ -252,7 +326,7 @@ Mark each item observed-pass / observed-fail / blocked / unexecuted:
 
 ## Outstanding 0.1.0 qualification
 
-- Integrate #69's actual standard application-linked host API and startup path;
+- Integrate #107/#69's actual standard application-linked host API and startup path;
   update both skill prerequisites and this guide, then rerun installed-kit checks
   plus the real-NATS example against it.
 - Resolve Catalog version discrepancy with the final runtime; validate live
