@@ -167,6 +167,21 @@ impl EventHistory for FaultStore {
 }
 #[async_trait]
 impl EventStore for FaultStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+        self.inner
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        self.inner.commit_outcome(transaction).await
+    }
     async fn append(
         &self,
         id: &StreamId,
@@ -336,6 +351,7 @@ impl Fixture {
     }
     pub async fn event_store(&self) -> TestResult<Arc<NatsEventStore>> {
         let config = NatsEventStoreConfig::for_bounded_context(&self.context)?
+            .with_fresh_completed_outcome_epoch("private-contract-fixture")?
             .with_storage_limits(32 * 1024 * 1024, 524_288)?;
         provision_event_store(&self.js, &config).await?;
         Ok(Arc::new(

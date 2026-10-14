@@ -82,6 +82,21 @@ impl EventHistory for FaultStore {
 }
 #[async_trait]
 impl EventStore for FaultStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+        self.inner
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        self.inner.commit_outcome(transaction).await
+    }
     async fn append(
         &self,
         id: &StreamId,

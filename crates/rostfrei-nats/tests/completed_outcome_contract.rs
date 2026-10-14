@@ -492,6 +492,7 @@ async fn exhausted_outcome_store() -> TestResult<(
 )> {
     let fixture = Fixture::new("92-full-outcome-store").await?;
     let config = NatsEventStoreConfig::for_bounded_context(&fixture.context)?
+        .with_fresh_completed_outcome_epoch("private-capacity-fixture")?
         .with_storage_limits(8192, 2048)?;
     provision_event_store(&fixture.js, &config).await?;
     let store = Arc::new(NatsEventStore::connect(fixture.js.clone(), config).await?);

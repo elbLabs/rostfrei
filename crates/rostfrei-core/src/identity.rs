@@ -203,6 +203,7 @@ const fn checked_hex_offset(value: u8, base: u8) -> Option<u8> {
 /// Transaction receipts and their events carry the same normalized metadata on every retry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandExecutionMetadata {
+    outcome_evidence: Option<crate::OutcomeEvidence>,
     bounded_context: Option<BoundedContextName>,
     operation_id: OperationId,
     operation_fingerprint: ContentFingerprint,
@@ -213,6 +214,7 @@ pub struct CommandExecutionMetadata {
 impl CommandExecutionMetadata {
     pub const fn new(operation_id: OperationId, operation_fingerprint: ContentFingerprint) -> Self {
         Self {
+            outcome_evidence: None,
             bounded_context: None,
             operation_id,
             operation_fingerprint,
@@ -241,6 +243,16 @@ impl CommandExecutionMetadata {
 
     pub const fn bounded_context(&self) -> Option<&BoundedContextName> {
         self.bounded_context.as_ref()
+    }
+
+    #[must_use]
+    pub fn with_outcome_evidence(mut self, evidence: crate::OutcomeEvidence) -> Self {
+        self.outcome_evidence = Some(evidence);
+        self
+    }
+
+    pub const fn outcome_evidence(&self) -> Option<&crate::OutcomeEvidence> {
+        self.outcome_evidence.as_ref()
     }
 
     pub const fn operation_id(&self) -> &OperationId {

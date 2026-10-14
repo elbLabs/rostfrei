@@ -17,6 +17,28 @@ impl EventHistory for PostCommitFault {
 }
 #[async_trait]
 impl EventStore for PostCommitFault {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+        self.inner
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        let outcome = self.inner.commit_outcome(transaction).await?;
+        if self.fail_once.swap(false, Ordering::SeqCst) {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::Unavailable,
+                "injected postcommit result-read failure",
+            ));
+        }
+        Ok(outcome)
+    }
     async fn append(
         &self,
         id: &StreamId,

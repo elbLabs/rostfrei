@@ -367,7 +367,20 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
                         "technical command execution is blocked; repair and redrive required",
                     );
                 }
-                _ => return DeliveryDisposition::Acknowledge,
+                _ => {
+                    // A retained business response is a projection, never an independent
+                    // authority. Legacy-only responses require explicit evidence-bound import.
+                    return match self.processor.reconcile_completed(&command).await {
+                        Ok(Some(authoritative)) if authoritative == response => {
+                            DeliveryDisposition::Acknowledge
+                        }
+                        Ok(Some(_)) | Ok(None) => quarantine(
+                            "retained business response lacks matching shared authority; migration required",
+                        ),
+                        Err(error) if error.is_retryable() => retry(),
+                        Err(_) => quarantine("shared outcome reconciliation is blocked"),
+                    };
+                }
             },
             Ok(None) => {}
             Err(ReconciliationError::Unavailable) => return retry(),

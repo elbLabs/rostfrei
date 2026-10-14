@@ -1,5 +1,6 @@
 mod aggregate;
 mod append_session;
+mod completed_outcome;
 mod domain_event;
 mod envelope;
 mod executor;
@@ -13,6 +14,11 @@ pub use aggregate::{
     EventVariant, JsonEventCodec,
 };
 pub use append_session::AppendSession;
+pub use completed_outcome::{
+    CommandCompletion, CompletedAppendOutcome, CompletedOutcome, EncodedRejection,
+    JsonRejectionCodec, MAX_REJECTION_BYTES, OutcomeEvidence, RejectionCodec,
+    validate_completed_transaction,
+};
 pub use domain_event::{
     CommittedDomainEvent, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
     DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError,

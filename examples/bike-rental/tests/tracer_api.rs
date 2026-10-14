@@ -84,6 +84,22 @@ impl EventHistory for ResettableStore {
 
 #[async_trait]
 impl EventStore for ResettableStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &rostfrei::BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei::CompletedOutcome>, EventStoreError> {
+        self.snapshot()
+            .await
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei::CompletedAppendOutcome, EventStoreError> {
+        self.snapshot().await.commit_outcome(transaction).await
+    }
     async fn append(
         &self,
         stream_id: &StreamId,

@@ -47,6 +47,7 @@ struct State {
 pub struct InMemoryEventStore {
     state: Arc<Mutex<State>>,
     maximum_events: usize,
+    maximum_outcomes: usize,
 }
 
 impl Default for InMemoryEventStore {
@@ -60,6 +61,7 @@ impl InMemoryEventStore {
         Self {
             state: Arc::new(Mutex::new(State::default())),
             maximum_events: usize::MAX,
+            maximum_outcomes: usize::MAX,
         }
     }
 
@@ -67,11 +69,18 @@ impl InMemoryEventStore {
         Self {
             state: Arc::new(Mutex::new(State::default())),
             maximum_events,
+            maximum_outcomes: usize::MAX,
         }
     }
 
     pub async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         <Self as EventHistory>::load(self, stream_id).await
+    }
+
+    #[must_use]
+    pub const fn with_outcome_capacity(mut self, maximum_outcomes: usize) -> Self {
+        self.maximum_outcomes = maximum_outcomes;
+        self
     }
 }
 
@@ -114,6 +123,32 @@ impl StreamDirectory for InMemoryEventStore {
 #[async_trait]
 #[allow(clippy::too_many_lines)]
 impl EventStore for InMemoryEventStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<crate::CompletedOutcome>, EventStoreError> {
+        let state = self.state.lock().await;
+        Ok(state
+            .transactions
+            .get(&(Some(context.clone()), operation.clone()))
+            .map(|stored| crate::CompletedOutcome::new(stored.receipt.clone())))
+    }
+
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<crate::CompletedAppendOutcome, EventStoreError> {
+        crate::validate_completed_transaction(&transaction)?;
+        Ok(match self.append_transaction_inner(transaction).await? {
+            TransactionAppendOutcome::Appended(receipt) => {
+                crate::CompletedAppendOutcome::Appended(crate::CompletedOutcome::new(receipt))
+            }
+            TransactionAppendOutcome::ExactReplay(receipt) => {
+                crate::CompletedAppendOutcome::ExactReplay(crate::CompletedOutcome::new(receipt))
+            }
+        })
+    }
     async fn append(
         &self,
         stream_id: &StreamId,
@@ -250,7 +285,8 @@ impl EventStore for InMemoryEventStore {
         Ok(state
             .transactions
             .get(&(None, operation_id.clone()))
-            .map(|stored| stored.receipt.clone()))
+            .map(|stored| stored.receipt.clone().require_acceptance())
+            .transpose()?)
     }
 
     async fn load_transaction_receipt_in_context(
@@ -262,10 +298,24 @@ impl EventStore for InMemoryEventStore {
         Ok(state
             .transactions
             .get(&(Some(bounded_context.clone()), operation_id.clone()))
-            .map(|stored| stored.receipt.clone()))
+            .map(|stored| stored.receipt.clone().require_acceptance())
+            .transpose()?)
     }
 
     async fn append_transaction(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        if transaction.completion().is_some() {
+            return Err(invalid("use commit_outcome for completed decisions"));
+        }
+        self.append_transaction_inner(transaction).await
+    }
+}
+
+impl InMemoryEventStore {
+    #[allow(clippy::too_many_lines)]
+    async fn append_transaction_inner(
         &self,
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
@@ -283,6 +333,12 @@ impl EventStore for InMemoryEventStore {
             }
             return Err(identity_conflict(
                 "transaction identity was reused with different content",
+            ));
+        }
+        if state.transactions.len() >= self.maximum_outcomes {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::CapacityExhausted,
+                "in-memory completed outcome capacity exhausted",
             ));
         }
         validate_transaction(&state, &transaction)?;
@@ -335,6 +391,9 @@ impl EventStore for InMemoryEventStore {
         if let Some(causation_id) = transaction.causation_id() {
             receipt = receipt.with_causation_id(causation_id.clone());
         }
+        if let Some(completion) = transaction.completion() {
+            receipt = receipt.with_completion(completion.clone());
+        }
 
         for (participant, _, events) in staged {
             let Some(batch) = participant.batch() else {
@@ -380,6 +439,7 @@ fn transaction_content_matches(first: &EventTransaction, second: &EventTransacti
         && first.operation_fingerprint() == second.operation_fingerprint()
         && first.correlation_id() == second.correlation_id()
         && first.causation_id() == second.causation_id()
+        && first.completion() == second.completion()
         && first.participants().len() == second.participants().len()
         && first
             .participants()

@@ -58,6 +58,7 @@ impl EventByteLimit {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NatsEventStoreConfig {
+    completed_outcome_epoch: Option<String>,
     application: ApplicationName,
     traffic_scope: TrafficScope,
     bounded_context: BoundedContextName,
@@ -85,6 +86,7 @@ impl NatsEventStoreConfig {
             context.name().as_str()
         );
         let config = Self {
+            completed_outcome_epoch: None,
             application: context.application().clone(),
             traffic_scope: context.traffic_scope(),
             bounded_context: context.name().clone(),
@@ -139,6 +141,30 @@ impl NatsEventStoreConfig {
 
     pub fn stream_name(&self) -> &str {
         &self.stream_name
+    }
+
+    /// Operator assertion: this is a NEW isolated authority namespace, with old writers
+    /// excluded by broker credentials/ACLs. Never use to activate an existing legacy store.
+    /// Provisioning durably binds this epoch at stream creation. Default is legacy/read-only.
+    pub fn with_fresh_completed_outcome_epoch(
+        mut self,
+        epoch: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
+        let epoch = epoch.into();
+        if epoch.is_empty()
+            || epoch.len() > 128
+            || !epoch
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(invalid("invalid completed outcome identity epoch"));
+        }
+        self.completed_outcome_epoch = Some(epoch);
+        Ok(self)
+    }
+
+    pub fn completed_outcome_epoch(&self) -> Option<&str> {
+        self.completed_outcome_epoch.as_deref()
     }
 
     pub fn subject_prefix(&self) -> &str {
@@ -239,6 +265,22 @@ impl NatsEventStoreConfig {
             deny_purge: true,
             allow_rollup: false,
             allow_atomic_publish: true,
+            metadata: self
+                .completed_outcome_epoch
+                .as_ref()
+                .map(|epoch| {
+                    std::collections::HashMap::from([
+                        (
+                            "rostfrei.completed-outcomes.epoch".to_owned(),
+                            epoch.clone(),
+                        ),
+                        (
+                            "rostfrei.completed-outcomes.version".to_owned(),
+                            "1".to_owned(),
+                        ),
+                    ])
+                })
+                .unwrap_or_default(),
             ..Default::default()
         }
     }

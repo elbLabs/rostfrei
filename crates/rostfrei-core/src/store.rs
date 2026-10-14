@@ -104,6 +104,7 @@ impl TransactionParticipant {
 /// events still persists a receipt; an empty participant list persists only the receipt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventTransaction {
+    completion: Option<crate::CommandCompletion>,
     bounded_context: Option<BoundedContextName>,
     operation_id: OperationId,
     operation_fingerprint: ContentFingerprint,
@@ -119,6 +120,7 @@ impl EventTransaction {
         participants: Vec<TransactionParticipant>,
     ) -> Self {
         Self {
+            completion: None,
             bounded_context: None,
             operation_id,
             operation_fingerprint,
@@ -172,6 +174,16 @@ impl EventTransaction {
 
     pub fn into_participants(self) -> Vec<TransactionParticipant> {
         self.participants
+    }
+
+    #[must_use]
+    pub fn with_completion(mut self, completion: crate::CommandCompletion) -> Self {
+        self.completion = Some(completion);
+        self
+    }
+
+    pub const fn completion(&self) -> Option<&crate::CommandCompletion> {
+        self.completion.as_ref()
     }
 }
 
@@ -255,6 +267,7 @@ impl TransactionStreamReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransactionReceipt {
+    completion: Option<crate::CommandCompletion>,
     bounded_context: Option<BoundedContextName>,
     operation_id: OperationId,
     operation_fingerprint: ContentFingerprint,
@@ -270,6 +283,7 @@ impl TransactionReceipt {
         streams: Vec<TransactionStreamReceipt>,
     ) -> Self {
         Self {
+            completion: None,
             bounded_context: None,
             operation_id,
             operation_fingerprint,
@@ -327,6 +341,31 @@ impl TransactionReceipt {
             .flat_map(|stream| stream.events.iter().cloned())
             .collect()
     }
+
+    #[must_use]
+    pub fn with_completion(mut self, completion: crate::CommandCompletion) -> Self {
+        self.completion = Some(completion);
+        self
+    }
+
+    pub const fn completion(&self) -> Option<&crate::CommandCompletion> {
+        self.completion.as_ref()
+    }
+
+    /// Acceptance-only readers must fail closed on rejected outcomes.
+    pub fn require_acceptance(self) -> Result<Self, EventStoreError> {
+        if self
+            .completion
+            .as_ref()
+            .is_some_and(|completion| completion.rejection.is_some())
+        {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::IdentityConflict,
+                "operation has a completed rejection, not acceptance",
+            ));
+        }
+        Ok(self)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -379,6 +418,18 @@ pub trait EventHistory: Send + Sync {
 
 #[async_trait]
 pub trait EventStore: EventHistory {
+    /// Same authoritative namespace/atomic decision as acceptance receipts. Required API:
+    /// implementations cannot silently omit rejected-outcome durability.
+    async fn load_completed_outcome_in_context(
+        &self,
+        bounded_context: &BoundedContextName,
+        operation_id: &OperationId,
+    ) -> Result<Option<crate::CompletedOutcome>, EventStoreError>;
+
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<crate::CompletedAppendOutcome, EventStoreError>;
     async fn append_session(&self) -> Result<Box<dyn crate::AppendSession + '_>, EventStoreError> {
         Ok(Box::new(crate::append_session::ForwardingAppendSession {
             store: self,
@@ -454,6 +505,21 @@ impl<History: EventHistory + ?Sized> EventHistory for Arc<History> {
 
 #[async_trait]
 impl<Store: EventStore + ?Sized> EventStore for Arc<Store> {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<crate::CompletedOutcome>, EventStoreError> {
+        self.as_ref()
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<crate::CompletedAppendOutcome, EventStoreError> {
+        self.as_ref().commit_outcome(transaction).await
+    }
     async fn append_session(&self) -> Result<Box<dyn crate::AppendSession + '_>, EventStoreError> {
         self.as_ref().append_session().await
     }

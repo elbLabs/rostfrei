@@ -85,19 +85,20 @@ pub use read_model::{
 };
 pub use rostfrei_core::{
     Aggregate, AggregateCodecs, AggregateId as StreamAggregateId, AggregateInstance,
-    AggregateType as StreamAggregateType, AppendOutcome, AppendSession, CommandDecision,
-    CommandExecution, CommandExecutionError, CommandExecutionMetadata, CommandExecutor,
-    CommandHandler, CommandHandlingResult, CommandOutcome, CommandReceipt, CommandResult,
-    CommittedDomainEvent, ContentFingerprint, DomainEventDispatchOutcome, DomainEventDispatcher,
-    DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind,
-    DomainEventRegistrationError, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind,
-    EventHistory, EventId, EventStore, EventStoreError, EventStoreErrorKind, EventTransaction,
-    EventVariant, ExpectedVersion, InMemoryEventStore, JsonReadModelCodec, LoadedAggregate,
-    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, ReadModel, ReadModelCodec, ReadModelEntry,
-    ReadModelError, ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelStore,
-    RecordedEvent, SimulatedParticipant, SimulationError, SimulationOutcome, StreamId,
-    StreamVersion, TransactionAppendOutcome, TransactionParticipant, TransactionReceipt,
-    TransactionStreamReceipt,
+    AggregateType as StreamAggregateType, AppendOutcome, AppendSession, CommandCompletion,
+    CommandDecision, CommandExecution, CommandExecutionError, CommandExecutionMetadata,
+    CommandExecutor, CommandHandler, CommandHandlingResult, CommandOutcome, CommandReceipt,
+    CommandResult, CommittedDomainEvent, CompletedAppendOutcome, CompletedOutcome,
+    ContentFingerprint, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
+    DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError,
+    EncodedRejection, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind, EventHistory,
+    EventId, EventStore, EventStoreError, EventStoreErrorKind, EventTransaction, EventVariant,
+    ExpectedVersion, InMemoryEventStore, JsonReadModelCodec, JsonRejectionCodec, LoadedAggregate,
+    MAX_REJECTION_BYTES, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, OutcomeEvidence, ReadModel,
+    ReadModelCodec, ReadModelEntry, ReadModelError, ReadModelErrorKind, ReadModelKey,
+    ReadModelRevision, ReadModelStore, RecordedEvent, RejectionCodec, SimulatedParticipant,
+    SimulationError, SimulationOutcome, StreamId, StreamVersion, TransactionAppendOutcome,
+    TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
 };
 pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};
 pub use rostfrei_macros::{QueryDefinition, ReadModel};

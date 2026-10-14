@@ -49,6 +49,7 @@ const EVENT_SCHEMA_VERSION: u16 = 3;
 const TRANSACTION_EVENT_SCHEMA_VERSION: u16 = 4;
 const TRANSACTION_RECEIPT_SCHEMA_VERSION: u16 = 1;
 const EVENT_FREE_RECEIPT_SCHEMA_VERSION: u16 = 2;
+const COMPLETED_OUTCOME_SCHEMA_VERSION: u16 = 3;
 const ATOMIC_BATCH_API_LEVEL: &str = "2";
 const MINIMUM_ATOMIC_BATCH_SERVER_VERSION: (i64, i64, i64) = (2, 12, 1);
 const NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT: &str =
@@ -60,6 +61,21 @@ struct NatsAppendSession<'a> {
     store: &'a NatsEventStore,
     histories: tokio::sync::Mutex<LoadedHistories>,
     incarnation: String,
+}
+
+fn completed_append(outcome: TransactionAppendOutcome) -> rostfrei_core::CompletedAppendOutcome {
+    match outcome {
+        TransactionAppendOutcome::Appended(receipt) => {
+            rostfrei_core::CompletedAppendOutcome::Appended(rostfrei_core::CompletedOutcome::new(
+                receipt,
+            ))
+        }
+        TransactionAppendOutcome::ExactReplay(receipt) => {
+            rostfrei_core::CompletedAppendOutcome::ExactReplay(
+                rostfrei_core::CompletedOutcome::new(receipt),
+            )
+        }
+    }
 }
 
 impl NatsAppendSession<'_> {
@@ -90,12 +106,25 @@ impl EventHistory for NatsAppendSession<'_> {
 
 #[async_trait]
 impl AppendSession for NatsAppendSession<'_> {
+    async fn commit_outcome(
+        self: Box<Self>,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        rostfrei_core::validate_completed_transaction(&transaction)?;
+        self.store.require_completed_outcome_writer().await?;
+        self.validate_incarnation().await?;
+        self.store
+            .append_transaction_with_histories(transaction, self.histories.into_inner())
+            .await
+            .map(completed_append)
+    }
     async fn append(
         mut self: Box<Self>,
         stream_id: &StreamId,
         expected_version: ExpectedVersion,
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
+        self.store.require_mutable_namespace().await?;
         let history = self
             .store
             .load_session_history(stream_id, self.histories.get_mut())
@@ -110,6 +139,10 @@ impl AppendSession for NatsAppendSession<'_> {
         self: Box<Self>,
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        self.store.require_mutable_namespace().await?;
+        if transaction.completion().is_some() {
+            return Err(invalid("use commit_outcome for completed decisions"));
+        }
         self.validate_incarnation().await?;
         self.store
             .append_transaction_with_histories(transaction, self.histories.into_inner())
@@ -140,6 +173,93 @@ struct ReadBarrierHook {
 }
 
 impl NatsEventStore {
+    /// Quiesced, credential-fenced legacy maintenance only. Imports a retained business
+    /// rejection bound to its ORIGINAL validated envelope. The legacy epoch remains blocked
+    /// for unknown identities (including expired/invisible rejections); no activation shortcut.
+    pub async fn import_legacy_rejected_outcome(
+        &self,
+        command: &rostfrei::EncodedCommand,
+        response: &rostfrei_messaging_core::CommandResponse,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        if self.config.completed_outcome_epoch().is_some()
+            || command.address().application() != self.config.application().as_str()
+            || command.address().traffic_scope() != self.config.traffic_scope()
+        {
+            return Err(invalid(
+                "legacy import requires matching legacy application/traffic namespace",
+            ));
+        }
+        let stream = self
+            .context
+            .get_stream(self.config.stream_name())
+            .await
+            .map_err(|error| unavailable(format!("legacy namespace inspection failed: {error}")))?;
+        if stream
+            .cached_info()
+            .config
+            .metadata
+            .contains_key("rostfrei.completed-outcomes.epoch")
+        {
+            return Err(invalid(
+                "legacy imports cannot write a fresh completed outcome epoch",
+            ));
+        }
+        let transaction = command
+            .legacy_rejection_transaction(response)
+            .map_err(|error| invalid(error.to_string()))?;
+        rostfrei_core::validate_completed_transaction(&transaction)?;
+        self.append_transaction_with_histories(transaction, LoadedHistories::default())
+            .await
+            .map(completed_append)
+    }
+    async fn require_completed_outcome_writer(&self) -> Result<(), EventStoreError> {
+        let epoch = self.config.completed_outcome_epoch().ok_or_else(|| EventStoreError::new(EventStoreErrorKind::ConfigurationMismatch, "legacy/read-only outcome namespace: import original evidence or use a fresh fenced identity epoch"))?;
+        let stream = self
+            .context
+            .get_stream(self.config.stream_name())
+            .await
+            .map_err(|error| {
+                unavailable(format!("failed to verify completed outcome epoch: {error}"))
+            })?;
+        if stream
+            .cached_info()
+            .config
+            .metadata
+            .get("rostfrei.completed-outcomes.epoch")
+            .map(String::as_str)
+            != Some(epoch)
+            || stream
+                .cached_info()
+                .config
+                .metadata
+                .get("rostfrei.completed-outcomes.version")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::ConfigurationMismatch,
+                "durable completed outcome epoch/version differs",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn require_mutable_namespace(&self) -> Result<(), EventStoreError> {
+        let stream = self
+            .context
+            .get_stream(self.config.stream_name())
+            .await
+            .map_err(|error| unavailable(format!("failed to inspect write namespace: {error}")))?;
+        if stream
+            .cached_info()
+            .config
+            .metadata
+            .contains_key("rostfrei.completed-outcomes.epoch")
+        {
+            self.require_completed_outcome_writer().await?;
+        }
+        Ok(())
+    }
     async fn stream_incarnation(&self) -> Result<String, EventStoreError> {
         let stream = self
             .context
@@ -1109,6 +1229,9 @@ impl NatsEventStore {
         if let Some(causation_id) = causation_id {
             receipt = receipt.with_causation_id(causation_id);
         }
+        if let Some(completion) = content.completion {
+            receipt = receipt.with_completion(completion);
+        }
         Ok(MaterializedTransactionReceipt {
             receipt,
             batch_id,
@@ -1337,6 +1460,31 @@ impl NatsEventStore {
 
 #[async_trait]
 impl EventStore for NatsEventStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+        if context != self.config.bounded_context() {
+            return Err(invalid("completed outcome context does not match store"));
+        }
+        if let Some(receipt) = self.load_transaction_receipt_inner(operation).await? {
+            return Ok(Some(rostfrei_core::CompletedOutcome::new(receipt)));
+        }
+        self.require_completed_outcome_writer().await?;
+        Ok(None)
+    }
+
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        rostfrei_core::validate_completed_transaction(&transaction)?;
+        self.require_completed_outcome_writer().await?;
+        self.append_transaction_with_histories(transaction, LoadedHistories::default())
+            .await
+            .map(completed_append)
+    }
     async fn append_session(&self) -> Result<Box<dyn AppendSession + '_>, EventStoreError> {
         Ok(Box::new(NatsAppendSession {
             store: self,
@@ -1351,6 +1499,7 @@ impl EventStore for NatsEventStore {
         expected_version: ExpectedVersion,
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
+        self.require_mutable_namespace().await?;
         let history = self.load_history(stream_id).await?;
         self.append_with_history(stream_id, expected_version, batch, history)
             .await
@@ -1360,7 +1509,10 @@ impl EventStore for NatsEventStore {
         &self,
         operation_id: &OperationId,
     ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-        self.load_transaction_receipt_inner(operation_id).await
+        self.load_transaction_receipt_inner(operation_id)
+            .await?
+            .map(TransactionReceipt::require_acceptance)
+            .transpose()
     }
 
     async fn load_transaction_receipt_in_context(
@@ -1375,13 +1527,20 @@ impl EventStore for NatsEventStore {
                 self.config.bounded_context().as_str()
             )));
         }
-        self.load_transaction_receipt_inner(operation_id).await
+        self.load_transaction_receipt_inner(operation_id)
+            .await?
+            .map(TransactionReceipt::require_acceptance)
+            .transpose()
     }
 
     async fn append_transaction(
         &self,
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        self.require_mutable_namespace().await?;
+        if transaction.completion().is_some() {
+            return Err(invalid("use commit_outcome for completed decisions"));
+        }
         self.append_transaction_with_histories(transaction, LoadedHistories::default())
             .await
     }
@@ -1847,6 +2006,17 @@ pub async fn update_event_store(
         })?;
     let actual = &existing.cached_info().config;
     let mut expected = config.stream_config();
+    for key in [
+        "rostfrei.completed-outcomes.epoch",
+        "rostfrei.completed-outcomes.version",
+    ] {
+        if actual.metadata.get(key) != expected.metadata.get(key) {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::ConfigurationMismatch,
+                "policy update cannot activate/change a completed outcome epoch; use a fresh fenced namespace",
+            ));
+        }
+    }
     if actual.subjects != expected.subjects
         && actual.subjects != vec![config.aggregate_subject_filter()]
     {
@@ -2063,6 +2233,8 @@ struct StoredTransactionReceiptWire {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TransactionReceiptContentWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completion: Option<rostfrei_core::CommandCompletion>,
     event_store_stream: String,
     application: String,
     bounded_context: String,
@@ -3162,6 +3334,7 @@ fn transaction_receipt_content(
     staged: &[StagedTransactionParticipant],
 ) -> Result<TransactionReceiptContentWire, EventStoreError> {
     Ok(TransactionReceiptContentWire {
+        completion: transaction.completion().cloned(),
         event_store_stream: config.stream_name().to_owned(),
         application: config.application().as_str().to_owned(),
         bounded_context: config.bounded_context().as_str().to_owned(),
@@ -3493,7 +3666,9 @@ fn global_sequence_at_version(
 fn encode_transaction_receipt(
     content: &TransactionReceiptContentWire,
 ) -> Result<Vec<u8>, EventStoreError> {
-    let schema_version = if content
+    let schema_version = if content.completion.is_some() {
+        COMPLETED_OUTCOME_SCHEMA_VERSION
+    } else if content
         .participants
         .iter()
         .any(|participant| participant.event_count > 0)
@@ -3560,7 +3735,9 @@ fn decode_transaction_receipt(
     })?;
     if !matches!(
         wire.schema_version,
-        TRANSACTION_RECEIPT_SCHEMA_VERSION | EVENT_FREE_RECEIPT_SCHEMA_VERSION
+        TRANSACTION_RECEIPT_SCHEMA_VERSION
+            | EVENT_FREE_RECEIPT_SCHEMA_VERSION
+            | COMPLETED_OUTCOME_SCHEMA_VERSION
     ) {
         return Err(corrupt(
             "stored transaction receipt has an unsupported schema version",
@@ -3586,6 +3763,25 @@ fn decode_transaction_receipt(
         ));
     }
     validate_receipt_participant_shape(&wire, batch_sequence)?;
+    if (wire.schema_version == COMPLETED_OUTCOME_SCHEMA_VERSION)
+        != wire.receipt.completion.is_some()
+    {
+        return Err(corrupt("completed outcome schema/decision mismatch"));
+    }
+    if let Some(completion) = &wire.receipt.completion {
+        completion
+            .validate()
+            .map_err(|error| corrupt(error.to_string()))?;
+        if completion.rejection.is_some()
+            && wire
+                .receipt
+                .participants
+                .iter()
+                .any(|participant| participant.event_count != 0)
+        {
+            return Err(corrupt("rejected outcome contains domain events"));
+        }
+    }
     Ok(DecodedTransactionReceipt {
         batch_id: batch_id.to_owned(),
         batch_sequence,
@@ -3603,7 +3799,8 @@ fn validate_receipt_participant_shape(
         .participants
         .iter()
         .any(|participant| participant.event_count > 0);
-    if (wire.schema_version == TRANSACTION_RECEIPT_SCHEMA_VERSION) != has_events
+    if (wire.schema_version != COMPLETED_OUTCOME_SCHEMA_VERSION
+        && (wire.schema_version == TRANSACTION_RECEIPT_SCHEMA_VERSION) != has_events)
         || wire
             .receipt
             .participants
@@ -3680,6 +3877,7 @@ fn transaction_matches_receipt(
         && transaction.operation_fingerprint() == receipt.operation_fingerprint()
         && transaction.correlation_id() == receipt.correlation_id()
         && transaction.causation_id() == receipt.causation_id();
+    let metadata_matches = metadata_matches && transaction.completion() == receipt.completion();
     metadata_matches
         && transaction.participants().len() == receipt.streams().len()
         && transaction
@@ -3743,6 +3941,16 @@ fn event_checksum(
 }
 
 fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventStoreError> {
+    if expected
+        .metadata
+        .iter()
+        .any(|(key, value)| actual.metadata.get(key) != Some(value))
+    {
+        return Err(EventStoreError::new(
+            EventStoreErrorKind::ConfigurationMismatch,
+            "existing stream does not carry the requested completed outcome epoch; legacy activation is forbidden",
+        ));
+    }
     let mut compatible = expected.clone();
     if actual.max_message_size == -1 || actual.max_message_size > expected.max_message_size {
         compatible.max_message_size = actual.max_message_size;
@@ -3896,6 +4104,7 @@ mod tests {
 
     fn transaction_receipt_fixture() -> TransactionReceiptContentWire {
         TransactionReceiptContentWire {
+            completion: None,
             event_store_stream: "EVENTS".to_owned(),
             application: "acme".to_owned(),
             bounded_context: "orders".to_owned(),

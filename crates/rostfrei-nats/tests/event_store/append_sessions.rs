@@ -16,6 +16,25 @@ impl EventHistory for SessionStore {
 
 #[async_trait]
 impl EventStore for SessionStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &rostfrei_messaging_core::BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+        self.0
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        let session = self.0.append_session().await?;
+        for participant in transaction.participants() {
+            session.load(participant.stream_id()).await?;
+        }
+        session.commit_outcome(transaction).await
+    }
     async fn append(
         &self,
         stream_id: &StreamId,

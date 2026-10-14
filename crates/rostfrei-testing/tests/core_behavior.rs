@@ -560,6 +560,34 @@ impl EventHistory for ForcedConflictStore {
 
 #[async_trait]
 impl EventStore for ForcedConflictStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+        self.inner
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        self.append_attempts.fetch_add(1, Ordering::Relaxed);
+        if self
+            .remaining_conflicts
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::Conflict,
+                "forced test conflict",
+            ));
+        }
+        self.inner.commit_outcome(transaction).await
+    }
     async fn append(
         &self,
         stream_id: &StreamId,
@@ -620,6 +648,21 @@ impl EventHistory for AppendOnlyStore {
 
 #[async_trait]
 impl EventStore for AppendOnlyStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+        self.0
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        self.0.commit_outcome(transaction).await
+    }
     async fn append(
         &self,
         stream_id: &StreamId,
