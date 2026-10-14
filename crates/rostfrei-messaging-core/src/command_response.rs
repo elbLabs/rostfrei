@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
@@ -247,7 +247,20 @@ struct CommandResponseWire {
     operation_id: OperationId,
     schema_version: SchemaVersion,
     correlation_id: CorrelationId,
+    outcome: CommandResponseOutcomeWire,
+    #[serde(flatten)]
+    extensions: BTreeMap<String, serde::de::IgnoredAny>,
+}
+
+#[derive(Deserialize)]
+struct CommandResponseOutcomeWire {
+    // Serde's flattened map representation retains entries (including duplicate keys),
+    // unlike serde_json::Value. The existing typed enum and ExecutionFailure visitors
+    // therefore still reject duplicate known fields, even when content precedes its tag.
+    #[serde(flatten)]
     outcome: CommandResponseOutcome,
+    #[serde(flatten)]
+    extensions: BTreeMap<String, serde::de::IgnoredAny>,
 }
 
 impl<'de> Deserialize<'de> for CommandResponse {
@@ -255,33 +268,14 @@ impl<'de> Deserialize<'de> for CommandResponse {
     where
         D: Deserializer<'de>,
     {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        // Schema 1 deliberately tolerates legacy extension fields. The unpublished technical
-        // schema is strict, including the adjacent outcome envelope and source/recovery fields.
-        if value
-            .get("schema_version")
-            .and_then(serde_json::Value::as_u64)
-            == Some(u64::from(TECHNICAL_RESPONSE_SCHEMA_VERSION))
+        // Decode known fields directly, preserving typed duplicate-field checks at every
+        // protocol layer. Only unknown extensions may be ignored for legacy schema 1.
+        let wire = CommandResponseWire::deserialize(deserializer)?;
+        if wire.schema_version.get() == TECHNICAL_RESPONSE_SCHEMA_VERSION
+            && (!wire.extensions.is_empty() || !wire.outcome.extensions.is_empty())
         {
-            check_technical_fields(
-                &value,
-                &[
-                    "message_id",
-                    "command_message_id",
-                    "command_address",
-                    "operation_id",
-                    "schema_version",
-                    "correlation_id",
-                    "outcome",
-                ],
-            )
-            .map_err(D::Error::custom)?;
-            let outcome = value
-                .get("outcome")
-                .ok_or_else(|| D::Error::custom("missing technical outcome"))?;
-            check_technical_fields(outcome, &["status", "value"]).map_err(D::Error::custom)?;
+            return Err(D::Error::custom("unknown technical response field"));
         }
-        let wire: CommandResponseWire = serde_json::from_value(value).map_err(D::Error::custom)?;
         Self::new(
             wire.message_id,
             wire.command_message_id,
@@ -289,20 +283,10 @@ impl<'de> Deserialize<'de> for CommandResponse {
             wire.operation_id,
             wire.schema_version,
             wire.correlation_id,
-            wire.outcome,
+            wire.outcome.outcome,
         )
         .map_err(D::Error::custom)
     }
-}
-
-fn check_technical_fields(value: &serde_json::Value, allowed: &[&str]) -> Result<(), &'static str> {
-    let object = value
-        .as_object()
-        .ok_or("technical response must be an object")?;
-    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
-        return Err("unknown technical response field");
-    }
-    Ok(())
 }
 
 fn command_response_schema_version() -> Result<SchemaVersion, MessageBuildError> {
