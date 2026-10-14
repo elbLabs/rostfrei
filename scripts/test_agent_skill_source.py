@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,6 +25,9 @@ def fresh_source_checkout(destination):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
     subprocess.run(["git", "init", "--quiet", str(destination)], check=True)
+    # These short-lived repos must not leave detached writers racing their cleanup.
+    for key, value in (("maintenance.auto", "false"), ("gc.auto", "0")):
+        subprocess.run(["git", "config", "--local", key, value], cwd=destination, check=True)
     subprocess.run(["git", "add", "."], cwd=destination, check=True)
     commit(destination)
     return destination
@@ -40,6 +44,16 @@ class SourceSkillTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="rostfrei-source-skills-")
         self.addCleanup(temporary.cleanup)
+        # Exercise eager Git maintenance without inheriting or changing user config.
+        git_config = Path(temporary.name) / "gitconfig"
+        git_config.write_text("[gc]\n\tauto = 1\n\tautoDetach = true\n[maintenance]\n\tauto = true\n")
+        self.git_trace = Path(temporary.name) / "git-trace.jsonl"
+        environment = patch.dict(os.environ, {
+            "GIT_CONFIG_GLOBAL": str(git_config),
+            "GIT_TRACE2_EVENT": str(self.git_trace),
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
         self.root = fresh_source_checkout(Path(temporary.name) / "checkout")
         self.skill = self.root / ".agents/skills/rostfrei-develop-feature"
         self.release = self.skill / "references/release.json"
@@ -49,6 +63,16 @@ class SourceSkillTests(unittest.TestCase):
         return subprocess.run([
             sys.executable, "-I", str(self.root / "scripts/package_agent_skills.py"), "--prepare-source",
         ], cwd=self.root, capture_output=True, text=True)
+
+    def test_fixture_does_not_launch_background_git_maintenance(self):
+        commit(self.root)
+        writers = [
+            event["argv"]
+            for line in self.git_trace.read_text().splitlines()
+            if (event := json.loads(line)).get("event") == "child_start"
+            and any(command in event.get("argv", []) for command in ("gc", "repack", "pack-objects"))
+        ]
+        self.assertEqual(writers, [], "Fixture commits must not leave writers racing temporary-directory cleanup")
 
     def test_discovered_source_bootstrap_and_runner_refresh_revision(self):
         result = self.prepare()
