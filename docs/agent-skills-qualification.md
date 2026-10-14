@@ -91,6 +91,14 @@ source modifications. This is provenance plumbing, not behavioral red.
 The new focused regression passed after the fix, as did focused all-target
 clippy; CI runs all four source checks together.
 
+A fresh Cargo Git cache then installed `958b039` successfully and was removed
+after installation. The resulting native CLI reported that exact revision and
+`sourceTreeDirty: false` with an empty PATH. Remote Agent Skills CI also passed
+its packaged-source removal, four source regressions and installed/source real
+NATS checks. The version-only workflow now collects `test_versions.py` (9 passed
+locally); native-dependent source tests remain covered in the Rust and skills
+jobs, where their build prerequisites are available.
+
 Historical evidence below records earlier implementations, not current commands.
 
 ### Historical packaging test-first record
