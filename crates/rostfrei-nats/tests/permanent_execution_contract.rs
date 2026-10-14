@@ -4,8 +4,8 @@ mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
 use rostfrei::{
-    CodecFailureKind, CommandBusErrorKind, CommandProcessorErrorKind, ExecutionFailure,
-    ExecutionRecovery, IntegrationEventCommandHandler, StoreFailureKind,
+    CodecFailureKind, CommandBusErrorKind, CommandProcessorErrorKind, EncodedCommand,
+    ExecutionFailure, ExecutionRecovery, IntegrationEventCommandHandler, StoreFailureKind,
 };
 
 const fn expected_failure(codec: Option<BadCodec>) -> ExecutionFailure {
@@ -584,6 +584,25 @@ async fn wait_quarantine_count(fixture: &Fixture, count: usize) -> TestResult {
     Ok(())
 }
 
+async fn publish_after_deduplication(fixture: &Fixture, encoded: &EncodedCommand) -> TestResult {
+    // Broker PubAck, not a blanket delay, establishes that publication dedup has expired.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if !fixture
+                .publisher()
+                .publish_command(encoded.message().clone())
+                .await?
+                .duplicate()
+            {
+                return TestResult::Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    Ok(())
+}
+
 #[tokio::test]
 async fn blocked_diagnostic_redrive_is_explicit_and_cannot_delete_a_business_outcome() -> TestResult
 {
@@ -640,21 +659,7 @@ async fn blocked_diagnostic_redrive_is_explicit_and_cannot_delete_a_business_out
             .remove_blocked_diagnostic_for_redrive(&encoded, Duration::from_secs(2))
             .await?
     );
-    // Broker PubAck, not a blanket delay, establishes that publication dedup has expired.
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            if !fixture
-                .publisher()
-                .publish_command(encoded.message().clone())
-                .await?
-                .duplicate()
-            {
-                break TestResult::Ok(());
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await??;
+    publish_after_deduplication(&fixture, &encoded).await?;
     let _worker = fixture.command_worker(processor).await?;
     let receipt = remote.dispatch(command).await?;
     assert_eq!(
