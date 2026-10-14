@@ -53,6 +53,7 @@ pub use provisioning::{
     verify_application_messaging, verify_stream,
 };
 pub use publish::{CORRELATION_ID_HEADER, NatsPublishAck, NatsPublisher};
+mod response_publication;
 pub use quarantine::NatsQuarantineReader;
 pub use query::{NatsQueryRequester, NatsQueryServer, NatsQueryServerConfig};
 pub use read_model::NatsReadModelStore;
@@ -63,4 +64,7 @@ pub use read_model_config::{
 pub use read_model_worker::{
     NatsReadModelConsumerOptions, NatsReadModelWorker, ReadModelWorkerError,
     provision_read_model_consumers,
+};
+pub use response_publication::{
+    DIAGNOSTIC_TRANSITION_HEADER, DiagnosticTransitionToken, PreparedCommandResponse,
 };

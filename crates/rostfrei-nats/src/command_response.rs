@@ -50,8 +50,10 @@ impl NatsCommandResponseReader {
     ///
     /// Maintenance operation: first quiesce this command's consumers and retain its quarantine
     /// evidence. Repair the source fault, call this method, wait out the command stream's
-    /// publication deduplication window, then republish the original envelope/ID. This does not
-    /// remove domain receipts, quarantine evidence, or reset broker deduplication. Concurrent
+    /// publication deduplication window (or verify a nonduplicate command `PubAck`), then republish
+    /// the original envelope/ID. Response generations make a new diagnostic distinct even within
+    /// response-stream deduplication. This does not remove receipts, quarantine evidence, or reset
+    /// either broker deduplication cache. Concurrent
     /// publication of a completed response is safe: only the observed diagnostic sequence is
     /// deleted. Running consumers can republish diagnostics, so redrive requires quiescence.
     pub async fn remove_blocked_diagnostic_for_redrive(
@@ -76,8 +78,8 @@ impl NatsCommandResponseReader {
                 Err(error) if matches!(error.kind(), jetstream::stream::LastRawMessageErrorKind::NoMessageFound) => return Ok(removed),
                 Err(_) => return Err(read_error(CommandResponseReadErrorKind::Unavailable)),
             };
-            let response = decode_stored_command_response(
-                stored.subject.as_str(), &stored.headers, &stored.payload, &address,
+            let response = decode_validated_stored_response(
+                &stored, self.topology.command_response_stream().as_str(), stream.cached_info().created.unix_timestamp_nanos(), &address,
                 command.operation_id(), command.message_id(),
             )?;
             command.validate_response(&response)
@@ -116,10 +118,10 @@ impl CommandResponseReader for NatsCommandResponseReader {
                 .get_last_raw_message_by_subject(address.as_str())
                 .await
             {
-                Ok(stored) => decode_stored_command_response(
-                    stored.subject.as_str(),
-                    &stored.headers,
-                    &stored.payload,
+                Ok(stored) => decode_validated_stored_response(
+                    &stored,
+                    self.topology.command_response_stream().as_str(),
+                    stream.cached_info().created.unix_timestamp_nanos(),
                     address,
                     expected_operation_id,
                     expected_command_message_id,
@@ -162,10 +164,10 @@ impl CommandResponseReader for NatsCommandResponseReader {
                     .await
                 {
                     Ok(stored) => {
-                        return decode_stored_command_response(
-                            stored.subject.as_str(),
-                            &stored.headers,
-                            &stored.payload,
+                        return decode_validated_stored_response(
+                            &stored,
+                            self.topology.command_response_stream().as_str(),
+                            stream.cached_info().created.unix_timestamp_nanos(),
                             address,
                             expected_operation_id,
                             expected_command_message_id,
@@ -208,6 +210,38 @@ fn validate_read_configuration(
     Ok(())
 }
 
+fn decode_validated_stored_response(
+    stored: &jetstream::message::StreamMessage,
+    stream: &str,
+    created: i128,
+    address: &CommandResponseAddress,
+    operation_id: &OperationId,
+    command_message_id: &MessageId,
+) -> Result<CommandResponse, CommandResponseReadError> {
+    let response = decode_stored_command_response(
+        stored.subject.as_str(),
+        &stored.headers,
+        &stored.payload,
+        address,
+        operation_id,
+        command_message_id,
+    )?;
+    crate::response_publication::validate_stored_publication(
+        &response,
+        stored.subject.as_str(),
+        &stored.payload,
+        &stored.headers,
+        crate::response_publication::StoredPublication {
+            stream,
+            created,
+            sequence: stored.sequence,
+        },
+    )
+    .map_err(|_| read_error(CommandResponseReadErrorKind::IdentityConflict))?;
+    Ok(response)
+}
+
+// Parses logical envelope identity; live readers additionally validate the publication token.
 fn decode_stored_command_response(
     subject: &str,
     headers: &HeaderMap,
@@ -230,7 +264,11 @@ fn decode_stored_command_response(
         .ok_or_else(|| read_error(CommandResponseReadErrorKind::InvalidResponse))?;
     let outer_message_id = MessageId::new(outer_message_id)
         .map_err(|_| read_error(CommandResponseReadErrorKind::InvalidResponse))?;
-    if response.message_id() != &outer_message_id {
+    if !matches!(
+        response.outcome(),
+        rostfrei_messaging_core::CommandResponseOutcome::ExecutionFailed(_)
+    ) && response.message_id() != &outer_message_id
+    {
         return Err(read_error(CommandResponseReadErrorKind::IdentityConflict));
     }
     if response.operation_id() != expected_operation_id

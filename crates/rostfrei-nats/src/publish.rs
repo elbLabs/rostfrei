@@ -11,10 +11,9 @@ use async_nats::{
 use async_trait::async_trait;
 use rostfrei_messaging_core::{
     CallerMetadata, CommandAddress, CommandPublisher, CommandResponse, CommandResponseAddress,
-    CommandResponseOutcome, CommandResponsePublisher, IntegrationEventAddress,
-    IntegrationEventPublisher, OutboundMessage, PublishError,
-    PublishErrorKind as CorePublishErrorKind, PublishReceipt, PublishableAddress, TraceContext,
-    derive_command_response_address,
+    CommandResponsePublisher, IntegrationEventAddress, IntegrationEventPublisher, OutboundMessage,
+    PublishError, PublishErrorKind as CorePublishErrorKind, PublishReceipt, PublishableAddress,
+    TraceContext, derive_command_response_address,
 };
 use tokio::time::timeout;
 
@@ -32,9 +31,9 @@ pub const DEFAULT_PUBLISH_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NatsPublishAck {
-    stream: StreamName,
-    sequence: u64,
-    duplicate: bool,
+    pub(crate) stream: StreamName,
+    pub(crate) sequence: u64,
+    pub(crate) duplicate: bool,
 }
 
 impl NatsPublishAck {
@@ -106,6 +105,29 @@ impl NatsPublisher {
         message: OutboundMessage<CommandResponseAddress>,
         publish_timeout: Duration,
     ) -> Result<NatsPublishAck, NatsError> {
+        // This convenience call is a fresh snapshot/upsert. Reprepare only after a definite
+        // CAS conflict; uncertain delivery returns to the caller without changing its token.
+        // Callers performing uncertain retries can retain PreparedCommandResponse explicitly.
+        for _ in 0..3 {
+            let prepared = self
+                .prepare_command_response(message.clone(), publish_timeout)
+                .await?;
+            match self
+                .publish_prepared_command_response(&prepared, publish_timeout)
+                .await
+            {
+                Err(NatsError::PublishExpectation) => {}
+                result => return result,
+            }
+        }
+        Err(NatsError::PublishExpectation)
+    }
+
+    pub async fn prepare_command_response(
+        &self,
+        message: OutboundMessage<CommandResponseAddress>,
+        operation_timeout: Duration,
+    ) -> Result<crate::response_publication::PreparedCommandResponse, NatsError> {
         if message.address().application() != self.topology.application().as_str()
             || message.address().traffic_scope() != self.topology.traffic_scope()
         {
@@ -120,13 +142,34 @@ impl NatsPublisher {
         }
         let mut headers = safe_headers(message.metadata(), message.trace_context());
         headers.insert(CORRELATION_ID_HEADER, response.correlation_id().as_str());
-        publish_immutable_command_response(
+        crate::response_publication::prepare(
             &self.context,
-            &message,
-            &response,
+            message,
+            response,
             self.topology.command_response_stream(),
             headers,
-            publish_timeout,
+            operation_timeout,
+        )
+        .await
+    }
+
+    /// Retry the same prepared value after uncertainty. A stale/superseded generation is
+    /// refused rather than being silently rebased; re-evaluate before preparing a new snapshot.
+    pub async fn publish_prepared_command_response(
+        &self,
+        prepared: &crate::response_publication::PreparedCommandResponse,
+        operation_timeout: Duration,
+    ) -> Result<NatsPublishAck, NatsError> {
+        if prepared.message().address().application() != self.topology.application().as_str()
+            || prepared.message().address().traffic_scope() != self.topology.traffic_scope()
+        {
+            return Err(NatsError::InvalidMessage);
+        }
+        crate::response_publication::publish(
+            &self.context,
+            prepared,
+            self.topology.command_response_stream(),
+            operation_timeout,
         )
         .await
     }
@@ -267,143 +310,6 @@ pub async fn publish_confirmed(
     })
 }
 
-async fn publish_immutable_command_response(
-    context: &jetstream::Context,
-    message: &OutboundMessage<CommandResponseAddress>,
-    response: &CommandResponse,
-    expected_stream: &StreamName,
-    mut headers: HeaderMap,
-    publish_timeout: Duration,
-) -> Result<NatsPublishAck, NatsError> {
-    if publish_timeout.is_zero() {
-        return Err(NatsError::Configuration);
-    }
-
-    headers.insert(CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE);
-    let mut expected_sequence = 0;
-    for _ in 0..3 {
-        let publish = PublishMessage::build()
-            .payload(message.payload().to_vec().into())
-            .headers(headers.clone())
-            .message_id(message.message_id().as_str())
-            .expected_stream(expected_stream.as_str())
-            .expected_last_subject_sequence(expected_sequence);
-        let result = timeout(publish_timeout, async {
-            let acknowledgement = context
-                .send_publish(message.address().as_str().to_owned(), publish)
-                .await
-                .map_err(|error| classify_publish_error(&error))?;
-            acknowledgement
-                .await
-                .map_err(|error| classify_publish_error(&error))
-        })
-        .await
-        .map_err(|_| NatsError::PublishTimeout)?;
-
-        match result {
-            Ok(acknowledgement) if !acknowledgement.duplicate => {
-                if acknowledgement.stream != expected_stream.as_str()
-                    || acknowledgement.sequence == 0
-                {
-                    return Err(NatsError::PublishExpectation);
-                }
-                return Ok(NatsPublishAck {
-                    stream: expected_stream.clone(),
-                    sequence: acknowledgement.sequence,
-                    duplicate: false,
-                });
-            }
-            Ok(_) | Err(NatsError::PublishExpectation) => {
-                let (sequence, exact) = reconcile_command_response_transition(
-                    context,
-                    expected_stream,
-                    message.address().as_str(),
-                    message.payload(),
-                    message.message_id().as_str(),
-                    response,
-                    publish_timeout,
-                )
-                .await?;
-                if exact {
-                    return Ok(NatsPublishAck {
-                        stream: expected_stream.clone(),
-                        sequence,
-                        duplicate: true,
-                    });
-                }
-                expected_sequence = sequence;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Err(NatsError::PublishExpectation)
-}
-
-async fn reconcile_command_response_transition(
-    context: &jetstream::Context,
-    expected_stream: &StreamName,
-    subject: &str,
-    payload: &[u8],
-    message_id: &str,
-    response: &CommandResponse,
-    operation_timeout: Duration,
-) -> Result<(u64, bool), NatsError> {
-    timeout(operation_timeout, async {
-        let stream = context
-            .get_stream(expected_stream.as_str())
-            .await
-            .map_err(|_| NatsError::StreamNotFound)?;
-        let stored = stream
-            .get_last_raw_message_by_subject(subject)
-            .await
-            .map_err(|error| {
-                if matches!(
-                    error.kind(),
-                    jetstream::stream::LastRawMessageErrorKind::NoMessageFound
-                ) {
-                    NatsError::IdentityConflict
-                } else {
-                    NatsError::Publish
-                }
-            })?;
-        if stored.subject.as_str() != subject
-            || stored.sequence == 0
-            || one_optional_header(&stored.headers, CONTENT_TYPE_HEADER)? != Some(JSON_CONTENT_TYPE)
-            || one_optional_header(&stored.headers, CORRELATION_ID_HEADER)?
-                != Some(response.correlation_id().as_str())
-        {
-            return Err(NatsError::IdentityConflict);
-        }
-        let stored_response: CommandResponse =
-            serde_json::from_slice(&stored.payload).map_err(|_| NatsError::IdentityConflict)?;
-        if one_optional_header(&stored.headers, "Nats-Msg-Id")?
-            != Some(stored_response.message_id().as_str())
-            || stored_response.command_message_id() != response.command_message_id()
-            || stored_response.command_address() != response.command_address()
-            || stored_response.operation_id() != response.operation_id()
-            || stored_response.correlation_id() != response.correlation_id()
-        {
-            return Err(NatsError::IdentityConflict);
-        }
-        let exact = stored.payload.as_ref() == payload
-            && stored_response.message_id().as_str() == message_id
-            && &stored_response == response;
-        if !exact
-            && !matches!(
-                stored_response.outcome(),
-                CommandResponseOutcome::ExecutionFailed(_)
-            )
-        {
-            return Err(NatsError::IdentityConflict);
-        }
-        // Only a technical diagnostic can be superseded. A completed business response
-        // remains immutable. The next publication CASes this exact subject sequence.
-        Ok((stored.sequence, exact))
-    })
-    .await
-    .map_err(|_| NatsError::PublishTimeout)?
-}
-
 fn decode_outbound_command_response(
     message: &OutboundMessage<CommandResponseAddress>,
 ) -> Result<CommandResponse, NatsError> {
@@ -421,19 +327,7 @@ fn decode_outbound_command_response(
     Ok(response)
 }
 
-fn one_optional_header<'a>(
-    headers: &'a HeaderMap,
-    name: &str,
-) -> Result<Option<&'a str>, NatsError> {
-    let mut values = headers.get_all(name.to_owned());
-    let first = values.next().map(async_nats::HeaderValue::as_str);
-    if values.next().is_some() {
-        return Err(NatsError::IdentityConflict);
-    }
-    Ok(first)
-}
-
-const fn core_publish_error(error: &NatsError) -> PublishError {
+pub const fn core_publish_error(error: &NatsError) -> PublishError {
     let kind = match error {
         NatsError::Configuration => CorePublishErrorKind::InvalidConfiguration,
         NatsError::PublishTimeout => CorePublishErrorKind::Timeout,
@@ -447,7 +341,7 @@ const fn core_publish_error(error: &NatsError) -> PublishError {
     PublishError::new(kind)
 }
 
-fn classify_publish_error(error: &JetStreamPublishError) -> NatsError {
+pub fn classify_publish_error(error: &JetStreamPublishError) -> NatsError {
     match error.kind() {
         PublishErrorKind::TimedOut => NatsError::PublishTimeout,
         PublishErrorKind::WrongLastMessageId | PublishErrorKind::WrongLastSequence => {

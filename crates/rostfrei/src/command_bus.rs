@@ -1119,6 +1119,10 @@ fn validate_command(
         || encoded.message_id() != &expected_message_id
         || envelope.operation_id() != encoded.operation_id()
         || envelope.correlation_id() != encoded.correlation_id()
+        || encoded
+            .message()
+            .correlation_id()
+            .is_some_and(|outer| outer != envelope.correlation_id())
         || envelope.schema_version().get() != routed.schema_version()
         || encoded.address().name() != routed.command()
         || encoded.fingerprint() != fingerprint
@@ -1398,4 +1402,52 @@ fn current_timestamp() -> Result<MessageTimestamp, CommandBusError> {
     })?;
     MessageTimestamp::from_unix_milliseconds(milliseconds)
         .map_err(|error| CommandBusError::encoding(error.to_string()))
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "assertions express the pure validator contract"
+    )]
+    fn pure_validation_refuses_contradictory_outer_correlation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let context = rostfrei_messaging_core::ApplicationName::new("validation")?
+            .bounded_context("orders")?;
+        let processor = Arc::new(CommandProcessor::new(
+            context.name().clone(),
+            Arc::new(rostfrei_core::InMemoryEventStore::new()),
+        ));
+        let bus = CommandBus::new(
+            context,
+            Arc::new(crate::InMemoryMessagingAdapter::new(processor)),
+        );
+        let original = bus.encode_dynamic(
+            DynamicCommandRequest::new(
+                CoreOperationId::new("operation")?,
+                "act",
+                1,
+                serde_json::json!({}),
+            )?
+            .with_correlation_id(CorrelationId::new("original")?),
+        )?;
+        original.validate()?;
+        let invalid = EncodedCommand::new(
+            original
+                .message()
+                .clone()
+                .with_correlation_id(CorrelationId::new("contradictory")?),
+            original.operation_id().clone(),
+            original.correlation_id().clone(),
+            original.fingerprint(),
+        );
+        assert_eq!(
+            invalid.validate().err().map(|error| error.kind()),
+            Some(CommandProcessorErrorKind::InvalidMessage)
+        );
+        Ok(())
+    }
 }

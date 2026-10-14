@@ -120,6 +120,26 @@ async fn repeated_diagnostic_source_must_supersede_the_latest_transient_snapshot
         first.sequence(),
         second.sequence()
     );
+    let reader = NatsCommandResponseReader::new(f.js.clone(), f.messaging.topology().clone());
+    let latest = reader
+        .read_command_response(
+            &command.response_address()?,
+            command.operation_id(),
+            command.message_id(),
+            Duration::from_secs(2),
+        )
+        .await?;
+    assert_eq!(
+        latest.outcome(),
+        &CommandResponseOutcome::ExecutionFailed(ExecutionFailure::Store(
+            StoreFailureKind::Unavailable
+        ))
+    );
+    assert!(
+        third
+            .as_ref()
+            .is_ok_and(|ack| !ack.duplicate() && ack.sequence() > second.sequence())
+    );
     // The blocked cycle must not be mistaken for a general sink failure or inability to complete.
     let completed = f
         .publisher()
@@ -161,6 +181,24 @@ async fn cleared_diagnostic_must_be_republishable_after_nonduplicate_command_pub
     assert!(
         republish.is_ok(),
         "command-stream dedup verification must not conceal a response-stream dedup tombstone"
+    );
+    let retained = reader
+        .read_command_response(
+            &command.response_address()?,
+            command.operation_id(),
+            command.message_id(),
+            Duration::from_secs(2),
+        )
+        .await?;
+    assert_eq!(
+        retained.outcome(),
+        &CommandResponseOutcome::ExecutionFailed(ExecutionFailure::Store(
+            StoreFailureKind::CapacityExhausted
+        ))
+    );
+    assert!(
+        !republish?.duplicate(),
+        "recurrence after deletion must be a new durable response publication"
     );
     Ok(())
 }
@@ -440,6 +478,10 @@ async fn real_lost_puback_retries_exact_stored_response_without_claiming_changed
 }
 
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one blocked record is retained through the complete canonical evidence matrix"
+)]
 async fn redrive_validates_all_canonical_dimensions_before_lookup_or_deletion() -> TestResult {
     let f = Fixture::new("remediation-redrive-matrix").await?;
     let (_, original) = command(&f)?;
@@ -613,6 +655,250 @@ fn technical_extensions_are_strict_but_legacy_business_extensions_remain_compati
         .unwrap()
         .insert("legacy_extension".to_owned(), serde_json::json!(true));
     assert!(serde_json::from_value::<CommandResponse>(legacy).is_ok());
+}
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one proxy proves lost PubAck, exact retry, stale retry and terminal immutability"
+)]
+async fn prepared_puback_loss_retries_one_token_and_never_rebases_a_stale_snapshot() -> TestResult {
+    let f = Fixture::new("remediation-prepared-puback").await?;
+    let (_, command) = command(&f)?;
+    let (proxy, address, dropped) = drop_first_puback_proxy(
+        f.messaging
+            .topology()
+            .command_response_stream()
+            .as_str()
+            .to_owned(),
+    )
+    .await?;
+    let client = async_nats::ConnectOptions::with_user_and_password(
+        std::env::var("ROSTFREI_CONTRACT_NATS_USER")?,
+        std::env::var("ROSTFREI_CONTRACT_NATS_PASSWORD")?,
+    )
+    .connect(format!("nats://{address}"))
+    .await?;
+    let publisher = NatsPublisher::new(
+        async_nats::jetstream::new(client.clone()),
+        f.messaging.topology().clone(),
+    );
+    let message = diagnostic(&command, StoreFailureKind::Unavailable)?;
+    let prepared = publisher
+        .prepare_command_response(message.clone(), Duration::from_secs(2))
+        .await?;
+    let token = prepared
+        .transition()
+        .ok_or("missing generation token")?
+        .clone();
+    let publication_id = prepared.publication_message_id().clone();
+    assert_ne!(
+        publication_id,
+        *message.message_id(),
+        "logical and broker IDs must be distinct"
+    );
+    assert!(matches!(
+        publisher
+            .publish_prepared_command_response(&prepared, Duration::from_millis(300))
+            .await,
+        Err(NatsError::PublishTimeout)
+    ));
+    assert_eq!(
+        dropped.load(Ordering::SeqCst),
+        1,
+        "actual broker PubAck dropped, not a discarded in-process result"
+    );
+    let retry = publisher
+        .publish_prepared_command_response(&prepared, Duration::from_secs(2))
+        .await?;
+    assert!(retry.duplicate());
+    assert_eq!(prepared.transition(), Some(&token));
+    assert_eq!(prepared.publication_message_id(), &publication_id);
+    assert_eq!(prepared.message().payload(), message.payload());
+    let stream =
+        f.js.get_stream(f.messaging.topology().command_response_stream().as_str())
+            .await?;
+    let stored = stream
+        .get_last_raw_message_by_subject(command.response_address()?.as_str())
+        .await?;
+    assert_eq!(stored.payload.as_ref(), message.payload());
+    assert_eq!(
+        stored
+            .headers
+            .get("Nats-Msg-Id")
+            .map(async_nats::HeaderValue::as_str),
+        Some(publication_id.as_str())
+    );
+    let second = f
+        .publisher()
+        .publish_command_response_with_ack(
+            diagnostic(&command, StoreFailureKind::Conflict)?,
+            Duration::from_secs(2),
+        )
+        .await?;
+    assert!(second.sequence() > retry.sequence());
+    assert!(
+        publisher
+            .publish_prepared_command_response(&prepared, Duration::from_secs(2))
+            .await
+            .is_err(),
+        "uncertain retry must not silently become a new A transition after B"
+    );
+    let fresh = publisher
+        .prepare_command_response(message, Duration::from_secs(2))
+        .await?;
+    assert_ne!(fresh.publication_message_id(), &publication_id);
+    assert!(
+        fresh
+            .transition()
+            .ok_or("missing fresh token")?
+            .generation()
+            >= second.sequence()
+    );
+    let third = publisher
+        .publish_prepared_command_response(&fresh, Duration::from_secs(2))
+        .await?;
+    assert!(!third.duplicate());
+    assert!(third.sequence() > second.sequence());
+    f.publisher()
+        .publish_command_response(accepted(&command)?)
+        .await?;
+    assert!(
+        publisher
+            .publish_prepared_command_response(&fresh, Duration::from_secs(2))
+            .await
+            .is_err()
+    );
+    let reader = NatsCommandResponseReader::new(f.js.clone(), f.messaging.topology().clone());
+    assert_eq!(
+        reader
+            .read_command_response(
+                &command.response_address()?,
+                command.operation_id(),
+                command.message_id(),
+                Duration::from_secs(2)
+            )
+            .await?
+            .outcome(),
+        &CommandResponseOutcome::Accepted
+    );
+    client.drain().await?;
+    drop(proxy);
+    Ok(())
+}
+
+fn forged_publication_id(
+    subject: &str,
+    payload: &[u8],
+    token: &serde_json::Value,
+) -> TestResult<(MessageId, String)> {
+    use sha2::{Digest, Sha256};
+    let token: rostfrei_nats::DiagnosticTransitionToken = serde_json::from_value(token.clone())?;
+    let encoded = serde_json::to_string(&token)?;
+    let mut hash = Sha256::new();
+    for frame in [
+        b"rostfrei:diagnostic-publication:v1".as_slice(),
+        subject.as_bytes(),
+        payload,
+        encoded.as_bytes(),
+    ] {
+        hash.update(u64::try_from(frame.len())?.to_be_bytes());
+        hash.update(frame);
+    }
+    Ok((MessageId::new(format!("{:x}", hash.finalize()))?, encoded))
+}
+
+#[tokio::test]
+async fn technical_reader_refuses_forged_generation_scope_version_and_payload_bindings()
+-> TestResult {
+    let f = Fixture::new("remediation-token-validation").await?;
+    let (_, command) = command(&f)?;
+    let message = diagnostic(&command, StoreFailureKind::CorruptHistory)?;
+    f.publisher()
+        .publish_command_response(message.clone())
+        .await?;
+    let stream =
+        f.js.get_stream(f.messaging.topology().command_response_stream().as_str())
+            .await?;
+    let stored = stream
+        .get_last_raw_message_by_subject(command.response_address()?.as_str())
+        .await?;
+    let token_text = stored
+        .headers
+        .get(rostfrei_nats::DIAGNOSTIC_TRANSITION_HEADER)
+        .ok_or("missing stored token")?
+        .as_str();
+    let base: serde_json::Value = serde_json::from_str(token_text)?;
+    let reader = NatsCommandResponseReader::new(f.js.clone(), f.messaging.topology().clone());
+    for (field, value) in [
+        ("version", serde_json::json!(2)),
+        ("created", serde_json::json!(1)),
+        ("stream", serde_json::json!("different-response-stream")),
+        ("generation", serde_json::json!(u64::MAX)),
+        ("predecessor", serde_json::json!(u64::MAX)),
+    ] {
+        let mut token = base.clone();
+        *token.get_mut(field).ok_or("missing token dimension")? = value;
+        let (id, encoded) = forged_publication_id(
+            command.response_address()?.as_str(),
+            message.payload(),
+            &token,
+        )?;
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Content-Type", "application/json");
+        headers.insert(
+            rostfrei_nats::CORRELATION_ID_HEADER,
+            command.correlation_id().as_str(),
+        );
+        headers.insert("Nats-Msg-Id", id.as_str());
+        headers.insert(rostfrei_nats::DIAGNOSTIC_TRANSITION_HEADER, encoded);
+        f.js.publish_with_headers(
+            command.response_address()?.to_string(),
+            headers,
+            message.payload().to_vec().into(),
+        )
+        .await?
+        .await?;
+        assert!(
+            reader
+                .find_command_response(
+                    &command.response_address()?,
+                    command.operation_id(),
+                    command.message_id(),
+                    Duration::from_secs(2)
+                )
+                .await
+                .is_err(),
+            "forged {field} must fail even with a matching digest"
+        );
+    }
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Content-Type", "application/json");
+    headers.insert(
+        rostfrei_nats::CORRELATION_ID_HEADER,
+        command.correlation_id().as_str(),
+    );
+    headers.insert(rostfrei_nats::DIAGNOSTIC_TRANSITION_HEADER, token_text);
+    headers.insert("Nats-Msg-Id", "unbound-broker-id");
+    f.js.publish_with_headers(
+        command.response_address()?.to_string(),
+        headers,
+        message.payload().to_vec().into(),
+    )
+    .await?
+    .await?;
+    assert!(
+        reader
+            .find_command_response(
+                &command.response_address()?,
+                command.operation_id(),
+                command.message_id(),
+                Duration::from_secs(2)
+            )
+            .await
+            .is_err()
+    );
+    Ok(())
 }
 
 rostfrei::install_macro_support!();

@@ -34,11 +34,13 @@ pub struct NatsMessagingAdapter {
     integration_publisher: Arc<dyn IntegrationEventPublisher>,
     response_reader: Arc<dyn CommandResponseReader>,
     response_timeout: Option<Duration>,
+    native_response_publisher: Option<Arc<NatsPublisher>>,
 }
 
 impl NatsMessagingAdapter {
     pub fn new(publisher: NatsPublisher, response_reader: NatsCommandResponseReader) -> Self {
         let publisher = Arc::new(publisher);
+        let native_response_publisher = Some(Arc::clone(&publisher));
         let command_publisher: Arc<dyn CommandPublisher> = publisher.clone();
         let response_publisher: Arc<dyn CommandResponsePublisher> = publisher.clone();
         let integration_publisher: Arc<dyn IntegrationEventPublisher> = publisher;
@@ -49,6 +51,7 @@ impl NatsMessagingAdapter {
             integration_publisher,
             response_reader,
             response_timeout: None,
+            native_response_publisher,
         }
     }
 
@@ -65,6 +68,7 @@ impl NatsMessagingAdapter {
             integration_publisher,
             response_reader,
             response_timeout: None,
+            native_response_publisher: None,
         }
     }
 
@@ -75,11 +79,15 @@ impl NatsMessagingAdapter {
     }
 
     pub fn command_handler(&self, processor: Arc<CommandProcessor>) -> NatsCommandHandler {
-        NatsCommandHandler::new(
+        let mut handler = NatsCommandHandler::new(
             processor,
             Arc::clone(&self.response_publisher),
             Arc::clone(&self.response_reader),
-        )
+        );
+        handler
+            .native_response_publisher
+            .clone_from(&self.native_response_publisher);
+        handler
     }
 
     async fn publish_command(
@@ -225,6 +233,7 @@ pub struct NatsCommandHandler {
     response_publisher: Arc<dyn CommandResponsePublisher>,
     response_reader: Arc<dyn CommandResponseReader>,
     execution_gates: CommandExecutionGates,
+    native_response_publisher: Option<Arc<NatsPublisher>>,
 }
 
 impl NatsCommandHandler {
@@ -238,6 +247,7 @@ impl NatsCommandHandler {
             response_publisher,
             response_reader,
             execution_gates: CommandExecutionGates::default(),
+            native_response_publisher: None,
         }
     }
 
@@ -288,13 +298,32 @@ impl NatsCommandHandler {
             .map_err(|_| PublishError::new(PublishErrorKind::InvalidConfiguration))?;
         let message = OutboundMessage::json(address, response.message_id().clone(), response)
             .map_err(|_| PublishError::new(PublishErrorKind::InvalidConfiguration))?;
+        // A single processing attempt retains one CAS token/payload across uncertain retries.
+        // Only a later source re-delivery/re-evaluation may prepare a fresh transition.
+        let prepared = match &self.native_response_publisher {
+            Some(publisher) => Some(
+                publisher
+                    .prepare_command_response(message.clone(), publisher.publish_timeout())
+                    .await
+                    .map_err(|error| crate::publish::core_publish_error(&error))?,
+            ),
+            None => None,
+        };
         let mut attempts_remaining = MAXIMUM_PUBLISH_ATTEMPTS;
         loop {
-            match self
-                .response_publisher
-                .publish_command_response(message.clone())
-                .await
-            {
+            let result = match (&self.native_response_publisher, &prepared) {
+                (Some(publisher), Some(prepared)) => publisher
+                    .publish_prepared_command_response(prepared, publisher.publish_timeout())
+                    .await
+                    .map(|ack| PublishReceipt::new(ack.duplicate()))
+                    .map_err(|error| crate::publish::core_publish_error(&error)),
+                _ => {
+                    self.response_publisher
+                        .publish_command_response(message.clone())
+                        .await
+                }
+            };
+            match result {
                 Ok(receipt) => return Ok(receipt),
                 Err(error)
                     if attempts_remaining > 1
@@ -351,7 +380,8 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
             Ok(response) => response,
             Err(error) => {
                 // Notify the remote caller before asking the existing native consumer to
-                // durably quarantine the source. A missing response sink must not TERM it.
+                // durably quarantine the source. A missing response sink selects retry here;
+                // the consumer's finite delivery budget can separately quarantine exhaustion.
                 match error.technical_response(&command) {
                     Ok(Some(response)) => {
                         if self.publish_response(&command, &response).await.is_err() {
