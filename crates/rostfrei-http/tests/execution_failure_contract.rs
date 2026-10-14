@@ -30,7 +30,7 @@ impl Aggregate for Target {
     const BOUNDED_CONTEXT: &'static str = "failure-contract";
     const AGGREGATE_TYPE: &'static str = "target";
     fn initial(_: &StreamId) {}
-    fn apply(_: &mut (), _: &Changed) {}
+    fn apply((): &mut (), _: &Changed) {}
 }
 impl Event for Changed {
     fn event_type(&self) -> &'static str {

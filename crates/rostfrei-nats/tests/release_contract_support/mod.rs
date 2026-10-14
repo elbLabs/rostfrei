@@ -300,6 +300,9 @@ impl Fixture {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ))?;
+        Self::for_application(application).await
+    }
+    pub async fn for_application(application: ApplicationName) -> TestResult<Self> {
         let context = application.bounded_context("release-contract")?;
         let messaging =
             ApplicationMessagingConfig::new(&application)?.with_max_bytes(64 * 1024 * 1024)?;
@@ -333,7 +336,7 @@ impl Fixture {
     }
     pub async fn event_store(&self) -> TestResult<Arc<NatsEventStore>> {
         let config = NatsEventStoreConfig::for_bounded_context(&self.context)?
-            .with_storage_limits(32 * 1024 * 1024, 524288)?;
+            .with_storage_limits(32 * 1024 * 1024, 524_288)?;
         provision_event_store(&self.js, &config).await?;
         Ok(Arc::new(
             NatsEventStore::connect(self.js.clone(), config).await?,

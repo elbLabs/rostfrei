@@ -53,13 +53,13 @@ async fn processor_permanent(codec: Option<BadCodec>) -> TestResult {
         .await;
     match (raw, codec) {
         (Err(CommandExecutionError::Store(e)), None) => {
-            assert_eq!(e.kind(), EventStoreErrorKind::CorruptHistory)
+            assert_eq!(e.kind(), EventStoreErrorKind::CorruptHistory);
         }
         (Err(CommandExecutionError::Codec(e)), Some(BadCodec::Decode)) => {
-            assert_eq!(e.kind(), EventCodecErrorKind::MalformedPayload)
+            assert_eq!(e.kind(), EventCodecErrorKind::MalformedPayload);
         }
         (Err(CommandExecutionError::Codec(e)), Some(BadCodec::Encode)) => {
-            assert_eq!(e.kind(), EventCodecErrorKind::EncodingFailed)
+            assert_eq!(e.kind(), EventCodecErrorKind::EncodingFailed);
         }
         _ => {
             return Err("fault fixture did not exercise the intended typed execution error".into());
@@ -82,6 +82,11 @@ async fn processor_permanent(codec: Option<BadCodec>) -> TestResult {
         error.kind()
     );
     assert_ne!(error.kind(), CommandProcessorErrorKind::Unavailable);
+    assert_ne!(error.kind(), CommandProcessorErrorKind::InvalidMessage);
+    assert_ne!(
+        error.kind(),
+        CommandProcessorErrorKind::InvalidConfiguration
+    );
     Ok(())
 }
 async fn local_permanent(codec: Option<BadCodec>) -> TestResult {
@@ -101,6 +106,7 @@ async fn local_permanent(codec: Option<BadCodec>) -> TestResult {
         CommandBusErrorKind::Rejected,
         "technical fault is not a domain rejection"
     );
+    assert_permanent_bus_kind(error.kind());
     Ok(())
 }
 macro_rules! boundary_cases {
@@ -276,6 +282,7 @@ async fn remote_permanent(codec: Option<BadCodec>) -> TestResult {
     );
     assert_ne!(error.kind(), CommandBusErrorKind::Unavailable);
     assert_ne!(error.kind(), CommandBusErrorKind::Rejected);
+    assert_permanent_bus_kind(error.kind());
     Ok(())
 }
 #[tokio::test]
@@ -291,6 +298,22 @@ async fn remote_encode_failure_is_typed_not_timeout() -> TestResult {
     remote_permanent(Some(BadCodec::Encode)).await
 }
 
+fn assert_permanent_bus_kind(kind: CommandBusErrorKind) {
+    assert!(
+        !matches!(
+            kind,
+            CommandBusErrorKind::Encoding
+                | CommandBusErrorKind::PayloadTooLarge
+                | CommandBusErrorKind::InvalidMessage
+                | CommandBusErrorKind::Timeout
+                | CommandBusErrorKind::Rejected
+                | CommandBusErrorKind::Unavailable
+                | CommandBusErrorKind::InvalidConfiguration
+                | CommandBusErrorKind::InvalidResponse
+        ),
+        "execution faults need a typed permanent classification, not an unrelated transport/request failure: {kind:?}"
+    );
+}
 struct Observed {
     inner: IntegrationEventCommandHandler<Trigger, Mapper>,
     calls: Arc<AtomicUsize>,
