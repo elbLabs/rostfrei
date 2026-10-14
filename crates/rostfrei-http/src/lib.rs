@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{DefaultBodyLimit, Path, State, rejection::JsonRejection},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware,
@@ -11,8 +12,9 @@ use axum::{
 use rostfrei::{
     CommandBus, CommandBusError, CommandBusErrorKind, CommandRejection,
     CommandRejectionClassification, CommandResponseOutcome, DomainRegistry, DynamicCommandRequest,
-    DynamicQueryRequest, OperationId, QueryBus, QueryBusError, QueryBusErrorKind,
-    QueryErrorClassification, QueryErrorPayload, QueryOptions, QueryOutcome, TraceContext,
+    DynamicQueryRequest, EncodedCommand, OperationId, QueryBus, QueryBusError, QueryBusErrorKind,
+    QueryErrorClassification, QueryErrorPayload, QueryOptions, QueryOutcome, RoutedCommand,
+    TraceContext,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -28,6 +30,7 @@ pub struct HttpApiConfig {
     query_options: QueryOptions,
     maximum_command_payload_bytes: usize,
     authentication_challenge: Option<HeaderValue>,
+    trusted_command_envelope_ingress: bool,
 }
 
 impl HttpApiConfig {
@@ -42,6 +45,7 @@ impl HttpApiConfig {
             query_options,
             maximum_command_payload_bytes,
             authentication_challenge: None,
+            trusted_command_envelope_ingress: false,
         })
     }
 
@@ -67,6 +71,14 @@ impl HttpApiConfig {
     pub const fn authentication_challenge(&self) -> Option<&HeaderValue> {
         self.authentication_challenge.as_ref()
     }
+
+    /// Enables full-envelope replay for trusted, authenticated callers. The router itself
+    /// supplies no authentication: deploy behind application authorization middleware.
+    #[must_use]
+    pub const fn with_trusted_command_envelope_ingress(mut self) -> Self {
+        self.trusted_command_envelope_ingress = true;
+        self
+    }
 }
 
 impl Default for HttpApiConfig {
@@ -75,6 +87,7 @@ impl Default for HttpApiConfig {
             query_options: QueryOptions::default(),
             maximum_command_payload_bytes: DEFAULT_MAXIMUM_COMMAND_PAYLOAD_BYTES,
             authentication_challenge: None,
+            trusted_command_envelope_ingress: false,
         }
     }
 }
@@ -130,6 +143,7 @@ struct HttpState {
     query_bus: QueryBus,
     query_options: QueryOptions,
     authentication_challenge: Option<HeaderValue>,
+    trusted_command_envelope_ingress: bool,
 }
 
 #[allow(
@@ -152,6 +166,10 @@ pub fn router(
             "/contexts/{context}/commands/{command}/schemas/{schema_version}",
             post(submit_command),
         )
+        .route(
+            "/contexts/{context}/commands/{command}/schemas/{schema_version}/envelope",
+            post(submit_command_envelope),
+        )
         .layer(DefaultBodyLimit::max(maximum_command_payload_bytes))
         .layer(middleware::map_response(add_private_no_store))
         .with_state(HttpState {
@@ -160,6 +178,7 @@ pub fn router(
             query_bus,
             query_options: config.query_options(),
             authentication_challenge: config.authentication_challenge().cloned(),
+            trusted_command_envelope_ingress: config.trusted_command_envelope_ingress,
         })
 }
 
@@ -253,6 +272,96 @@ async fn submit_command(
         Ok(receipt) => command_response(
             receipt.into_response(),
             state.authentication_challenge.as_ref(),
+        ),
+        Err(error) => command_bus_error(&error),
+    }
+}
+
+async fn submit_command_envelope(
+    State(state): State<HttpState>,
+    Path((context, command, schema_version)): Path<(String, String, u32)>,
+    headers: HeaderMap,
+    payload: Bytes,
+) -> Response {
+    if !state.trusted_command_envelope_ingress {
+        return not_found("Command envelope ingress is disabled.");
+    }
+    if context != state.command_bus.context().name().as_str()
+        || state
+            .registry
+            .command(&context, &command, schema_version)
+            .is_none()
+    {
+        return not_found("The command name or schema version is not registered.");
+    }
+    if !matches!(
+        optional_single_header(&headers, "content-type"),
+        Ok(Some("application/json"))
+    ) {
+        return error_response(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "rostfrei.http.invalid-content-type",
+            "Command envelopes require exactly one application/json content-type.",
+        );
+    }
+    let operation = match idempotency_key(&headers) {
+        Ok(operation) => operation,
+        Err(error) => return error.into_response(),
+    };
+    let envelope: rostfrei::CommandEnvelope<RoutedCommand> = match serde_json::from_slice(&payload)
+    {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "rostfrei.http.invalid-command-envelope",
+                error.to_string(),
+            );
+        }
+    };
+    if envelope.operation_id().as_str() != operation.as_str()
+        || envelope.payload().command() != command
+        || envelope.payload().schema_version() != schema_version
+    {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "rostfrei.http.command-envelope-identity",
+            "Envelope identity must match the HTTP route and idempotency key.",
+        );
+    }
+    let address = match state.command_bus.context().command_address(&command) {
+        Ok(address) => address,
+        Err(error) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "rostfrei.http.invalid-command-envelope",
+                error.to_string(),
+            );
+        }
+    };
+    let encoded = match EncodedCommand::from_delivery(
+        address,
+        envelope.message_id().clone(),
+        payload.to_vec(),
+    ) {
+        Ok(encoded) => encoded,
+        Err(error) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "rostfrei.http.invalid-command-envelope",
+                error.to_string(),
+            );
+        }
+    };
+    match state.command_bus.dispatch_encoded(encoded).await {
+        Ok(receipt) => command_response(
+            receipt.into_response(),
+            state.authentication_challenge.as_ref(),
+        ),
+        Err(error) if error.kind() == CommandBusErrorKind::InvalidMessage => error_response(
+            StatusCode::BAD_REQUEST,
+            "rostfrei.http.invalid-command-envelope",
+            "Command envelope route or identity is inconsistent.",
         ),
         Err(error) => command_bus_error(&error),
     }

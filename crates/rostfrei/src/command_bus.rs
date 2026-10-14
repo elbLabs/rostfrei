@@ -252,7 +252,8 @@ impl EncodedCommand {
             routed_command_execution_fingerprint(address.context(), envelope.payload())
                 .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
         let message = OutboundMessage::new(address, message_id, payload)
-            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?
+            .with_correlation_id(envelope.correlation_id().clone());
         Ok(Self::new(
             message,
             envelope.operation_id().clone(),
@@ -448,6 +449,54 @@ impl CommandBus {
         self.adapter.maximum_payload_len()
     }
 
+    /// Dispatches an existing envelope without regenerating timestamp or provenance.
+    /// All route, scope, canonical identity, and adapter-size checks precede publication.
+    pub async fn dispatch_encoded(
+        &self,
+        command: EncodedCommand,
+    ) -> Result<CommandBusReceipt, CommandBusError> {
+        self.dispatch_encoded_observed(command, Arc::new(IgnoreCommandPublications))
+            .await
+    }
+
+    pub async fn dispatch_encoded_observed(
+        &self,
+        command: EncodedCommand,
+        observer: Arc<dyn CommandBusObserver>,
+    ) -> Result<CommandBusReceipt, CommandBusError> {
+        if command.payload().len() > self.maximum_payload_len() {
+            return Err(CommandBusError::new(
+                CommandBusErrorKind::PayloadTooLarge,
+                "command envelope exceeds the adapter limit",
+            ));
+        }
+        let expected_address = self
+            .context
+            .command_address(command.address().name())
+            .map_err(|error| {
+                CommandBusError::new(CommandBusErrorKind::InvalidMessage, error.to_string())
+            })?;
+        if command.address() != &expected_address {
+            return Err(CommandBusError::new(
+                CommandBusErrorKind::InvalidMessage,
+                "command envelope belongs to another application, context, or traffic scope",
+            ));
+        }
+        validate_command(&command, self.context.name()).map_err(|error| {
+            CommandBusError::new(CommandBusErrorKind::InvalidMessage, error.to_string())
+        })?;
+        let receipt = self.adapter.dispatch(command.clone(), observer).await?;
+        command
+            .validate_response(receipt.response())
+            .map_err(|error| {
+                CommandBusError::new(CommandBusErrorKind::InvalidResponse, error.to_string())
+            })?;
+        if let CommandResponseOutcome::ExecutionFailed(failure) = receipt.response().outcome() {
+            return Err(CommandBusError::execution_failed(*failure));
+        }
+        Ok(receipt)
+    }
+
     pub async fn dispatch<C>(
         &self,
         request: CommandRequest<C>,
@@ -468,7 +517,7 @@ impl CommandBus {
         C: JsonCommandPayload,
     {
         let encoded = self.encode::<C>(request)?;
-        self.adapter.dispatch(encoded, observer).await
+        self.dispatch_encoded_observed(encoded, observer).await
     }
 
     pub fn encode<C>(&self, request: CommandRequest<C>) -> Result<EncodedCommand, CommandBusError>
@@ -512,7 +561,7 @@ impl CommandBus {
         observer: Arc<dyn CommandBusObserver>,
     ) -> Result<CommandBusReceipt, CommandBusError> {
         let encoded = self.encode_dynamic(request)?;
-        self.adapter.dispatch(encoded, observer).await
+        self.dispatch_encoded_observed(encoded, observer).await
     }
 
     pub fn encode_dynamic(

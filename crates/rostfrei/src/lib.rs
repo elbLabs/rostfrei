@@ -103,11 +103,11 @@ pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply
 pub use rostfrei_macros::{QueryDefinition, ReadModel};
 pub use rostfrei_messaging_core::{
     ApplicationErrorCode, ApplicationName, BoundedContext, BoundedContextName, CallerMetadata,
-    CausationId, CodecFailureKind, CommandAddress, CommandPublisher, CommandRejection,
-    CommandRejectionClassification, CommandResponse, CommandResponseOutcome, CommandResponseReader,
-    CorrelationId, DurableName, ExecutionFailure, ExecutionRecovery, IntegrationEventEnvelope,
-    MessageId, MessageTimestamp, ProcessorFailureKind, QueryAddress, QueryErrorClassification,
-    QueryErrorPayload, QueryHandler, QueryOptions, QueryOutcome,
+    CausationId, CodecFailureKind, CommandAddress, CommandEnvelope, CommandPublisher,
+    CommandRejection, CommandRejectionClassification, CommandResponse, CommandResponseOutcome,
+    CommandResponseReader, CorrelationId, DurableName, ExecutionFailure, ExecutionRecovery,
+    IntegrationEventEnvelope, MessageId, MessageTimestamp, ProcessorFailureKind, QueryAddress,
+    QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryOptions, QueryOutcome,
     QueryRequest as QueryHandlerRequest, QueryRequestError, QueryRequestErrorKind, QueryResponse,
     QueryResult, QueryServer, StoreFailureKind, TraceContext, TrafficScope,
 };
