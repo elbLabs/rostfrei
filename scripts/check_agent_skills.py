@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -26,6 +27,10 @@ class InstalledKitTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.consumer = Path(self.temporary.name)
         self.assertFalse(self.consumer.is_relative_to(ROOT))
+        self.cli = self.consumer / "cargo-rostfrei"
+        shutil.copy2(os.environ.get("ROSTFREI_CLI", ROOT / "target/debug/cargo-rostfrei"), self.cli)
+        self.no_tools = self.consumer / "no-tools"
+        self.no_tools.mkdir()
         self.output = self.consumer / "build"
         result = self.command(ROOT / "scripts/package_agent_skills.py", "--output", self.output)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -52,11 +57,16 @@ class InstalledKitTests(unittest.TestCase):
         )
 
     def install(self):
-        return self.command(self.kit / "install.py", "--destination", self.destination)
+        return subprocess.run([
+            str(self.cli), "rostfrei", "skills", "install", "--kit", str(self.kit),
+            "--destination", str(self.destination),
+        ], cwd=self.consumer, env={**os.environ, "PATH": str(self.no_tools)},
+            capture_output=True, text=True, check=False)
 
     def test_external_install_is_self_contained_and_release_matched(self):
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(list(self.kit.rglob("*.py")), [], "The consumer kit must not ship Python")
         version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
         release = json.loads((self.kit / "release.json").read_text())
         self.assertEqual(release["frameworkVersion"], version)
