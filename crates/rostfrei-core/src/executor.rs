@@ -722,11 +722,9 @@ where
                 CommandExecution::with_codecs(session.as_ref(), &metadata, self.codecs.as_ref());
             let (participants, rejection) = match handler.handle(command, &mut execution).await? {
                 CommandDecision::Rejected(rejection) => {
-                    if let Some(outcome) =
-                        reconcile_completed(&self.store, &metadata, codec).await?
-                    {
-                        return Ok(outcome);
-                    }
+                    // Finalize tracking and consume the original guarded session before
+                    // reconciling a winner. A concurrent decision cannot excuse invalid
+                    // handles or an observed loss of this attempt's authority incarnation.
                     let participants = execution.finish_rejected()?;
                     let encoded = codec.encode(&rejection)?;
                     encoded.validate()?;

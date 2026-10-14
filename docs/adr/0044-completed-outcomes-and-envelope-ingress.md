@@ -168,6 +168,12 @@ protocol-independent equivalent; invalid evidence fails before publication/handl
 
 ## Verification and bounded scope
 
+Once a handler has run, both decisions finalize aggregate tracking and consume the
+original guarded append session before winner reconciliation. A concurrent accepted
+or rejected record cannot hide forgotten/replaced handles or an observed session
+incarnation mismatch. This is a bounded fail-closed check, not an administrative
+lock against arbitrary later deletion or recreation.
+
 Enabled tests cover original cross-adapter rejection/restart/capacity/read-guard
 regressions; shared memory/NATS store/session arbitration; generic codecs and
 fail-closed defaults; accepted/rejected evidence matrices; actual response TTL and
