@@ -254,7 +254,33 @@ impl<'de> Deserialize<'de> for CommandResponse {
     where
         D: Deserializer<'de>,
     {
-        let wire = CommandResponseWire::deserialize(deserializer)?;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        // Schema 1 deliberately tolerates legacy extension fields. The unpublished technical
+        // schema is strict, including the adjacent outcome envelope and source/recovery fields.
+        if value
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64)
+            == Some(u64::from(TECHNICAL_RESPONSE_SCHEMA_VERSION))
+        {
+            check_technical_fields(
+                &value,
+                &[
+                    "message_id",
+                    "command_message_id",
+                    "command_address",
+                    "operation_id",
+                    "schema_version",
+                    "correlation_id",
+                    "outcome",
+                ],
+            )
+            .map_err(D::Error::custom)?;
+            let outcome = value
+                .get("outcome")
+                .ok_or_else(|| D::Error::custom("missing technical outcome"))?;
+            check_technical_fields(outcome, &["status", "value"]).map_err(D::Error::custom)?;
+        }
+        let wire: CommandResponseWire = serde_json::from_value(value).map_err(D::Error::custom)?;
         Self::new(
             wire.message_id,
             wire.command_message_id,
@@ -266,6 +292,16 @@ impl<'de> Deserialize<'de> for CommandResponse {
         )
         .map_err(D::Error::custom)
     }
+}
+
+fn check_technical_fields(value: &serde_json::Value, allowed: &[&str]) -> Result<(), &'static str> {
+    let object = value
+        .as_object()
+        .ok_or("technical response must be an object")?;
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err("unknown technical response field");
+    }
+    Ok(())
 }
 
 fn command_response_schema_version() -> Result<SchemaVersion, MessageBuildError> {

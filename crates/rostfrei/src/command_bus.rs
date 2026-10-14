@@ -290,6 +290,15 @@ impl EncodedCommand {
         self.fingerprint
     }
 
+    /// Pure validation of the entire command's canonical identity, route, schema, provenance,
+    /// inner/outer IDs and normalized metadata. Does not read a store, publish, or run a handler.
+    /// Application/traffic-scope authorization is additionally the caller's boundary policy.
+    pub fn validate(&self) -> Result<(), CommandProcessorError> {
+        let context = BoundedContextName::new(self.address().context())
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+        validate_command(self, &context).map(|_| ())
+    }
+
     pub fn response_address(
         &self,
     ) -> Result<rostfrei_messaging_core::CommandResponseAddress, ContractError> {
@@ -482,7 +491,7 @@ impl CommandBus {
                 "command envelope belongs to another application, context, or traffic scope",
             ));
         }
-        validate_command(&command, self.context.name()).map_err(|error| {
+        command.validate().map_err(|error| {
             CommandBusError::new(CommandBusErrorKind::InvalidMessage, error.to_string())
         })?;
         let receipt = self.adapter.dispatch(command.clone(), observer).await?;

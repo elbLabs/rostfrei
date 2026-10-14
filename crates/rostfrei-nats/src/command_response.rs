@@ -59,6 +59,9 @@ impl NatsCommandResponseReader {
         command: &rostfrei::EncodedCommand,
         read_timeout: Duration,
     ) -> Result<bool, CommandResponseReadError> {
+        command
+            .validate()
+            .map_err(|_| read_error(CommandResponseReadErrorKind::IdentityConflict))?;
         let address = command
             .response_address()
             .map_err(|_| read_error(CommandResponseReadErrorKind::InvalidConfiguration))?;

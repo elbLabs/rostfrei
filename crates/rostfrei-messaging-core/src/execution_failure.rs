@@ -3,7 +3,12 @@ use serde::{Deserialize, Serialize};
 /// Technical execution failures are not completed business outcomes.
 /// The source kind, rather than diagnostic text, determines recovery policy.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "source", content = "kind", rename_all = "snake_case")]
+#[serde(
+    tag = "source",
+    content = "kind",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum ExecutionFailure {
     Store(StoreFailureKind),
     Codec(CodecFailureKind),

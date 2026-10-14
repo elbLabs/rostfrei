@@ -439,4 +439,180 @@ async fn real_lost_puback_retries_exact_stored_response_without_claiming_changed
     Ok(())
 }
 
+#[tokio::test]
+async fn redrive_validates_all_canonical_dimensions_before_lookup_or_deletion() -> TestResult {
+    let f = Fixture::new("remediation-redrive-matrix").await?;
+    let (_, original) = command(&f)?;
+    f.publisher()
+        .publish_command_response(diagnostic(&original, StoreFailureKind::CorruptHistory)?)
+        .await?;
+    let reader = NatsCommandResponseReader::new(f.js.clone(), f.messaging.topology().clone());
+    let base: serde_json::Value = serde_json::from_slice(original.payload())?;
+    let mutations = [
+        (
+            "payload",
+            serde_json::json!({"command":"act","schema_version":1,"payload":{"target":"changed","action":"noop","item":"I"}}),
+        ),
+        ("message_id", serde_json::json!("changed-inner-id")),
+        ("operation_id", serde_json::json!("changed-operation")),
+        ("schema_version", serde_json::json!(2)),
+        ("correlation_id", serde_json::json!("changed-correlation")),
+        ("causation_id", serde_json::json!("changed-causation")),
+        (
+            "payload",
+            serde_json::json!({"command":"unknown","schema_version":1,"payload":{"target":"target","action":"noop","item":"I"}}),
+        ),
+        (
+            "payload",
+            serde_json::json!({"command":"act","schema_version":2,"payload":{"target":"target","action":"noop","item":"I"}}),
+        ),
+        (
+            "payload",
+            serde_json::json!({"command":"act","schema_version":1,"events_caused_by_command":true,"payload":{"target":"target","action":"noop","item":"I"}}),
+        ),
+    ];
+    for (field, value) in mutations {
+        let mut wire = base.clone();
+        *wire.get_mut(field).ok_or("missing fixture dimension")? = value;
+        let invalid = EncodedCommand::from_delivery(
+            original.address().clone(),
+            original.message_id().clone(),
+            serde_json::to_vec(&wire)?,
+        )?;
+        assert!(
+            invalid.validate().is_err(),
+            "invalid {field} must fail pure validation"
+        );
+        assert!(
+            reader
+                .remove_blocked_diagnostic_for_redrive(&invalid, Duration::from_secs(2))
+                .await
+                .is_err()
+        );
+        assert!(
+            reader
+                .find_command_response(
+                    &original.response_address()?,
+                    original.operation_id(),
+                    original.message_id(),
+                    Duration::from_secs(2)
+                )
+                .await?
+                .is_some()
+        );
+    }
+    for address in [
+        CommandAddress::new(
+            original.address().application(),
+            original.address().context(),
+            "different-route",
+        )?,
+        CommandAddress::new(original.address().application(), "different-context", "act")?,
+        CommandAddress::new("different-application", original.address().context(), "act")?,
+        CommandAddress::new_in_scope(
+            original.address().application(),
+            rostfrei::TrafficScope::Test,
+            original.address().context(),
+            "act",
+        )?,
+    ] {
+        let invalid = EncodedCommand::from_delivery(
+            address,
+            original.message_id().clone(),
+            original.payload().to_vec(),
+        )?;
+        assert!(
+            reader
+                .remove_blocked_diagnostic_for_redrive(&invalid, Duration::from_secs(2))
+                .await
+                .is_err()
+        );
+    }
+    let invalid = EncodedCommand::from_delivery(
+        original.address().clone(),
+        MessageId::new("changed-outer-id")?,
+        original.payload().to_vec(),
+    )?;
+    assert!(
+        reader
+            .remove_blocked_diagnostic_for_redrive(&invalid, Duration::from_secs(2))
+            .await
+            .is_err()
+    );
+    // A canonical but foreign-scoped command is not authority to inspect this reader's sink.
+    let foreign = local_bus(
+        &ApplicationName::new("foreign-application")?.bounded_context("release-contract")?,
+        processor(
+            &f.context,
+            Arc::new(InMemoryEventStore::new()),
+            Arc::new(AtomicUsize::new(0)),
+            None,
+        )?,
+    )
+    .encode(request("review-operation", "target", "noop")?)?;
+    foreign.validate()?;
+    assert!(
+        reader
+            .remove_blocked_diagnostic_for_redrive(&foreign, Duration::from_secs(2))
+            .await
+            .is_err()
+    );
+    assert!(
+        reader
+            .find_command_response(
+                &original.response_address()?,
+                original.operation_id(),
+                original.message_id(),
+                Duration::from_secs(2)
+            )
+            .await?
+            .is_some()
+    );
+    f.js.delete_stream(f.messaging.topology().command_response_stream().as_str())
+        .await?;
+    assert_eq!(
+        reader
+            .remove_blocked_diagnostic_for_redrive(&invalid, Duration::from_secs(2))
+            .await
+            .unwrap_err()
+            .kind(),
+        CommandResponseReadErrorKind::IdentityConflict,
+        "invalid evidence must be refused before even looking up an unavailable sink"
+    );
+    Ok(())
+}
+
+#[test]
+fn technical_extensions_are_strict_but_legacy_business_extensions_remain_compatible() {
+    let technical = serde_json::json!({
+        "message_id":"response", "command_message_id":"command", "command_address":"acme.command.orders.place-order",
+        "operation_id":"operation", "schema_version":2, "correlation_id":"correlation",
+        "outcome":{"status":"execution_failed","value":{"source":"store","kind":"corrupt_history"}}
+    });
+    assert!(serde_json::from_value::<CommandResponse>(technical.clone()).is_ok());
+    let mut extra = technical.clone();
+    extra
+        .as_object_mut()
+        .unwrap()
+        .insert("recovery".to_owned(), serde_json::json!("retry"));
+    assert!(serde_json::from_value::<CommandResponse>(extra).is_err());
+    let mut extra = technical.clone();
+    extra
+        .get_mut("outcome")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .insert("recovery".to_owned(), serde_json::json!("future_recovery"));
+    assert!(serde_json::from_value::<CommandResponse>(extra).is_err());
+    let mut legacy = technical;
+    *legacy.get_mut("schema_version").unwrap() = serde_json::json!(1);
+    *legacy.get_mut("outcome").unwrap() =
+        serde_json::json!({"status":"accepted", "legacy_extension":true});
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .insert("legacy_extension".to_owned(), serde_json::json!(true));
+    assert!(serde_json::from_value::<CommandResponse>(legacy).is_ok());
+}
+
 rostfrei::install_macro_support!();
