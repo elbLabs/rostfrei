@@ -48,6 +48,7 @@ async fn recreated_session_winner(accepted: bool) -> TestResult {
         "add",
     )?)?;
     let metadata = encoded.validated_execution_metadata()?;
+    let operation = metadata.operation_id().clone();
     let reached = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Semaphore::new(0));
     let handler = GatedRejection {
@@ -98,7 +99,7 @@ async fn recreated_session_winner(accepted: bool) -> TestResult {
     );
     assert_eq!(rejected(response.outcome()), !accepted);
     let before = fresh_store
-        .load_completed_outcome_in_context(fixture.context.name(), encoded.operation_id())
+        .load_completed_outcome_in_context(fixture.context.name(), &operation)
         .await?
         .ok_or("missing fresh winner")?;
     let before_events = fresh_store.load(&stream("target")?).await?;
@@ -122,7 +123,7 @@ async fn recreated_session_winner(accepted: bool) -> TestResult {
     );
     assert_eq!(
         fresh_store
-            .load_completed_outcome_in_context(fixture.context.name(), encoded.operation_id())
+            .load_completed_outcome_in_context(fixture.context.name(), &operation)
             .await?
             .unwrap(),
         before
