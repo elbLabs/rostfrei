@@ -59,6 +59,7 @@ pub use command_bus::{
     CommandRequest, DynamicCommandRequest, EncodedCommand, InfallibleCommandRejectionMapper,
     InvalidCommandResponse, JsonDomainRejectionMapper, RoutedCommand, RoutedCommandError,
     command_execution_fingerprint, command_message_id, command_response_message_id,
+    command_technical_response_message_id,
 };
 pub use domain::*;
 pub use in_memory_messaging::InMemoryMessagingAdapter;
@@ -102,12 +103,13 @@ pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply
 pub use rostfrei_macros::{QueryDefinition, ReadModel};
 pub use rostfrei_messaging_core::{
     ApplicationErrorCode, ApplicationName, BoundedContext, BoundedContextName, CallerMetadata,
-    CausationId, CommandAddress, CommandPublisher, CommandRejection,
+    CausationId, CodecFailureKind, CommandAddress, CommandPublisher, CommandRejection,
     CommandRejectionClassification, CommandResponse, CommandResponseOutcome, CommandResponseReader,
-    CorrelationId, DurableName, IntegrationEventEnvelope, MessageId, MessageTimestamp,
-    QueryAddress, QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryOptions,
-    QueryOutcome, QueryRequest as QueryHandlerRequest, QueryRequestError, QueryRequestErrorKind,
-    QueryResponse, QueryResult, QueryServer, TraceContext, TrafficScope,
+    CorrelationId, DurableName, ExecutionFailure, ExecutionRecovery, IntegrationEventEnvelope,
+    MessageId, MessageTimestamp, ProcessorFailureKind, QueryAddress, QueryErrorClassification,
+    QueryErrorPayload, QueryHandler, QueryOptions, QueryOutcome,
+    QueryRequest as QueryHandlerRequest, QueryRequestError, QueryRequestErrorKind, QueryResponse,
+    QueryResult, QueryServer, StoreFailureKind, TraceContext, TrafficScope,
 };
 pub use rostfrei_registry::{
     CommandDefinition, CommandDescriptor as CommandRegistrationDescriptor, DomainRegistry,

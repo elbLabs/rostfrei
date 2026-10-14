@@ -3115,6 +3115,7 @@ fn transport_failure(error: &CommandTransportError) -> (&'static str, String) {
         CommandTransportErrorKind::Unavailable => "command-transport-unavailable",
         CommandTransportErrorKind::InvalidConfiguration => "command-transport-misconfigured",
         CommandTransportErrorKind::InvalidResponse => "invalid-command-transport-response",
+        CommandTransportErrorKind::ExecutionFailed => "command-execution-blocked",
     };
     (code, error.message().to_owned())
 }

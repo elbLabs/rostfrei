@@ -456,6 +456,37 @@ pub enum CommandExecutionError {
     Codec(#[from] EventCodecError),
 }
 
+impl CommandExecutionError {
+    /// Lossless typed technical classification. Request/identity failures remain separate.
+    pub const fn execution_failure(&self) -> Option<rostfrei_messaging_core::ExecutionFailure> {
+        use crate::EventCodecErrorKind;
+        use rostfrei_messaging_core::{CodecFailureKind, ExecutionFailure, StoreFailureKind};
+        Some(match self {
+            Self::Store(error) => ExecutionFailure::Store(match error.kind() {
+                EventStoreErrorKind::CorruptHistory => StoreFailureKind::CorruptHistory,
+                EventStoreErrorKind::CapacityExhausted => StoreFailureKind::CapacityExhausted,
+                EventStoreErrorKind::ConfigurationMismatch => {
+                    StoreFailureKind::ConfigurationMismatch
+                }
+                EventStoreErrorKind::Conflict => StoreFailureKind::Conflict,
+                EventStoreErrorKind::Unavailable => StoreFailureKind::Unavailable,
+                EventStoreErrorKind::InvalidRequest | EventStoreErrorKind::IdentityConflict => {
+                    return None;
+                }
+            }),
+            Self::Codec(error) => ExecutionFailure::Codec(match error.kind() {
+                EventCodecErrorKind::UnknownEventType => CodecFailureKind::UnknownEventType,
+                EventCodecErrorKind::UnsupportedSchemaVersion => {
+                    CodecFailureKind::UnsupportedSchemaVersion
+                }
+                EventCodecErrorKind::MalformedPayload => CodecFailureKind::MalformedPayload,
+                EventCodecErrorKind::InvalidEnvelope => CodecFailureKind::InvalidEnvelope,
+                EventCodecErrorKind::EncodingFailed => CodecFailureKind::EncodingFailed,
+            }),
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SimulatedParticipant {
     stream_id: StreamId,
@@ -966,6 +997,82 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::{AppendOutcome, ContentFingerprint, InMemoryEventStore, OperationId};
+
+    #[test]
+    fn all_execution_source_kinds_have_explicit_lossless_technical_policy() {
+        use rostfrei_messaging_core::{CodecFailureKind, ExecutionFailure, StoreFailureKind};
+        for (source, expected) in [
+            (
+                EventStoreErrorKind::CorruptHistory,
+                StoreFailureKind::CorruptHistory,
+            ),
+            (
+                EventStoreErrorKind::CapacityExhausted,
+                StoreFailureKind::CapacityExhausted,
+            ),
+            (
+                EventStoreErrorKind::ConfigurationMismatch,
+                StoreFailureKind::ConfigurationMismatch,
+            ),
+            (EventStoreErrorKind::Conflict, StoreFailureKind::Conflict),
+            (
+                EventStoreErrorKind::Unavailable,
+                StoreFailureKind::Unavailable,
+            ),
+        ] {
+            let error = CommandExecutionError::Store(EventStoreError::new(source, "not parsed"));
+            assert_eq!(
+                error.execution_failure(),
+                Some(ExecutionFailure::Store(expected))
+            );
+            assert_eq!(
+                error.execution_failure().unwrap().is_retryable(),
+                matches!(
+                    source,
+                    EventStoreErrorKind::Conflict | EventStoreErrorKind::Unavailable
+                )
+            );
+        }
+        for source in [
+            EventStoreErrorKind::InvalidRequest,
+            EventStoreErrorKind::IdentityConflict,
+        ] {
+            assert_eq!(
+                CommandExecutionError::Store(EventStoreError::new(source, "not parsed"))
+                    .execution_failure(),
+                None
+            );
+        }
+        for (source, expected) in [
+            (
+                crate::EventCodecErrorKind::UnknownEventType,
+                CodecFailureKind::UnknownEventType,
+            ),
+            (
+                crate::EventCodecErrorKind::UnsupportedSchemaVersion,
+                CodecFailureKind::UnsupportedSchemaVersion,
+            ),
+            (
+                crate::EventCodecErrorKind::MalformedPayload,
+                CodecFailureKind::MalformedPayload,
+            ),
+            (
+                crate::EventCodecErrorKind::InvalidEnvelope,
+                CodecFailureKind::InvalidEnvelope,
+            ),
+            (
+                crate::EventCodecErrorKind::EncodingFailed,
+                CodecFailureKind::EncodingFailed,
+            ),
+        ] {
+            let error = CommandExecutionError::Codec(EventCodecError::new(source, "not parsed"));
+            assert_eq!(
+                error.execution_failure(),
+                Some(ExecutionFailure::Codec(expected))
+            );
+            assert!(!error.execution_failure().unwrap().is_retryable());
+        }
+    }
 
     struct TestAggregate;
 

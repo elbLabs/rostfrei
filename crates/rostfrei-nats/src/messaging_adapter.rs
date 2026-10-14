@@ -12,10 +12,10 @@ use rostfrei::{
     IntegrationMessageAdapter,
 };
 use rostfrei_messaging_core::{
-    CommandAddress, CommandPublisher, CommandResponse, CommandResponsePublisher,
-    CommandResponseReadErrorKind, CommandResponseReader, DeliveryDisposition,
-    IntegrationEventPublisher, MessageDelivery, MessageHandler, OutboundMessage, PublishError,
-    PublishErrorKind, PublishReceipt, QuarantineReason, RetryDelay,
+    CommandAddress, CommandPublisher, CommandResponse, CommandResponseOutcome,
+    CommandResponsePublisher, CommandResponseReadErrorKind, CommandResponseReader,
+    DeliveryDisposition, IntegrationEventPublisher, MessageDelivery, MessageHandler,
+    OutboundMessage, PublishError, PublishErrorKind, PublishReceipt, QuarantineReason, RetryDelay,
 };
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
@@ -183,6 +183,9 @@ impl CommandMessageAdapter for NatsMessagingAdapter {
         command.validate_response(&response).map_err(|error| {
             CommandBusError::new(CommandBusErrorKind::InvalidResponse, error.to_string())
         })?;
+        if let CommandResponseOutcome::ExecutionFailed(failure) = response.outcome() {
+            return Err(CommandBusError::execution_failed(*failure));
+        }
         Ok(CommandBusReceipt::new(publication.duplicate(), response))
     }
 }
@@ -328,7 +331,15 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
         }
         let _execution = self.execution_gates.acquire(command.message_id()).await;
         match self.reconcile_response(&command).await {
-            Ok(Some(_)) => return DeliveryDisposition::Acknowledge,
+            Ok(Some(response)) => match response.outcome() {
+                CommandResponseOutcome::ExecutionFailed(failure) if failure.is_retryable() => {}
+                CommandResponseOutcome::ExecutionFailed(_) => {
+                    return quarantine(
+                        "technical command execution is blocked; repair and redrive required",
+                    );
+                }
+                _ => return DeliveryDisposition::Acknowledge,
+            },
             Ok(None) => {}
             Err(ReconciliationError::Unavailable) => return retry(),
             Err(ReconciliationError::Invalid) => {
@@ -338,8 +349,23 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
 
         let response = match self.processor.process(&command).await {
             Ok(response) => response,
-            Err(error) if error.is_retryable() => return retry(),
-            Err(_) => return quarantine("command processing failed permanently"),
+            Err(error) => {
+                // Notify the remote caller before asking the existing native consumer to
+                // durably quarantine the source. A missing response sink must not TERM it.
+                match error.technical_response(&command) {
+                    Ok(Some(response)) => {
+                        if self.publish_response(&command, &response).await.is_err() {
+                            return retry();
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => return retry(),
+                }
+                if error.is_retryable() {
+                    return retry();
+                }
+                return quarantine("command processing failed permanently");
+            }
         };
         match self.publish_response(&command, &response).await {
             Ok(_) => DeliveryDisposition::Acknowledge,

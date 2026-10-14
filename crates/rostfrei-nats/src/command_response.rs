@@ -45,6 +45,45 @@ impl NatsCommandResponseReader {
     pub const fn poll_interval(&self) -> Duration {
         self.poll_interval
     }
+
+    /// Removes only an exact blocked technical diagnostic, never a business outcome.
+    ///
+    /// Maintenance operation: first quiesce this command's consumers and retain its quarantine
+    /// evidence. Repair the source fault, call this method, wait out the command stream's
+    /// publication deduplication window, then republish the original envelope/ID. This does not
+    /// remove domain receipts, quarantine evidence, or reset broker deduplication. Concurrent
+    /// publication of a completed response is safe: only the observed diagnostic sequence is
+    /// deleted. Running consumers can republish diagnostics, so redrive requires quiescence.
+    pub async fn remove_blocked_diagnostic_for_redrive(
+        &self,
+        command: &rostfrei::EncodedCommand,
+        read_timeout: Duration,
+    ) -> Result<bool, CommandResponseReadError> {
+        let address = command
+            .response_address()
+            .map_err(|_| read_error(CommandResponseReadErrorKind::InvalidConfiguration))?;
+        validate_read_configuration(&address, &self.topology, read_timeout)?;
+        timeout(read_timeout, async {
+            let stream = self.context.get_stream(self.topology.command_response_stream().as_str())
+                .await.map_err(|_| read_error(CommandResponseReadErrorKind::Unavailable))?;
+            let stored = match stream.get_last_raw_message_by_subject(address.as_str()).await {
+                Ok(stored) => stored,
+                Err(error) if matches!(error.kind(), jetstream::stream::LastRawMessageErrorKind::NoMessageFound) => return Ok(false),
+                Err(_) => return Err(read_error(CommandResponseReadErrorKind::Unavailable)),
+            };
+            let response = decode_stored_command_response(
+                stored.subject.as_str(), &stored.headers, &stored.payload, &address,
+                command.operation_id(), command.message_id(),
+            )?;
+            command.validate_response(&response)
+                .map_err(|_| read_error(CommandResponseReadErrorKind::IdentityConflict))?;
+            if !matches!(response.outcome(), rostfrei_messaging_core::CommandResponseOutcome::ExecutionFailed(failure) if !failure.is_retryable()) {
+                return Err(read_error(CommandResponseReadErrorKind::IdentityConflict));
+            }
+            stream.delete_message(stored.sequence).await
+                .map_err(|_| read_error(CommandResponseReadErrorKind::Unavailable))
+        }).await.map_err(|_| read_error(CommandResponseReadErrorKind::Timeout))?
+    }
 }
 
 #[async_trait]

@@ -375,6 +375,9 @@ impl Fixture {
             .get_stream(self.messaging.topology().quarantine_stream().as_str())
             .await?;
         let info = stream.cached_info();
+        if info.state.messages == 0 {
+            return Ok(Vec::new());
+        }
         let mut records = Vec::new();
         for sequence in info.state.first_sequence..=info.state.last_sequence {
             let stored = stream.get_raw_message(sequence).await?;

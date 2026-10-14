@@ -7,12 +7,15 @@ use sha2::{Digest, Sha256};
 use crate::{
     ApplicationErrorCode, CommandAddress, CommandResponseAddress, CommandResponseReadError,
     CommandResponseReadErrorKind, ContractError, ContractErrorKind, CorrelationId,
-    MessageBuildError, MessageId, OperationId, SchemaVersion, envelope::validate_serialized_size,
+    ExecutionFailure, MessageBuildError, MessageId, OperationId, SchemaVersion,
+    envelope::validate_serialized_size,
 };
 
 pub const MAX_COMMAND_REJECTION_MESSAGE_BYTES: usize = 1024;
 pub const MAX_COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_hours(24);
 pub const COMMAND_RESPONSE_SCHEMA_VERSION: u32 = 1;
+/// Version 1 accepted/rejected responses remain byte-compatible. Only technical responses use v2.
+pub const TECHNICAL_RESPONSE_SCHEMA_VERSION: u32 = 2;
 const RESPONSE_ADDRESS_HASH_DOMAIN: &[u8] = b"rostfrei.command-response-address.v1";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -96,6 +99,8 @@ impl<'de> Deserialize<'de> for CommandRejection {
 pub enum CommandResponseOutcome {
     Accepted,
     Rejected(CommandRejection),
+    /// Diagnostic response only: no acceptance/rejection receipt was committed.
+    ExecutionFailed(ExecutionFailure),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -110,6 +115,26 @@ pub struct CommandResponse {
 }
 
 impl CommandResponse {
+    pub fn execution_failed(
+        message_id: MessageId,
+        command_message_id: MessageId,
+        command_address: CommandAddress,
+        operation_id: OperationId,
+        correlation_id: CorrelationId,
+        failure: ExecutionFailure,
+    ) -> Result<Self, MessageBuildError> {
+        Self::new(
+            message_id,
+            command_message_id,
+            command_address,
+            operation_id,
+            SchemaVersion::new(TECHNICAL_RESPONSE_SCHEMA_VERSION)
+                .map_err(|_| MessageBuildError::serialization())?,
+            correlation_id,
+            CommandResponseOutcome::ExecutionFailed(failure),
+        )
+    }
+
     pub fn accepted(
         message_id: MessageId,
         command_message_id: MessageId,
@@ -156,7 +181,11 @@ impl CommandResponse {
         correlation_id: CorrelationId,
         outcome: CommandResponseOutcome,
     ) -> Result<Self, MessageBuildError> {
-        if schema_version.get() != COMMAND_RESPONSE_SCHEMA_VERSION {
+        let expected_version = match outcome {
+            CommandResponseOutcome::ExecutionFailed(_) => TECHNICAL_RESPONSE_SCHEMA_VERSION,
+            _ => COMMAND_RESPONSE_SCHEMA_VERSION,
+        };
+        if schema_version.get() != expected_version {
             return Err(MessageBuildError::serialization());
         }
         let response = Self {
@@ -350,6 +379,64 @@ mod tests {
             outcome,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn technical_v2_is_typed_and_v1_business_responses_remain_compatible() {
+        use crate::{CodecFailureKind, ExecutionRecovery, ProcessorFailureKind, StoreFailureKind};
+        let accepted = response(CommandResponseOutcome::Accepted);
+        let legacy = serde_json::to_value(&accepted).unwrap();
+        assert_eq!(legacy["schema_version"], 1);
+        assert_eq!(legacy["outcome"], serde_json::json!({"status":"accepted"}));
+        assert_eq!(
+            serde_json::from_value::<CommandResponse>(legacy.clone()).unwrap(),
+            accepted
+        );
+        for failure in [
+            ExecutionFailure::Store(StoreFailureKind::CorruptHistory),
+            ExecutionFailure::Store(StoreFailureKind::CapacityExhausted),
+            ExecutionFailure::Store(StoreFailureKind::ConfigurationMismatch),
+            ExecutionFailure::Store(StoreFailureKind::Conflict),
+            ExecutionFailure::Store(StoreFailureKind::Unavailable),
+            ExecutionFailure::Codec(CodecFailureKind::UnknownEventType),
+            ExecutionFailure::Codec(CodecFailureKind::UnsupportedSchemaVersion),
+            ExecutionFailure::Codec(CodecFailureKind::MalformedPayload),
+            ExecutionFailure::Codec(CodecFailureKind::InvalidEnvelope),
+            ExecutionFailure::Codec(CodecFailureKind::EncodingFailed),
+            ExecutionFailure::Processor(ProcessorFailureKind::InvalidConfiguration),
+        ] {
+            let technical = CommandResponse::execution_failed(
+                accepted.message_id().clone(),
+                accepted.command_message_id().clone(),
+                accepted.command_address().clone(),
+                accepted.operation_id().clone(),
+                accepted.correlation_id().clone(),
+                failure,
+            )
+            .unwrap();
+            assert_eq!(
+                technical.schema_version().get(),
+                TECHNICAL_RESPONSE_SCHEMA_VERSION
+            );
+            let mut wire = serde_json::to_value(&technical).unwrap();
+            assert_eq!(
+                serde_json::from_value::<CommandResponse>(wire.clone()).unwrap(),
+                technical
+            );
+            assert_eq!(
+                failure.is_retryable(),
+                matches!(failure.recovery(), ExecutionRecovery::Retry)
+            );
+            wire["schema_version"] = serde_json::json!(1);
+            assert!(serde_json::from_value::<CommandResponse>(wire).is_err());
+        }
+        let mut invalid_business = legacy;
+        invalid_business["schema_version"] = serde_json::json!(2);
+        assert!(serde_json::from_value::<CommandResponse>(invalid_business).is_err());
+        let mut unknown = serde_json::to_value(&accepted).unwrap();
+        unknown["schema_version"] = serde_json::json!(2);
+        unknown["outcome"] = serde_json::json!({"status":"execution_failed", "value":{"source":"store", "kind":"future_unknown"}});
+        assert!(serde_json::from_value::<CommandResponse>(unknown).is_err());
     }
 
     #[test]

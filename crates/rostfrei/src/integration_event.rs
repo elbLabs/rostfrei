@@ -149,16 +149,16 @@ where
 
         match self.processor.process(&envelope).await {
             Ok(_) => DeliveryDisposition::Acknowledge,
-            Err(IntegrationEventProcessingError::CommandBus(error))
-                if matches!(
-                    error.kind(),
-                    crate::CommandBusErrorKind::Timeout | crate::CommandBusErrorKind::Unavailable
-                ) =>
-            {
+            Err(IntegrationEventProcessingError::CommandBus(error)) if error.is_retryable() => {
                 DeliveryDisposition::RetryAfter(self.retry_delay)
             }
             Err(IntegrationEventProcessingError::Mapper(_)) => {
                 quarantine("integration command mapping failed")
+            }
+            Err(IntegrationEventProcessingError::CommandBus(error))
+                if error.execution_failure().is_some() =>
+            {
+                quarantine("technical command execution is blocked; repair and redrive required")
             }
             Err(_) => quarantine("integration command mapping produced an invalid command"),
         }

@@ -14,10 +14,11 @@ use rostfrei_core::{
 };
 use rostfrei_messaging_core::{
     ApplicationErrorCode, BoundedContext, BoundedContextName, COMMAND_RESPONSE_SCHEMA_VERSION,
-    CausationId, CommandAddress, CommandEnvelope, CommandRejection, CommandRejectionClassification,
-    CommandResponse, CommandResponseOutcome, ContractError, CorrelationId, EnvelopeContext,
-    MessageBuildError, MessageBuildErrorKind, MessageId, MessageTimestamp, OperationId,
-    OutboundMessage, SchemaVersion, derive_command_response_address,
+    CausationId, CodecFailureKind, CommandAddress, CommandEnvelope, CommandRejection,
+    CommandRejectionClassification, CommandResponse, CommandResponseOutcome, ContractError,
+    CorrelationId, EnvelopeContext, ExecutionFailure, MessageBuildError, MessageBuildErrorKind,
+    MessageId, MessageTimestamp, OperationId, OutboundMessage, ProcessorFailureKind, SchemaVersion,
+    StoreFailureKind, TECHNICAL_RESPONSE_SCHEMA_VERSION, derive_command_response_address,
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use serde_json::Value;
@@ -298,9 +299,18 @@ impl EncodedCommand {
         &self,
         response: &CommandResponse,
     ) -> Result<(), InvalidCommandResponse> {
+        let technical = matches!(
+            response.outcome(),
+            CommandResponseOutcome::ExecutionFailed(_)
+        );
+        let expected_message_id = match response.outcome() {
+            CommandResponseOutcome::ExecutionFailed(failure) => {
+                command_technical_response_message_id(self.message_id(), *failure)
+            }
+            _ => command_response_message_id(self.message_id()),
+        };
         if response.message_id()
-            != &command_response_message_id(self.message_id())
-                .map_err(|_| InvalidCommandResponse::ResponseMessageId)?
+            != &expected_message_id.map_err(|_| InvalidCommandResponse::ResponseMessageId)?
         {
             return Err(InvalidCommandResponse::ResponseMessageId);
         }
@@ -313,7 +323,12 @@ impl EncodedCommand {
         if response.operation_id() != self.operation_id() {
             return Err(InvalidCommandResponse::OperationId);
         }
-        if response.schema_version().get() != COMMAND_RESPONSE_SCHEMA_VERSION {
+        let expected_version = if technical {
+            TECHNICAL_RESPONSE_SCHEMA_VERSION
+        } else {
+            COMMAND_RESPONSE_SCHEMA_VERSION
+        };
+        if response.schema_version().get() != expected_version {
             return Err(InvalidCommandResponse::SchemaVersion);
         }
         if response.correlation_id() != self.correlation_id() {
@@ -596,6 +611,8 @@ pub enum CommandBusErrorKind {
     InvalidConfiguration,
     #[error("command response is invalid")]
     InvalidResponse,
+    #[error("command execution is blocked")]
+    ExecutionFailed,
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -603,6 +620,7 @@ pub enum CommandBusErrorKind {
 pub struct CommandBusError {
     kind: CommandBusErrorKind,
     message: String,
+    execution_failure: Option<ExecutionFailure>,
 }
 
 impl CommandBusError {
@@ -610,6 +628,7 @@ impl CommandBusError {
         Self {
             kind,
             message: message.into(),
+            execution_failure: None,
         }
     }
 
@@ -623,6 +642,29 @@ impl CommandBusError {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    pub fn execution_failed(failure: ExecutionFailure) -> Self {
+        Self {
+            kind: if failure.is_retryable() {
+                CommandBusErrorKind::Unavailable
+            } else {
+                CommandBusErrorKind::ExecutionFailed
+            },
+            message: "Technical command execution failure".to_owned(),
+            execution_failure: Some(failure),
+        }
+    }
+
+    pub const fn execution_failure(&self) -> Option<ExecutionFailure> {
+        self.execution_failure
+    }
+
+    pub const fn is_retryable(&self) -> bool {
+        matches!(
+            self.kind,
+            CommandBusErrorKind::Timeout | CommandBusErrorKind::Unavailable
+        )
     }
 }
 
@@ -754,6 +796,8 @@ pub enum CommandProcessorErrorKind {
     Unavailable,
     #[error("command processor configuration is invalid")]
     InvalidConfiguration,
+    #[error("command execution is blocked")]
+    ExecutionFailed,
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -761,6 +805,7 @@ pub enum CommandProcessorErrorKind {
 pub struct CommandProcessorError {
     kind: CommandProcessorErrorKind,
     message: String,
+    execution_failure: Option<ExecutionFailure>,
 }
 
 impl CommandProcessorError {
@@ -768,6 +813,13 @@ impl CommandProcessorError {
         Self {
             kind,
             message: message.into(),
+            execution_failure: if kind == CommandProcessorErrorKind::InvalidConfiguration {
+                Some(ExecutionFailure::Processor(
+                    ProcessorFailureKind::InvalidConfiguration,
+                ))
+            } else {
+                None
+            },
         }
     }
 
@@ -785,6 +837,42 @@ impl CommandProcessorError {
 
     pub const fn is_retryable(&self) -> bool {
         matches!(self.kind, CommandProcessorErrorKind::Unavailable)
+    }
+
+    pub const fn execution_failure(&self) -> Option<ExecutionFailure> {
+        self.execution_failure
+    }
+
+    fn execution(error: &CommandExecutionError) -> Self {
+        let Some(failure) = error.execution_failure() else {
+            // A request failure reaching this branch is a processor mapping/configuration bug,
+            // not an infrastructure outage. Never panic or manufacture a business outcome.
+            return Self::new(
+                CommandProcessorErrorKind::InvalidConfiguration,
+                error.to_string(),
+            );
+        };
+        Self {
+            kind: if failure.is_retryable() {
+                CommandProcessorErrorKind::Unavailable
+            } else {
+                CommandProcessorErrorKind::ExecutionFailed
+            },
+            message: error.to_string(),
+            execution_failure: Some(failure),
+        }
+    }
+
+    /// Builds a typed diagnostic response, never a completed business outcome.
+    pub fn technical_response(
+        &self,
+        command: &EncodedCommand,
+    ) -> Result<Option<CommandResponse>, Self> {
+        self.execution_failure
+            .map(|failure| {
+                build_response(command, CommandResponseOutcome::ExecutionFailed(failure))
+            })
+            .transpose()
     }
 }
 
@@ -924,10 +1012,7 @@ impl CommandProcessor {
                     )?)
                 }
                 Err(BindingError::Execution(error)) => {
-                    return Err(CommandProcessorError::new(
-                        CommandProcessorErrorKind::Unavailable,
-                        error.to_string(),
-                    ));
+                    return Err(CommandProcessorError::execution(&error));
                 }
                 Err(BindingError::RejectionMapping(message)) => {
                     return Err(CommandProcessorError::new(
@@ -1014,8 +1099,13 @@ fn build_response(
     encoded: &EncodedCommand,
     outcome: CommandResponseOutcome,
 ) -> Result<CommandResponse, CommandProcessorError> {
-    let message_id = command_response_message_id(encoded.message_id())
-        .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+    let message_id = match &outcome {
+        CommandResponseOutcome::ExecutionFailed(failure) => {
+            command_technical_response_message_id(encoded.message_id(), *failure)
+        }
+        _ => command_response_message_id(encoded.message_id()),
+    }
+    .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
     match outcome {
         CommandResponseOutcome::Accepted => CommandResponse::accepted(
             message_id,
@@ -1031,6 +1121,14 @@ fn build_response(
             encoded.operation_id().clone(),
             encoded.correlation_id().clone(),
             rejection,
+        ),
+        CommandResponseOutcome::ExecutionFailed(failure) => CommandResponse::execution_failed(
+            message_id,
+            encoded.message_id().clone(),
+            encoded.address().clone(),
+            encoded.operation_id().clone(),
+            encoded.correlation_id().clone(),
+            failure,
         ),
     }
     .map_err(|error| {
@@ -1135,6 +1233,39 @@ pub fn command_response_message_id(
     let digest = framed_fingerprint(&[
         b"rostfrei:command-response-message:v1",
         command_message_id.as_str().as_bytes(),
+    ]);
+    MessageId::new(digest.to_hex())
+}
+
+/// A separate diagnostic identity prevents a technical response from suppressing a later
+/// completed outcome in broker publication deduplication after explicit redrive.
+pub fn command_technical_response_message_id(
+    command_message_id: &MessageId,
+    failure: ExecutionFailure,
+) -> Result<MessageId, ContractError> {
+    let source = match failure {
+        ExecutionFailure::Store(StoreFailureKind::CorruptHistory) => "store.corrupt_history",
+        ExecutionFailure::Store(StoreFailureKind::CapacityExhausted) => "store.capacity_exhausted",
+        ExecutionFailure::Store(StoreFailureKind::ConfigurationMismatch) => {
+            "store.configuration_mismatch"
+        }
+        ExecutionFailure::Store(StoreFailureKind::Conflict) => "store.conflict",
+        ExecutionFailure::Store(StoreFailureKind::Unavailable) => "store.unavailable",
+        ExecutionFailure::Codec(CodecFailureKind::UnknownEventType) => "codec.unknown_event_type",
+        ExecutionFailure::Codec(CodecFailureKind::UnsupportedSchemaVersion) => {
+            "codec.unsupported_schema_version"
+        }
+        ExecutionFailure::Codec(CodecFailureKind::MalformedPayload) => "codec.malformed_payload",
+        ExecutionFailure::Codec(CodecFailureKind::InvalidEnvelope) => "codec.invalid_envelope",
+        ExecutionFailure::Codec(CodecFailureKind::EncodingFailed) => "codec.encoding_failed",
+        ExecutionFailure::Processor(ProcessorFailureKind::InvalidConfiguration) => {
+            "processor.invalid_configuration"
+        }
+    };
+    let digest = framed_fingerprint(&[
+        b"rostfrei:command-technical-response-message:v1",
+        command_message_id.as_str().as_bytes(),
+        source.as_bytes(),
     ]);
     MessageId::new(digest.to_hex())
 }

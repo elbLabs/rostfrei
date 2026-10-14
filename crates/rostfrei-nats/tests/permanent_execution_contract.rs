@@ -3,7 +3,18 @@
 mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{CommandBusErrorKind, CommandProcessorErrorKind, IntegrationEventCommandHandler};
+use rostfrei::{
+    CodecFailureKind, CommandBusErrorKind, CommandProcessorErrorKind, ExecutionFailure,
+    ExecutionRecovery, IntegrationEventCommandHandler, StoreFailureKind,
+};
+
+fn expected_failure(codec: Option<BadCodec>) -> ExecutionFailure {
+    match codec {
+        None => ExecutionFailure::Store(StoreFailureKind::CorruptHistory),
+        Some(BadCodec::Decode) => ExecutionFailure::Codec(CodecFailureKind::MalformedPayload),
+        Some(BadCodec::Encode) => ExecutionFailure::Codec(CodecFailureKind::EncodingFailed),
+    }
+}
 
 async fn fault(
     codec: Option<BadCodec>,
@@ -66,6 +77,7 @@ async fn processor_permanent(codec: Option<BadCodec>) -> TestResult {
         }
     }
     let error = processor.process(&encoded).await.unwrap_err();
+    assert_eq!(error.execution_failure(), Some(expected_failure(codec)));
     assert!(
         store
             .inner
@@ -107,6 +119,7 @@ async fn local_permanent(codec: Option<BadCodec>) -> TestResult {
         "technical fault is not a domain rejection"
     );
     assert_permanent_bus_kind(error.kind());
+    assert_eq!(error.execution_failure(), Some(expected_failure(codec)));
     Ok(())
 }
 macro_rules! boundary_cases {
@@ -187,6 +200,140 @@ async fn invalid_store_configuration_is_not_a_transient_outage() -> TestResult {
         .await
         .unwrap_err();
     assert!(!error.is_retryable());
+    Ok(())
+}
+
+#[tokio::test]
+async fn processor_mapping_configuration_failure_is_typed_for_local_and_remote_callers()
+-> TestResult {
+    let fixture = Fixture::new("85-mapper-configuration").await?;
+    let store = Arc::new(InMemoryEventStore::new());
+    let mut processor = CommandProcessor::new(fixture.context.name().clone(), store.clone());
+    processor.register::<Act, _>(
+        Handler(Arc::new(AtomicUsize::new(0))),
+        |_: &&'static str| Err("invalid rejection mapper configuration".to_owned()),
+    )?;
+    let processor = Arc::new(processor);
+    let local = local_bus(&fixture.context, processor.clone());
+    let command = request("mapping-configuration", "missing", "add")?;
+    let expected =
+        ExecutionFailure::Processor(rostfrei::ProcessorFailureKind::InvalidConfiguration);
+    let error = processor
+        .process(&local.encode(command.clone())?)
+        .await
+        .unwrap_err();
+    assert_eq!(error.execution_failure(), Some(expected));
+    assert!(!error.is_retryable());
+    assert_eq!(
+        local
+            .dispatch(command.clone())
+            .await
+            .unwrap_err()
+            .execution_failure(),
+        Some(expected)
+    );
+    let _worker = fixture.command_worker(processor).await?;
+    let remote = CommandBus::new(fixture.context.clone(), fixture.adapter.clone());
+    assert_eq!(
+        remote
+            .dispatch(command)
+            .await
+            .unwrap_err()
+            .execution_failure(),
+        Some(expected)
+    );
+    assert!(
+        store
+            .load_transaction_receipt_in_context(
+                fixture.context.name(),
+                &OperationId::new("mapping-configuration")?
+            )
+            .await?
+            .is_none()
+    );
+    assert!(store.load(&stream("missing")?).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn unavailable_remote_response_sink_cannot_terminate_the_source_before_recovery() -> TestResult
+{
+    let (fixture, store, processor, local) =
+        fault(None, EventStoreErrorKind::CorruptHistory).await?;
+    let _worker = fixture.command_worker(processor).await?;
+    let source = fixture
+        .js
+        .get_stream(fixture.messaging.topology().command_stream().as_str())
+        .await?;
+    let mut observer: async_nats::jetstream::consumer::PullConsumer = source
+        .get_consumer(fixture.context.durable_name("act", 1)?.as_str())
+        .await?;
+    fixture
+        .js
+        .delete_stream(
+            fixture
+                .messaging
+                .topology()
+                .command_response_stream()
+                .as_str(),
+        )
+        .await?;
+    let encoded = local.encode(request("sink-recovery", "bad-target", "create")?)?;
+    fixture
+        .publisher()
+        .publish_command(encoded.message().clone())
+        .await?;
+    tokio::time::timeout(WAIT, async {
+        loop {
+            if observer.info().await?.delivered.consumer_sequence >= 2 {
+                break TestResult::Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await??;
+    let before = observer.info().await?;
+    assert_eq!(before.ack_floor.consumer_sequence, 0);
+    assert_eq!(before.num_ack_pending, 1);
+    assert!(fixture.quarantine().await?.is_empty());
+    assert!(
+        store
+            .inner
+            .load_transaction_receipt_in_context(
+                fixture.context.name(),
+                &OperationId::new("sink-recovery")?
+            )
+            .await?
+            .is_none()
+    );
+    provision_application_messaging(&fixture.js, &fixture.messaging).await?;
+    wait_drained(&mut observer, &store.inner, None).await?;
+    let reader =
+        NatsCommandResponseReader::new(fixture.js.clone(), fixture.messaging.topology().clone());
+    let response = reader
+        .read_command_response(
+            &encoded.response_address()?,
+            encoded.operation_id(),
+            encoded.message_id(),
+            Duration::from_secs(2),
+        )
+        .await?;
+    encoded.validate_response(&response)?;
+    assert_eq!(
+        response.outcome(),
+        &CommandResponseOutcome::ExecutionFailed(expected_failure(None))
+    );
+    let records = fixture.quarantine().await?;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].message_id(), encoded.message_id().as_str());
+    assert_eq!(
+        base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            records[0].payload_base64()
+        )?,
+        encoded.payload()
+    );
+    assert!(store.inner.load(&stream("bad-target")?).await?.is_empty());
     Ok(())
 }
 #[tokio::test]
@@ -283,6 +430,69 @@ async fn remote_permanent(codec: Option<BadCodec>) -> TestResult {
     assert_ne!(error.kind(), CommandBusErrorKind::Unavailable);
     assert_ne!(error.kind(), CommandBusErrorKind::Rejected);
     assert_permanent_bus_kind(error.kind());
+    assert_eq!(error.execution_failure(), Some(expected_failure(codec)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn store_failure_matrix_preserves_source_and_recovery_through_processor_local_and_nats()
+-> TestResult {
+    for (source, wire, retryable) in [
+        (
+            EventStoreErrorKind::CorruptHistory,
+            StoreFailureKind::CorruptHistory,
+            false,
+        ),
+        (
+            EventStoreErrorKind::ConfigurationMismatch,
+            StoreFailureKind::ConfigurationMismatch,
+            false,
+        ),
+        (
+            EventStoreErrorKind::CapacityExhausted,
+            StoreFailureKind::CapacityExhausted,
+            false,
+        ),
+        (
+            EventStoreErrorKind::Conflict,
+            StoreFailureKind::Conflict,
+            true,
+        ),
+        (
+            EventStoreErrorKind::Unavailable,
+            StoreFailureKind::Unavailable,
+            true,
+        ),
+    ] {
+        let (fixture, _, processor, local) = fault(None, source).await?;
+        let expected = ExecutionFailure::Store(wire);
+        assert_eq!(
+            expected.recovery(),
+            if retryable {
+                ExecutionRecovery::Retry
+            } else {
+                ExecutionRecovery::Blocked
+            }
+        );
+        let encoded = local.encode(request("matrix", "bad-target", "create")?)?;
+        let error = processor.process(&encoded).await.unwrap_err();
+        assert_eq!(error.execution_failure(), Some(expected));
+        assert_eq!(error.is_retryable(), retryable);
+        let error = local
+            .dispatch(request("matrix", "bad-target", "create")?)
+            .await
+            .unwrap_err();
+        assert_eq!(error.execution_failure(), Some(expected));
+        assert_eq!(error.is_retryable(), retryable);
+        let _worker = fixture.command_worker(processor).await?;
+        let remote = CommandBus::new(fixture.context.clone(), fixture.adapter.clone());
+        let error = remote
+            .dispatch(request("matrix", "bad-target", "create")?)
+            .await
+            .unwrap_err();
+        assert_eq!(error.execution_failure(), Some(expected));
+        assert_eq!(error.is_retryable(), retryable);
+    }
     Ok(())
 }
 #[tokio::test]
@@ -296,6 +506,139 @@ async fn remote_decode_failure_is_typed_not_timeout() -> TestResult {
 #[tokio::test]
 async fn remote_encode_failure_is_typed_not_timeout() -> TestResult {
     remote_permanent(Some(BadCodec::Encode)).await
+}
+
+#[tokio::test]
+async fn remote_transient_diagnostic_does_not_prevent_automatic_recovery() -> TestResult {
+    let (fixture, store, processor, _) = fault(None, EventStoreErrorKind::Unavailable).await?;
+    let _worker = fixture.command_worker(processor).await?;
+    let remote = CommandBus::new(fixture.context.clone(), fixture.adapter.clone());
+    let command = request("recover-remote", "bad-target", "create")?;
+    let error = remote.dispatch(command.clone()).await.unwrap_err();
+    assert_eq!(
+        error.execution_failure(),
+        Some(ExecutionFailure::Store(StoreFailureKind::Unavailable))
+    );
+    assert!(error.is_retryable());
+    assert!(fixture.quarantine().await?.is_empty());
+    store.active.store(false, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if store.inner.load(&stream("bad-target")?).await?.len() == 1 {
+                break TestResult::Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await??;
+    // The accepted response PubAck follows the commit; retry until that concrete response exists.
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            match remote.dispatch(command.clone()).await {
+                Ok(receipt) => break TestResult::Ok(receipt),
+                Err(error) if error.is_retryable() => {
+                    tokio::time::sleep(Duration::from_millis(20)).await
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    })
+    .await??;
+    assert_eq!(store.inner.load(&stream("bad-target")?).await?.len(), 1);
+    assert!(fixture.quarantine().await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocked_diagnostic_redrive_is_explicit_and_cannot_delete_a_business_outcome() -> TestResult
+{
+    let (fixture, store, processor, local) =
+        fault(None, EventStoreErrorKind::CorruptHistory).await?;
+    let mut command_stream = fixture
+        .js
+        .get_stream(fixture.messaging.topology().command_stream().as_str())
+        .await?;
+    let mut config = command_stream.info().await?.config.clone();
+    config.duplicate_window = Duration::from_millis(100);
+    fixture.js.update_stream(config).await?;
+    let mut worker = fixture.command_worker(processor.clone()).await?;
+    let remote = CommandBus::new(fixture.context.clone(), fixture.adapter.clone());
+    let command = request("redrive", "bad-target", "create")?;
+    let encoded = local.encode(command.clone())?;
+    assert_eq!(
+        remote
+            .dispatch(command.clone())
+            .await
+            .unwrap_err()
+            .execution_failure(),
+        Some(expected_failure(None))
+    );
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if fixture.quarantine().await?.len() == 1 {
+                break TestResult::Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await??;
+    let source = fixture
+        .js
+        .get_stream(fixture.messaging.topology().command_stream().as_str())
+        .await?;
+    let mut observer: async_nats::jetstream::consumer::PullConsumer = source
+        .get_consumer(fixture.context.durable_name("act", 1)?.as_str())
+        .await?;
+    wait_drained(&mut observer, &store.inner, None).await?;
+    worker.0.abort();
+    let _ = (&mut worker.0).await;
+    let reader =
+        NatsCommandResponseReader::new(fixture.js.clone(), fixture.messaging.topology().clone());
+    store.active.store(false, Ordering::SeqCst);
+    assert!(
+        reader
+            .remove_blocked_diagnostic_for_redrive(&encoded, Duration::from_secs(2))
+            .await?
+    );
+    assert!(
+        !reader
+            .remove_blocked_diagnostic_for_redrive(&encoded, Duration::from_secs(2))
+            .await?
+    );
+    // Broker PubAck, not a blanket delay, establishes that publication dedup has expired.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if !fixture
+                .publisher()
+                .publish_command(encoded.message().clone())
+                .await?
+                .duplicate()
+            {
+                break TestResult::Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    let _worker = fixture.command_worker(processor).await?;
+    let receipt = remote.dispatch(command).await?;
+    assert_eq!(
+        receipt.response().outcome(),
+        &CommandResponseOutcome::Accepted
+    );
+    assert!(
+        reader
+            .remove_blocked_diagnostic_for_redrive(&encoded, Duration::from_secs(2))
+            .await
+            .is_err()
+    );
+    assert_eq!(store.inner.load(&stream("bad-target")?).await?.len(), 1);
+    assert_eq!(
+        fixture.quarantine().await?.len(),
+        1,
+        "redrive must preserve original evidence"
+    );
+    Ok(())
 }
 
 fn assert_permanent_bus_kind(kind: CommandBusErrorKind) {

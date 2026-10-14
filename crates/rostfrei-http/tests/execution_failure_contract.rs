@@ -237,6 +237,13 @@ async fn permanent_http(codec: Option<BadCodec>) -> TestResult {
         "HTTP must preserve permanent vs transient execution classification"
     );
     assert_eq!(status, 500);
+    let expected = match codec {
+        None => serde_json::json!({"source":"store", "kind":"corrupt_history"}),
+        Some(BadCodec::Decode) => serde_json::json!({"source":"codec", "kind":"malformed_payload"}),
+        Some(BadCodec::Encode) => serde_json::json!({"source":"codec", "kind":"encoding_failed"}),
+    };
+    assert_eq!(body["execution"], expected);
+    assert_eq!(body["recovery"], "blocked");
     Ok(())
 }
 #[tokio::test]
@@ -257,6 +264,11 @@ async fn unavailable_http_command_remains_retryable_and_same_operation_recovers(
     let (_server, address, store, _) = http(EventStoreErrorKind::Unavailable, None).await?;
     let (status, body) = submit(address).await?;
     assert_eq!(status, 503);
+    assert_eq!(
+        body["execution"],
+        serde_json::json!({"source":"store", "kind":"unavailable"})
+    );
+    assert_eq!(body["recovery"], "retry");
     assert_eq!(
         body.get("code").and_then(serde_json::Value::as_str),
         Some("rostfrei.http.command-unavailable")

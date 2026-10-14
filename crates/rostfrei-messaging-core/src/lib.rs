@@ -3,6 +3,7 @@ mod command_response;
 mod consume;
 mod envelope;
 mod error;
+mod execution_failure;
 mod message_series;
 mod metadata;
 mod publish;
@@ -21,7 +22,7 @@ pub use command_response::{
     COMMAND_RESPONSE_SCHEMA_VERSION, CommandRejection, CommandRejectionClassification,
     CommandResponse, CommandResponseOutcome, CommandResponseReader,
     MAX_COMMAND_REJECTION_MESSAGE_BYTES, MAX_COMMAND_RESPONSE_TIMEOUT,
-    derive_command_response_address,
+    TECHNICAL_RESPONSE_SCHEMA_VERSION, derive_command_response_address,
 };
 pub use consume::{
     CONSUMER_NAME_CONVENTION, ConsumerConfig, ConsumerName, DURABLE_NAME_CONVENTION,
@@ -38,6 +39,9 @@ pub use error::{
     ContractError, ContractErrorKind, MessageBuildError, MessageBuildErrorKind, PublishError,
     PublishErrorKind, QueryRequestError, QueryRequestErrorKind, QueryServerError,
     QueryServerErrorKind,
+};
+pub use execution_failure::{
+    CodecFailureKind, ExecutionFailure, ExecutionRecovery, ProcessorFailureKind, StoreFailureKind,
 };
 pub use message_series::{
     MAX_MESSAGE_SERIES_NODES, MessageSeries, MessageSeriesInsertOutcome, MessageSeriesNode,

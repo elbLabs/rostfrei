@@ -83,12 +83,16 @@ impl CommandMessageAdapter for InMemoryMessagingAdapter {
             .published(CommandPublication::new(command.message_id().clone(), false))
             .await;
         let response = self.processor.process(&command).await.map_err(|error| {
+            if let Some(failure) = error.execution_failure() {
+                return CommandBusError::execution_failed(failure);
+            }
             let kind = match error.kind() {
                 CommandProcessorErrorKind::InvalidMessage => CommandBusErrorKind::InvalidMessage,
                 CommandProcessorErrorKind::Unavailable => CommandBusErrorKind::Unavailable,
                 CommandProcessorErrorKind::InvalidConfiguration => {
                     CommandBusErrorKind::InvalidConfiguration
                 }
+                CommandProcessorErrorKind::ExecutionFailed => CommandBusErrorKind::ExecutionFailed,
             };
             CommandBusError::new(kind, error.to_string())
         })?;

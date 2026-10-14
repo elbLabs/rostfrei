@@ -354,6 +354,9 @@ fn command_response(
             add_authentication_challenge(&mut response, status, authentication_challenge);
             response
         }
+        CommandResponseOutcome::ExecutionFailed(failure) => {
+            command_bus_error(&CommandBusError::execution_failed(failure))
+        }
     }
 }
 
@@ -422,6 +425,19 @@ fn add_authentication_challenge(
 }
 
 fn command_bus_error(error: &CommandBusError) -> Response {
+    if let Some(failure) = error.execution_failure() {
+        let status = if failure.is_retryable() {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        return (status, Json(serde_json::json!({
+            "code": if failure.is_retryable() { "rostfrei.http.command-unavailable" } else { "rostfrei.http.command-execution-failed" },
+            "message": "Technical command execution failed.",
+            "execution": failure,
+            "recovery": failure.recovery(),
+        }))).into_response();
+    }
     let (status, code, message) = match error.kind() {
         CommandBusErrorKind::Encoding => (
             StatusCode::BAD_REQUEST,

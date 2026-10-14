@@ -74,6 +74,11 @@ concurrency retries. Queries use a read-only handle.
 See the [runtime reference](docs/runtime.md) for NATS authentication, history
 reads and audits, command correlation, and worker delivery.
 
+Technical command failures expose typed source and recovery information through
+the processor, local/NATS command buses, and HTTP. They are not business
+rejections. See the [classification, response compatibility, and redrive contract](docs/adr/0043-typed-technical-command-failures.md)
+before upgrading response readers or replaying quarantined commands.
+
 ## HTTP API
 
 Applications explicitly mount the routes provided by `rostfrei-http`:
