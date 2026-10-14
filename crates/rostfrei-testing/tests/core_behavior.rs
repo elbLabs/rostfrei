@@ -136,7 +136,7 @@ enum AccountCommand {
     NoOp,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 enum AccountRejection {
     AlreadyImported,
     Deliberate,
@@ -1037,11 +1037,12 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
         .await
         .expect("load should succeed");
     let rejection = executor
-        .execute(
+        .execute_with_rejection_codec(
             &handler,
             metadata("rejected-operation", "record-then-reject")
                 .expect("valid rejected execution metadata fixture"),
             &AccountCommand::RecordThenReject,
+            &rostfrei_core::JsonRejectionCodec::new("test.account-rejection", 1),
         )
         .await
         .expect("domain rejection is a completed command outcome");

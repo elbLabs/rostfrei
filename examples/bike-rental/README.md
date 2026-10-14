@@ -7,12 +7,27 @@ for a walkthrough. Run the commands below from the repository root. Requirements
 the pinned Rust toolchain and NATS Server 2.12.1 or newer (the supplied Docker
 Compose configuration provides NATS).
 
+## Completed-outcome cutover
+
+NATS now defaults to a fail-closed legacy/read-only outcome namespace. For a **new
+isolated application** (not an existing demo namespace), explicitly set both
+`ROSTFREI_APPLICATION=bike-rental-epoch92` and
+`ROSTFREI_COMPLETED_OUTCOME_EPOCH=epoch92` for provision/API processes. Fence old
+credentials before starting new mutable workers. Programmatic fixtures use
+`BikeRentalNatsConfig::with_fresh_completed_outcome_epoch` with
+`BikeRentalNatsRuntime::provision_config`. Do not use this setting to activate old
+streams: provisioning refuses an existing stream without the matching epoch.
+Old retries stay in their original namespace; a repaired business attempt uses a
+new operation ID. See the [cutover runbook](../../docs/completed-outcome-cutover.md).
+
 ## Run locally
 
 ```sh
 docker compose -f examples/bike-rental/compose.yaml up -d
 
 ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
+  ROSTFREI_APPLICATION=bike-rental-epoch92 \
+  ROSTFREI_COMPLETED_OUTCOME_EPOCH=epoch92 \
   ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES=67108864 \
   ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES=268435456 \
   ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES=524288 \

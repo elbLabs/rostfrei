@@ -214,7 +214,12 @@ where
                     local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                 })?;
                 match CommandExecutor::new(self.store.clone())
-                    .execute(&RentBicycleHandler, metadata, &command)
+                    .execute_with_rejection_codec(
+                        &RentBicycleHandler,
+                        metadata,
+                        &command,
+                        &rostfrei::JsonRejectionCodec::new("bike-rental.bicycle-unavailable", 1),
+                    )
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
@@ -230,7 +235,12 @@ where
                         local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                     })?;
                 match CommandExecutor::new(self.store.clone())
-                    .execute(&ReturnBicycleHandler, metadata, &command)
+                    .execute_with_rejection_codec(
+                        &ReturnBicycleHandler,
+                        metadata,
+                        &command,
+                        &rostfrei::JsonRejectionCodec::new("bike-rental.bicycle-not-rented", 1),
+                    )
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
@@ -245,7 +255,15 @@ where
                     local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                 })?;
                 match CommandExecutor::new(self.store.clone())
-                    .execute(&AddBicycleHandler, metadata, &command)
+                    .execute_with_rejection_codec(
+                        &AddBicycleHandler,
+                        metadata,
+                        &command,
+                        &rostfrei::JsonRejectionCodec::new(
+                            "bike-rental.bicycle-already-in-fleet",
+                            1,
+                        ),
+                    )
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,
@@ -261,7 +279,15 @@ where
                         local_transport_error(CommandTransportErrorKind::InvalidRequest, error)
                     })?;
                 match CommandExecutor::new(self.store.clone())
-                    .execute(&TransferBicycleHandler, metadata, &command)
+                    .execute_with_rejection_codec(
+                        &TransferBicycleHandler,
+                        metadata,
+                        &command,
+                        &rostfrei::JsonRejectionCodec::new(
+                            "bike-rental.bicycle-transfer-rejected",
+                            1,
+                        ),
+                    )
                     .await
                 {
                     Ok(rostfrei::CommandOutcome::Accepted(_)) => CommandOutcome::Accepted,

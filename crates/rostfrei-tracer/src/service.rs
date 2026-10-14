@@ -3129,6 +3129,9 @@ fn runtime_failure(error: RuntimeSimulationError) -> (&'static str, String) {
         RuntimeSimulationError::Simulation(SimulationError::Codec(error)) => {
             ("event-json-failed", error.to_string())
         }
+        RuntimeSimulationError::Simulation(SimulationError::RejectionMapping(error)) => {
+            ("rejection-encoding-failed", error)
+        }
         RuntimeSimulationError::Simulation(SimulationError::Store(error)) => {
             let code = match error.kind() {
                 EventStoreErrorKind::CorruptHistory => "corrupt-history",

@@ -258,6 +258,15 @@ pub struct BikeRentalNatsConfig {
 }
 
 impl BikeRentalNatsConfig {
+    /// Explicit opt-in for a newly isolated application namespace. Existing legacy
+    /// namespaces remain fail-closed; see docs/completed-outcome-cutover.md.
+    pub fn with_fresh_completed_outcome_epoch(
+        mut self,
+        epoch: &str,
+    ) -> Result<Self, BikeRentalNatsError> {
+        self.event_store = self.event_store.with_fresh_completed_outcome_epoch(epoch)?;
+        Ok(self)
+    }
     pub fn new(application: &str) -> Result<Self, BikeRentalNatsError> {
         Self::new_in_scope(
             application,
@@ -669,6 +678,18 @@ impl BikeRentalNatsRuntime {
                 BikeRentalNatsConfig::new_test_with_resource_limits(application, resource_limits)?
             }
         };
+        let config = match std::env::var("ROSTFREI_COMPLETED_OUTCOME_EPOCH") {
+            Ok(epoch) => config.with_fresh_completed_outcome_epoch(&epoch)?,
+            Err(_) => config,
+        };
+        Self::provision_config(connection, config).await
+    }
+
+    /// Uses an explicitly configured fresh epoch or legacy/read-only authority.
+    pub async fn provision_config(
+        connection: NatsConnection,
+        config: BikeRentalNatsConfig,
+    ) -> Result<Self, BikeRentalNatsError> {
         config.provision(&connection).await?;
         let store = config.connect_store(&connection).await?;
         let messaging = Arc::new(

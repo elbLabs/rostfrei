@@ -34,10 +34,11 @@ async fn executor_atomically_transfers_replays_and_rejects_in_memory() -> TestRe
     verify_executor_transfer(store.clone()).await?;
 
     let rejected = CommandExecutor::new(store.clone())
-        .execute(
+        .execute_with_rejection_codec(
             &TransferBicycleHandler,
             metadata("reject-missing-transfer")?,
             &transfer_command("missing-bike")?,
+            &rostfrei::JsonRejectionCodec::new("bike-rental.bicycle-transfer-rejected", 1),
         )
         .await?;
     let CommandOutcome::Rejected(rejection) = rejected else {
@@ -57,10 +58,11 @@ async fn executor_atomically_transfers_replays_and_rejects_in_memory() -> TestRe
     )?;
 
     let same_fleet = CommandExecutor::new(store.clone())
-        .execute(
+        .execute_with_rejection_codec(
             &TransferBicycleHandler,
             metadata("reject-same-fleet-transfer")?,
             &same_fleet_transfer_command("bike-99")?,
+            &rostfrei::JsonRejectionCodec::new("bike-rental.bicycle-transfer-rejected", 1),
         )
         .await?;
     let CommandOutcome::Rejected(rejection) = same_fleet else {
@@ -163,7 +165,8 @@ async fn executor_atomically_transfers_with_actual_nats_event_store() -> TestRes
     let unique = Uuid::now_v7();
     let application = rostfrei::ApplicationName::new(format!("transfer-executor-{unique}"))?;
     let context = application.test_bounded_context("bike-rental")?;
-    let config = NatsEventStoreConfig::for_bounded_context(&context)?;
+    let config = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_fresh_completed_outcome_epoch("isolated-transfer-fixture")?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("transfer-executor-{unique}"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -194,7 +197,8 @@ async fn command_bus_to_nats_worker_transfers_bicycle_across_two_streams() -> Te
     let unique = Uuid::now_v7();
     let application = format!("transfer-transport-{unique}");
     let limits = BikeRentalNatsResourceLimits::from_env()?;
-    let config = BikeRentalNatsConfig::new_with_resource_limits(&application, limits)?;
+    let config = BikeRentalNatsConfig::new_with_resource_limits(&application, limits)?
+        .with_fresh_completed_outcome_epoch("isolated-transfer-fixture")?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("transfer-transport-{unique}"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -202,12 +206,7 @@ async fn command_bus_to_nats_worker_transfers_bicycle_across_two_streams() -> Te
     .await?;
     let result: TestResult = async {
         let runtime = Arc::new(
-            BikeRentalNatsRuntime::provision_with_resource_limits(
-                connection.clone(),
-                &application,
-                limits,
-            )
-            .await?,
+            BikeRentalNatsRuntime::provision_config(connection.clone(), config.clone()).await?,
         );
         let test_result = async {
             runtime.apply_fixture(&demo_fixture()?).await?;
@@ -308,7 +307,12 @@ where
     let executor = CommandExecutor::new(store.clone());
 
     let first = executor
-        .execute(&TransferBicycleHandler, metadata.clone(), &command)
+        .execute_with_rejection_codec(
+            &TransferBicycleHandler,
+            metadata.clone(),
+            &command,
+            &rostfrei::JsonRejectionCodec::new("bike-rental.bicycle-transfer-rejected", 1),
+        )
         .await?;
     let CommandOutcome::Accepted(CommandReceipt::Appended(events)) = first else {
         return Err(io::Error::other("first transfer was not appended").into());
@@ -316,7 +320,12 @@ where
     verify_event_pair(&events)?;
 
     let replay = executor
-        .execute(&TransferBicycleHandler, metadata, &command)
+        .execute_with_rejection_codec(
+            &TransferBicycleHandler,
+            metadata,
+            &command,
+            &rostfrei::JsonRejectionCodec::new("bike-rental.bicycle-transfer-rejected", 1),
+        )
         .await?;
     let CommandOutcome::Accepted(CommandReceipt::ExactReplay(replayed)) = replay else {
         return Err(io::Error::other("identical transfer was not an exact replay").into());
