@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Technical execution failures are not completed business outcomes.
+///
 /// The source kind, rather than diagnostic text, determines recovery policy.
+/// A failure can follow a durable commit; it does not prove the absence of a receipt/events.
+/// Preserve the operation and canonical evidence for reconciliation after uncertainty.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(
     tag = "source",

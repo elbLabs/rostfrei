@@ -99,7 +99,8 @@ impl<'de> Deserialize<'de> for CommandRejection {
 pub enum CommandResponseOutcome {
     Accepted,
     Rejected(CommandRejection),
-    /// Diagnostic response only: no acceptance/rejection receipt was committed.
+    /// Diagnostic only: neither proof of completion nor proof that nothing committed.
+    /// Reconcile uncertainty with the same operation and canonical evidence, never a fresh ID.
     ExecutionFailed(ExecutionFailure),
 }
 

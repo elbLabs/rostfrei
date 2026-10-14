@@ -34,18 +34,29 @@ NATS/HTTP. Business rejection remains `CommandResponseOutcome::Rejected`.
 Capacity is **not** corruption. Its source remains distinguishable even though
 both require intervention. A transient codec backend must not report a
 deterministic codec error: current codec kinds all describe deterministic
-incompatibility/encoding failures, not network outages. No execution fault adds
-events, skips history, or writes an acceptance/rejection receipt.
+incompatibility/encoding failures, not network outages. Reporting a technical failure
+does not fabricate events, skip history, or write a completed business outcome.
+It is **neither proof of completion nor proof of non-commit**: atomic acceptance
+can already be durable when acknowledgement, validation or result materialization
+fails. Always reconcile the **same operation and canonical evidence**; never use a
+fresh ID to bypass uncertain technical failure.
 
 ## Response wire compatibility
 
 Accepted/rejected responses retain schema version 1 and their existing response
 identities/encoding. Technical diagnostics use schema version 2 and
 `outcome: {status: "execution_failed", value: {source: "store"|"codec"|"processor", kind: ...}}`.
-Version/outcome combinations are validated; unknown kinds/versions fail closed.
-The technical response message ID is separately derived from the command ID and
-typed source kind. It cannot deduplicate a later business response. Existing
-response address, operation, command, and correlation validation still applies.
+Version/outcome combinations are validated; unknown kinds/versions and unknown
+schema-2 fields (including any undeclared recovery extension) fail closed. Recovery
+is computed from the source kind. Intentional schema-1 extension compatibility remains.
+The **logical** technical response ID is derived from command ID and typed source.
+The **broker publication** ID instead binds the exact bytes, subject and a versioned
+transition token in `rostfrei-Control-Response-Transition`: stream name/creation
+epoch, global last-sequence generation and observed subject predecessor sequence.
+Both identities, token bounds, stream epoch and payload binding are validated on read.
+A→B→A and deletion→A have new generations, not stale JetStream duplicate IDs.
+Schema-1 business payloads and broker IDs remain unchanged and immutable.
+Existing response address, operation, command, and correlation validation still applies.
 
 This is an additive Rust enum variant but a reader compatibility change:
 downstream exhaustive `CommandProcessorErrorKind` and `CommandResponseOutcome`
@@ -55,13 +66,21 @@ still lose failure classification. Arbitrary mixed old/new writers are not
 claimed to satisfy #85; rollback to old readers is unsafe while v2 diagnostics
 remain. Acceptance receipt readers and store schema are unchanged.
 
+This tightens the **unpublished** schema-2 transport contract: earlier experimental
+v2 diagnostics without transition headers fail closed and require an audited,
+quiesced cutover retaining their source/quarantine evidence. Do not delete or
+reinterpret them automatically, or claim arbitrary mixed diagnostic writers work.
+
 ## Durability, retention, and recovery
 
 For a blocked execution the native command handler first obtains the technical
 response's Publish PubAck. It then returns the existing `Quarantine` disposition.
 The native consumer obtains the quarantine evidence Publish PubAck **before**
-confirmed source TERM. Either unavailable sink leaves the source retryable; a
-retained diagnostic on redelivery still selects quarantine, never successful ACK.
+confirmed source TERM. An unavailable sink selects retry at the handler level,
+**not infinite retry**: the existing consumer delivery budget can durably quarantine
+`DeliveryAttemptsExhausted` and TERM even without a typed response. Callers may then
+time out. An unavailable quarantine sink still cannot authorize TERM without durable
+evidence. A retained blocked diagnostic selects quarantine, never successful ACK.
 The original envelope bytes, IDs, and delivery evidence remain in that existing
 quarantine stream. Repairing history is a separate, audited operation.
 
@@ -71,6 +90,16 @@ reason to ACK or stop executing. A later completed response supersedes it.
 The publisher permits this transition only with a compare-and-set against the
 observed subject sequence. Accepted/rejected responses remain immutable; stale
 diagnostics cannot overwrite a completed business response.
+
+`prepare_command_response` produces an immutable `PreparedCommandResponse` containing
+token, exact bytes/headers, broker ID and subject CAS. Retry that **same value** with
+`publish_prepared_command_response` after uncertain publication; native handler
+retries do so. A duplicate PubAck is not fresh durability: success requires the latest
+retained exact payload and validated publication identity. A stale/superseded prepared
+request is refused, not silently rebased. Re-evaluate/reconcile before preparing a
+genuine subsequent transition. The convenience publish API is a fresh snapshot/upsert;
+it only re-prepares internally after definite CAS conflict, not timeout/uncertainty.
+Lost PubAck followed by an exact retained retry reconciles as duplicate, not fresh.
 
 Technical responses are transport diagnostics, **not** durable completed-outcome
 receipts. They retain the configured response-stream horizon (default 30 days;
@@ -82,14 +111,19 @@ For blocked NATS recovery:
 
 1. Retain and inspect the quarantine record. Quiesce the affected command consumers.
 2. Repair the underlying fault; preserve unchanged operation/canonical evidence for
-   a technical retry. No business attempt was completed.
+   a technical retry. The diagnostic alone cannot tell whether acceptance committed;
+   reconcile authoritative acceptance evidence instead of assuming non-commit.
 3. Call `NatsCommandResponseReader::remove_blocked_diagnostic_for_redrive` with the
-   original `EncodedCommand`. It validates identity and deletes exact observed
+   original `EncodedCommand`. Pure full-command canonical validation precedes every
+   lookup/deletion; response identity alone is insufficient. It deletes exact observed
    blocked diagnostic sequences until none remain (or an older transient diagnostic
    is exposed). It refuses accepted/rejected responses;
    concurrent later business responses are not deleted. Keep quarantine evidence.
 4. Wait out publication deduplication or verify a nonduplicate command Publish
-   PubAck. Republish the original bytes/message ID and resume consumers.
+   PubAck. Republish the original bytes/message ID and resume consumers. Command
+   deduplication and response deduplication are separate caches: a new prepared
+   response uses the retained stream generation after deletion, so no response-window
+   wait or response-cache reset is necessary. Discard/quiesce old prepared attempts.
 5. Reconcile the later durable business response/acceptance receipt as normal.
 
 Do not treat repeated submission within broker deduplication as a fresh execution.
@@ -104,3 +138,13 @@ Tests cover processor/local/NATS source kinds, technical wire validation, actual
 HTTP sockets, transient recovery, and explicit native redrive without deleting a
 business outcome. Existing native quarantine machinery is reused. Saturation and
 quarantine-sink recovery tests remain acceptance tests, not known-bug probes.
+Review regressions and added controls cover A→B→A, diagnostic deletion/recurrence
+within response deduplication, actual response-PubAck loss through a TCP proxy,
+retained exact-token retries, stale retries, token validation, competing terminal
+writers, and full-command maintenance negatives. A wrapper injects result failure
+**after a real NATS acceptance commit** and proves same-identity receipt reconciliation
+without a second effect. It is not an injection into the store's internal postcommit
+read; that particular failure window is supported by source analysis of
+`event_store.rs` after `publish_atomic_batch`. A two-attempt sink-outage control
+proves durable exhaustion quarantine with no typed response. No new exhaustion policy,
+receipt format, history skipping, or shared rejection-outcome authority is introduced.
