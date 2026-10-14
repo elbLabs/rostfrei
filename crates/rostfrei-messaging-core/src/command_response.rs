@@ -304,8 +304,10 @@ pub fn derive_command_response_address(
 #[async_trait]
 /// Reads a durably stored response without consuming it.
 ///
-/// Repeated reads for the same identity must return the same response while the
-/// transport's documented response-retention window remains open.
+/// Completed accepted/rejected responses for an identity are immutable while the
+/// transport's documented response-retention window remains open. Technical diagnostics
+/// are execution snapshots, not completed outcomes: a later diagnostic or completed
+/// response may supersede them. Readers return the latest durable snapshot.
 pub trait CommandResponseReader: Send + Sync {
     /// Looks up one exact retained response without waiting for its publication.
     async fn find_command_response(
