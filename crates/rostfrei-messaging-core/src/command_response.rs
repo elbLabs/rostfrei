@@ -386,8 +386,11 @@ mod tests {
         use crate::{CodecFailureKind, ExecutionRecovery, ProcessorFailureKind, StoreFailureKind};
         let accepted = response(CommandResponseOutcome::Accepted);
         let legacy = serde_json::to_value(&accepted).unwrap();
-        assert_eq!(legacy["schema_version"], 1);
-        assert_eq!(legacy["outcome"], serde_json::json!({"status":"accepted"}));
+        assert_eq!(legacy.get("schema_version"), Some(&serde_json::json!(1)));
+        assert_eq!(
+            legacy.get("outcome"),
+            Some(&serde_json::json!({"status":"accepted"}))
+        );
         assert_eq!(
             serde_json::from_value::<CommandResponse>(legacy.clone()).unwrap(),
             accepted
@@ -427,15 +430,15 @@ mod tests {
                 failure.is_retryable(),
                 matches!(failure.recovery(), ExecutionRecovery::Retry)
             );
-            wire["schema_version"] = serde_json::json!(1);
+            *wire.get_mut("schema_version").unwrap() = serde_json::json!(1);
             assert!(serde_json::from_value::<CommandResponse>(wire).is_err());
         }
         let mut invalid_business = legacy;
-        invalid_business["schema_version"] = serde_json::json!(2);
+        *invalid_business.get_mut("schema_version").unwrap() = serde_json::json!(2);
         assert!(serde_json::from_value::<CommandResponse>(invalid_business).is_err());
         let mut unknown = serde_json::to_value(&accepted).unwrap();
-        unknown["schema_version"] = serde_json::json!(2);
-        unknown["outcome"] = serde_json::json!({"status":"execution_failed", "value":{"source":"store", "kind":"future_unknown"}});
+        *unknown.get_mut("schema_version").unwrap() = serde_json::json!(2);
+        *unknown.get_mut("outcome").unwrap() = serde_json::json!({"status":"execution_failed", "value":{"source":"store", "kind":"future_unknown"}});
         assert!(serde_json::from_value::<CommandResponse>(unknown).is_err());
     }
 

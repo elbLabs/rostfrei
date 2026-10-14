@@ -325,11 +325,14 @@ async fn unavailable_remote_response_sink_cannot_terminate_the_source_before_rec
     );
     let records = fixture.quarantine().await?;
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].message_id(), encoded.message_id().as_str());
+    let record = records
+        .first()
+        .ok_or("missing source quarantine evidence")?;
+    assert_eq!(record.message_id(), encoded.message_id().as_str());
     assert_eq!(
         base64::Engine::decode(
             &base64::engine::general_purpose::STANDARD,
-            records[0].payload_base64()
+            record.payload_base64()
         )?,
         encoded.payload()
     );
@@ -592,6 +595,26 @@ async fn blocked_diagnostic_redrive_is_explicit_and_cannot_delete_a_business_out
     wait_drained(&mut observer, &store.inner, None).await?;
     worker.0.abort();
     let _ = (&mut worker.0).await;
+    // A second worker can observe a different technical source. Neither diagnostic is a
+    // completed business authority; clearing only the latest must not expose a stale block.
+    let later_failure = ExecutionFailure::Store(StoreFailureKind::ConfigurationMismatch);
+    let later_diagnostic = rostfrei::CommandResponse::execution_failed(
+        rostfrei::command_technical_response_message_id(encoded.message_id(), later_failure)?,
+        encoded.message_id().clone(),
+        encoded.address().clone(),
+        encoded.operation_id().clone(),
+        encoded.correlation_id().clone(),
+        later_failure,
+    )?;
+    let later_message = OutboundMessage::json(
+        encoded.response_address()?,
+        later_diagnostic.message_id().clone(),
+        &later_diagnostic,
+    )?;
+    fixture
+        .publisher()
+        .publish_command_response(later_message.clone())
+        .await?;
     let reader =
         NatsCommandResponseReader::new(fixture.js.clone(), fixture.messaging.topology().clone());
     store.active.store(false, Ordering::SeqCst);
@@ -624,6 +647,26 @@ async fn blocked_diagnostic_redrive_is_explicit_and_cannot_delete_a_business_out
     let receipt = remote.dispatch(command).await?;
     assert_eq!(
         receipt.response().outcome(),
+        &CommandResponseOutcome::Accepted
+    );
+    assert!(
+        fixture
+            .publisher()
+            .publish_command_response(later_message)
+            .await
+            .is_err(),
+        "late technical responses must never overwrite a completed business response"
+    );
+    assert_eq!(
+        reader
+            .read_command_response(
+                &encoded.response_address()?,
+                encoded.operation_id(),
+                encoded.message_id(),
+                Duration::from_secs(2)
+            )
+            .await?
+            .outcome(),
         &CommandResponseOutcome::Accepted
     );
     assert!(

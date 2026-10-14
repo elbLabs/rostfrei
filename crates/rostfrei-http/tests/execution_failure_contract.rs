@@ -242,8 +242,11 @@ async fn permanent_http(codec: Option<BadCodec>) -> TestResult {
         Some(BadCodec::Decode) => serde_json::json!({"source":"codec", "kind":"malformed_payload"}),
         Some(BadCodec::Encode) => serde_json::json!({"source":"codec", "kind":"encoding_failed"}),
     };
-    assert_eq!(body["execution"], expected);
-    assert_eq!(body["recovery"], "blocked");
+    assert_eq!(body.get("execution"), Some(&expected));
+    assert_eq!(
+        body.get("recovery").and_then(serde_json::Value::as_str),
+        Some("blocked")
+    );
     Ok(())
 }
 #[tokio::test]
@@ -265,10 +268,13 @@ async fn unavailable_http_command_remains_retryable_and_same_operation_recovers(
     let (status, body) = submit(address).await?;
     assert_eq!(status, 503);
     assert_eq!(
-        body["execution"],
-        serde_json::json!({"source":"store", "kind":"unavailable"})
+        body.get("execution"),
+        Some(&serde_json::json!({"source":"store", "kind":"unavailable"}))
     );
-    assert_eq!(body["recovery"], "retry");
+    assert_eq!(
+        body.get("recovery").and_then(serde_json::Value::as_str),
+        Some("retry")
+    );
     assert_eq!(
         body.get("code").and_then(serde_json::Value::as_str),
         Some("rostfrei.http.command-unavailable")

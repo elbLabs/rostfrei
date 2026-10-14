@@ -46,7 +46,7 @@ impl NatsCommandResponseReader {
         self.poll_interval
     }
 
-    /// Removes only an exact blocked technical diagnostic, never a business outcome.
+    /// Removes exact blocked technical diagnostics, never a business outcome.
     ///
     /// Maintenance operation: first quiesce this command's consumers and retain its quarantine
     /// evidence. Repair the source fault, call this method, wait out the command stream's
@@ -66,9 +66,11 @@ impl NatsCommandResponseReader {
         timeout(read_timeout, async {
             let stream = self.context.get_stream(self.topology.command_response_stream().as_str())
                 .await.map_err(|_| read_error(CommandResponseReadErrorKind::Unavailable))?;
+            let mut removed = false;
+            loop {
             let stored = match stream.get_last_raw_message_by_subject(address.as_str()).await {
                 Ok(stored) => stored,
-                Err(error) if matches!(error.kind(), jetstream::stream::LastRawMessageErrorKind::NoMessageFound) => return Ok(false),
+                Err(error) if matches!(error.kind(), jetstream::stream::LastRawMessageErrorKind::NoMessageFound) => return Ok(removed),
                 Err(_) => return Err(read_error(CommandResponseReadErrorKind::Unavailable)),
             };
             let response = decode_stored_command_response(
@@ -77,11 +79,15 @@ impl NatsCommandResponseReader {
             )?;
             command.validate_response(&response)
                 .map_err(|_| read_error(CommandResponseReadErrorKind::IdentityConflict))?;
+            if removed && matches!(response.outcome(), rostfrei_messaging_core::CommandResponseOutcome::ExecutionFailed(failure) if failure.is_retryable()) {
+                return Ok(true);
+            }
             if !matches!(response.outcome(), rostfrei_messaging_core::CommandResponseOutcome::ExecutionFailed(failure) if !failure.is_retryable()) {
                 return Err(read_error(CommandResponseReadErrorKind::IdentityConflict));
             }
-            stream.delete_message(stored.sequence).await
-                .map_err(|_| read_error(CommandResponseReadErrorKind::Unavailable))
+            removed |= stream.delete_message(stored.sequence).await
+                .map_err(|_| read_error(CommandResponseReadErrorKind::Unavailable))?;
+            }
         }).await.map_err(|_| read_error(CommandResponseReadErrorKind::Timeout))?
     }
 }

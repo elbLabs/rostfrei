@@ -11,9 +11,10 @@ use async_nats::{
 use async_trait::async_trait;
 use rostfrei_messaging_core::{
     CallerMetadata, CommandAddress, CommandPublisher, CommandResponse, CommandResponseAddress,
-    CommandResponsePublisher, IntegrationEventAddress, IntegrationEventPublisher, OutboundMessage,
-    PublishError, PublishErrorKind as CorePublishErrorKind, PublishReceipt, PublishableAddress,
-    TraceContext, derive_command_response_address,
+    CommandResponseOutcome, CommandResponsePublisher, IntegrationEventAddress,
+    IntegrationEventPublisher, OutboundMessage, PublishError,
+    PublishErrorKind as CorePublishErrorKind, PublishReceipt, PublishableAddress, TraceContext,
+    derive_command_response_address,
 };
 use tokio::time::timeout;
 
@@ -279,57 +280,66 @@ async fn publish_immutable_command_response(
     }
 
     headers.insert(CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE);
-    let publish = PublishMessage::build()
-        .payload(message.payload().to_vec().into())
-        .headers(headers)
-        .message_id(message.message_id().as_str())
-        .expected_stream(expected_stream.as_str())
-        .expected_last_subject_sequence(0);
-    let result = timeout(publish_timeout, async {
-        let acknowledgement = context
-            .send_publish(message.address().as_str().to_owned(), publish)
-            .await
-            .map_err(|error| classify_publish_error(&error))?;
-        acknowledgement
-            .await
-            .map_err(|error| classify_publish_error(&error))
-    })
-    .await
-    .map_err(|_| NatsError::PublishTimeout)?;
+    let mut expected_sequence = 0;
+    for _ in 0..3 {
+        let publish = PublishMessage::build()
+            .payload(message.payload().to_vec().into())
+            .headers(headers.clone())
+            .message_id(message.message_id().as_str())
+            .expected_stream(expected_stream.as_str())
+            .expected_last_subject_sequence(expected_sequence);
+        let result = timeout(publish_timeout, async {
+            let acknowledgement = context
+                .send_publish(message.address().as_str().to_owned(), publish)
+                .await
+                .map_err(|error| classify_publish_error(&error))?;
+            acknowledgement
+                .await
+                .map_err(|error| classify_publish_error(&error))
+        })
+        .await
+        .map_err(|_| NatsError::PublishTimeout)?;
 
-    match result {
-        Ok(acknowledgement) if !acknowledgement.duplicate => {
-            if acknowledgement.stream != expected_stream.as_str() || acknowledgement.sequence == 0 {
-                return Err(NatsError::PublishExpectation);
+        match result {
+            Ok(acknowledgement) if !acknowledgement.duplicate => {
+                if acknowledgement.stream != expected_stream.as_str()
+                    || acknowledgement.sequence == 0
+                {
+                    return Err(NatsError::PublishExpectation);
+                }
+                return Ok(NatsPublishAck {
+                    stream: expected_stream.clone(),
+                    sequence: acknowledgement.sequence,
+                    duplicate: false,
+                });
             }
-            Ok(NatsPublishAck {
-                stream: expected_stream.clone(),
-                sequence: acknowledgement.sequence,
-                duplicate: false,
-            })
+            Ok(_) | Err(NatsError::PublishExpectation) => {
+                let (sequence, exact) = reconcile_command_response_transition(
+                    context,
+                    expected_stream,
+                    message.address().as_str(),
+                    message.payload(),
+                    message.message_id().as_str(),
+                    response,
+                    publish_timeout,
+                )
+                .await?;
+                if exact {
+                    return Ok(NatsPublishAck {
+                        stream: expected_stream.clone(),
+                        sequence,
+                        duplicate: true,
+                    });
+                }
+                expected_sequence = sequence;
+            }
+            Err(error) => return Err(error),
         }
-        Ok(_) | Err(NatsError::PublishExpectation) => {
-            let sequence = verify_existing_command_response(
-                context,
-                expected_stream,
-                message.address().as_str(),
-                message.payload(),
-                message.message_id().as_str(),
-                response,
-                publish_timeout,
-            )
-            .await?;
-            Ok(NatsPublishAck {
-                stream: expected_stream.clone(),
-                sequence,
-                duplicate: true,
-            })
-        }
-        Err(error) => Err(error),
     }
+    Err(NatsError::PublishExpectation)
 }
 
-async fn verify_existing_command_response(
+async fn reconcile_command_response_transition(
     context: &jetstream::Context,
     expected_stream: &StreamName,
     subject: &str,
@@ -337,7 +347,7 @@ async fn verify_existing_command_response(
     message_id: &str,
     response: &CommandResponse,
     operation_timeout: Duration,
-) -> Result<u64, NatsError> {
+) -> Result<(u64, bool), NatsError> {
     timeout(operation_timeout, async {
         let stream = context
             .get_stream(expected_stream.as_str())
@@ -358,9 +368,7 @@ async fn verify_existing_command_response(
             })?;
         if stored.subject.as_str() != subject
             || stored.sequence == 0
-            || stored.payload.as_ref() != payload
             || one_optional_header(&stored.headers, CONTENT_TYPE_HEADER)? != Some(JSON_CONTENT_TYPE)
-            || one_optional_header(&stored.headers, "Nats-Msg-Id")? != Some(message_id)
             || one_optional_header(&stored.headers, CORRELATION_ID_HEADER)?
                 != Some(response.correlation_id().as_str())
         {
@@ -368,10 +376,29 @@ async fn verify_existing_command_response(
         }
         let stored_response: CommandResponse =
             serde_json::from_slice(&stored.payload).map_err(|_| NatsError::IdentityConflict)?;
-        if stored_response.message_id().as_str() != message_id || &stored_response != response {
+        if one_optional_header(&stored.headers, "Nats-Msg-Id")?
+            != Some(stored_response.message_id().as_str())
+            || stored_response.command_message_id() != response.command_message_id()
+            || stored_response.command_address() != response.command_address()
+            || stored_response.operation_id() != response.operation_id()
+            || stored_response.correlation_id() != response.correlation_id()
+        {
             return Err(NatsError::IdentityConflict);
         }
-        Ok(stored.sequence)
+        let exact = stored.payload.as_ref() == payload
+            && stored_response.message_id().as_str() == message_id
+            && &stored_response == response;
+        if !exact
+            && !matches!(
+                stored_response.outcome(),
+                CommandResponseOutcome::ExecutionFailed(_)
+            )
+        {
+            return Err(NatsError::IdentityConflict);
+        }
+        // Only a technical diagnostic can be superseded. A completed business response
+        // remains immutable. The next publication CASes this exact subject sequence.
+        Ok((stored.sequence, exact))
     })
     .await
     .map_err(|_| NatsError::PublishTimeout)?

@@ -68,6 +68,9 @@ quarantine stream. Repairing history is a separate, audited operation.
 Transient diagnostics are also caller-visible, but the source continues delayed
 NAK and is reevaluated on redelivery. A retained transient diagnostic is never a
 reason to ACK or stop executing. A later completed response supersedes it.
+The publisher permits this transition only with a compare-and-set against the
+observed subject sequence. Accepted/rejected responses remain immutable; stale
+diagnostics cannot overwrite a completed business response.
 
 Technical responses are transport diagnostics, **not** durable completed-outcome
 receipts. They retain the configured response-stream horizon (default 30 days;
@@ -81,8 +84,9 @@ For blocked NATS recovery:
 2. Repair the underlying fault; preserve unchanged operation/canonical evidence for
    a technical retry. No business attempt was completed.
 3. Call `NatsCommandResponseReader::remove_blocked_diagnostic_for_redrive` with the
-   original `EncodedCommand`. It validates identity and deletes only the exact
-   observed blocked diagnostic sequence. It refuses accepted/rejected responses;
+   original `EncodedCommand`. It validates identity and deletes exact observed
+   blocked diagnostic sequences until none remain (or an older transient diagnostic
+   is exposed). It refuses accepted/rejected responses;
    concurrent later business responses are not deleted. Keep quarantine evidence.
 4. Wait out publication deduplication or verify a nonduplicate command Publish
    PubAck. Republish the original bytes/message ID and resume consumers.
