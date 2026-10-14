@@ -50,12 +50,22 @@ identities/encoding. Technical diagnostics use schema version 2 and
 `outcome: {status: "execution_failed", value: {source: "store"|"codec"|"processor", kind: ...}}`.
 Version/outcome combinations are validated; unknown kinds/versions and unknown
 schema-2 fields (including any undeclared recovery extension) fail closed. Recovery
-is computed from the source kind. Intentional schema-1 extension compatibility remains.
+is computed from the source kind. Known fields are decoded with lossless typed visitors,
+not a normalized JSON Value: duplicate known envelope/outcome/source fields fail closed
+in **both** schemas, including identical duplicates and content-before-tag order.
+Intentional schema-1 **unknown extension** compatibility remains; application-owned
+rejection details are not redefined as a new globally strict JSON protocol.
 The **logical** technical response ID is derived from command ID and typed source.
 The **broker publication** ID instead binds the exact bytes, subject and a versioned
 transition token in `rostfrei-Control-Response-Transition`: stream name/creation
 epoch, global last-sequence generation and observed subject predecessor sequence.
 Both identities, token bounds, stream epoch and payload binding are validated on read.
+New schema-2 reads and writer reconciliation also require **exactly one** outer
+`rostfrei-Control-Correlation-Id` equal to the body's correlation ID. Correlation
+metadata is evidence, not authentication authority. Schema-1 readers retain their
+historical optional correlation-header contract. Response-only raw storage reads
+preserve repeated header lines before validation, avoiding the pinned client's
+last-value header conversion; no dependency or other message-family parser is changed.
 A→B→A and deletion→A have new generations, not stale JetStream duplicate IDs.
 Schema-1 business payloads and broker IDs remain unchanged and immutable.
 Existing response address, operation, command, and correlation validation still applies.
@@ -76,7 +86,8 @@ reinterpret them automatically, or claim arbitrary mixed diagnostic writers work
 ## Durability, retention, and recovery
 
 For a blocked execution the native command handler first obtains the technical
-response's Publish PubAck. It then returns the existing `Quarantine` disposition.
+response's Publish PubAck **and verifies usable retained publication evidence in the
+current stream incarnation**. It then returns the existing `Quarantine` disposition.
 The native consumer obtains the quarantine evidence Publish PubAck **before**
 confirmed source TERM. An unavailable sink selects retry at the handler level,
 **not infinite retry**: the existing consumer delivery budget can durably quarantine
@@ -103,6 +114,29 @@ genuine subsequent transition. The convenience publish API is a fresh snapshot/u
 it only re-prepares internally after definite CAS conflict, not timeout/uncertainty.
 Lost PubAck followed by an exact retained retry reconciles as duplicate, not fresh.
 
+A fresh nonduplicate PubAck is not sufficient by itself either. The publisher reads
+the exact acknowledged sequence, validates its retained bytes/publication identity,
+then rechecks the current stream creation epoch. Checking that exact sequence allows
+unrelated-subject progress and later valid snapshots/terminal responses. Duplicate or
+already-observed retries instead reconcile the **latest** exact publication, preserving
+stale-retry refusal. Missing/unusable post-Ack evidence returns error, not fresh success
+or an automatic new-token retry. Unknown/old-epoch records remain for audit; they are not
+automatically deleted or reinterpreted as business outcomes.
+
+**Administrative precondition:** coordinate quiescence/fencing of response publishers,
+all in-flight/retained prepared attempts, affected source consumers, and stream
+administration before deletion/recreation, destructive restore, or maintenance redrive.
+Drain/cancel old publications and discard prepared requests from the old incarnation;
+preserve original command/quarantine/unknown-response audit evidence. Application-owned
+deployment/permission fencing must prevent concurrent stream recreation and sequence reuse.
+The SDK does **not** implement that administrative lock. Pre/post epoch checks only
+observe bounded points in time; an administrator can still remove/recreate storage
+after the final observation. They do not control all future admin actions or extend
+normal retention/deletion guarantees. This is distinct from reconnect or broker restart
+with retained storage, which keeps the stream incarnation. Concurrent same-name admin
+recreation is unsupported operationally, but the reproduced in-flight race fails closed
+instead of claiming a usable diagnostic on its fresh Ack alone.
+
 Technical responses are transport diagnostics, **not** durable completed-outcome
 receipts. They retain the configured response-stream horizon (default 30 days;
 bounded byte capacity can refuse writes). The command stream's default two-minute
@@ -111,7 +145,9 @@ adapter/processor never caches execution failures.
 
 For blocked NATS recovery:
 
-1. Retain and inspect the quarantine record. Quiesce the affected command consumers.
+1. Retain and inspect the quarantine record. Quiesce affected source consumers,
+   response publishers and outstanding prepared attempts; coordinate/fence stream
+   administration so the incarnation cannot change during inspection/deletion.
 2. Repair the underlying fault; preserve unchanged operation/canonical evidence for
    a technical retry. The diagnostic alone cannot tell whether acceptance committed;
    reconcile authoritative acceptance evidence instead of assuming non-commit.
@@ -120,7 +156,8 @@ For blocked NATS recovery:
    lookup/deletion; response identity alone is insufficient. It deletes exact observed
    blocked diagnostic sequences until none remain (or an older transient diagnostic
    is exposed). It refuses accepted/rejected responses;
-   concurrent later business responses are not deleted. Keep quarantine evidence.
+   concurrent later business responses in the **same incarnation** are not deleted.
+   Sequence numbers alone do not fence administrative recreation. Keep quarantine evidence.
 4. Wait out publication deduplication or verify a nonduplicate command Publish
    PubAck. Republish the original bytes/message ID and resume consumers. Command
    deduplication and response deduplication are separate caches: a new prepared
@@ -150,3 +187,9 @@ read; that particular failure window is supported by source analysis of
 `event_store.rs` after `publish_atomic_batch`. A two-attempt sink-outage control
 proves durable exhaustion quarantine with no typed response. No new exhaustion policy,
 receipt format, history skipping, or shared rejection-outcome authority is introduced.
+Additional raw-byte and native controls cover duplicate known fields, lossless repeated
+correlation headers, schema-1 unknown-extension/optional-header compatibility, gated
+actual HPUB plus same-name empty-stream recreation, and a real PubAck held while its
+owned test record is removed. The direct native-handler race control refuses blocked
+quarantine when usable publication verification fails; this is a disposition control,
+not an injected source TERM-confirmation loss or an unlimited-retry guarantee.

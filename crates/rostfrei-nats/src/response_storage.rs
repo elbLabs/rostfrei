@@ -55,9 +55,7 @@ async fn fetch(
             decoded.headers = headers;
             Ok(Some(decoded))
         }
-        Response::Err { error }
-            if error.error_code() == jetstream::ErrorCode::NO_MESSAGE_FOUND =>
-        {
+        Response::Err { error } if error.error_code() == jetstream::ErrorCode::NO_MESSAGE_FOUND => {
             Ok(None)
         }
         Response::Err { .. } => Err(NatsError::Publish),
@@ -74,7 +72,10 @@ fn decode_headers(encoded: Option<&str>) -> Result<HeaderMap, NatsError> {
     let text = std::str::from_utf8(&bytes).map_err(|_| NatsError::InvalidMessage)?;
     let mut lines = text.lines().peekable();
     // The pinned client's conversion below still validates any optional status line.
-    if !lines.next().is_some_and(|line| line.starts_with("NATS/1.0")) {
+    if !lines
+        .next()
+        .is_some_and(|line| line.starts_with("NATS/1.0"))
+    {
         return Err(NatsError::InvalidMessage);
     }
     let mut headers = HeaderMap::new();

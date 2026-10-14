@@ -47,7 +47,8 @@ pub enum CodecFailureKind {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionRecovery {
-    /// No completed outcome exists. Retry unchanged evidence with the same operation ID.
+    /// Retry/reconcile unchanged canonical evidence with the same operation ID.
+    /// Completion may already be durable when a technical result is uncertain.
     Retry,
     /// Isolate the trigger durably; operator repair and explicit redrive are required.
     Blocked,

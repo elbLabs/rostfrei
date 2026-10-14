@@ -81,6 +81,8 @@ impl DiagnosticTransitionToken {
 /// prepare a fresh generation until reconciliation/re-evaluation chooses a new transition.
 ///
 /// Payload, headers, broker ID and subject CAS expectation are retained together.
+/// Coordinate/fence stream administration with all publishers and prepared attempts.
+/// Epoch checks are observations, not an atomic administrative lock.
 #[derive(Clone, Debug)]
 pub struct PreparedCommandResponse {
     message: OutboundMessage<CommandResponseAddress>,
@@ -307,6 +309,22 @@ pub async fn publish(
                 {
                     return Err(NatsError::PublishExpectation);
                 }
+                // A fresh broker Ack alone is insufficient: administration may have recreated
+                // this name after the precheck, or removed the acknowledged record. Validate
+                // the exact sequence (not the latest snapshot, which can legitimately advance)
+                // and then re-observe the current incarnation before reporting usable evidence.
+                let stored = crate::response_storage::sequence(
+                    context,
+                    expected_stream.as_str(),
+                    ack.sequence,
+                )
+                .await?
+                .ok_or(NatsError::Publish)?;
+                if stored.sequence != ack.sequence {
+                    return Err(NatsError::IdentityConflict);
+                }
+                verify_exact_record(&stored, prepared).map_err(|_| NatsError::IdentityConflict)?;
+                verify_current_incarnation(context, prepared).await?;
                 Ok(NatsPublishAck {
                     stream: expected_stream.clone(),
                     sequence: ack.sequence,
@@ -332,8 +350,23 @@ async fn reconcile(
     )
     .await?
     .ok_or(NatsError::PublishExpectation)?;
+    verify_exact_record(&stored, prepared)?;
+    verify_current_incarnation(context, prepared).await?;
+    // A duplicate acknowledgement is never evidence of fresh durability. Verify the retained
+    // bytes AND validated publication identity; an absent/deleted/superseded record is not success.
+    Ok(NatsPublishAck {
+        stream: prepared.stream.clone(),
+        sequence: stored.sequence,
+        duplicate: true,
+    })
+}
+
+fn verify_exact_record(
+    stored: &jetstream::message::StreamMessage,
+    prepared: &PreparedCommandResponse,
+) -> Result<(), NatsError> {
     let previous = decode_existing(
-        &stored,
+        stored,
         prepared.stream.as_str(),
         prepared.created,
         &prepared.response,
@@ -353,13 +386,23 @@ async fn reconcile(
             },
         );
     }
-    // A duplicate acknowledgement is never evidence of fresh durability. Verify the retained
-    // bytes AND validated publication identity; an absent/deleted/superseded record is not success.
-    Ok(NatsPublishAck {
-        stream: prepared.stream.clone(),
-        sequence: stored.sequence,
-        duplicate: true,
-    })
+    Ok(())
+}
+
+async fn verify_current_incarnation(
+    context: &jetstream::Context,
+    prepared: &PreparedCommandResponse,
+) -> Result<(), NatsError> {
+    let current = context
+        .get_stream(prepared.stream.as_str())
+        .await
+        .map_err(|_| NatsError::StreamNotFound)?;
+    if current.cached_info().created.unix_timestamp_nanos() != prepared.created {
+        return Err(NatsError::IdentityConflict);
+    }
+    // This does not fence an administrator acting AFTER this observation. Administrative
+    // recreation/deletion still requires coordinated publisher/prepared-attempt quiescence.
+    Ok(())
 }
 
 fn decode_existing(

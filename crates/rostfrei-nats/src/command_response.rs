@@ -48,14 +48,16 @@ impl NatsCommandResponseReader {
 
     /// Removes exact blocked technical diagnostics, never a business outcome.
     ///
-    /// Maintenance operation: first quiesce this command's consumers and retain its quarantine
+    /// Maintenance operation: first quiesce this command's consumers, response publishers and
+    /// unresolved prepared attempts, fence stream administration, and retain its quarantine
     /// evidence. Repair the source fault, call this method, wait out the command stream's
     /// publication deduplication window (or verify a nonduplicate command `PubAck`), then republish
     /// the original envelope/ID. Response generations make a new diagnostic distinct even within
     /// response-stream deduplication. This does not remove receipts, quarantine evidence, or reset
     /// either broker deduplication cache. Concurrent
-    /// publication of a completed response is safe: only the observed diagnostic sequence is
-    /// deleted. Running consumers can republish diagnostics, so redrive requires quiescence.
+    /// publication of a completed response IN THE SAME INCARNATION is safe: only the observed
+    /// diagnostic sequence is deleted. Stream recreation can reuse sequences; this API supplies
+    /// no atomic administrative fence. Redrive requires application-coordinated quiescence.
     pub async fn remove_blocked_diagnostic_for_redrive(
         &self,
         command: &rostfrei::EncodedCommand,

@@ -1,8 +1,9 @@
-//! Native disposition and actual PubAck retention controls for the administrative race.
+//! Native disposition and actual `PubAck` retention controls for the administrative race.
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
 mod release_contract_support;
 use release_contract_support::*;
 use rostfrei::EncodedCommand;
+use std::io::Write;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum GatePoint {
@@ -281,7 +282,6 @@ async fn fresh_real_puback_cannot_establish_usable_durability_after_its_record_w
     let snapshot = serde_json::json!({"subject":retained.subject.to_string(), "sequence":retained.sequence, "headers":retained.headers, "payload_utf8":std::str::from_utf8(&retained.payload)?});
     let path = std::path::PathBuf::from(std::env::var("ROSTFREI_CONTRACT_EVIDENCE_DIR")?)
         .join("puback-record-before-owned-deletion.json");
-    use std::io::Write;
     std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
