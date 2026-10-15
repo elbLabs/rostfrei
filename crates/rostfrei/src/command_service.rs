@@ -5,8 +5,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-use rostfrei_core::{CompletedOutcome, OutcomeLookup, SecurityScope};
-use rostfrei_messaging_core::{CommandResponse, MessageId};
+use rostfrei_core::{CompletedOutcome, OutcomeDecision, OutcomeLookup, SecurityScope};
+use rostfrei_messaging_core::{CommandResponse, CommandResponseOutcome, MessageId};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -110,6 +110,65 @@ impl ProcessedCommand {
     pub const fn outcome(&self) -> &CompletedOutcome<CommandResponse> {
         &self.outcome
     }
+
+    /// Admit a service result for this exact original request and trusted scope.
+    /// Services remain responsible for authorization and configured-backend authority
+    /// validation before projection. Native admission additionally requires a current
+    /// authoritative winner/lifecycle lookup and comparison of its complete reference.
+    pub fn admit(
+        &self,
+        caller: &TrustedCommandContext,
+        command: &EncodedCommand,
+    ) -> Result<&CommandResponse, CommandProcessorError> {
+        let metadata = command
+            .validated_metadata()?
+            .with_security_scope(caller.security_scope().clone());
+        let marker = self.outcome.marker();
+        let key = marker.detail_reference().key();
+        if Some(key.bounded_context()) != metadata.bounded_context()
+            || key.operation_id() != metadata.operation_id()
+            || marker.evidence().is_none()
+        {
+            return Err(admission_error(
+                "service completion has no matching original request identity",
+            ));
+        }
+        marker
+            .validate_identity(&metadata)
+            .map_err(|e| admission_error(e.to_string()))?;
+        marker
+            .integrity_receipt()
+            .validate_integrity()
+            .map_err(|e| admission_error(e.to_string()))?;
+        let response = self
+            .outcome
+            .details()
+            .available()
+            .map_err(|e| CommandProcessorError::recovery(&e))?;
+        command
+            .validate_response(response)
+            .map_err(|e| admission_error(e.to_string()))?;
+        if !matches!(
+            (marker.decision(), response.outcome()),
+            (OutcomeDecision::Accepted, CommandResponseOutcome::Accepted)
+                | (
+                    OutcomeDecision::Rejected,
+                    CommandResponseOutcome::Rejected(_)
+                )
+        ) {
+            return Err(admission_error(
+                "service response contradicts the permanent decision",
+            ));
+        }
+        Ok(response)
+    }
+}
+
+fn admission_error(message: impl Into<String>) -> CommandProcessorError {
+    CommandProcessorError::new(
+        crate::CommandProcessorErrorKind::CompletedDetailsBlocked,
+        message,
+    )
 }
 pub struct ServiceReport<T> {
     pub(crate) result: Result<T, CommandProcessorError>,

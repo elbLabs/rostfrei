@@ -604,7 +604,9 @@ impl OutcomeReader for InMemoryEventStore {
         match stored {
             None => Ok(OutcomeLookup::Missing),
             Some(StoredTransaction::Scoped(marker)) => Ok(OutcomeLookup::Completed(
-                self.resolve_marker(*marker).await?,
+                self.resolve_marker(*marker)
+                    .await
+                    .map_err(EventStoreError::in_outcome_recovery)?,
             )),
             Some(StoredTransaction::Unscoped { .. }) => Err(EventStoreError::new(
                 EventStoreErrorKind::CorruptHistory,
@@ -634,7 +636,11 @@ impl CommandCommitSession for MemoryCommandSession<'_> {
         let StoredTransaction::Scoped(marker) = stored else {
             return Err(invalid("completed command requires scoped marker"));
         };
-        let outcome = self.0.resolve_marker(*marker).await?;
+        let outcome = self
+            .0
+            .resolve_marker(*marker)
+            .await
+            .map_err(EventStoreError::in_outcome_recovery)?;
         Ok(if replay {
             CompletedCommit::ExactReplay(outcome)
         } else {
@@ -701,6 +707,7 @@ fn recovery_error(error: &crate::OutcomeRecoveryError) -> EventStoreError {
         },
         error.to_string(),
     )
+    .in_outcome_recovery()
 }
 
 fn validate_transaction(

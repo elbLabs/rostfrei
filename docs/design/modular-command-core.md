@@ -96,6 +96,13 @@ consumer check: complete authority/context/operation key, original identity/scop
 receipt integrity and encoded binding. Executor initial lookup, post-conflict
 reconciliation and commit results use it; service lookup uses it before projection.
 Wrong returned keys are `CorruptHistory`, never Missing or business rejection.
+`EventStoreError::origin()` separately identifies `Backend` versus `OutcomeRecovery`.
+Executor outcome lookups and completed-result checks attach recovery origin while
+retaining the original kind and `CommandExecutionError::Store` shape. Consuming
+backends use `in_outcome_recovery()` for failed recovery after a durable commit;
+memory does so. Aggregate reads and uncertain writes remain backend failures.
+This lets service projections classify blocked completion consistently regardless
+of winner timing without changing retained technical-history diagnostics.
 
 `TransactionReceipt::validate_proposal` checks ordered participant count/identity,
 guard bases, complete batch metadata, event cardinality, coordinates and contents.
@@ -113,11 +120,11 @@ replace a different model using the same wire identity. Implicit JSON resolution
 does not reserve a slot. `resolve` and erased `validate_history` use the same
 configuration; the latter applies original decoded facts without rewriting them.
 `CommandExecutor::with_codec` is fallible and performs a standalone copy-on-write
-override. The preserved core characterization also demonstrates that the low-level
-executor currently permits this after `with_codecs`. The subsequent service review
-requires shared-mode refusal (S2); that behavior change and its explicitly authorized
-characterization adaptation are queued for the service-repair checkpoint. Composed
-runtimes must select replacements before publishing the shared registry.
+override. After `with_codecs` selects shared mode, `with_codec` rejects with
+`SharedConfiguration`, including uniquely owned registries. The original core
+characterization is intentionally strengthened to shared refusal plus standalone
+override control, as required by service review S2. Composed runtimes select
+replacements before publishing the effective shared registry.
 
 `DomainEventDispatcher::with_codecs` resolves registered handlers through the shared
 registry and rejects per-handler overrides. The standalone dispatcher retains its
@@ -129,10 +136,9 @@ retain the selected historical meaning after those rejected override attempts.
 ## Remaining integration
 
 D2a implemented the facade, local/HTTP service and shared codec integration. Core
-review R1/R2/O1 remediation is implemented, awaiting independent re-review. The
-subsequent service review requires adapter result admission, shared-executor
-override refusal, retryability, audit classification and stable recovery-origin
-corrections; those remain queued for a separate service-repair checkpoint. The
+review R1/R2/O1 and service S1/S2/S3/SO1/SO2 remediation are implemented, awaiting
+independent re-review. Checked local/HTTP admission binds mapped responses to
+canonical request metadata, trusted scope and permanent decision. The
 native continuation must migrate remaining native consumers and supply native
 marker/reference wire restoration and authority fencing. Native storage must use
 the frozen journal + combined CAS/last-value outcome-state protocol, not the obsolete

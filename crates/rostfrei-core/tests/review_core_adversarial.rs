@@ -983,7 +983,8 @@ async fn unsupported_rejection_codec_blocks_completed_replay_without_session_or_
     assert_eq!(handler.0.load(Ordering::SeqCst), 0);
 }
 
-// Characterization, not a failure assertion: the convenience builder forks a supplied registry.
+// Service-review S2 intentionally strengthens the original shared-fork characterization.
+// Preserve the historical standalone override and selected registry meanings separately.
 #[tokio::test]
 async fn observation_with_codec_overrides_and_forks_a_shared_registry() {
     let store = InMemoryEventStore::new();
@@ -1000,7 +1001,25 @@ async fn observation_with_codec_overrides_and_forks_a_shared_registry() {
     let mut registry = AggregateCodecs::default();
     registry.register::<Model, _>(ScalingCodec(100)).unwrap();
     let registry = Arc::new(registry);
-    let executor = CommandExecutor::with_codecs(store, registry.clone())
+    assert!(matches!(
+        CommandExecutor::with_codecs(store.clone(), Arc::new(AggregateCodecs::default()))
+            .with_codec::<Model, _>(ScalingCodec(1)),
+        Err(CodecRegistrationError::SharedConfiguration)
+    ));
+    assert!(matches!(
+        CommandExecutor::with_codecs(store.clone(), registry.clone())
+            .with_codec::<Model, _>(ScalingCodec(1)),
+        Err(CodecRegistrationError::SharedConfiguration)
+    ));
+    assert_eq!(
+        *CommandExecutor::with_codecs(store.clone(), registry.clone())
+            .rehydrate::<Model>(&stream("one"))
+            .await
+            .unwrap()
+            .state(),
+        200
+    );
+    let executor = CommandExecutor::new(store)
         .with_codec::<Model, _>(ScalingCodec(1))
         .unwrap();
     let executor = executor.with_codec::<Model, _>(ScalingCodec(10)).unwrap();

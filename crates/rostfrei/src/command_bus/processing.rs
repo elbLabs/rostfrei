@@ -10,8 +10,8 @@ use super::{
     AggregateCodecs, Arc, BindingError, BoundedContext, CommandBackend, CommandExecutionMetadata,
     CommandExecutor, CommandProcessor, CommandProcessorError, CommandProcessorErrorKind,
     CommandRejection, CommandRejectionClassification, CommandResponse, CommandResponseOutcome,
-    EncodedCommand, EventStoreErrorKind, FixedRejection, INVALID_PAYLOAD_CODE,
-    UNKNOWN_COMMAND_CODE, async_trait, build_response, framework_rejection, validate_command,
+    EncodedCommand, FixedRejection, INVALID_PAYLOAD_CODE, UNKNOWN_COMMAND_CODE, async_trait,
+    build_response, framework_rejection, validate_command,
 };
 use crate::command_service::{
     AttemptId, AuditDelivery, AuditError, AuditPhase, AuditTerminal, CommandAccess,
@@ -136,34 +136,12 @@ impl CommandProcessor {
             .store
             .lookup_outcome(&key)
             .await
-            .map_err(|e| match e.kind() {
-                EventStoreErrorKind::CorruptHistory | EventStoreErrorKind::DetailForbidden => {
-                    CommandProcessorError::new(
-                        CommandProcessorErrorKind::CompletedDetailsBlocked,
-                        e.to_string(),
-                    )
-                }
-                EventStoreErrorKind::CompletedDetailsExpired => CommandProcessorError::new(
-                    CommandProcessorErrorKind::CompletedDetailsExpired,
-                    e.to_string(),
-                ),
-                EventStoreErrorKind::CompletedDetailsUnavailable => CommandProcessorError::new(
-                    CommandProcessorErrorKind::CompletedDetailsUnavailable,
-                    e.to_string(),
-                ),
-                _ => CommandProcessorError::execution(&e.into()),
-            })? {
+            .map_err(|e| CommandProcessorError::execution(&e.in_outcome_recovery().into()))?
+        {
             OutcomeLookup::Missing => Ok(OutcomeLookup::Missing),
             OutcomeLookup::Completed(outcome) => {
                 outcome.validate_for(&key, metadata).map_err(|e| {
-                    if e.kind() == EventStoreErrorKind::CorruptHistory {
-                        CommandProcessorError::new(
-                            CommandProcessorErrorKind::CompletedDetailsBlocked,
-                            e.to_string(),
-                        )
-                    } else {
-                        CommandProcessorError::execution(&e.into())
-                    }
+                    CommandProcessorError::execution(&e.in_outcome_recovery().into())
                 })?;
                 Ok(OutcomeLookup::Completed(self.project(encoded, outcome)?))
             }
@@ -365,7 +343,17 @@ impl CommandProcessor {
         record.phase = AuditPhase::Finished;
         record.terminal = Some(match &result {
             Ok(value) => terminal(value),
-            Err(error) if error.authorization_error().is_some() => AuditTerminal::Denied,
+            Err(error)
+                if matches!(
+                    error.authorization_error(),
+                    Some(
+                        crate::AuthorizationError::Denied
+                            | crate::AuthorizationError::Unauthenticated
+                    )
+                ) =>
+            {
+                AuditTerminal::Denied
+            }
             Err(_) => AuditTerminal::Failed,
         });
         self.audit(&record, &mut errors).await;

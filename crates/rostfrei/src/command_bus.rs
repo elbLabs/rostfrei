@@ -345,9 +345,15 @@ impl EncodedCommand {
     /// inner/outer IDs and normalized metadata. Does not read a store, publish, or run a handler.
     /// Application/traffic-scope authorization is additionally the caller's boundary policy.
     pub fn validate(&self) -> Result<(), CommandProcessorError> {
+        self.validated_metadata().map(|_| ())
+    }
+
+    pub(crate) fn validated_metadata(
+        &self,
+    ) -> Result<CommandExecutionMetadata, CommandProcessorError> {
         let context = BoundedContextName::new(self.address().context())
             .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
-        validate_command(self, &context).map(|_| ())
+        validate_command(self, &context).map(|(_, metadata, _)| metadata)
     }
 
     pub fn response_address(
@@ -815,7 +821,12 @@ impl CommandBusError {
     pub const fn is_retryable(&self) -> bool {
         matches!(
             self.kind,
-            CommandBusErrorKind::Timeout | CommandBusErrorKind::Unavailable
+            CommandBusErrorKind::Timeout
+                | CommandBusErrorKind::Unavailable
+                | CommandBusErrorKind::CompletedDetailsUnavailable
+        ) || matches!(
+            self.authorization,
+            Some(crate::AuthorizationError::Unavailable)
         )
     }
 }
@@ -1068,7 +1079,14 @@ impl CommandProcessorError {
     }
 
     pub const fn is_retryable(&self) -> bool {
-        matches!(self.kind, CommandProcessorErrorKind::Unavailable)
+        matches!(
+            self.kind,
+            CommandProcessorErrorKind::Unavailable
+                | CommandProcessorErrorKind::CompletedDetailsUnavailable
+        ) || matches!(
+            self.authorization,
+            Some(crate::AuthorizationError::Unavailable)
+        )
     }
 
     pub const fn execution_failure(&self) -> Option<ExecutionFailure> {
@@ -1112,6 +1130,28 @@ impl CommandProcessorError {
                 CommandProcessorErrorKind::IdentityConflict,
                 error.to_string(),
             );
+        }
+        if let CommandExecutionError::Store(source)
+        | CommandExecutionError::RejectedOutcomePersistence(source) = error
+            && source.origin() == rostfrei_core::EventStoreErrorOrigin::OutcomeRecovery
+        {
+            let kind = match source.kind() {
+                EventStoreErrorKind::CorruptHistory
+                | EventStoreErrorKind::DetailForbidden
+                | EventStoreErrorKind::ConfigurationMismatch => {
+                    Some(CommandProcessorErrorKind::CompletedDetailsBlocked)
+                }
+                EventStoreErrorKind::CompletedDetailsExpired => {
+                    Some(CommandProcessorErrorKind::CompletedDetailsExpired)
+                }
+                EventStoreErrorKind::CompletedDetailsUnavailable => {
+                    Some(CommandProcessorErrorKind::CompletedDetailsUnavailable)
+                }
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                return Self::new(kind, source.to_string());
+            }
         }
         let Some(failure) = error.execution_failure() else {
             // A request failure reaching this branch is a processor mapping/configuration bug,

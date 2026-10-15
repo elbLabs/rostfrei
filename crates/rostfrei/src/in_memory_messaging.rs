@@ -6,9 +6,9 @@ use tokio::sync::Mutex;
 
 use crate::{
     CommandBusError, CommandBusErrorKind, CommandBusObserver, CommandBusReceipt,
-    CommandMessageAdapter, CommandProcessingService, CommandProcessor, CommandProcessorError,
-    CommandPublication, EncodedCommand, EncodedIntegrationMessage, IntegrationEventBusError,
-    IntegrationMessageAdapter, TrustedCommandContext,
+    CommandMessageAdapter, CommandProcessingService, CommandProcessor, CommandPublication,
+    EncodedCommand, EncodedIntegrationMessage, IntegrationEventBusError, IntegrationMessageAdapter,
+    TrustedCommandContext,
 };
 
 #[derive(Default)]
@@ -56,6 +56,9 @@ impl InMemoryMessagingAdapter {
                 "context-aware dispatch requires a processing service",
             )
         })?;
+        command
+            .validate()
+            .map_err(|e| CommandBusError::from_processor(&e))?;
         let gate = self.command_gate(command.message_id()).await;
         let _guard = gate.lock().await;
         let processed = service
@@ -64,10 +67,8 @@ impl InMemoryMessagingAdapter {
             .into_result()
             .map_err(|e| CommandBusError::from_processor(&e))?;
         let response = processed
-            .outcome()
-            .details()
-            .available()
-            .map_err(|e| CommandBusError::from_processor(&CommandProcessorError::recovery(&e)))?
+            .admit(caller, &command)
+            .map_err(|e| CommandBusError::from_processor(&e))?
             .clone();
         let mut state = self.state.lock().await;
         let duplicate = !state

@@ -39,6 +39,14 @@ impl std::fmt::Display for EventStoreErrorKind {
 pub struct EventStoreError {
     kind: EventStoreErrorKind,
     message: String,
+    origin: EventStoreErrorOrigin,
+}
+
+/// Preserve recovery context without changing the underlying technical failure kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EventStoreErrorOrigin {
+    Backend,
+    OutcomeRecovery,
 }
 
 impl EventStoreError {
@@ -46,6 +54,7 @@ impl EventStoreError {
         Self {
             kind,
             message: message.into(),
+            origin: EventStoreErrorOrigin::Backend,
         }
     }
 
@@ -55,6 +64,18 @@ impl EventStoreError {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    pub const fn origin(&self) -> EventStoreErrorOrigin {
+        self.origin
+    }
+
+    /// Mark an error from outcome lookup, completed-result validation or recovery
+    /// after a committed winner. Do not apply to aggregate reads or uncertain writes.
+    #[must_use]
+    pub const fn in_outcome_recovery(mut self) -> Self {
+        self.origin = EventStoreErrorOrigin::OutcomeRecovery;
+        self
     }
 }
 

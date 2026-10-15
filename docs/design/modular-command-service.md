@@ -6,9 +6,9 @@ declare the full modular runtime or workspace complete. The independent core
 review's marker/detail, proposal/receipt and returned-key corrections are now
 implemented in core and this service boundary, awaiting independent re-review.
 Native wire restoration must reuse those checked boundaries.
-The subsequent service review has queued separate fixes for adapter result admission,
-shared-executor override refusal, retryability, audit terminals and recovery-origin
-classification. This bounded core-repair checkpoint does not close those findings.
+Service-review corrections for adapter result admission, shared-executor override
+refusal, retryability, audit terminals and recovery-origin classification are also
+implemented. Independent re-review and the native/D3 checkpoints remain pending.
 
 ## Processing boundary
 
@@ -30,8 +30,8 @@ identify authorization/audit callers and do not partition operations or aggregat
 status. `ProcessedCommand` exposes Committed/Replayed origin and the permanent
 marker plus typed detail availability. Expired, archived and unavailable details
 remain completed operations. Service lookup never evaluates a handler. Full-result
-transport projection uses `OutcomeDetails::available()` and typed boundary errors,
-never synthetic business rejections.
+transport projection uses checked `ProcessedCommand::admit` and typed boundary
+errors, never synthetic business rejections.
 
 The existing executor remains the sole owner of reevaluation. Its
 `execute_completed_with_rejection_codec` preserves marker, availability and origin
@@ -55,6 +55,11 @@ same typed codec instance. Original fixture/event bytes and identities remain
 unchanged. Shared installations reject local registration overrides. Standalone
 configuration retains fallible duplicate-rejecting registration; explicit replacement
 happens before sharing. Generated JSON decoding remains the ordinary default.
+`CommandExecutor::new(...).with_codec(...)` retains explicit standalone replacement.
+`CommandExecutor::with_codecs(...).with_codec(...)` returns `SharedConfiguration`,
+even when the selected registry's Arc is uniquely owned. The core review's earlier
+fork characterization now asserts this refusal and separately retains its standalone
+override and original-registry historical-meaning controls.
 
 Preview executes with the configured codec and remains read-only. Its current JSON
 display contract reports typed `InvalidEventPayload` for opaque event output;
@@ -75,6 +80,9 @@ are reported separately from the command result and never trigger reevaluation.
 Internal conflict retries belong to one attempt. New invocations get new attempt
 IDs even when replaying the same operation. Route/envelope validation failures do
 not reach the policy or sink.
+Denied/Unauthenticated authorization outcomes finish as `AuditTerminal::Denied`;
+provider Unavailable/InvalidConfiguration finish as `Failed`. Delivery failures
+remain independent of those terminals and the command result.
 
 `InMemoryCommandAuditSink::new(maximum_records)` evicts oldest records at capacity.
 Zero capacity reports delivery failure. Its explicit `clear` operation affects no
@@ -91,6 +99,21 @@ duplicates, and returns that invocation's authoritative response. The adapter re
 publication diagnostics but no cached completion response body. A contextless
 dispatch cannot use an installed context-aware service.
 
+Both context-aware adapters validate the original envelope before calling the service
+and call the same `ProcessedCommand::admit(caller, command)` before returning a full
+result or recording successful local publication. Admission reconstructs canonical
+metadata from the original bytes, binds trusted security scope, checks marker context,
+operation, original evidence and receipt integrity, validates all response IDs/route/
+schema/correlation, and checks response decision against the permanent marker.
+An injected intact foreign-operation/scope completion or contradictory mapped response
+fails as `CompletedDetailsBlocked`, without another evaluation or successful diagnostics.
+
+This admission check composes with the processing service's authorization and complete
+configured-backend key validation before encoded-to-response projection. A response
+DTO does not attest storage authority. Native admission must additionally consult
+current authoritative winner/lifecycle state and compare the exact full reference;
+the local helper alone is not that native authority consultation.
+
 `rostfrei_http::context_command_router` is local full-envelope ingress. Application
 middleware installs `Extension<TrustedCommandContext>`. Envelope bytes are passed
 unchanged; route/schema and any supplied idempotency header must match. Envelope
@@ -103,6 +126,23 @@ After authorization, expired details map to HTTP 410
 maps to 403, unauthenticated to 401 with the configured challenge (403 without one),
 authorization-provider outage to 503 and policy misconfiguration to 500. All
 responses carry `Cache-Control: private, no-store`.
+
+Both processor and bus `is_retryable` helpers include authorization-provider
+Unavailable and `CompletedDetailsUnavailable` (including pending archive recovery).
+Denied/Unauthenticated/InvalidConfiguration, expired and blocked results remain
+nonretryable. Retrying uses the same operation through authorization and fresh
+authority lookup; completed recovery does not permit reexecution.
+
+`EventStoreErrorOrigin::OutcomeRecovery` preserves error origin independently of the
+original `EventStoreErrorKind`. Executor outcome lookup/result validation and memory
+post-commit detail recovery attach it; the facade uses it for stable typed recovery
+classification across initial lookup, concurrent winner and commit-result paths.
+Corrupt/forbidden/misconfigured outcome recovery maps to `CompletedDetailsBlocked`.
+Ordinary aggregate-history errors and uncertain writes keep their existing technical
+diagnostics. Backends must mark post-commit recovery errors with
+`EventStoreError::in_outcome_recovery`; they must not mark an uncertain persistence
+failure as recovered completion. A failed read after a durable rejected commit is
+recovery failure, not rejected-outcome persistence failure.
 
 `CommandProcessor::new`, contextless `process`/`reconcile_completed`, and
 `InMemoryMessagingAdapter::new` are the explicit low-level trusted-infrastructure

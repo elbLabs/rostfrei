@@ -16,6 +16,7 @@ use crate::{
 pub struct CommandExecutor<S> {
     store: S,
     codecs: Arc<AggregateCodecs>,
+    shared_codecs: bool,
     conflict_retry_policy: Arc<dyn crate::ConflictRetryPolicy>,
 }
 
@@ -24,6 +25,7 @@ impl<S> CommandExecutor<S> {
         Self {
             store,
             codecs: Arc::new(AggregateCodecs::default()),
+            shared_codecs: false,
             conflict_retry_policy: Arc::new(crate::BoundedConflictRetries::default()),
         }
     }
@@ -32,19 +34,22 @@ impl<S> CommandExecutor<S> {
         Self {
             store,
             codecs,
+            shared_codecs: true,
             conflict_retry_policy: Arc::new(crate::BoundedConflictRetries::default()),
         }
     }
 
     /// Overrides the event codec used to load and persist one aggregate type.
-    /// This low-level convenience uses copy-on-write. Composed runtimes must select
-    /// replacements before installing their effective shared registry and must not
-    /// call this override afterward.
+    /// Standalone executors allow explicit replacement. Once `with_codecs` selects
+    /// a shared effective registry, local overrides are rejected, even if uniquely owned.
     pub fn with_codec<A, C>(mut self, codec: C) -> Result<Self, crate::CodecRegistrationError>
     where
         A: Aggregate + 'static,
         C: EventCodec<A> + 'static,
     {
+        if self.shared_codecs {
+            return Err(crate::CodecRegistrationError::SharedConfiguration);
+        }
         Arc::make_mut(&mut self.codecs).replace::<A, C>(codec)?;
         Ok(self)
     }
@@ -774,7 +779,10 @@ where
                         required_bounded_context(&metadata)?.clone(),
                         metadata.operation_id().clone(),
                     );
-                    outcome.outcome().validate_for(&key, &metadata)?;
+                    outcome
+                        .outcome()
+                        .validate_for(&key, &metadata)
+                        .map_err(EventStoreError::in_outcome_recovery)?;
                     return Ok(*outcome);
                 }
                 PersistenceAttempt::Conflict(error) => {
@@ -855,6 +863,9 @@ async fn append_transaction(
         {
             Ok(PersistenceAttempt::Conflict(error))
         }
+        Err(error) if error.origin() == crate::EventStoreErrorOrigin::OutcomeRecovery => {
+            Err(error.into())
+        }
         Err(error) if is_rejected => Err(CommandExecutionError::RejectedOutcomePersistence(error)),
         Err(error) => Err(error.into()),
     }
@@ -880,10 +891,16 @@ async fn lookup_completed<S: CommandBackend>(
         required_bounded_context(metadata)?.clone(),
         metadata.operation_id().clone(),
     );
-    match store.lookup_outcome(&key).await? {
+    match store
+        .lookup_outcome(&key)
+        .await
+        .map_err(EventStoreError::in_outcome_recovery)?
+    {
         crate::OutcomeLookup::Missing => Ok(None),
         crate::OutcomeLookup::Completed(outcome) => {
-            outcome.validate_for(&key, metadata)?;
+            outcome
+                .validate_for(&key, metadata)
+                .map_err(EventStoreError::in_outcome_recovery)?;
             Ok(Some(outcome))
         }
     }

@@ -106,10 +106,13 @@ async fn submit(
         Ok(command) => command,
         Err(error) => return bad_request("rostfrei.http.invalid-command-envelope", error),
     };
+    if let Err(error) = encoded.validate() {
+        return processor_error(&error, challenge);
+    }
     match state.service.process(&caller, &encoded).await.into_result() {
-        Ok(processed) => match processed.outcome().details().available() {
+        Ok(processed) => match processed.admit(&caller, &encoded) {
             Ok(response) => command_response(response.clone(), challenge),
-            Err(error) => processor_error(&CommandProcessorError::recovery(&error), challenge),
+            Err(error) => processor_error(&error, challenge),
         },
         Err(error) => processor_error(&error, challenge),
     }
