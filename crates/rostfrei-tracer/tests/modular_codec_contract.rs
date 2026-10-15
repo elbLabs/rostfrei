@@ -52,7 +52,7 @@ impl EventCodec<Counter> for HistoricalCodec {
         .decode(e)
     }
 }
-fn historical_fixture(payload: serde_json::Value) -> TestResult<Fixture> {
+fn historical_fixture(payload: &serde_json::Value) -> TestResult<Fixture> {
     Ok(serde_json::from_value(
         json!({"schemaVersion":1,"id":"old-cents","revision":"v1","messages":[{"kind":"domain-event","messageId":"historical-cents","correlationId":"historical-flow","name":"added","schemaVersion":1,"aggregate":{"type":"counter","id":"one"},"streamVersion":1,"payload":payload}]}),
     )?)
@@ -85,6 +85,10 @@ impl DomainEventHandler<Added> for Observe {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one acceptance scenario proves the same historical meaning across all consumers"
+)]
 async fn historical_meaning_and_original_facts_are_shared_across_all_consumers() -> TestResult {
     let reads = Arc::new(AtomicUsize::new(0));
     let mut codecs = AggregateCodecs::default();
@@ -93,7 +97,7 @@ async fn historical_meaning_and_original_facts_are_shared_across_all_consumers()
     })?;
     let codecs = Arc::new(codecs);
     let store = Arc::new(InMemoryEventStore::new());
-    let fixture = historical_fixture(json!({"whole_units":2}))?;
+    let fixture = historical_fixture(&json!({"whole_units":2}))?;
     let engine = MessageSeriesEngine::with_codecs(codecs.clone());
     engine.apply(store.as_ref(), &fixture).await?;
     let original = store.load(&stream()?).await?;
@@ -157,7 +161,11 @@ async fn historical_meaning_and_original_facts_are_shared_across_all_consumers()
     let states = Arc::new(Mutex::new(Vec::new()));
     let mut registry = DomainRegistry::new();
     registry.register_command::<Change, PreviewHandler>()?;
-    let mut builder = TracerBuilder::new(store.clone(), registry).with_event_codecs(codecs.clone());
+    let mut builder = TracerBuilder::new(store.clone(), registry)
+        .with_event_codecs(codecs.clone())
+        .with_trace_payload_policy(Arc::new(
+            rostfrei_tracer::ExposeTracePayloadsForLocalDevelopment,
+        ));
     builder.register_json::<Change, _>(PreviewHandler(states.clone()))?;
     let tracer = builder.build()?;
     tracer
@@ -248,7 +256,7 @@ async fn registration_collisions_and_malformed_fixture_fail_before_any_write() -
     })?;
     let store = InMemoryEventStore::new();
     let error = MessageSeriesEngine::with_codecs(Arc::new(codecs))
-        .apply(&store, &historical_fixture(json!({"misspelled_units":2}))?)
+        .apply(&store, &historical_fixture(&json!({"misspelled_units":2}))?)
         .await
         .unwrap_err();
     assert!(
@@ -297,7 +305,7 @@ impl CommandHandler<()> for TwoParticipants {
     type Rejection = std::convert::Infallible;
     async fn handle(
         &self,
-        _: &(),
+        (): &(),
         execution: &mut CommandExecution<'_>,
     ) -> CommandHandlingResult<Self::Rejection> {
         let mut first = execution.load::<Counter>("one").await?;
@@ -325,10 +333,7 @@ async fn multi_aggregate_commit_and_private_dispatch_use_each_participants_own_c
     .with_bounded_context(context()?.name().clone());
     let CommandOutcome::Accepted(receipt) = CommandExecutor::with_codecs(store, codecs.clone())
         .execute(&TwoParticipants, metadata, &())
-        .await?
-    else {
-        return Err("acceptance missing".into());
-    };
+        .await?;
     let observations = Arc::new(Mutex::new(Vec::new()));
     let mut dispatcher = DomainEventDispatcher::with_codecs(codecs);
     dispatcher.register::<Counter, Added, _>("added", Arc::new(Observe(observations.clone())))?;

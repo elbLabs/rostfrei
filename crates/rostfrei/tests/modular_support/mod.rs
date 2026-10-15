@@ -166,7 +166,7 @@ pub fn noncanonical(command: &EncodedCommand) -> TestResult<EncodedCommand> {
     Ok(original)
 }
 pub fn baseline_processor(
-    store: Arc<dyn EventStore>,
+    store: Arc<dyn CommandBackend>,
     calls: Arc<AtomicUsize>,
 ) -> TestResult<Arc<CommandProcessor>> {
     let mut processor = CommandProcessor::new(context()?.name().clone(), store);

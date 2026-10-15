@@ -659,7 +659,7 @@ impl OutcomeLifecycle for InMemoryEventStore {
         &self,
         key: &OutcomeKey,
         expected: &OutcomeRevision,
-    ) -> Result<OutcomeRevision, OutcomeLifecycleError> {
+    ) -> Result<crate::OutcomeExpiry, OutcomeLifecycleError> {
         self.validate_authority(key)?;
         let mut state = self.state.lock().await;
         let Some(StoredTransaction::Scoped(marker)) = state.transactions.get(&(
@@ -682,7 +682,10 @@ impl OutcomeLifecycle for InMemoryEventStore {
         // No API can prepare or reinsert bytes for this reference afterwards.
         *detail = DetailState::Expired;
         drop(state);
-        Ok(expected.clone())
+        Ok(crate::OutcomeExpiry::new(
+            expected.clone(),
+            crate::ReclamationStatus::Reclaimed,
+        ))
     }
 }
 

@@ -86,7 +86,7 @@ impl EventStore for FaultStore {
         &self,
         context: &BoundedContextName,
         operation: &OperationId,
-    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+    ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, EventStoreError> {
         self.inner
             .load_completed_outcome_in_context(context, operation)
             .await
@@ -125,6 +125,52 @@ impl EventStore for FaultStore {
         self.inner
             .load_transaction_receipt_in_context(context, id)
             .await
+    }
+}
+#[async_trait]
+impl OutcomeReader for FaultStore {
+    async fn lookup_outcome(
+        &self,
+        key: &OutcomeKey,
+    ) -> Result<OutcomeLookup<EncodedOutcomeDetails>, EventStoreError> {
+        self.inner.lookup_outcome(key).await
+    }
+}
+struct FaultSession<'a> {
+    store: &'a FaultStore,
+    inner: Box<dyn CommandCommitSession + 'a>,
+}
+#[async_trait]
+impl EventHistory for FaultSession<'_> {
+    async fn load(&self, id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        if self.store.active.load(Ordering::SeqCst) {
+            return Err(EventStoreError::new(
+                self.store.kind,
+                "controlled HTTP aggregate load fault",
+            ));
+        }
+        self.inner.load(id).await
+    }
+}
+#[async_trait]
+impl CommandCommitSession for FaultSession<'_> {
+    async fn commit_outcome(
+        self: Box<Self>,
+        proposal: EventTransaction,
+    ) -> Result<CompletedCommit, EventStoreError> {
+        self.inner.commit_outcome(proposal).await
+    }
+}
+#[async_trait]
+impl CommandBackend for FaultStore {
+    fn authority(&self) -> &CommandAuthority {
+        self.inner.authority()
+    }
+    async fn begin_command(&self) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError> {
+        Ok(Box::new(FaultSession {
+            store: self,
+            inner: self.inner.begin_command().await?,
+        }))
     }
 }
 struct Server(tokio::task::JoinHandle<std::io::Result<()>>);
@@ -192,7 +238,7 @@ async fn http(
     let mut processor = CommandProcessor::new(context.name().clone(), store.clone());
     processor.register::<Act, _>(Handler, InfallibleCommandRejectionMapper)?;
     if let Some(codec) = codec {
-        processor.register_codec::<Target, _>(codec);
+        processor.register_codec::<Target, _>(codec)?;
     }
     let bus = CommandBus::new(
         context.clone(),

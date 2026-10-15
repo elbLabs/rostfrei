@@ -110,6 +110,33 @@ pub trait CommandCommitSession: EventHistory {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct OutcomeRevision(pub(crate) crate::ContentFingerprint);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReclamationStatus {
+    Pending,
+    Reclaimed,
+}
+
+/// A proven logical withdrawal, with separately reported retained-payload reclamation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutcomeExpiry {
+    revision: OutcomeRevision,
+    reclamation: ReclamationStatus,
+}
+impl OutcomeExpiry {
+    pub const fn new(revision: OutcomeRevision, reclamation: ReclamationStatus) -> Self {
+        Self {
+            revision,
+            reclamation,
+        }
+    }
+    pub const fn revision(&self) -> &OutcomeRevision {
+        &self.revision
+    }
+    pub const fn reclamation(&self) -> ReclamationStatus {
+        self.reclamation
+    }
+}
+
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum OutcomeLifecycleError {
     #[error("outcome does not exist")]
@@ -124,13 +151,12 @@ pub enum OutcomeLifecycleError {
 
 #[async_trait]
 pub trait OutcomeLifecycle: Send + Sync {
-    /// Privileged maintenance. Success means withdrawal AND owned payload reclamation.
-    /// Implementations unable to verify reclamation must return a distinct pending/error state.
+    /// Privileged maintenance. Success proves withdrawal; reclamation is reported separately.
     async fn expire_details(
         &self,
         key: &OutcomeKey,
         expected: &OutcomeRevision,
-    ) -> Result<OutcomeRevision, OutcomeLifecycleError>;
+    ) -> Result<OutcomeExpiry, OutcomeLifecycleError>;
 }
 
 #[async_trait]

@@ -8,8 +8,8 @@ use std::{
 use async_trait::async_trait;
 use domain::{BoundedContextType, DomainError, JsonCommandPayload, JsonErrorPayload};
 use rostfrei_core::{
-    Aggregate, AggregateCodecs, CommandExecutionError, CommandExecutionMetadata, CommandExecutor,
-    CommandHandler, CommandOutcome, ContentFingerprint, EventCodec, EventStore,
+    Aggregate, AggregateCodecs, CommandBackend, CommandExecutionError, CommandExecutionMetadata,
+    CommandExecutor, CommandHandler, CommandOutcome, ContentFingerprint, EventCodec,
     EventStoreErrorKind, OperationId as CoreOperationId,
 };
 use rostfrei_messaging_core::{
@@ -28,6 +28,8 @@ const INVALID_COMMAND_CODE: &str = "rostfrei.command.invalid";
 const INVALID_PAYLOAD_CODE: &str = "rostfrei.command.invalid-payload";
 const UNKNOWN_COMMAND_CODE: &str = "rostfrei.command.unknown";
 const OPERATION_CONFLICT_CODE: &str = "rostfrei.operation.identity-conflict";
+
+pub mod processing;
 
 /// A command submission whose correlation defaults to its operation ID when omitted.
 /// Explicit correlation and causation are preserved in the outgoing envelope.
@@ -702,6 +704,14 @@ fn command_message_build_error(error: &MessageBuildError) -> CommandBusError {
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum CommandBusErrorKind {
+    #[error("command access denied")]
+    Authorization,
+    #[error("completed command details expired")]
+    CompletedDetailsExpired,
+    #[error("completed command details temporarily unavailable")]
+    CompletedDetailsUnavailable,
+    #[error("completed command recovery blocked")]
+    CompletedDetailsBlocked,
     #[error("command encoding failed")]
     Encoding,
     #[error("command payload is too large")]
@@ -725,6 +735,7 @@ pub enum CommandBusErrorKind {
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error("{message}")]
 pub struct CommandBusError {
+    authorization: Option<crate::AuthorizationError>,
     kind: CommandBusErrorKind,
     message: String,
     execution_failure: Option<ExecutionFailure>,
@@ -733,6 +744,7 @@ pub struct CommandBusError {
 impl CommandBusError {
     pub fn new(kind: CommandBusErrorKind, message: impl Into<String>) -> Self {
         Self {
+            authorization: None,
             kind,
             message: message.into(),
             execution_failure: None,
@@ -753,6 +765,7 @@ impl CommandBusError {
 
     pub fn execution_failed(failure: ExecutionFailure) -> Self {
         Self {
+            authorization: None,
             kind: if failure.is_retryable() {
                 CommandBusErrorKind::Unavailable
             } else {
@@ -765,6 +778,38 @@ impl CommandBusError {
 
     pub const fn execution_failure(&self) -> Option<ExecutionFailure> {
         self.execution_failure
+    }
+
+    pub const fn authorization_error(&self) -> Option<&crate::AuthorizationError> {
+        self.authorization.as_ref()
+    }
+
+    pub fn from_processor(error: &CommandProcessorError) -> Self {
+        let kind = match error.kind() {
+            CommandProcessorErrorKind::Authorization => CommandBusErrorKind::Authorization,
+            CommandProcessorErrorKind::CompletedDetailsExpired => {
+                CommandBusErrorKind::CompletedDetailsExpired
+            }
+            CommandProcessorErrorKind::CompletedDetailsUnavailable => {
+                CommandBusErrorKind::CompletedDetailsUnavailable
+            }
+            CommandProcessorErrorKind::CompletedDetailsBlocked => {
+                CommandBusErrorKind::CompletedDetailsBlocked
+            }
+            CommandProcessorErrorKind::IdentityConflict
+            | CommandProcessorErrorKind::InvalidMessage => CommandBusErrorKind::InvalidMessage,
+            CommandProcessorErrorKind::Unavailable => CommandBusErrorKind::Unavailable,
+            CommandProcessorErrorKind::InvalidConfiguration => {
+                CommandBusErrorKind::InvalidConfiguration
+            }
+            CommandProcessorErrorKind::ExecutionFailed => CommandBusErrorKind::ExecutionFailed,
+        };
+        Self {
+            kind,
+            message: error.to_string(),
+            authorization: error.authorization,
+            execution_failure: error.execution_failure,
+        }
     }
 
     pub const fn is_retryable(&self) -> bool {
@@ -846,11 +891,13 @@ impl CommandRejectionMapper<Infallible> for InfallibleCommandRejectionMapper {
 trait ErasedCommandBinding: Send + Sync {
     async fn execute(
         &self,
-        store: Arc<dyn EventStore>,
+        store: Arc<dyn CommandBackend>,
         codecs: Arc<AggregateCodecs>,
+        policy: Arc<dyn rostfrei_core::ConflictRetryPolicy>,
+        rejection_codec: Arc<dyn rostfrei_core::RejectionCodec<CommandRejection>>,
         metadata: CommandExecutionMetadata,
         payload: &Value,
-    ) -> Result<CommandResponseOutcome, BindingError>;
+    ) -> Result<rostfrei_core::CompletedCommit, BindingError>;
 }
 
 struct TypedCommandBinding<C, H, M> {
@@ -930,28 +977,27 @@ where
 {
     async fn execute(
         &self,
-        store: Arc<dyn EventStore>,
+        store: Arc<dyn CommandBackend>,
         codecs: Arc<AggregateCodecs>,
+        policy: Arc<dyn rostfrei_core::ConflictRetryPolicy>,
+        rejection_codec: Arc<dyn rostfrei_core::RejectionCodec<CommandRejection>>,
         metadata: CommandExecutionMetadata,
         payload: &Value,
-    ) -> Result<CommandResponseOutcome, BindingError> {
+    ) -> Result<rostfrei_core::CompletedCommit, BindingError> {
         let command = C::decode_json(payload).map_err(BindingError::InvalidPayload)?;
-        match CommandExecutor::with_codecs(store, codecs)
-            .execute_with_rejection_codec(
+        CommandExecutor::with_codecs(store, codecs)
+            .with_conflict_retry_policy(policy)
+            .execute_completed_with_rejection_codec(
                 &MappedCommandHandler {
                     handler: &self.handler,
                     mapper: &self.rejection_mapper,
                 },
                 metadata,
                 &command,
-                &rostfrei_core::JsonRejectionCodec::new("rostfrei.command-rejection", 1),
+                rejection_codec.as_ref(),
             )
             .await
-            .map_err(BindingError::Execution)?
-        {
-            CommandOutcome::Accepted(_) => Ok(CommandResponseOutcome::Accepted),
-            CommandOutcome::Rejected(rejection) => Ok(CommandResponseOutcome::Rejected(rejection)),
-        }
+            .map_err(BindingError::Execution)
     }
 }
 
@@ -962,6 +1008,16 @@ enum BindingError {
 
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum CommandProcessorErrorKind {
+    #[error("authorization failed")]
+    Authorization,
+    #[error("operation identity conflicts with its winner")]
+    IdentityConflict,
+    #[error("completed details expired")]
+    CompletedDetailsExpired,
+    #[error("completed details temporarily unavailable")]
+    CompletedDetailsUnavailable,
+    #[error("completed details recovery blocked")]
+    CompletedDetailsBlocked,
     #[error("invalid command message")]
     InvalidMessage,
     #[error("command processing is unavailable")]
@@ -975,6 +1031,7 @@ pub enum CommandProcessorErrorKind {
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error("{message}")]
 pub struct CommandProcessorError {
+    authorization: Option<crate::AuthorizationError>,
     rejected_outcome_persistence_failed: bool,
     kind: CommandProcessorErrorKind,
     message: String,
@@ -984,6 +1041,7 @@ pub struct CommandProcessorError {
 impl CommandProcessorError {
     pub fn new(kind: CommandProcessorErrorKind, message: impl Into<String>) -> Self {
         Self {
+            authorization: None,
             rejected_outcome_persistence_failed: false,
             kind,
             message: message.into(),
@@ -1017,7 +1075,43 @@ impl CommandProcessorError {
         self.execution_failure
     }
 
+    pub const fn authorization_error(&self) -> Option<&crate::AuthorizationError> {
+        self.authorization.as_ref()
+    }
+
+    pub fn authorization(error: crate::AuthorizationError) -> Self {
+        let mut result = Self::new(CommandProcessorErrorKind::Authorization, error.to_string());
+        result.authorization = Some(error);
+        result
+    }
+
+    pub fn recovery(error: &rostfrei_core::OutcomeRecoveryError) -> Self {
+        use rostfrei_core::{DetailUnavailableReason, OutcomeRecoveryError};
+        let kind = match error {
+            OutcomeRecoveryError::Expired => CommandProcessorErrorKind::CompletedDetailsExpired,
+            OutcomeRecoveryError::Archived { .. }
+            | OutcomeRecoveryError::Unavailable {
+                reason: DetailUnavailableReason::BackendUnavailable,
+            } => CommandProcessorErrorKind::CompletedDetailsUnavailable,
+            OutcomeRecoveryError::Unavailable {
+                reason: DetailUnavailableReason::MissingDetails,
+            } => CommandProcessorErrorKind::CompletedDetailsBlocked,
+        };
+        Self::new(kind, error.to_string())
+    }
+
     fn execution(error: &CommandExecutionError) -> Self {
+        if let CommandExecutionError::OutcomeRecovery(error) = error {
+            return Self::recovery(error);
+        }
+        if let CommandExecutionError::Store(error) = error
+            && error.kind() == EventStoreErrorKind::IdentityConflict
+        {
+            return Self::new(
+                CommandProcessorErrorKind::IdentityConflict,
+                error.to_string(),
+            );
+        }
         let Some(failure) = error.execution_failure() else {
             // A request failure reaching this branch is a processor mapping/configuration bug,
             // not an infrastructure outage. Never panic or manufacture a business outcome.
@@ -1027,6 +1121,7 @@ impl CommandProcessorError {
             );
         };
         Self {
+            authorization: None,
             rejected_outcome_persistence_failed: matches!(
                 error,
                 CommandExecutionError::RejectedOutcomePersistence(_)
@@ -1080,9 +1175,10 @@ pub enum CommandBindingRegistrationError {
 
 pub struct CommandProcessor {
     context: BoundedContextName,
-    store: Arc<dyn EventStore>,
+    store: Arc<dyn CommandBackend>,
     codecs: Arc<AggregateCodecs>,
     bindings: HashMap<CommandBindingKey, Arc<dyn ErasedCommandBinding>>,
+    configuration: processing::Configuration,
 }
 
 impl CommandProcessor {
@@ -1091,11 +1187,12 @@ impl CommandProcessor {
         &self,
         encoded: &EncodedCommand,
     ) -> Result<Option<CommandResponse>, CommandProcessorError> {
+        self.require_trusted_profile()?;
         let (_, metadata, _) = validate_command(encoded, &self.context)?;
         let result = CommandExecutor::new(Arc::clone(&self.store))
             .reconcile_with_rejection_codec::<CommandRejection>(
                 metadata,
-                &rostfrei_core::JsonRejectionCodec::new("rostfrei.command-rejection", 1),
+                self.configuration.rejection_codec.as_ref(),
             )
             .await;
         let outcome = match result {
@@ -1113,22 +1210,30 @@ impl CommandProcessor {
         };
         build_response(encoded, outcome).map(Some)
     }
-    pub fn new(context: BoundedContextName, store: Arc<dyn EventStore>) -> Self {
+    /// Trusted infrastructure compatibility profile. Policy-enabled applications use `builder`.
+    pub fn new(context: BoundedContextName, store: Arc<dyn CommandBackend>) -> Self {
         Self {
             context,
             store,
             codecs: Arc::new(AggregateCodecs::default()),
             bindings: HashMap::new(),
+            configuration: processing::Configuration::trusted(),
         }
     }
 
-    pub fn register_codec<A, C>(&mut self, codec: C) -> &mut Self
+    pub fn register_codec<A, C>(
+        &mut self,
+        codec: C,
+    ) -> Result<&mut Self, rostfrei_core::CodecRegistrationError>
     where
         A: Aggregate + 'static,
         C: EventCodec<A> + 'static,
     {
-        Arc::make_mut(&mut self.codecs).register::<A, C>(codec);
-        self
+        if self.configuration.shared_codecs {
+            return Err(rostfrei_core::CodecRegistrationError::SharedConfiguration);
+        }
+        Arc::make_mut(&mut self.codecs).register::<A, C>(codec)?;
+        Ok(self)
     }
 
     pub fn register<C, H>(
@@ -1173,92 +1278,22 @@ impl CommandProcessor {
         if let Some(response) = self.reconcile_completed(encoded).await? {
             return Ok(response);
         }
-        let (envelope, metadata, key) = validate_command(encoded, &self.context)?;
-        let routed = envelope.payload();
-        let outcome = match self.bindings.get(&key) {
-            None => CommandResponseOutcome::Rejected(framework_rejection(
-                CommandRejectionClassification::InvalidRequest,
-                UNKNOWN_COMMAND_CODE,
-                "The command name or schema version is not registered.",
-                Some(serde_json::json!({
-                    "context": encoded.address().context(),
-                    "command": routed.command(),
-                    "schema_version": routed.schema_version(),
-                })),
-            )?),
-            Some(binding) => match binding
-                .execute(
-                    Arc::clone(&self.store),
-                    Arc::clone(&self.codecs),
-                    metadata.clone(),
-                    routed.payload(),
+        let (_, metadata, _) = validate_command(encoded, &self.context)?;
+        match self.execute_missing(encoded, metadata).await {
+            Ok(processed) => processed
+                .outcome()
+                .details()
+                .available()
+                .cloned()
+                .map_err(|error| CommandProcessorError::recovery(&error)),
+            Err(error) if error.kind() == CommandProcessorErrorKind::IdentityConflict => {
+                build_response(
+                    encoded,
+                    CommandResponseOutcome::Rejected(operation_conflict()?),
                 )
-                .await
-            {
-                Ok(outcome) => outcome,
-                Err(BindingError::InvalidPayload(message)) => {
-                    CommandResponseOutcome::Rejected(framework_rejection(
-                        CommandRejectionClassification::InvalidRequest,
-                        INVALID_PAYLOAD_CODE,
-                        "The command payload is invalid.",
-                        Some(serde_json::json!({ "reason": message })),
-                    )?)
-                }
-                Err(BindingError::Execution(CommandExecutionError::Store(error)))
-                    if error.kind() == EventStoreErrorKind::IdentityConflict =>
-                {
-                    CommandResponseOutcome::Rejected(framework_rejection(
-                        CommandRejectionClassification::Conflict,
-                        OPERATION_CONFLICT_CODE,
-                        "The operation ID was already used for different command content or context.",
-                        None,
-                    )?)
-                }
-                Err(BindingError::Execution(CommandExecutionError::Store(error)))
-                    if error.kind() == EventStoreErrorKind::InvalidRequest =>
-                {
-                    // Request errors from the handler were mapped inside the guarded
-                    // attempt. A remaining error is malformed tracking/persistence, not
-                    // a completed business decision whose guards can be reconstructed.
-                    return Err(CommandProcessorError::new(
-                        CommandProcessorErrorKind::InvalidConfiguration,
-                        error.to_string(),
-                    ));
-                }
-                Err(BindingError::Execution(error)) => {
-                    return Err(CommandProcessorError::execution(&error));
-                }
-            },
-        };
-        let outcome = if let CommandResponseOutcome::Rejected(rejection) = &outcome {
-            if rejection.code().as_str() == OPERATION_CONFLICT_CODE {
-                outcome
-            } else {
-                match CommandExecutor::new(Arc::clone(&self.store))
-                    .execute_with_rejection_codec(
-                        &FixedRejection(rejection.clone()),
-                        metadata,
-                        &(),
-                        &rostfrei_core::JsonRejectionCodec::new("rostfrei.command-rejection", 1),
-                    )
-                    .await
-                {
-                    Ok(CommandOutcome::Accepted(_)) => CommandResponseOutcome::Accepted,
-                    Ok(CommandOutcome::Rejected(rejection)) => {
-                        CommandResponseOutcome::Rejected(rejection)
-                    }
-                    Err(CommandExecutionError::Store(error))
-                        if error.kind() == EventStoreErrorKind::IdentityConflict =>
-                    {
-                        CommandResponseOutcome::Rejected(operation_conflict()?)
-                    }
-                    Err(error) => return Err(CommandProcessorError::execution(&error)),
-                }
             }
-        } else {
-            outcome
-        };
-        build_response(encoded, outcome)
+            Err(error) => Err(error),
+        }
     }
 }
 

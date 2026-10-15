@@ -22,7 +22,7 @@ impl EventStore for AuthorityGate {
         &self,
         c: &rostfrei_messaging_core::BoundedContextName,
         id: &OperationId,
-    ) -> Result<Option<CompletedOutcome>, EventStoreError> {
+    ) -> Result<Option<InlineCompletedOutcome>, EventStoreError> {
         if self.down.load(Ordering::SeqCst) {
             return Err(EventStoreError::new(
                 EventStoreErrorKind::Unavailable,
@@ -66,6 +66,31 @@ impl EventStore for AuthorityGate {
         t: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
         self.inner.append_transaction(t).await
+    }
+}
+
+#[async_trait]
+impl OutcomeReader for AuthorityGate {
+    async fn lookup_outcome(
+        &self,
+        key: &OutcomeKey,
+    ) -> Result<OutcomeLookup<EncodedOutcomeDetails>, EventStoreError> {
+        if self.down.load(Ordering::SeqCst) {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::Unavailable,
+                "authority deliberately unavailable",
+            ));
+        }
+        self.inner.lookup_outcome(key).await
+    }
+}
+#[async_trait]
+impl CommandBackend for AuthorityGate {
+    fn authority(&self) -> &CommandAuthority {
+        self.inner.authority()
+    }
+    async fn begin_command(&self) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError> {
+        self.inner.begin_command().await
     }
 }
 

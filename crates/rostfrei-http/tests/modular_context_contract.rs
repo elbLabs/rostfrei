@@ -108,7 +108,7 @@ async fn typed_http_extension_reaches_service_and_expiry_maps_to_410_only_after_
     let key = OutcomeKey::new(
         store.authority().clone(),
         context()?.name().clone(),
-        command.operation_id().clone(),
+        OperationId::new(command.operation_id().as_str())?,
     );
     store
         .expire_details(&key, completed.marker().revision())
@@ -129,6 +129,82 @@ async fn typed_http_extension_reaches_service_and_expiry_maps_to_410_only_after_
     for (principal, bytes) in policy.seen.lock().unwrap().iter() {
         assert_eq!(principal, "middleware-verified");
         assert_eq!(bytes, command.payload());
+    }
+    Ok(())
+}
+
+struct DetailFault(Option<rostfrei_core::DetailReadError>);
+#[async_trait]
+impl rostfrei_core::OutcomeDetailReader for DetailFault {
+    async fn get(
+        &self,
+        _: &rostfrei_core::OutcomeDetailReference,
+    ) -> Result<rostfrei_core::DetailRead, rostfrei_core::DetailReadError> {
+        self.0
+            .clone()
+            .map_or(Ok(rostfrei_core::DetailRead::AbsentHere), Err)
+    }
+}
+
+#[tokio::test]
+async fn unavailable_missing_and_forbidden_completed_details_are_typed_http_errors() -> TestResult {
+    for (fault, status, code) in [
+        (
+            Some(rostfrei_core::DetailReadError::Unavailable),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "rostfrei.command.completed-details-unavailable",
+        ),
+        (
+            None,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "rostfrei.command.completed-details-blocked",
+        ),
+        (
+            Some(rostfrei_core::DetailReadError::Forbidden),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "rostfrei.command.completed-details-blocked",
+        ),
+    ] {
+        let store = InMemoryEventStore::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut processor = CommandProcessor::builder(context()?, Arc::new(store.clone()))
+            .authorizer(Arc::new(rostfrei::AllowAllCommands))
+            .build()?;
+        processor.register::<Change, _>(ChangeHandler(calls.clone()), map_rejection)?;
+        let caller =
+            TrustedCommandContext::new(PrincipalId::new("verified")?, SecurityScope::new("scope")?);
+        let command = bus(baseline_processor(
+            Arc::new(InMemoryEventStore::new()),
+            calls.clone(),
+        )?)?
+        .encode(request("detail-error", true)?)?;
+        CommandProcessingService::process(&processor, &caller, &command)
+            .await
+            .into_result()?;
+        let resolver = store.with_detail_readers(Arc::new(DetailFault(fault)), None);
+        let service = CommandProcessor::builder(context()?, Arc::new(resolver))
+            .authorizer(Arc::new(rostfrei::AllowAllCommands))
+            .build()?;
+        let router = rostfrei_http::context_command_router(
+            context()?,
+            Arc::new(service),
+            rostfrei_http::HttpApiConfig::default().with_trusted_command_envelope_ingress(),
+        )
+        .layer(Extension(caller));
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/contexts/modular/commands/change/schemas/1/envelope")
+                    .header("content-type", "application/json")
+                    .body(Body::from(command.payload().to_vec()))?,
+            )
+            .await?;
+        assert_eq!(response.status(), status);
+        let bytes = response.into_body().collect().await?.to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes)?;
+        assert_eq!(body["code"], code);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
     Ok(())
 }

@@ -31,12 +31,13 @@ fn encoded(id: &str, reject: bool) -> TestResult<EncodedCommand> {
     noncanonical(&command)
 }
 
+type PolicyObservation = (CommandAccess, String, String, Vec<u8>);
 #[derive(Default)]
 struct Policy {
     deny_read: AtomicBool,
     deny_execute: AtomicBool,
     unavailable: AtomicBool,
-    seen: Mutex<Vec<(CommandAccess, String, String, Vec<u8>)>>,
+    seen: Mutex<Vec<PolicyObservation>>,
 }
 #[async_trait]
 impl CommandAuthorizer for Policy {
@@ -570,7 +571,7 @@ async fn attempt_ids_phases_original_evidence_and_history_retention_are_independ
         let phases: Vec<_> = records
             .iter()
             .filter(|r| r.attempt_id() == report_id)
-            .map(|r| r.phase())
+            .map(CommandAuditRecord::phase)
             .collect();
         assert_eq!(
             phases,
@@ -668,7 +669,7 @@ async fn retry_policy_sees_real_version_conflict_but_not_replay_identity_or_code
         Arc::new(AtomicUsize::new(0)),
     )?)?
     .encode(CommandRequest::new(
-        command.operation_id().clone(),
+        OperationId::new(command.operation_id().as_str())?,
         Change {
             amount: 99,
             reject: true,
@@ -835,7 +836,7 @@ async fn local_cached_response_cannot_resurrect_expired_details() -> TestResult 
     let key = OutcomeKey::new(
         store.authority().clone(),
         context()?.name().clone(),
-        command.operation_id().clone(),
+        OperationId::new(command.operation_id().as_str())?,
     );
     store
         .expire_details(&key, retained.marker().revision())
@@ -927,6 +928,102 @@ async fn zero_budget_concurrent_opposite_proposals_reconcile_the_committed_winne
 struct AlwaysRace {
     store: Arc<InMemoryEventStore>,
     calls: Arc<AtomicUsize>,
+}
+
+#[tokio::test]
+async fn policy_enabled_processor_refuses_every_contextless_compatibility_path() -> TestResult {
+    let store = Arc::new(InMemoryEventStore::new());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let policy = Arc::new(Policy::default());
+    let processor = Arc::new(processor(store, calls.clone(), policy.clone())?);
+    let command = encoded("compatibility-cannot-bypass-policy", false)?;
+    assert!(processor.process(&command).await.is_err());
+    assert!(processor.reconcile_completed(&command).await.is_err());
+    let compatibility = bus(processor.clone())?;
+    assert!(
+        compatibility
+            .dispatch_encoded(command.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(policy.seen.lock().unwrap().is_empty());
+    CommandProcessingService::process(processor.as_ref(), &caller("verified", "scope")?, &command)
+        .await
+        .into_result()?;
+    policy.deny_read.store(true, Ordering::SeqCst);
+    assert!(processor.process(&command).await.is_err());
+    assert!(processor.reconcile_completed(&command).await.is_err());
+    assert!(compatibility.dispatch_encoded(command).await.is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+struct InvalidAfterRead(RaceOnce);
+#[async_trait]
+impl CommandHandler<Change> for InvalidAfterRead {
+    type Rejection = String;
+    async fn handle(
+        &self,
+        command: &Change,
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<String> {
+        self.0.handle(command, execution).await?;
+        Err(EventStoreError::new(
+            EventStoreErrorKind::InvalidRequest,
+            "guarded framework refusal",
+        )
+        .into())
+    }
+}
+#[tokio::test]
+async fn framework_invalid_request_keeps_original_read_guards_through_retry() -> TestResult {
+    for retries in [0, 1] {
+        let store = Arc::new(InMemoryEventStore::new());
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let mut processor = CommandProcessor::builder(context()?, store.clone())
+            .authorizer(Arc::new(AllowAllCommands))
+            .conflict_retry_policy(Arc::new(BoundedConflictRetries::new(retries)))
+            .build()?;
+        processor.register::<Change, _>(
+            InvalidAfterRead(RaceOnce {
+                store: store.clone(),
+                observations: observations.clone(),
+            }),
+            map_rejection,
+        )?;
+        let who = caller("service", "scope")?;
+        let command = encoded("framework-refusal-guards", false)?;
+        let result = CommandProcessingService::process(&processor, &who, &command)
+            .await
+            .into_result();
+        if retries == 0 {
+            assert!(result.is_err());
+            assert_eq!(*observations.lock().unwrap(), [0]);
+            assert!(matches!(
+                processor.lookup(&who, &command).await.into_result()?,
+                OutcomeLookup::Missing
+            ));
+        } else {
+            let completed = result?;
+            let response = completed.outcome().details().available()?;
+            assert!(
+                matches!(response.outcome(), CommandResponseOutcome::Rejected(rejection)
+                if rejection.classification() == CommandRejectionClassification::InvalidRequest)
+            );
+            assert_eq!(*observations.lock().unwrap(), [0, 10]);
+            assert_eq!(
+                CommandProcessingService::process(&processor, &who, &command)
+                    .await
+                    .into_result()?
+                    .origin(),
+                CompletionOrigin::Replayed
+            );
+            assert_eq!(*observations.lock().unwrap(), [0, 10]);
+        }
+        assert_eq!(store.load(&stream()?).await?.len(), 1);
+    }
+    Ok(())
 }
 #[async_trait]
 impl CommandHandler<Change> for AlwaysRace {

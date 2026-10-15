@@ -254,9 +254,11 @@ async fn expiry_is_revision_bound_reclaims_hot_bytes_and_overrides_a_still_prese
         let resolver = store
             .clone()
             .with_detail_readers(store.detail_reader(), Some(cold.clone()));
-        store
+        let expiry = store
             .expire_details(&key(&store, "expire"), retained.marker().revision())
             .await?;
+        assert_eq!(expiry.revision(), retained.marker().revision());
+        assert_eq!(expiry.reclamation(), ReclamationStatus::Reclaimed);
         // Same request is idempotent and may finish reclamation after an interrupted declaration.
         store
             .expire_details(&key(&store, "expire"), retained.marker().revision())

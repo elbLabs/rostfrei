@@ -310,6 +310,7 @@ pub enum CommandInputError {
 }
 
 pub struct TracerBuilder {
+    event_codecs: Arc<rostfrei_core::AggregateCodecs>,
     observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
     history: Arc<dyn EventHistory>,
     test_event_store: Option<Arc<dyn EventStore>>,
@@ -334,6 +335,7 @@ pub struct TracerBuilder {
 impl TracerBuilder {
     pub fn new(history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
         Self {
+            event_codecs: Arc::new(rostfrei_core::AggregateCodecs::default()),
             observation: BTreeMap::new(),
             history,
             test_event_store: None,
@@ -354,6 +356,12 @@ impl TracerBuilder {
             production_quarantine_reader: None,
             quarantine_payload_policy: Arc::new(DefaultQuarantinePayloadPolicy),
         }
+    }
+
+    #[must_use]
+    pub fn with_event_codecs(mut self, codecs: Arc<rostfrei_core::AggregateCodecs>) -> Self {
+        self.event_codecs = codecs;
+        self
     }
 
     #[must_use]
@@ -603,6 +611,7 @@ impl TracerBuilder {
             .collect();
         Ok(Tracer {
             inner: Arc::new(TracerInner {
+                event_codecs: self.event_codecs,
                 observation: self.observation,
                 history: self.history,
                 test_backing_configured: self.test_event_store.is_some(),
@@ -757,6 +766,7 @@ fn test_transport_payload_limit(transport: Option<&dyn CommandTransport>) -> usi
 }
 
 struct TracerInner {
+    event_codecs: Arc<rostfrei_core::AggregateCodecs>,
     observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
     history: Arc<dyn EventHistory>,
     test_backing_configured: bool,
@@ -2346,6 +2356,7 @@ impl Tracer {
         match simulator
             .simulate(
                 Arc::clone(&self.inner.history),
+                Arc::clone(&self.inner.event_codecs),
                 operation_id,
                 execution_fingerprint,
                 payload,
@@ -3132,21 +3143,30 @@ fn runtime_failure(error: RuntimeSimulationError) -> (&'static str, String) {
         RuntimeSimulationError::Simulation(SimulationError::RejectionMapping(error)) => {
             ("rejection-encoding-failed", error)
         }
+        RuntimeSimulationError::Simulation(SimulationError::OutcomeRecovery(error)) => {
+            ("outcome-recovery-failed", error.to_string())
+        }
         RuntimeSimulationError::Simulation(SimulationError::Store(error)) => {
             let code = match error.kind() {
                 EventStoreErrorKind::CorruptHistory => "corrupt-history",
                 EventStoreErrorKind::Unavailable
                 | EventStoreErrorKind::CapacityExhausted
+                | EventStoreErrorKind::DetailForbidden
                 | EventStoreErrorKind::ConfigurationMismatch => "history-unavailable",
                 EventStoreErrorKind::Conflict | EventStoreErrorKind::IdentityConflict => {
                     "history-conflict"
                 }
                 EventStoreErrorKind::InvalidRequest => "invalid-runtime",
+                EventStoreErrorKind::CompletedDetailsExpired => "completed-details-expired",
+                EventStoreErrorKind::CompletedDetailsUnavailable => "completed-details-unavailable",
             };
             (code, error.to_string())
         }
         RuntimeSimulationError::RejectionEncoding(error) => ("rejection-encoding-failed", error),
-        RuntimeSimulationError::InvalidEventPayload(error) => ("event-json-failed", error),
+        RuntimeSimulationError::InvalidEventPayload(error) => (
+            "event-json-failed",
+            format!("event payload is not valid JSON: {error}"),
+        ),
         RuntimeSimulationError::StreamVersionOverflow => {
             ("stream-version-overflow", error.to_string())
         }

@@ -721,7 +721,7 @@ impl EventStore for OrderedEventStore {
         &self,
         context: &BoundedContextName,
         operation: &OperationId,
-    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+    ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, EventStoreError> {
         self.inner
             .load_completed_outcome_in_context(context, operation)
             .await

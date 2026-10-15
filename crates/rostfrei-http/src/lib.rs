@@ -20,6 +20,9 @@ use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
 
+mod context;
+pub use context::context_command_router;
+
 pub const DEFAULT_MAXIMUM_COMMAND_PAYLOAD_BYTES: usize = 1024 * 1024;
 pub const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 pub const TRACE_PARENT_HEADER: &str = "traceparent";
@@ -548,6 +551,21 @@ fn command_bus_error(error: &CommandBusError) -> Response {
         }))).into_response();
     }
     let (status, code, message) = match error.kind() {
+        CommandBusErrorKind::CompletedDetailsExpired => (
+            StatusCode::GONE,
+            "rostfrei.command.completed-details-expired",
+            "Completed command details have expired.",
+        ),
+        CommandBusErrorKind::CompletedDetailsUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "rostfrei.command.completed-details-unavailable",
+            "Completed command details are temporarily unavailable.",
+        ),
+        CommandBusErrorKind::CompletedDetailsBlocked => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "rostfrei.command.completed-details-blocked",
+            "Completed command details cannot be recovered.",
+        ),
         CommandBusErrorKind::Encoding => (
             StatusCode::BAD_REQUEST,
             "rostfrei.http.invalid-command",

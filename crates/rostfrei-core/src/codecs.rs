@@ -14,6 +14,8 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum CodecRegistrationError {
+    #[error("shared codec configuration must be changed before it is installed")]
+    SharedConfiguration,
     #[error(transparent)]
     InvalidAggregateType(#[from] IdentityError),
     #[error("an explicit codec is already registered for `{aggregate_type}`")]

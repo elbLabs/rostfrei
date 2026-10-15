@@ -11,15 +11,31 @@ use crate::CommandRejectionMapper;
 /// Use the same canonical execution metadata and this
 /// bridge when direct generic execution must replay outcomes written by a processor.
 /// The reverse mapping must retain readers for all previously stored domain codes.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MappedCommandRejectionCodec<M, D> {
     mapper: M,
     decoder: D,
+    codec: std::sync::Arc<dyn RejectionCodec<CommandRejection>>,
 }
 
 impl<M, D> MappedCommandRejectionCodec<M, D> {
-    pub const fn new(mapper: M, decoder: D) -> Self {
-        Self { mapper, decoder }
+    pub fn new(mapper: M, decoder: D) -> Self {
+        Self::with_codec(
+            mapper,
+            decoder,
+            std::sync::Arc::new(JsonRejectionCodec::new("rostfrei.command-rejection", 1)),
+        )
+    }
+    pub fn with_codec(
+        mapper: M,
+        decoder: D,
+        codec: std::sync::Arc<dyn RejectionCodec<CommandRejection>>,
+    ) -> Self {
+        Self {
+            mapper,
+            decoder,
+            codec,
+        }
     }
 }
 
@@ -32,12 +48,11 @@ where
         let mapped = self.mapper.map(rejection).map_err(|message| {
             EventCodecError::new(EventCodecErrorKind::EncodingFailed, message)
         })?;
-        JsonRejectionCodec::new("rostfrei.command-rejection", 1).encode(&mapped)
+        self.codec.encode(&mapped)
     }
 
     fn decode(&self, rejection: &EncodedRejection) -> Result<R, EventCodecError> {
-        let mapped: CommandRejection =
-            JsonRejectionCodec::new("rostfrei.command-rejection", 1).decode(rejection)?;
+        let mapped = self.codec.decode(rejection)?;
         (self.decoder)(&mapped)
             .map_err(|message| EventCodecError::new(EventCodecErrorKind::MalformedPayload, message))
     }

@@ -707,13 +707,41 @@ where
             .with_default_outcome_evidence::<Command>()
             .normalized()
             .map_err(|error| invalid_request(error.to_string()))?;
+        let completed = self
+            .execute_completed_with_rejection_codec(handler, metadata.clone(), command, codec)
+            .await?;
+        completed_replay(
+            &metadata,
+            completed.outcome(),
+            codec,
+            completed.is_exact_replay(),
+        )
+    }
+
+    /// Executes through the same guarded loop, preserving the authoritative marker,
+    /// availability and commit/replay origin for processing services.
+    pub async fn execute_completed_with_rejection_codec<Handler, Command>(
+        &self,
+        handler: &Handler,
+        metadata: CommandExecutionMetadata,
+        command: &Command,
+        codec: &dyn crate::RejectionCodec<Handler::Rejection>,
+    ) -> Result<crate::CompletedCommit, CommandExecutionError>
+    where
+        Handler: CommandHandler<Command>,
+        Command: Sync,
+    {
+        let metadata = metadata
+            .with_default_outcome_evidence::<Command>()
+            .normalized()
+            .map_err(|error| invalid_request(error.to_string()))?;
         if let Some(evidence) = metadata.outcome_evidence() {
             evidence.validate()?;
         }
         let mut evaluations = 0_usize;
         loop {
-            if let Some(outcome) = reconcile_completed(&self.store, &metadata, codec).await? {
-                return Ok(outcome);
+            if let Some(outcome) = lookup_completed(&self.store, &metadata).await? {
+                return Ok(crate::CompletedCommit::ExactReplay(outcome));
             }
 
             let session = self.store.begin_command().await?;
@@ -737,20 +765,15 @@ where
 
             match append_transaction(session, &metadata, participants, rejection).await? {
                 PersistenceAttempt::Completed(outcome) => {
-                    return completed_replay(
-                        &metadata,
-                        outcome.outcome(),
-                        codec,
-                        outcome.is_exact_replay(),
-                    );
+                    outcome.outcome().marker().validate_identity(&metadata)?;
+                    transaction_replay(&metadata, outcome.outcome().marker().integrity_receipt())?;
+                    return Ok(*outcome);
                 }
                 PersistenceAttempt::Conflict(error) => {
                     // A simultaneous execution can decide differently against newer state.
                     // The winning acceptance is authoritative if the command evidence matches.
-                    if let Some(outcome) =
-                        reconcile_completed(&self.store, &metadata, codec).await?
-                    {
-                        return Ok(outcome);
+                    if let Some(outcome) = lookup_completed(&self.store, &metadata).await? {
+                        return Ok(crate::CompletedCommit::ExactReplay(outcome));
                     }
                     if error.kind() != EventStoreErrorKind::Conflict {
                         return Err(error.into());
@@ -834,6 +857,16 @@ async fn reconcile_completed<S: CommandBackend, R>(
     metadata: &CommandExecutionMetadata,
     codec: &dyn crate::RejectionCodec<R>,
 ) -> Result<Option<CommandOutcome<R>>, CommandExecutionError> {
+    lookup_completed(store, metadata)
+        .await?
+        .map(|outcome| completed_replay(metadata, &outcome, codec, true))
+        .transpose()
+}
+
+async fn lookup_completed<S: CommandBackend>(
+    store: &S,
+    metadata: &CommandExecutionMetadata,
+) -> Result<Option<crate::CompletedOutcome>, CommandExecutionError> {
     let key = crate::OutcomeKey::new(
         store.authority().clone(),
         required_bounded_context(metadata)?.clone(),
@@ -842,7 +875,9 @@ async fn reconcile_completed<S: CommandBackend, R>(
     match store.lookup_outcome(&key).await? {
         crate::OutcomeLookup::Missing => Ok(None),
         crate::OutcomeLookup::Completed(outcome) => {
-            Ok(Some(completed_replay(metadata, &outcome, codec, true)?))
+            outcome.marker().validate_identity(metadata)?;
+            transaction_replay(metadata, outcome.marker().integrity_receipt())?;
+            Ok(Some(outcome))
         }
     }
 }

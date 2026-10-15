@@ -47,6 +47,14 @@ macro_rules! install_macro_support {
 
 mod command_bus;
 mod command_rejection_codec;
+mod command_service;
+pub use command_bus::processing::CommandProcessorBuilder;
+pub use command_service::{
+    AllowAllCommands, AttemptId, AuditDelivery, AuditError, AuditPhase, AuditTerminal,
+    AuthorizationError, CommandAccess, CommandAuditRecord, CommandAuditSink, CommandAuthorizer,
+    CommandProcessingService, CompletionOrigin, InMemoryCommandAuditSink, PrincipalId,
+    ProcessedCommand, ServiceReport, TrustedCommandContext, ValidatedCommand,
+};
 mod in_memory_messaging;
 mod integration_event;
 mod integration_event_bus;
@@ -87,18 +95,22 @@ pub use read_model::{
 };
 pub use rostfrei_core::{
     Aggregate, AggregateCodecs, AggregateId as StreamAggregateId, AggregateInstance,
-    AggregateType as StreamAggregateType, AppendOutcome, AppendSession, CommandCompletion,
-    CommandDecision, CommandExecution, CommandExecutionError, CommandExecutionMetadata,
-    CommandExecutor, CommandHandler, CommandHandlingResult, CommandOutcome, CommandReceipt,
-    CommandResult, CommittedDomainEvent, CompletedAppendOutcome, CompletedOutcome,
-    ContentFingerprint, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
-    DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError,
+    AggregateType as StreamAggregateType, AppendOutcome, AppendSession, BoundedConflictRetries,
+    CommandAuthority, CommandBackend, CommandCommitSession, CommandCompletion, CommandDecision,
+    CommandExecution, CommandExecutionError, CommandExecutionMetadata, CommandExecutor,
+    CommandHandler, CommandHandlingResult, CommandOutcome, CommandReceipt, CommandResult,
+    CommittedDomainEvent, CompletedAppendOutcome, CompletedCommit, CompletedOutcome, ConflictRetry,
+    ConflictRetryDecision, ConflictRetryPolicy, ContentFingerprint, DomainEventDispatchOutcome,
+    DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
+    DomainEventHandlerErrorKind, DomainEventRegistrationError, EncodedOutcomeDetails,
     EncodedRejection, EventBatch, EventCodec, EventCodecError, EventCodecErrorKind, EventHistory,
     EventId, EventStore, EventStoreError, EventStoreErrorKind, EventTransaction, EventVariant,
     ExpectedVersion, InMemoryEventStore, JsonReadModelCodec, JsonRejectionCodec, LoadedAggregate,
-    MAX_REJECTION_BYTES, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, OutcomeEvidence, ReadModel,
-    ReadModelCodec, ReadModelEntry, ReadModelError, ReadModelErrorKind, ReadModelKey,
-    ReadModelRevision, ReadModelStore, RecordedEvent, RejectionCodec, SimulatedParticipant,
+    MAX_REJECTION_BYTES, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, OutcomeDetails,
+    OutcomeEvidence, OutcomeExpiry, OutcomeKey, OutcomeLifecycle, OutcomeLookup, OutcomeReader,
+    OutcomeRecoveryError, OutcomeRevision, ReadModel, ReadModelCodec, ReadModelEntry,
+    ReadModelError, ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelStore,
+    ReclamationStatus, RecordedEvent, RejectionCodec, SecurityScope, SimulatedParticipant,
     SimulationError, SimulationOutcome, StreamId, StreamVersion, TransactionAppendOutcome,
     TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
 };
