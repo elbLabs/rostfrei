@@ -101,7 +101,8 @@ class Capabilities:
         submission, headers = self.request(version["simulateHrefTemplate"], payload={
             "schemaVersion": root["schemaVersion"], "payload": payload,
         }, expected=202)
-        operation = submission["operation"]
+        # Direct submission flattens OperationSnapshot; suite reports nest it.
+        operation = submission
         deadline = time.monotonic() + 10
         while operation["status"] not in ("completed", "failed", "indeterminate"):
             assert time.monotonic() < deadline, "Preview did not complete; do not resubmit"
