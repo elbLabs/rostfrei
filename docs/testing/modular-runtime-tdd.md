@@ -2,6 +2,8 @@
 
 Test-author baseline: `050f08693170e3c5e2b9879fae9a9c8244a9c21a`.
 The parent `CONTRACT-FREEZE.md` (2026-10-15) overrides both architecture reports.
+The accepted `FREEZE-ADDENDUM.md` and final `NATIVE-EXPIRY-SIMPLIFICATION.md`
+supersede the earlier separate lifecycle stream / explicit deletion recipe.
 These tests are the pre-implementation handoff, not a claim that the new runtime exists.
 
 ## Targets and acceptance IDs
@@ -14,7 +16,7 @@ These tests are the pre-implementation handoff, not a claim that the new runtime
 | `rostfrei-core / modular_outcome_lifecycle` | LIFE-1/2/5 and ATOMIC-4: independent detached hot/cold readers, missing versus unavailable, no forbidden/corrupt fallback, revision binding, actual hot reclamation, cold-copy withdrawal, permanent proposal equality after expiry. |
 | `rostfrei-tracer / modular_codec_contract` | CODEC-1/2/3/4/5: historical unit-to-cent semantics, preserved original facts, mixed v1/v2 history, one shared registry for fixture/execution/Preview/private dispatch, opaque bytes, multi-aggregate codecs, collisions and malformed preflight. Preview may use either frozen display option. |
 | `rostfrei-http / modular_context_contract` | AUTH-4/5 and LIFE-4: middleware typed extension, spoofed headers ignored, original full-envelope bytes, missing identity 401/challenge, denied 403 before lifecycle disclosure, authorized expired 410/typed code. |
-| `rostfrei-nats / modular_native_contract` | AUTH-2/4/5, LIFE-2/3/4, ATOMIC-2/3: schema-4 physical split, expiry declaration/deletion/idempotence, fresh reader, strict integrity/directory audit and actual private-event consumer after expiry, caller-facing response admission, verified worker resolver, capacity-before-CAS, actual TCP final-frame gate after durable preparation, process+broker restart with retained and expired controls. |
+| `rostfrei-nats / modular_native_contract` | AUTH-2/4/5, LIFE-2/3/4, ATOMIC-2/3, FR-1..4: schema-4 journal + combined outcome-state, retained Expired replacement/idempotence/old-sequence absence, fresh maintenance-disabled reader, strict integrity/directory audit and actual private-event consumer after expiry, winner-bound caller admission, verified worker resolver, capacity-before-CAS, actual TCP final-frame gate after durable preparation, process+broker restart with retained and expired controls. Four delta tests in `tests/modular_native_delta/mod.rs` cover delayed CAS0, stale revision, authority loss with independent cold/cache copies, contradictory raw responses, and actual expiry-PubAck/verification faults. |
 
 The five future-API targets intentionally do not compile on the baseline. There
 are no product stubs, unconditional failure assertions, ignored tests, new features
@@ -145,8 +147,12 @@ trait CommandCommitSession: EventHistory {
 #[async_trait]
 trait OutcomeLifecycle: Send + Sync {
     async fn expire_details(&self, key: &OutcomeKey, expected: &OutcomeRevision)
-        -> Result<OutcomeRevision, OutcomeLifecycleError>;
+        -> Result<OutcomeExpiry, OutcomeLifecycleError>;
 }
+enum ReclamationStatus { Pending, Reclaimed }
+// OutcomeExpiry::reclamation(&self) -> ReclamationStatus
+// A successful OutcomeExpiry proves durable logical withdrawal. Typed uncertainty /
+// verification failure is permitted when that proof or reclamation verification fails.
 enum OutcomeLookup<T> { Missing, Completed(CompletedOutcome<T>) }
 enum OutcomeDetails<T> {
     Available(T), Expired, Archived { reference: ArchiveReference },
@@ -184,8 +190,12 @@ require a new untyped result serialization plugin.
 
 Permanent `OutcomeMarker` identity/reference remains unchanged by expiry. Its
 opaque revision binds that exact winning reference, rather than merely an operation
-string. `expire_details`'s return may be a lifecycle revision; replay of the same
-valid expiry request must be idempotent. Existing input `EventTransaction` still
+string. `expire_details` reports withdrawal separately from retained-message
+reclamation; replay of the same valid expiry request must be idempotent. The new
+native assertions use the indicative `OutcomeExpiry` / `ReclamationStatus` API;
+an equivalent honest `Expired { reclamation: Pending | Reclaimed }` result is an
+allowed mechanical adjustment. A verification error cannot imply Active or permit
+full-result return after durable withdrawal. Existing input `EventTransaction` still
 carries completion; permanent storage must not retain its full payload copy.
 
 ### Shared codecs and harnesses
@@ -222,7 +232,9 @@ carries completion; permanent storage must not retain its full payload copy.
 - `NatsMessagingAdapter::with_outcome_service(self,
   Arc<dyn CommandProcessingService>, TrustedCommandContext) -> Self` selects an
   explicitly service-bound caller admission profile for *both* cached and newly
-  received responses.
+  received responses. It must return the verified authorized winner or reject a
+  disagreeing candidate as a typed invalid-response/identity error. Boolean
+  permission plus an arbitrary raw response is insufficient; lookup cannot execute.
 - `NatsMessagingAdapter::command_handler_with_resolver(
   Arc<dyn CommandProcessingService>, Arc<dyn TrustedCommandContextResolver>)
   -> NatsCommandHandler`.
@@ -237,19 +249,60 @@ carries completion; permanent storage must not retain its full payload copy.
 `NatsEventStoreConfig` test-facing additions:
 `with_fresh_split_outcome_epoch(self, &str) -> Result<Self, _>`,
 `with_explicit_detail_expiry(self, bool) -> Result<Self, _>`,
-`outcome_detail_stream_name(&self) -> &str`,
-`outcome_lifecycle_stream_name(&self) -> &str`.
+`outcome_state_stream_name(&self) -> &str`.
 The existing provisioning function creates/validates the configured stores.
-New writes are schema 4; details schema 1; old authorities keep original routing.
+New journal writes are schema 4; immutable details schema 1 live within a separately
+versioned Active/Expired state envelope. Old authorities keep original routing.
 Names may change with the native implementation. These methods must not silently
 mutate the epoch on an existing schema-3 stream.
 
-The native expiry fixture enables deletion only on owned details, verifies journal
-deny-delete/purge remains set, checks immutable journal bytes and lifecycle message
-count, then uses a fresh backend and actual private-event consumer. Command/lifecycle
-credential separation needs final implementation ACL validation in addition to this
-admin-owned fixture. The native preparation test gates a real final NATS frame;
+There are **two mandatory streams**, journal and combined outcome-state. The state
+stream uses file/Limits, global DiscardNew, DiscardNewPerSubject=false,
+MaxMsgsPerSubject=1, MaxMsgs=-1, finite positive byte/message limits, no age expiry,
+TTL, rollup, direct reads, delete, purge, schedules, mirrors/sources or subject
+transforms. Active prepare is raw expected-subject-sequence zero without dedup IDs
+or KV helpers. Maintenance validates the winning opaque revision then CAS-replaces
+that subject with bounded Expired evidence. The manifest digest binds the immutable
+detail body, not the changing outer envelope. No third stream or delete ACL is
+required. Trusted writers enforce terminal Expired; broker ACLs do not inspect body
+state transitions. Physical reclamation means retained-message removal, not secure
+disk/RAFT/backup erasure or immediate file shrinkage.
+
+The expiry fixture verifies **one** retained state record, typed NoMessageFound for
+the prior Active sequence, unchanged journal bytes, and a fresh maintenance-disabled
+backend plus actual private-event consumer. Duplicate expiry reuses the same terminal
+record. Restart retains three states (two Expired, one Active); captured pre-expiry
+bytes still fail raw CAS0 after restart. The native preparation test gates a real final NATS frame;
 it does not fake a committed result or discard a Rust return value as a crash test.
+
+`NatsEventStore::detail_reader` and `with_detail_readers(hot, cold)` have the same
+test-facing signatures as the in-memory reader view above. Injecting them must
+preserve the verified marker and combined state authority. The native delta first
+recovers a detached exact copy through a deliberately absent hot reader **while
+Active lifecycle metadata is retained**, then faults state authority. The cold
+adapter owns only one keyed reference/byte pair, with no access to any journal or
+backend. Deleting/recreating the combined state stream is deliberately destructive
+authority loss, never a simulated hot-cache miss. Missing, recreated or inaccessible
+authority must block both independent cold bytes and a still-readable raw response.
+Disabling maintenance must not bypass state reads, and a previous successful lookup
+must not create a reusable Active permit.
+
+### Native delta mapping (future API requirements, not executed product proof)
+
+| Test suffix in `modular_native_delta` | Accepted correction / assertions |
+| --- | --- |
+| `stale_maintenance_revision_is_write_free_and_delayed_active_cannot_resurrect` | FR-2/3: use another real winner's opaque revision, assert no sequence/byte mutation; expire correct winner, old sequence absent and logical bytes shrink, replay exact captured Active bytes with raw CAS0 gets WrongLastSequence, unrelated reference unchanged. |
+| `lost_state_authority_blocks_warm_cache_and_independent_cold_copy_without_execution` | FR-1/4: successful cold/cache control; then leader-GET timeout, missing stream, or empty recreated stream blocks new lookup/admission without cold access/handler or journal mutation. Raw transport copy survives; outage recovery control returns the same winner. |
+| `active_winner_does_not_admit_wrong_identity_or_wrong_decision_raw_response` | FR-4: contradictory real raw response on the requested subject; identity-valid conflicting rejection passes raw reader yet service-bound admission rejects or returns only the exact authorized winner. Wrong-identity evidence also cannot be exposed. Winner and raw evidence remain unchanged. |
+| `lost_expiry_ack_and_failed_old_sequence_verification_remain_withdrawn_and_retryable` | FR-3: TCP proxy drops actual expiry PubAck, or drops GET of the old sequence; fresh public lookup still proves Expired. Failed verification may report Pending or typed verification failure, never Reclaimed. Fault-free retry reports Reclaimed without another state write; CAS0 remains closed. |
+
+The fault proxy parses standard NATS frames/API sequence requests only, forwards
+all other traffic, and never fabricates product state. Counters assert the intended
+fault actually occurred. These cases do not guess private JSON state fields. Names
+and equivalent public error/result shapes may be adapted with documented mechanical
+changes; don't remove the stale-revision, no-disclosure, no-reexecution, terminal
+CAS or reclamation-verification assertions. The original 30 tests remain (the native
+expiry test is renamed); these four additions bring the suite to 34 tests.
 
 ## Retained controls and commands
 
@@ -303,14 +356,19 @@ move to an explicit trusted-service profile without changing evidence/assertions
 
 Final independent review must still cover: every hidden in-memory proposal/payload
 copy reclaimed (a public reader returning Absent alone cannot prove that); native
-expiry crash between declaration and deletion and lost expiry/detail acknowledgments;
+within-broker state-update/old-value-removal crash windows and lost prepare acknowledgments;
 typed archive-pending/unconfigured archive states; full native reference tamper matrix
 (digest/length is covered in memory, but not all scope/schema/kind substitutions);
 new schema-3 single legacy scope mapping and unsupported legacy physical expiry;
-separate lifecycle credential ACLs; new-schema detail-free history request counts;
+private maintenance access and fresh-namespace fencing; new-schema detail-free history request counts;
 replicated/failover behavior and request/storage accounting (PERF-1). The bounded
-suite directly covers prepare-before-CAS and the existing actual final-PubAck-loss
-controls; it does not claim the other crash windows were exercised.
+suite specifies prepare-before-CAS, expiry-PubAck loss, failed old-sequence
+verification and acknowledged expiry restart, alongside existing final-PubAck-loss
+controls. The new delta remains an API-gap target until implementation; it does not
+claim these product scenarios have executed. Newly arriving response-return races,
+all typed recovery-error classifications, cold copies across native expiry, and
+audit clear/failure preserving lifecycle still need final review coverage. The
+separate declaration-to-delete crash window no longer exists in the chosen design.
 
 Automatic archive/GC, production cold adapters, FGA providers, full #111 registry,
 #107 host integration and durable audit workers remain outside this increment.

@@ -65,6 +65,7 @@ fn child(directory: &Path, test: &str, url: &str, phase: &str) -> TestResult {
     let output = Command::new(std::env::current_exe()?)
         .args(["--exact", test, "--nocapture"])
         .env("ROSTFREI_MODULAR_RESTART_MODE", phase)
+        .env("ROSTFREI_MODULAR_RESTART_RECORDS", directory)
         .env(
             "ROSTFREI_MODULAR_RESTART_APP",
             format!("modular-restart-{}", std::process::id()),

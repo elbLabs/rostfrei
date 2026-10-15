@@ -4,7 +4,9 @@
     clippy::unwrap_used,
     clippy::indexing_slicing
 )]
+mod modular_native_delta;
 mod modular_restart_support;
+mod modular_state_fault_support;
 mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
@@ -124,7 +126,7 @@ impl CommandAuthorizer for Policy {
 }
 
 #[tokio::test]
-async fn native_expiry_deletes_details_preserves_integrity_and_blocks_cached_business_response()
+async fn native_expiry_replaces_active_preserves_integrity_and_blocks_cached_business_response()
 -> TestResult {
     for reject in [false, true] {
         let fixture = Fixture::new(if reject {
@@ -190,7 +192,7 @@ async fn native_expiry_deletes_details_preserves_integrity_and_blocks_cached_bus
         policy.deny_read.store(false, Ordering::SeqCst);
         let history = store.load(&stream("target")?).await?;
         let journal_before = message_count(&fixture, store.config().stream_name()).await?;
-        let detail_name = store.config().outcome_detail_stream_name();
+        let detail_name = store.config().outcome_state_stream_name();
         assert_eq!(message_count(&fixture, detail_name).await?, 1);
         let mut journal = fixture.js.get_stream(store.config().stream_name()).await?;
         let manifest_sequence = journal.info().await?.state.last_sequence;
@@ -204,33 +206,32 @@ async fn native_expiry_deletes_details_preserves_integrity_and_blocks_cached_bus
         assert!(
             journal.cached_info().config.deny_delete && journal.cached_info().config.deny_purge
         );
-        let details = fixture.js.get_stream(detail_name).await?;
+        let mut details = fixture.js.get_stream(detail_name).await?;
         assert_ne!(
             details.cached_info().config.name,
             journal.cached_info().config.name
         );
-        assert_eq!(details.cached_info().config.max_age, Duration::ZERO);
-        assert!(details.cached_info().config.deny_purge);
-        assert!(
-            !details.cached_info().config.deny_delete,
-            "owned maintenance fixture enables narrowly scoped reclamation"
-        );
+        modular_native_delta::assert_state_config(&details.cached_info().config);
+        let active = modular_native_delta::capture_latest(&mut details).await?;
         let outcome_key = key(&store, &fixture.context, command.operation_id());
-        store
+        let expiry = store
             .expire_details(&outcome_key, completed.outcome().marker().revision())
             .await?;
-        store
+        assert_eq!(expiry.reclamation(), ReclamationStatus::Reclaimed);
+        let expired = modular_native_delta::assert_replaced(&details, &active).await?;
+        let retry = store
             .expire_details(&outcome_key, completed.outcome().marker().revision())
             .await?;
+        assert_eq!(retry.reclamation(), ReclamationStatus::Reclaimed);
         assert_eq!(
             message_count(&fixture, detail_name).await?,
-            0,
-            "physical payload reclamation"
+            1,
+            "one retained Expired state, with the old Active sequence absent"
         );
         assert_eq!(
-            message_count(&fixture, store.config().outcome_lifecycle_stream_name()).await?,
-            1,
-            "one immutable declaration despite duplicate expiry"
+            modular_native_delta::assert_replaced(&details, &active).await?,
+            expired,
+            "duplicate expiry must reuse the same terminal record"
         );
         assert_eq!(
             message_count(&fixture, store.config().stream_name()).await?,
@@ -240,7 +241,11 @@ async fn native_expiry_deletes_details_preserves_integrity_and_blocks_cached_bus
             journal.get_raw_message(manifest_sequence).await?.payload,
             manifest.payload
         );
-        let fresh = NatsEventStore::connect(fixture.js.clone(), store.config().clone()).await?;
+        let fresh = NatsEventStore::connect(
+            fixture.js.clone(),
+            store.config().clone().with_explicit_detail_expiry(false)?,
+        )
+        .await?;
         assert!(
             matches!(fresh.lookup_outcome(&outcome_key).await?, OutcomeLookup::Completed(outcome) if matches!(outcome.details(), OutcomeDetails::Expired))
         );
@@ -340,7 +345,7 @@ async fn native_worker_uses_verified_context_even_when_a_shared_response_already
     };
     assert!(!matches!(
         handler.handle(delivery(false)?).await,
-        DeliveryDisposition::Ack
+        DeliveryDisposition::Acknowledge
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert!(matches!(
@@ -351,7 +356,7 @@ async fn native_worker_uses_verified_context_even_when_a_shared_response_already
     ));
     assert!(matches!(
         handler.handle(delivery(true)?).await,
-        DeliveryDisposition::Ack
+        DeliveryDisposition::Acknowledge
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     let reader =
@@ -366,7 +371,7 @@ async fn native_worker_uses_verified_context_even_when_a_shared_response_already
         .await?;
     assert!(!matches!(
         handler.handle(delivery(false)?).await,
-        DeliveryDisposition::Ack
+        DeliveryDisposition::Acknowledge
     ));
     assert_eq!(
         reader
@@ -414,7 +419,7 @@ async fn detail_capacity_failure_prevents_any_atomic_journal_decision() -> TestR
     let store = split_store(&fixture).await?;
     let detail = fixture
         .js
-        .get_stream(store.config().outcome_detail_stream_name())
+        .get_stream(store.config().outcome_state_stream_name())
         .await?;
     let mut config = detail.cached_info().config.clone();
     config.max_bytes = 1024;
@@ -435,7 +440,7 @@ async fn detail_capacity_failure_prevents_any_atomic_journal_decision() -> TestR
         0
     );
     assert_eq!(
-        message_count(&fixture, store.config().outcome_detail_stream_name()).await?,
+        message_count(&fixture, store.config().outcome_state_stream_name()).await?,
         0
     );
     assert!(matches!(
@@ -549,7 +554,7 @@ async fn acknowledged_preparation_without_cas_is_not_a_decision_and_is_retained(
         .await??
         .forget();
     assert_eq!(
-        message_count(&fixture, store.config().outcome_detail_stream_name()).await?,
+        message_count(&fixture, store.config().outcome_state_stream_name()).await?,
         1,
         "detail is durable before CAS was even sent"
     );
@@ -572,7 +577,7 @@ async fn acknowledged_preparation_without_cas_is_not_a_decision_and_is_retained(
     let fresh =
         Arc::new(NatsEventStore::connect(fixture.js.clone(), store.config().clone()).await?);
     assert_eq!(
-        message_count(&fixture, store.config().outcome_detail_stream_name()).await?,
+        message_count(&fixture, store.config().outcome_state_stream_name()).await?,
         1,
         "negative marker lookup cannot collect an unresolved preparation"
     );
@@ -638,13 +643,24 @@ async fn restart_phase(mode: &str) -> TestResult {
                 )
                 .await?;
             if expire {
+                let mut states = fixture
+                    .js
+                    .get_stream(store.config().outcome_state_stream_name())
+                    .await?;
+                let active = modular_native_delta::capture_latest(&mut states).await?;
+                let path =
+                    std::path::PathBuf::from(std::env::var("ROSTFREI_MODULAR_RESTART_RECORDS")?)
+                        .join(format!("{id}.json"));
+                std::fs::write(path, serde_json::to_vec(&active)?)?;
                 let OutcomeLookup::Completed(outcome) = store.lookup_outcome(&outcome_key).await?
                 else {
                     return Err("seed completion missing".into());
                 };
-                store
+                let expiry = store
                     .expire_details(&outcome_key, outcome.marker().revision())
                     .await?;
+                assert_eq!(expiry.reclamation(), ReclamationStatus::Reclaimed);
+                modular_native_delta::assert_replaced(&states, &active).await?;
             }
         } else {
             assert_eq!(mode, "replay");
@@ -664,6 +680,29 @@ async fn restart_phase(mode: &str) -> TestResult {
             if expire {
                 assert!(matches!(outcome.details(), OutcomeDetails::Expired));
                 assert!(result.is_err());
+                let path =
+                    std::path::PathBuf::from(std::env::var("ROSTFREI_MODULAR_RESTART_RECORDS")?)
+                        .join(format!("{id}.json"));
+                let active = serde_json::from_slice(&std::fs::read(path)?)?;
+                let states = fixture
+                    .js
+                    .get_stream(store.config().outcome_state_stream_name())
+                    .await?;
+                let expired = modular_native_delta::assert_replaced(&states, &active).await?;
+                modular_native_delta::assert_prepare_refused(
+                    &fixture.js,
+                    store.config().outcome_state_stream_name(),
+                    &active,
+                )
+                .await?;
+                let retry = store
+                    .expire_details(&outcome_key, outcome.marker().revision())
+                    .await?;
+                assert_eq!(retry.reclamation(), ReclamationStatus::Reclaimed);
+                assert_eq!(
+                    modular_native_delta::assert_replaced(&states, &active).await?,
+                    expired
+                );
             } else {
                 assert_eq!(
                     result?,
@@ -677,12 +716,9 @@ async fn restart_phase(mode: &str) -> TestResult {
         3
     );
     assert_eq!(
-        message_count(&fixture, store.config().outcome_detail_stream_name()).await?,
-        1
-    );
-    assert_eq!(
-        message_count(&fixture, store.config().outcome_lifecycle_stream_name()).await?,
-        2
+        message_count(&fixture, store.config().outcome_state_stream_name()).await?,
+        3,
+        "one Active plus two terminal Expired records survive restart"
     );
     assert_eq!(
         calls.load(Ordering::SeqCst),
