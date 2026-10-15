@@ -168,6 +168,12 @@ protocol-independent equivalent; invalid evidence fails before publication/handl
 
 ## Verification and bounded scope
 
+A valid retained blocked technical diagnostic does not override a completion
+subsequently recorded through another entry point. Native handling may publish that
+shared accepted/rejected winner without invoking a handler and without deleting the
+older diagnostic. With no shared completion, repair alone still cannot re-evaluate
+the blocked delivery: ADR 0043's explicit repair/redrive policy remains in force.
+
 Once a handler has run, both decisions finalize aggregate tracking and consume the
 original guarded append session before winner reconciliation. A concurrent accepted
 or rejected record cannot hide forgotten/replaced handles or an observed session

@@ -143,6 +143,13 @@ bounded byte capacity can refuse writes). The command stream's default two-minut
 publication deduplication window is independent of this horizon. The local
 adapter/processor never caches execution failures.
 
+Under ADR 0044, if another entry point has already durably completed the unchanged
+operation, native handling may publish that authoritative accepted/rejected result
+without re-evaluation or diagnostic deletion. With no shared completion, the blocked
+diagnostic still requires explicit repair/redrive; repair alone does not invoke the
+handler again. Publication still requires usable retained evidence and the same
+incarnation checks described above.
+
 For blocked NATS recovery:
 
 1. Retain and inspect the quarantine record. Quiesce affected source consumers,

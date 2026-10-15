@@ -363,9 +363,23 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
             Ok(Some(response)) => match response.outcome() {
                 CommandResponseOutcome::ExecutionFailed(failure) if failure.is_retryable() => {}
                 CommandResponseOutcome::ExecutionFailed(_) => {
-                    return quarantine(
-                        "technical command execution is blocked; repair and redrive required",
-                    );
+                    // A diagnostic never overrides an already durable completion. This
+                    // lookup cannot invoke a handler; without a winner the existing blocked
+                    // repair/redrive policy is unchanged. Keep the old record for audit.
+                    let authoritative = match self.processor.reconcile_completed(&command).await {
+                        Ok(Some(response)) => response,
+                        Ok(None) => {
+                            return quarantine(
+                                "technical command execution is blocked; repair and redrive required",
+                            );
+                        }
+                        Err(error) if error.is_retryable() => return retry(),
+                        Err(_) => return quarantine("shared outcome reconciliation is blocked"),
+                    };
+                    return match self.publish_response(&command, &authoritative).await {
+                        Ok(_) => DeliveryDisposition::Acknowledge,
+                        Err(_) => retry(),
+                    };
                 }
                 _ => {
                     // A retained business response is a projection, never an independent
