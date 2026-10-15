@@ -73,16 +73,19 @@ available in the environment, is:
 docker run --rm --name rostfrei-skills-nats -p 127.0.0.1:14222:4222 nats:2.12.1-alpine -js
 # Framework checkout, while that broker runs:
 ROSTFREI_NATS_URL=nats://127.0.0.1:14222 \
-  cargo run --locked -p bike-rental --bin bike-rental-api
+  cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer
 ```
 
 The host defaults to `127.0.0.1:1309` (`ROSTFREI_API_ADDR` overrides it). It requires
 distinct `ROSTFREI_API_TOKEN` and `ROSTFREI_DISPATCH_TOKEN`, provisions both traffic
-scopes, and resets Test at startup. Stop the host and the owned broker after use
+scopes, and resets Test at startup. Optional `ROSTFREI_INSPECTION_TOKEN` enables
+read-only production observation/quarantine; Test inspection uses the control
+token. Stop the host and the owned broker after use
 (`docker stop rostfrei-skills-nats`). A consuming application supplies its own
-application-linked host. #107's standard `cargo run --locked -p bike-rental --
---tracer` startup belongs to that separate host revision; final combined release
-and fresh-session qualification remain explicit integration gates.
+application-linked host. The shared host also supports `cargo run --locked -p
+bike-rental -- --tracer` through its default binary. Without the flag it runs the
+normal application with no Tracer HTTP; older baseline hosts always enabled
+Tracer and ignored the flag. Startup does not install skills.
 
 ## Installed skill execution
 
@@ -110,7 +113,16 @@ client. Never display tokens, put them in arguments/URLs or persist them.
 Exit **0** means a reported pass with complete retrieval; **1** means a reported
 failed suite with complete retrieval; **2** is a typed local blocked/incomplete
 execution. Inspect diagnostics to distinguish an assertion mismatch from a
-runner/environment issue. Preview is prediction, never acceptance.
+runner/environment issue. Real isolated execution is the normal TDD path.
+Preview is explicitly requested, predicted/uncommitted handler simulation, never
+acceptance or a fallback for unavailable execution.
+
+For “what happened?”, read the returned operation and finite capture. For actions
+initiated by another client/worker, discover optional `observation[]` relations
+and read list/detail snapshots with the scope's token. Inspect health, partial
+window/fidelity metadata and quarantine before explaining missing activity.
+The Tracer skill describes these HTTP JSON/SSE workflows; no MCP adapter or
+native observation subcommand is currently implemented.
 
 Errors are stderr JSON with `error.kind`, `message`, `phase` and `details`.
 Rust error kinds are `incomplete_response`, `request_failed`, `invalid_response`

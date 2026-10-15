@@ -44,8 +44,10 @@ useful scenario; add further scenarios as the agreed feature requires them.
 
 ## 2. Build the behavior test first
 
-Use `cargo rostfrei skills info` to identify the CLI's compiled revision and
-contracts. In an existing Cargo application, explicit `cargo rostfrei skills
+Identify the selected skills' revision/contracts from installed
+`references/release.json` and match the application's locked dependency.
+`cargo rostfrei skills info` identifies the invoked setup CLI, which can serve
+several application versions. In an existing Cargo application, explicit `cargo rostfrei skills
 install` selects its resolved Rostfrei dependency; after dependency upgrades use
 `cargo rostfrei skills update`. The setup tool caches matching native CLIs, so
 its own version need not equal every application's. Commit installed skills and
@@ -68,7 +70,19 @@ accepted runner encoding.
 Feature acceptance runs through the real NATS command pipeline using the
 application's handlers, workers and NATS event store in an isolated environment.
 Rust unit tests can support implementation; the feature's red/green evidence
-comes from the NATS-backed behavior suite. Preview supplies predicted feedback.
+comes from the NATS-backed behavior suite. Within the agreed isolated scope,
+“run/test/try” means real Test execution. Preview is explicit-request-only handler
+simulation, not a prerequisite, fallback or source of acceptance evidence.
+
+Use the release-matched `rostfrei-tracer` skill to discover the runtime's actual
+catalog capabilities before choosing how to inspect it. The Rust CLI executes
+suites; direct HTTP handles richer inspection. Read operation/capture evidence to
+explain a run, and observation list/detail snapshots for activity initiated by
+other clients or workers. Inspect observer health and scoped quarantine when
+events are missing or delivery fails. Observation is a partial window, not a
+business-completion verdict. Do not assume capabilities or infer them from source
+scraping. If that skill is unavailable, the execution reference still covers
+suite execution; explain inspection gaps rather than inventing endpoints.
 
 Translate the scenario directly:
 
@@ -125,9 +139,9 @@ behavior, return to the conversation and revise the test first.
 
 Run the same behavior-suite test against real NATS to observe green. Refactor
 with that test passing, then run affected tests and repository-required checks.
-Use the release-matched `rostfrei-tracer` skill for richer inspection when
-available; [execution instructions](references/execution.md) also stand alone.
-Preview cannot substitute for this acceptance run.
+Use the Tracer workflow above to diagnose failures from actual evidence;
+[execution instructions](references/execution.md) also stand alone.
+Simulation cannot substitute for this acceptance run.
 
 Finish with Given/When/Then, test and implementation locations, commands/results,
 application/framework revisions, fixture revision, isolation and cleanup status.

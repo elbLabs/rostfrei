@@ -44,6 +44,19 @@ For an application-owned definition add
 kit/framework version, source revision and protocol versions. Match the
 application dependency revision too; the live catalog does not identify a release.
 
+## HTTP, CLI and runtime capabilities
+
+Tracer's implemented adapter is HTTP JSON plus SSE. Use the native Rust CLI for
+behavior suites and direct Bash/curl for discovery, recorded operations,
+observation, quarantine and explicitly requested simulation. There is no MCP
+server or native `observe`/`preview` subcommand. MCP is a possible future adapter
+of the same service, not an extra capability the agent should assume exists.
+
+Real Test execution and recorded observation are the normal workflows. Preview
+invokes handler logic against history but reports predicted, uncommitted results
+with synthetic identities; it does not execute the NATS pipeline or integrations.
+Use it only when explicitly requested, never to stand in for an unavailable Test.
+
 ## Contracts
 
 At the specified baseline, Catalog is **v1**, behavior definitions and observed
@@ -64,15 +77,19 @@ unavailable Test/reset capability. Use a disposable broker or uniquely owned
 application namespace; never reset unknown shared resources. Run suites serially
 until independent Test-run isolation is available.
 
-The baseline example runs with
-`cargo run --locked -p bike-rental --bin bike-rental-api`, with
+The framework example's Tracer-enabled startup is
+`cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`, with
 `ROSTFREI_NATS_URL` pointing to the disposable broker and distinct
 `ROSTFREI_API_TOKEN` / `ROSTFREI_DISPATCH_TOKEN` available in the host environment.
+Set optional `ROSTFREI_INSPECTION_TOKEN` on the host and client for read-only
+production observation/quarantine. Test inspection uses the control token.
 It provisions both Normal and Test topology and resets Test on startup. Default
 bind: `127.0.0.1:1309`, configurable via `ROSTFREI_API_ADDR`.
-#107's separate standard host revision uses
-`cargo run --locked -p bike-rental -- --tracer`; final combined release and
-fresh-session qualification are still integration gates.
+The shared host's ordinary startup without `--tracer` runs the application with
+no Tracer HTTP surface. Its `default-run` also allows `cargo run --locked -p
+bike-rental -- --tracer`. Older baseline hosts always enabled Tracer and ignored
+this flag. Consumer applications supply their own entry point and explicitly
+configured observation feeds; discover optional relations in their live catalog.
 
 Reset recreates the configured Test topology, including event history/receipts,
 messaging/quarantine streams and consumers, and invalidates Test/Preview evidence.

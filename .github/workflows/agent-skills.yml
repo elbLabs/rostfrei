@@ -46,9 +46,9 @@ jobs:
         run: python3 scripts/test_agent_skill_source.py
       - name: Build the current application-linked host
         run: cargo build --locked -p bike-rental --bin bike-rental-api
-      - name: Execute installed JSON v2 example through real NATS
+      - name: Qualify installed suites and catalog-driven HTTP/SSE capabilities through real NATS
         run: python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --output "$RUNNER_TEMP/skills-evidence"
-      - name: Execute fresh source-discovered skill with the Rust CLI
+      - name: Qualify fresh source CLI and matching application host through real NATS
         run: python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --source-checkout --output "$RUNNER_TEMP/skills-source-evidence"
       - uses: actions/upload-artifact@v4
         if: always()
