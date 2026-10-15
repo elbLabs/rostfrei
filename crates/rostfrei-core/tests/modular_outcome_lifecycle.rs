@@ -30,7 +30,7 @@ struct Decide {
 #[async_trait]
 impl CommandHandler<()> for Decide {
     type Rejection = String;
-    async fn handle(&self, _: &(), _: &mut CommandExecution<'_>) -> CommandHandlingResult<String> {
+    async fn handle(&self, (): &(), _: &mut CommandExecution<'_>) -> CommandHandlingResult<String> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(if self.reject {
             CommandDecision::Rejected("secret exact rejection".to_owned())
@@ -56,7 +56,7 @@ async fn execute(
 }
 
 /// Independent test adapter: stores ONLY exact detached bytes and records the stable reference.
-/// It has no EventStore, journal, transaction or completion accessor.
+/// It has no `EventStore`, journal, transaction or completion accessor.
 struct Reader {
     response: Mutex<Result<DetailRead, DetailReadError>>,
     requests: Mutex<Vec<OutcomeDetailReference>>,
@@ -153,6 +153,7 @@ async fn independent_cold_reader_recovers_the_same_reference_after_hot_absence_o
             let requests = requests.lock().unwrap();
             assert!(!requests.is_empty());
             assert!(requests.iter().all(|requested| requested == &reference));
+            drop(requests);
         }
     }
     assert_eq!(handler.calls.load(Ordering::SeqCst), 1);

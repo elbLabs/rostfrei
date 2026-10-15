@@ -23,6 +23,9 @@ pub enum EventStoreErrorKind {
     CapacityExhausted,
     ConfigurationMismatch,
     Unavailable,
+    DetailForbidden,
+    CompletedDetailsExpired,
+    CompletedDetailsUnavailable,
 }
 
 impl std::fmt::Display for EventStoreErrorKind {
@@ -104,6 +107,7 @@ impl TransactionParticipant {
 /// events still persists a receipt; an empty participant list persists only the receipt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventTransaction {
+    security_scope: Option<crate::SecurityScope>,
     completion: Option<crate::CommandCompletion>,
     bounded_context: Option<BoundedContextName>,
     operation_id: OperationId,
@@ -120,6 +124,7 @@ impl EventTransaction {
         participants: Vec<TransactionParticipant>,
     ) -> Self {
         Self {
+            security_scope: None,
             completion: None,
             bounded_context: None,
             operation_id,
@@ -184,6 +189,16 @@ impl EventTransaction {
 
     pub const fn completion(&self) -> Option<&crate::CommandCompletion> {
         self.completion.as_ref()
+    }
+
+    #[must_use]
+    pub fn with_security_scope(mut self, scope: crate::SecurityScope) -> Self {
+        self.security_scope = Some(scope);
+        self
+    }
+
+    pub const fn security_scope(&self) -> Option<&crate::SecurityScope> {
+        self.security_scope.as_ref()
     }
 }
 
@@ -267,6 +282,7 @@ impl TransactionStreamReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransactionReceipt {
+    security_scope: Option<crate::SecurityScope>,
     completion: Option<crate::CommandCompletion>,
     bounded_context: Option<BoundedContextName>,
     operation_id: OperationId,
@@ -283,6 +299,7 @@ impl TransactionReceipt {
         streams: Vec<TransactionStreamReceipt>,
     ) -> Self {
         Self {
+            security_scope: None,
             completion: None,
             bounded_context: None,
             operation_id,
@@ -350,6 +367,22 @@ impl TransactionReceipt {
 
     pub const fn completion(&self) -> Option<&crate::CommandCompletion> {
         self.completion.as_ref()
+    }
+
+    /// Acceptance-only readers must fail closed on rejected outcomes.
+    #[must_use]
+    pub fn with_security_scope(mut self, scope: crate::SecurityScope) -> Self {
+        self.security_scope = Some(scope);
+        self
+    }
+
+    pub const fn security_scope(&self) -> Option<&crate::SecurityScope> {
+        self.security_scope.as_ref()
+    }
+
+    pub(crate) fn without_completion(mut self) -> Self {
+        self.completion = None;
+        self
     }
 
     /// Acceptance-only readers must fail closed on rejected outcomes.
@@ -424,7 +457,7 @@ pub trait EventStore: EventHistory {
         &self,
         bounded_context: &BoundedContextName,
         operation_id: &OperationId,
-    ) -> Result<Option<crate::CompletedOutcome>, EventStoreError>;
+    ) -> Result<Option<crate::InlineCompletedOutcome>, EventStoreError>;
 
     async fn commit_outcome(
         &self,
@@ -509,7 +542,7 @@ impl<Store: EventStore + ?Sized> EventStore for Arc<Store> {
         &self,
         context: &BoundedContextName,
         operation: &OperationId,
-    ) -> Result<Option<crate::CompletedOutcome>, EventStoreError> {
+    ) -> Result<Option<crate::InlineCompletedOutcome>, EventStoreError> {
         self.as_ref()
             .load_completed_outcome_in_context(context, operation)
             .await

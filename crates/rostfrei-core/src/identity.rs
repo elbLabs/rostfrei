@@ -23,7 +23,7 @@ pub enum IdentityError {
     InvalidFingerprint,
 }
 
-fn validate(value: &str, kind: &'static str, maximum: usize) -> Result<(), IdentityError> {
+pub fn validate(value: &str, kind: &'static str, maximum: usize) -> Result<(), IdentityError> {
     if value.is_empty() {
         return Err(IdentityError::Empty { kind });
     }
@@ -93,6 +93,8 @@ string_identity!(AggregateId, "aggregate id", MAX_AGGREGATE_ID_LEN);
 string_identity!(EventId, "event id", MAX_ID_LEN);
 string_identity!(CommitId, "commit id", MAX_ID_LEN);
 string_identity!(OperationId, "operation id", MAX_ID_LEN);
+// Trusted application identity binding, not an aggregate or operation namespace.
+string_identity!(SecurityScope, "security scope", 256);
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StreamId {
@@ -203,6 +205,7 @@ const fn checked_hex_offset(value: u8, base: u8) -> Option<u8> {
 /// Transaction receipts and their events carry the same normalized metadata on every retry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandExecutionMetadata {
+    security_scope: Option<SecurityScope>,
     outcome_evidence: Option<crate::OutcomeEvidence>,
     bounded_context: Option<BoundedContextName>,
     operation_id: OperationId,
@@ -214,6 +217,7 @@ pub struct CommandExecutionMetadata {
 impl CommandExecutionMetadata {
     pub const fn new(operation_id: OperationId, operation_fingerprint: ContentFingerprint) -> Self {
         Self {
+            security_scope: None,
             outcome_evidence: None,
             bounded_context: None,
             operation_id,
@@ -243,6 +247,16 @@ impl CommandExecutionMetadata {
 
     pub const fn bounded_context(&self) -> Option<&BoundedContextName> {
         self.bounded_context.as_ref()
+    }
+
+    #[must_use]
+    pub fn with_security_scope(mut self, scope: SecurityScope) -> Self {
+        self.security_scope = Some(scope);
+        self
+    }
+
+    pub const fn security_scope(&self) -> Option<&SecurityScope> {
+        self.security_scope.as_ref()
     }
 
     #[must_use]
@@ -325,7 +339,7 @@ pub fn derive_event_id(commit_id: &CommitId, ordinal: u32) -> EventId {
     EventId(format!("event:{:x}", hasher.finalize()))
 }
 
-fn hash_part(hasher: &mut Sha256, part: &[u8]) {
+pub fn hash_part(hasher: &mut Sha256, part: &[u8]) {
     #[cfg(target_pointer_width = "16")]
     let length = u64::from(u16::from_be_bytes(part.len().to_be_bytes()));
     #[cfg(target_pointer_width = "32")]

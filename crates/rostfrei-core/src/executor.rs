@@ -1,4 +1,3 @@
-use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
@@ -8,47 +7,16 @@ use thiserror::Error;
 
 use crate::identity::{derive_commit_id, derive_event_id};
 use crate::{
-    Aggregate, AggregateId, AggregateInstance, AggregateType, AppendSession,
-    CommandExecutionMetadata, Event, EventBatch, EventCodec, EventCodecError, EventHistory,
-    EventStore, EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion,
-    JsonEventCodec, NewEvent, RecordedEvent, StreamId, StreamVersion, TransactionParticipant,
-    TransactionReceipt,
+    Aggregate, AggregateCodecs, AggregateId, AggregateInstance, AggregateType, CommandBackend,
+    CommandCommitSession, CommandExecutionMetadata, Event, EventBatch, EventCodec, EventCodecError,
+    EventHistory, EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion,
+    NewEvent, RecordedEvent, StreamId, StreamVersion, TransactionParticipant, TransactionReceipt,
 };
-
-const DEFAULT_MAX_CONFLICT_RETRIES: usize = 3;
-
-#[derive(Clone, Default)]
-pub struct AggregateCodecs {
-    codecs: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
-}
-
-impl AggregateCodecs {
-    pub fn register<A, C>(&mut self, codec: C)
-    where
-        A: Aggregate + 'static,
-        C: EventCodec<A> + 'static,
-    {
-        let codec: Arc<dyn EventCodec<A>> = Arc::new(codec);
-        self.codecs.insert(TypeId::of::<A>(), Arc::new(codec));
-    }
-
-    fn resolve<A>(&self) -> Arc<dyn EventCodec<A>>
-    where
-        A: Aggregate + 'static,
-        A::Event: Event,
-    {
-        self.codecs
-            .get(&TypeId::of::<A>())
-            .and_then(|codec| codec.downcast_ref::<Arc<dyn EventCodec<A>>>())
-            .cloned()
-            .unwrap_or_else(|| Arc::new(JsonEventCodec))
-    }
-}
 
 pub struct CommandExecutor<S> {
     store: S,
     codecs: Arc<AggregateCodecs>,
-    maximum_conflict_retries: usize,
+    conflict_retry_policy: Arc<dyn crate::ConflictRetryPolicy>,
 }
 
 impl<S> CommandExecutor<S> {
@@ -56,32 +24,41 @@ impl<S> CommandExecutor<S> {
         Self {
             store,
             codecs: Arc::new(AggregateCodecs::default()),
-            maximum_conflict_retries: DEFAULT_MAX_CONFLICT_RETRIES,
+            conflict_retry_policy: Arc::new(crate::BoundedConflictRetries::default()),
         }
     }
 
-    pub const fn with_codecs(store: S, codecs: Arc<AggregateCodecs>) -> Self {
+    pub fn with_codecs(store: S, codecs: Arc<AggregateCodecs>) -> Self {
         Self {
             store,
             codecs,
-            maximum_conflict_retries: DEFAULT_MAX_CONFLICT_RETRIES,
+            conflict_retry_policy: Arc::new(crate::BoundedConflictRetries::default()),
         }
     }
 
     /// Overrides the event codec used to load and persist one aggregate type.
-    #[must_use]
-    pub fn with_codec<A, C>(mut self, codec: C) -> Self
+    pub fn with_codec<A, C>(mut self, codec: C) -> Result<Self, crate::CodecRegistrationError>
     where
         A: Aggregate + 'static,
         C: EventCodec<A> + 'static,
     {
-        Arc::make_mut(&mut self.codecs).register::<A, C>(codec);
-        self
+        Arc::make_mut(&mut self.codecs).replace::<A, C>(codec)?;
+        Ok(self)
     }
 
     #[must_use]
-    pub const fn with_max_conflict_retries(mut self, maximum_conflict_retries: usize) -> Self {
-        self.maximum_conflict_retries = maximum_conflict_retries;
+    pub fn with_max_conflict_retries(self, maximum_conflict_retries: usize) -> Self {
+        self.with_conflict_retry_policy(Arc::new(crate::BoundedConflictRetries::new(
+            maximum_conflict_retries,
+        )))
+    }
+
+    #[must_use]
+    pub fn with_conflict_retry_policy(
+        mut self,
+        policy: Arc<dyn crate::ConflictRetryPolicy>,
+    ) -> Self {
+        self.conflict_retry_policy = policy;
         self
     }
 
@@ -197,7 +174,7 @@ struct CollectedParticipant {
 /// Per-attempt access to all aggregates participating in a command.
 ///
 /// Each aggregate type uses its codec registered on [`CommandExecutor`], falling back to
-/// [`JsonEventCodec`] when no override exists.
+/// [`crate::JsonEventCodec`] when no override exists.
 pub struct CommandExecution<'a> {
     history: &'a dyn EventHistory,
     metadata: &'a CommandExecutionMetadata,
@@ -247,7 +224,7 @@ impl<'a> CommandExecution<'a> {
         }
         let history = self.history.load(&stream_id).await?;
         validate_history(&stream_id, &history)?;
-        let codec = self.codecs.resolve::<A>();
+        let codec = self.codecs.resolve::<A>()?;
         let events = history
             .iter()
             .map(|event| codec.decode(event))
@@ -458,6 +435,8 @@ impl CommandReceipt {
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum CommandExecutionError {
+    #[error(transparent)]
+    OutcomeRecovery(#[from] crate::OutcomeRecoveryError),
     #[error("rejected outcome persistence failed: {0}")]
     RejectedOutcomePersistence(EventStoreError),
     #[error("rejection mapping failed: {0}")]
@@ -469,11 +448,22 @@ pub enum CommandExecutionError {
 }
 
 impl CommandExecutionError {
-    /// Lossless typed technical classification. Request/identity failures remain separate.
+    /// Technical classification for diagnostics. Request/identity failures and deliberate
+    /// expiry remain separate; callers must inspect the typed outcome-recovery error.
     pub const fn execution_failure(&self) -> Option<rostfrei_messaging_core::ExecutionFailure> {
         use crate::EventCodecErrorKind;
         use rostfrei_messaging_core::{CodecFailureKind, ExecutionFailure, StoreFailureKind};
         Some(match self {
+            Self::OutcomeRecovery(error) => ExecutionFailure::Store(match error {
+                crate::OutcomeRecoveryError::Unavailable {
+                    reason: crate::DetailUnavailableReason::BackendUnavailable,
+                }
+                | crate::OutcomeRecoveryError::Archived { .. } => StoreFailureKind::Unavailable,
+                crate::OutcomeRecoveryError::Expired => return None,
+                crate::OutcomeRecoveryError::Unavailable {
+                    reason: crate::DetailUnavailableReason::MissingDetails,
+                } => StoreFailureKind::CorruptHistory,
+            }),
             Self::RejectionMapping(_) => ExecutionFailure::Processor(
                 rostfrei_messaging_core::ProcessorFailureKind::InvalidConfiguration,
             ),
@@ -481,12 +471,18 @@ impl CommandExecutionError {
                 ExecutionFailure::Store(match error.kind() {
                     EventStoreErrorKind::CorruptHistory => StoreFailureKind::CorruptHistory,
                     EventStoreErrorKind::CapacityExhausted => StoreFailureKind::CapacityExhausted,
-                    EventStoreErrorKind::ConfigurationMismatch => {
+                    EventStoreErrorKind::ConfigurationMismatch
+                    | EventStoreErrorKind::DetailForbidden => {
                         StoreFailureKind::ConfigurationMismatch
                     }
                     EventStoreErrorKind::Conflict => StoreFailureKind::Conflict,
-                    EventStoreErrorKind::Unavailable => StoreFailureKind::Unavailable,
-                    EventStoreErrorKind::InvalidRequest | EventStoreErrorKind::IdentityConflict => {
+                    EventStoreErrorKind::Unavailable
+                    | EventStoreErrorKind::CompletedDetailsUnavailable => {
+                        StoreFailureKind::Unavailable
+                    }
+                    EventStoreErrorKind::InvalidRequest
+                    | EventStoreErrorKind::IdentityConflict
+                    | EventStoreErrorKind::CompletedDetailsExpired => {
                         return None;
                     }
                 })
@@ -552,6 +548,8 @@ impl<Rejection> SimulationOutcome<Rejection> {
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum SimulationError {
+    #[error(transparent)]
+    OutcomeRecovery(#[from] crate::OutcomeRecoveryError),
     #[error("rejection mapping failed: {0}")]
     RejectionMapping(String),
     #[error(transparent)]
@@ -563,6 +561,7 @@ pub enum SimulationError {
 impl From<CommandExecutionError> for SimulationError {
     fn from(error: CommandExecutionError) -> Self {
         match error {
+            CommandExecutionError::OutcomeRecovery(error) => Self::OutcomeRecovery(error),
             CommandExecutionError::RejectionMapping(message) => Self::RejectionMapping(message),
             CommandExecutionError::Store(error)
             | CommandExecutionError::RejectedOutcomePersistence(error) => Self::Store(error),
@@ -609,7 +608,7 @@ where
         validate_aggregate_type::<A>(stream_id)?;
         let history = self.store.load(stream_id).await?;
         validate_history(stream_id, &history)?;
-        let codec = self.codecs.resolve::<A>();
+        let codec = self.codecs.resolve::<A>()?;
         let events = history
             .iter()
             .map(|event| codec.decode(event))
@@ -652,7 +651,7 @@ where
 
 impl<S> CommandExecutor<S>
 where
-    S: EventStore,
+    S: CommandBackend,
 {
     pub async fn reconcile_with_rejection_codec<R>(
         &self,
@@ -711,13 +710,14 @@ where
         if let Some(evidence) = metadata.outcome_evidence() {
             evidence.validate()?;
         }
-        let mut remaining_conflict_retries = self.maximum_conflict_retries;
+        let mut evaluations = 0_usize;
         loop {
             if let Some(outcome) = reconcile_completed(&self.store, &metadata, codec).await? {
                 return Ok(outcome);
             }
 
-            let session = self.store.append_session().await?;
+            let session = self.store.begin_command().await?;
+            evaluations = evaluations.saturating_add(1);
             let mut execution =
                 CommandExecution::with_codecs(session.as_ref(), &metadata, self.codecs.as_ref());
             let (participants, rejection) = match handler.handle(command, &mut execution).await? {
@@ -752,12 +752,19 @@ where
                     {
                         return Ok(outcome);
                     }
-                    if error.kind() != EventStoreErrorKind::Conflict
-                        || remaining_conflict_retries == 0
-                    {
+                    if error.kind() != EventStoreErrorKind::Conflict {
                         return Err(error.into());
                     }
-                    remaining_conflict_retries = remaining_conflict_retries.saturating_sub(1);
+                    match self
+                        .conflict_retry_policy
+                        .after_conflict(crate::ConflictRetry::new(evaluations, error.clone()))
+                    {
+                        crate::ConflictRetryDecision::Stop => return Err(error.into()),
+                        crate::ConflictRetryDecision::RetryNow => {}
+                        crate::ConflictRetryDecision::RetryAfter(delay) => {
+                            tokio::time::sleep(delay).await;
+                        }
+                    }
                 }
             }
         }
@@ -765,12 +772,12 @@ where
 }
 
 enum PersistenceAttempt {
-    Completed(Box<crate::CompletedAppendOutcome>),
+    Completed(Box<crate::CompletedCommit>),
     Conflict(EventStoreError),
 }
 
 async fn append_transaction(
-    session: Box<dyn AppendSession + '_>,
+    session: Box<dyn CommandCommitSession + '_>,
     metadata: &CommandExecutionMetadata,
     participants: Vec<CollectedParticipant>,
     rejection: Option<crate::EncodedRejection>,
@@ -799,6 +806,9 @@ async fn append_transaction(
     if let Some(causation_id) = metadata.causation_id() {
         transaction = transaction.with_causation_id(causation_id.clone());
     }
+    if let Some(scope) = metadata.security_scope() {
+        transaction = transaction.with_security_scope(scope.clone());
+    }
     let is_rejected = rejection.is_some();
     transaction = transaction.with_completion(crate::CommandCompletion::new(
         metadata.outcome_evidence().cloned(),
@@ -819,19 +829,22 @@ async fn append_transaction(
     }
 }
 
-async fn reconcile_completed<S: EventStore, R>(
+async fn reconcile_completed<S: CommandBackend, R>(
     store: &S,
     metadata: &CommandExecutionMetadata,
     codec: &dyn crate::RejectionCodec<R>,
 ) -> Result<Option<CommandOutcome<R>>, CommandExecutionError> {
-    store
-        .load_completed_outcome_in_context(
-            required_bounded_context(metadata)?,
-            metadata.operation_id(),
-        )
-        .await?
-        .map(|outcome| completed_replay(metadata, &outcome, codec, true))
-        .transpose()
+    let key = crate::OutcomeKey::new(
+        store.authority().clone(),
+        required_bounded_context(metadata)?.clone(),
+        metadata.operation_id().clone(),
+    );
+    match store.lookup_outcome(&key).await? {
+        crate::OutcomeLookup::Missing => Ok(None),
+        crate::OutcomeLookup::Completed(outcome) => {
+            Ok(Some(completed_replay(metadata, &outcome, codec, true)?))
+        }
+    }
 }
 
 fn completed_replay<R>(
@@ -840,7 +853,9 @@ fn completed_replay<R>(
     codec: &dyn crate::RejectionCodec<R>,
     replay: bool,
 ) -> CommandResult<R> {
-    let record = outcome.record();
+    outcome.marker().validate_identity(metadata)?;
+    let inline = outcome.to_inline()?;
+    let record = inline.record();
     let receipt = transaction_replay(metadata, record)?;
     if let Some(completion) = record.completion() {
         completion.validate()?;
@@ -864,7 +879,7 @@ fn completed_replay<R>(
             .into());
         }
     }
-    if let Some(rejection) = outcome.rejection() {
+    if let Some(rejection) = inline.rejection() {
         return Ok(CommandOutcome::Rejected(codec.decode(rejection)?));
     }
     Ok(CommandOutcome::Accepted(if replay {
@@ -1100,12 +1115,12 @@ fn invalid_request(message: impl Into<String>) -> EventStoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TransactionAppendOutcome;
+    use crate::{CompletedCommit, EventStore, OutcomeKey, OutcomeLookup, OutcomeReader};
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crate::{AppendOutcome, ContentFingerprint, InMemoryEventStore, OperationId};
+    use crate::{ContentFingerprint, InMemoryEventStore, OperationId};
 
     #[test]
     fn all_execution_source_kinds_have_explicit_lossless_technical_policy() {
@@ -1235,7 +1250,24 @@ mod tests {
     fn executor_configuration_preserves_store_and_retry_limit() {
         let executor = CommandExecutor::new(()).with_max_conflict_retries(4);
         assert_eq!(*executor.store(), ());
-        assert_eq!(executor.maximum_conflict_retries, 4);
+        assert_eq!(
+            executor
+                .conflict_retry_policy
+                .after_conflict(crate::ConflictRetry::new(
+                    4,
+                    EventStoreError::new(EventStoreErrorKind::Conflict, "test")
+                )),
+            crate::ConflictRetryDecision::RetryNow
+        );
+        assert_eq!(
+            executor
+                .conflict_retry_policy
+                .after_conflict(crate::ConflictRetry::new(
+                    5,
+                    EventStoreError::new(EventStoreErrorKind::Conflict, "test")
+                )),
+            crate::ConflictRetryDecision::Stop
+        );
     }
 
     #[tokio::test]
@@ -1919,49 +1951,32 @@ mod tests {
     }
 
     #[async_trait]
-    impl AppendSession for ConflictOnceSession<'_> {
+    impl CommandCommitSession for ConflictOnceSession<'_> {
         async fn commit_outcome(
             self: Box<Self>,
             transaction: EventTransaction,
-        ) -> Result<crate::CompletedAppendOutcome, EventStoreError> {
+        ) -> Result<CompletedCommit, EventStoreError> {
             assert_eq!(self.loads.load(Ordering::Relaxed), 2);
             assert_eq!(self.session_id, self.store.attempts.load(Ordering::Relaxed));
             self.store.commit_outcome(transaction).await
         }
-        async fn append(
-            self: Box<Self>,
-            stream_id: &StreamId,
-            expected_version: ExpectedVersion,
-            batch: EventBatch,
-        ) -> Result<AppendOutcome, EventStoreError> {
-            self.store.append(stream_id, expected_version, batch).await
-        }
-
-        async fn append_transaction(
-            self: Box<Self>,
-            transaction: EventTransaction,
-        ) -> Result<TransactionAppendOutcome, EventStoreError> {
-            assert_eq!(self.loads.load(Ordering::Relaxed), 2);
-            assert_eq!(self.session_id, self.store.attempts.load(Ordering::Relaxed));
-            self.store.append_transaction(transaction).await
-        }
     }
 
     #[async_trait]
-    impl EventStore for ConflictOnceStore {
-        async fn load_completed_outcome_in_context(
+    impl OutcomeReader for ConflictOnceStore {
+        async fn lookup_outcome(
             &self,
-            context: &rostfrei_messaging_core::BoundedContextName,
-            operation: &OperationId,
-        ) -> Result<Option<crate::CompletedOutcome>, EventStoreError> {
-            self.inner
-                .load_completed_outcome_in_context(context, operation)
-                .await
+            key: &OutcomeKey,
+        ) -> Result<OutcomeLookup<crate::EncodedOutcomeDetails>, EventStoreError> {
+            self.inner.lookup_outcome(key).await
         }
+    }
+
+    impl ConflictOnceStore {
         async fn commit_outcome(
             &self,
             transaction: EventTransaction,
-        ) -> Result<crate::CompletedAppendOutcome, EventStoreError> {
+        ) -> Result<CompletedCommit, EventStoreError> {
             assert_eq!(
                 transaction
                     .correlation_id()
@@ -1975,60 +1990,27 @@ mod tests {
                     "injected transaction conflict",
                 ));
             }
-            self.inner.commit_outcome(transaction).await
+            self.inner
+                .begin_command()
+                .await?
+                .commit_outcome(transaction)
+                .await
         }
-        async fn append_session(&self) -> Result<Box<dyn AppendSession + '_>, EventStoreError> {
+    }
+
+    #[async_trait]
+    impl CommandBackend for ConflictOnceStore {
+        fn authority(&self) -> &crate::CommandAuthority {
+            self.inner.authority()
+        }
+        async fn begin_command(
+            &self,
+        ) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError> {
             Ok(Box::new(ConflictOnceSession {
                 store: self,
                 session_id: self.sessions.fetch_add(1, Ordering::Relaxed),
                 loads: AtomicUsize::new(0),
             }))
-        }
-
-        async fn append(
-            &self,
-            stream_id: &StreamId,
-            expected_version: ExpectedVersion,
-            batch: EventBatch,
-        ) -> Result<AppendOutcome, EventStoreError> {
-            self.inner.append(stream_id, expected_version, batch).await
-        }
-
-        async fn load_transaction_receipt(
-            &self,
-            operation_id: &OperationId,
-        ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-            self.inner.load_transaction_receipt(operation_id).await
-        }
-
-        async fn load_transaction_receipt_in_context(
-            &self,
-            bounded_context: &rostfrei_messaging_core::BoundedContextName,
-            operation_id: &OperationId,
-        ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-            self.inner
-                .load_transaction_receipt_in_context(bounded_context, operation_id)
-                .await
-        }
-
-        async fn append_transaction(
-            &self,
-            transaction: EventTransaction,
-        ) -> Result<TransactionAppendOutcome, EventStoreError> {
-            assert_eq!(
-                transaction
-                    .correlation_id()
-                    .map(rostfrei_messaging_core::CorrelationId::as_str),
-                Some(transaction.operation_id().as_str()),
-            );
-            assert_eq!(transaction.causation_id(), None);
-            if self.attempts.fetch_add(1, Ordering::Relaxed) == 0 {
-                return Err(EventStoreError::new(
-                    self.failure_kind,
-                    "injected transaction conflict",
-                ));
-            }
-            self.inner.append_transaction(transaction).await
         }
     }
 
@@ -2037,7 +2019,7 @@ mod tests {
         let attempts = Arc::new(AtomicUsize::new(0));
         let sessions = Arc::new(AtomicUsize::new(0));
         let session_loads = Arc::new(AtomicUsize::new(0));
-        let store: Arc<dyn EventStore> = Arc::new(ConflictOnceStore {
+        let store: Arc<dyn CommandBackend> = Arc::new(ConflictOnceStore {
             inner: InMemoryEventStore::new(),
             failure_kind: EventStoreErrorKind::Conflict,
             attempts: Arc::clone(&attempts),
@@ -2076,62 +2058,27 @@ mod tests {
     }
 
     #[async_trait]
-    impl EventStore for ReceiptAfterDecisionStore {
-        async fn load_completed_outcome_in_context(
+    impl OutcomeReader for ReceiptAfterDecisionStore {
+        async fn lookup_outcome(
             &self,
-            context: &rostfrei_messaging_core::BoundedContextName,
-            operation: &OperationId,
-        ) -> Result<Option<crate::CompletedOutcome>, EventStoreError> {
+            key: &OutcomeKey,
+        ) -> Result<OutcomeLookup<crate::EncodedOutcomeDetails>, EventStoreError> {
             if self.receipt_lookups.fetch_add(1, Ordering::Relaxed) == 0 {
-                return Ok(None);
+                return Ok(OutcomeLookup::Missing);
             }
-            self.inner
-                .load_completed_outcome_in_context(context, operation)
-                .await
+            self.inner.lookup_outcome(key).await
         }
-        async fn commit_outcome(
-            &self,
-            transaction: EventTransaction,
-        ) -> Result<crate::CompletedAppendOutcome, EventStoreError> {
-            self.inner.commit_outcome(transaction).await
-        }
-        async fn append(
-            &self,
-            stream_id: &StreamId,
-            expected_version: ExpectedVersion,
-            batch: EventBatch,
-        ) -> Result<AppendOutcome, EventStoreError> {
-            self.inner.append(stream_id, expected_version, batch).await
-        }
+    }
 
-        async fn load_transaction_receipt(
-            &self,
-            operation_id: &OperationId,
-        ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-            if self.receipt_lookups.fetch_add(1, Ordering::Relaxed) == 0 {
-                return Ok(None);
-            }
-            self.inner.load_transaction_receipt(operation_id).await
+    #[async_trait]
+    impl CommandBackend for ReceiptAfterDecisionStore {
+        fn authority(&self) -> &crate::CommandAuthority {
+            self.inner.authority()
         }
-
-        async fn load_transaction_receipt_in_context(
+        async fn begin_command(
             &self,
-            bounded_context: &rostfrei_messaging_core::BoundedContextName,
-            operation_id: &OperationId,
-        ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-            if self.receipt_lookups.fetch_add(1, Ordering::Relaxed) == 0 {
-                return Ok(None);
-            }
-            self.inner
-                .load_transaction_receipt_in_context(bounded_context, operation_id)
-                .await
-        }
-
-        async fn append_transaction(
-            &self,
-            transaction: EventTransaction,
-        ) -> Result<TransactionAppendOutcome, EventStoreError> {
-            self.inner.append_transaction(transaction).await
+        ) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError> {
+            self.inner.begin_command().await
         }
     }
 

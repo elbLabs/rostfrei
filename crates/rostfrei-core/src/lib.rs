@@ -1,11 +1,16 @@
 mod aggregate;
 mod append_session;
+mod codecs;
+mod command_backend;
 mod completed_outcome;
+mod conflict_retry;
 mod domain_event;
 mod envelope;
 mod executor;
 mod identity;
 mod memory;
+mod outcome;
+mod proposal;
 mod read_model;
 mod store;
 
@@ -14,11 +19,14 @@ pub use aggregate::{
     EventVariant, JsonEventCodec,
 };
 pub use append_session::AppendSession;
+pub use codecs::{AggregateCodecs, CodecRegistrationError, CodecValidationError};
+pub use command_backend::*;
 pub use completed_outcome::{
-    CommandCompletion, CompletedAppendOutcome, CompletedOutcome, EncodedRejection,
+    CommandCompletion, CompletedAppendOutcome, EncodedRejection, InlineCompletedOutcome,
     JsonRejectionCodec, MAX_REJECTION_BYTES, OutcomeEvidence, RejectionCodec,
     validate_completed_transaction,
 };
+pub use conflict_retry::*;
 pub use domain_event::{
     CommittedDomainEvent, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
     DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError,
@@ -28,15 +36,21 @@ pub use envelope::{
     MAX_EVENT_TYPE_LEN, MAX_EVENTS_PER_BATCH, NewEvent, RecordedEvent, StreamVersion,
 };
 pub use executor::{
-    AggregateCodecs, CommandDecision, CommandExecution, CommandExecutionError, CommandExecutor,
-    CommandHandler, CommandHandlingResult, CommandOutcome, CommandReceipt, CommandResult,
-    LoadedAggregate, SimulatedParticipant, SimulationError, SimulationOutcome,
+    CommandDecision, CommandExecution, CommandExecutionError, CommandExecutor, CommandHandler,
+    CommandHandlingResult, CommandOutcome, CommandReceipt, CommandResult, LoadedAggregate,
+    SimulatedParticipant, SimulationError, SimulationOutcome,
 };
 pub use identity::{
     AggregateId, AggregateType, CommandExecutionMetadata, CommitId, ContentFingerprint, EventId,
-    IdentityError, OperationId, StreamId, derive_commit_id, derive_event_id,
+    IdentityError, OperationId, SecurityScope, StreamId, derive_commit_id, derive_event_id,
 };
 pub use memory::InMemoryEventStore;
+pub use outcome::{
+    ArchiveReference, CompletedOutcome, DetailRead, DetailReadError, DetailUnavailableReason,
+    EncodedOutcomeDetails, OutcomeDecision, OutcomeDetailReader, OutcomeDetailReference,
+    OutcomeDetails, OutcomeMarker, OutcomeRecoveryError,
+};
+pub use proposal::ProposalDigest;
 pub use read_model::{
     JsonReadModelCodec, ReadModel, ReadModelCodec, ReadModelEntry, ReadModelError,
     ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelStore,

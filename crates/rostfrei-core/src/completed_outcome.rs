@@ -129,9 +129,9 @@ impl CommandCompletion {
 
 /// A single atomic winner, including its read guards and (only for acceptance) events.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CompletedOutcome(TransactionReceipt);
+pub struct InlineCompletedOutcome(TransactionReceipt);
 
-impl CompletedOutcome {
+impl InlineCompletedOutcome {
     pub const fn new(receipt: TransactionReceipt) -> Self {
         Self(receipt)
     }
@@ -150,12 +150,12 @@ impl CompletedOutcome {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompletedAppendOutcome {
-    Appended(CompletedOutcome),
-    ExactReplay(CompletedOutcome),
+    Appended(InlineCompletedOutcome),
+    ExactReplay(InlineCompletedOutcome),
 }
 
 impl CompletedAppendOutcome {
-    pub const fn outcome(&self) -> &CompletedOutcome {
+    pub const fn outcome(&self) -> &InlineCompletedOutcome {
         match self {
             Self::Appended(outcome) | Self::ExactReplay(outcome) => outcome,
         }

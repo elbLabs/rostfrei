@@ -7,7 +7,7 @@ use std::sync::{
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateType, CommandDecision, CommandExecution,
+    Aggregate, AggregateId, AggregateType, CommandBackend, CommandDecision, CommandExecution,
     CommandExecutionError, CommandExecutionMetadata, CommandExecutor, CommandHandler,
     CommandHandlingResult, CommandOutcome, CommandReceipt, ContentFingerprint, Event,
     EventCodecError, EventStore, EventStoreErrorKind, OperationId, RecordedEvent, StreamId,
@@ -105,13 +105,13 @@ fn metadata(
 }
 
 /// Runs event-free replay and concurrent first-registration scenarios in the `acceptance` context.
-pub async fn run(store: Arc<dyn EventStore>) -> TestResult {
+pub async fn run<S: EventStore + CommandBackend>(store: Arc<S>) -> TestResult {
     replay_and_changed_evidence(Arc::clone(&store)).await?;
     losing_first_registration(Arc::clone(&store)).await?;
     simultaneous_same_operation(store).await
 }
 
-async fn replay_and_changed_evidence(store: Arc<dyn EventStore>) -> TestResult {
+async fn replay_and_changed_evidence<S: EventStore + CommandBackend>(store: Arc<S>) -> TestResult {
     let handler = EnsureCustomer::default();
     let executor = CommandExecutor::new(Arc::clone(&store));
     executor
@@ -164,7 +164,7 @@ async fn replay_and_changed_evidence(store: Arc<dyn EventStore>) -> TestResult {
     Ok(())
 }
 
-async fn losing_first_registration(store: Arc<dyn EventStore>) -> TestResult {
+async fn losing_first_registration<S: EventStore + CommandBackend>(store: Arc<S>) -> TestResult {
     let handler = EnsureCustomer {
         calls: AtomicUsize::new(0),
         first_attempts: Some(Arc::new(Barrier::new(2))),
@@ -239,7 +239,7 @@ async fn losing_first_registration(store: Arc<dyn EventStore>) -> TestResult {
     Ok(())
 }
 
-async fn simultaneous_same_operation(store: Arc<dyn EventStore>) -> TestResult {
+async fn simultaneous_same_operation<S: EventStore + CommandBackend>(store: Arc<S>) -> TestResult {
     let executor = CommandExecutor::new(store);
     executor
         .execute(
