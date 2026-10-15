@@ -27,7 +27,91 @@ coverage/retention/fidelity, and watches SSE only for a bounded requested period
 It preserves opaque generation strings and decimal-string revisions/counters.
 Only explicit matching message/causation IDs establish graph edges.
 
-## Exact integration inputs
+## Explicit handler diagnostics refinement (2026-10-15)
+
+The user-approved refinement retains useful **Simulate handler**, without
+restoring legacy Preview's operation-shaped synthetic trace. Its optional catalog
+relation is `contexts[].commands[].versions[].simulateHandlerHrefTemplate`;
+follow that value with POST `{"schemaVersion":1,"payload":{...}}` using the
+control token. The current route is
+`/contexts/{context}/commands/{command}/simulate-handler`.
+
+HTTP 200 returns a distinct `kind: "handlerSimulation"`, `committed: false`,
+command/schema coordinates, typed `outcome.decision` (accepted/rejected), `streams`
+with aggregate identities/base versions/read guards, and `proposedEvents` with
+event type/schema/proposed versions and policy-controlled payloads. Rejection
+discards pending events; accepted zero-event results are legitimate. There is no
+operation ID, Location, receipt or observed MessageSeries. Legacy `/simulate`
+remains 404. Rust callers use `Tracer::simulate_handler(..., CommandRequest)`;
+there is no native CLI simulation subcommand.
+
+Studio defaults to Test and deliberately selects **Simulate handler**, showing
+an **Uncommitted · no acceptance receipt** result outside the observed graph.
+The installed skills use it only for explicit simulation/rule-debugging questions,
+never before every Test, as acceptance evidence, or as a fallback. It replays
+configured history (Test history in the shared host), invokes the same real handler
+and dependencies, and does not test broker delivery, atomic persistence/concurrency,
+workers or downstream integrations. Injected dependencies are not automatically
+sandboxed. Uncertain requests are not retried automatically.
+
+| Qualification input | Exact revision |
+| --- | --- |
+| #106 canonical skills/capability helper | `dc1d83d714195037dec3662ecccc3a0931313662` |
+| #107 unchanged shared host | `b4c79060e8238be695e13b45e0b6593e6d2c268c` |
+| #112 handler/Studio implementation | `24c529146445210a856a7b1d54ec0da1949c9d29` |
+| Clean detached combined implementation | `e4dd403082b0997fb300303c1a6e19767c4bae6b` |
+| Fresh source fixture (matching CLI and host) | `811a1e91fc1bc3397bd3a7bfcfc04be43909c4c9` |
+
+The current merge completed without conflicts, preserving the canonical `.agents`
+source. No #107 history was merged into #106. The later #112 live Studio fixture
+correction `697a458` uses the actual free-form identity fields and changes no
+runtime behavior. Review #107 before #112, paired with #106.
+
+Evidence root: `/tmp/rostfrei-harmony-4wflut29/handler-qualification/`. Input heads
+are in `inputs.json`, the clean integration is retained in `combined.bundle`, and
+`qualify.py` reproduces the matched package/native/live checks. Original absence
+red was observed at `abc4380` (missing relation, HTTP 404, missing deliberate Studio
+choice and absent capability after real external-host Test execution). The original
+managed logs were unavailable when archiving; `red-observations.md` is explicitly
+a session transcription. Earlier failed attempts are retained, not overwritten.
+
+Confirmed controls:
+
+- Clean **77-file Cargo package**, external native install and extracted build
+  source removal; **7 kit/reference checks** passed (`package.log`,
+  `native-install.log`, `kit-checks.log`).
+- Installed and fresh-source paths each passed real-NATS **pass → intentional
+  mismatch → unchanged pass** with complete, settled/exact captures. Each CLI and
+  host matched the clean revision recorded above. Installed execution removed
+  the extracted kit; both consumer PATHs excluded Cargo/Git/Python. Their handler
+  diagnostic accepted a proposed bicycle
+  from base version 1, rejected the existing bicycle with no proposals, and kept
+  history at version 1 with unchanged observation (`installed/`, `source/`). Scoped catalog,
+  quarantine, actual causation, finite/SSE observation and reset isolation passed.
+- A standalone counter app pinned **all eleven resolved Rostfrei crates** to the
+  combined revision. Default native `skills install` selected matching clean
+  resources, and empty-PATH pass/mismatch/pass plus handler simulation passed.
+  The handler proposed value 9 at base version 2 without appending. Unconfigured
+  observation stayed undiscovered and returned `501 observation-unavailable`
+  (`external-consumer-verified/`, reproducer `external-consumer.py`). The earlier
+  attempt incorrectly assumed twelve dependencies; its log and consumer remain
+  retained, and the corrected check verifies every actual resolved Git revision.
+- #112's **154 Tracer tests**, **7 core/testing simulation controls**, **5 pinned
+  external-host tests**, and **3 real external-observation tests** passed. The
+  counter proposed value 9 from version 2 without changing persisted history or
+  observation. Cancellation released reset/admission gates; Test retained separate
+  operation capacity. Core/domain sources remain unchanged from #107.
+- Studio lint/build, mocked interactions and **13 visual scenarios** passed;
+  desktop accepted/rejected and mobile handler results were inspected. Five real
+  HTTP suites and five live Studio suites passed, plus explicit live handler
+  diagnostics with the real Test graph unchanged. Normal state survived Test resets
+  (`studio-live-inputs.log`).
+
+All owned hosts and disposable brokers stopped. These scripted controls are not
+independent agent competence or human feedback.
+The release/independent-trial gates below remain open.
+
+## Historical integration inputs
 
 Original #106 head: `a87199fc98ccb0d6ec5290e7d6553b38ec188712`.
 Shared-host #107 head: `b4c79060e8238be695e13b45e0b6593e6d2c268c`.
