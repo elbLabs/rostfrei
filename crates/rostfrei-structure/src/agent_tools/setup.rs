@@ -367,6 +367,42 @@ fn inspect_tool(path: &Path) -> Result<Release> {
         .map_err(|_| error("Resolved tool has no supported release metadata"))
 }
 
+fn retain_current_tool(release: &Release) -> Result<PathBuf> {
+    let destination = release_cache(release)?;
+    let binary = executable(&destination);
+    if fs::symlink_metadata(&destination).is_err() {
+        let tools = tools_root()?;
+        fs::create_dir_all(&tools).map_err(|_| error("Could not create matching tool cache"))?;
+        let staging = tempfile::Builder::new()
+            .prefix(".retained-tool-")
+            .tempdir_in(&tools)
+            .map_err(|_| error("Could not stage the current matching tool"))?;
+        let staged_binary = executable(staging.path());
+        fs::create_dir(staging.path().join("bin"))
+            .map_err(|_| error("Could not stage the matching executable"))?;
+        let current = env::current_exe()
+            .map_err(|_| error("Could not locate the current matching executable"))?;
+        // Copy bytes and executable permissions, never link to the mutable global CLI.
+        fs::copy(current, &staged_binary)
+            .map_err(|_| error("Could not retain the current matching executable"))?;
+        if !release.matches(&inspect_tool(&staged_binary)?) {
+            return Err(error("Staged runner release or protocol mismatch"));
+        }
+        if fs::rename(staging.path(), &destination).is_err() && !destination.exists() {
+            return Err(error(
+                "Could not publish the retained runner; existing cache entries preserved",
+            ));
+        }
+    }
+    // Also validates a concurrent publisher's entry without overwriting it.
+    if binary.is_symlink() {
+        return Err(error(
+            "Cached runner must be an independent executable; preserve this entry and move it aside before retrying",
+        ));
+    }
+    cached_runner(release)
+}
+
 fn matching_tool(framework: &Framework) -> Result<Option<PathBuf>> {
     if let Source::Local(directory) = &framework.source {
         return local_tool(framework, directory).map(Some);
@@ -377,7 +413,7 @@ fn matching_tool(framework: &Framework) -> Result<Option<PathBuf>> {
         && !current.source_tree_dirty
         && !matches!(framework.source, Source::Local(_))
     {
-        return Ok(None);
+        return retain_current_tool(&current).map(Some);
     }
     let root = cache_root(&framework.version, &framework.revision)?;
     let binary = executable(&root);

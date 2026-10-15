@@ -27,6 +27,61 @@ coverage/retention/fidelity, and watches SSE only for a bounded requested period
 It preserves opaque generation strings and decimal-string revisions/counters.
 Only explicit matching message/causation IDs establish graph edges.
 
+## Prioritized review repairs (2026-10-15)
+
+The human selected exactly two corrective findings after the independent review:
+
+- **#106 runner retention:** normal dependency-aware setup now stages an independent
+  copy of an already-matching global executable, preserves its executable permissions,
+  validates its full release identity and atomically retains it in the versioned
+  cache. Setup applies through that retained executable. A valid entry is reused;
+  an incompatible entry is preserved and rejected. This path needs no tool build
+  or download, and standalone/explicit-kit installation retains its existing path.
+- **#112 stale Studio diagnostics:** computations are associated with their originating
+  command/schema, payload/options and Test-state revision. Changed state discards
+  ownership; late responses/errors cannot restore a stale result or clear a newer
+  request's busy state. Test remains default and simulation stays explicitly selected.
+
+Test-first `abfffd2` reproduced setup returning success with **zero retained runners**.
+`scripts/check_agent_onboarding.py` now tests a real external app pinned to clean A:
+matching A setup, repeated setup preserving the cache entry, global replacement by
+clean B, then empty-PATH/source-free routing of the unchanged installed release to
+the configuration sentinel. It also checks executable permissions, exact identity,
+no build/install during matching setup, and preservation of a mismatched entry.
+The targeted regression is green. #112's `692aab9` reproduced stale completed
+results and unreleased pending ownership after Test-state refresh. Its three browser
+cases now pass: completed result invalidation, late success, and late error while
+a newer request is pending, with current accepted/rejected results rendering normally.
+
+Local #106 checks: all **76** `rostfrei-structure` tests passed, as did targeted
+all-target/all-feature Clippy, formatting and shared-version validation. The new
+real-Cargo regression is also part of the existing onboarding CI step.
+
+Focused evidence is `/tmp/rostfrei-two-fixes-MyJMJAEu/` (`runner-red.log`,
+`runner-green.log`, `studio-red.log`, `studio-green.log`, `ui-red/`, `ui-green/`).
+The browser checks use real Studio with mocked HTTP; runner selection uses a
+configuration sentinel, not a behavioral acceptance claim. Broader integration
+verification comes from the existing final-head CI. The earlier combined live
+matrix below remains evidence for its recorded revisions, not a new rerun.
+
+### Explicitly deferred independent-review findings
+
+These remain known limitations; this focused repair is not a review-clean claim:
+
+1. **Generated workspace-installation output feeds back into source identity.**
+   Repeated local in-framework install/update can change its own fingerprint.
+   Ordinary pinned Git consumers are unaffected. Reproduction:
+   `/tmp/rostfrei-independent-review-x_64fcq8/findings.md`,
+   `local-setup-results.json` and `local-setup-repro/`.
+2. **Direct shared-runtime reset health is not reflected in handler simulation.**
+   Tracer-mediated resets are guarded; a failed direct `NatsRuntime::reset` can
+   leave simulation reading incomplete state. Reproduction:
+   `/tmp/rostfrei-independent-review-x_64fcq8/final-review.md`,
+   `final-consumer/tests/review_reset.rs`.
+
+Reviewer originals were not modified. The next main task is the independent
+installed-skill feature trial, with human feedback; existing release gates remain.
+
 ## Explicit handler diagnostics refinement (2026-10-15)
 
 The user-approved refinement retains useful **Simulate handler**, without
