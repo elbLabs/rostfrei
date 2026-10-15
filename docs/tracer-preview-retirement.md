@@ -47,6 +47,38 @@ The new tests check injected handler behavior, accepted/rejected/zero-event
 decisions, pending-event discard, unchanged history/receipts, no operation or
 observation contamination, redaction/bounds, typed failures and control scope.
 
+Implementation `24c529146445210a856a7b1d54ec0da1949c9d29` is green. The live
+Studio test follow-up `697a458` uses the actual free-form identity inputs, rather
+than assuming select options. Its initial failed attempt and all earlier evidence
+are retained under `/tmp/rostfrei-harmony-4wflut29/handler-qualification/`.
+
+- 154 Tracer tests passed across library/schema/observation/quarantine/protocol
+  suites. The final 66-test protocol run passed sequentially, including handler
+  cancellation releasing reset/concurrency gates and independently admitted Test.
+  An earlier loaded parallel run hit the existing short behavioral-deadline test;
+  its unchanged rerun passed. Workspace all-target/all-feature Clippy is green.
+- Seven core/testing simulation controls passed, including object-safe history,
+  zero events, normalized metadata, typed rejection and discarded pending events.
+- Five pinned standalone-host tests passed on real NATS 2.12.15; the injected
+  counter handler proposed value 9 from version 2 while persisted history and
+  the actual observation snapshot remained unchanged. The external entry-point
+  discovery/suite/shutdown check also passed (`external-host-green.log`).
+- Three real shared-host observation tests passed: external publishers, Test/Normal
+  separation and reset/shutdown (`external-observation.log`).
+- Studio lint/build and mocked interactions passed; 13 visual scenarios passed.
+  Command/default selection and accepted/rejected desktop diagnostics, plus the
+  390×844 handler result, were inspected (`handler-before/`, `handler-after/`,
+  `handler-mobile/` under the parent evidence root).
+- Five real HTTP suites and five live Studio suites passed. The new live Studio
+  action returned a handler diagnostic without changing the real Test graph.
+  Normal dispatch survived all Test resets (`studio-live-inputs.log`).
+
+Matched package/installed/source/standalone-client qualification is recorded in
+#106's `docs/agent-skills-harmony.md`; its capability driver explicitly checks the
+new relation when available and reports unavailable on older hosts. CI and exact
+final heads are attached to both PRs. This does not complete independent agent
+trials, human feedback or final release rehearsal/attachment verification.
+
 ### Supported handler interface
 
 Control catalog relation:
