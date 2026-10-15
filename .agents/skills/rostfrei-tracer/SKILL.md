@@ -141,8 +141,9 @@ For “what happened?”, prefer bounded snapshots:
 1. GET `listHref`. Read `status`, `generation`, `revision`, retention counters and
    `items`. `connecting`, `resetting` and `unavailable` are not healthy empty feeds.
 2. Choose a returned flow by correlation/event identity, then GET its `detailHref`.
-   Check application, scope and generation. Preserve decimal-string revisions,
-   generations, `evictedFlows` and `discardedMessages` without numeric coercion.
+   Check application, scope and generation. Preserve opaque generation strings
+   and decimal-string revisions, `evictedFlows` and `discardedMessages` exactly,
+   without numeric coercion.
 3. Explain `messageSeries`, `fidelity`, `partial`, `truncated` and `conflicted`.
    Every flow is a **partial rolling window**, even with exact fidelity. It does
    not prove business completion, complete history or the absence of other activity.

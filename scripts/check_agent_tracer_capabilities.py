@@ -58,7 +58,8 @@ class Capabilities:
         assert snapshot["application"] == self.application
         assert snapshot["scope"] == scope
         assert snapshot["status"] == "live", "Unavailable coverage must not pass as healthy emptiness"
-        for name in ("generation", "revision", "evictedFlows", "discardedMessages"):
+        assert isinstance(snapshot["generation"], str) and snapshot["generation"]
+        for name in ("revision", "evictedFlows", "discardedMessages"):
             assert isinstance(snapshot[name], str) and snapshot[name].isdecimal(), name
         assert isinstance(snapshot["items"], list)
         return snapshot
