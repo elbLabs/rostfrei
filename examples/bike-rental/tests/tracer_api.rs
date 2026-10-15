@@ -682,10 +682,7 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         command["versions"][0]["payloadTemplate"],
         json!({ "fleet_id": null, "bicycle_id": null })
     );
-    assert_eq!(
-        command["versions"][0]["simulateHrefTemplate"],
-        "/contexts/bike-rental/commands/rent-bicycle/simulate"
-    );
+    assert!(command["versions"][0].get("simulateHrefTemplate").is_none());
     assert_eq!(
         command["versions"][0]["testHrefTemplate"],
         "/contexts/bike-rental/commands/rent-bicycle/test"
@@ -716,9 +713,10 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
         transfer_command["versions"][0]["payloadTemplate"],
         json!({ "from_fleet_id": null, "bicycle_id": null, "to_fleet_id": null })
     );
-    assert_eq!(
-        transfer_command["versions"][0]["simulateHrefTemplate"],
-        "/contexts/bike-rental/commands/transfer-bicycle/simulate"
+    assert!(
+        transfer_command["versions"][0]
+            .get("simulateHrefTemplate")
+            .is_none()
     );
 
     let tests = app
@@ -795,31 +793,39 @@ async fn catalog_and_aggregate_instances_are_discovered_through_the_authenticate
 }
 
 #[tokio::test]
-async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
+async fn accepted_test_streams_a_resumable_trace_and_appends() {
     let (tracer, store, _) = fixture().await;
     let history_before = store.load(&demo_stream()).await.unwrap();
     let app = app(tracer);
 
     let response = app
         .clone()
-        .oneshot(simulation_request("operation-accepted", "bike-42"))
+        .oneshot(command_request(
+            "test",
+            "operation-accepted",
+            "bike-42",
+            API_TOKEN,
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::ACCEPTED);
-    assert_eq!(
-        response.headers().get("location").unwrap(),
-        "/operations/operation-accepted"
-    );
+    let location = response
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
     let queued = json_body(response).await;
-    assert_eq!(queued["operationId"], "operation-accepted");
+    let events_href = queued["operationEventsHref"].as_str().unwrap();
     assert_eq!(queued["status"], "queued");
-    assert_event_evidence(&queued, "predicted");
+    assert_event_evidence(&queued, "observed");
 
     let response = app
         .clone()
         .oneshot(
             authorize(Request::builder())
-                .uri("/operations/operation-accepted/events")
+                .uri(events_href)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -840,15 +846,15 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
     assert!(trace.contains("event: operation.queued"));
     assert!(trace.contains("event: operation.started"));
     assert!(trace.contains("event: command.accepted"));
-    assert!(trace.contains("event: domain-event.predicted"));
+    assert!(trace.contains("event: command.published"));
+    assert!(!trace.contains("domain-event.predicted"));
     assert!(trace.contains("event: operation.completed"));
-    assert!(trace.contains("\"eventType\":\"bicycle-rented\""));
 
     let response = app
         .clone()
         .oneshot(
             authorize(Request::builder())
-                .uri("/operations/operation-accepted")
+                .uri(&location)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -857,40 +863,17 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
     let completed = json_body(response).await;
     assert_eq!(completed["status"], "completed");
     assert_eq!(completed["result"]["decision"], "accepted");
-    assert_eq!(
-        completed["result"]["participants"][0]["baseStreamVersion"],
-        2
-    );
-    assert_eq!(completed["result"]["appended"], false);
-    assert_eq!(completed["result"]["published"], false);
-    assert_event_evidence(&completed, "predicted");
+    assert!(completed["result"].get("predictedEvents").is_none());
+    assert_eq!(completed["result"]["published"], true);
+    assert_event_evidence(&completed, "observed");
     assert_eq!(completed["context"], "bike-rental");
-    assert_eq!(
-        completed["result"]["participants"][0]["aggregateType"],
-        "bike-rental/rental-fleet"
-    );
-    assert_eq!(
-        completed["result"]["participants"][0]["aggregateId"],
-        "city-fleet"
-    );
-    assert_eq!(
-        completed["result"]["predictedEvents"][0]["schemaVersion"],
-        1
-    );
-    assert_eq!(
-        completed["result"]["predictedEvents"][0]["payload"],
-        json!({
-            "fleet_id": "city-fleet",
-            "bicycle_id": "bike-42",
-        })
-    );
     let latest = completed["latestEventId"].as_u64().unwrap();
 
     let response = app
         .clone()
         .oneshot(
             authorize(Request::builder())
-                .uri("/operations/operation-accepted/events")
+                .uri(events_href)
                 .header("last-event-id", "2")
                 .body(Body::empty())
                 .unwrap(),
@@ -914,7 +897,7 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
     let response = app
         .oneshot(
             authorize(Request::builder())
-                .uri("/operations/operation-accepted/events")
+                .uri(events_href)
                 .header("last-event-id", latest.to_string())
                 .body(Body::empty())
                 .unwrap(),
@@ -922,7 +905,9 @@ async fn accepted_simulation_streams_a_resumable_trace_without_appending() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert_eq!(store.load(&demo_stream()).await.unwrap(), history_before);
+    let history = store.load(&demo_stream()).await.unwrap();
+    assert_eq!(history.len(), history_before.len() + 1);
+    assert_eq!(history.last().unwrap().event_type(), "bicycle-rented");
 }
 
 #[tokio::test]
@@ -933,21 +918,39 @@ async fn rejection_and_idempotency_have_explicit_http_outcomes() {
 
     let first = app
         .clone()
-        .oneshot(simulation_request("operation-rejected", "bike-99"))
+        .oneshot(command_request(
+            "test",
+            "operation-rejected",
+            "bike-99",
+            API_TOKEN,
+        ))
         .await
         .unwrap();
     assert_eq!(first.status(), StatusCode::ACCEPTED);
+    let queued = json_body(first).await;
+    let operation_id = queued["operationId"].as_str().unwrap();
+    let events_href = queued["operationEventsHref"].as_str().unwrap();
 
     let repeated = app
         .clone()
-        .oneshot(simulation_request("operation-rejected", "bike-99"))
+        .oneshot(command_request(
+            "test",
+            "operation-rejected",
+            "bike-99",
+            API_TOKEN,
+        ))
         .await
         .unwrap();
     assert_eq!(repeated.status(), StatusCode::ACCEPTED);
 
     let conflict = app
         .clone()
-        .oneshot(simulation_request("operation-rejected", "bike-42"))
+        .oneshot(command_request(
+            "test",
+            "operation-rejected",
+            "bike-42",
+            API_TOKEN,
+        ))
         .await
         .unwrap();
     assert_eq!(conflict.status(), StatusCode::CONFLICT);
@@ -957,7 +960,7 @@ async fn rejection_and_idempotency_have_explicit_http_outcomes() {
         .clone()
         .oneshot(
             authorize(Request::builder())
-                .uri("/operations/operation-rejected/events")
+                .uri(events_href)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -975,7 +978,7 @@ async fn rejection_and_idempotency_have_explicit_http_outcomes() {
     let response = app
         .oneshot(
             authorize(Request::builder())
-                .uri("/operations/operation-rejected")
+                .uri(format!("/operations/{operation_id}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -983,12 +986,8 @@ async fn rejection_and_idempotency_have_explicit_http_outcomes() {
         .unwrap();
     let completed = json_body(response).await;
     assert_eq!(completed["result"]["decision"], "rejected");
-    assert_eq!(
-        completed["result"]["participants"][0]["baseStreamVersion"],
-        2
-    );
-    assert_eq!(completed["result"]["appended"], false);
-    assert_eq!(completed["result"]["published"], false);
+    assert!(completed["result"].get("predictedEvents").is_none());
+    assert_eq!(completed["result"]["published"], true);
     assert_eq!(
         completed["result"]["rejection"]["code"],
         "BICYCLE_UNAVAILABLE"
@@ -1042,14 +1041,6 @@ async fn submissions_echo_idempotency_keys_without_retaining_them() {
     let (tracer, _, _) = fixture().await;
     let app = app(tracer);
 
-    let simulation = accepted_submission(
-        &app,
-        simulation_request("idempotency-simulation", "bike-42"),
-    )
-    .await;
-    assert_eq!(simulation["operationId"], "idempotency-simulation");
-    assert_eq!(simulation["idempotencyKey"], "idempotency-simulation");
-
     let test = accepted_submission(
         &app,
         command_request("test", "idempotency-test", "bike-42", API_TOKEN),
@@ -1091,7 +1082,7 @@ async fn submissions_echo_idempotency_keys_without_retaining_them() {
 }
 
 #[tokio::test]
-async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated() {
+async fn test_is_stateful_retired_simulation_is_unavailable_and_dispatch_is_isolated() {
     let (tracer, test_store, production_store) = fixture().await;
     let app = app(tracer);
 
@@ -1176,14 +1167,7 @@ async fn test_is_stateful_simulate_reads_test_history_and_dispatch_is_isolated()
         .oneshot(simulation_request("simulate-after-test", "bike-42"))
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
-    let simulated = terminal_operation(&app, "simulate-after-test", API_TOKEN).await;
-    assert_eq!(simulated["mode"], "simulate");
-    assert_eq!(simulated["result"]["decision"], "rejected");
-    assert_eq!(
-        simulated["result"]["participants"][0]["baseStreamVersion"],
-        3
-    );
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert_eq!(test_store.load(&demo_stream()).await.unwrap().len(), 3);
 
     let response = app
