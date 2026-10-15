@@ -7,6 +7,7 @@ import {
   closeStudioBrowser,
 } from "./browser.mjs"
 import { checkCommandRefresh } from "./command-refresh.mjs"
+import { checkHandlerRefresh } from "./handler-refresh.mjs"
 import { checkCommandExecution } from "./command-execution.mjs"
 import { checkApiTimeouts } from "./api-timeouts.mjs"
 import {
@@ -749,6 +750,7 @@ try {
   assert.deepEqual(errors, [], "no browser runtime errors")
   await checkCommandExecution(browser, url)
   await checkCommandRefresh(browser, url)
+  await checkHandlerRefresh(browser, url)
   await checkApiTimeouts(browser, url)
   console.log("Verified API request deadlines and partial capture evidence")
   await checkContinuousObservation()
