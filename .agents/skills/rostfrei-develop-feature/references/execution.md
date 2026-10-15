@@ -1,22 +1,36 @@
 # Execute with the Rust CLI against real NATS
 
-Install the CLI from the kit's exact `sourceRevision` (read `references/release.json`
-in an installed skill). Initial compilation needs Rust 1.98+, Cargo, Git, a native
-linker and registry/Git network access, but no Python or system TLS development
-packages:
+Install a skills-enabled setup CLI once, then run explicit setup inside the
+application with its dependency resolved in `Cargo.lock`:
 
 ```sh
 cargo install --locked --git https://github.com/elbLabs/rostfrei \
-  --rev <sourceRevision> rostfrei-structure
-cargo rostfrei skills info
+  --rev <skills-enabled-sourceRevision> rostfrei-structure
+cargo rostfrei skills install
+# After upgrading the application's framework dependency and lockfile:
+cargo rostfrei skills update
 ```
 
-From a matching source checkout, `cargo install --locked --path
-crates/rostfrei-structure` is equivalent. The installed `cargo-rostfrei` native
-binary runs offline with respect to package registries and the source checkout;
-execution needs only the application Tracer endpoint. The portable skills kit
-does not carry a platform-specific executable. Cargo builds the CLI for the
-consumer's platform.
+Setup uses the application's resolved dependency, obtains its exact matching CLI
+when needed and caches it under `$CARGO_HOME/rostfrei/tools` (default
+`$HOME/.cargo/rostfrei/tools`; `ROSTFREI_TOOLS_DIR` overrides). Skills go in the
+application's `.agents/skills`. Commit the managed baseline alongside them.
+Updates preserve user-added files and block all skills on edited-file conflicts.
+Adding the library or starting the host never installs skills.
+
+Initial compilation requires Rust 1.98+, Cargo, Git, a native linker and source
+access; consumer setup/execution requires no Python. PR #106 must be merged or
+selected by its reviewed revision; published `v0.0.5-alpha` predates this setup
+capability. Do not substitute a newer CLI's bundle for an unsupported dependency.
+From this checkout, `cargo install --locked --path crates/rostfrei-structure`
+installs the setup tool. `skills info` reports that executable's own provenance;
+`references/release.json` records the selected installed skills' provenance.
+
+The native runner uses the already-cached matching CLI without downloads, Cargo,
+Git or a source checkout. Keep the cache available to the runtime environment.
+Optional `--kit` imports remain exact-release checked; `--destination` overrides
+the application-local path (or explicitly installs this CLI's bundled skills
+when used outside a Cargo project).
 
 ## Source discovery
 

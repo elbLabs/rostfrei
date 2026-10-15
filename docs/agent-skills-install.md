@@ -1,169 +1,189 @@
-# Rostfrei Agent Skills kit
+# Explicit Rostfrei skills setup
 
-The kit contains **rostfrei-develop-feature** and **rostfrei-tracer**, their
-relative resources, compatibility metadata and file hashes. Installation and
-execution use **Rostfrei's Rust CLI**, `cargo-rostfrei`; no consumer Python is
-required or shipped. Running application acceptance needs a matching
-application-linked Tracer with real isolated NATS.
-
-## Install from a release
-
-Download `rostfrei-agent-skills-0.1.0.tar.gz` and its `.sha256` companion from the
-matching Rostfrei release. Verify and extract in the download directory:
-
-These filenames illustrate the upcoming 0.1.0 artifact. Use the downloaded
-release's version; the current source baseline builds `0.0.5-alpha` until the
-shared release version is bumped.
+Rostfrei is a **Cargo library dependency**. Adding it does not install a global
+command, and neither building nor starting an application writes skills. Install
+the Rust setup tool once, then deliberately set up each application:
 
 ```sh
-sha256sum --check rostfrei-agent-skills-0.1.0.tar.gz.sha256
-tar -xzf rostfrei-agent-skills-0.1.0.tar.gz
-cd rostfrei-agent-skills-0.1.0
+# Once, after this setup feature is merged into the selected Git source:
+cargo install --locked --git https://github.com/elbLabs/rostfrei rostfrei-structure
+# Inside an existing application with its dependency resolved in Cargo.lock:
+cargo rostfrei skills install
+# After deliberately upgrading the application's dependency and lockfile:
+cargo rostfrei skills update
 ```
 
-Read `sourceRevision` from the extracted `release.json`, then install that exact
-CLI revision (not the older published alpha, which predates these commands):
+**PR #106 is not yet merged/published.** To try this branch now, install the tool
+from its exact reviewed commit with `--rev <PR-sourceRevision>`, or from its
+checkout using `cargo install --locked --path crates/rostfrei-structure`.
+The previously published `v0.0.5-alpha` framework revision predates this setup
+capability. Selecting it reports the real missing capability; the new setup tool
+never substitutes its own newer skills for that application's older dependency.
+
+Initial tool compilation needs Rust 1.98+, Cargo, Git, a native linker and access
+to the selected Git/registry source. No consumer Python is required. Library
+versions and tool installation remain separate; a newer setup tool can serve
+multiple applications without replacing a global binary for every dependency.
+
+## What installation resolves
+
+The command runs `cargo metadata --locked`, using the actual resolved package
+graph, including renamed and inherited dependencies. It selects a unique
+reachable package named `rostfrei`, its exact version and source revision. Create
+or update the lockfile through Cargo first if it does not exist or is stale.
+
+The default destination is the selected application's `.agents/skills`, next to
+its `Cargo.toml`. A single default workspace member is supported. If multiple
+applications are possible, select deliberately:
 
 ```sh
-cargo install --locked --git https://github.com/elbLabs/rostfrei \
-  --rev <sourceRevision> rostfrei-structure
-cargo rostfrei skills info
-cargo rostfrei skills install --kit "$PWD" \
-  --destination /absolute/path/to/application/.agents/skills
+cargo rostfrei skills install --manifest-path /path/to/workspace/Cargo.toml --package my-app
+cargo rostfrei skills install --destination /path/to/client/skills
 ```
 
-Building requires Rust 1.98+, Cargo, Git, a native linker and registry/Git network
-access. The kit is platform-neutral; it contains no prebuilt native binary.
-Cargo builds the executable for the consumer platform. A matching source
-checkout also supports `cargo install --locked --path crates/rostfrei-structure`.
-The installed binary needs neither Python nor Git nor the source checkout, and
-does not contact package registries at runtime. Direct invocation, even without
-Cargo on PATH: `/path/to/cargo-rostfrei rostfrei skills install --kit <kit>
---destination <skills-directory>`.
+No dependency, multiple reachable framework revisions, unknown source provenance
+or unsupported source types produce a diagnostic before skill installation.
+Crates.io packages require their published Cargo VCS metadata; Git dependencies
+use Cargo's resolved full commit. Git-backed local path dependencies use that
+checkout's exact revision and matching sibling `rostfrei-structure` source.
+Local sources are rebuilt during explicit setup so uncommitted resource changes
+cannot be hidden by a revision-keyed cache; their dirty-build provenance is retained.
 
-The destination is the **skills directory**, not the application root. The
-installer requires an explicit destination, checks the extracted kit's manifest
-and exact CLI/framework revision compatibility,
-copies both skills, and preserves unrelated files. Identical installs are no-ops.
-Any differing existing skill (including extra consumer files) stops the whole
-preflight before any skill is installed. There is no overwrite switch: install
-an upgrade into a separate directory and deliberately merge local changes.
-Unrelated `AGENTS.md`, client configuration and other skills are never edited.
+If the installed setup CLI already matches, it uses its bundled resources.
+Otherwise it obtains `rostfrei-structure` from the **same exact Git source/commit**,
+exact crates.io version, or matching local source. Cargo handles retrieval/build;
+there are no invented release-download URLs or `latest` substitutions. The tool's
+reported version/revision is checked before use. Old releases without bundled
+setup support fail explicitly. Acquisition may need network access on first use.
 
-The extracted kit and source checkout can be removed after installation. Every
-installed skill includes `references/release.json` recording framework version,
-source revision, dirty-build status and protocol compatibility. The archive's
-version comes from `workspace.package.version` in the release's Cargo manifest.
-Use a clean release artifact, and match the consuming application's dependency
-revision; equal `0.1.0` version labels alone do not imply equal prerelease code.
+Matching native tools are cached under `$CARGO_HOME/rostfrei/tools` (or
+`$HOME/.cargo/rostfrei/tools`), keyed by version, revision and platform.
+`ROSTFREI_TOOLS_DIR` overrides this cache root. Keep that cache available when
+moving between setup and execution environments. It is not committed to the app.
 
-## Client discovery
+## Explicit updates and consumer work
 
-These **project-local locations** were checked against the linked authoritative
-documentation on 2026-10-13:
+`skills update` follows the **current application dependency**, not an independent
+latest-skills channel. `.agents/skills/.rostfrei-managed.json` is deterministic,
+commit-able metadata recording the installed release/protocol provenance and
+managed file hashes. Commit it alongside the installed skill directories.
 
-| Client | Explicit installer destination | Documentation |
+Install/update are idempotent. An ordinary install does not upgrade an existing
+managed build; it asks you to use `skills update`. Update replaces unchanged
+managed files, adds upstream resources and removes obsolete managed resources.
+User-added files and unrelated skills/instructions are preserved. Edited managed
+files produce conflicts with paths; resolve those deliberately and rerun. All
+skills are preflighted together, staged, and committed with rollback on write or
+rename failure. A conflict does not partially update the other skill.
+
+Older installations without a managed baseline are adopted only when complete
+skills are byte-identical. Different/unowned contents are preserved, not assumed
+to be pristine. Install into another directory and deliberately merge if needed.
+
+## Optional offline/standalone paths
+
+Both flags remain independent overrides:
+
+```sh
+# No Cargo project: install this native CLI's bundled skills at an explicit path.
+cargo rostfrei skills install --destination /path/to/consumer/.agents/skills
+# Optional external kit import; destination defaults to cwd/.agents/skills.
+cargo rostfrei skills install --kit /path/to/extracted-kit
+cargo rostfrei skills install --kit /path/to/extracted-kit --destination /path/to/skills
+```
+
+The same overrides work with `skills update`. An explicit kit overrides dependency
+discovery and undergoes full manifest and exact native-tool compatibility checks.
+A different kit revision requires its already-cached matching tool. No Cargo,
+Git, Python, source checkout or network is required for matching native/explicit
+kit installation. Direct invocation works with an empty tools PATH:
+`/path/to/cargo-rostfrei rostfrei skills install --destination /path/to/skills`.
+Within a Cargo project, `--destination` alone still resolves its dependency.
+
+Optional release archives are `rostfrei-agent-skills-<version>.tar.gz` plus a
+`.sha256` companion. Verify with `sha256sum --check <archive>.sha256` and extract
+before `--kit` import. Archive versions follow `workspace.package.version`,
+currently **0.0.5-alpha**; **0.1.0** is the release milestone. Ordinary setup does
+not require an archive.
+
+## Client discovery and execution
+
+| Client | Project-local discovery directory | Authoritative documentation |
 | --- | --- | --- |
-| OpenCode V2 | `/path/to/app/.opencode/skills` or `/path/to/app/.agents/skills` | [V2 skills discovery](https://opencode.ai/v2/docs/skills) |
-| Codex CLI / IDE | `/path/to/app/.agents/skills` | [Where Codex loads local skills](https://developers.openai.com/codex/build-skills) |
+| OpenCode V2 | `.agents/skills` or `.opencode/skills` | [V2 discovery](https://opencode.ai/v2/docs/skills) |
+| Codex CLI / IDE | `.agents/skills` | [Codex skills](https://developers.openai.com/codex/build-skills) |
 
-`.agents/skills` is the shared choice. Install once per project; avoid duplicate
-IDs across discovery locations. Launch the client in the application repository.
-Explicitly request `rostfrei-develop-feature` for a feature or `rostfrei-tracer`
-for inspection. A missing host question tool falls back to ordinary conversation.
-Documented discovery is not proof of workflow quality; fresh-session trials are
-tracked in the qualification guide. This installer does not change user/global
-configuration.
+These locations were checked on 2026-10-13. Install once per project, avoid duplicate
+skill IDs, and launch the client in the app. No user/global client configuration
+is changed. Ordinary conversation substitutes for host-specific question tools.
 
-## Start and run
-
-Use the application's documented binary exposing registered fixtures and the
-behavior suite. The current framework example is the actual `bike-rental-api`
-binary. In a matching framework checkout, with Rust, Docker and distinct control
-and dispatch tokens supplied in the environment:
+With the authorized isolated runtime's `ROSTFREI_TRACER_URL` and
+`ROSTFREI_API_TOKEN` in the environment:
 
 ```sh
-# Terminal 1: owned disposable broker, no persistent volume
-docker run --rm --name rostfrei-skills-nats -p 127.0.0.1:14222:4222 nats:2.12.1-alpine -js
-# Terminal 2: matching framework checkout
-ROSTFREI_NATS_URL=nats://127.0.0.1:14222 \
-  cargo run --locked -p bike-rental --bin bike-rental-api
+cargo rostfrei test .agents/skills/rostfrei-develop-feature/assets/add-first-bicycle.json \
+  --output behavior-evidence.json
+# Application-owned definition: select the installed release explicitly.
+cargo rostfrei test tests/my-behavior.json --output my-evidence.json \
+  --release .agents/skills/rostfrei-develop-feature/references/release.json
 ```
 
-Stop the host and `docker stop rostfrei-skills-nats` after use.
-The host defaults to `127.0.0.1:1309` (`ROSTFREI_API_ADDR` overrides it). It
-provisions both Test and Normal topology and resets Test at startup. Never point
-it at an unknown shared namespace. A real consumer supplies its own application
-composition, handlers and external dependency fixtures.
+The runner selects the installed release's already-cached native CLI if needed;
+exact revision/protocol checks remain enforced. Execution performs no tool
+downloads and needs neither Cargo/Git/Python nor the source checkout when invoked
+directly. Exit 0/1 means a supported reported pass/fail with retrieved evidence;
+exit 2 means typed blocked/incomplete execution. Uncertain submissions are never
+retried and existing evidence is never overwritten. Later capture failure retains
+the complete report/verdict. Preview is prediction, not acceptance.
 
-The installed develop-feature skill includes a complete JSON v2 definition.
-In another terminal with `ROSTFREI_TRACER_URL` and
-`ROSTFREI_API_TOKEN` available, after authorizing this specific isolated scope:
+Use the application's actual handlers, workers, fixtures and NATS event store on
+an authorized disposable NATS 2.12.1+ broker with JetStream. The verified baseline
+host is `cargo run --locked -p bike-rental --bin bike-rental-api`; supply
+`ROSTFREI_NATS_URL` and distinct control/dispatch tokens. Default bind is
+`127.0.0.1:1309`. Runs reset the entire configured Test scenario. See each skill's
+runtime reference for isolation, reset scope and broker cleanup.
 
-```sh
-SKILL=/absolute/path/to/application/.agents/skills/rostfrei-develop-feature
-cargo rostfrei test "$SKILL/assets/add-first-bicycle.json" --output behavior-evidence.json
-```
+## New-project release blocker
 
-For application-owned definitions, add `--release "$SKILL/references/release.json"`.
-The binary can also run directly as `/path/to/cargo-rostfrei rostfrei test ...`.
-Exit 0 means reported pass, 1 means reported failure, and 2 means typed
-blocked/incomplete execution. Complete verdicts require successful evidence
-retrieval; later capture failure preserves the report and exits 2. Evidence
-files are created exclusively and submissions are never automatically retried.
+`cargo rostfrei new my-app` still pins the **published** `v0.0.5-alpha` revision
+`c9f5516ddc324265916b60e1eb7300dad9acac9d`. That release predates skills-enabled
+tooling. The command preserves its working scaffold and explicitly reports that
+skills were not installed; attaching the current bundle would be incompatible.
+The shared setup hook runs inside staged/atomic project creation once the starter
+pin advances to a genuinely published skills-enabled release and its capability
+is qualified. This PR does not publish a release or invent a 0.1.0 pin.
 
-This runs the real NATS-backed suite; Preview is prediction only. Each run resets
-the host's entire configured Test scenario, not just the command's aggregate.
-See the installed skills for reset impact, capability separation and evidence
-interpretation. No source checkout is required by the installed Rust client.
+## Source and package maintenance
 
-**Release integration still required:** #107's standard application-linked host
-uses `cargo run --locked -p bike-rental -- --tracer` at its separate revision.
-Final combined installed-kit 0.1.0 and fresh-session rehearsals remain gates.
-The actual contracts are Catalog 1, behavior/MessageSeries 2 and fixture 1;
-the changelog records the intentional Catalog v2 → v1 change.
+Source discovery stays at the sole authoritative `.agents/skills/<name>` tree.
+The CLI's explicitly enumerated `resources/` entries are Git symlinks to those
+files, the repository license, and the existing runtime-generated schema. Git/path
+builds need a symlink-preserving checkout. Cargo **flattens these references into
+regular files in the `.crate`**; packaged builds need no external resources or
+symlink support. There is no manually synchronized second content/schema source.
+The native bundle supplies both installation and archive export. Release metadata
+comes from the CLI build, and protocol numbers remain Catalog 1, behavior and
+MessageSeries 2, fixture 1.
 
-## Repository maintenance
+From this checkout, use `cargo rostfrei-dev skills install --package bike-rental`
+for the workspace application (or `--manifest-path` for another app), and
+`cargo rostfrei-dev test <definition.json> --output <new-evidence.json>` for source
+execution. No source preparation command is required. Source resource edits are
+picked up by an ordinary Rust rebuild and reflected in dirty-build provenance.
 
-The only authoritative skill sources are `.agents/skills/<name>/`. This is
-discovered directly by OpenCode V2 and Codex, without symlinks, duplicate copies
-or configuration. The earlier `.opencode/skills/rostfrei-tracer` source moved
-there. Use source-discovered skills directly from the framework root:
-
-```sh
-cargo rostfrei-dev skills info
-cargo rostfrei-dev test .agents/skills/rostfrei-develop-feature/assets/add-first-bicycle.json \
-  --output source-evidence.json
-```
-
-Use the documented isolated runtime and authorization scope above. There is no
-source bootstrap or generated-file dependency. Cargo refreshes compiled revision
-metadata when HEAD changes; the schema comes from the live catalog. Legacy
-generated metadata, if present beside an example, is validated and preserved:
-move a stale file aside deliberately or use the matching CLI. Installed artifacts
-bundle release metadata, runtime-schema snapshot and licenses.
-
-From the framework repository:
+Repository-only maintenance/CI commands:
 
 ```sh
 cargo build --locked -p rostfrei-structure --bin cargo-rostfrei
 python3 scripts/check_agent_skills.py
+python3 scripts/check_agent_onboarding.py
 python3 scripts/package_agent_skills.py --output /path/to/artifacts
 ```
 
-Python remains repository-only packaging/CI infrastructure. The builder uses the
-Rust CLI's release metadata and the runtime's authoritative schema; only tracked
-Markdown/JSON/license skill resources are packaged, excluding local caches and
-untracked work. `ROSTFREI_CLI` can select an installed matching native executable.
-
-The check builds and installs into a standalone temporary consumer outside the
-workspace and validates both skills with the pinned upstream reference validator.
-`scripts/skills_ref_validator.py` downloads SHA-256-pinned source at Agent Skills
-revision `69ef37e9424c0a7ea9dd2293b559e43ec8176379`, StrictYAML 1.7.3,
-python-dateutil 2.9.0.post0 and six 1.17.0 into disposable storage. It calls the
-reference library directly, needing no pip/venv, build backend, system package
-installation or host-specific tool. CI requires HTTPS access to codeload GitHub
-and files.pythonhosted.org; checksum/network errors fail the check.
-
-The existing prepare-release workflow validates, builds and attaches the archive
-and checksum to a **draft** release. It does not publish the release.
+The exporter validates native bundled bytes against tracked authoritative inputs;
+ignored/untracked junk is excluded. Tests install an independently verified Cargo
+package outside the workspace, remove its source, validate installed skills using
+the pinned upstream Agent Skills validator, exercise dependency upgrades, and run
+real NATS controls. The draft-release workflow attaches the archive/checksum but
+does not publish. Final combined #107 host qualification, fresh-session trials with
+human feedback and final release rehearsal remain explicit release gates.

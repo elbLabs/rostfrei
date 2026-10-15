@@ -82,7 +82,7 @@ class InstalledKitTests(unittest.TestCase):
         result = self.native("--destination", destination, cwd=current)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         actual = {str(path.relative_to(destination)): path.read_bytes()
-                  for path in destination.rglob("*") if path.is_file()}
+                  for path in destination.rglob("*") if path.is_file() and path.name != ".rostfrei-managed.json"}
         self.assertEqual(actual, expected)
         self.assertFalse((self.consumer / ".agents").exists())
         self.assertFalse((current / "Cargo.toml").exists())

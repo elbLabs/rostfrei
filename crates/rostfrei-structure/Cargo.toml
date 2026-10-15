@@ -4,7 +4,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-include = ["src/**", "templates/**", "build.rs", "Cargo.toml"]
+include = ["src/**", "templates/**", "build.rs", "Cargo.toml",
+    "resources/develop.md", "resources/execution.md", "resources/worked-example.md",
+    "resources/add-first-bicycle.json", "resources/tracer.md", "resources/runtime.md",
+    "resources/behavioral-test-v2.schema.json", "resources/LICENSE"]
 
 [lib]
 name = "rostfrei_structure"

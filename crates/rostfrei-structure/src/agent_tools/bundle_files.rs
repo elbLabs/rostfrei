@@ -1,0 +1,40 @@
+// Source links reference the sole authoritative skill/schema/license inputs.
+// Cargo flattens these links to regular files when producing the .crate.
+pub const FILES: &[(&str, &[u8])] = &[
+    (
+        "rostfrei-develop-feature/SKILL.md",
+        include_bytes!("../../resources/develop.md"),
+    ),
+    (
+        "rostfrei-develop-feature/references/execution.md",
+        include_bytes!("../../resources/execution.md"),
+    ),
+    (
+        "rostfrei-develop-feature/references/worked-example.md",
+        include_bytes!("../../resources/worked-example.md"),
+    ),
+    (
+        "rostfrei-develop-feature/assets/add-first-bicycle.json",
+        include_bytes!("../../resources/add-first-bicycle.json"),
+    ),
+    (
+        "rostfrei-develop-feature/assets/behavioral-test-v2.schema.json",
+        include_bytes!("../../resources/behavioral-test-v2.schema.json"),
+    ),
+    (
+        "rostfrei-tracer/SKILL.md",
+        include_bytes!("../../resources/tracer.md"),
+    ),
+    (
+        "rostfrei-tracer/references/runtime.md",
+        include_bytes!("../../resources/runtime.md"),
+    ),
+    (
+        "rostfrei-develop-feature/LICENSE",
+        include_bytes!("../../resources/LICENSE"),
+    ),
+    (
+        "rostfrei-tracer/LICENSE",
+        include_bytes!("../../resources/LICENSE"),
+    ),
+];

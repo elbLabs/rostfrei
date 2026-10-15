@@ -135,8 +135,12 @@ fn valid_manifest_does_not_make_a_different_revision_compatible() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("release or protocol mismatch"));
     assert!(!destination.exists());
     let result = Command::new(env!("CARGO_BIN_EXE_cargo-rostfrei"))
-        .args(["rostfrei", "skills", "install", "--kit"]).arg(&kit)
-        .current_dir(temporary.path()).env("PATH", "").output().unwrap();
+        .args(["rostfrei", "skills", "install", "--kit"])
+        .arg(&kit)
+        .current_dir(temporary.path())
+        .env("PATH", "")
+        .output()
+        .unwrap();
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("release or protocol mismatch"));
     assert!(!temporary.path().join(".agents").exists());
@@ -156,4 +160,91 @@ fn destination_symlinks_preserve_their_target() {
     assert!(!install(&kit, &destination).status.success());
     assert_eq!(fs::read_dir(work).unwrap().count(), 0);
     assert!(!destination.join("rostfrei-develop-feature").exists());
+}
+
+#[test]
+fn explicit_update_is_transactional_and_preserves_user_additions() {
+    let temporary = TempDir::new().unwrap();
+    let kit = temporary.path().join("kit");
+    let destination = temporary.path().join("skills");
+    let mut resources = fixture(&kit);
+    resources.insert(
+        "skills/rostfrei-tracer/references/obsolete.md".to_owned(),
+        b"old managed resource".to_vec(),
+    );
+    seal(&kit, &resources);
+    assert!(install(&kit, &destination).status.success());
+    let baseline = fs::read(destination.join(".rostfrei-managed.json")).unwrap();
+    let first = destination.join("rostfrei-develop-feature/SKILL.md");
+    let original_first = fs::read(&first).unwrap();
+    let second = destination.join("rostfrei-tracer/SKILL.md");
+    let original_second = fs::read(&second).unwrap();
+    fs::write(&second, "local edit").unwrap();
+    write(
+        &destination,
+        "rostfrei-tracer/user-notes.md",
+        b"unmanaged notes",
+    );
+    resources.insert(
+        "skills/rostfrei-develop-feature/SKILL.md".to_owned(),
+        b"upstream change".to_vec(),
+    );
+    resources.insert(
+        "skills/rostfrei-tracer/SKILL.md".to_owned(),
+        b"upstream second change".to_vec(),
+    );
+    resources.remove("skills/rostfrei-tracer/references/obsolete.md");
+    fs::remove_file(kit.join("skills/rostfrei-tracer/references/obsolete.md")).unwrap();
+    resources.insert(
+        "skills/rostfrei-tracer/references/added.md".to_owned(),
+        b"new managed resource".to_vec(),
+    );
+    seal(&kit, &resources);
+    let update = || {
+        Command::new(env!("CARGO_BIN_EXE_cargo-rostfrei"))
+            .args(["rostfrei", "skills", "update", "--kit"])
+            .arg(&kit)
+            .arg("--destination")
+            .arg(&destination)
+            .env("PATH", "")
+            .output()
+            .unwrap()
+    };
+    let rejected = update();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("Preserving"));
+    assert_eq!(fs::read(&first).unwrap(), original_first);
+    assert_eq!(fs::read(&second).unwrap(), b"local edit");
+    assert_eq!(
+        fs::read(destination.join(".rostfrei-managed.json")).unwrap(),
+        baseline
+    );
+    assert!(
+        destination
+            .join("rostfrei-tracer/references/obsolete.md")
+            .exists()
+    );
+    fs::write(&second, original_second).unwrap();
+    let updated = update();
+    assert!(
+        updated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&updated.stderr)
+    );
+    assert_eq!(fs::read(first).unwrap(), b"upstream change");
+    assert!(
+        !destination
+            .join("rostfrei-tracer/references/obsolete.md")
+            .exists()
+    );
+    assert_eq!(
+        fs::read(destination.join("rostfrei-tracer/references/added.md")).unwrap(),
+        b"new managed resource"
+    );
+    assert_eq!(
+        fs::read(destination.join("rostfrei-tracer/user-notes.md")).unwrap(),
+        b"unmanaged notes"
+    );
+    assert!(update().status.success());
+    assert!(install(&kit, &destination).status.success());
 }

@@ -45,7 +45,12 @@ useful scenario; add further scenarios as the agreed feature requires them.
 ## 2. Build the behavior test first
 
 Use `cargo rostfrei skills info` to identify the CLI's compiled revision and
-contracts. In the framework checkout, use `cargo rostfrei-dev skills info` and
+contracts. In an existing Cargo application, explicit `cargo rostfrei skills
+install` selects its resolved Rostfrei dependency; after dependency upgrades use
+`cargo rostfrei skills update`. The setup tool caches matching native CLIs, so
+its own version need not equal every application's. Commit installed skills and
+their `.rostfrei-managed.json` baseline; resolve local-edit conflicts deliberately.
+In the framework checkout, use `cargo rostfrei-dev skills info` and
 `cargo rostfrei-dev test ...`; Cargo rebuilds the local Rust CLI after revision
 changes. Source discovery requires no generated skill files or preparation step.
 Installed kits include `references/release.json`; the CLI checks it when running

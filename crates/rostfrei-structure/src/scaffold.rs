@@ -13,6 +13,12 @@ const SCAFFOLD_RELEASE: &str = "v0.0.5-alpha";
 const SCAFFOLD_REVISION: &str = "c9f5516ddc324265916b60e1eb7300dad9acac9d";
 const RUST_VERSION: &str = env!("CARGO_PKG_RUST_VERSION");
 
+/// Release qualification owns this capability alongside the published pin.
+/// The current published starter predates the skills/setup CLI protocol.
+pub const fn scaffold_dependency() -> (&'static str, &'static str, bool) {
+    (SCAFFOLD_RELEASE, SCAFFOLD_REVISION, false)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreatedProject {
     pub destination: PathBuf,
@@ -21,6 +27,8 @@ pub struct CreatedProject {
 
 #[derive(Debug, Error)]
 pub enum NewProjectError {
+    #[error("project setup failed before creation: {0}")]
+    Setup(String),
     #[error("project path `{0}` has no usable directory name")]
     InvalidPath(PathBuf),
     #[error(
@@ -157,6 +165,14 @@ const TEMPLATES: &[Template] = &[
 ];
 
 pub fn create_project(destination: impl AsRef<Path>) -> Result<CreatedProject, NewProjectError> {
+    create_project_with_setup(destination, |_| Ok(()))
+}
+
+/// Runs deliberate project setup within the same staged creation transaction.
+pub fn create_project_with_setup(
+    destination: impl AsRef<Path>,
+    setup: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<CreatedProject, NewProjectError> {
     let destination = destination.as_ref();
     ensure_destination_is_available(destination)?;
     let names = project_names(destination)?;
@@ -177,6 +193,7 @@ pub fn create_project(destination: impl AsRef<Path>) -> Result<CreatedProject, N
         })?;
 
     render_project(temporary.path(), &names)?;
+    setup(temporary.path()).map_err(NewProjectError::Setup)?;
     fs::rename(temporary.path(), destination).map_err(|source| NewProjectError::Commit {
         path: destination.to_path_buf(),
         source,

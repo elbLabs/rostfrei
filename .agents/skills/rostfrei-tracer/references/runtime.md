@@ -1,19 +1,31 @@
 # Release and execution prerequisites
 
-Use the release-matched Rust CLI. Read the installed skill's
-`references/release.json` and install `rostfrei-structure` from that exact revision:
+Install a skills-enabled Rust setup CLI once, then explicitly set up the
+application whose dependency is resolved in `Cargo.lock`:
 
 ```sh
 cargo install --locked --git https://github.com/elbLabs/rostfrei \
-  --rev <sourceRevision> rostfrei-structure
-cargo rostfrei skills info
+  --rev <skills-enabled-sourceRevision> rostfrei-structure
+cargo rostfrei skills install
+# After upgrading the app's framework dependency/lockfile:
+cargo rostfrei skills update
 ```
 
-Initial compilation requires Rust 1.98+, Cargo, Git, a native linker and network
-access. Consumer installation/execution needs no Python. After installation the
-native `cargo-rostfrei` binary needs neither Git nor a source checkout and does
-not contact package registries. The kit contains platform-neutral skills/resources;
-Cargo builds the executable for the local platform.
+Setup follows the actual resolved framework version/revision, acquiring and caching
+its matching CLI when needed. The default destination is the selected app's
+`.agents/skills`; commit its managed baseline too. Explicit updates preserve
+user-added files and reject edited managed-file conflicts before changing any
+skill. Merely adding the dependency or starting the app writes no skills.
+
+Initial compilation requires Rust 1.98+, Cargo, Git, a native linker and source
+access. Consumer installation/execution needs no Python. PR #106 must be merged
+or selected by its reviewed revision; published `v0.0.5-alpha` predates setup
+support. Unsupported older dependencies do not receive a newer tool's skills.
+`skills info` identifies the invoked tool; installed `references/release.json`
+identifies the selected skills. Native execution dispatches to the already-cached
+matching tool without Cargo, Git, downloads or source files. Keep
+`$CARGO_HOME/rostfrei/tools` (default `$HOME/.cargo/rostfrei/tools`, overridden by
+`ROSTFREI_TOOLS_DIR`) available to the execution environment.
 
 In the framework checkout use `cargo rostfrei-dev skills info` and
 `cargo rostfrei-dev test <definition.json> --output <new-evidence.json>`. Source

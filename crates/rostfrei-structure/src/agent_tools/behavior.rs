@@ -63,7 +63,6 @@ fn selected_release(options: &TestOptions) -> Result<Release> {
     };
     let release: Release = serde_json::from_value(json_file(path, Phase::Preparation)?)
         .map_err(|_| setup("Invalid skill release metadata"))?;
-    release.check(Phase::Preparation)?;
     Ok(release)
 }
 
@@ -212,12 +211,15 @@ fn execute(
     Ok(passed)
 }
 
-pub fn run_test(options: &TestOptions) -> Result<bool> {
+pub fn run_test(options: &TestOptions) -> Result<u8> {
     let definition = json_file(&options.definition, Phase::Preparation)?;
     if definition.get("schemaVersion").and_then(Value::as_u64) != Some(2) {
         return Err(setup("Expected a canonical JSON v2 behavior definition"));
     }
     let release = selected_release(options)?;
+    if release.check(Phase::Preparation).is_err() {
+        return super::setup::delegate_test(&release);
+    }
     let tracer = Tracer::from_env()?;
     let (mut evidence, href) = discover(&tracer, release, definition)?;
     let mut opening = OpenOptions::new();
@@ -242,7 +244,7 @@ pub fn run_test(options: &TestOptions) -> Result<bool> {
                 if passed { "passed" } else { "failed" },
                 options.output.display()
             );
-            Ok(passed)
+            Ok(u8::from(!passed))
         }
         Err(mut error) => {
             if matches!(evidence.run_state, RunState::Reported)

@@ -9,6 +9,87 @@ the eventual 0.1.0 release-version bump is separate release preparation.
 Implementation branch: `feat/agent-skills-kit`. Agent/client: GPT-6 Astra in
 OpenCode V2. This implementation session is not a fresh-session workflow trial.
 
+### Explicit dependency-aware setup (2026-10-15)
+
+Agreed scenario: an existing Cargo app resolves Rostfrei; explicit install selects
+that dependency's skills, and explicit update follows a dependency upgrade while
+preserving local edits. This CLI/filesystem behavior cannot be expressed by the
+NATS JSON-v2 message-graph suite. External Cargo/CLI acceptance covers it; the
+real-NATS installed/source checks continue to cover actual runner behavior.
+
+Test-first commit `ac58f93`: `python3 scripts/check_agent_onboarding.py` first
+resolved/locked the real renamed, inherited framework dependency, then failed
+with CLI exit **2**, `--kit <KIT>` and `--destination <DESTINATION>` required.
+This is an observed missing-setup capability red, not application behavioral red.
+
+Implemented commands are `skills install`, `skills update`, `skills info` and
+`test`. The setup tool is installed once separately from the library. Cargo
+metadata/lock resolution selects exact Git revisions or published crates.io
+version/VCS provenance; matching tools are obtained through Cargo and cached.
+Local path source builds refresh during explicit setup. Cached runner routing
+preserves exact release/contracts checks and performs no runtime acquisition.
+Optional kit/destination overrides retain source-free native paths. Updates use
+a committed baseline of resource hashes, all-skill conflict preflight and staged
+rollback; consumer additions survive and obsolete unmodified resources are removed.
+
+Authoritative skills stay in `.agents/skills`. Explicit package resource links
+reference that source, runtime schema and license; Cargo flattens them into
+regular `.crate` files. The native bundle is also the archive export source,
+validated against tracked authoritative inputs. There is no consumer Python or
+build/startup installation side effect.
+
+Initial local green evidence:
+
+- **72 Rust tests** passed, including 7 HTTP failure-boundary tests, 5 installer
+  tests, staged transaction rollback and atomic scaffold setup failure.
+- **5 external onboarding checks** passed: real renamed/inherited resolution,
+  absent dependency, explicit workspace/package selection, and two controlled
+  Git revisions. The setup CLI's own revision differed from both selected tools.
+  Dependency upgrade required `update`; a local edit blocked all skills, then
+  deliberate resolution allowed replacement/removal/addition while preserving
+  user notes. Cached update worked offline; runtime routing worked without
+  Cargo/Git/Python. Invalid release skill sets were rejected without delegation.
+  An uncommitted local source edit was rebuilt on explicit update; that dirty
+  cached build was rejected for a later immutable Git dependency at the same SHA.
+- **4 source regressions** passed, including ordinary Rust rebuild picking up a
+  canonical skill edit and retaining dirty provenance without generated files.
+- The fifth external onboarding check exercised the actual published starter and
+  confirmed the pre-kit capability diagnostic before any skills were installed.
+- **7 external kit acceptance checks** passed with the native executable from an
+  externally extracted `.crate`, after its build-source directory was removed.
+  Both skills passed pinned reference validation. Optional override combinations,
+  empty-tools-PATH installation, idempotency, preservation and reproducible
+  archives excluding ignored/untracked junk passed.
+- `cargo package --locked --offline --allow-dirty -p rostfrei-structure` built and
+  verified **74 files**. All eight resource entries were regular package files.
+  The package was separately installed with `cargo install --locked --offline
+  --debug --path <external-package> --root /tmp/rostfrei-onboarding-cli`, then the
+  package source was deleted. This local pre-commit build records `ac58f93` plus
+  dirty implementation changes; clean-revision packaging is repeated by CI.
+- Workspace all-target/all-feature clippy, formatting, domain structure, shared
+  versions and diff checks passed.
+- Installed native real-NATS evidence: `/tmp/rostfrei-onboarding-installed`,
+  disposable NATS 2.12.1 port **33262**, actual `bike-rental-api` host, pass →
+  intentional comparison failure → unchanged pass. Source discovery evidence:
+  `/tmp/rostfrei-onboarding-source`, separate broker port **33264**, actual pass
+  without generated skill resources. All four captures settled/exact (500ms).
+  Both owned brokers/hosts were cleaned up. Consumer commands ran without
+  Python/Cargo/Git on PATH; the installed run also removed the extracted kit.
+
+These scripted NATS controls are not a fresh-session feature-TDD trial. Final
+remote checks are tracked on PR #106, separately from the local evidence above.
+
+**Release blocker:** scaffold release `v0.0.5-alpha` / `c9f5516` genuinely predates
+skills support. `cargo rostfrei new` preserves that working published dependency
+and reports the gap. Its shared setup hook is inside staged atomic creation,
+ready for a qualified published skills-enabled pin; this PR does not attach a
+mismatched current bundle or invent/publish a future release. The promised
+new-project skills inclusion remains pending that publication/pin qualification.
+
+Combined #107 qualification, independent fresh-session/human feedback, final
+external-consumer release rehearsal and draft-release attachment verification
+remain unexecuted release gates.
+
 ### Rust consumer migration (2026-10-14)
 
 The supported consumer commands are now `cargo rostfrei skills install`,

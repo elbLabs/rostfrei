@@ -2,7 +2,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
-use rostfrei_structure::{CheckOptions, check_workspace, create_project};
+use rostfrei_structure::{
+    CheckOptions, check_workspace, create_project_with_setup, scaffold_dependency,
+};
 
 mod agent_tools;
 
@@ -52,13 +54,48 @@ struct SkillsArgs {
 enum SkillsCommand {
     /// Prints the CLI build revision, framework version and supported contracts as JSON.
     Info,
-    /// Installs both skills from an extracted kit, preserving existing consumer work.
-    Install {
+    /// Installs skills matching the application's resolved Rostfrei dependency.
+    Install(InstallArgs),
+    /// Updates unmodified managed skills to the application's current dependency.
+    Update(InstallArgs),
+    // Internal versioned-tool handoff, after the parent has checked provenance.
+    #[command(hide = true)]
+    Apply {
         #[arg(long)]
-        kit: PathBuf,
+        kit: Option<PathBuf>,
         #[arg(long)]
         destination: PathBuf,
+        #[arg(long)]
+        update: bool,
     },
+}
+
+#[derive(Args, Debug)]
+struct InstallArgs {
+    /// Import an explicit kit instead of resolving an application dependency.
+    #[arg(long)]
+    kit: Option<PathBuf>,
+    /// Override the selected application's .agents/skills directory.
+    #[arg(long)]
+    destination: Option<PathBuf>,
+    /// Application/workspace manifest (otherwise found from the current directory).
+    #[arg(long, conflicts_with = "kit")]
+    manifest_path: Option<PathBuf>,
+    /// Select an application in a workspace with multiple default members.
+    #[arg(long, conflicts_with = "kit")]
+    package: Option<String>,
+}
+
+fn setup_skills(args: InstallArgs, update: bool) -> Result<bool, String> {
+    agent_tools::setup_skills(agent_tools::SetupOptions {
+        kit: args.kit,
+        destination: args.destination,
+        manifest_path: args.manifest_path,
+        package: args.package,
+        update,
+    })
+    .map_err(|error| serde_json::json!({"error": error}).to_string())?;
+    Ok(true)
 }
 
 #[derive(Args, Debug)]
@@ -85,8 +122,7 @@ fn main() -> ExitCode {
             output: test.output,
             release: test.release,
         }) {
-            Ok(true) => ExitCode::SUCCESS,
-            Ok(false) => ExitCode::FAILURE,
+            Ok(code) => ExitCode::from(code),
             Err(error) => {
                 eprintln!("{}", serde_json::json!({"error": error}));
                 ExitCode::from(2)
@@ -116,9 +152,15 @@ fn run(command: Command) -> Result<bool, String> {
                 );
                 Ok(true)
             }
-            SkillsCommand::Install { kit, destination } => {
-                agent_tools::install_skills(&kit, &destination)
-                    .map_err(|error| error.to_string())?;
+            SkillsCommand::Install(args) => setup_skills(args, false),
+            SkillsCommand::Update(args) => setup_skills(args, true),
+            SkillsCommand::Apply {
+                kit,
+                destination,
+                update,
+            } => {
+                agent_tools::install_skills(kit.as_deref(), &destination, update)
+                    .map_err(|error| serde_json::json!({"error": error}).to_string())?;
                 Ok(true)
             }
         },
@@ -159,7 +201,15 @@ fn run_check(arguments: CheckArgs) -> Result<bool, String> {
 }
 
 fn run_new(arguments: NewArgs) -> Result<bool, String> {
-    let project = create_project(arguments.path).map_err(|error| error.to_string())?;
+    let (release, revision, supports_skills) = scaffold_dependency();
+    let project = create_project_with_setup(arguments.path, |staged| {
+        if supports_skills {
+            agent_tools::setup_scaffold(staged, release.trim_start_matches('v'), revision)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    })
+    .map_err(|error| error.to_string())?;
     println!(
         "Created Rostfrei project `{}` at {}",
         project.package_name,
@@ -171,6 +221,14 @@ fn run_new(arguments: NewArgs) -> Result<bool, String> {
     println!("  cargo test");
     println!("  docker compose up -d");
     println!("  cargo run");
+    if !supports_skills {
+        println!(
+            "\nSkills not installed: the published starter {release} ({revision}) predates skills-enabled tooling."
+        );
+        println!(
+            "After upgrading to a published skills-enabled framework release, run cargo rostfrei skills install."
+        );
+    }
     Ok(true)
 }
 

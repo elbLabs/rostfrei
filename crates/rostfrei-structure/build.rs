@@ -1,5 +1,10 @@
 use std::{env, fs, path::Path, process::Command};
 
+// Including the same inputs here also refreshes build provenance when a linked
+// authoritative resource changes, even if no CLI Rust source changed.
+#[path = "src/agent_tools/bundle_files.rs"]
+mod bundle_files;
+
 fn git(root: &Path, arguments: &[&str]) -> Option<String> {
     let output = Command::new("git")
         .args(arguments)
@@ -13,6 +18,7 @@ fn git(root: &Path, arguments: &[&str]) -> Option<String> {
 }
 
 fn main() {
+    let _ = bundle_files::FILES;
     let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap_or_default();
     let directory = Path::new(&manifest);
     // Cargo packages retain provenance without requiring Git at build/runtime.

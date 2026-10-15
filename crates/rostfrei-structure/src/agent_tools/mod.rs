@@ -1,7 +1,10 @@
 mod behavior;
+mod bundle_files;
 mod http;
 mod install;
 mod release;
+mod setup;
+mod transaction;
 
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -10,6 +13,7 @@ use thiserror::Error;
 pub use behavior::{TestOptions, run_test};
 pub use install::install_skills;
 pub use release::Release;
+pub use setup::{SetupOptions, setup_scaffold, setup_skills};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

@@ -18,7 +18,11 @@ def fresh_source_checkout(destination):
     paths = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
     for name in filter(None, paths):
         source = ROOT / name
-        if source.is_file():
+        if source.is_symlink():
+            target = destination / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(os.readlink(source))
+        elif source.is_file():
             target = destination / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
@@ -95,6 +99,18 @@ class SourceSkillTests(unittest.TestCase):
         cli = self.build_cli()
         metadata = json.loads(subprocess.check_output([str(cli), "rostfrei", "skills", "info"], env=environment))
         self.assertEqual(metadata["sourceRevision"], new_head)
+        self.assertFalse(self.release.exists())
+        # The source link's target is authoritative: a normal Rust rebuild picks
+        # up instruction edits without synchronizing a second copy or Python prep.
+        instructions = self.skill / "SKILL.md"
+        instructions.write_text(instructions.read_text() + "\nSource freshness regression\n")
+        cli = self.build_cli()
+        installed = self.root.parent / "installed"
+        result = subprocess.run([str(cli), "rostfrei", "skills", "install", "--destination", str(installed)],
+                                cwd=self.root.parent, env=environment, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((installed / "rostfrei-develop-feature/SKILL.md").read_text().endswith("Source freshness regression\n"))
+        self.assertTrue(json.loads((installed / "rostfrei-develop-feature/references/release.json").read_text())["sourceTreeDirty"])
         self.assertFalse(self.release.exists())
 
     def test_stale_legacy_metadata_is_preserved_and_rejected(self):

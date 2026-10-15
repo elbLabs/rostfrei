@@ -1,14 +1,15 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::Write,
     path::{Component, Path},
 };
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use super::{ErrorKind, Phase, Release, Result, ToolError};
+use super::{
+    ErrorKind, Phase, Release, Result, ToolError, bundle_files, release::SKILLS, transaction,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,11 +17,11 @@ struct Manifest {
     sha256: BTreeMap<String, String>,
 }
 
-fn error(message: &str) -> ToolError {
+pub(super) fn error(message: &str) -> ToolError {
     ToolError::new(ErrorKind::SetupFailed, Phase::Installation, message)
 }
 
-fn files(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
+pub(super) fn files(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut output = BTreeMap::new();
     visit(root, root, &mut output)?;
     Ok(output)
@@ -68,7 +69,26 @@ fn visit(root: &Path, path: &Path, output: &mut BTreeMap<String, Vec<u8>>) -> Re
     Ok(())
 }
 
-pub fn install_skills(kit: &Path, destination: &Path) -> Result<()> {
+pub(super) struct Kit {
+    pub release: Release,
+    pub files: BTreeMap<String, Vec<u8>>,
+}
+
+pub(super) fn bundled() -> Result<Kit> {
+    let release = Release::current();
+    let metadata = serde_json::to_vec_pretty(&release)
+        .map_err(|_| error("Could not encode release metadata"))?;
+    let mut files: BTreeMap<_, _> = bundle_files::FILES
+        .iter()
+        .map(|(name, bytes)| ((*name).to_owned(), bytes.to_vec()))
+        .collect();
+    for name in SKILLS {
+        files.insert(format!("{name}/references/release.json"), metadata.clone());
+    }
+    Ok(Kit { release, files })
+}
+
+pub(super) fn external(kit: &Path) -> Result<Kit> {
     let mut contents = files(kit)?;
     let manifest = contents
         .remove("manifest.json")
@@ -89,10 +109,20 @@ pub fn install_skills(kit: &Path, destination: &Path) -> Result<()> {
         .ok_or_else(|| error("Kit release metadata is missing"))?;
     let release: Release =
         serde_json::from_slice(metadata).map_err(|_| error("Invalid kit release metadata"))?;
-    release.check(Phase::Installation)?;
-    let mut pending = Vec::new();
+    // Reject unexpected skill names before interpreting paths from the document.
+    if release.skills != SKILLS {
+        return Err(error("Unsupported kit skill set"));
+    }
+    let mut resources = BTreeMap::new();
     for name in &release.skills {
-        let source = files(&kit.join("skills").join(name))?;
+        let prefix = format!("skills/{name}/");
+        let source: BTreeMap<_, _> = contents
+            .iter()
+            .filter_map(|(path, bytes)| {
+                path.strip_prefix(&prefix)
+                    .map(|relative| (relative.to_owned(), bytes.clone()))
+            })
+            .collect();
         if !source.contains_key("SKILL.md")
             || source.get("references/release.json") != Some(metadata)
         {
@@ -100,42 +130,23 @@ pub fn install_skills(kit: &Path, destination: &Path) -> Result<()> {
                 "Skill resources are incomplete or not release-matched",
             ));
         }
-        let target = destination.join(name);
-        if target
-            .try_exists()
-            .map_err(|_| error("Could not inspect destination"))?
-            || target.is_symlink()
-        {
-            if files(&target)? != source {
-                return Err(error(
-                    "Preserving existing modified skill; install elsewhere and merge deliberately",
-                )
-                .detail("path", target.display().to_string()));
-            }
-        } else {
-            pending.push((target, source));
+        for (path, bytes) in source {
+            resources.insert(format!("{name}/{path}"), bytes);
         }
     }
-    // Preflight all conflicts before writing either skill. create_new also
-    // preserves any consumer work created concurrently with this installation.
-    fs::create_dir_all(destination).map_err(|_| error("Could not create destination directory"))?;
-    for (target, source) in pending {
-        fs::create_dir(&target)
-            .map_err(|_| error("Preserving destination created since preflight"))?;
-        for (name, bytes) in source {
-            let file = target.join(name);
-            if let Some(parent) = file.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|_| error("Could not create skill directory"))?;
-            }
-            fs::OpenOptions::new().write(true).create_new(true).open(file)
-                .and_then(|mut file| file.write_all(&bytes))
-                .map_err(|_| error("Could not install skill file; preserving partial installation for inspection"))?;
-        }
-    }
+    Ok(Kit {
+        release,
+        files: resources,
+    })
+}
+
+pub fn install_skills(kit: Option<&Path>, destination: &Path, update: bool) -> Result<()> {
+    let kit = kit.map_or_else(bundled, external)?;
+    kit.release.check(Phase::Installation)?;
+    transaction::apply(&kit, destination, update)?;
     println!(
         "Installed Rostfrei {} skills in {}",
-        release.framework_version,
+        kit.release.framework_version,
         destination.display()
     );
     Ok(())
