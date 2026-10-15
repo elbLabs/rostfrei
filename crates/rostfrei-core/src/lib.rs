@@ -12,6 +12,7 @@ mod memory;
 mod outcome;
 mod proposal;
 mod read_model;
+mod receipt_validation;
 mod store;
 
 pub use aggregate::{

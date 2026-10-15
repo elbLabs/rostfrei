@@ -2,6 +2,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::any::Any;
 use thiserror::Error;
 
 use crate::{
@@ -66,28 +67,7 @@ impl OutcomeMarker {
         proposal: &EventTransaction,
         receipt: TransactionReceipt,
     ) -> Result<(Self, Vec<u8>), EventStoreError> {
-        if proposal.completion().is_some() {
-            crate::validate_completed_transaction(proposal)?;
-        }
-        if receipt.bounded_context() != proposal.bounded_context()
-            || receipt.operation_id() != proposal.operation_id()
-            || receipt.operation_fingerprint() != proposal.operation_fingerprint()
-            || receipt.correlation_id() != proposal.correlation_id()
-            || receipt.causation_id() != proposal.causation_id()
-            || receipt.security_scope() != proposal.security_scope()
-            || receipt
-                .completion()
-                .is_some_and(|value| Some(value) != proposal.completion())
-            || (proposal
-                .completion()
-                .is_some_and(|value| value.rejection.is_some())
-                && !receipt.events().is_empty())
-        {
-            return Err(EventStoreError::new(
-                EventStoreErrorKind::InvalidRequest,
-                "outcome integrity receipt does not match its proposal",
-            ));
-        }
+        receipt.validate_proposal(proposal)?;
         let context = proposal.bounded_context().ok_or_else(|| {
             EventStoreError::new(
                 EventStoreErrorKind::InvalidRequest,
@@ -95,14 +75,16 @@ impl OutcomeMarker {
             )
         })?;
         let key = OutcomeKey::new(authority, context.clone(), proposal.operation_id().clone());
-        let details = EncodedOutcomeDetails {
-            completion: proposal.completion().cloned(),
-        };
-        let bytes = details.encode(&key, proposal.security_scope())?;
+        let completion = proposal.completion().cloned();
+        let bytes =
+            EncodedOutcomeDetails::encode(completion.clone(), &key, proposal.security_scope())?;
         let reference = OutcomeDetailReference {
             key,
             security_scope: proposal.security_scope().cloned(),
-            decision: if details.rejection().is_some() {
+            decision: if completion
+                .as_ref()
+                .is_some_and(|value| value.rejection.is_some())
+            {
                 OutcomeDecision::Rejected
             } else {
                 OutcomeDecision::Accepted
@@ -117,8 +99,7 @@ impl OutcomeMarker {
         crate::identity::hash_part(&mut hash, reference.digest.as_bytes());
         crate::identity::hash_part(&mut hash, proposal.fingerprint().as_bytes());
         let revision = OutcomeRevision(ContentFingerprint::from_bytes(hash.finalize().into()));
-        let evidence = details
-            .completion
+        let evidence = completion
             .as_ref()
             .and_then(|v| v.evidence.clone())
             .map(|mut v| {
@@ -155,6 +136,17 @@ impl OutcomeMarker {
     }
     pub const fn evidence(&self) -> Option<&OutcomeEvidence> {
         self.evidence.as_ref()
+    }
+
+    /// Validates an adapter result against the exact requested storage coordinate.
+    /// Authority strings identify storage; possession of one does not grant access.
+    pub fn validate_key(&self, expected: &OutcomeKey) -> Result<(), EventStoreError> {
+        if self.reference.key() != expected {
+            return Err(corrupt(
+                "completed outcome reference key differs from requested authority/context/operation",
+            ));
+        }
+        Ok(())
     }
 
     /// Identity reconciliation deliberately ignores the speculative proposal and timestamp.
@@ -216,6 +208,8 @@ pub enum OutcomeDetails<T> {
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum OutcomeRecoveryError {
+    #[error("completed outcome details do not match the immutable winning reference")]
+    IntegrityMismatch,
     #[error("completed outcome details expired")]
     Expired,
     #[error("completed outcome is archived at {reference:?}")]
@@ -246,38 +240,78 @@ pub struct CompletedOutcome<T = EncodedOutcomeDetails> {
 }
 
 impl<T> CompletedOutcome<T> {
-    pub fn new(marker: OutcomeMarker, details: OutcomeDetails<T>) -> Self {
-        Self {
-            marker: Box::new(marker),
-            details,
-        }
-    }
     pub const fn marker(&self) -> &OutcomeMarker {
         &self.marker
     }
     pub const fn details(&self) -> &OutcomeDetails<T> {
         &self.details
     }
-    pub fn try_map<U, E>(
+}
+
+impl<T: 'static> CompletedOutcome<T> {
+    /// Checked assembly. Encoded details retain the exact reference validated at decode.
+    pub fn new(
+        marker: OutcomeMarker,
+        details: OutcomeDetails<T>,
+    ) -> Result<Self, OutcomeRecoveryError> {
+        validate_detail_binding(&marker, &details)?;
+        Ok(Self {
+            marker: Box::new(marker),
+            details,
+        })
+    }
+
+    /// Checks both sides of a projection, including encoded values reintroduced by
+    /// a mapping from an application DTO. Mapping never confers storage authority.
+    pub fn try_map<U: 'static, E: From<OutcomeRecoveryError>>(
         self,
         map: impl FnOnce(T) -> Result<U, E>,
     ) -> Result<CompletedOutcome<U>, E> {
+        validate_detail_binding(&self.marker, &self.details)?;
         let details = match self.details {
             OutcomeDetails::Available(value) => OutcomeDetails::Available(map(value)?),
             OutcomeDetails::Expired => OutcomeDetails::Expired,
             OutcomeDetails::Archived { reference } => OutcomeDetails::Archived { reference },
             OutcomeDetails::Unavailable { reason } => OutcomeDetails::Unavailable { reason },
         };
-        Ok(CompletedOutcome {
-            marker: self.marker,
-            details,
-        })
+        CompletedOutcome::new(*self.marker, details).map_err(E::from)
     }
 }
 
+// Generic owned projections need no application-defined validation trait. Inspecting
+// this one concrete type also prevents a projection from overriding encoded binding
+// validation or laundering a foreign encoded value through an intermediate DTO.
+fn validate_detail_binding<T: 'static>(
+    marker: &OutcomeMarker,
+    details: &OutcomeDetails<T>,
+) -> Result<(), OutcomeRecoveryError> {
+    if let OutcomeDetails::Available(value) = details {
+        let value: &dyn Any = value;
+        if let Some(encoded) = value.downcast_ref::<EncodedOutcomeDetails>()
+            && encoded.reference != *marker.detail_reference()
+        {
+            return Err(OutcomeRecoveryError::IntegrityMismatch);
+        }
+    }
+    Ok(())
+}
+
 impl CompletedOutcome<EncodedOutcomeDetails> {
+    /// Consumer boundary for lookup, winner reconciliation and commit results.
+    /// Invalid completed data never becomes Missing or authorizes reevaluation.
+    pub fn validate_for(
+        &self,
+        key: &OutcomeKey,
+        metadata: &CommandExecutionMetadata,
+    ) -> Result<(), EventStoreError> {
+        self.marker.validate_key(key)?;
+        self.marker.validate_identity(metadata)?;
+        self.marker.integrity_receipt().validate_integrity()?;
+        validate_detail_binding(&self.marker, &self.details).map_err(|e| corrupt(e.to_string()))
+    }
     /// Deliberate compatibility materialization. No inline receipt is stored by the split backend.
     pub fn to_inline(&self) -> Result<InlineCompletedOutcome, OutcomeRecoveryError> {
+        validate_detail_binding(&self.marker, &self.details)?;
         let details = self.details.available()?;
         let mut receipt = self.marker.integrity.clone();
         if let Some(completion) = &details.completion {
@@ -289,10 +323,14 @@ impl CompletedOutcome<EncodedOutcomeDetails> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncodedOutcomeDetails {
+    reference: OutcomeDetailReference,
     completion: Option<CommandCompletion>,
 }
 
 impl EncodedOutcomeDetails {
+    pub const fn detail_reference(&self) -> &OutcomeDetailReference {
+        &self.reference
+    }
     pub const fn completion(&self) -> Option<&CommandCompletion> {
         self.completion.as_ref()
     }
@@ -301,11 +339,10 @@ impl EncodedOutcomeDetails {
     }
 
     fn encode(
-        &self,
+        mut completion: Option<CommandCompletion>,
         key: &OutcomeKey,
         scope: Option<&SecurityScope>,
     ) -> Result<Vec<u8>, EventStoreError> {
-        let mut completion = self.completion.clone();
         let payload = completion
             .as_mut()
             .and_then(|v| v.rejection.as_mut())
@@ -375,6 +412,7 @@ impl EncodedOutcomeDetails {
             completion.validate().map_err(|e| corrupt(e.to_string()))?;
         }
         let details = Self {
+            reference: reference.clone(),
             completion: header.completion,
         };
         if (details.rejection().is_some()) != (reference.decision == OutcomeDecision::Rejected) {
@@ -468,4 +506,47 @@ pub async fn resolve_details(
 
 fn corrupt(message: impl Into<String>) -> EventStoreError {
     EventStoreError::new(EventStoreErrorKind::CorruptHistory, message)
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+
+    #[test]
+    #[allow(clippy::unwrap_used, clippy::panic_in_result_fn)]
+    fn internal_pair_mixup_is_rechecked_before_materialization_or_mapping() {
+        let authority = CommandAuthority::new("binding-test").unwrap();
+        let prepare = |id: &str| {
+            let operation = crate::OperationId::new(id).unwrap();
+            let context = rostfrei_messaging_core::BoundedContextName::new("context").unwrap();
+            let proposal =
+                EventTransaction::new(operation.clone(), ContentFingerprint::digest(id), vec![])
+                    .with_bounded_context(context.clone());
+            let receipt =
+                TransactionReceipt::new(operation, ContentFingerprint::digest(id), vec![])
+                    .with_bounded_context(context);
+            let (marker, bytes) =
+                OutcomeMarker::prepare(authority.clone(), &proposal, receipt).unwrap();
+            let details = EncodedOutcomeDetails::decode(marker.detail_reference(), &bytes).unwrap();
+            (marker, details)
+        };
+        let (marker, _) = prepare("one");
+        let (_, other) = prepare("two");
+        // Deliberate private-field fault: public construction now prevents this pair.
+        let invalid = CompletedOutcome {
+            marker: Box::new(marker),
+            details: OutcomeDetails::Available(other),
+        };
+        assert_eq!(
+            invalid.to_inline().unwrap_err(),
+            OutcomeRecoveryError::IntegrityMismatch
+        );
+        let mut called = false;
+        let result = invalid.try_map::<_, OutcomeRecoveryError>(|_| {
+            called = true;
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err(), OutcomeRecoveryError::IntegrityMismatch);
+        assert!(!called);
+    }
 }

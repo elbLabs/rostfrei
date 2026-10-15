@@ -65,6 +65,10 @@ async fn commit(store: &InMemoryEventStore, p: EventTransaction) -> CompletedOut
         .clone()
 }
 
+#[allow(
+    clippy::panic,
+    reason = "missing control bytes must fail the independent fixture"
+)]
 async fn bytes(store: &InMemoryEventStore, outcome: &CompletedOutcome) -> Vec<u8> {
     let DetailRead::Found(bytes) = store
         .detail_reader()
@@ -374,7 +378,7 @@ fn proposal_digest_matches_the_original_exact_equality_over_adversarial_variants
             ],
         ),
         with_participants(&p, vec![guard.clone(), write.clone()]),
-        with_participants(&p, vec![write.clone()]),
+        with_participants(&p, vec![write]),
         with_participants(
             &p,
             vec![
@@ -480,9 +484,10 @@ fn marker_prepare_must_reject_a_receipt_with_the_wrong_guard_revision() {
 /// Injects a read-result mixup; no malicious command data or source mutation is needed.
 struct ReadResultBackend {
     authority: CommandAuthority,
-    outcome: CompletedOutcome,
+    outcome: Result<CompletedOutcome, OutcomeRecoveryError>,
 }
 #[async_trait]
+#[allow(clippy::panic, reason = "forbidden aggregate reads are test failures")]
 impl EventHistory for ReadResultBackend {
     async fn load(&self, _: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         panic!("completed lookup must not read aggregates")
@@ -495,7 +500,12 @@ impl OutcomeReader for ReadResultBackend {
         key: &OutcomeKey,
     ) -> Result<OutcomeLookup<EncodedOutcomeDetails>, EventStoreError> {
         assert_eq!(key.authority(), &self.authority);
-        Ok(OutcomeLookup::Completed(self.outcome.clone()))
+        self.outcome
+            .clone()
+            .map(OutcomeLookup::Completed)
+            .map_err(|error| {
+                EventStoreError::new(EventStoreErrorKind::CorruptHistory, error.to_string())
+            })
     }
 }
 #[async_trait]
@@ -503,6 +513,7 @@ impl CommandBackend for ReadResultBackend {
     fn authority(&self) -> &CommandAuthority {
         &self.authority
     }
+    #[allow(clippy::panic, reason = "completed replay must not begin an attempt")]
     async fn begin_command(&self) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError> {
         panic!("completed lookup must not start a session")
     }
@@ -514,7 +525,11 @@ async fn completed_pair_must_reject_details_decoded_for_another_reference_and_de
     let rejected = commit(&store, proposal("rejected", Some("permanent denial"))).await;
     let accepted = commit(&store, proposal("accepted", None)).await;
     let spliced = CompletedOutcome::new(rejected.marker().clone(), accepted.details().clone());
-    assert_eq!(spliced.marker().decision(), OutcomeDecision::Rejected);
+    assert_eq!(rejected.marker().decision(), OutcomeDecision::Rejected);
+    assert_eq!(
+        spliced.as_ref().unwrap_err(),
+        &OutcomeRecoveryError::IntegrityMismatch
+    );
     let handler = NeverExecute(AtomicUsize::new(0));
     let result = CommandExecutor::new(ReadResultBackend {
         authority: store.authority().clone(),
@@ -540,6 +555,10 @@ async fn completed_pair_must_reject_another_rejections_bytes_even_with_same_deci
     let first = commit(&store, proposal("first", Some("original secret"))).await;
     let second = commit(&store, proposal("second", Some("other secret"))).await;
     let spliced = CompletedOutcome::new(first.marker().clone(), second.details().clone());
+    assert_eq!(
+        spliced.as_ref().unwrap_err(),
+        &OutcomeRecoveryError::IntegrityMismatch
+    );
     let result = CommandExecutor::new(ReadResultBackend {
         authority: store.authority().clone(),
         outcome: spliced,
@@ -568,7 +587,7 @@ async fn executor_must_reject_a_completed_marker_from_a_different_backend_author
     );
     let result = CommandExecutor::new(ReadResultBackend {
         authority: local.authority().clone(),
-        outcome,
+        outcome: Ok(outcome),
     })
     .execute_with_rejection_codec(
         &NeverExecute(AtomicUsize::new(0)),
@@ -590,6 +609,10 @@ impl Aggregate for Model {
     fn initial(_: &StreamId) -> i64 {
         0
     }
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "bounded independent fixture values"
+    )]
     fn apply(state: &mut i64, event: &Added) {
         *state += event.0;
     }
@@ -616,6 +639,10 @@ impl EventCodec<Model> for ScalingCodec {
         NewEvent::new(id, "added", 1, event.0.to_string().into_bytes())
             .map_err(|e| EventCodecError::new(EventCodecErrorKind::InvalidEnvelope, e.to_string()))
     }
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "bounded independent fixture values"
+    )]
     fn decode(&self, event: &RecordedEvent) -> Result<Added, EventCodecError> {
         Added::decode_json(event).map(|v| Added(v.0 * self.0))
     }
@@ -698,6 +725,10 @@ struct SessionBackend {
     fault: CommitFault,
 }
 #[async_trait]
+#[allow(
+    clippy::panic,
+    reason = "bypassing the consuming session is a test failure"
+)]
 impl EventHistory for SessionBackend {
     async fn load(&self, _: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         panic!("execution must read through its consuming session")
@@ -943,7 +974,7 @@ async fn unsupported_rejection_codec_blocks_completed_replay_without_session_or_
     let handler = NeverExecute(AtomicUsize::new(0));
     let backend = ReadResultBackend {
         authority: store.authority().clone(),
-        outcome,
+        outcome: Ok(outcome),
     };
     assert!(
         matches!(CommandExecutor::new(backend).execute_with_rejection_codec(&handler, metadata("unsupported"), &(), &JsonRejectionCodec::new("review", 2)).await,

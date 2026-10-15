@@ -3,8 +3,12 @@
 This is the processor/local/HTTP/codec integration checkpoint. Native split storage,
 native resolver and authorized sender admission are still pending. It does not
 declare the full modular runtime or workspace complete. The independent core
-review's marker/detail and proposal/receipt binding corrections must be integrated
-before native wire restoration is implemented.
+review's marker/detail, proposal/receipt and returned-key corrections are now
+implemented in core and this service boundary, awaiting independent re-review.
+Native wire restoration must reuse those checked boundaries.
+The subsequent service review has queued separate fixes for adapter result admission,
+shared-executor override refusal, retryability, audit terminals and recovery-origin
+classification. This bounded core-repair checkpoint does not close those findings.
 
 ## Processing boundary
 

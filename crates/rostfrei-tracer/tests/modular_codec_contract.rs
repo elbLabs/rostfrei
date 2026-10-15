@@ -98,7 +98,11 @@ async fn historical_meaning_and_original_facts_are_shared_across_all_consumers()
     let codecs = Arc::new(codecs);
     let store = Arc::new(InMemoryEventStore::new());
     let fixture = historical_fixture(&json!({"whole_units":2}))?;
-    let engine = MessageSeriesEngine::with_codecs(codecs.clone());
+    let mut engine = MessageSeriesEngine::with_codecs(codecs.clone());
+    assert!(
+        engine.register_json::<Counter>().is_err(),
+        "shared fixture registry cannot fork"
+    );
     engine.apply(store.as_ref(), &fixture).await?;
     let original = store.load(&stream()?).await?;
     assert_eq!(original.len(), 1);
@@ -112,6 +116,19 @@ async fn historical_meaning_and_original_facts_are_shared_across_all_consumers()
     );
     let observations = Arc::new(Mutex::new(Vec::new()));
     let mut dispatcher = DomainEventDispatcher::with_codecs(codecs.clone());
+    assert!(
+        dispatcher
+            .register_with_codec::<Counter, Added, _, _>(
+                "added",
+                Arc::new(CentsCodec {
+                    scale: 1,
+                    decodes: reads.clone()
+                }),
+                Arc::new(Observe(observations.clone()))
+            )
+            .is_err(),
+        "shared private-event registry cannot fork"
+    );
     dispatcher.register::<Counter, Added, _>("added", Arc::new(Observe(observations.clone())))?;
     let execution = CommandExecutionMetadata::new(
         OperationId::new("simulate-cents")?,
@@ -140,6 +157,15 @@ async fn historical_meaning_and_original_facts_are_shared_across_all_consumers()
         .event_codecs(codecs.clone())
         .authorizer(Arc::new(rostfrei::AllowAllCommands))
         .build()?;
+    assert!(
+        processor
+            .register_codec::<Counter, _>(CentsCodec {
+                scale: 1,
+                decodes: reads.clone()
+            })
+            .is_err(),
+        "shared processor registry cannot fork"
+    );
     processor.register::<Change, _>(ChangeHandler(Arc::new(AtomicUsize::new(0))), map_rejection)?;
     let command = bus(baseline_processor(
         Arc::new(InMemoryEventStore::new()),

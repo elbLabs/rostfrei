@@ -155,10 +155,16 @@ impl CommandProcessor {
             })? {
             OutcomeLookup::Missing => Ok(OutcomeLookup::Missing),
             OutcomeLookup::Completed(outcome) => {
-                outcome
-                    .marker()
-                    .validate_identity(metadata)
-                    .map_err(|e| CommandProcessorError::execution(&e.into()))?;
+                outcome.validate_for(&key, metadata).map_err(|e| {
+                    if e.kind() == EventStoreErrorKind::CorruptHistory {
+                        CommandProcessorError::new(
+                            CommandProcessorErrorKind::CompletedDetailsBlocked,
+                            e.to_string(),
+                        )
+                    } else {
+                        CommandProcessorError::execution(&e.into())
+                    }
+                })?;
                 Ok(OutcomeLookup::Completed(self.project(encoded, outcome)?))
             }
         }

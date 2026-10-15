@@ -1093,7 +1093,8 @@ impl CommandProcessorError {
             | OutcomeRecoveryError::Unavailable {
                 reason: DetailUnavailableReason::BackendUnavailable,
             } => CommandProcessorErrorKind::CompletedDetailsUnavailable,
-            OutcomeRecoveryError::Unavailable {
+            OutcomeRecoveryError::IntegrityMismatch
+            | OutcomeRecoveryError::Unavailable {
                 reason: DetailUnavailableReason::MissingDetails,
             } => CommandProcessorErrorKind::CompletedDetailsBlocked,
         };
@@ -1151,6 +1152,12 @@ impl CommandProcessorError {
                 build_response(command, CommandResponseOutcome::ExecutionFailed(failure))
             })
             .transpose()
+    }
+}
+
+impl From<rostfrei_core::OutcomeRecoveryError> for CommandProcessorError {
+    fn from(error: rostfrei_core::OutcomeRecoveryError) -> Self {
+        Self::recovery(&error)
     }
 }
 

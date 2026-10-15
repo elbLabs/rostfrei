@@ -48,8 +48,8 @@ permission, corruption and configuration errors may not. A missing lifecycle slo
 for a completed marker is an error, even when a detached reader has valid bytes.
 
 `OutcomeLifecycle::expire_details(key, expected_revision)` verifies the exact winner
-and atomically replaces its active bytes with a payload-free terminal slot. Success
-means withdrawal and actual reclamation of backend-owned detail bytes; repeated
+and atomically replaces its active bytes with a payload-free terminal slot. Memory
+returns `OutcomeExpiry` with `ReclamationStatus::Reclaimed`; repeated
 valid requests are idempotent. The marker/revision, event history and integrity
 receipts survive. No API reopens an expired slot. Caller-held or independent cold
 copies are outside physical reclamation, but framework resolution will not return
@@ -79,8 +79,31 @@ The legacy full-result wrapper is now explicitly named `InlineCompletedOutcome`.
 reader, not by retaining a second body. They return typed store errors after
 withdrawal. New callers use `OutcomeReader` / `CompletedCommit`. Acceptance-only
 integrity receipt methods work without details and still reject rejected markers.
-`CompletedOutcome<T>` is the new marker + availability result; `try_map` preserves
-unavailable states while mapping available payloads.
+`CompletedOutcome<T>` is the new marker + availability result. Its checked `new`
+returns `Result<_, OutcomeRecoveryError>` and accepts owned (`'static`) payloads.
+Decoded `EncodedOutcomeDetails` retains its complete immutable reference, not only
+the completion body. Opposite-decision, same-decision and same-operation foreign
+details fail with `IntegrityMismatch` before any business result can be materialized.
+`try_map` preserves unavailable states and checks both input and output encoded
+bindings. Mapping through an intermediate application DTO cannot manufacture a
+verified encoded pair. An allocation-free `Any` downcast checks this concrete type;
+application projection types cannot override the check and need no validation trait.
+Mapping errors must support `From<OutcomeRecoveryError>`. Generic projections do
+not themselves confer storage authority. `to_inline` rechecks encoded binding.
+
+`CompletedOutcome<EncodedOutcomeDetails>::validate_for(key, metadata)` is the shared
+consumer check: complete authority/context/operation key, original identity/scope,
+receipt integrity and encoded binding. Executor initial lookup, post-conflict
+reconciliation and commit results use it; service lookup uses it before projection.
+Wrong returned keys are `CorruptHistory`, never Missing or business rejection.
+
+`TransactionReceipt::validate_proposal` checks ordered participant count/identity,
+guard bases, complete batch metadata, event cardinality, coordinates and contents.
+`OutcomeMarker::prepare` requires this check. `validate_integrity` separately checks
+receipt structure and event identities/provenance without reclaimable details;
+replay and future native restoration share that boundary. Preparation alone is
+not commit authority. These checks do not change `ProposalDigest`'s intentional
+expected-version exclusion or winner identity reconciliation.
 
 `AggregateCodecs` is the existing registry evolved into a typed codec plus derived
 wire-aggregate validation index. Both views share the same codec `Arc`.
@@ -89,17 +112,28 @@ second instance of the same Rust codec type. `replace` is explicit, and cannot
 replace a different model using the same wire identity. Implicit JSON resolution
 does not reserve a slot. `resolve` and erased `validate_history` use the same
 configuration; the latter applies original decoded facts without rewriting them.
-`CommandExecutor::with_codec` is now fallible.
+`CommandExecutor::with_codec` is fallible and performs a standalone copy-on-write
+override. The preserved core characterization also demonstrates that the low-level
+executor currently permits this after `with_codecs`. The subsequent service review
+requires shared-mode refusal (S2); that behavior change and its explicitly authorized
+characterization adaptation are queued for the service-repair checkpoint. Composed
+runtimes must select replacements before publishing the shared registry.
 
 `DomainEventDispatcher::with_codecs` resolves registered handlers through the shared
 registry and rejects per-handler overrides. The standalone dispatcher retains its
-explicit low-level codec API. D2 must pass the same immutable registry into fixture
-and Tracer consumers and remove their separate effective codec configuration.
+explicit low-level codec API. The D2a processor, fixture engine, Preview and private
+dispatcher use the same selected registry. Installed processor/fixture/dispatcher
+configuration rejects local overrides; parity tests verify subsequent consumers
+retain the selected historical meaning after those rejected override attempts.
 
 ## Remaining integration
 
-D2 must migrate facade/native inline type references and exhaustive error mappings,
-implement processor authorization/audit and adapter admission, and supply native
+D2a implemented the facade, local/HTTP service and shared codec integration. Core
+review R1/R2/O1 remediation is implemented, awaiting independent re-review. The
+subsequent service review requires adapter result admission, shared-executor
+override refusal, retryability, audit classification and stable recovery-origin
+corrections; those remain queued for a separate service-repair checkpoint. The
+native continuation must migrate remaining native consumers and supply native
 marker/reference wire restoration and authority fencing. Native storage must use
 the frozen journal + combined CAS/last-value outcome-state protocol, not the obsolete
 three-stream deletion recipe. Lifecycle verification uncertainty needs explicit

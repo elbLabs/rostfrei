@@ -37,6 +37,9 @@ impl<S> CommandExecutor<S> {
     }
 
     /// Overrides the event codec used to load and persist one aggregate type.
+    /// This low-level convenience uses copy-on-write. Composed runtimes must select
+    /// replacements before installing their effective shared registry and must not
+    /// call this override afterward.
     pub fn with_codec<A, C>(mut self, codec: C) -> Result<Self, crate::CodecRegistrationError>
     where
         A: Aggregate + 'static,
@@ -460,7 +463,8 @@ impl CommandExecutionError {
                 }
                 | crate::OutcomeRecoveryError::Archived { .. } => StoreFailureKind::Unavailable,
                 crate::OutcomeRecoveryError::Expired => return None,
-                crate::OutcomeRecoveryError::Unavailable {
+                crate::OutcomeRecoveryError::IntegrityMismatch
+                | crate::OutcomeRecoveryError::Unavailable {
                     reason: crate::DetailUnavailableReason::MissingDetails,
                 } => StoreFailureKind::CorruptHistory,
             }),
@@ -765,8 +769,12 @@ where
 
             match append_transaction(session, &metadata, participants, rejection).await? {
                 PersistenceAttempt::Completed(outcome) => {
-                    outcome.outcome().marker().validate_identity(&metadata)?;
-                    transaction_replay(&metadata, outcome.outcome().marker().integrity_receipt())?;
+                    let key = crate::OutcomeKey::new(
+                        self.store.authority().clone(),
+                        required_bounded_context(&metadata)?.clone(),
+                        metadata.operation_id().clone(),
+                    );
+                    outcome.outcome().validate_for(&key, &metadata)?;
                     return Ok(*outcome);
                 }
                 PersistenceAttempt::Conflict(error) => {
@@ -875,8 +883,7 @@ async fn lookup_completed<S: CommandBackend>(
     match store.lookup_outcome(&key).await? {
         crate::OutcomeLookup::Missing => Ok(None),
         crate::OutcomeLookup::Completed(outcome) => {
-            outcome.marker().validate_identity(metadata)?;
-            transaction_replay(metadata, outcome.marker().integrity_receipt())?;
+            outcome.validate_for(&key, metadata)?;
             Ok(Some(outcome))
         }
     }
@@ -930,26 +937,12 @@ fn transaction_replay(
     metadata: &CommandExecutionMetadata,
     receipt: &TransactionReceipt,
 ) -> Result<CommandReceipt, CommandExecutionError> {
-    let identities_are_valid = receipt.streams().iter().all(|stream| {
-        let commit_id = derive_commit_id(stream.stream_id(), receipt.operation_id());
-        stream.events().iter().enumerate().all(|(ordinal, event)| {
-            u32::try_from(ordinal).is_ok_and(|ordinal| {
-                event.stream_id() == stream.stream_id()
-                    && event.commit_id() == &commit_id
-                    && event.event_id() == &derive_event_id(&commit_id, ordinal)
-                    && event.operation_id() == receipt.operation_id()
-                    && event.operation_fingerprint() == receipt.operation_fingerprint()
-                    && event.correlation_id() == receipt.correlation_id()
-                    && event.causation_id() == receipt.causation_id()
-            })
-        })
-    });
+    receipt.validate_integrity()?;
     if receipt.bounded_context() == metadata.bounded_context()
         && receipt.operation_id() == metadata.operation_id()
         && receipt.operation_fingerprint() == metadata.operation_fingerprint()
         && receipt.correlation_id() == metadata.correlation_id()
         && receipt.causation_id() == metadata.causation_id()
-        && identities_are_valid
     {
         return Ok(CommandReceipt::ExactReplay(receipt.events()));
     }

@@ -580,7 +580,7 @@ impl InMemoryEventStore {
             )
             .await?
         };
-        Ok(CompletedOutcome::new(marker, details))
+        CompletedOutcome::new(marker, details).map_err(|e| recovery_error(&e))
     }
 }
 
@@ -692,6 +692,7 @@ impl OutcomeLifecycle for InMemoryEventStore {
 fn recovery_error(error: &crate::OutcomeRecoveryError) -> EventStoreError {
     EventStoreError::new(
         match error {
+            crate::OutcomeRecoveryError::IntegrityMismatch => EventStoreErrorKind::CorruptHistory,
             crate::OutcomeRecoveryError::Expired => EventStoreErrorKind::CompletedDetailsExpired,
             crate::OutcomeRecoveryError::Archived { .. }
             | crate::OutcomeRecoveryError::Unavailable { .. } => {
