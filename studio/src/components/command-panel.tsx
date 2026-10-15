@@ -53,6 +53,13 @@ interface CommandChoice {
   version: CatalogCommandVersion
 }
 
+interface HandlerComputation {
+  origin: string
+  pending?: boolean
+  result?: HandlerSimulationResult
+  error?: string
+}
+
 export function CommandPanel({
   open,
   catalog,
@@ -68,10 +75,6 @@ export function CommandPanel({
   const choices = commandChoices(catalog)
   const [choiceKey, setChoiceKey] = useState("")
   const [mode, setMode] = useState<"test" | "simulate-handler">("test")
-  const [simulating, setSimulating] = useState(false)
-  const [simulation, setSimulation] = useState<HandlerSimulationResult>()
-  const [simulationError, setSimulationError] = useState<string>()
-  const busy = executionBusy || simulating
   const [payloadValues, setPayloadValues] = useState<Record<string, string>>({})
   const previousInputs = useRef<CommandInputField[]>([])
   const [validationError, setValidationError] = useState<string>()
@@ -104,6 +107,32 @@ export function CommandPanel({
     commandInputs?.key !== inputsKey &&
     inputsError?.key !== inputsKey
   )
+
+  const simulationOrigin = JSON.stringify([
+    choiceKey,
+    selected?.version,
+    mode,
+    payloadValues,
+    currentCommandInputs,
+    inputsKey,
+    inputsLoading,
+    testStateRevision,
+    executionBusy,
+  ])
+  const [computation, setComputation] = useState<HandlerComputation>({
+    origin: simulationOrigin,
+  })
+  // Discard obsolete ownership during render, before displaying a changed form.
+  // Each pending object also identifies one request, so late completions cannot
+  // restore a result or clear the busy state of a newer computation.
+  if (computation.origin !== simulationOrigin) {
+    setComputation({ origin: simulationOrigin })
+  }
+  const currentComputation =
+    computation.origin === simulationOrigin ? computation : undefined
+  const simulation = currentComputation?.result
+  const simulationError = currentComputation?.error
+  const busy = executionBusy || currentComputation?.pending === true
 
   useEffect(() => {
     if (!inputsHrefTemplate || !inputsKey) return
@@ -146,8 +175,7 @@ export function CommandPanel({
 
   const markEdited = () => {
     setValidationError(undefined)
-    setSimulation(undefined)
-    setSimulationError(undefined)
+    setComputation({ origin: simulationOrigin })
     onEdit()
   }
 
@@ -175,9 +203,11 @@ export function CommandPanel({
         const href = selected.version.simulateHandlerHrefTemplate
         if (!href)
           throw new Error("Handler simulation is unavailable for this command")
-        setSimulating(true)
-        setSimulation(undefined)
-        setSimulationError(undefined)
+        const pending: HandlerComputation = {
+          origin: simulationOrigin,
+          pending: true,
+        }
+        setComputation(pending)
         void simulateHandler(href, request.schemaVersion, request.payloadJson)
           .then((value) => {
             if (
@@ -185,14 +215,23 @@ export function CommandPanel({
               value.command !== request.commandId
             )
               throw new Error("Handler simulation returned a different command")
-            setSimulation(value)
+            setComputation((current) =>
+              current === pending
+                ? { ...pending, pending: false, result: value }
+                : current
+            )
           })
           .catch((error) =>
-            setSimulationError(
-              `${error instanceof Error ? error.message : "Handler simulation failed"}. Handler dependencies may have run; no automatic retry.`
+            setComputation((current) =>
+              current === pending
+                ? {
+                    ...pending,
+                    pending: false,
+                    error: `${error instanceof Error ? error.message : "Handler simulation failed"}. Handler dependencies may have run; no automatic retry.`,
+                  }
+                : current
             )
           )
-          .finally(() => setSimulating(false))
         return
       }
       if (!selected.version.testHrefTemplate) {

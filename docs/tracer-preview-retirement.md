@@ -38,6 +38,36 @@ starter pin is advanced here.
 
 ## Verification
 
+### Prioritized Studio stale-result repair
+
+The human selected this repair and #106's matching-global runner retention only.
+Test-first `692aab9` reproduced the previous accepted handler result remaining
+visible after a behavioral run changed Test state and invalidated its selected
+payload option; pending computations also retained obsolete busy state.
+
+`studio/scripts/handler-refresh.mjs` now verifies completed-result invalidation
+and late success/error delivery while a newer computation is pending. Only the
+current command/schema/payload/options/Test-state owner can display a result/error
+or finish its busy state. Current accepted/rejected responses still render; there
+are exactly two explicit simulation POSTs, with no retry or Test fallback. The
+three targeted cases pass, and before/after desktop screenshots were inspected.
+Evidence: `/tmp/rostfrei-two-fixes-MyJMJAEu/{studio-red.log,studio-green.log,ui-red,ui-green}`.
+These are mocked-HTTP UI regressions, not new real-NATS behavioral acceptance.
+Local Studio lint/build and the complete existing UI interaction suite also passed
+(`ui-smoke.log`), including these new cases; shared-version checks passed. Existing
+CI supplies the broader real-NATS coverage for the final head.
+
+**Still deferred:** the separate failed direct `NatsRuntime::reset` health gap in
+handler simulation (Tracer-mediated resets are guarded), and #106's generated
+workspace-installation output/source-fingerprint feedback. Reproduction details
+remain in `/tmp/rostfrei-independent-review-x_64fcq8/final-review.md` with
+`final-consumer/tests/review_reset.rs`, and `findings.md` with
+`local-setup-results.json`. No reset API/gate or source-identity repair is included
+in this pass; these limitations prevent a review-clean/full-release claim. Next
+main task: independent installed-skill feature trial and human feedback.
+
+### Earlier handler capability evidence
+
 The original blanket removal was refined with user approval to retain useful
 handler computation behind a distinct typed interface. Test-first `abc4380`
 observed missing discovery, HTTP 404 instead of 200, missing Studio action
@@ -114,7 +144,8 @@ Existing per-result payload budgets apply; oversized results return typed
 
 The shared host supplies isolated Test history; `with_test_event_store` also
 selects that history. A custom builder's supplied `EventHistory` defines scope.
-Computation holds the Test reset read gate and honors failed-reset unavailability.
+Computation holds Tracer's Test reset read gate and honors failed Tracer-mediated
+reset unavailability. The direct shared-runtime reset gap is documented above.
 Its bounded concurrency pool is separate from Test/Dispatch operation admission.
 A 30-second deadline/caller cancellation aborts unfinished async work; this does
 not undo external dependency effects or sandbox synchronous handler code. Do not
