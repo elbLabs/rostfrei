@@ -332,10 +332,10 @@ async fn challenge(fault: Fault) -> TestResult {
 
 #[tokio::test]
 async fn rebound_journal_cannot_be_adopted_by_captured_store_or_sessions() -> TestResult {
-    challenge(Fault::ReboundJournal).await
+    Box::pin(challenge(Fault::ReboundJournal)).await
 }
 
 #[tokio::test]
 async fn state_info_outage_blocks_every_write_route_and_same_pair_recovers() -> TestResult {
-    challenge(Fault::UnavailableState).await
+    Box::pin(challenge(Fault::UnavailableState)).await
 }
