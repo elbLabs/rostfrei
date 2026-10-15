@@ -90,31 +90,6 @@ class Capabilities:
             assert snapshot["scope"] == scope and snapshot["status"] == "live"
             self.save(f"observation-{scope}-sse-initial", snapshot)
 
-    def preview_prediction_control(self, definition):
-        # Explicit compatibility control, not a prerequisite for real acceptance.
-        root = definition["expected"]["graphs"][0]["nodes"][0]
-        context = next(item for item in self.catalogs["test"]["contexts"] if item["id"] == root["context"])
-        command = next(item for item in context["commands"] if item["id"] == root["name"])
-        version = next(item for item in command["versions"] if item["schemaVersion"] == root["schemaVersion"])
-        before = self.snapshot("test")
-        payload = {**root["payload"], "bicycle_id": "simulation-only-bicycle"}
-        submission, headers = self.request(version["simulateHrefTemplate"], payload={
-            "schemaVersion": root["schemaVersion"], "payload": payload,
-        }, expected=202)
-        # Direct submission flattens OperationSnapshot; suite reports nest it.
-        operation = submission
-        deadline = time.monotonic() + 10
-        while operation["status"] not in ("completed", "failed", "indeterminate"):
-            assert time.monotonic() < deadline, "Preview did not complete; do not resubmit"
-            time.sleep(0.05)
-            operation, _ = self.request(headers["Location"])
-        assert operation["status"] == "completed" and operation["mode"] == "simulate"
-        assert operation["result"]["decision"] == "accepted"
-        series, _ = self.request(operation["messageSeriesHref"] + "?within=10s&settleFor=500ms")
-        assert series["capture"]["fidelity"] == "grouped", "Preview synthetic identities are not exact execution"
-        assert self.snapshot("test")["items"] == before["items"], "Preview must not enter the real traffic feed"
-        self.save("preview", {"operation": operation, "series": series})
-
     def observed_run(self, evidence):
         correlation = evidence["report"]["operation"]["correlationId"]
         deadline = time.monotonic() + 10

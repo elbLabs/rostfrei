@@ -59,7 +59,7 @@ until independent run isolation is available.
 
 Every behavior run resets **all configured Test resources**: event history and
 receipts, command/response and integration streams, quarantine and consumers,
-plus retained Test/Preview operation and correlation evidence. It applies the
+plus retained Test operation and correlation evidence. It applies the
 selected fixture's domain events. Normal resources are separate; external
 stores/read models require explicit application reset support. Reuse the already
 authorized specific fixture/suite TDD scope without redundant confirmations.
@@ -114,8 +114,8 @@ Exit **0** means a reported pass with complete retrieval; **1** means a reported
 failed suite with complete retrieval; **2** is a typed local blocked/incomplete
 execution. Inspect diagnostics to distinguish an assertion mismatch from a
 runner/environment issue. Real isolated execution is the normal TDD path.
-Preview is explicitly requested, predicted/uncommitted handler simulation, never
-acceptance or a fallback for unavailable execution.
+Tracer does not expose handler simulation. Core simulation in focused unit tests
+is never acceptance or a fallback for unavailable execution.
 
 For “what happened?”, read the returned operation and finite capture. For actions
 initiated by another client/worker, discover optional `observation[]` relations

@@ -1,7 +1,7 @@
 ---
 name: rostfrei-tracer
 license: EUPL-1.2
-description: Use Rostfrei Tracer to discover runtime capabilities, execute real isolated tests, observe external application activity, inspect operations or quarantine, and explain causal flows with Mermaid. Also covers explicitly requested handler simulation and production dispatch.
+description: Use Rostfrei Tracer to discover runtime capabilities, execute real isolated tests, observe external application activity, inspect operations or quarantine, and explain causal flows with Mermaid. Also covers explicitly authorized production dispatch.
 compatibility: Requires the release-matched cargo-rostfrei Rust CLI, a Tracer HTTP endpoint and capability credentials. Test acceptance needs application handlers, workers and event store on isolated real NATS 2.12.1 or newer. Direct HTTP examples require Bash and curl; no Python is required.
 ---
 
@@ -17,10 +17,10 @@ Use Tracer to execute real isolated behavior and explain actual recorded activit
 4. Explain only what the evidence establishes, with an explicit-causality Mermaid graph.
 
 Call direct isolated publication **Test** and production publication **production
-dispatch**. **Preview** is explicit-request-only handler simulation: predicted,
-uncommitted results with synthetic identities, not observed system execution.
-It is neither a prerequisite nor a fallback for Test. Mention protocol details
-only when useful; avoid UI terminology unless requested.
+dispatch**. Tracer exposes real execution and read-only inspection. Handler
+simulation belongs in focused core tests, outside Tracer; it is never a
+prerequisite or fallback for Test. Mention protocol details only when useful;
+avoid UI terminology unless requested.
 
 Read [release and execution prerequisites](references/runtime.md) before execution.
 Read installed `references/release.json` for the selected application's skills
@@ -42,7 +42,6 @@ Use ordinary conversation if a host-specific question tool is unavailable.
 | What happened through another client or worker? | `observation[].listHref`, then `detailHref` | Partial rolling window of actual events |
 | Watch activity for a stated duration | `observation[].eventsHref` | Bounded SSE replacement snapshots |
 | Investigate failure/missing activity | Operation diagnostics, observation health, scoped quarantine | Distinguish rejection, unavailable coverage and quarantined delivery |
-| Explicitly predict handler decisions | `simulateHrefTemplate` (Preview) | Synthetic, uncommitted prediction only |
 
 The implemented interface is **HTTP JSON plus SSE**. The native Rust CLI handles
 suite execution; use Bash/curl with the rules below for richer exploration.
@@ -52,7 +51,7 @@ command. A future MCP adapter would be another client of the same service.
 ## Connection And Capabilities
 
 - Read `ROSTFREI_TRACER_URL`; default to `http://127.0.0.1:1309` when unset.
-- Use `ROSTFREI_API_TOKEN` for Test discovery, observation/quarantine inspection, Test/suites, reset, their operations and explicitly requested Preview.
+- Use `ROSTFREI_API_TOKEN` for Test discovery, observation/quarantine inspection, Test/suites, reset and their operations.
 - Use `ROSTFREI_DISPATCH_TOKEN` only for production dispatch and production operation inspection.
 - Use `ROSTFREI_INSPECTION_TOKEN` for read-only production observation and quarantine, including their initial catalog discovery, lists, details and SSE. Never substitute Dispatch credentials for these reads.
 - Never print, quote back, log, persist, or place any capability token in a URL, request body, idempotency key, Mermaid graph, or temporary file.
@@ -103,7 +102,6 @@ Use these advertised relations:
 
 - `contexts[].aggregates[].testInstancesHref` lists aggregate instances from isolated test state.
 - `contexts[].commands[].versions[].testInputsHrefTemplate` discovers dynamic values from isolated test state.
-- `simulateHrefTemplate` explicitly requests handler simulation without appending.
 - `testHrefTemplate` publishes through the isolated Test pipeline.
 - `dispatchHrefTemplate` publishes to production.
 - `behavioralTest.schemaHref`, `validateHref`, `runHref`, and optional `definitionsHref` drive behavioral tests.
@@ -119,7 +117,7 @@ When choosing inputs:
 
 - Reuse the agreed schema version; ask only when multiple versions remain ambiguous. Do not silently select the newest version.
 - Use `payloadTemplate` only to understand payload shape. Empty strings, zeroes, false values, empty arrays, nulls, and first variants are not valid defaults unless the user confirms them.
-- Use `testInstancesHref` and `testInputsHrefTemplate` only for Preview and Test. Explicitly describe these values as isolated test-state discoveries.
+- Use `testInstancesHref` and `testInputsHrefTemplate` only for Test. Explicitly describe these values as isolated test-state discoveries.
 - Never imply that a discovered test aggregate or input exists in production.
 - Require the user to provide or confirm production payload identities and values independently of test discovery. Commands address a bounded context; aggregate identities belong in the typed payload, not in invented aggregate route parameters.
 - Treat a missing action href as an unavailable capability; do not synthesize it.
@@ -229,7 +227,7 @@ An authorized feature-development loop covers its agreed fixture resets and
 suite red/green reruns. Record the disposable broker or unique application
 namespace, selected fixtures and definitions, and reset impact once. Reuse that
 authorization while the scope stays the same; ask only for missing scope or a
-change of target/impact. A Preview request alone does not authorize publication.
+change of target/impact. An inspection request alone does not authorize publication.
 
 Use a stable idempotency key. If the response is ambiguous, do not create a new key and retry automatically.
 
@@ -237,13 +235,13 @@ Use a stable idempotency key. If the response is ambiguous, do not create a new 
 
 A reset recreates the host's complete configured Test topology: authoritative
 event history and receipts, command/response and integration streams, quarantine,
-and their consumers. It invalidates retained Test and Preview operations/captures
+and their consumers. It invalidates retained Test operations/captures
 and the continuous Test observation window, and resets fixture state; it is not limited to one aggregate or definition. External stores
 and read models are only reset if the application's host explicitly does so.
 Normal production resources are separate. A run ID alone is not isolation.
 Before POSTing to `testScenario.resetHref`, state that impact and establish scope
 authorization as above. For a standalone reset outside that scope, obtain explicit
-confirmation. Never infer reset consent from an earlier Preview or unrelated Test.
+confirmation. Never infer reset consent from earlier inspection or unrelated Test.
 
 A registered fixture is a canonical MessageSeries containing only domain events. Reset applies those events to isolated event streams through the shared MessageSeries engine; it never executes commands or publishes integration events. Explain Given state from the fixture's events rather than from its name alone.
 
@@ -259,23 +257,12 @@ Never infer production identifiers or values from test discovery. Require all of
 
 Use only `ROSTFREI_DISPATCH_TOKEN`. If the response is ambiguous or the operation becomes `indeterminate`, do not retry automatically and do not claim success or failure.
 
-### Explicitly Requested Preview
-
-Only use this when simulation/prediction is explicitly requested. It invokes the
-registered handler against Test history, but does not publish/commit a command
-through NATS, execute downstream integrations or observe the full system.
-
-1. Discover the command and ask only about still-ambiguous schema versions.
-2. Discover test aggregate instances and test inputs when useful.
-3. Clarify the context and complete payload, including every required aggregate ID, when values remain ambiguous.
-4. POST the typed request to `simulateHrefTemplate` with the control token.
-5. Follow the returned operation href or `Location` without resubmitting.
-
-Label the result **Preview — predicted, uncommitted handler simulation**. Synthetic
-command/response IDs and predicted events produce grouped fidelity; any graph is
-a predicted graph, never observed causal evidence or feature acceptance.
-
 ## Operation Inspection
+
+Preview submission is retired. Do not call legacy simulation actions or remap
+them to Test/production dispatch. If inspecting historical `mode: simulate`
+evidence, label it **historical simulation — predicted and uncommitted**. Its
+synthetic identities are never proof of real messages, persistence or causality.
 
 After command submission, poll the advertised operation href with the mode-matched token. Use a bounded wait, normally at most 10 seconds unless the user requested another limit, with a short bounded interval. Stop polling at `completed`, `failed`, or `indeterminate`. If the wait expires, report the current state; never resubmit merely because polling timed out.
 

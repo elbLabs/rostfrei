@@ -133,7 +133,6 @@ def qualify(output, source_checkout=False, host_command=None):
                     assert evidence["messageSeries"]["capture"]["settled"]
                     assert evidence["messageSeries"]["capture"]["fidelity"] == "exact"
                 capabilities.after_reset(observed)
-                capabilities.preview_prediction_control(json.loads(definition.read_text()))
                 summary = {
                     "release": passed["release"], "catalogVersion": catalog["catalogVersion"],
                     "application": application, "applicationCommand": command,
@@ -148,8 +147,10 @@ def qualify(output, source_checkout=False, host_command=None):
                     "extractedKitRemovedBeforeExecution": not source_checkout,
                     "capabilities": ["scoped catalogs", "Test/Production observation lists and bounded initial SSE snapshots",
                                      "Test observed event detail and explicit causation", "Test observation expiry after reset",
-                                     "Production observation generation retained", "scoped quarantine lists",
-                                     "explicit Preview prediction control: grouped, no real traffic"],
+                                      "Production observation generation retained", "scoped quarantine lists"],
+                    "simulationAdvertised": any("simulateHrefTemplate" in version
+                        for context in catalog["contexts"] for command in context["commands"]
+                        for version in command["versions"]),
                 }
                 (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
                 print(f"{'Source' if source_checkout else 'Installed-kit'} live qualification passed; evidence: {output}")

@@ -71,8 +71,9 @@ Feature acceptance runs through the real NATS command pipeline using the
 application's handlers, workers and NATS event store in an isolated environment.
 Rust unit tests can support implementation; the feature's red/green evidence
 comes from the NATS-backed behavior suite. Within the agreed isolated scope,
-“run/test/try” means real Test execution. Preview is explicit-request-only handler
-simulation, not a prerequisite, fallback or source of acceptance evidence.
+“run/test/try” means real Test execution. Core handler simulation remains useful
+for focused unit tests, outside Tracer; it is never a prerequisite, fallback or
+source of acceptance evidence.
 
 Use the release-matched `rostfrei-tracer` skill to discover the runtime's actual
 catalog capabilities before choosing how to inspect it. The Rust CLI executes
