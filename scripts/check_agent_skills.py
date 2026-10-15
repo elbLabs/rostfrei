@@ -63,6 +63,63 @@ class InstalledKitTests(unittest.TestCase):
         ], cwd=self.consumer, env={**os.environ, "PATH": str(self.no_tools)},
             capture_output=True, text=True, check=False)
 
+    def native(self, *args, cwd=None):
+        return subprocess.run([str(self.cli), "rostfrei", "skills", "install", *map(str, args)],
+                              cwd=cwd or self.consumer,
+                              env={**os.environ, "PATH": str(self.no_tools)},
+                              capture_output=True, text=True, check=False)
+
+    def test_explicit_destination_installs_complete_bundled_skills_without_project(self):
+        release = json.loads((self.kit / "release.json").read_text())
+        expected = {str(path.relative_to(self.kit / "skills")): path.read_bytes()
+                    for path in (self.kit / "skills").rglob("*") if path.is_file()}
+        shutil.rmtree(self.kit)  # No extracted archive is available to this command.
+        current = self.consumer / "standalone"
+        current.mkdir()
+        instructions = current / "AGENTS.md"
+        instructions.write_text("consumer instructions\n")
+        destination = current / ".agents/skills"
+        result = self.native("--destination", destination, cwd=current)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        actual = {str(path.relative_to(destination)): path.read_bytes()
+                  for path in destination.rglob("*") if path.is_file()}
+        self.assertEqual(actual, expected)
+        self.assertFalse((self.consumer / ".agents").exists())
+        self.assertFalse((current / "Cargo.toml").exists())
+        self.assertEqual(list(destination.rglob("*.py")), [])
+        from skills_ref_validator import reference_validator
+        with reference_validator() as validate:
+            for name in NAMES:
+                self.assertEqual(validate(destination / name), [])
+                self.assertEqual(json.loads((destination / name / "references/release.json").read_text()), release)
+        self.assertEqual(self.native("--destination", destination, cwd=current).returncode, 0)
+        edited = destination / NAMES[1] / "SKILL.md"
+        edited.write_text("consumer edits\n")
+        shutil.rmtree(destination / NAMES[0])
+        self.assertNotEqual(self.native("--destination", destination, cwd=current).returncode, 0)
+        self.assertFalse((destination / NAMES[0]).exists())
+        self.assertEqual(edited.read_text(), "consumer edits\n")
+        self.assertEqual(instructions.read_text(), "consumer instructions\n")
+
+    def test_install_flags_are_independent_overrides(self):
+        override = self.consumer / "custom/skills"
+        result = self.native("--destination", override)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.consumer / ".agents").exists())
+        result = self.native("--kit", self.kit)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        default = self.consumer / ".agents/skills"
+        for name in NAMES:
+            for path in (override / name).rglob("*"):
+                if path.is_file():
+                    self.assertEqual(path.read_bytes(), (default / name / path.relative_to(override / name)).read_bytes())
+        self.assertEqual(self.install().returncode, 0)  # both explicit overrides
+        (self.kit / "skills" / NAMES[0] / "SKILL.md").write_text("corrupted")
+        other = self.consumer / "other"
+        other.mkdir()
+        self.assertNotEqual(self.native("--kit", self.kit, cwd=other).returncode, 0)
+        self.assertFalse((other / ".agents").exists())
+
     def test_external_install_is_self_contained_and_release_matched(self):
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

@@ -134,6 +134,12 @@ fn valid_manifest_does_not_make_a_different_revision_compatible() {
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("release or protocol mismatch"));
     assert!(!destination.exists());
+    let result = Command::new(env!("CARGO_BIN_EXE_cargo-rostfrei"))
+        .args(["rostfrei", "skills", "install", "--kit"]).arg(&kit)
+        .current_dir(temporary.path()).env("PATH", "").output().unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("release or protocol mismatch"));
+    assert!(!temporary.path().join(".agents").exists());
 }
 
 #[cfg(unix)]
