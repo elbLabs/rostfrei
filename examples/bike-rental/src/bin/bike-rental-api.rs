@@ -11,6 +11,7 @@ use bike_rental::{
     tracer,
 };
 use rostfrei::EventHistory;
+use rostfrei_messaging_core::ApplicationName;
 use rostfrei_nats::{NatsConnectionConfig, ServerVersion, connect};
 use rostfrei_tracer::{
     ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, OperationMode,
@@ -63,6 +64,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer"),
     )?);
     let mut builder = tracer::builder(history)?
+        .with_continuous_observation(rostfrei_tracer::ObservationFeed::new(
+            ApplicationName::new(&application)?,
+            rostfrei_tracer::ObservationScope::Test,
+        ))
+        .with_continuous_observation(rostfrei_tracer::ObservationFeed::new(
+            ApplicationName::new(&application)?,
+            rostfrei_tracer::ObservationScope::Production,
+        ))
         .with_domain_model(domain_model()?)
         .with_test_event_store(test_store.clone())
         .with_stream_directory(test_store)

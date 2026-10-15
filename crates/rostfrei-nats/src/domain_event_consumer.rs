@@ -6,11 +6,10 @@ use async_nats::jetstream::{
     message::AckKind,
     stream::{RawMessageError, RawMessageErrorKind},
 };
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt, stream};
 use rostfrei_core::{
     DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, EventStore, EventStoreErrorKind, MAX_EVENTS_PER_BATCH,
-    RecordedEvent,
+    DomainEventHandlerErrorKind, EventStore, EventStoreErrorKind, RecordedEvent,
 };
 use rostfrei_fixtures::FixtureEventSet;
 use rostfrei_messaging_core::{ConsumerName, DurableName, MAX_PROCESSING_TIMEOUT, RetryDelay};
@@ -26,6 +25,8 @@ use crate::{
 };
 
 const PULL_EXPIRATION: Duration = Duration::from_secs(1);
+const MAX_WAITING_PULLS: i64 = 512;
+const HISTORY_READ_CONCURRENCY: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -70,6 +71,7 @@ pub struct NatsDomainEventConsumerConfig {
     ack_wait: Duration,
     processing_timeout: Duration,
     retry_delay: RetryDelay,
+    start_sequence: Option<u64>,
 }
 
 impl NatsDomainEventConsumerConfig {
@@ -103,7 +105,21 @@ impl NatsDomainEventConsumerConfig {
             ack_wait,
             processing_timeout,
             retry_delay,
+            start_sequence: None,
         })
+    }
+
+    /// Initial position for an explicitly migrated durable. Stop all old workers
+    /// first and use the saved confirmed stream sequence plus one. Keep this
+    /// setting on subsequent starts; it does not reset an existing consumer.
+    pub fn with_start_sequence(mut self, sequence: u64) -> Result<Self, DomainEventConsumerError> {
+        if sequence == 0 {
+            return Err(invalid_configuration(
+                "initial stream sequence must be nonzero",
+            ));
+        }
+        self.start_sequence = Some(sequence);
+        Ok(self)
     }
 
     pub const fn name(&self) -> &ConsumerName {
@@ -203,12 +219,11 @@ impl NatsDomainEventConsumer {
         })
     }
 
-    #[allow(clippy::too_many_lines)]
     pub async fn run_until_shutdown(
         self,
         mut shutdown: watch::Receiver<bool>,
     ) -> Result<(), DomainEventConsumerError> {
-        if *shutdown.borrow() {
+        if shutdown_requested(&shutdown) {
             return Ok(());
         }
         let stream = self
@@ -221,8 +236,8 @@ impl NatsDomainEventConsumer {
             .await
             .map_err(|error| unavailable(format!("failed to get durable consumer: {error}")))?;
         verify_consumer(&consumer, self.event_store.config(), &self.config)?;
-        loop {
-            let mut first_delivery = consumer
+        while !shutdown_requested(&shutdown) {
+            let mut deliveries = consumer
                 .batch()
                 .max_messages(1)
                 .expires(PULL_EXPIRATION)
@@ -231,145 +246,105 @@ impl NatsDomainEventConsumer {
                 .map_err(|error| {
                     unavailable(format!("failed to start durable delivery: {error}"))
                 })?;
-            let first = tokio::select! {
-                changed = shutdown.changed() => {
-                    if changed.is_err() || *shutdown.borrow() {
-                        return Ok(());
-                    }
-                    continue;
-                }
-                message = first_delivery.try_next() => {
-                    let delivery = message.map_err(|error| {
-                        unavailable(format!("domain-event delivery failed: {error}"))
-                    })?;
-                    let Some(message) = delivery else {
-                        continue;
-                    };
-                    message
-                },
-            };
-            let first = self.buffer_delivery(first)?;
-            let consumer_info = consumer.get_info().await.map_err(|error| {
-                unavailable(format!("failed to inspect durable progress: {error}"))
-            })?;
-            let search_start = consumer_info
-                .ack_floor
-                .stream_sequence
-                .checked_add(1)
-                .ok_or_else(|| invalid_committed_event("durable sequence space overflowed"))?;
-            let expected_sequence = stream
-                .get_first_raw_message_by_subject(
-                    &self.event_store.config().aggregate_subject_filter(),
-                    search_start,
-                )
+            // Let this finite pull finish even on shutdown. Dropping its inbox
+            // early can strand a delivery until AckWait. A late arrival is NAKed
+            // below without starting another transaction.
+            let Some(delivery) = deliveries
+                .try_next()
                 .await
-                .map_err(|error| earliest_unresolved_lookup_error(&error))?
-                .sequence;
-            if first.event.stream_sequence != expected_sequence {
-                tracing::warn!(
-                    durable = %self.config.durable_name(),
-                    expected_sequence,
-                    delivered_sequence = first.event.stream_sequence,
-                    "deferring delivery until the durable's earliest unresolved event is available"
-                );
-                defer_delivery(&first.delivery, self.config.ack_wait()).await?;
-                if !wait_for_retry(self.config.ack_wait(), &mut shutdown).await {
-                    return Ok(());
-                }
+                .map_err(|error| unavailable(format!("domain-event delivery failed: {error}")))?
+            else {
                 continue;
+            };
+            drop(deliveries);
+            if shutdown_requested(&shutdown) {
+                defer_delivery(&delivery, Duration::ZERO).await?;
+                break;
             }
-
-            let mut commit = self
-                .reconstruct_acknowledged_prefix(&stream, &first.event)
-                .await?;
-            if commit.is_empty() {
-                validate_first_event(&first.event)?;
-            } else {
-                validate_next_event(&commit, &first.event)?;
-            }
-            let event_count = first.event.decoded.transaction_event_count;
-            let commit_id = first.event.decoded.commit_id.clone();
-            let mut live_deliveries = LiveDeliveries::new(first.delivery);
-            commit.push(first.event);
-            let remaining = event_count.checked_sub(commit.len()).ok_or_else(|| {
-                invalid_committed_event("committed transaction exceeds its declared event count")
-            })?;
-            if remaining > 0 {
-                let mut remaining_deliveries = consumer
-                    .batch()
-                    .max_messages(remaining)
-                    .expires(PULL_EXPIRATION)
-                    .messages()
-                    .await
-                    .map_err(|error| {
-                        unavailable(format!("failed to continue durable delivery: {error}"))
-                    })?;
-                while commit.len() < event_count {
-                    let message = tokio::select! {
-                        changed = shutdown.changed() => {
-                            if changed.is_err() || *shutdown.borrow() {
-                                return Ok(());
-                            }
-                            continue;
-                        }
-                        message = remaining_deliveries.try_next() => message
-                            .map_err(|error| unavailable(format!("domain-event delivery failed: {error}")))?
-                            .ok_or_else(|| unavailable(
-                                "domain-event delivery ended inside a committed event batch",
-                            ))?,
-                    };
-                    let next = self.buffer_delivery(message)?;
-                    validate_next_event(&commit, &next.event)?;
-                    live_deliveries.push(next.delivery);
-                    commit.push(next.event);
-                }
-            }
-            let transaction = BufferedEventTransaction::try_new(commit)?;
-            self.validate_transaction_receipt(&transaction).await?;
-
-            match timeout(
+            let LiveDomainEvent { event, delivery } = self.buffer_delivery(delivery)?;
+            let result = timeout(
                 self.config.processing_timeout(),
-                self.handle_transaction(&transaction),
+                self.process_event(&stream, &consumer, event),
             )
             .await
-            {
-                Ok(Ok(())) => acknowledge_commit(live_deliveries.last()).await?,
-                Ok(Err(error)) if error.kind() == DomainEventHandlerErrorKind::Retryable => {
-                    tracing::warn!(
-                        durable = %self.config.durable_name(),
-                        commit_id = %commit_id,
-                        error = %error,
-                        "domain-event handler requested redelivery"
-                    );
-                    let delay = self.config.retry_delay().get();
-                    retry_commit(&live_deliveries, delay).await?;
-                    if !wait_for_retry(delay, &mut shutdown).await {
-                        return Ok(());
-                    }
+            .unwrap_or_else(|_| Err(unavailable("domain-event transaction processing timed out")));
+            match result {
+                Ok(true) => {
+                    acknowledge_delivery(&delivery).await?;
+                    continue;
                 }
-                Ok(Err(error)) => {
-                    tracing::error!(
-                        durable = %self.config.durable_name(),
-                        commit_id = %commit_id,
-                        error = %error,
-                        "domain-event durable is blocked and requires operator action"
-                    );
-                    return Err(handler_blocked(&error));
+                Ok(false) => {}
+                Err(error) if error.kind() == DomainEventConsumerErrorKind::Unavailable => {
+                    tracing::warn!(durable = %self.config.durable_name(), %error,
+                        "domain-event transaction will be retried");
                 }
-                Err(_) => {
-                    tracing::warn!(
-                        durable = %self.config.durable_name(),
-                        commit_id = %commit_id,
-                        "domain-event handler timed out and will be redelivered"
-                    );
-                    let delay = self.config.retry_delay().get();
-                    retry_commit(&live_deliveries, delay).await?;
-                    if !wait_for_retry(delay, &mut shutdown).await {
-                        return Ok(());
-                    }
-                }
+                Err(error) => return Err(error),
+            }
+            let delay = if shutdown_requested(&shutdown) {
+                Duration::ZERO
+            } else {
+                self.config.retry_delay().get()
+            };
+            // The processing future has ended before work is released.
+            defer_delivery(&delivery, delay).await?;
+            if !wait_for_retry(delay, &mut shutdown).await {
+                break;
             }
         }
+        Ok(())
+    }
+
+    /// With one pending message across the durable, its first event represents
+    /// the whole transaction's work. Its ACK certifies that *all* handlers
+    /// succeeded. Later events only drain the durable's existing ACK state,
+    /// even if another worker receives them or the first worker has restarted.
+    async fn process_event(
+        &self,
+        stream: &jetstream::stream::Stream,
+        consumer: &consumer::PullConsumer,
+        event: BufferedDomainEvent,
+    ) -> Result<bool, DomainEventConsumerError> {
+        let info = consumer
+            .get_info()
+            .await
+            .map_err(|error| unavailable(format!("failed to inspect durable progress: {error}")))?;
+        let migrated_floor = self
+            .config
+            .start_sequence
+            .and_then(|sequence| sequence.checked_sub(1))
+            .unwrap_or(0);
+        let ack_floor = info.ack_floor.stream_sequence.max(migrated_floor);
+        if event.stream_sequence <= ack_floor {
+            return Ok(true); // An old delivery whose retry has already completed.
+        }
+        let start = event.transaction_start()?;
+        if start <= ack_floor {
+            // Check the immutable first event before interpreting its ACK as
+            // proof. A forged ordinal must not borrow another transaction's ACK.
+            let first = self.read_event(stream, start).await?;
+            validate_acknowledged_member(&first, &event)?;
+            return Ok(true);
+        }
+        let search_start = ack_floor
+            .checked_add(1)
+            .ok_or_else(|| invalid_committed_event("durable sequence space overflowed"))?;
+        let expected_sequence = stream
+            .get_first_raw_message_by_subject(
+                &self.event_store.config().aggregate_subject_filter(),
+                search_start,
+            )
+            .await
+            .map_err(|error| earliest_unresolved_lookup_error(&error))?
+            .sequence;
+        if event.stream_sequence != expected_sequence {
+            return Ok(false);
+        }
+        let transaction = self.reconstruct_transaction(stream, event).await?;
+        self.validate_transaction_receipt(&transaction).await?;
+        self.handle_transaction(&transaction)
+            .await
+            .map_err(|error| handler_blocked(&error))?;
+        Ok(true)
     }
 
     fn buffer_delivery(
@@ -409,47 +384,56 @@ impl NatsDomainEventConsumer {
         })
     }
 
-    async fn reconstruct_acknowledged_prefix(
+    async fn read_event(
         &self,
         stream: &jetstream::stream::Stream,
-        first: &BufferedDomainEvent,
-    ) -> Result<Vec<BufferedDomainEvent>, DomainEventConsumerError> {
-        if first.decoded.transaction_event_ordinal == 0 {
-            return Ok(Vec::new());
-        }
-        let transaction_event_ordinal = u64::try_from(first.decoded.transaction_event_ordinal)
-            .map_err(|_| {
-                invalid_committed_event("transaction event ordinal cannot be represented")
-            })?;
-        let start_sequence = first
+        sequence: u64,
+    ) -> Result<BufferedDomainEvent, DomainEventConsumerError> {
+        let raw = stream
+            .get_raw_message(sequence)
+            .await
+            .map_err(|error| transaction_history_lookup_error(&error))?;
+        let decoded = decode_consumed_event(
+            self.event_store.config(),
+            raw.subject.as_str(),
+            &raw.headers,
+            &raw.payload,
+        )
+        .map_err(|error| invalid_committed_event(error.to_string()))?;
+        Ok(BufferedDomainEvent {
+            stream_sequence: raw.sequence,
+            decoded,
+        })
+    }
+
+    async fn reconstruct_transaction(
+        &self,
+        stream: &jetstream::stream::Stream,
+        first: BufferedDomainEvent,
+    ) -> Result<BufferedEventTransaction, DomainEventConsumerError> {
+        validate_first_event(&first)?;
+        let count = u64::try_from(first.decoded.transaction_event_count).map_err(|_| {
+            invalid_committed_event("transaction event count cannot be represented")
+        })?;
+        let end = first
             .stream_sequence
-            .checked_sub(transaction_event_ordinal)
-            .ok_or_else(|| invalid_committed_event("commit start sequence underflowed"))?;
-        let mut prefix = Vec::with_capacity(first.decoded.transaction_event_ordinal);
-        for sequence in start_sequence..first.stream_sequence {
-            let raw = stream
-                .get_raw_message(sequence)
-                .await
-                .map_err(|error| acknowledged_prefix_lookup_error(&error))?;
-            let decoded = decode_consumed_event(
-                self.event_store.config(),
-                raw.subject.as_str(),
-                &raw.headers,
-                &raw.payload,
-            )
-            .map_err(|error| invalid_committed_event(error.to_string()))?;
-            let event = BufferedDomainEvent {
-                stream_sequence: raw.sequence,
-                decoded,
-            };
-            if prefix.is_empty() {
-                validate_first_event(&event)?;
-            } else {
-                validate_next_event(&prefix, &event)?;
-            }
-            prefix.push(event);
+            .checked_add(count)
+            .ok_or_else(|| invalid_committed_event("transaction sequence space overflowed"))?;
+        let next = first
+            .stream_sequence
+            .checked_add(1)
+            .ok_or_else(|| invalid_committed_event("transaction sequence space overflowed"))?;
+        let mut events = vec![first];
+        // Read committed history, not more work from the shared durable. Bounded
+        // concurrent reads avoid one broker roundtrip per event in a large batch.
+        let mut remaining = stream::iter(next..end)
+            .map(|sequence| self.read_event(stream, sequence))
+            .buffered(HISTORY_READ_CONCURRENCY);
+        while let Some(event) = remaining.try_next().await? {
+            validate_next_event(&events, &event)?;
+            events.push(event);
         }
-        Ok(prefix)
+        BufferedEventTransaction::try_new(events)
     }
 
     async fn validate_transaction_receipt(
@@ -569,35 +553,20 @@ struct BufferedDomainEvent {
     decoded: DecodedEvent,
 }
 
+impl BufferedDomainEvent {
+    fn transaction_start(&self) -> Result<u64, DomainEventConsumerError> {
+        let ordinal = u64::try_from(self.decoded.transaction_event_ordinal)
+            .map_err(|_| invalid_committed_event("transaction ordinal cannot be represented"))?;
+        self.stream_sequence
+            .checked_sub(ordinal)
+            .filter(|sequence| *sequence > 0)
+            .ok_or_else(|| invalid_committed_event("transaction start sequence underflowed"))
+    }
+}
+
 struct LiveDomainEvent {
     event: BufferedDomainEvent,
     delivery: jetstream::Message,
-}
-
-struct LiveDeliveries {
-    first: jetstream::Message,
-    rest: Vec<jetstream::Message>,
-}
-
-impl LiveDeliveries {
-    const fn new(first: jetstream::Message) -> Self {
-        Self {
-            first,
-            rest: Vec::new(),
-        }
-    }
-
-    fn push(&mut self, delivery: jetstream::Message) {
-        self.rest.push(delivery);
-    }
-
-    fn last(&self) -> &jetstream::Message {
-        self.rest.last().unwrap_or(&self.first)
-    }
-
-    fn iter(&self) -> impl Iterator<Item = &jetstream::Message> {
-        std::iter::once(&self.first).chain(self.rest.iter())
-    }
 }
 
 pub async fn provision_domain_event_consumer(
@@ -630,20 +599,24 @@ fn durable_domain_event_consumer_config(
             "domain-event consumer belongs to a different application or bounded context",
         ));
     }
-    let max_pending = i64::try_from(MAX_EVENTS_PER_BATCH)
-        .map_err(|_| invalid_configuration("maximum commit size cannot be represented"))?;
     Ok(consumer::pull::Config {
         durable_name: Some(config.durable_name().as_str().to_owned()),
         name: Some(config.durable_name().as_str().to_owned()),
         description: Some(config.name().as_str().to_owned()),
-        deliver_policy: DeliverPolicy::All,
-        ack_policy: AckPolicy::All,
+        deliver_policy: config
+            .start_sequence
+            .map_or(DeliverPolicy::All, |start_sequence| {
+                DeliverPolicy::ByStartSequence { start_sequence }
+            }),
+        ack_policy: AckPolicy::Explicit,
         ack_wait: config.ack_wait(),
         max_deliver: -1,
         filter_subject: event_store.aggregate_subject_filter(),
-        max_ack_pending: max_pending,
-        max_batch: max_pending,
-        max_waiting: 1,
+        // Ordered work sharing: only the oldest delivery may drive effects.
+        // Its transaction tail is read directly from immutable stream history.
+        max_ack_pending: 1,
+        max_batch: 1,
+        max_waiting: MAX_WAITING_PULLS,
         ..Default::default()
     })
 }
@@ -655,14 +628,20 @@ fn verify_consumer(
 ) -> Result<(), DomainEventConsumerError> {
     let expected = durable_domain_event_consumer_config(event_store, config)?;
     let actual = &consumer.cached_info().config;
+    if actual.ack_policy == AckPolicy::All || actual.max_waiting == 1 {
+        return Err(invalid_configuration(
+            "legacy domain-event durable requires offline migration: stop its workers, save the \
+             confirmed stream sequence, and recreate with Explicit ACKs and shared waiting pulls",
+        ));
+    }
     if consumer.cached_info().name != config.durable_name().as_str()
         || actual.deliver_subject.is_some()
         || actual.deliver_group.is_some()
         || actual.name.as_deref() != expected.name.as_deref()
         || actual.durable_name.as_deref() != expected.durable_name.as_deref()
         || actual.description != expected.description
-        || actual.deliver_policy != DeliverPolicy::All
-        || actual.ack_policy != AckPolicy::All
+        || actual.deliver_policy != expected.deliver_policy
+        || actual.ack_policy != AckPolicy::Explicit
         || actual.ack_wait != expected.ack_wait
         || actual.max_deliver != -1
         || actual.filter_subject != expected.filter_subject
@@ -671,7 +650,7 @@ fn verify_consumer(
         || actual.sample_frequency != expected.sample_frequency
         || actual.max_ack_pending != expected.max_ack_pending
         || actual.max_batch != expected.max_batch
-        || actual.max_waiting != 1
+        || actual.max_waiting != expected.max_waiting
         || actual.headers_only != expected.headers_only
         || actual.flow_control
         || !actual.idle_heartbeat.is_zero()
@@ -681,9 +660,32 @@ fn verify_consumer(
         || actual.num_replicas != expected.num_replicas
         || actual.memory_storage != expected.memory_storage
         || actual.backoff != expected.backoff
+        || actual.priority_policy != expected.priority_policy
+        || actual.priority_groups != expected.priority_groups
     {
         return Err(invalid_configuration(
             "existing durable consumer configuration does not match",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_acknowledged_member(
+    first: &BufferedDomainEvent,
+    event: &BufferedDomainEvent,
+) -> Result<(), DomainEventConsumerError> {
+    validate_first_event(first)?;
+    if event.transaction_start()? != first.stream_sequence
+        || event.decoded.transaction_event_count != first.decoded.transaction_event_count
+        || event.decoded.batch_id != first.decoded.batch_id
+        || event.decoded.operation_id != first.decoded.operation_id
+        || event.decoded.operation_fingerprint != first.decoded.operation_fingerprint
+        || event.decoded.is_transactional != first.decoded.is_transactional
+        || event.decoded.recorded.correlation_id() != first.decoded.recorded.correlation_id()
+        || event.decoded.recorded.causation_id() != first.decoded.recorded.causation_id()
+    {
+        return Err(invalid_committed_event(
+            "event does not belong to the acknowledged transaction",
         ));
     }
     Ok(())
@@ -766,31 +768,15 @@ fn validate_complete_transaction(
     Ok(())
 }
 
-async fn acknowledge_commit(delivery: &jetstream::Message) -> Result<(), DomainEventConsumerError> {
+async fn acknowledge_delivery(
+    delivery: &jetstream::Message,
+) -> Result<(), DomainEventConsumerError> {
     delivery.double_ack().await.map_err(|error| {
         DomainEventConsumerError::new(
             DomainEventConsumerErrorKind::Acknowledgement,
-            format!("failed to acknowledge committed event batch: {error}"),
+            format!("failed to acknowledge domain-event delivery: {error}"),
         )
     })
-}
-
-async fn retry_commit(
-    deliveries: &LiveDeliveries,
-    delay: Duration,
-) -> Result<(), DomainEventConsumerError> {
-    for message in deliveries.iter() {
-        message
-            .double_ack_with(AckKind::Nak(Some(delay)))
-            .await
-            .map_err(|error| {
-                DomainEventConsumerError::new(
-                    DomainEventConsumerErrorKind::Acknowledgement,
-                    format!("failed to NAK committed event batch: {error}"),
-                )
-            })?;
-    }
-    Ok(())
 }
 
 async fn defer_delivery(
@@ -803,12 +789,15 @@ async fn defer_delivery(
         .map_err(|error| {
             DomainEventConsumerError::new(
                 DomainEventConsumerErrorKind::Acknowledgement,
-                format!("failed to defer out-of-order durable delivery: {error}"),
+                format!("failed to release domain-event delivery for redelivery: {error}"),
             )
         })
 }
 
 async fn wait_for_retry(delay: Duration, shutdown: &mut watch::Receiver<bool>) -> bool {
+    if shutdown_requested(shutdown) {
+        return false;
+    }
     let sleep = tokio::time::sleep(delay);
     tokio::pin!(sleep);
     loop {
@@ -821,6 +810,10 @@ async fn wait_for_retry(delay: Duration, shutdown: &mut watch::Receiver<bool>) -
             }
         }
     }
+}
+
+fn shutdown_requested(shutdown: &watch::Receiver<bool>) -> bool {
+    *shutdown.borrow() || shutdown.has_changed().is_err()
 }
 
 fn handler_blocked(error: &DomainEventHandlerError) -> DomainEventConsumerError {
@@ -848,11 +841,11 @@ fn unavailable(message: impl Into<String>) -> DomainEventConsumerError {
     DomainEventConsumerError::new(DomainEventConsumerErrorKind::Unavailable, message)
 }
 
-fn acknowledged_prefix_lookup_error(error: &RawMessageError) -> DomainEventConsumerError {
+fn transaction_history_lookup_error(error: &RawMessageError) -> DomainEventConsumerError {
     raw_message_lookup_error(
         error,
-        "acknowledged commit prefix",
-        "reconstruct acknowledged commit prefix",
+        "committed transaction",
+        "reconstruct committed transaction",
     )
 }
 
@@ -917,12 +910,12 @@ mod tests {
     }
 
     #[test]
-    fn acknowledged_prefix_lookup_distinguishes_missing_history_from_unavailability() {
-        let missing = acknowledged_prefix_lookup_error(&RawMessageError::new(
+    fn transaction_history_lookup_distinguishes_missing_history_from_unavailability() {
+        let missing = transaction_history_lookup_error(&RawMessageError::new(
             RawMessageErrorKind::NoMessageFound,
         ));
         let unavailable =
-            acknowledged_prefix_lookup_error(&RawMessageError::new(RawMessageErrorKind::Other));
+            transaction_history_lookup_error(&RawMessageError::new(RawMessageErrorKind::Other));
 
         assert_eq!(
             missing.kind(),
@@ -983,6 +976,19 @@ mod tests {
             error.kind(),
             DomainEventConsumerErrorKind::InvalidCommittedEvent
         );
+    }
+
+    #[test]
+    fn a_tail_cannot_borrow_another_transactions_acknowledgement() {
+        let source = stream_id("source");
+        let first = buffered_event(&source, 1, 0, 1, 0, 1, 1);
+        let mut forged = buffered_event(&source, 2, 1, 2, 1, 2, 2);
+        assert!(validate_acknowledged_member(&first, &forged).is_err());
+
+        let first = buffered_event(&source, 1, 0, 2, 0, 2, 1);
+        assert!(validate_acknowledged_member(&first, &forged).is_ok());
+        forged.decoded.batch_id = "another-atomic-batch".to_owned();
+        assert!(validate_acknowledged_member(&first, &forged).is_err());
     }
 
     #[test]

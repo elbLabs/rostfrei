@@ -67,13 +67,12 @@ keeping up with its sources.
 
 ## Reproduce the comparison
 
-From the repository root, with its Rust toolchain, Python 3.11+, and Docker:
+From the repository root, with its Rust toolchain and Docker:
 
 ```sh
-cargo build --locked --release -p rostfrei-nats --example read_model_benchmark
+cargo build --locked --release -p rostfrei-benchmarks --bins
 
-python3 scripts/test_nats.py -- cargo run --locked --release \
-  -p rostfrei-nats --example read_model_benchmark -- \
+target/release/rostfrei-benchmarks read-model -- \
   --events-per-aggregate 10,50,100 \
   --samples 100 --rounds 3 --warmup 10 \
   --events-per-commit 1 --extra-event-bytes 256
@@ -86,7 +85,7 @@ mean latency, payload sizes, and client traffic counters.
 
 - [Full methodology](https://github.com/elbLabs/rostfrei/blob/main/docs/read-model-benchmark.md)
 - [Recorded JSON results](https://github.com/elbLabs/rostfrei/blob/main/docs/benchmarks/read-model-2026-10-02.json)
-- [Benchmark source](https://github.com/elbLabs/rostfrei/tree/main/crates/rostfrei-nats/examples/read_model_benchmark)
+- [Benchmark source](https://github.com/elbLabs/rostfrei/tree/main/crates/rostfrei-benchmarks/src/bin/read-model-benchmark)
 
 Start building a [read model](/docs/read-models), or review its
 [ordering and recovery contract](/docs/read-models/ordering).

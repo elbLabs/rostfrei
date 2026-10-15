@@ -31,3 +31,7 @@ rostfrei-testing.workspace = true
 
 [lints]
 workspace = true
+
+[[example]]
+name = "pinned_handoff"
+test = true

@@ -10,7 +10,7 @@ compatibility: Requires the release-matched cargo-rostfrei Rust CLI, a Tracer HT
 Use the Tracer HTTP API as an agent-facing command and explanation surface. Keep the normal mental model simple:
 
 1. Choose a command.
-2. Choose the bounded context, command schema and complete payload.
+2. Choose the bounded context, command schema and complete payload, including all required aggregate IDs.
 3. Preview it or publish it.
 4. Explain what happened.
 5. Render one causal Mermaid graph.
@@ -62,19 +62,21 @@ Before every authenticated request:
 5. Disable redirects with `curl --max-redirs 0`; treat every `3xx` response as an error and never follow it.
 6. Permit only HTTP and HTTPS. Permit plain HTTP only for a loopback Tracer unless the user explicitly configured another trusted local endpoint.
 
-For `{aggregateId}` and every other substituted path segment, UTF-8 encode the value and percent-encode it once as an RFC 3986 path segment. Leave only `A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, and `~` unescaped. Never interpolate raw identifiers containing `/`, `%`, `?`, `#`, or whitespace. Prefer returned hrefs such as `messageSeriesHref`, `definitionHref`, and `runHref` over substitution.
+For any substituted path segment, UTF-8 encode the value and percent-encode it once as an RFC 3986 path segment. Leave only `A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, and `~` unescaped. Never interpolate raw identifiers containing `/`, `%`, `?`, `#`, or whitespace. Prefer returned hrefs such as `messageSeriesHref`, `definitionHref`, and `runHref` over substitution. Command aggregate IDs belong in the payload, not in command routes.
 
 Use bounded HTTP timeouts. Never use automatic retries for a state-changing `POST`. An ambiguous response does not prove that publication failed.
 
 ## Release-matched Catalog
 
 Fetch the catalog before choosing a command. Require `catalogVersion` to match
-`contracts.catalog` from `cargo rostfrei skills info` (and the installed
-`references/release.json`, when present); stop and explain
+`contracts.catalog` from the installed `references/release.json`, or from
+`cargo rostfrei-dev skills info` for source use. The global setup CLI may serve
+several app versions, so its own `skills info` need not identify this app. Stop and explain
 an unsupported version rather than guessing. The source baseline's catalog is
 v1; canonical behavior definitions and observed MessageSeries are v2. These
 version numbers describe different contracts. See the release prerequisites
 for the outstanding 0.1.0 host/protocol integration.
+Command-payload schema versions are independent of those protocol versions too.
 
 Use these advertised relations:
 
@@ -138,8 +140,8 @@ the command-operation response template below.
 ### Preview
 
 1. Discover the command and ask only about still-ambiguous schema versions.
-2. Discover a test aggregate and test inputs when useful.
-3. Clarify the complete payload with the user when values remain ambiguous.
+2. Discover test aggregate instances and test inputs when useful.
+3. Clarify the context and complete payload, including every required aggregate ID, when values remain ambiguous.
 4. POST the typed request to `simulateHrefTemplate` with the control token.
 5. Follow the returned operation href or `Location` without resubmitting.
 
@@ -149,7 +151,7 @@ Preview does not append, but it reads isolated test history. Synthetic identitie
 
 Test publication executes the real command pipeline and may append to the isolated test scenario. Before POSTing to `testHrefTemplate`:
 
-- show the context, command, schema version, complete payload, and idempotency key;
+- show the context, command, schema version, complete payload with required aggregate IDs, and idempotency key;
 - explain that the target is isolated Test state; and
 - establish authorization for that publication or the already agreed specific isolated TDD suite scope.
 
@@ -180,8 +182,8 @@ A registered fixture is a canonical MessageSeries containing only domain events.
 Never infer production identifiers or values from test discovery. Require all of the following before POSTing to `dispatchHrefTemplate`:
 
 - an explicit command and schema version;
-- an explicit production bounded context and all payload aggregate identities;
-- an explicit complete payload;
+- an explicit production bounded context;
+- an explicit complete payload, including every required production aggregate ID;
 - a stable idempotency key; and
 - explicit confirmation for the exact request after warning that production state and downstream integrations may change.
 
@@ -285,7 +287,7 @@ Do not dump raw API JSON unless the user asks. Use these sections in this order:
 
 **Result**
 
-State the mode, context, command, operation status, and business decision or behavioral-test verdict. Identify touched aggregates only from the payload and observed participants.
+State the mode, bounded context, command, operation status, and business decision or behavioral-test verdict. Include useful participating aggregate IDs only from the payload and observed participants.
 
 **Message Flow**
 

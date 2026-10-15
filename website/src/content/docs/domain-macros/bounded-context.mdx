@@ -1,10 +1,6 @@
 # `BoundedContext`
 
-Name one domain language. A bounded context is a small marker with a stable ID and a human label. The derive keeps that boundary explicit without adding runtime behavior.
-
-- Non-generic unit struct
-- Stable context ID
-- No runtime behavior
+Declares a bounded context's ID and display label on a non-generic unit struct. Commands, aggregates, and domain services refer to this type to declare their context.
 
 **Placement:** [Bounded context](/docs/project-structure/bounded-context) — `context.rs`.
 

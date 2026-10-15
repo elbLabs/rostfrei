@@ -8,7 +8,7 @@ use tempfile::Builder;
 use thiserror::Error;
 
 // A tested, already published Git release, independent of the CLI's package version.
-// Advance explicitly after publication; see README's starter dependency contract.
+// Advance explicitly after publication; see docs/development.md's starter contract.
 const SCAFFOLD_RELEASE: &str = "v0.0.5-alpha";
 const SCAFFOLD_REVISION: &str = "c9f5516ddc324265916b60e1eb7300dad9acac9d";
 const RUST_VERSION: &str = env!("CARGO_PKG_RUST_VERSION");

@@ -1,6 +1,6 @@
 # Build a domain you can explain
 
-Rostfrei is a Rust framework for domain modeling, event sourcing, and messaging. It helps you understand a codebase even when AI agents wrote it, by connecting explicit domain ownership, typed contracts, event history, and inspectable behavior.
+Rostfrei is a Rust framework for domain modeling, event sourcing, and messaging. Domain declarations connect business ownership to Rust implementations, event history, and runtime tools used by developers and coding agents.
 
 Keep business decisions in ordinary Rust. Describe their contracts with a compiled domain model. Let the runtime handle event-store execution, then use Tracer to explore commands and follow their outcomes.
 
@@ -26,11 +26,11 @@ Imagine a customer renting a bicycle:
 3. An accepted rental produces a **domain event**, `BicycleRented`. The runtime commits it to the fleet's private history. Replaying that history reconstructs the aggregate's state.
 4. After the commit, application code maps the private fact to a separately versioned **integration event**, `BicycleRentalStarted`, for public communication.
 
-A query reads state without appending events. A domain policy interprets facts without changing state. These distinctions keep decisions, history, and communication explicit.
+A query reads state without changing it. A domain policy evaluates facts without changing state or recording events.
 
-## Follow a domain message
+## From command to decision
 
-Explore how commands, policies, events, and rejections relate. A policy helps make the decision; it does not record the change itself.
+The rental command carries fleet and bicycle IDs. Its action evaluates eligibility, then raises `BicycleRented` or returns a rejection. The runtime appends accepted domain events.
 
 <DomainFlow />
 
