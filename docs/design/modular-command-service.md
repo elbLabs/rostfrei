@@ -1,14 +1,9 @@
 # Modular command processing service
 
-This is the processor/local/HTTP/codec integration checkpoint. Native split storage,
-native resolver and authorized sender admission are still pending. It does not
-declare the full modular runtime or workspace complete. The independent core
-review's marker/detail, proposal/receipt and returned-key corrections are now
-implemented in core and this service boundary, awaiting independent re-review.
-Native wire restoration must reuse those checked boundaries.
-Service-review corrections for adapter result admission, shared-executor override
-refusal, retryability, audit terminals and recovery-origin classification are also
-implemented. Independent re-review and the native/D3 checkpoints remain pending.
+Core and service corrections have independently passed. Native split storage,
+trusted resolver and authorized sender admission now use these checked boundaries;
+see [the D2b native protocol](modular-command-native.md). Independent native review
+and broad D3 validation remain pending.
 
 ## Processing boundary
 
@@ -156,5 +151,6 @@ transport; it does not infer per-user identity.
 `OutcomeLifecycle::expire_details` now returns `OutcomeExpiry`, containing the exact
 winning revision and a separate `ReclamationStatus::{Pending, Reclaimed}`. Success
 proves withdrawal. Memory withdraws and reclaims owned bytes atomically and returns
-Reclaimed. Native uncertain transition and retained-message verification remain
-work for the native checkpoint; no native reclaim guarantee is claimed here.
+Reclaimed. Native expiry reconciles terminal state and verifies absence of the
+previous retained sequence before reporting Reclaimed; otherwise it reports Pending
+or a typed transition/verification error.

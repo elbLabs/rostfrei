@@ -15,10 +15,14 @@ isolated application** (not an existing demo namespace), explicitly set both
 `ROSTFREI_COMPLETED_OUTCOME_EPOCH=epoch92` for provision/API processes. Fence old
 credentials before starting new mutable workers. Programmatic fixtures use
 `BikeRentalNatsConfig::with_fresh_completed_outcome_epoch` with
-`BikeRentalNatsRuntime::provision_config`. Do not use this setting to activate old
-streams: provisioning refuses an existing stream without the matching epoch.
+`BikeRentalNatsRuntime::provision_config`. This now selects the fresh two-stream
+split authority, deriving disjoint journal/state namespaces. Do not use it to
+reinterpret old retries or migrate histories implicitly; each belongs to its
+original authority. The pair is verified by configuration and incarnation.
 Old retries stay in their original namespace; a repaired business attempt uses a
 new operation ID. See the [cutover runbook](../../docs/completed-outcome-cutover.md).
+The [native modular protocol](../../docs/design/modular-command-native.md) describes
+explicit detail expiry, legacy scope mapping and authorized sender/worker APIs.
 
 ## Run locally
 

@@ -166,7 +166,7 @@ async fn executor_atomically_transfers_with_actual_nats_event_store() -> TestRes
     let application = rostfrei::ApplicationName::new(format!("transfer-executor-{unique}"))?;
     let context = application.test_bounded_context("bike-rental")?;
     let config = NatsEventStoreConfig::for_bounded_context(&context)?
-        .with_fresh_completed_outcome_epoch("isolated-transfer-fixture")?;
+        .with_fresh_split_outcome_epoch("isolated-transfer-fixture")?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("transfer-executor-{unique}"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -300,7 +300,7 @@ async fn dispatch_transfer_through_nats(
 
 async fn verify_executor_transfer<S>(store: S) -> TestResult
 where
-    S: EventStore + Clone,
+    S: EventStore + rostfrei::CommandBackend + Clone,
 {
     let command = transfer_command("bike-42")?;
     let metadata = metadata("transfer-bike-42")?;

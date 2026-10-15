@@ -1,8 +1,7 @@
 # Modular command core (D1 checkpoint)
 
-The core implementation is complete at this checkpoint. Processor, facade, fixtures,
-Tracer, HTTP and native integration are subsequent D2/D3 work; this is not a
-workspace-complete migration.
+Core, service and native D2b integration are implemented. Broad D3 validation and
+independent native review remain the next gates.
 
 ## Coordinated execution
 
@@ -108,7 +107,7 @@ of winner timing without changing retained technical-history diagnostics.
 guard bases, complete batch metadata, event cardinality, coordinates and contents.
 `OutcomeMarker::prepare` requires this check. `validate_integrity` separately checks
 receipt structure and event identities/provenance without reclaimable details;
-replay and future native restoration share that boundary. Preparation alone is
+replay and native restoration share that boundary. Preparation alone is
 not commit authority. These checks do not change `ProposalDigest`'s intentional
 expected-version exclusion or winner identity reconciliation.
 
@@ -133,17 +132,11 @@ dispatcher use the same selected registry. Installed processor/fixture/dispatche
 configuration rejects local overrides; parity tests verify subsequent consumers
 retain the selected historical meaning after those rejected override attempts.
 
-## Remaining integration
+## Integration status
 
-D2a implemented the facade, local/HTTP service and shared codec integration. Core
-review R1/R2/O1 and service S1/S2/S3/SO1/SO2 remediation are implemented, awaiting
-independent re-review. Checked local/HTTP admission binds mapped responses to
-canonical request metadata, trusted scope and permanent decision. The
-native continuation must migrate remaining native consumers and supply native
-marker/reference wire restoration and authority fencing. Native storage must use
-the frozen journal + combined CAS/last-value outcome-state protocol, not the obsolete
-three-stream deletion recipe. Lifecycle verification uncertainty needs explicit
-native transition/reclamation reporting; memory expiry is one atomic transition.
-Native schema-3 reading requires the frozen explicit legacy-scope policy and cannot
-claim split-payload reclamation. D3 retains broad regressions, request/storage
-accounting, standalone-consumer validation and exact-head independent review.
+D2a supplies facade, local/HTTP service and shared codecs; core and service repairs
+have independently passed. D2b supplies checked native restoration, authority fencing,
+two-stream CAS/last-value outcomes, explicit expiry and authorized sender admission.
+See [native protocol and migration](modular-command-native.md). D3 retains broad
+regressions, request/storage accounting, standalone-consumer validation and exact-head
+independent native review.

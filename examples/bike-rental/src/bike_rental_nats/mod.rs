@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use rostfrei::{
     Command, CommandBindingRegistrationError, CommandBus, CommandMessageAdapter, CommandProcessor,
     CommittedDomainEvent, DomainEventDispatcher, DomainEventRegistrationError,
-    EncodedIntegrationMessage, EventStore, EventStoreError, IntegrationEvent, IntegrationEventBus,
+    EncodedIntegrationMessage, EventStoreError, IntegrationEvent, IntegrationEventBus,
     IntegrationEventDispatcherExt, IntegrationEventMapper, IntegrationMessageAdapter,
     JsonDomainRejectionMapper,
 };
@@ -264,7 +264,7 @@ impl BikeRentalNatsConfig {
         mut self,
         epoch: &str,
     ) -> Result<Self, BikeRentalNatsError> {
-        self.event_store = self.event_store.with_fresh_completed_outcome_epoch(epoch)?;
+        self.event_store = self.event_store.with_fresh_split_outcome_epoch(epoch)?;
         Ok(self)
     }
     pub fn new(application: &str) -> Result<Self, BikeRentalNatsError> {
@@ -557,7 +557,7 @@ impl CommandTransport for ScopedCommandTransport {
 pub struct BikeRentalNatsRuntime {
     connection: NatsConnection,
     config: BikeRentalNatsConfig,
-    store: NatsEventStore,
+    store: std::sync::RwLock<NatsEventStore>,
     messaging: Arc<NatsMessagingAdapter>,
     transport: Arc<ScopedCommandTransport>,
     scope_gate: Arc<RwLock<()>>,
@@ -709,7 +709,7 @@ impl BikeRentalNatsRuntime {
         Ok(Self {
             connection,
             config,
-            store,
+            store: std::sync::RwLock::new(store),
             messaging,
             transport,
             scope_gate,
@@ -722,8 +722,11 @@ impl BikeRentalNatsRuntime {
         &self.config
     }
 
-    pub const fn store(&self) -> &NatsEventStore {
-        &self.store
+    pub fn store(&self) -> NatsEventStore {
+        self.store
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     pub fn transport(&self) -> Arc<dyn CommandTransport> {
@@ -747,7 +750,7 @@ impl BikeRentalNatsRuntime {
         // Fixture application is not globally atomic. Register the validated plan
         // first so a persisted prefix remains side-effect free if a later append fails.
         fixture_events.extend(new_fixture_events);
-        let result = apply_message_series_fixture(&self.store, fixture)
+        let result = apply_message_series_fixture(&self.store(), fixture)
             .await
             .map_err(Into::into);
         drop(fixture_events);
@@ -775,7 +778,7 @@ impl BikeRentalNatsRuntime {
     }
 
     fn command_processor(&self) -> Result<Arc<CommandProcessor>, BikeRentalNatsError> {
-        let event_store: Arc<dyn EventStore> = Arc::new(self.store.clone());
+        let event_store: Arc<dyn rostfrei::CommandBackend> = Arc::new(self.store());
         let mut processor =
             CommandProcessor::new(self.config.context().name().clone(), event_store);
         processor.register::<RentBicycle, _>(
@@ -927,7 +930,7 @@ impl BikeRentalNatsRuntime {
         if let Some(source) = &source {
             source.ready();
         }
-        let store = self.store.clone();
+        let store = self.store();
         Ok(tokio::spawn(async move {
             if let Err(error) = subscription
                 .run(Arc::new(TracerCorrelationHandler {
@@ -972,6 +975,16 @@ impl BikeRentalNatsRuntime {
         for stream in streams {
             self.connection.delete_stream_if_exists(stream).await?;
         }
+        if !self
+            .config
+            .event_store
+            .outcome_state_stream_name()
+            .is_empty()
+        {
+            self.connection
+                .delete_stream_if_exists(self.config.event_store.outcome_state_stream_name())
+                .await?;
+        }
         Ok(())
     }
 
@@ -984,6 +997,11 @@ impl BikeRentalNatsRuntime {
         *self.fixture_events.write().await = FixtureEventSet::default();
         self.delete_resources().await?;
         self.config.provision(&self.connection).await?;
+        let replacement = self.config.connect_store(&self.connection).await?;
+        *self
+            .store
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = replacement;
         self.apply_fixture(fixture).await?;
         self.start_workers_in_scope().await
     }

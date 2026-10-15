@@ -168,7 +168,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             BikeRentalNatsRuntime::provision_config(connection.clone(), test_config.clone())
                 .await?,
         );
-        let test_store = Arc::new(test_runtime.store().clone());
+        let test_store = Arc::new(test_runtime.store());
         let history: Arc<dyn EventHistory> = test_store.clone();
         let test_reset: Arc<dyn TestScenarioReset> = test_runtime.clone();
         let test_repository: Arc<dyn TestRepository> = Arc::new(FilesystemTestRepository::load(
@@ -673,7 +673,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
             rostfrei_tracer::ObservationScope::Production,
         );
         let tracer = rostfrei_tracer::TracerBuilder::new(
-            Arc::new(runtime.store().clone()),
+            Arc::new(runtime.store()),
             rostfrei::DomainRegistry::new(),
         )
         .with_continuous_observation(Arc::clone(&feed))

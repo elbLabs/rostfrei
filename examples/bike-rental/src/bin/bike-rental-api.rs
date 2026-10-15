@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     dispatch_runtime.start_workers().await?;
 
-    let test_store = Arc::new(test_runtime.store().clone());
+    let test_store = Arc::new(test_runtime.store());
     let history: Arc<dyn EventHistory> = test_store.clone();
     let test_reset: Arc<dyn TestScenarioReset> = test_runtime.clone();
     let test_repository: Arc<dyn TestRepository> = Arc::new(FilesystemTestRepository::load(
