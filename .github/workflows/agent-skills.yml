@@ -1,0 +1,64 @@
+name: Agent Skills kit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-skills-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kit:
+    name: External install, reference format and live NATS protocol
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the repository Rust toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: agent-skills
+      - name: Check Rust CLI installation and typed HTTP failure boundaries
+        run: cargo test --locked -p rostfrei-structure
+      - name: Verify the published CLI package is self-contained
+        run: cargo package --locked -p rostfrei-structure
+      - name: Install the packaged native CLI externally and remove its source
+        run: |
+          mkdir "$RUNNER_TEMP/skills-cli-source"
+          tar -xzf target/package/rostfrei-structure-*.crate -C "$RUNNER_TEMP/skills-cli-source"
+          cargo install --locked --path "$RUNNER_TEMP"/skills-cli-source/rostfrei-structure-*/ --debug --root "$RUNNER_TEMP/skills-cli"
+          rm -r "$RUNNER_TEMP/skills-cli-source"
+          echo "ROSTFREI_CLI=$RUNNER_TEMP/skills-cli/bin/cargo-rostfrei" >> "$GITHUB_ENV"
+      - name: Qualify the external installed artifact without consumer Python
+        run: python3 scripts/check_agent_skills.py
+      - name: Resolve application dependencies and update managed skills across revisions
+        run: python3 scripts/check_agent_onboarding.py
+      - name: Check fresh source use and fixture maintenance isolation
+        run: python3 scripts/test_agent_skill_source.py
+      - name: Build the current application-linked host
+        run: cargo build --locked -p bike-rental --bin bike-rental-api
+      - name: Qualify installed suites and catalog-driven HTTP/SSE capabilities through real NATS
+        run: python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --output "$RUNNER_TEMP/skills-evidence"
+      - name: Qualify fresh source CLI and matching application host through real NATS
+        run: python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --source-checkout --output "$RUNNER_TEMP/skills-source-evidence"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-skills-live-evidence
+          path: ${{ runner.temp }}/skills-evidence/
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-skills-source-evidence
+          path: ${{ runner.temp }}/skills-source-evidence/
+          if-no-files-found: ignore

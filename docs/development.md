@@ -143,6 +143,13 @@ this guide. Run the external acceptance check in that follow-up PR. Templates
 must remain compatible with the selected release; new runtime APIs require an
 available release and a pin update, not a future tag or local fallback.
 
+The current pin predates bundled Agent Skills setup. `new` reports that skills
+were not installed; [existing-application setup](agent-skills-install.md) also
+reports that older dependency's capability gap. Once a skills-enabled release is
+published, qualify its matching resources and enable `scaffold_dependency()`'s
+skills capability alongside the pin update. The shared setup runs inside staged
+project creation, so a failure cannot leave a partial destination.
+
 To generate from this checkout:
 
 ```sh
