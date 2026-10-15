@@ -49,7 +49,7 @@ pub use memory::InMemoryEventStore;
 pub use outcome::{
     ArchiveReference, CompletedOutcome, DetailRead, DetailReadError, DetailUnavailableReason,
     EncodedOutcomeDetails, OutcomeDecision, OutcomeDetailReader, OutcomeDetailReference,
-    OutcomeDetails, OutcomeMarker, OutcomeRecoveryError,
+    OutcomeDetails, OutcomeMarker, OutcomeRecoveryError, resolve_details,
 };
 pub use proposal::ProposalDigest;
 pub use read_model::{

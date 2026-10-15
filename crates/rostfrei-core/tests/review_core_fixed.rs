@@ -1,5 +1,10 @@
 //! Independent repair confirmation; additional cases beyond the imported D1 suite.
 #![allow(clippy::unwrap_used, clippy::panic_in_result_fn)]
+#![allow(
+    clippy::as_conversions,
+    clippy::panic,
+    reason = "retained independent type-erasure and forbidden-path assertions"
+)]
 use async_trait::async_trait;
 use rostfrei_core::*;
 use rostfrei_messaging_core::{BoundedContextName, CausationId, CorrelationId};

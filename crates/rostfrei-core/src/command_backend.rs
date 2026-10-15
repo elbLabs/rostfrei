@@ -109,6 +109,11 @@ pub trait CommandCommitSession: EventHistory {
 /// Opaque token bound to an immutable winning reference, including authority incarnation.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct OutcomeRevision(pub(crate) crate::ContentFingerprint);
+impl OutcomeRevision {
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReclamationStatus {

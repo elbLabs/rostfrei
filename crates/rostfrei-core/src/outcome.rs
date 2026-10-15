@@ -29,6 +29,21 @@ pub struct OutcomeDetailReference {
 }
 
 impl OutcomeDetailReference {
+    /// Canonical complete reference encoding, separate from mutable lifecycle state.
+    pub fn encode(&self) -> Result<Vec<u8>, EventStoreError> {
+        serde_json::to_vec(&(
+            1_u16,
+            self.key.authority().as_str(),
+            self.key.bounded_context().as_str(),
+            self.key.operation_id().as_str(),
+            self.security_scope.as_ref().map(SecurityScope::as_str),
+            self.decision == OutcomeDecision::Rejected,
+            self.format,
+            self.length,
+            self.digest.to_hex(),
+        ))
+        .map_err(|e| corrupt(e.to_string()))
+    }
     pub const fn key(&self) -> &OutcomeKey {
         &self.key
     }
@@ -60,6 +75,96 @@ pub struct OutcomeMarker {
 }
 
 impl OutcomeMarker {
+    /// Versioned, payload-free storage metadata. Event integrity remains in the journal.
+    pub fn encode_manifest(&self) -> Result<Vec<u8>, EventStoreError> {
+        serde_json::to_vec(&MarkerManifest {
+            version: 1,
+            authority: self.reference.key.authority().as_str().to_owned(),
+            context: self.reference.key.bounded_context().as_str().to_owned(),
+            operation: self.reference.key.operation_id().as_str().to_owned(),
+            scope: self
+                .reference
+                .security_scope
+                .as_ref()
+                .map(|v| v.as_str().to_owned()),
+            rejected: self.decision() == OutcomeDecision::Rejected,
+            format: self.reference.format,
+            length: self.reference.length,
+            digest: self.reference.digest.to_hex(),
+            proposal_version: self.proposal.version(),
+            proposal: self.proposal.fingerprint().to_hex(),
+            revision: self.revision.0.to_hex(),
+            evidence: self.evidence.clone(),
+            integrity: integrity_digest(&self.integrity)?.to_hex(),
+        })
+        .map_err(|e| corrupt(e.to_string()))
+    }
+
+    /// Checked restoration against independently reconstructed permanent event integrity.
+    /// The adapter must first verify journal provenance and the configured authority key.
+    pub fn restore_manifest(
+        expected: &OutcomeKey,
+        bytes: &[u8],
+        integrity: TransactionReceipt,
+    ) -> Result<Self, EventStoreError> {
+        let wire: MarkerManifest =
+            serde_json::from_slice(bytes).map_err(|e| corrupt(e.to_string()))?;
+        integrity.validate_integrity()?;
+        if wire.integrity != integrity_digest(&integrity)?.to_hex() {
+            return Err(corrupt("manifest event-integrity digest mismatch"));
+        }
+        if wire.version != 1
+            || wire.format != 1
+            || wire.length < 4
+            || wire.authority != expected.authority().as_str()
+            || wire.context != expected.bounded_context().as_str()
+            || wire.operation != expected.operation_id().as_str()
+            || integrity.bounded_context() != Some(expected.bounded_context())
+            || integrity.operation_id() != expected.operation_id()
+            || integrity.security_scope().map(SecurityScope::as_str) != wire.scope.as_deref()
+            || integrity.completion().is_some()
+            || (wire.rejected && integrity.streams().iter().any(|s| !s.events().is_empty()))
+        {
+            return Err(corrupt(
+                "manifest key, format, scope or integrity binding mismatch",
+            ));
+        }
+        if let Some(evidence) = &wire.evidence {
+            CommandCompletion::new(Some(evidence.clone()), None)
+                .validate()
+                .map_err(|e| corrupt(e.to_string()))?;
+            if evidence.created_at_millis.is_some() {
+                return Err(corrupt("retainable timestamp in permanent manifest"));
+            }
+        }
+        let fingerprint =
+            |value: &str| ContentFingerprint::from_hex(value).map_err(|e| corrupt(e.to_string()));
+        let proposal =
+            ProposalDigest::restore(wire.proposal_version, fingerprint(&wire.proposal)?)?;
+        let reference = OutcomeDetailReference {
+            key: expected.clone(),
+            security_scope: integrity.security_scope().cloned(),
+            decision: if wire.rejected {
+                OutcomeDecision::Rejected
+            } else {
+                OutcomeDecision::Accepted
+            },
+            format: wire.format,
+            length: wire.length,
+            digest: fingerprint(&wire.digest)?,
+        };
+        let revision = marker_revision(&reference, proposal, wire.evidence.as_ref(), &integrity)?;
+        if revision.0 != fingerprint(&wire.revision)? {
+            return Err(corrupt("manifest revision mismatch"));
+        }
+        Ok(Self {
+            reference,
+            revision,
+            proposal,
+            evidence: wire.evidence,
+            integrity,
+        })
+    }
     /// Creates the marker/detail pair before the coordinator's atomic decision.
     /// This function alone does not confer commit authority.
     pub fn prepare(
@@ -94,11 +199,6 @@ impl OutcomeMarker {
             digest: ContentFingerprint::digest(&bytes),
         };
         let proposal = ProposalDigest::of(proposal)?;
-        let mut hash = Sha256::new();
-        crate::identity::hash_part(&mut hash, b"rostfrei:outcome-revision:v1");
-        crate::identity::hash_part(&mut hash, reference.digest.as_bytes());
-        crate::identity::hash_part(&mut hash, proposal.fingerprint().as_bytes());
-        let revision = OutcomeRevision(ContentFingerprint::from_bytes(hash.finalize().into()));
         let evidence = completion
             .as_ref()
             .and_then(|v| v.evidence.clone())
@@ -107,13 +207,15 @@ impl OutcomeMarker {
                 v.created_at_millis = None;
                 v
             });
+        let integrity = receipt.without_completion();
+        let revision = marker_revision(&reference, proposal, evidence.as_ref(), &integrity)?;
         Ok((
             Self {
                 reference,
                 revision,
                 proposal,
                 evidence,
-                integrity: receipt.without_completion(),
+                integrity,
             },
             bytes,
         ))
@@ -177,6 +279,104 @@ impl OutcomeMarker {
         }
         Ok(())
     }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MarkerManifest {
+    version: u16,
+    authority: String,
+    context: String,
+    operation: String,
+    #[serde(deserialize_with = "required_optional")]
+    scope: Option<String>,
+    rejected: bool,
+    format: u16,
+    length: usize,
+    digest: String,
+    proposal_version: u16,
+    proposal: String,
+    revision: String,
+    integrity: String,
+    #[serde(deserialize_with = "required_optional")]
+    evidence: Option<OutcomeEvidence>,
+}
+
+fn required_optional<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    Option::deserialize(deserializer)
+}
+
+fn integrity_digest(receipt: &TransactionReceipt) -> Result<ContentFingerprint, EventStoreError> {
+    let streams: Vec<_> = receipt
+        .streams()
+        .iter()
+        .map(|stream| {
+            let events: Vec<_> = stream
+                .events()
+                .iter()
+                .map(|event| {
+                    serde_json::json!([
+                        event.event_id().as_str(),
+                        event.commit_id().as_str(),
+                        event.stream_version().value(),
+                        event.commit_event_ordinal(),
+                        event.commit_event_count(),
+                        event.event_type(),
+                        event.schema_version(),
+                        ContentFingerprint::digest(event.payload()).to_hex()
+                    ])
+                })
+                .collect();
+            serde_json::json!([
+                stream.stream_id().aggregate_type().as_str(),
+                stream.stream_id().aggregate_id().as_str(),
+                stream.base_version().value(),
+                events
+            ])
+        })
+        .collect();
+    let value = serde_json::json!([
+        "rostfrei:outcome-integrity:v1",
+        receipt
+            .bounded_context()
+            .map(rostfrei_messaging_core::BoundedContextName::as_str),
+        receipt.operation_id().as_str(),
+        receipt.operation_fingerprint().to_hex(),
+        receipt
+            .correlation_id()
+            .map(rostfrei_messaging_core::CorrelationId::as_str),
+        receipt
+            .causation_id()
+            .map(rostfrei_messaging_core::CausationId::as_str),
+        receipt.security_scope().map(SecurityScope::as_str),
+        streams
+    ]);
+    Ok(ContentFingerprint::digest(
+        serde_json::to_vec(&value).map_err(|e| corrupt(e.to_string()))?,
+    ))
+}
+
+fn marker_revision(
+    reference: &OutcomeDetailReference,
+    proposal: ProposalDigest,
+    evidence: Option<&OutcomeEvidence>,
+    integrity: &TransactionReceipt,
+) -> Result<OutcomeRevision, EventStoreError> {
+    let mut hash = Sha256::new();
+    crate::identity::hash_part(&mut hash, b"rostfrei:outcome-revision:v2");
+    crate::identity::hash_part(&mut hash, &reference.encode()?);
+    crate::identity::hash_part(&mut hash, &proposal.version().to_be_bytes());
+    crate::identity::hash_part(&mut hash, proposal.fingerprint().as_bytes());
+    crate::identity::hash_part(
+        &mut hash,
+        &serde_json::to_vec(&evidence).map_err(|e| corrupt(e.to_string()))?,
+    );
+    crate::identity::hash_part(&mut hash, integrity_digest(integrity)?.as_bytes());
+    Ok(OutcomeRevision(ContentFingerprint::from_bytes(
+        hash.finalize().into(),
+    )))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

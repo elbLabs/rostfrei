@@ -15,6 +15,18 @@ pub struct ProposalDigest {
 }
 
 impl ProposalDigest {
+    pub(crate) fn restore(
+        version: u16,
+        digest: ContentFingerprint,
+    ) -> Result<Self, EventStoreError> {
+        if version != 1 {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::CorruptHistory,
+                "unsupported proposal digest version",
+            ));
+        }
+        Ok(Self { version, digest })
+    }
     pub fn of(transaction: &EventTransaction) -> Result<Self, EventStoreError> {
         let mut hash = Sha256::new();
         hash_part(&mut hash, b"rostfrei:proposal:v1");
