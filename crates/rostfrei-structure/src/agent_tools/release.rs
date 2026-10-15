@@ -33,8 +33,9 @@ impl Release {
             framework_version: env!("CARGO_PKG_VERSION").to_owned(),
             source_revision: env!("ROSTFREI_CLI_REVISION").to_owned(),
             source_tree_dirty: env!("ROSTFREI_CLI_DIRTY") == "true",
-            source_fingerprint: Some(env!("ROSTFREI_CLI_FINGERPRINT").to_owned())
-                .filter(|value| !value.is_empty()),
+            source_fingerprint: Some(env!("ROSTFREI_CLI_FINGERPRINT"))
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
             contracts: Contracts {
                 catalog: 1,
                 behavioral_test: 2,
