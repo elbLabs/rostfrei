@@ -56,6 +56,10 @@ a newer request is pending, with current accepted/rejected results rendering nor
 Local #106 checks: all **76** `rostfrei-structure` tests passed, as did targeted
 all-target/all-feature Clippy, formatting and shared-version validation. The new
 real-Cargo regression is also part of the existing onboarding CI step.
+The first CI attempt exposed metadata resolution failing in the fixture's
+restricted setup environment, before retention. The fixture now prepares real
+Cargo metadata, then runs setup offline with a metadata-only Cargo wrapper and
+normal setup tooling; execution still has empty PATH. The runner repair is unchanged.
 
 Focused evidence is `/tmp/rostfrei-two-fixes-MyJMJAEu/` (`runner-red.log`,
 `runner-green.log`, `studio-red.log`, `studio-green.log`, `ui-red/`, `ui-green/`).

@@ -119,6 +119,10 @@ class ExistingApplicationTests(unittest.TestCase):
         self.assertIn("predates skills-enabled tooling", created.stdout)
         locked = command(["cargo", "generate-lockfile"], app)
         self.assertEqual(locked.returncode, 0, locked.stderr)
+        # Lockfile generation alone does not download all metadata inputs on a
+        # cold CI cache. Prepare the real graph before the offline setup check.
+        metadata = command(["cargo", "metadata", "--locked", "--format-version", "1"], app)
+        self.assertEqual(metadata.returncode, 0, metadata.stderr)
         result = command([CLI, "rostfrei", "skills", "install"], app,
                          {**os.environ, "CARGO_PROFILE_RELEASE_OPT_LEVEL": "0",
                           "CARGO_PROFILE_RELEASE_DEBUG": "0"})
@@ -156,8 +160,10 @@ class ExistingApplicationTests(unittest.TestCase):
         wrapper = tools / "cargo"
         wrapper.write_text(f'#!/bin/sh\n[ "$1" = metadata ] || exit 91\nexec {json.dumps(cargo)} "$@"\n')
         wrapper.chmod(0o755)
-        (tools / "rustc").symlink_to(shutil.which("rustc"))
-        environment = {**os.environ, "PATH": str(tools), "CARGO_NET_OFFLINE": "true"}
+        environment = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                       "CARGO_NET_OFFLINE": "true"}
+        prepared = command(["cargo", "metadata", "--locked", "--format-version", "1"], app, environment)
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
         setup = [global_cli, "rostfrei", "skills", "install"]
         installed = command(setup, app, environment)
         self.assertEqual(installed.returncode, 0, installed.stderr)
