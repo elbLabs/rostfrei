@@ -52,6 +52,17 @@ const LEGACY_EVENT_SCHEMA_VERSION: u16 = 1;
 const CORRELATION_EVENT_SCHEMA_VERSION: u16 = 2;
 const EVENT_SCHEMA_VERSION: u16 = 3;
 const TRANSACTION_EVENT_SCHEMA_VERSION: u16 = 4;
+const ACTOR_EVENT_SCHEMA_VERSION: u16 = 5;
+const ACTOR_TRANSACTION_EVENT_SCHEMA_VERSION: u16 = 6;
+const ACTOR_RECEIPT_SCHEMA_VERSION: u16 = 5;
+
+#[cfg(test)]
+#[path = "event_store/attribution_tests.rs"]
+mod attribution_tests;
+
+#[cfg(test)]
+#[path = "event_store/legacy_vectors.rs"]
+mod legacy_vectors;
 const TRANSACTION_RECEIPT_SCHEMA_VERSION: u16 = 1;
 const EVENT_FREE_RECEIPT_SCHEMA_VERSION: u16 = 2;
 const COMPLETED_OUTCOME_SCHEMA_VERSION: u16 = 3;
@@ -1280,6 +1291,7 @@ impl NatsEventStore {
                 fingerprint,
                 correlation_id.as_ref(),
                 causation_id.as_ref(),
+                content.actor.as_ref(),
                 &batch_id,
                 transaction_event_ordinal,
                 transaction_event_count,
@@ -1328,6 +1340,9 @@ impl NatsEventStore {
         if let Some(causation_id) = causation_id {
             receipt = receipt.with_causation_id(causation_id);
         }
+        if let Some(actor) = content.actor {
+            receipt = receipt.with_actor(actor);
+        }
         if let Some(scope) = content.security_scope {
             receipt = receipt.with_security_scope(
                 rostfrei_core::SecurityScope::new(scope).map_err(|e| corrupt(e.to_string()))?,
@@ -1336,6 +1351,7 @@ impl NatsEventStore {
         if let Some(completion) = content.completion {
             receipt = receipt.with_completion(completion);
         }
+        receipt.validate_integrity()?;
         let marker = content
             .manifest
             .map(|encoded| {
@@ -2356,6 +2372,12 @@ struct StoredEventContentWire {
     correlation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     causation_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_actor"
+    )]
+    actor: Option<rostfrei_core::ActorRef>,
     commit_event_ordinal: u32,
     commit_event_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2408,7 +2430,27 @@ struct TransactionReceiptContentWire {
     correlation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     causation_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_actor"
+    )]
+    actor: Option<rostfrei_core::ActorRef>,
     participants: Vec<TransactionParticipantWire>,
+}
+
+// Missing is legacy unknown; present null is never an admissible attribution field.
+fn present_actor<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<rostfrei_core::ActorRef>, D::Error> {
+    rostfrei_core::ActorRef::deserialize(deserializer).map(Some)
+}
+
+const fn transactional_event_schema(version: u16) -> bool {
+    matches!(
+        version,
+        TRANSACTION_EVENT_SCHEMA_VERSION | ACTOR_TRANSACTION_EVENT_SCHEMA_VERSION
+    )
 }
 
 struct DecodedTransactionReceipt {
@@ -2562,6 +2604,7 @@ fn encode_events_inner(
                 causation_id: batch
                     .causation_id()
                     .map(|identity| identity.as_str().to_owned()),
+                actor: batch.actor().cloned(),
                 commit_event_ordinal: ordinal,
                 commit_event_count: event_count,
                 transaction_event_ordinal,
@@ -2571,10 +2614,11 @@ fn encode_events_inner(
                 event_schema_version: event.schema_version(),
                 payload_base64: STANDARD.encode(event.payload()),
             };
-            let schema_version = if transaction.is_some() {
-                TRANSACTION_EVENT_SCHEMA_VERSION
-            } else {
-                EVENT_SCHEMA_VERSION
+            let schema_version = match (transaction.is_some(), batch.actor().is_some()) {
+                (true, true) => ACTOR_TRANSACTION_EVENT_SCHEMA_VERSION,
+                (false, true) => ACTOR_EVENT_SCHEMA_VERSION,
+                (true, false) => TRANSACTION_EVENT_SCHEMA_VERSION,
+                (false, false) => EVENT_SCHEMA_VERSION,
             };
             let checksum = event_checksum(schema_version, &content)
                 .map_err(|error| invalid(format!("failed to checksum event: {error}")))?;
@@ -2640,8 +2684,17 @@ fn decode_event_inner(
             | CORRELATION_EVENT_SCHEMA_VERSION
             | EVENT_SCHEMA_VERSION
             | TRANSACTION_EVENT_SCHEMA_VERSION
+            | ACTOR_EVENT_SCHEMA_VERSION
+            | ACTOR_TRANSACTION_EVENT_SCHEMA_VERSION
     ) {
         return Err(corrupt("stored event has an unsupported schema version"));
+    }
+    if matches!(
+        wire.schema_version,
+        ACTOR_EVENT_SCHEMA_VERSION | ACTOR_TRANSACTION_EVENT_SCHEMA_VERSION
+    ) != wire.event.actor.is_some()
+    {
+        return Err(corrupt("stored event actor/schema mismatch"));
     }
     if wire.schema_version == LEGACY_EVENT_SCHEMA_VERSION
         && (wire.event.correlation_id.is_some() || wire.event.causation_id.is_some())
@@ -2657,7 +2710,7 @@ fn decode_event_inner(
             "legacy stored events cannot contain application scope metadata",
         ));
     }
-    if wire.schema_version < TRANSACTION_EVENT_SCHEMA_VERSION
+    if !transactional_event_schema(wire.schema_version)
         && (wire.event.transaction_event_ordinal.is_some()
             || wire.event.transaction_event_count.is_some())
     {
@@ -2709,7 +2762,7 @@ fn decode_event_inner(
         return Err(corrupt("stored event has invalid commit coordinates"));
     }
     let (transaction_event_ordinal, transaction_event_count) =
-        if wire.schema_version == TRANSACTION_EVENT_SCHEMA_VERSION {
+        if transactional_event_schema(wire.schema_version) {
             let ordinal = wire
                 .event
                 .transaction_event_ordinal
@@ -2784,6 +2837,9 @@ fn decode_event_inner(
     if let Some(causation_id) = causation_id {
         recorded = recorded.with_causation_id(causation_id);
     }
+    if let Some(actor) = wire.event.actor {
+        recorded = recorded.with_actor(actor);
+    }
     let batch_id = validate_atomic_headers(
         config.stream_name(),
         headers,
@@ -2804,11 +2860,11 @@ fn decode_event_inner(
             event_count,
             transaction_event_ordinal,
             transaction_event_count,
-            is_transactional: wire.schema_version == TRANSACTION_EVENT_SCHEMA_VERSION,
+            is_transactional: transactional_event_schema(wire.schema_version),
             recorded,
         },
         global_stream_sequence: 0,
-        is_transactional: wire.schema_version == TRANSACTION_EVENT_SCHEMA_VERSION,
+        is_transactional: transactional_event_schema(wire.schema_version),
     })
 }
 
@@ -2980,6 +3036,7 @@ impl PendingCommit {
             || decoded.operation_fingerprint != self.operation_fingerprint
             || decoded.recorded.correlation_id() != first.correlation_id()
             || decoded.recorded.causation_id() != first.causation_id()
+            || decoded.recorded.actor() != first.actor()
             || !transaction_matches
         {
             return Err(corrupt("stored commit metadata is inconsistent"));
@@ -3025,6 +3082,9 @@ impl PendingCommit {
         }
         if let Some(causation_id) = causation_id {
             batch = batch.with_causation_id(causation_id);
+        }
+        if let Some(actor) = first.actor() {
+            batch = batch.with_actor(actor.clone());
         }
         let commit = StoredCommit {
             batch,
@@ -3307,7 +3367,7 @@ fn validate_atomic_headers(
         ));
     }
     let commit = optional_single_header(headers, "Nats-Batch-Commit")?;
-    if schema_version == TRANSACTION_EVENT_SCHEMA_VERSION {
+    if transactional_event_schema(schema_version) {
         if commit.is_some() {
             return Err(corrupt(
                 "transactional domain event finalized before its receipt",
@@ -3399,6 +3459,9 @@ fn record_batch(
         if let Some(causation_id) = batch.causation_id() {
             recorded_event = recorded_event.with_causation_id(causation_id.clone());
         }
+        if let Some(actor) = batch.actor() {
+            recorded_event = recorded_event.with_actor(actor.clone());
+        }
         recorded.push(recorded_event);
     }
     RecordedBatch::new(recorded)
@@ -3410,6 +3473,7 @@ fn same_batch(stored: &EventBatch, incoming: &EventBatch) -> bool {
         && stored.operation_fingerprint() == incoming.operation_fingerprint()
         && stored.correlation_id() == incoming.correlation_id()
         && stored.causation_id() == incoming.causation_id()
+        && stored.actor() == incoming.actor()
         && stored.events() == incoming.events()
 }
 
@@ -3438,6 +3502,12 @@ fn validate_derived_identities(
 fn validate_transaction_shape(transaction: &EventTransaction) -> Result<(), EventStoreError> {
     let mut streams = HashSet::with_capacity(transaction.participants().len());
     for participant in transaction.participants() {
+        if participant
+            .batch()
+            .is_some_and(|batch| batch.actor() != transaction.actor())
+        {
+            return Err(invalid("participant actor does not match its transaction"));
+        }
         if !streams.insert(participant.stream_id()) {
             return Err(invalid(
                 "an event transaction must not contain duplicate streams",
@@ -3512,6 +3582,7 @@ fn transaction_receipt_content(
         causation_id: transaction
             .causation_id()
             .map(|identity| identity.as_str().to_owned()),
+        actor: transaction.actor().cloned(),
         participants: staged
             .iter()
             .map(|participant| {
@@ -3566,6 +3637,7 @@ fn transaction_receipt_covers_commit(
         || commit.batch.operation_fingerprint() != materialized.receipt.operation_fingerprint()
         || commit.batch.correlation_id() != materialized.receipt.correlation_id()
         || commit.batch.causation_id() != materialized.receipt.causation_id()
+        || commit.batch.actor() != materialized.receipt.actor()
     {
         return false;
     }
@@ -3615,6 +3687,7 @@ fn materialize_transaction_participant(
     operation_fingerprint: ContentFingerprint,
     correlation_id: Option<&CorrelationId>,
     causation_id: Option<&CausationId>,
+    actor: Option<&rostfrei_core::ActorRef>,
     batch_id: &str,
     transaction_event_ordinal: usize,
     transaction_event_count: usize,
@@ -3692,6 +3765,7 @@ fn materialize_transaction_participant(
         || stored.batch.operation_fingerprint() != operation_fingerprint
         || stored.batch.correlation_id() != correlation_id
         || stored.batch.causation_id() != causation_id
+        || stored.batch.actor() != actor
         || provenance.batch_id != batch_id
         || provenance.event_ordinals != (transaction_event_ordinal..transaction_event_end)
         || provenance.transaction_event_count != transaction_event_count
@@ -3832,7 +3906,9 @@ fn global_sequence_at_version(
 fn encode_transaction_receipt(
     content: &TransactionReceiptContentWire,
 ) -> Result<Vec<u8>, EventStoreError> {
-    let schema_version = if content.manifest.is_some() {
+    let schema_version = if content.actor.is_some() {
+        ACTOR_RECEIPT_SCHEMA_VERSION
+    } else if content.manifest.is_some() {
         SPLIT_OUTCOME_SCHEMA_VERSION
     } else if content.completion.is_some() {
         COMPLETED_OUTCOME_SCHEMA_VERSION
@@ -3911,10 +3987,14 @@ fn decode_transaction_receipt(
             | EVENT_FREE_RECEIPT_SCHEMA_VERSION
             | COMPLETED_OUTCOME_SCHEMA_VERSION
             | SPLIT_OUTCOME_SCHEMA_VERSION
+            | ACTOR_RECEIPT_SCHEMA_VERSION
     ) {
         return Err(corrupt(
             "stored transaction receipt has an unsupported schema version",
         ));
+    }
+    if (wire.schema_version == ACTOR_RECEIPT_SCHEMA_VERSION) != wire.receipt.actor.is_some() {
+        return Err(corrupt("stored transaction receipt actor/schema mismatch"));
     }
     let checksum =
         transaction_receipt_checksum(wire.schema_version, &wire.receipt).map_err(|error| {
@@ -3936,14 +4016,16 @@ fn decode_transaction_receipt(
         ));
     }
     validate_receipt_participant_shape(&wire, batch_sequence)?;
-    if (wire.schema_version == SPLIT_OUTCOME_SCHEMA_VERSION) != wire.receipt.manifest.is_some()
+    if (wire.schema_version != ACTOR_RECEIPT_SCHEMA_VERSION
+        && (wire.schema_version == SPLIT_OUTCOME_SCHEMA_VERSION) != wire.receipt.manifest.is_some())
         || (wire.receipt.manifest.is_some()
             && (!config.split_outcomes() || wire.receipt.completion.is_some()))
     {
         return Err(corrupt("split outcome schema/authority mismatch"));
     }
-    if (wire.schema_version == COMPLETED_OUTCOME_SCHEMA_VERSION)
-        != wire.receipt.completion.is_some()
+    if wire.schema_version != ACTOR_RECEIPT_SCHEMA_VERSION
+        && (wire.schema_version == COMPLETED_OUTCOME_SCHEMA_VERSION)
+            != wire.receipt.completion.is_some()
     {
         return Err(corrupt("completed outcome schema/decision mismatch"));
     }
@@ -3980,7 +4062,9 @@ fn validate_receipt_participant_shape(
         .any(|participant| participant.event_count > 0);
     if (!matches!(
         wire.schema_version,
-        COMPLETED_OUTCOME_SCHEMA_VERSION | SPLIT_OUTCOME_SCHEMA_VERSION
+        COMPLETED_OUTCOME_SCHEMA_VERSION
+            | SPLIT_OUTCOME_SCHEMA_VERSION
+            | ACTOR_RECEIPT_SCHEMA_VERSION
     ) && (wire.schema_version == TRANSACTION_RECEIPT_SCHEMA_VERSION) != has_events)
         || wire
             .receipt
@@ -4057,7 +4141,8 @@ fn transaction_matches_receipt(
         && transaction.operation_id() == receipt.operation_id()
         && transaction.operation_fingerprint() == receipt.operation_fingerprint()
         && transaction.correlation_id() == receipt.correlation_id()
-        && transaction.causation_id() == receipt.causation_id();
+        && transaction.causation_id() == receipt.causation_id()
+        && transaction.actor() == receipt.actor();
     let metadata_matches = metadata_matches && transaction.completion() == receipt.completion();
     metadata_matches
         && transaction.participants().len() == receipt.streams().len()
@@ -4107,6 +4192,7 @@ fn batch_matches_recorded(batch: &EventBatch, recorded: &[RecordedEvent]) -> boo
                     && batch.operation_fingerprint() == stored.operation_fingerprint()
                     && batch.correlation_id() == stored.correlation_id()
                     && batch.causation_id() == stored.causation_id()
+                    && batch.actor() == stored.actor()
             })
 }
 
@@ -4295,6 +4381,7 @@ mod tests {
 
     fn transaction_receipt_fixture() -> TransactionReceiptContentWire {
         TransactionReceiptContentWire {
+            actor: None,
             manifest: None,
             security_scope: None,
             completion: None,
@@ -4821,6 +4908,7 @@ mod tests {
                 fingerprint,
                 None,
                 None,
+                None,
                 "atomic-transaction",
                 1,
                 2,
@@ -4854,6 +4942,7 @@ mod tests {
                 StreamVersion::ZERO,
                 &operation_id,
                 fingerprint,
+                None,
                 None,
                 None,
                 "atomic-transaction",
@@ -4901,6 +4990,7 @@ mod tests {
                 fingerprint,
                 None,
                 None,
+                None,
                 "atomic-transaction",
                 1,
                 2,
@@ -4926,6 +5016,7 @@ mod tests {
                 StreamVersion::ZERO,
                 &operation_id,
                 fingerprint,
+                None,
                 None,
                 None,
                 "atomic-transaction",

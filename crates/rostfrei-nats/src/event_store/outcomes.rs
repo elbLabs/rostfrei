@@ -777,6 +777,9 @@ pub(super) fn staged_receipt(
     if let Some(scope) = proposal.security_scope() {
         receipt = receipt.with_security_scope(scope.clone());
     }
+    if let Some(actor) = proposal.actor() {
+        receipt = receipt.with_actor(actor.clone());
+    }
     receipt
 }
 
@@ -812,6 +815,9 @@ pub(super) fn proposal_from_receipt(
             if let Some(id) = receipt.causation_id() {
                 batch = batch.with_causation_id(id.clone());
             }
+            if let Some(actor) = receipt.actor() {
+                batch = batch.with_actor(actor.clone());
+            }
             Some(batch)
         } else {
             None
@@ -842,6 +848,9 @@ pub(super) fn proposal_from_receipt(
     }
     if let Some(scope) = receipt.security_scope() {
         proposal = proposal.with_security_scope(scope.clone());
+    }
+    if let Some(actor) = receipt.actor() {
+        proposal = proposal.with_actor(actor.clone());
     }
     if let Some(completion) = receipt.completion() {
         proposal = proposal.with_completion(completion.clone());

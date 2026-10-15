@@ -4,6 +4,13 @@
     clippy::panic_in_result_fn,
     clippy::indexing_slicing
 )]
+// Keep the frozen acceptance expressions intact under workspace lint profiles.
+#![allow(
+    clippy::redundant_clone,
+    clippy::manual_string_new,
+    clippy::cloned_ref_to_slice_refs,
+    clippy::ignored_unit_patterns
+)]
 mod modular_support;
 use async_trait::async_trait;
 use modular_support::*;

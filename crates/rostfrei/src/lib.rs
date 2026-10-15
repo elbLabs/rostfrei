@@ -94,7 +94,7 @@ pub use read_model::{
     ReadModelRuntime, ReadModelState, ReadModels,
 };
 pub use rostfrei_core::{
-    Aggregate, AggregateCodecs, AggregateId as StreamAggregateId, AggregateInstance,
+    ActorRef, Aggregate, AggregateCodecs, AggregateId as StreamAggregateId, AggregateInstance,
     AggregateType as StreamAggregateType, AppendOutcome, AppendSession, BoundedConflictRetries,
     CommandAuthority, CommandCommitSession, CommandCompletion, CommandDecision, CommandExecution,
     CommandExecutionError, CommandExecutionMetadata, CommandExecutor, CommandHandler,
@@ -107,13 +107,14 @@ pub use rostfrei_core::{
     EventId, EventStore, EventStoreError, EventStoreErrorKind, EventStoreErrorOrigin,
     EventTransaction, EventVariant, ExecutionStore, ExpectedVersion, InMemoryEventStore,
     InlineCompletedOutcome, JsonReadModelCodec, JsonRejectionCodec, LoadedAggregate,
-    MAX_REJECTION_BYTES, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, OutcomeDetails,
-    OutcomeEvidence, OutcomeExpiry, OutcomeKey, OutcomeLifecycle, OutcomeLookup, OutcomeReader,
-    OutcomeRecoveryError, OutcomeRevision, ReadModel, ReadModelCodec, ReadModelEntry,
-    ReadModelError, ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelStore,
-    ReclamationStatus, RecordedEvent, RejectionCodec, SecurityScope, SimulatedParticipant,
-    SimulationError, SimulationOutcome, StreamId, StreamVersion, TransactionAppendOutcome,
-    TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
+    MAX_ACTOR_ID_BYTES, MAX_ACTOR_NAMESPACE_BYTES, MAX_REJECTION_BYTES, MAX_TRANSACTION_ITEMS,
+    NewEvent, OperationId, OutcomeDetails, OutcomeEvidence, OutcomeExpiry, OutcomeKey,
+    OutcomeLifecycle, OutcomeLookup, OutcomeReader, OutcomeRecoveryError, OutcomeRevision,
+    ReadModel, ReadModelCodec, ReadModelEntry, ReadModelError, ReadModelErrorKind, ReadModelKey,
+    ReadModelRevision, ReadModelStore, ReclamationStatus, RecordedEvent, RejectionCodec,
+    SecurityScope, SimulatedParticipant, SimulationError, SimulationOutcome, StreamId,
+    StreamVersion, TransactionAppendOutcome, TransactionParticipant, TransactionReceipt,
+    TransactionStreamReceipt,
 };
 pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};
 pub use rostfrei_macros::{QueryDefinition, ReadModel};

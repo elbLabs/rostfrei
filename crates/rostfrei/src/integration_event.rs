@@ -88,11 +88,14 @@ impl<Mapper> IntegrationEventProcessor<Mapper> {
             .map_err(|error| IntegrationEventProcessingError::MessageIdentity(error.to_string()))?;
         let causation_id = CausationId::new(envelope.message_id().as_str())
             .map_err(|error| IntegrationEventProcessingError::MessageIdentity(error.to_string()))?;
-        let request = CommandRequest::new(operation_id, command)
+        let mut request = CommandRequest::new(operation_id, command)
             .with_correlation_id(envelope.correlation_id().clone())
             .with_causation_id(causation_id)
             .with_created_at(envelope.occurred_at())
             .with_events_caused_by_command();
+        if let Some(actor) = envelope.actor() {
+            request = request.with_actor(actor.clone());
+        }
         let receipt = self
             .command_bus
             .dispatch::<Mapper::Command>(request)

@@ -1,3 +1,5 @@
+pub use rostfrei_messaging_core::{ActorRef, MAX_ACTOR_ID_BYTES, MAX_ACTOR_NAMESPACE_BYTES};
+
 mod aggregate;
 mod append_session;
 mod codecs;

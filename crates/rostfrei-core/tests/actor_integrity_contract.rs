@@ -1,4 +1,4 @@
-//! ACT-10..13: future ActorRef API, raw consistency and independent integrity boundaries.
+//! ACT-10..13: future `ActorRef` API, raw consistency and independent integrity boundaries.
 #![allow(
     clippy::unwrap_used,
     clippy::panic_in_result_fn,
@@ -25,7 +25,7 @@ impl CommandHandler<()> for Observe {
     type Rejection = String;
     async fn handle(
         &self,
-        _: &(),
+        (): &(),
         execution: &mut CommandExecution<'_>,
     ) -> CommandHandlingResult<String> {
         self.0

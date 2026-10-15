@@ -33,6 +33,7 @@ impl TransactionReceipt {
                     || event.operation_fingerprint() != self.operation_fingerprint()
                     || event.correlation_id() != self.correlation_id()
                     || event.causation_id() != self.causation_id()
+                    || event.actor() != self.actor()
                     || event.commit_event_ordinal() != ordinal
                     || event.commit_event_count() != count
                 {
@@ -68,6 +69,7 @@ impl TransactionReceipt {
             || self.operation_fingerprint() != proposal.operation_fingerprint()
             || self.correlation_id() != proposal.correlation_id()
             || self.causation_id() != proposal.causation_id()
+            || self.actor() != proposal.actor()
             || self.security_scope() != proposal.security_scope()
             || self
                 .completion()
@@ -101,6 +103,7 @@ impl TransactionReceipt {
                 || batch.operation_fingerprint() != self.operation_fingerprint()
                 || batch.correlation_id() != self.correlation_id()
                 || batch.causation_id() != self.causation_id()
+                || batch.actor() != self.actor()
                 || batch.commit_id() != &derive_commit_id(stream.stream_id(), self.operation_id())
                 || batch.events().len() != stream.events().len()
             {

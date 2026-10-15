@@ -470,6 +470,9 @@ impl InMemoryEventStore {
         if let Some(scope) = transaction.security_scope() {
             receipt = receipt.with_security_scope(scope.clone());
         }
+        if let Some(actor) = transaction.actor() {
+            receipt = receipt.with_actor(actor.clone());
+        }
         // Prepare before mutating any journal state. No full proposal or inline
         // completion survives in permanent storage, even before expiry.
         let (stored, detail) = if transaction.bounded_context().is_some() {
@@ -728,6 +731,7 @@ fn validate_transaction(
             || batch.operation_fingerprint() != transaction.operation_fingerprint()
             || batch.correlation_id() != transaction.correlation_id()
             || batch.causation_id() != transaction.causation_id()
+            || batch.actor() != transaction.actor()
         {
             return Err(invalid(
                 "participant commit metadata does not match its transaction",

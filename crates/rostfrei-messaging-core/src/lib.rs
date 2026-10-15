@@ -1,3 +1,4 @@
+mod actor;
 mod address;
 mod command_response;
 mod consume;
@@ -12,6 +13,7 @@ mod query;
 mod scope;
 mod value;
 
+pub use actor::{ActorRef, MAX_ACTOR_ID_BYTES, MAX_ACTOR_NAMESPACE_BYTES};
 pub use address::{
     AddressKind, COMMAND_ADDRESS_CONVENTION, COMMAND_RESPONSE_ADDRESS_CONVENTION, CommandAddress,
     CommandResponseAddress, INTEGRATION_EVENT_ADDRESS_CONVENTION, IntegrationEventAddress,

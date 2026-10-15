@@ -4,6 +4,7 @@ use crate::identity::hash_part;
 use crate::{ContentFingerprint, EventStoreError, EventStoreErrorKind, EventTransaction};
 
 /// Version 1: SHA-256 over framed fields, ordered participants/batches and completion JSON v1.
+/// Version 2 adds original actor framing to the transaction and each batch.
 ///
 /// Expected versions are deliberately excluded (the
 /// original append contract), while timestamp and rejection bytes are included.
@@ -19,7 +20,7 @@ impl ProposalDigest {
         version: u16,
         digest: ContentFingerprint,
     ) -> Result<Self, EventStoreError> {
-        if version != 1 {
+        if !matches!(version, 1 | 2) {
             return Err(EventStoreError::new(
                 EventStoreErrorKind::CorruptHistory,
                 "unsupported proposal digest version",
@@ -27,9 +28,32 @@ impl ProposalDigest {
         }
         Ok(Self { version, digest })
     }
+    #[allow(
+        clippy::too_many_lines,
+        reason = "versioned hash framing is kept in one ordered boundary"
+    )]
     pub fn of(transaction: &EventTransaction) -> Result<Self, EventStoreError> {
+        if transaction
+            .participants()
+            .iter()
+            .filter_map(crate::TransactionParticipant::batch)
+            .any(|batch| batch.actor() != transaction.actor())
+        {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::InvalidRequest,
+                "participant actor differs from transaction actor",
+            ));
+        }
+        let attributed = transaction.actor().is_some();
         let mut hash = Sha256::new();
-        hash_part(&mut hash, b"rostfrei:proposal:v1");
+        hash_part(
+            &mut hash,
+            if attributed {
+                b"rostfrei:proposal:v2"
+            } else {
+                b"rostfrei:proposal:v1"
+            },
+        );
         optional(
             &mut hash,
             transaction
@@ -56,6 +80,9 @@ impl ProposalDigest {
                 .security_scope()
                 .map(crate::SecurityScope::as_str),
         );
+        if attributed {
+            actor(&mut hash, transaction.actor());
+        }
         let completion = serde_json::to_vec(&transaction.completion()).map_err(|error| {
             EventStoreError::new(EventStoreErrorKind::InvalidRequest, error.to_string())
         })?;
@@ -87,6 +114,9 @@ impl ProposalDigest {
                         .causation_id()
                         .map(rostfrei_messaging_core::CausationId::as_str),
                 );
+                if attributed {
+                    actor(&mut hash, batch.actor());
+                }
                 for event in batch.events() {
                     hash_part(&mut hash, b"event");
                     hash_part(&mut hash, event.event_id().as_str().as_bytes());
@@ -101,7 +131,7 @@ impl ProposalDigest {
         }
         hash_part(&mut hash, b"end-proposal");
         Ok(Self {
-            version: 1,
+            version: if attributed { 2 } else { 1 },
             digest: ContentFingerprint::from_bytes(hash.finalize().into()),
         })
     }
@@ -118,6 +148,14 @@ fn optional(hash: &mut Sha256, value: Option<&str>) {
     hash_part(hash, if value.is_some() { b"some" } else { b"none" });
     if let Some(value) = value {
         hash_part(hash, value.as_bytes());
+    }
+}
+
+fn actor(hash: &mut Sha256, value: Option<&crate::ActorRef>) {
+    hash_part(hash, if value.is_some() { b"some" } else { b"none" });
+    if let Some(value) = value {
+        hash_part(hash, value.namespace().as_bytes());
+        hash_part(hash, value.id().as_bytes());
     }
 }
 

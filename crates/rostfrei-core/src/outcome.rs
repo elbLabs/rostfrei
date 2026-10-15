@@ -22,6 +22,7 @@ pub enum OutcomeDecision {
 pub struct OutcomeDetailReference {
     key: OutcomeKey,
     security_scope: Option<SecurityScope>,
+    actor: Option<crate::ActorRef>,
     decision: OutcomeDecision,
     format: u16,
     length: usize,
@@ -31,6 +32,21 @@ pub struct OutcomeDetailReference {
 impl OutcomeDetailReference {
     /// Canonical complete reference encoding, separate from mutable lifecycle state.
     pub fn encode(&self) -> Result<Vec<u8>, EventStoreError> {
+        if let Some(actor) = &self.actor {
+            return serde_json::to_vec(&(
+                2_u16,
+                self.key.authority().as_str(),
+                self.key.bounded_context().as_str(),
+                self.key.operation_id().as_str(),
+                self.security_scope.as_ref().map(SecurityScope::as_str),
+                actor,
+                self.decision == OutcomeDecision::Rejected,
+                self.format,
+                self.length,
+                self.digest.to_hex(),
+            ))
+            .map_err(|e| corrupt(e.to_string()));
+        }
         serde_json::to_vec(&(
             1_u16,
             self.key.authority().as_str(),
@@ -46,6 +62,9 @@ impl OutcomeDetailReference {
     }
     pub const fn key(&self) -> &OutcomeKey {
         &self.key
+    }
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
     }
     pub const fn security_scope(&self) -> Option<&SecurityScope> {
         self.security_scope.as_ref()
@@ -78,7 +97,7 @@ impl OutcomeMarker {
     /// Versioned, payload-free storage metadata. Event integrity remains in the journal.
     pub fn encode_manifest(&self) -> Result<Vec<u8>, EventStoreError> {
         serde_json::to_vec(&MarkerManifest {
-            version: 1,
+            version: self.reference.format,
             authority: self.reference.key.authority().as_str().to_owned(),
             context: self.reference.key.bounded_context().as_str().to_owned(),
             operation: self.reference.key.operation_id().as_str().to_owned(),
@@ -87,6 +106,7 @@ impl OutcomeMarker {
                 .security_scope
                 .as_ref()
                 .map(|v| v.as_str().to_owned()),
+            actor: self.actor().cloned(),
             rejected: self.decision() == OutcomeDecision::Rejected,
             format: self.reference.format,
             length: self.reference.length,
@@ -113,8 +133,10 @@ impl OutcomeMarker {
         if wire.integrity != integrity_digest(&integrity)?.to_hex() {
             return Err(corrupt("manifest event-integrity digest mismatch"));
         }
-        if wire.version != 1
-            || wire.format != 1
+        if wire.version != actor_format(wire.actor.as_ref())
+            || wire.format != wire.version
+            || wire.proposal_version != wire.version
+            || wire.actor.as_ref() != integrity.actor()
             || wire.length < 4
             || wire.authority != expected.authority().as_str()
             || wire.context != expected.bounded_context().as_str()
@@ -144,6 +166,7 @@ impl OutcomeMarker {
         let reference = OutcomeDetailReference {
             key: expected.clone(),
             security_scope: integrity.security_scope().cloned(),
+            actor: integrity.actor().cloned(),
             decision: if wire.rejected {
                 OutcomeDecision::Rejected
             } else {
@@ -181,11 +204,16 @@ impl OutcomeMarker {
         })?;
         let key = OutcomeKey::new(authority, context.clone(), proposal.operation_id().clone());
         let completion = proposal.completion().cloned();
-        let bytes =
-            EncodedOutcomeDetails::encode(completion.clone(), &key, proposal.security_scope())?;
+        let bytes = EncodedOutcomeDetails::encode(
+            completion.clone(),
+            &key,
+            proposal.security_scope(),
+            proposal.actor(),
+        )?;
         let reference = OutcomeDetailReference {
             key,
             security_scope: proposal.security_scope().cloned(),
+            actor: proposal.actor().cloned(),
             decision: if completion
                 .as_ref()
                 .is_some_and(|value| value.rejection.is_some())
@@ -194,7 +222,7 @@ impl OutcomeMarker {
             } else {
                 OutcomeDecision::Accepted
             },
-            format: 1,
+            format: actor_format(proposal.actor()),
             length: bytes.len(),
             digest: ContentFingerprint::digest(&bytes),
         };
@@ -223,6 +251,9 @@ impl OutcomeMarker {
 
     pub const fn detail_reference(&self) -> &OutcomeDetailReference {
         &self.reference
+    }
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.reference.actor()
     }
     pub const fn revision(&self) -> &OutcomeRevision {
         &self.revision
@@ -269,6 +300,7 @@ impl OutcomeMarker {
             || receipt.operation_fingerprint() != metadata.operation_fingerprint()
             || receipt.correlation_id() != metadata.correlation_id()
             || receipt.causation_id() != metadata.causation_id()
+            || self.actor() != metadata.actor()
             || self.reference.security_scope.as_ref() != metadata.security_scope()
             || !evidence_matches
         {
@@ -290,6 +322,12 @@ struct MarkerManifest {
     operation: String,
     #[serde(deserialize_with = "required_optional")]
     scope: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_actor"
+    )]
+    actor: Option<crate::ActorRef>,
     rejected: bool,
     format: u16,
     length: usize,
@@ -308,6 +346,16 @@ fn required_optional<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
     Option::deserialize(deserializer)
 }
 
+fn present_actor<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<crate::ActorRef>, D::Error> {
+    crate::ActorRef::deserialize(deserializer).map(Some)
+}
+
+const fn actor_format(actor: Option<&crate::ActorRef>) -> u16 {
+    if actor.is_some() { 2 } else { 1 }
+}
+
 fn integrity_digest(receipt: &TransactionReceipt) -> Result<ContentFingerprint, EventStoreError> {
     let streams: Vec<_> = receipt
         .streams()
@@ -317,16 +365,20 @@ fn integrity_digest(receipt: &TransactionReceipt) -> Result<ContentFingerprint, 
                 .events()
                 .iter()
                 .map(|event| {
-                    serde_json::json!([
-                        event.event_id().as_str(),
-                        event.commit_id().as_str(),
-                        event.stream_version().value(),
-                        event.commit_event_ordinal(),
-                        event.commit_event_count(),
-                        event.event_type(),
-                        event.schema_version(),
-                        ContentFingerprint::digest(event.payload()).to_hex()
-                    ])
+                    let mut row = vec![
+                        serde_json::json!(event.event_id().as_str()),
+                        serde_json::json!(event.commit_id().as_str()),
+                        serde_json::json!(event.stream_version().value()),
+                        serde_json::json!(event.commit_event_ordinal()),
+                        serde_json::json!(event.commit_event_count()),
+                        serde_json::json!(event.event_type()),
+                        serde_json::json!(event.schema_version()),
+                        serde_json::json!(ContentFingerprint::digest(event.payload()).to_hex()),
+                    ];
+                    if receipt.actor().is_some() {
+                        row.push(serde_json::json!(event.actor()));
+                    }
+                    serde_json::Value::Array(row)
                 })
                 .collect();
             serde_json::json!([
@@ -337,22 +389,36 @@ fn integrity_digest(receipt: &TransactionReceipt) -> Result<ContentFingerprint, 
             ])
         })
         .collect();
-    let value = serde_json::json!([
-        "rostfrei:outcome-integrity:v1",
-        receipt
-            .bounded_context()
-            .map(rostfrei_messaging_core::BoundedContextName::as_str),
-        receipt.operation_id().as_str(),
-        receipt.operation_fingerprint().to_hex(),
-        receipt
-            .correlation_id()
-            .map(rostfrei_messaging_core::CorrelationId::as_str),
-        receipt
-            .causation_id()
-            .map(rostfrei_messaging_core::CausationId::as_str),
-        receipt.security_scope().map(SecurityScope::as_str),
-        streams
-    ]);
+    let mut fields = vec![
+        serde_json::json!(if receipt.actor().is_some() {
+            "rostfrei:outcome-integrity:v2"
+        } else {
+            "rostfrei:outcome-integrity:v1"
+        }),
+        serde_json::json!(
+            receipt
+                .bounded_context()
+                .map(rostfrei_messaging_core::BoundedContextName::as_str)
+        ),
+        serde_json::json!(receipt.operation_id().as_str()),
+        serde_json::json!(receipt.operation_fingerprint().to_hex()),
+        serde_json::json!(
+            receipt
+                .correlation_id()
+                .map(rostfrei_messaging_core::CorrelationId::as_str)
+        ),
+        serde_json::json!(
+            receipt
+                .causation_id()
+                .map(rostfrei_messaging_core::CausationId::as_str)
+        ),
+        serde_json::json!(receipt.security_scope().map(SecurityScope::as_str)),
+    ];
+    if receipt.actor().is_some() {
+        fields.push(serde_json::json!(receipt.actor()));
+    }
+    fields.push(serde_json::json!(streams));
+    let value = serde_json::Value::Array(fields);
     Ok(ContentFingerprint::digest(
         serde_json::to_vec(&value).map_err(|e| corrupt(e.to_string()))?,
     ))
@@ -365,7 +431,14 @@ fn marker_revision(
     integrity: &TransactionReceipt,
 ) -> Result<OutcomeRevision, EventStoreError> {
     let mut hash = Sha256::new();
-    crate::identity::hash_part(&mut hash, b"rostfrei:outcome-revision:v2");
+    crate::identity::hash_part(
+        &mut hash,
+        if reference.actor().is_some() {
+            b"rostfrei:outcome-revision:v3"
+        } else {
+            b"rostfrei:outcome-revision:v2"
+        },
+    );
     crate::identity::hash_part(&mut hash, &reference.encode()?);
     crate::identity::hash_part(&mut hash, &proposal.version().to_be_bytes());
     crate::identity::hash_part(&mut hash, proposal.fingerprint().as_bytes());
@@ -542,17 +615,19 @@ impl EncodedOutcomeDetails {
         mut completion: Option<CommandCompletion>,
         key: &OutcomeKey,
         scope: Option<&SecurityScope>,
+        actor: Option<&crate::ActorRef>,
     ) -> Result<Vec<u8>, EventStoreError> {
         let payload = completion
             .as_mut()
             .and_then(|v| v.rejection.as_mut())
             .map_or_else(Vec::new, |r| std::mem::take(&mut r.bytes));
         let header = DetailHeader {
-            version: 1,
+            version: actor_format(actor),
             authority: key.authority().as_str().to_owned(),
             context: key.bounded_context().as_str().to_owned(),
             operation: key.operation_id().as_str().to_owned(),
             security_scope: scope.map(|v| v.as_str().to_owned()),
+            actor: actor.cloned(),
             completion,
         };
         let header = serde_json::to_vec(&header).map_err(|e| corrupt(e.to_string()))?;
@@ -567,7 +642,7 @@ impl EncodedOutcomeDetails {
         reference: &OutcomeDetailReference,
         bytes: &[u8],
     ) -> Result<Self, EventStoreError> {
-        if reference.format != 1
+        if reference.format != actor_format(reference.actor())
             || bytes.len() != reference.length
             || ContentFingerprint::digest(bytes) != reference.digest
         {
@@ -587,7 +662,8 @@ impl EncodedOutcomeDetails {
             .ok_or_else(|| corrupt("truncated detail body"))?;
         let mut header: DetailHeader =
             serde_json::from_slice(header).map_err(|e| corrupt(e.to_string()))?;
-        if header.version != 1
+        if header.version != reference.format
+            || header.actor.as_ref() != reference.actor()
             || header.authority != reference.key.authority().as_str()
             || header.context != reference.key.bounded_context().as_str()
             || header.operation != reference.key.operation_id().as_str()
@@ -631,6 +707,12 @@ struct DetailHeader {
     context: String,
     operation: String,
     security_scope: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_actor"
+    )]
+    actor: Option<crate::ActorRef>,
     completion: Option<CommandCompletion>,
 }
 

@@ -35,6 +35,7 @@ pub mod processing;
 /// Explicit correlation and causation are preserved in the outgoing envelope.
 #[derive(Clone, Debug)]
 pub struct CommandRequest<C> {
+    actor: Option<crate::ActorRef>,
     operation_id: CoreOperationId,
     command: C,
     correlation_id: Option<CorrelationId>,
@@ -44,9 +45,20 @@ pub struct CommandRequest<C> {
 }
 
 impl<C> CommandRequest<C> {
+    #[must_use]
+    pub fn with_actor(mut self, actor: crate::ActorRef) -> Self {
+        self.actor = Some(actor);
+        self
+    }
+
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     pub const fn new(operation_id: CoreOperationId, command: C) -> Self {
         Self {
             operation_id,
+            actor: None,
             command,
             correlation_id: None,
             causation_id: None,
@@ -81,6 +93,7 @@ impl<C> CommandRequest<C> {
 
 #[derive(Clone, Debug)]
 pub struct DynamicCommandRequest {
+    actor: Option<crate::ActorRef>,
     operation_id: CoreOperationId,
     command: String,
     schema_version: u32,
@@ -92,6 +105,16 @@ pub struct DynamicCommandRequest {
 }
 
 impl DynamicCommandRequest {
+    #[must_use]
+    pub fn with_actor(mut self, actor: crate::ActorRef) -> Self {
+        self.actor = Some(actor);
+        self
+    }
+
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     pub fn new(
         operation_id: CoreOperationId,
         command: impl Into<String>,
@@ -105,6 +128,7 @@ impl DynamicCommandRequest {
             .map_err(|error| CommandBusError::encoding(error.to_string()))?;
         Ok(Self {
             operation_id,
+            actor: None,
             command,
             schema_version,
             payload,
@@ -222,6 +246,7 @@ pub enum RoutedCommandError {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncodedCommand {
+    actor: Option<crate::ActorRef>,
     message: OutboundMessage<CommandAddress>,
     operation_id: OperationId,
     correlation_id: CorrelationId,
@@ -229,6 +254,10 @@ pub struct EncodedCommand {
 }
 
 impl EncodedCommand {
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     /// Pure, full-envelope execution evidence for direct generic execution against
     /// the same authority as a processor. Supply its matching typed command and a
     /// compatible rejection codec; this does not dispatch or authorize the command.
@@ -245,6 +274,14 @@ impl EncodedCommand {
         response: &CommandResponse,
     ) -> Result<rostfrei_core::EventTransaction, CommandProcessorError> {
         self.validate()?;
+        if self.actor().is_some() {
+            return Err(CommandProcessorError::execution(
+                &CommandExecutionError::Store(rostfrei_core::EventStoreError::new(
+                    EventStoreErrorKind::InvalidRequest,
+                    "historical rejection import cannot assert actor attribution",
+                )),
+            ));
+        }
         self.validate_response(response)
             .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
         let CommandResponseOutcome::Rejected(rejection) = response.outcome() else {
@@ -286,6 +323,7 @@ impl EncodedCommand {
     ) -> Self {
         Self {
             message,
+            actor: None,
             operation_id,
             correlation_id,
             fingerprint,
@@ -299,18 +337,23 @@ impl EncodedCommand {
     ) -> Result<Self, CommandProcessorError> {
         let envelope: CommandEnvelope<RoutedCommand> = serde_json::from_slice(&payload)
             .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
-        let fingerprint =
-            routed_command_execution_fingerprint(address.context(), envelope.payload())
-                .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+        let fingerprint = routed_command_execution_fingerprint(
+            address.context(),
+            envelope.payload(),
+            envelope.actor(),
+        )
+        .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
         let message = OutboundMessage::new(address, message_id, payload)
             .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?
             .with_correlation_id(envelope.correlation_id().clone());
-        Ok(Self::new(
+        let mut command = Self::new(
             message,
             envelope.operation_id().clone(),
             envelope.correlation_id().clone(),
             fingerprint,
-        ))
+        );
+        command.actor = envelope.actor().cloned();
+        Ok(command)
     }
 
     pub const fn message(&self) -> &OutboundMessage<CommandAddress> {
@@ -602,6 +645,7 @@ impl CommandBus {
             .encode_json()
             .map_err(CommandBusError::encoding)?;
         self.encode_dynamic(DynamicCommandRequest {
+            actor: request.actor,
             operation_id: request.operation_id,
             command: C::LOCAL_ID.to_owned(),
             schema_version: C::SCHEMA_VERSION,
@@ -647,8 +691,11 @@ impl CommandBus {
         let routed = RoutedCommand::new(request.command, request.schema_version, request.payload)
             .map_err(|error| CommandBusError::encoding(error.to_string()))?
             .with_events_caused_by_command(request.events_caused_by_command);
-        let fingerprint =
-            routed_command_execution_fingerprint(self.context.name().as_str(), &routed)?;
+        let fingerprint = routed_command_execution_fingerprint(
+            self.context.name().as_str(),
+            &routed,
+            request.actor.as_ref(),
+        )?;
         let mut metadata = CommandExecutionMetadata::new(request.operation_id, fingerprint);
         if let Some(correlation_id) = request.correlation_id {
             metadata = metadata.with_correlation_id(correlation_id);
@@ -663,7 +710,7 @@ impl CommandBus {
             &correlation_id,
             request.causation_id.as_ref(),
         )?;
-        let envelope = CommandEnvelope::new(
+        let mut envelope = CommandEnvelope::new(
             EnvelopeContext::new(
                 message_id.clone(),
                 SchemaVersion::new(routed.schema_version())
@@ -676,6 +723,11 @@ impl CommandBus {
             routed,
         )
         .map_err(|error| command_message_build_error(&error))?;
+        if let Some(actor) = request.actor.as_ref() {
+            envelope = envelope
+                .with_actor(actor.clone())
+                .map_err(|error| command_message_build_error(&error))?;
+        }
         let payload = canonical_serialize(&envelope)?;
         if payload.len() > self.maximum_payload_len() {
             return Err(CommandBusError::new(
@@ -689,12 +741,9 @@ impl CommandBus {
         let message = OutboundMessage::new(address, message_id, payload)
             .map_err(|error| CommandBusError::encoding(error.to_string()))?
             .with_correlation_id(correlation_id.clone());
-        Ok(EncodedCommand::new(
-            message,
-            operation_id,
-            correlation_id,
-            fingerprint,
-        ))
+        let mut command = EncodedCommand::new(message, operation_id, correlation_id, fingerprint);
+        command.actor = request.actor;
+        Ok(command)
     }
 }
 
@@ -1365,8 +1414,9 @@ fn validate_command(
     let envelope: CommandEnvelope<RoutedCommand> = serde_json::from_slice(encoded.payload())
         .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
     let routed = envelope.payload();
-    let fingerprint = routed_command_execution_fingerprint(encoded.address().context(), routed)
-        .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+    let fingerprint =
+        routed_command_execution_fingerprint(encoded.address().context(), routed, envelope.actor())
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
     let expected_message_id = command_message_id(
         encoded.address(),
         envelope.operation_id(),
@@ -1386,6 +1436,7 @@ fn validate_command(
         || envelope.schema_version().get() != routed.schema_version()
         || encoded.address().name() != routed.command()
         || encoded.fingerprint() != fingerprint
+        || encoded.actor() != envelope.actor()
     {
         return Err(CommandProcessorError::invalid_message(
             "command envelope identity, route, or fingerprint is inconsistent",
@@ -1408,6 +1459,9 @@ fn validate_command(
         }
     };
     metadata = metadata.with_causation_id(causation_id);
+    if let Some(actor) = envelope.actor() {
+        metadata = metadata.with_actor(actor.clone());
+    }
     metadata = metadata.with_outcome_evidence(rostfrei_core::OutcomeEvidence {
         authority_scope: Some(format!(
             "{}:{}",
@@ -1419,7 +1473,7 @@ fn validate_command(
                 .unwrap_or("normal")
         )),
         created_at_millis: Some(envelope.created_at().unix_milliseconds()),
-        fingerprint_version: 2,
+        fingerprint_version: if envelope.actor().is_some() { 3 } else { 2 },
         command_type: routed.command().to_owned(),
         command_schema: routed.schema_version(),
         events_caused_by_command: routed.events_caused_by_command(),
@@ -1519,6 +1573,7 @@ pub fn command_execution_fingerprint(
         schema_version,
         payload,
         false,
+        None,
     )
 }
 
@@ -1528,23 +1583,34 @@ fn command_execution_fingerprint_with_provenance(
     schema_version: u32,
     payload: &Value,
     events_caused_by_command: bool,
+    actor: Option<&crate::ActorRef>,
 ) -> Result<ContentFingerprint, CommandBusError> {
     let schema_version = schema_version.to_be_bytes();
     let payload = canonical_json_bytes(payload)?;
     let provenance = [u8::from(events_caused_by_command)];
-    Ok(framed_fingerprint(&[
-        b"rostfrei:command-execution:v2",
+    let mut fields: Vec<&[u8]> = vec![
+        if actor.is_some() {
+            b"rostfrei:command-execution:v3"
+        } else {
+            b"rostfrei:command-execution:v2"
+        },
         bounded_context.as_bytes(),
         command.as_bytes(),
         &schema_version,
         &payload,
         &provenance,
-    ]))
+    ];
+    if let Some(actor) = actor {
+        fields.push(actor.namespace().as_bytes());
+        fields.push(actor.id().as_bytes());
+    }
+    Ok(framed_fingerprint(&fields))
 }
 
 fn routed_command_execution_fingerprint(
     bounded_context: &str,
     command: &RoutedCommand,
+    actor: Option<&crate::ActorRef>,
 ) -> Result<ContentFingerprint, CommandBusError> {
     command_execution_fingerprint_with_provenance(
         bounded_context,
@@ -1552,6 +1618,7 @@ fn routed_command_execution_fingerprint(
         command.schema_version(),
         command.payload(),
         command.events_caused_by_command(),
+        actor,
     )
 }
 

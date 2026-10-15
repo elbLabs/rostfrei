@@ -1,5 +1,5 @@
 //! ACT-14..16. Run only `actor_` tests: source import retains unrelated original unit tests.
-//! Future ActorRef API; real owned NATS, no production changes or replacement store.
+//! Future `ActorRef` API; real owned NATS, no production changes or replacement store.
 #![allow(
     dead_code,
     clippy::unwrap_used,
@@ -17,7 +17,6 @@ mod hex;
 mod stream_policy;
 use event_store_config::NatsEventStoreConfig;
 mod event_store {
-    include!("../src/event_store.rs");
     pub fn actor_check_receipt(
         config: &NatsEventStoreConfig,
         sequence: u64,
@@ -26,6 +25,7 @@ mod event_store {
     ) -> Result<(), EventStoreError> {
         decode_transaction_receipt(config, sequence, headers, bytes).map(|_| ())
     }
+    include!("../src/event_store.rs");
 }
 use async_trait::async_trait;
 use release_contract_support::*;
@@ -161,6 +161,7 @@ async fn actor_native_resolver_keeps_authenticated_principal_distinct_on_replay(
     assert!(!rows.is_empty());
     assert!(rows.iter().all(|row| row.0 == "verified-worker"));
     assert!(rows.iter().any(|row| row.1 == Some(actor("admin"))));
+    drop(rows);
     Ok(())
 }
 

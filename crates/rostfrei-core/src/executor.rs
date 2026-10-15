@@ -849,6 +849,9 @@ async fn append_transaction(
     if let Some(scope) = metadata.security_scope() {
         transaction = transaction.with_security_scope(scope.clone());
     }
+    if let Some(actor) = metadata.actor() {
+        transaction = transaction.with_actor(actor.clone());
+    }
     let is_rejected = rejection.is_some();
     transaction = transaction.with_completion(crate::CommandCompletion::new(
         metadata.outcome_evidence().cloned(),
@@ -961,6 +964,7 @@ fn transaction_replay(
         && receipt.operation_fingerprint() == metadata.operation_fingerprint()
         && receipt.correlation_id() == metadata.correlation_id()
         && receipt.causation_id() == metadata.causation_id()
+        && receipt.actor() == metadata.actor()
     {
         return Ok(CommandReceipt::ExactReplay(receipt.events()));
     }
@@ -1042,6 +1046,9 @@ fn prepare_batch_for_stream(
     }
     if let Some(causation_id) = metadata.causation_id() {
         batch = batch.with_causation_id(causation_id.clone());
+    }
+    if let Some(actor) = metadata.actor() {
+        batch = batch.with_actor(actor.clone());
     }
     Ok(Some(batch))
 }
@@ -1135,7 +1142,11 @@ fn validate_history(
             Some((event.commit_id(), next_ordinal, event_count))
         };
 
-        let operation_identity = (event.commit_id(), event.operation_fingerprint());
+        let operation_identity = (
+            event.commit_id(),
+            event.operation_fingerprint(),
+            event.actor(),
+        );
         if let Some(previous) = operations.insert(event.operation_id(), operation_identity)
             && previous != operation_identity
         {

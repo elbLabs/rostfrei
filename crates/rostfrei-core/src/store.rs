@@ -128,6 +128,7 @@ impl TransactionParticipant {
 /// events still persists a receipt; an empty participant list persists only the receipt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventTransaction {
+    actor: Option<crate::ActorRef>,
     security_scope: Option<crate::SecurityScope>,
     completion: Option<crate::CommandCompletion>,
     bounded_context: Option<BoundedContextName>,
@@ -139,6 +140,16 @@ pub struct EventTransaction {
 }
 
 impl EventTransaction {
+    #[must_use]
+    pub fn with_actor(mut self, actor: crate::ActorRef) -> Self {
+        self.actor = Some(actor);
+        self
+    }
+
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     pub const fn new(
         operation_id: OperationId,
         operation_fingerprint: ContentFingerprint,
@@ -146,6 +157,7 @@ impl EventTransaction {
     ) -> Self {
         Self {
             security_scope: None,
+            actor: None,
             completion: None,
             bounded_context: None,
             operation_id,
@@ -303,6 +315,7 @@ impl TransactionStreamReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransactionReceipt {
+    actor: Option<crate::ActorRef>,
     security_scope: Option<crate::SecurityScope>,
     completion: Option<crate::CommandCompletion>,
     bounded_context: Option<BoundedContextName>,
@@ -314,6 +327,16 @@ pub struct TransactionReceipt {
 }
 
 impl TransactionReceipt {
+    #[must_use]
+    pub fn with_actor(mut self, actor: crate::ActorRef) -> Self {
+        self.actor = Some(actor);
+        self
+    }
+
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     pub const fn new(
         operation_id: OperationId,
         operation_fingerprint: ContentFingerprint,
@@ -321,6 +344,7 @@ impl TransactionReceipt {
     ) -> Self {
         Self {
             security_scope: None,
+            actor: None,
             completion: None,
             bounded_context: None,
             operation_id,

@@ -205,6 +205,7 @@ const fn checked_hex_offset(value: u8, base: u8) -> Option<u8> {
 /// Transaction receipts and their events carry the same normalized metadata on every retry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandExecutionMetadata {
+    actor: Option<crate::ActorRef>,
     security_scope: Option<SecurityScope>,
     outcome_evidence: Option<crate::OutcomeEvidence>,
     bounded_context: Option<BoundedContextName>,
@@ -215,8 +216,20 @@ pub struct CommandExecutionMetadata {
 }
 
 impl CommandExecutionMetadata {
+    /// Original attribution, independent of the current authenticated caller.
+    #[must_use]
+    pub fn with_actor(mut self, actor: crate::ActorRef) -> Self {
+        self.actor = Some(actor);
+        self
+    }
+
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     pub const fn new(operation_id: OperationId, operation_fingerprint: ContentFingerprint) -> Self {
         Self {
+            actor: None,
             security_scope: None,
             outcome_evidence: None,
             bounded_context: None,

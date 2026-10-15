@@ -795,7 +795,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     concurrent_transaction_identity_race(&store)
         .await
         .expect("transaction identity race");
-    unavailable_reconciliation_policy(&store, &url, &config)
+    Box::pin(unavailable_reconciliation_policy(&store, &url, &config))
         .await
         .expect("unavailable transaction reconciliation policy");
     forged_receipt_cannot_bind_a_direct_commit(&store, &context, &config)

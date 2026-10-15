@@ -77,6 +77,12 @@ pub trait CommandAuthorizer: Send + Sync {
         access: CommandAccess,
     ) -> Result<(), AuthorizationError>;
 }
+/// Explicit trusted-producer policy.
+///
+/// Actor claims are retained, not authenticated:
+/// this policy does not prove that a named person acted or grant them a principal.
+/// Applications that restrict attribution should check `command.original().actor()`
+/// against the authenticated caller and their ingress evidence in their authorizer.
 pub struct AllowAllCommands;
 #[async_trait]
 impl CommandAuthorizer for AllowAllCommands {

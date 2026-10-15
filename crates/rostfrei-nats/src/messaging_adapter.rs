@@ -307,6 +307,10 @@ pub trait TrustedCommandContextResolver: Send + Sync {
 }
 
 /// Explicit service-principal profile for already trusted infrastructure deliveries.
+///
+/// Producers on this boundary are trusted to assert original actor attribution.
+/// This resolver does not authenticate the actor or prove that a named person acted;
+/// a resolver/authorizer with application evidence must enforce any such restriction.
 pub struct ServicePrincipalContext(pub TrustedCommandContext);
 #[async_trait]
 impl TrustedCommandContextResolver for ServicePrincipalContext {
