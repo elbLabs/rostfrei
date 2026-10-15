@@ -119,10 +119,6 @@ class ExistingApplicationTests(unittest.TestCase):
         self.assertIn("predates skills-enabled tooling", created.stdout)
         locked = command(["cargo", "generate-lockfile"], app)
         self.assertEqual(locked.returncode, 0, locked.stderr)
-        # Lockfile generation alone does not download all metadata inputs on a
-        # cold CI cache. Prepare the real graph before the offline setup check.
-        metadata = command(["cargo", "metadata", "--locked", "--format-version", "1"], app)
-        self.assertEqual(metadata.returncode, 0, metadata.stderr)
         result = command([CLI, "rostfrei", "skills", "install"], app,
                          {**os.environ, "CARGO_PROFILE_RELEASE_OPT_LEVEL": "0",
                           "CARGO_PROFILE_RELEASE_DEBUG": "0"})
@@ -153,6 +149,10 @@ class ExistingApplicationTests(unittest.TestCase):
             '[dependencies]\nrostfrei={git=' + json.dumps(source.as_uri()) + ',rev=' + json.dumps(first["sourceRevision"]) + '}\n')
         locked = command(["cargo", "generate-lockfile"], app)
         self.assertEqual(locked.returncode, 0, locked.stderr)
+        # Lockfile generation alone does not download all metadata inputs on a
+        # cold CI cache. Prepare this app's graph before the offline setup check.
+        metadata = command(["cargo", "metadata", "--locked", "--format-version", "1"], app)
+        self.assertEqual(metadata.returncode, 0, metadata.stderr)
         # Real Cargo metadata remains available, but setup must not invoke a build/install.
         cargo = shutil.which("cargo")
         tools = self.root / "metadata-only"
