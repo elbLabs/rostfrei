@@ -126,6 +126,77 @@ class ExistingApplicationTests(unittest.TestCase):
         self.assertIn("predates skills-enabled tooling", result.stderr)
         self.assertFalse((app / ".agents").exists())
 
+    def test_matching_global_setup_retains_runner_across_global_upgrade(self):
+        from test_agent_skill_source import fresh_source_checkout, commit
+        source = fresh_source_checkout(self.root / "framework")
+        target = ROOT / "target/onboarding-tools"
+        global_cli = self.root / "cargo-rostfrei"
+
+        def build_global():
+            built = command(["cargo", "build", "--locked", "--offline", "--manifest-path",
+                             source / "crates/rostfrei-structure/Cargo.toml", "--bin", "cargo-rostfrei",
+                             "--target-dir", target], source)
+            self.assertEqual(built.returncode, 0, built.stderr)
+            shutil.copy2(target / "debug/cargo-rostfrei", global_cli)
+            return json.loads(command([global_cli, "rostfrei", "skills", "info"], self.root).stdout)
+
+        first = build_global()
+        self.assertFalse(first["sourceTreeDirty"])
+        app = self.root / "app"
+        (app / "src").mkdir(parents=True)
+        (app / "src/main.rs").write_text("fn main() {}\n")
+        (app / "Cargo.toml").write_text('[package]\nname="retained-runner"\nversion="0.1.0"\nedition="2024"\n'
+            '[dependencies]\nrostfrei={git=' + json.dumps(source.as_uri()) + ',rev=' + json.dumps(first["sourceRevision"]) + '}\n')
+        locked = command(["cargo", "generate-lockfile"], app)
+        self.assertEqual(locked.returncode, 0, locked.stderr)
+        # Real Cargo metadata remains available, but setup must not invoke a build/install.
+        cargo = shutil.which("cargo")
+        tools = self.root / "metadata-only"
+        tools.mkdir()
+        wrapper = tools / "cargo"
+        wrapper.write_text(f'#!/bin/sh\n[ "$1" = metadata ] || exit 91\nexec {json.dumps(cargo)} "$@"\n')
+        wrapper.chmod(0o755)
+        (tools / "rustc").symlink_to(shutil.which("rustc"))
+        environment = {**os.environ, "PATH": str(tools), "CARGO_NET_OFFLINE": "true"}
+        setup = [global_cli, "rostfrei", "skills", "install"]
+        installed = command(setup, app, environment)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        retained = list((self.root / "tools").rglob("cargo-rostfrei"))
+        self.assertEqual(len(retained), 1, "Matching-global setup must retain its runner before returning success")
+        cached, = retained
+        self.assertFalse(cached.is_symlink())
+        self.assertEqual(cached.read_bytes(), global_cli.read_bytes())
+        self.assertEqual(cached.stat().st_mode & 0o777, global_cli.stat().st_mode & 0o777)
+        cache_stat = cached.stat()
+        self.assertEqual(command(setup, app, environment).returncode, 0)
+        self.assertEqual(cached.stat().st_mtime_ns, cache_stat.st_mtime_ns, "Valid cache is reused, not replaced")
+        self.assertEqual(cached.stat().st_ino, cache_stat.st_ino)
+        saved_a = self.root / "runner-a"
+        shutil.copy2(global_cli, saved_a)
+        commit(source)
+        second = build_global()
+        self.assertNotEqual(first["sourceRevision"], second["sourceRevision"])
+        shutil.rmtree(source)
+        skill = app / ".agents/skills/rostfrei-develop-feature"
+        self.assertEqual(json.loads((skill / "references/release.json").read_text()), first)
+        runtime = {**os.environ, "PATH": "", "CARGO_NET_OFFLINE": "true",
+                   "ROSTFREI_TRACER_URL": "unsupported://retained-runner-sentinel"}
+        routed = command([global_cli, "rostfrei", "test", skill / "assets/add-first-bicycle.json",
+                          "--output", app / "never-written.json"], app, runtime)
+        self.assertEqual(routed.returncode, 2, routed.stderr)
+        self.assertEqual(json.loads(routed.stderr)["error"]["phase"], "configuration", routed.stderr)
+        self.assertFalse((app / "never-written.json").exists())
+        self.assertEqual(json.loads(command([cached, "rostfrei", "skills", "info"], app, runtime).stdout), first)
+        # A preexisting different executable at A's cache identity must survive intact.
+        shutil.copy2(global_cli, cached)
+        collision = cached.read_bytes()
+        baseline = (app / ".agents/skills/.rostfrei-managed.json").read_bytes()
+        rejected = command([saved_a, "rostfrei", "skills", "install"], app, environment)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("mismatch", rejected.stderr)
+        self.assertEqual(cached.read_bytes(), collision)
+        self.assertEqual((app / ".agents/skills/.rostfrei-managed.json").read_bytes(), baseline)
+
     def test_versioned_tools_follow_upgrade_and_preserve_local_edits_atomically(self):
         from test_agent_skill_source import fresh_source_checkout, commit
         source = fresh_source_checkout(self.root / "framework")
