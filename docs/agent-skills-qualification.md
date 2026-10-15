@@ -3,7 +3,9 @@
 ## Scope and evidence
 
 **Current integration:** #106's real-execution skills have been qualified together
-with #107's shared host and #112's Preview retirement in a clean isolated snapshot.
+with #107's shared host and #112's legacy Preview retirement / explicit handler
+diagnostics in a clean isolated snapshot. Historical records below retain their
+original behavior; current capability evidence is recorded in the harmony guide.
 See [exact revisions, commands and evidence](agent-skills-harmony.md). Installed,
 fresh-source and pinned external-consumer paths each passed actual NATS
 pass/mismatch/pass controls; scoped observation and quarantine were exercised.

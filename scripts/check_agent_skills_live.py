@@ -133,6 +133,7 @@ def qualify(output, source_checkout=False, host_command=None):
                     assert evidence["messageSeries"]["capture"]["settled"]
                     assert evidence["messageSeries"]["capture"]["fidelity"] == "exact"
                 capabilities.after_reset(observed)
+                handler_simulation = capabilities.simulate_handler(json.loads(definition.read_text()))
                 summary = {
                     "release": passed["release"], "catalogVersion": catalog["catalogVersion"],
                     "application": application, "applicationCommand": command,
@@ -151,6 +152,7 @@ def qualify(output, source_checkout=False, host_command=None):
                     "simulationAdvertised": any("simulateHrefTemplate" in version
                         for context in catalog["contexts"] for command in context["commands"]
                         for version in command["versions"]),
+                    "handlerSimulation": handler_simulation,
                 }
                 (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
                 print(f"{'Source' if source_checkout else 'Installed-kit'} live qualification passed; evidence: {output}")

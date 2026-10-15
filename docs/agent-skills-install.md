@@ -148,9 +148,13 @@ directly. Exit 0/1 means a supported reported pass/fail with retrieved evidence;
 exit 2 means typed blocked/incomplete execution. Uncertain submissions are never
 retried and existing evidence is never overwritten. Later capture failure retains
 the complete report/verdict. Real isolated Test/suite execution is the normal
-agent workflow. Preview submission is retired; core handler simulation remains
-available for focused unit tests, outside Tracer. It cannot replace real execution
-or recorded evidence.
+agent workflow. Legacy Preview submission is retired. Optional **Simulate handler**
+is discovered via `simulateHandlerHrefTemplate` and invoked through direct HTTP
+for explicit rule diagnostics, returning uncommitted proposals without an operation
+or receipt. It uses the registered handler/dependencies over configured history;
+dependencies are not automatically sandboxed. Core unit simulation remains useful.
+Neither replaces real execution or recorded evidence. Older hosts may omit this
+capability; never fall back to Preview. There is no CLI simulation subcommand.
 Malformed capture envelopes or observations are typed `invalid_response` errors
 in the capture phase, retain the received verdict and exit 2. Observations are
 validated against the runtime-generated MessageSeries v2 schema; valid empty

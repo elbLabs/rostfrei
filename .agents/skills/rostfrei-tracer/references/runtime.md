@@ -52,10 +52,14 @@ observation and quarantine. There is no MCP
 server or native `observe`/`preview` subcommand. MCP is a possible future adapter
 of the same service, not an extra capability the agent should assume exists.
 
-Real Test execution and recorded observation are the workflows. Tracer Preview
-submission is retired. Core `CommandExecutor::simulate` remains available for
-focused handler tests; its predictions are uncommitted and cannot substitute for
-real Test execution. Never remap a retired request to Test or production dispatch.
+Real Test execution and recorded observation are the primary workflows. Legacy
+Tracer Preview submission is retired. Optional `simulateHandlerHrefTemplate`
+exposes core `CommandExecutor::simulate` using the same registered handler and
+dependencies over configured history (Test history in the shared NATS host).
+It returns a distinct `handlerSimulation` diagnostic: decision, starting versions
+and proposed/uncommitted events, with no receipt or synthetic observed trace.
+Dependencies are not automatically sandboxed. It cannot substitute for real Test
+acceptance. Never remap a missing/retired capability to Test or production dispatch.
 
 ## Contracts
 

@@ -11,9 +11,13 @@ explicit and dependency-matched; starting the application never installs skills.
 The primary path is real isolated Test/suite execution or read-only inspection of
 recorded activity. Within an agreed isolated TDD loop, “run/test/try” executes for
 real. “Show what happened” reads evidence. Ambiguous target/scope is clarified.
-Preview submission is retired from the runtime, Studio and agent workflow.
-Core `CommandExecutor::simulate` and `SimulationOutcome` remain supported for
-focused handler tests, outside Tracer. Historical simulation evidence remains
+Legacy Preview submission is retired from the runtime, Studio and agent workflow.
+Optional **Simulate handler** uses the same registered handler and core
+`CommandExecutor::simulate` over configured history for explicit rule diagnostics.
+Its distinct typed result contains a decision, starting versions and proposed,
+uncommitted domain events, with no operation, receipt or observed causal trace.
+Injected dependencies are not automatically sandboxed. Core `SimulationOutcome`
+and focused handler tests remain supported. Historical simulation evidence remains
 predicted/uncommitted; retired requests never silently publish to Test/Dispatch.
 
 Observation is a partial rolling event window, not a completion verdict. The
@@ -45,7 +49,7 @@ shared-host controls cover external publishers and Normal-state preservation.
 The first live check corrected an assumption about generation formatting:
 generations are opaque strings, not decimal counters.
 
-## Qualified real-execution snapshot (2026-10-15)
+## Earlier qualified real-execution snapshot (2026-10-15)
 
 | Input | Exact revision |
 | --- | --- |

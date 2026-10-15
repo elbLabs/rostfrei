@@ -1,7 +1,7 @@
 ---
 name: rostfrei-tracer
 license: EUPL-1.2
-description: Use Rostfrei Tracer to discover runtime capabilities, execute real isolated tests, observe external application activity, inspect operations or quarantine, and explain causal flows with Mermaid. Also covers explicitly authorized production dispatch.
+description: Use Rostfrei Tracer to discover runtime capabilities, execute real isolated tests, observe external application activity, inspect operations or quarantine, and explain causal flows with Mermaid. Also covers explicit handler simulation for rule diagnostics and authorized production dispatch.
 compatibility: Requires the release-matched cargo-rostfrei Rust CLI, a Tracer HTTP endpoint and capability credentials. Test acceptance needs application handlers, workers and event store on isolated real NATS 2.12.1 or newer. Direct HTTP examples require Bash and curl; no Python is required.
 ---
 
@@ -17,9 +17,9 @@ Use Tracer to execute real isolated behavior and explain actual recorded activit
 4. Explain only what the evidence establishes, with an explicit-causality Mermaid graph.
 
 Call direct isolated publication **Test** and production publication **production
-dispatch**. Tracer exposes real execution and read-only inspection. Handler
-simulation belongs in focused core tests, outside Tracer; it is never a
-prerequisite or fallback for Test. Mention protocol details only when useful;
+dispatch**. Optional **Simulate handler** computes a handler decision and proposed,
+uncommitted domain events. It is never a prerequisite or fallback for Test, and
+never evidence of what actually happened. Mention protocol details only when useful;
 avoid UI terminology unless requested.
 
 Read [release and execution prerequisites](references/runtime.md) before execution.
@@ -38,6 +38,7 @@ Use ordinary conversation if a host-specific question tool is unavailable.
 | --- | --- | --- |
 | Develop/verify behavior | JSON v2 suite via `cargo rostfrei test` | Real NATS outcome and finite capture; explain red/green |
 | Run/test/try a command in the agreed isolated scope | `testHrefTemplate` | Real command publication and operation capture |
+| Why would this handler reject; which events would it propose? | Optional `simulateHandlerHrefTemplate` | Actual handler computation, uncommitted proposals only |
 | Show/explain an earlier operation | Returned operation and `messageSeriesHref` | Its recorded outcome and finite message series |
 | What happened through another client or worker? | `observation[].listHref`, then `detailHref` | Partial rolling window of actual events |
 | Watch activity for a stated duration | `observation[].eventsHref` | Bounded SSE replacement snapshots |
@@ -45,13 +46,13 @@ Use ordinary conversation if a host-specific question tool is unavailable.
 
 The implemented interface is **HTTP JSON plus SSE**. The native Rust CLI handles
 suite execution; use Bash/curl with the rules below for richer exploration.
-There is no implemented MCP server and no `cargo rostfrei observe` or `preview`
-command. A future MCP adapter would be another client of the same service.
+There is no implemented MCP server and no `cargo rostfrei observe`, `simulate`
+or `preview` command. Use the advertised HTTP capability for handler diagnostics.
 
 ## Connection And Capabilities
 
 - Read `ROSTFREI_TRACER_URL`; default to `http://127.0.0.1:1309` when unset.
-- Use `ROSTFREI_API_TOKEN` for Test discovery, observation/quarantine inspection, Test/suites, reset and their operations.
+- Use `ROSTFREI_API_TOKEN` for Test discovery, observation/quarantine inspection, Test/suites, reset, their operations and explicit handler simulation.
 - Use `ROSTFREI_DISPATCH_TOKEN` only for production dispatch and production operation inspection.
 - Use `ROSTFREI_INSPECTION_TOKEN` for read-only production observation and quarantine, including their initial catalog discovery, lists, details and SSE. Never substitute Dispatch credentials for these reads.
 - Never print, quote back, log, persist, or place any capability token in a URL, request body, idempotency key, Mermaid graph, or temporary file.
@@ -103,6 +104,7 @@ Use these advertised relations:
 - `contexts[].aggregates[].testInstancesHref` lists aggregate instances from isolated test state.
 - `contexts[].commands[].versions[].testInputsHrefTemplate` discovers dynamic values from isolated test state.
 - `testHrefTemplate` publishes through the isolated Test pipeline.
+- Optional `simulateHandlerHrefTemplate` invokes the registered handler over configured history, returning a distinct uncommitted diagnostic result.
 - `dispatchHrefTemplate` publishes to production.
 - `behavioralTest.schemaHref`, `validateHref`, `runHref`, and optional `definitionsHref` drive behavioral tests.
 - `testScenario.fixturesHref` lists canonical MessageSeries fixtures and their `fixtureHref` resources.
@@ -117,7 +119,7 @@ When choosing inputs:
 
 - Reuse the agreed schema version; ask only when multiple versions remain ambiguous. Do not silently select the newest version.
 - Use `payloadTemplate` only to understand payload shape. Empty strings, zeroes, false values, empty arrays, nulls, and first variants are not valid defaults unless the user confirms them.
-- Use `testInstancesHref` and `testInputsHrefTemplate` only for Test. Explicitly describe these values as isolated test-state discoveries.
+- Use `testInstancesHref` and `testInputsHrefTemplate` for Test and handler simulation against that same Test history. Explicitly describe these values as isolated test-state discoveries.
 - Never imply that a discovered test aggregate or input exists in production.
 - Require the user to provide or confirm production payload identities and values independently of test discovery. Commands address a bounded context; aggregate identities belong in the typed payload, not in invented aggregate route parameters.
 - Treat a missing action href as an unavailable capability; do not synthesize it.
@@ -257,10 +259,53 @@ Never infer production identifiers or values from test discovery. Require all of
 
 Use only `ROSTFREI_DISPATCH_TOKEN`. If the response is ambiguous or the operation becomes `indeterminate`, do not retry automatically and do not claim success or failure.
 
+## Simulate Handler — Optional Rule Diagnostics
+
+Use only for an explicit simulation request or the narrow question “why would
+this handler reject?” / “which domain events would it propose?”. Discover
+`contexts[].commands[].versions[].simulateHandlerHrefTemplate`; if absent,
+report unavailable. Never fall back to legacy Preview or publish a real command.
+The relation is available in the refined shared host; older hosts may omit it.
+
+POST the same typed envelope, `{"schemaVersion":1,"payload":{...}}`, to that
+validated href using the control token. For example, after choosing the actual
+schema/payload and validating `$SIMULATE_HANDLER_URL` by the link-safety rules:
+
+```sh
+curl -q --silent --show-error --proxy "" --noproxy "*" --max-redirs 0 \
+  --connect-timeout 3 --max-time 35 \
+  --header @<(printf 'Authorization: Bearer %s\n' "$ROSTFREI_API_TOKEN") \
+  --header 'Content-Type: application/json' --data-binary @handler-request.json \
+  "$SIMULATE_HANDLER_URL"
+```
+
+HTTP 200 returns `kind: "handlerSimulation"`, `committed: false`, command/schema
+coordinates, `outcome.decision` (`accepted` or `rejected`, with typed/redacted
+`rejection`), `streams` (aggregate identities, `baseStreamVersion`, `readGuard`),
+and `proposedEvents` (aggregate identities, event type/schema,
+`proposedStreamVersion`, optional policy-controlled payload). Preserve numeric
+stream versions without rounding. Accepted with zero events is legitimate;
+rejection discards pending events. There is no durable acceptance receipt,
+operation ID, Location, command/response identity or observed MessageSeries.
+Do not send this document to the operation-capture/behavior-verdict path or draw
+a real-activity causal graph from it. Explain the decision and proposals as
+**handler computation — uncommitted**, separate from actual recorded activity.
+
+The service replays its configured history and invokes the **same registered real
+handler and injected dependencies** using core `CommandExecutor::simulate`.
+The shared NATS host uses isolated Test history; a custom host's supplied history
+defines its scope. It does not validate broker delivery, atomic persistence,
+concurrency, worker processing or downstream integrations. Injected external
+dependencies are **not automatically sandboxed** and can have side effects.
+No idempotent-publication key is used; do not retry automatically after a timeout,
+disconnect or uncertain response. Existing payload redaction/bounds apply; typed
+failure or oversized-result responses are not a handler rejection or acceptance.
+Use real Test/suites for feature acceptance, and recorded evidence for “what happened”.
+
 ## Operation Inspection
 
-Preview submission is retired. Do not call legacy simulation actions or remap
-them to Test/production dispatch. If inspecting historical `mode: simulate`
+Legacy Preview submission is retired. Do not call `simulateHrefTemplate` or remap
+it to Test/production dispatch. If inspecting historical `mode: simulate`
 evidence, label it **historical simulation — predicted and uncommitted**. Its
 synthetic identities are never proof of real messages, persistence or causality.
 

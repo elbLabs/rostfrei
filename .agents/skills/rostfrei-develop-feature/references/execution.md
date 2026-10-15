@@ -114,8 +114,11 @@ Exit **0** means a reported pass with complete retrieval; **1** means a reported
 failed suite with complete retrieval; **2** is a typed local blocked/incomplete
 execution. Inspect diagnostics to distinguish an assertion mismatch from a
 runner/environment issue. Real isolated execution is the normal TDD path.
-Tracer does not expose handler simulation. Core simulation in focused unit tests
-is never acceptance or a fallback for unavailable execution.
+Optional Tracer **Simulate handler** is discovered through
+`simulateHandlerHrefTemplate` for explicit rule diagnostics. It invokes the real
+handler over configured history; dependencies are not automatically sandboxed.
+Its uncommitted proposals and core simulation unit tests are never feature
+acceptance or a fallback for unavailable real execution.
 
 For “what happened?”, read the returned operation and finite capture. For actions
 initiated by another client/worker, discover optional `observation[]` relations

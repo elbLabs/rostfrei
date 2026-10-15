@@ -115,6 +115,40 @@ class Capabilities:
         self.save("observation-test-after-run", detail)
         return detail
 
+    def simulate_handler(self, definition):
+        root = definition["expected"]["graphs"][0]["nodes"][0]
+        context = next(item for item in self.catalogs["test"]["contexts"] if item["id"] == root["context"])
+        command = next(item for item in context["commands"] if item["id"] == root["name"])
+        version = next(item for item in command["versions"] if item["schemaVersion"] == root["schemaVersion"])
+        href = version.get("simulateHandlerHrefTemplate")
+        if href is None:
+            result = {"status": "unavailable", "reason": "No simulateHandlerHrefTemplate; legacy Preview is not a substitute"}
+            self.save("handler-simulation", result)
+            return result["status"]
+        assert "simulateHrefTemplate" not in version
+        aggregate = next(item for item in context["aggregates"] if item["aggregateType"] == "bike-rental/rental-fleet")
+        before, _ = self.request(aggregate["testInstancesHref"])
+        observation = self.snapshot("test")
+        proposal_payload = {**root["payload"], "bicycle_id": "handler-only-bicycle"}
+        proposal, headers = self.request(href, payload={"schemaVersion": root["schemaVersion"], "payload": proposal_payload})
+        assert "Location" not in headers
+        assert proposal["kind"] == "handlerSimulation" and proposal["committed"] is False
+        assert proposal["outcome"]["decision"] == "accepted"
+        assert proposal["proposedEvents"][0]["payload"]["bicycle_id"] == "handler-only-bicycle"
+        stream, = proposal["streams"]
+        current = next(item for item in before["items"] if item["aggregateId"] == stream["aggregateId"])
+        assert stream["baseStreamVersion"] == current["streamVersion"]
+        rejection, _ = self.request(href, payload={"schemaVersion": root["schemaVersion"], "payload": root["payload"]})
+        assert rejection["outcome"]["decision"] == "rejected" and rejection["proposedEvents"] == []
+        for result in (proposal, rejection):
+            assert not any(field in result for field in ("operationId", "correlationId", "messageSeries", "capture", "receipt"))
+        after, _ = self.request(aggregate["testInstancesHref"])
+        assert after == before, "Handler diagnostics must not append history"
+        assert self.snapshot("test")["items"] == observation["items"], "No invented observation"
+        self.save("handler-simulation", {"status":"passed", "proposal":proposal, "rejection":rejection,
+                                       "historyBefore":before, "historyAfter":after})
+        return "passed"
+
     def after_reset(self, previous):
         error, _ = self.request(previous["detailHref"], expected=410)
         assert error["code"] == "observation-expired"
