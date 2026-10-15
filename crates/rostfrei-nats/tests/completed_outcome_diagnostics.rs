@@ -12,6 +12,17 @@ fn response_stream_name(fixture: &Fixture) -> &str {
         .as_str()
 }
 
+fn assert_blocked_diagnostic(payload: &[u8]) -> TestResult {
+    let body: CommandResponse = serde_json::from_slice(payload)?;
+    assert_eq!(
+        body.outcome(),
+        &CommandResponseOutcome::ExecutionFailed(ExecutionFailure::Store(
+            StoreFailureKind::CorruptHistory
+        ))
+    );
+    Ok(())
+}
+
 async fn completed_winner_after_blocked_diagnostic(accepted: bool) -> TestResult {
     let fixture = Fixture::new("92-completion-after-blocked-diagnostic").await?;
     let store = Arc::new(FaultStore {
@@ -39,13 +50,7 @@ async fn completed_winner_after_blocked_diagnostic(accepted: bool) -> TestResult
     let diagnostic = responses
         .get_last_raw_message_by_subject(encoded.response_address()?.as_str())
         .await?;
-    let body: CommandResponse = serde_json::from_slice(&diagnostic.payload)?;
-    assert_eq!(
-        body.outcome(),
-        &CommandResponseOutcome::ExecutionFailed(ExecutionFailure::Store(
-            StoreFailureKind::CorruptHistory
-        ))
-    );
+    assert_blocked_diagnostic(&diagnostic.payload)?;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     store.active.store(false, Ordering::SeqCst);
