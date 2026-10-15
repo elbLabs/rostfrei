@@ -53,6 +53,36 @@ const API_TOKEN: &str = "integration-test-capability";
 #[cfg(feature = "http")]
 const SIMULATION_PATH: &str = "/contexts/test-context/commands/test-command/simulate";
 
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn discovery_advertises_real_execution_without_preview() {
+    let transport = Arc::new(FakeTransport::accepted("discovery", false));
+    let tracer = transported_tracer(Some(transport.clone()), None, false);
+    let catalog = serde_json::to_value(tracer.catalog()).unwrap();
+    let version = &catalog["contexts"][0]["commands"][0]["versions"][0];
+    assert!(version.get("testHrefTemplate").is_some());
+    assert!(version.get("simulateHrefTemplate").is_none(), "Preview is retired from discovery");
+    assert!(transport.invocations.lock().await.is_empty());
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn retired_preview_requests_never_execute_or_fall_back_to_publication() {
+    let test = Arc::new(FakeTransport::accepted("test", false));
+    let dispatch = Arc::new(FakeTransport::accepted("dispatch", false));
+    let tracer = transported_tracer(Some(test.clone()), Some(dispatch.clone()), false);
+    let app = http::router(tracer.clone(), HttpConfig::new(API_TOKEN).unwrap());
+    let response = app.oneshot(authorize(Request::builder().method("POST").uri(SIMULATION_PATH))
+        .header("content-type", "application/json").header("idempotency-key", "retired")
+        .body(Body::from(r#"{"schemaVersion":1,"payload":{"reject":false}}"#)).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(matches!(tracer.submit_simulation("test-context", COMMAND_NAME, simulation_request(false), Some("retired")).await,
+        Err(SubmissionError::ModeUnavailable("simulate"))));
+    assert!(test.invocations.lock().await.is_empty());
+    assert!(dispatch.invocations.lock().await.is_empty());
+    assert!(matches!(tracer.operation("retired").await, Err(SubmissionError::NotFound)));
+}
+
 #[derive(domain::BoundedContext)]
 #[domain(id = "test-context", label = "Test context")]
 struct TestContext;

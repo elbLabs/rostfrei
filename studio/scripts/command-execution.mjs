@@ -219,6 +219,8 @@ export async function checkCommandExecution(browser, url) {
       "a catalog without a test repository must still support commands"
     )
     await page.click('button[aria-controls="studio-command-panel"]')
+    assert.equal(await page.$('[data-command-mode="preview"]'), null,
+      "Studio must not offer the retired Preview execution mode")
     const choice = 'select[aria-label="Command and schema"]'
     await page.select(choice, "bike-rental/preview-only@2")
     assert.equal(
