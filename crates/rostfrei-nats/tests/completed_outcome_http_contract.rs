@@ -105,7 +105,7 @@ async fn submit_envelope(
 #[tokio::test]
 async fn nats_rejection_replays_through_actual_http_with_unchanged_full_envelope() -> TestResult {
     let fixture = Fixture::new("92-nats-http-full").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let initial = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let _worker = fixture.command_worker(initial.clone()).await?;
@@ -163,7 +163,7 @@ async fn nats_rejection_replays_through_actual_http_with_unchanged_full_envelope
 #[tokio::test]
 async fn accepted_no_event_replay_preserves_full_nats_envelope_through_actual_http() -> TestResult {
     let fixture = Fixture::new("92-accepted-http-full").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let initial = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let _worker = fixture.command_worker(initial).await?;
@@ -206,7 +206,7 @@ async fn lost_http_response(accepted: bool) -> TestResult {
         "92-http-lost-rejected"
     })
     .await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let first = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let original = local_bus(&fixture.context, first.clone()).encode(request(
@@ -286,7 +286,7 @@ async fn actual_http_rejected_response_loss_replays_over_nats_without_reevaluati
 async fn full_http_envelope_ingress_is_opt_in_and_rejects_changed_identity_before_dispatch()
 -> TestResult {
     let fixture = Fixture::new("92-http-ingress-validation").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let processor = processor(&fixture.context, store, calls.clone(), None)?;
     let original = local_bus(&fixture.context, processor.clone()).encode(request(
@@ -378,7 +378,7 @@ async fn submit(address: std::net::SocketAddr) -> TestResult<(u16, serde_json::V
 #[tokio::test]
 async fn http_rejection_replays_through_nats_with_identical_canonical_evidence() -> TestResult {
     let fixture = Fixture::new("92-http-nats").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let processor = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let (_server, address, captured) = http(&fixture, processor.clone()).await?;

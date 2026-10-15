@@ -82,7 +82,7 @@ async fn uncertain(accepted: bool) -> TestResult {
         "92-rejected-outcome-puback"
     })
     .await?;
-    let durable = fixture.event_store().await?;
+    let durable = fixture.split_event_store().await?;
     let (proxy, address, dropped) =
         drop_outcome_puback(durable.config().stream_name().to_owned()).await?;
     let client = async_nats::ConnectOptions::with_user_and_password(

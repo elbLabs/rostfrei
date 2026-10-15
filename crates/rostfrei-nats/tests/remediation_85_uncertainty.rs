@@ -10,6 +10,53 @@ struct PostCommitFault {
     fail_once: AtomicBool,
 }
 #[async_trait]
+impl OutcomeReader for PostCommitFault {
+    async fn lookup_outcome(
+        &self,
+        key: &OutcomeKey,
+    ) -> Result<OutcomeLookup<EncodedOutcomeDetails>, EventStoreError> {
+        self.inner.lookup_outcome(key).await
+    }
+}
+#[async_trait]
+impl CommandBackend for PostCommitFault {
+    fn authority(&self) -> &CommandAuthority {
+        self.inner.authority()
+    }
+    async fn begin_command(&self) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError> {
+        Ok(Box::new(PostCommitSession {
+            fault: self,
+            inner: self.inner.begin_command().await?,
+        }))
+    }
+}
+struct PostCommitSession<'a> {
+    fault: &'a PostCommitFault,
+    inner: Box<dyn CommandCommitSession + 'a>,
+}
+#[async_trait]
+impl EventHistory for PostCommitSession<'_> {
+    async fn load(&self, id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        self.inner.load(id).await
+    }
+}
+#[async_trait]
+impl CommandCommitSession for PostCommitSession<'_> {
+    async fn commit_outcome(
+        self: Box<Self>,
+        proposal: EventTransaction,
+    ) -> Result<CompletedCommit, EventStoreError> {
+        let outcome = self.inner.commit_outcome(proposal).await?;
+        if self.fault.fail_once.swap(false, Ordering::SeqCst) {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::Unavailable,
+                "injected postcommit result-read failure",
+            ));
+        }
+        Ok(outcome)
+    }
+}
+#[async_trait]
 impl EventHistory for PostCommitFault {
     async fn load(&self, id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         self.inner.load(id).await
@@ -21,7 +68,7 @@ impl EventStore for PostCommitFault {
         &self,
         context: &BoundedContextName,
         operation: &OperationId,
-    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+    ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, EventStoreError> {
         self.inner
             .load_completed_outcome_in_context(context, operation)
             .await
@@ -83,7 +130,7 @@ impl EventStore for PostCommitFault {
 async fn postcommit_technical_diagnostic_reconciles_same_identity_without_second_effect()
 -> TestResult {
     let f = Fixture::new("remediation-postcommit").await?;
-    let durable = f.event_store().await?;
+    let durable = f.split_event_store().await?;
     let fault = Arc::new(PostCommitFault {
         inner: durable.clone(),
         fail_once: AtomicBool::new(true),

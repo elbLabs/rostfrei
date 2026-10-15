@@ -21,7 +21,12 @@ impl CommandHandler<String> for RejectBytes {
 #[tokio::test]
 async fn permanent_journal_size_is_independent_of_rejection_body_size() -> TestResult {
     let fixture = Fixture::new("modular-physical-red").await?;
-    let store = fixture.event_store().await?;
+    let config = NatsEventStoreConfig::for_bounded_context(&fixture.context)?
+        .with_fresh_split_outcome_epoch("physical-probe-v2")?
+        .with_explicit_detail_expiry(true)?
+        .with_storage_limits(32 * 1024 * 1024, 524_288)?;
+    provision_event_store(&fixture.js, &config).await?;
+    let store = Arc::new(NatsEventStore::connect(fixture.js.clone(), config).await?);
     let journal = fixture.js.get_stream(store.config().stream_name()).await?;
     let mut sizes = Vec::new();
     for (operation, length) in [("small", 32), ("large", 24_000)] {

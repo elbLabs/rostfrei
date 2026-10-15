@@ -1,8 +1,16 @@
 #[path = "event_store/append_sessions.rs"]
 mod append_sessions;
 #[path = "../src/event_store.rs"]
+#[allow(
+    dead_code,
+    reason = "source-import fixture exercises private journal invariants; public lifecycle methods are tested by separate targets"
+)]
 mod event_store;
 #[path = "../src/event_store_config.rs"]
+#[allow(
+    dead_code,
+    reason = "source-import fixture; public lifecycle configuration is covered by separate targets"
+)]
 mod event_store_config;
 #[path = "../src/hex.rs"]
 mod hex;
@@ -133,7 +141,7 @@ async fn nats_store_persists_command_acceptance() -> TestResult<()> {
     let bounded_context =
         ApplicationName::new(unique_context.name().as_str())?.bounded_context("acceptance")?;
     let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
-        .with_fresh_completed_outcome_epoch("isolated-acceptance-fixture")?
+        .with_fresh_split_outcome_epoch("isolated-acceptance-fixture")?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     provision_event_store(&context, &config).await?;
     let store = NatsEventStore::connect(context.clone(), config.clone()).await?;

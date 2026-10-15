@@ -18,10 +18,10 @@ use rostfrei::{
     InfallibleCommandRejectionMapper,
 };
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateType, CommandDecision, CommandExecution,
-    CommandExecutionMetadata, CommandExecutor, CommandHandler, CommandHandlingResult,
-    CommandOutcome, CommandReceipt, ContentFingerprint, Event, EventCodecError, EventStore,
-    EventTransaction, OperationId, RecordedEvent, StreamDirectory, StreamId,
+    Aggregate, AggregateId, AggregateType, CommandDecision, CommandExecution, CommandExecutor,
+    CommandHandler, CommandHandlingResult, CommandOutcome, CommandReceipt, ContentFingerprint,
+    Event, EventCodecError, EventStore, EventTransaction, OperationId, RecordedEvent,
+    StreamDirectory, StreamId,
 };
 use rostfrei_messaging_core::{
     ApplicationName, BoundedContext, CallerMetadata, CausationId, CommandAddress,
@@ -118,7 +118,7 @@ fn request(operation: &str, content: &str, guarded: bool) -> TestResult<CommandR
 }
 
 fn processor(
-    store: Arc<dyn EventStore>,
+    store: Arc<dyn rostfrei_core::CommandBackend>,
     calls: Arc<AtomicUsize>,
 ) -> TestResult<Arc<CommandProcessor>> {
     let mut processor = CommandProcessor::new(context()?.name().clone(), store);
@@ -126,25 +126,49 @@ fn processor(
     Ok(Arc::new(processor))
 }
 
-fn docker(args: &[&str]) -> TestResult<String> {
-    let output = Process::new("docker").args(args).output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
-    }
-    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+struct Server {
+    child: std::process::Child,
+    directory: std::path::PathBuf,
 }
-
-struct Server(String);
+impl Server {
+    fn spawn(directory: &std::path::Path, phase: &str) -> TestResult<Self> {
+        let log = std::fs::File::create(directory.join(format!("broker-{phase}.log")))?;
+        let child = Process::new(std::env::var("ROSTFREI_CONTRACT_NATS_BINARY")?)
+            .arg("--config")
+            .arg(directory.join("nats.conf"))
+            .stdout(log.try_clone()?)
+            .stderr(log)
+            .spawn()?;
+        Ok(Self {
+            child,
+            directory: directory.to_owned(),
+        })
+    }
+}
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = docker(&["rm", "--force", "--volumes", &self.0]);
+        if matches!(self.child.try_wait(), Ok(None)) {
+            let _ = self.child.kill();
+        }
+        let status = self.child.wait();
+        let _ = std::fs::write(
+            self.directory
+                .join(format!("cleanup-{}.txt", self.child.id())),
+            format!("owned pid={} wait={status:?}", self.child.id()),
+        );
     }
 }
 
 async fn connect_ready(url: &str) -> TestResult<async_nats::jetstream::Context> {
     Ok(tokio::time::timeout(WAIT, async {
         loop {
-            if let Ok(client) = async_nats::connect(url).await {
+            if let Ok(client) = async_nats::ConnectOptions::with_user_and_password(
+                "acceptance".to_owned(),
+                "owned".to_owned(),
+            )
+            .connect(url)
+            .await
+            {
                 let context = async_nats::jetstream::new(client);
                 if context.query_account().await.is_ok() {
                     return context;
@@ -156,12 +180,20 @@ async fn connect_ready(url: &str) -> TestResult<async_nats::jetstream::Context> 
     .await?)
 }
 
-fn child(url: &str, mode: &str) -> TestResult {
+fn child(directory: &std::path::Path, url: &str, mode: &str) -> TestResult {
     let output = Process::new(std::env::current_exe()?)
         .args(["--ignored", "--exact", "acceptance_child", "--nocapture"])
         .env(URL_ENV, url)
         .env("ROSTFREI_ACCEPTANCE_RESTART_MODE", mode)
         .output()?;
+    std::fs::write(
+        directory.join(format!("child-{mode}.log")),
+        [&output.stdout[..], &output.stderr[..]].concat(),
+    )?;
+    std::fs::write(
+        directory.join(format!("child-{mode}-exit.txt")),
+        output.status.to_string(),
+    )?;
     if !output.status.success() {
         return Err(format!(
             "acceptance child {mode} failed:\n{}\n{}",
@@ -192,29 +224,35 @@ async fn dedup_probe(
 
 #[tokio::test]
 async fn acceptance_survives_process_and_broker_restart_beyond_deduplication() -> TestResult {
-    let server = Server(format!("rostfrei-acceptance-{}", std::process::id()));
-    let mount = format!(
-        "type=bind,src={}/../../scripts/nats-test.conf,dst=/etc/nats/test.conf,readonly",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    docker(&[
-        "run",
-        "--detach",
-        "--name",
-        &server.0,
-        "--publish",
-        "127.0.0.1::4222",
-        "--mount",
-        &mount,
-        "nats:2.12.1-alpine@sha256:b3f2bd84176ae7bd0afa9c48a00f06d7d0818ff4aaee898e4172e0b8340e5816",
-        "--config",
-        "/etc/nats/test.conf",
-    ])?;
-    let url = format!("nats://{}", docker(&["port", &server.0, "4222/tcp"])?);
+    let directory = std::path::PathBuf::from(std::env::var("ROSTFREI_CONTRACT_EVIDENCE_DIR")?)
+        .join(format!("acceptance-restart-{}", std::process::id()));
+    std::fs::create_dir(&directory)?;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    std::fs::write(
+        directory.join("nats.conf"),
+        format!(
+            "host: \"127.0.0.1\"\nport: {port}\nmax_payload: 2113536\nauthorization {{ user: \"acceptance\", password: \"owned\" }}\njetstream {{ store_dir: \"{}\" }}\n",
+            directory.join("data").display()
+        ),
+    )?;
+    drop(listener);
+    let server = Server::spawn(&directory, "seed")?;
+    let url = format!("nats://acceptance:owned@127.0.0.1:{port}");
     let js = connect_ready(&url).await?;
-    let config = NatsEventStoreConfig::for_bounded_context(&context()?)?;
+    let config = NatsEventStoreConfig::for_bounded_context(&context()?)?
+        .with_fresh_split_outcome_epoch("acceptance-restart")?;
     provision_event_store(&js, &config).await?;
-    child(&url, "seed")?;
+    let original = js
+        .get_stream(config.stream_name())
+        .await?
+        .cached_info()
+        .config
+        .clone();
+    child(&directory, &url, "seed")?;
+    let mut short_window = original.clone();
+    short_window.duplicate_window = Duration::from_millis(100);
+    js.update_stream(short_window).await?;
     check(
         !dedup_probe(&js, &config).await?,
         "first probe was deduplicated",
@@ -223,19 +261,18 @@ async fn acceptance_survives_process_and_broker_restart_beyond_deduplication() -
         dedup_probe(&js, &config).await?,
         "broker did not deduplicate the second probe",
     )?;
-    // The seed process shortened the broker window only after connecting with verified policy.
+    // Shorten only after command execution; current authority admission verifies its policy.
     tokio::time::sleep(Duration::from_secs(1)).await;
-    docker(&["stop", "--time", "10", &server.0])?;
-    docker(&["start", &server.0])?;
-    let url = format!("nats://{}", docker(&["port", &server.0, "4222/tcp"])?);
+    drop(server);
+    let _restarted = Server::spawn(&directory, "replay")?;
     let js = connect_ready(&url).await?;
     check(
         !dedup_probe(&js, &config).await?,
         "broker duplicate evidence must have expired",
     )?;
-    js.update_stream(config.stream_config()).await?;
-    child(&url, "replay")?;
-    child(&url, "failure")?;
+    js.update_stream(original).await?;
+    child(&directory, &url, "replay")?;
+    child(&directory, &url, "failure")?;
     Ok(())
 }
 
@@ -247,7 +284,8 @@ async fn acceptance_child() -> TestResult {
     if mode == "failure" {
         return receipt_failure_does_not_ack(js).await;
     }
-    let config = NatsEventStoreConfig::for_bounded_context(&context()?)?;
+    let config = NatsEventStoreConfig::for_bounded_context(&context()?)?
+        .with_fresh_split_outcome_epoch("acceptance-restart")?;
     let store = Arc::new(NatsEventStore::connect(js.clone(), config.clone()).await?);
     let calls = Arc::new(AtomicUsize::new(0));
     let bus = CommandBus::new(
@@ -262,11 +300,6 @@ async fn acceptance_child() -> TestResult {
         .subscribe(config.aggregate_subject_filter())
         .await?;
     js.client().flush().await?;
-    if mode == "seed" {
-        let mut policy = config.stream_config();
-        policy.duplicate_window = Duration::from_millis(100);
-        js.update_stream(policy).await?;
-    }
     let before = js
         .get_stream(config.stream_name())
         .await?
@@ -345,11 +378,7 @@ async fn verify_operation(
         "unexpected guard count",
     )?;
     let encoded = bus.encode(request(operation, "original", guarded)?)?;
-    let metadata =
-        CommandExecutionMetadata::new(OperationId::new(operation)?, encoded.fingerprint())
-            .with_bounded_context(context()?.name().clone())
-            .with_correlation_id(CorrelationId::new("correlation")?)
-            .with_causation_id(CausationId::new("cause")?);
+    let metadata = encoded.validated_execution_metadata()?;
     let replay = CommandExecutor::new(store.clone())
         .execute(
             &AcceptHandler(calls.clone()),
@@ -387,6 +416,7 @@ async fn receipt_failure_does_not_ack(js: async_nats::jetstream::Context) -> Tes
     let capacity_context =
         ApplicationName::new("acceptance-capacity")?.bounded_context("acceptance")?;
     let config = NatsEventStoreConfig::new(&capacity_context, "acceptance_capacity")?
+        .with_fresh_split_outcome_epoch("acceptance-capacity")?
         .with_storage_limits(8192, 2048)?;
     provision_event_store(&js, &config).await?;
     let store = Arc::new(NatsEventStore::connect(js.clone(), config.clone()).await?);
@@ -424,6 +454,17 @@ async fn receipt_failure_does_not_ack(js: async_nats::jetstream::Context) -> Tes
         .with_max_bytes(64 * 1024 * 1024)?;
     provision_application_messaging(&js, &messaging).await?;
     let topology = messaging.topology();
+    // #85 makes capacity a blocked diagnostic. Keep the original retry/no-response
+    // assertion by refusing that diagnostic at its sink; successful diagnostic and
+    // quarantine behavior is independently covered by permanent_execution_contract.
+    let mut sink = js
+        .get_stream(topology.command_response_stream().as_str())
+        .await?
+        .cached_info()
+        .config
+        .clone();
+    sink.sealed = true;
+    js.update_stream(sink).await?;
     let handler = NatsMessagingAdapter::new(
         NatsPublisher::new(js.clone(), topology.clone()),
         NatsCommandResponseReader::new(js.clone(), topology.clone()),

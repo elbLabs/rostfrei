@@ -44,6 +44,9 @@ mod history_reader;
 #[path = "event_store/history_reads.rs"]
 mod history_reads;
 use history_reader::HistoryReader;
+#[path = "event_store/outcomes.rs"]
+mod outcomes;
+use outcomes::SplitAuthority;
 
 const LEGACY_EVENT_SCHEMA_VERSION: u16 = 1;
 const CORRELATION_EVENT_SCHEMA_VERSION: u16 = 2;
@@ -52,6 +55,7 @@ const TRANSACTION_EVENT_SCHEMA_VERSION: u16 = 4;
 const TRANSACTION_RECEIPT_SCHEMA_VERSION: u16 = 1;
 const EVENT_FREE_RECEIPT_SCHEMA_VERSION: u16 = 2;
 const COMPLETED_OUTCOME_SCHEMA_VERSION: u16 = 3;
+const SPLIT_OUTCOME_SCHEMA_VERSION: u16 = 4;
 const ATOMIC_BATCH_API_LEVEL: &str = "2";
 const MINIMUM_ATOMIC_BATCH_SERVER_VERSION: (i64, i64, i64) = (2, 12, 1);
 const NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT: &str =
@@ -68,13 +72,13 @@ struct NatsAppendSession<'a> {
 fn completed_append(outcome: TransactionAppendOutcome) -> rostfrei_core::CompletedAppendOutcome {
     match outcome {
         TransactionAppendOutcome::Appended(receipt) => {
-            rostfrei_core::CompletedAppendOutcome::Appended(rostfrei_core::CompletedOutcome::new(
-                receipt,
-            ))
+            rostfrei_core::CompletedAppendOutcome::Appended(
+                rostfrei_core::InlineCompletedOutcome::new(receipt),
+            )
         }
         TransactionAppendOutcome::ExactReplay(receipt) => {
             rostfrei_core::CompletedAppendOutcome::ExactReplay(
-                rostfrei_core::CompletedOutcome::new(receipt),
+                rostfrei_core::InlineCompletedOutcome::new(receipt),
             )
         }
     }
@@ -112,6 +116,13 @@ impl AppendSession for NatsAppendSession<'_> {
         self: Box<Self>,
         transaction: EventTransaction,
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        if self.store.config.split_outcomes() {
+            self.validate_incarnation().await?;
+            return self
+                .store
+                .commit_inline(transaction, self.histories.into_inner())
+                .await;
+        }
         rostfrei_core::validate_completed_transaction(&transaction)?;
         self.store.validate_completed_scope(&transaction)?;
         self.store.require_completed_outcome_writer().await?;
@@ -158,6 +169,10 @@ pub struct NatsEventStore {
     context: jetstream::Context,
     config: NatsEventStoreConfig,
     history_auditing: bool,
+    authority: rostfrei_core::CommandAuthority,
+    journal_incarnation: String,
+    split: Option<SplitAuthority>,
+    detail_readers: Option<DetailReaders>,
     #[cfg(test)]
     transaction_receipt_miss_hook: Option<ReadBarrierHook>,
     #[cfg(test)]
@@ -167,6 +182,11 @@ pub struct NatsEventStore {
     #[cfg(test)]
     history_snapshot_hook: Option<ReadBarrierHook>,
 }
+
+type DetailReaders = (
+    Arc<dyn rostfrei_core::OutcomeDetailReader>,
+    Option<Arc<dyn rostfrei_core::OutcomeDetailReader>>,
+);
 
 #[cfg(test)]
 #[derive(Clone)]
@@ -233,11 +253,20 @@ impl NatsEventStore {
             ));
         }
         rostfrei_core::validate_completed_transaction(&transaction)?;
-        self.append_transaction_with_histories(transaction, LoadedHistories::default())
+        Box::pin(self.append_transaction_with_histories(transaction, LoadedHistories::default()))
             .await
             .map(completed_append)
     }
     async fn require_completed_outcome_writer(&self) -> Result<(), EventStoreError> {
+        if self.config.read_only_outcomes() {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::ConfigurationMismatch,
+                "outcome authority is configured read-only",
+            ));
+        }
+        if self.config.split_outcomes() {
+            return self.verify_authority().await;
+        }
         let epoch = self.config.completed_outcome_epoch().ok_or_else(|| EventStoreError::new(EventStoreErrorKind::ConfigurationMismatch, "legacy/read-only outcome namespace: import original evidence or use a fresh fenced identity epoch"))?;
         let stream = self
             .context
@@ -333,10 +362,17 @@ impl NatsEventStore {
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
         verify_stream_config(&config.stream_config(), &stream.cached_info().config)?;
+        let journal_incarnation = stream.cached_info().created.to_string();
+        let split = outcomes::connect_split(&context, &config, &stream).await?;
+        let authority = outcomes::authority(&config, &journal_incarnation, split.as_ref())?;
         Ok(Self {
             context,
             config,
             history_auditing: false,
+            authority,
+            journal_incarnation,
+            split,
+            detail_readers: None,
             #[cfg(test)]
             transaction_receipt_miss_hook: None,
             #[cfg(test)]
@@ -1280,11 +1316,27 @@ impl NatsEventStore {
         if let Some(causation_id) = causation_id {
             receipt = receipt.with_causation_id(causation_id);
         }
+        if let Some(scope) = content.security_scope {
+            receipt = receipt.with_security_scope(
+                rostfrei_core::SecurityScope::new(scope).map_err(|e| corrupt(e.to_string()))?,
+            );
+        }
         if let Some(completion) = content.completion {
             receipt = receipt.with_completion(completion);
         }
+        let marker = content
+            .manifest
+            .map(|encoded| {
+                let bytes = STANDARD
+                    .decode(encoded)
+                    .map_err(|e| corrupt(e.to_string()))?;
+                let key = self.outcome_key(receipt.operation_id());
+                rostfrei_core::OutcomeMarker::restore_manifest(&key, &bytes, receipt.clone())
+            })
+            .transpose()?;
         Ok(MaterializedTransactionReceipt {
             receipt,
+            marker,
             batch_id,
             batch_start_stream_sequence,
             transaction_event_count,
@@ -1299,7 +1351,7 @@ impl NatsEventStore {
             .load_transaction_receipt_inner(transaction.operation_id())
             .await?
         {
-            if transaction_matches_receipt(transaction, &receipt) {
+            if self.matches_stored(transaction, &receipt).await? {
                 return Ok(TransactionAppendOutcome::ExactReplay(receipt));
             }
             return Err(identity_conflict(
@@ -1312,10 +1364,9 @@ impl NatsEventStore {
                 let receipt = self
                     .load_transaction_receipt_inner(transaction.operation_id())
                     .await?;
-                return resolve_transaction_identity_after_participant_conflict(
-                    transaction,
-                    receipt,
-                );
+                return self
+                    .resolve_identity_after_conflict(transaction, receipt)
+                    .await;
             }
         }
         Err(conflict("an aggregate changed during transaction append"))
@@ -1332,7 +1383,7 @@ impl NatsEventStore {
             &original,
         )?;
         match receipt {
-            Some(receipt) if transaction_matches_receipt(transaction, &receipt) => {
+            Some(receipt) if self.matches_stored(transaction, &receipt).await? => {
                 return Ok(TransactionAppendOutcome::ExactReplay(receipt));
             }
             Some(_) => {
@@ -1357,10 +1408,9 @@ impl NatsEventStore {
                         .await,
                     &original,
                 )?;
-                return resolve_transaction_identity_after_participant_conflict(
-                    transaction,
-                    receipt,
-                );
+                return self
+                    .resolve_identity_after_conflict(transaction, receipt)
+                    .await;
             }
         }
         Err(original)
@@ -1515,9 +1565,12 @@ impl EventStore for NatsEventStore {
         &self,
         context: &BoundedContextName,
         operation: &OperationId,
-    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+    ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, EventStoreError> {
         if context != self.config.bounded_context() {
             return Err(invalid("completed outcome context does not match store"));
+        }
+        if self.config.split_outcomes() {
+            return self.inline_lookup(operation).await;
         }
         if let Some(receipt) = self.load_transaction_receipt_inner(operation).await? {
             if self.config.completed_outcome_epoch().is_none() && receipt.completion().is_none() {
@@ -1528,7 +1581,7 @@ impl EventStore for NatsEventStore {
                     "legacy acceptance/cache authority is unaudited; command replay blocked",
                 ));
             }
-            return Ok(Some(rostfrei_core::CompletedOutcome::new(receipt)));
+            return Ok(Some(rostfrei_core::InlineCompletedOutcome::new(receipt)));
         }
         self.require_completed_outcome_writer().await?;
         Ok(None)
@@ -1538,6 +1591,11 @@ impl EventStore for NatsEventStore {
         &self,
         transaction: EventTransaction,
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        if self.config.split_outcomes() {
+            return self
+                .commit_inline(transaction, LoadedHistories::default())
+                .await;
+        }
         rostfrei_core::validate_completed_transaction(&transaction)?;
         self.validate_completed_scope(&transaction)?;
         self.require_completed_outcome_writer().await?;
@@ -1569,10 +1627,7 @@ impl EventStore for NatsEventStore {
         &self,
         operation_id: &OperationId,
     ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-        self.load_transaction_receipt_inner(operation_id)
-            .await?
-            .map(TransactionReceipt::require_acceptance)
-            .transpose()
+        self.acceptance_receipt(operation_id).await
     }
 
     async fn load_transaction_receipt_in_context(
@@ -1587,10 +1642,7 @@ impl EventStore for NatsEventStore {
                 self.config.bounded_context().as_str()
             )));
         }
-        self.load_transaction_receipt_inner(operation_id)
-            .await?
-            .map(TransactionReceipt::require_acceptance)
-            .transpose()
+        self.acceptance_receipt(operation_id).await
     }
 
     async fn append_transaction(
@@ -1752,7 +1804,7 @@ impl NatsEventStore {
             .load_transaction_receipt_inner(transaction.operation_id())
             .await?
         {
-            if transaction_matches_receipt(&transaction, &receipt) {
+            if self.matches_stored(&transaction, &receipt).await? {
                 return Ok(TransactionAppendOutcome::ExactReplay(receipt));
             }
             return Err(identity_conflict(
@@ -1772,10 +1824,9 @@ impl NatsEventStore {
                 let receipt = self
                     .load_transaction_receipt_inner(transaction.operation_id())
                     .await?;
-                return resolve_transaction_identity_after_participant_conflict(
-                    &transaction,
-                    receipt,
-                );
+                return self
+                    .resolve_identity_after_conflict(&transaction, receipt)
+                    .await;
             }
             let base_version = history
                 .events
@@ -1881,7 +1932,18 @@ impl NatsEventStore {
             });
         }
 
-        let receipt_content = transaction_receipt_content(&self.config, &transaction, &staged)?;
+        let mut receipt_content = transaction_receipt_content(&self.config, &transaction, &staged)?;
+        if self.config.split_outcomes() && transaction.completion().is_some() {
+            let receipt = outcomes::staged_receipt(&transaction, &staged);
+            let (marker, bytes) = rostfrei_core::OutcomeMarker::prepare(
+                self.authority.clone(),
+                &transaction,
+                receipt,
+            )?;
+            self.prepare_details(&marker, &bytes).await?;
+            receipt_content.completion = None;
+            receipt_content.manifest = Some(STANDARD.encode(marker.encode_manifest()?));
+        }
         let receipt_payload = encode_transaction_receipt(&receipt_content)?;
         if receipt_payload.len() > self.config.max_event_bytes() {
             return Err(invalid(format!(
@@ -1938,67 +2000,77 @@ impl NatsEventStore {
         }
         let item_count = u64::try_from(transaction_item_count)
             .map_err(|_| invalid("transaction item count cannot be represented"))?;
-        let batch_start = ack
-            .sequence
-            .checked_sub(item_count)
-            .and_then(|sequence| sequence.checked_add(1))
-            .ok_or_else(|| corrupt("transaction PubAck contains an invalid sequence"))?;
-        let mut histories = histories.by_stream;
-        let mut next_sequence = batch_start;
-        for participant in &staged {
-            if participant.batch.is_none() {
-                continue;
+        let verification = async {
+            let batch_start = ack
+                .sequence
+                .checked_sub(item_count)
+                .and_then(|sequence| sequence.checked_add(1))
+                .ok_or_else(|| corrupt("transaction PubAck contains an invalid sequence"))?;
+            let mut histories = histories.by_stream;
+            let mut next_sequence = batch_start;
+            for participant in &staged {
+                if participant.batch.is_none() {
+                    continue;
+                }
+                let event_count = u64::try_from(participant.recorded.len())
+                    .map_err(|_| invalid("participant event count cannot be represented"))?;
+                next_sequence = next_sequence
+                    .checked_add(event_count)
+                    .ok_or_else(|| corrupt("transaction sequence space overflowed"))?;
+                let last_sequence = next_sequence.checked_sub(1).ok_or_else(|| {
+                    corrupt("transaction contains an invalid participant sequence")
+                })?;
+                let previous = histories
+                    .get(&participant.stream_id)
+                    .ok_or_else(|| corrupt("staged participant history is missing"))?;
+                let history = self
+                    .extend_history(
+                        &participant.stream_id,
+                        previous,
+                        last_sequence,
+                        &batch_id,
+                        participant.recorded.len(),
+                    )
+                    .await?;
+                histories.insert(participant.stream_id.clone(), history);
             }
-            let event_count = u64::try_from(participant.recorded.len())
-                .map_err(|_| invalid("participant event count cannot be represented"))?;
-            next_sequence = next_sequence
-                .checked_add(event_count)
-                .ok_or_else(|| corrupt("transaction sequence space overflowed"))?;
-            let last_sequence = next_sequence
-                .checked_sub(1)
-                .ok_or_else(|| corrupt("transaction contains an invalid participant sequence"))?;
-            let previous = histories
-                .get(&participant.stream_id)
-                .ok_or_else(|| corrupt("staged participant history is missing"))?;
-            let history = self
-                .extend_history(
-                    &participant.stream_id,
-                    previous,
-                    last_sequence,
-                    &batch_id,
-                    participant.recorded.len(),
+            let mut raw_histories = RawHistoryCache {
+                histories,
+                maximum_stream_sequence: None,
+            };
+            let materialized = self
+                .load_transaction_receipt_materialized_with_raw_histories(
+                    transaction.operation_id(),
+                    true,
+                    &mut raw_histories,
+                    TransactionSubjectLayout::Operation,
                 )
-                .await?;
-            histories.insert(participant.stream_id.clone(), history);
+                .await?
+                .ok_or_else(|| corrupt("published transaction receipt is not visible"))?;
+            if materialized.batch_id != batch_id
+                || materialized.batch_start_stream_sequence != batch_start
+                || materialized.transaction_event_count != domain_event_count
+            {
+                return Err(corrupt(
+                    "published transaction receipt contains different batch metadata",
+                ));
+            }
+            let receipt = materialized.receipt;
+            if !self.matches_stored(&transaction, &receipt).await? {
+                return Err(corrupt(
+                    "published transaction receipt contains different content",
+                ));
+            }
+            Ok(TransactionAppendOutcome::Appended(receipt))
         }
-        let mut raw_histories = RawHistoryCache {
-            histories,
-            maximum_stream_sequence: None,
-        };
-        let materialized = self
-            .load_transaction_receipt_materialized_with_raw_histories(
-                transaction.operation_id(),
-                true,
-                &mut raw_histories,
-                TransactionSubjectLayout::Operation,
-            )
-            .await?
-            .ok_or_else(|| corrupt("published transaction receipt is not visible"))?;
-        if materialized.batch_id != batch_id
-            || materialized.batch_start_stream_sequence != batch_start
-            || materialized.transaction_event_count != domain_event_count
-        {
-            return Err(corrupt(
-                "published transaction receipt contains different batch metadata",
-            ));
-        }
-        let receipt = materialized.receipt;
-        if !transaction_matches_receipt(&transaction, &receipt) {
-            return Err(corrupt(
-                "published transaction receipt contains different content",
-            ));
-        }
-        Ok(TransactionAppendOutcome::Appended(receipt))
+        .await;
+        verification.map_err(|error: EventStoreError| {
+            if transaction.completion().is_some() {
+                error.in_outcome_recovery()
+            } else {
+                error
+            }
+        })
     }
 }
 
@@ -2013,6 +2085,9 @@ pub async fn provision_event_store(
 ) -> Result<(), EventStoreError> {
     validate_server_compatibility(context)?;
     validate_server_payload_capacity(context, config)?;
+    if config.split_outcomes() {
+        return Box::pin(outcomes::provision_split(context, config)).await;
+    }
     let expected = config.stream_config();
     match context.get_stream(config.stream_name()).await {
         Ok(existing) => {
@@ -2065,6 +2140,11 @@ pub async fn update_event_store(
             ))
         })?;
     let actual = &existing.cached_info().config;
+    if config.split_outcomes() {
+        verify_stream_config(&config.stream_config(), actual)?;
+        outcomes::connect_split(context, config, &existing).await?;
+        return Ok(());
+    }
     let mut expected = config.stream_config();
     for key in [
         "rostfrei.completed-outcomes.epoch",
@@ -2150,6 +2230,7 @@ struct StoredTransactionProvenance {
 #[derive(Clone)]
 struct MaterializedTransactionReceipt {
     receipt: TransactionReceipt,
+    marker: Option<rostfrei_core::OutcomeMarker>,
     batch_id: String,
     batch_start_stream_sequence: u64,
     transaction_event_count: usize,
@@ -2293,6 +2374,10 @@ struct StoredTransactionReceiptWire {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TransactionReceiptContentWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    manifest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    security_scope: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     completion: Option<rostfrei_core::CommandCompletion>,
     event_store_stream: String,
@@ -3394,6 +3479,8 @@ fn transaction_receipt_content(
     staged: &[StagedTransactionParticipant],
 ) -> Result<TransactionReceiptContentWire, EventStoreError> {
     Ok(TransactionReceiptContentWire {
+        manifest: None,
+        security_scope: transaction.security_scope().map(|v| v.as_str().to_owned()),
         completion: transaction.completion().cloned(),
         event_store_stream: config.stream_name().to_owned(),
         application: config.application().as_str().to_owned(),
@@ -3726,7 +3813,9 @@ fn global_sequence_at_version(
 fn encode_transaction_receipt(
     content: &TransactionReceiptContentWire,
 ) -> Result<Vec<u8>, EventStoreError> {
-    let schema_version = if content.completion.is_some() {
+    let schema_version = if content.manifest.is_some() {
+        SPLIT_OUTCOME_SCHEMA_VERSION
+    } else if content.completion.is_some() {
         COMPLETED_OUTCOME_SCHEMA_VERSION
     } else if content
         .participants
@@ -3747,6 +3836,10 @@ fn encode_transaction_receipt(
     .map_err(|error| invalid(format!("failed to encode transaction receipt: {error}")))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "versioned journal boundary validates all wire coordinates together"
+)]
 fn decode_transaction_receipt(
     config: &NatsEventStoreConfig,
     stream_sequence: u64,
@@ -3798,6 +3891,7 @@ fn decode_transaction_receipt(
         TRANSACTION_RECEIPT_SCHEMA_VERSION
             | EVENT_FREE_RECEIPT_SCHEMA_VERSION
             | COMPLETED_OUTCOME_SCHEMA_VERSION
+            | SPLIT_OUTCOME_SCHEMA_VERSION
     ) {
         return Err(corrupt(
             "stored transaction receipt has an unsupported schema version",
@@ -3823,6 +3917,12 @@ fn decode_transaction_receipt(
         ));
     }
     validate_receipt_participant_shape(&wire, batch_sequence)?;
+    if (wire.schema_version == SPLIT_OUTCOME_SCHEMA_VERSION) != wire.receipt.manifest.is_some()
+        || (wire.receipt.manifest.is_some()
+            && (!config.split_outcomes() || wire.receipt.completion.is_some()))
+    {
+        return Err(corrupt("split outcome schema/authority mismatch"));
+    }
     if (wire.schema_version == COMPLETED_OUTCOME_SCHEMA_VERSION)
         != wire.receipt.completion.is_some()
     {
@@ -3859,8 +3959,10 @@ fn validate_receipt_participant_shape(
         .participants
         .iter()
         .any(|participant| participant.event_count > 0);
-    if (wire.schema_version != COMPLETED_OUTCOME_SCHEMA_VERSION
-        && (wire.schema_version == TRANSACTION_RECEIPT_SCHEMA_VERSION) != has_events)
+    if (!matches!(
+        wire.schema_version,
+        COMPLETED_OUTCOME_SCHEMA_VERSION | SPLIT_OUTCOME_SCHEMA_VERSION
+    ) && (wire.schema_version == TRANSACTION_RECEIPT_SCHEMA_VERSION) != has_events)
         || wire
             .receipt
             .participants
@@ -4012,6 +4114,11 @@ fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventS
         ));
     }
     let mut compatible = expected.clone();
+    for key in [outcomes::JOURNAL_BINDING, outcomes::STATE_BINDING] {
+        if let Some(value) = actual.metadata.get(key) {
+            compatible.metadata.insert(key.to_owned(), value.clone());
+        }
+    }
     if expected.metadata.is_empty() {
         // A new reader may inspect/replay a fresh epoch in explicit default read-only
         // mode. Every mutable API independently requires its configured durable epoch.
@@ -4169,6 +4276,8 @@ mod tests {
 
     fn transaction_receipt_fixture() -> TransactionReceiptContentWire {
         TransactionReceiptContentWire {
+            manifest: None,
+            security_scope: None,
             completion: None,
             event_store_stream: "EVENTS".to_owned(),
             application: "acme".to_owned(),

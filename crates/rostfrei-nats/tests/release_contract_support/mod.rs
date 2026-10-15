@@ -107,14 +107,14 @@ pub fn map_rejection(rejection: &&'static str) -> Result<CommandRejection, Strin
 }
 pub fn processor(
     context: &BoundedContext,
-    store: Arc<dyn EventStore>,
+    store: Arc<dyn CommandBackend>,
     calls: Arc<AtomicUsize>,
     codec: Option<BadCodec>,
 ) -> TestResult<Arc<CommandProcessor>> {
     let mut processor = CommandProcessor::new(context.name().clone(), store);
     processor.register::<Act, _>(Handler(calls), map_rejection)?;
     if let Some(codec) = codec {
-        processor.register_codec::<Target, _>(codec);
+        processor.register_codec::<Target, _>(codec)?;
     }
     Ok(Arc::new(processor))
 }
@@ -154,6 +154,46 @@ pub struct FaultStore {
     pub active: Arc<AtomicBool>,
 }
 #[async_trait]
+impl OutcomeReader for FaultStore {
+    async fn lookup_outcome(
+        &self,
+        key: &OutcomeKey,
+    ) -> Result<OutcomeLookup<EncodedOutcomeDetails>, EventStoreError> {
+        self.inner.lookup_outcome(key).await
+    }
+}
+#[async_trait]
+impl CommandBackend for FaultStore {
+    fn authority(&self) -> &CommandAuthority {
+        self.inner.authority()
+    }
+    async fn begin_command(&self) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError> {
+        Ok(Box::new(FaultSession {
+            fault: self,
+            inner: self.inner.begin_command().await?,
+        }))
+    }
+}
+struct FaultSession<'a> {
+    fault: &'a FaultStore,
+    inner: Box<dyn CommandCommitSession + 'a>,
+}
+#[async_trait]
+impl EventHistory for FaultSession<'_> {
+    async fn load(&self, id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        self.fault.load(id).await
+    }
+}
+#[async_trait]
+impl CommandCommitSession for FaultSession<'_> {
+    async fn commit_outcome(
+        self: Box<Self>,
+        proposal: EventTransaction,
+    ) -> Result<CompletedCommit, EventStoreError> {
+        self.inner.commit_outcome(proposal).await
+    }
+}
+#[async_trait]
 impl EventHistory for FaultStore {
     async fn load(&self, id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         if self.active.load(Ordering::SeqCst) && id.aggregate_id().as_str().starts_with("bad") {
@@ -171,7 +211,7 @@ impl EventStore for FaultStore {
         &self,
         context: &BoundedContextName,
         operation: &OperationId,
-    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+    ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, EventStoreError> {
         self.inner
             .load_completed_outcome_in_context(context, operation)
             .await
@@ -377,6 +417,15 @@ impl Fixture {
         Ok(Worker(tokio::spawn(
             async move { consumer.run(handler).await },
         )))
+    }
+    pub async fn split_event_store(&self) -> TestResult<Arc<NatsEventStore>> {
+        let config = NatsEventStoreConfig::for_bounded_context(&self.context)?
+            .with_fresh_split_outcome_epoch("private-split-contract-fixture")?
+            .with_storage_limits(32 * 1024 * 1024, 524_288)?;
+        provision_event_store(&self.js, &config).await?;
+        Ok(Arc::new(
+            NatsEventStore::connect(self.js.clone(), config).await?,
+        ))
     }
     pub async fn messages(&self, name: &str) -> TestResult<u64> {
         let mut stream = self.js.get_stream(name).await?;

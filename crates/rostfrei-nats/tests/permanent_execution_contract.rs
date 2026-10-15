@@ -46,7 +46,7 @@ async fn processor_permanent(codec: Option<BadCodec>) -> TestResult {
     let encoded = local.encode(request("permanent", "bad-target", "create")?)?;
     let mut codecs = AggregateCodecs::default();
     if let Some(codec) = codec {
-        codecs.register::<Target, _>(codec);
+        codecs.register::<Target, _>(codec)?;
     }
     let raw = CommandExecutor::with_codecs(store.clone(), Arc::new(codecs))
         .execute(

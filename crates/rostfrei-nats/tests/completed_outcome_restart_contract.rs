@@ -117,7 +117,7 @@ fn child(directory: &std::path::Path, url: &str, application: &str, mode: &str) 
 }
 async fn phase(mode: &str) -> TestResult {
     let fixture = Fixture::for_application(ApplicationName::new(std::env::var(APP)?)?).await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let processor = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let local = local_bus(&fixture.context, processor.clone());

@@ -33,6 +33,10 @@ impl Drop for TaskGuard {
     }
 }
 impl StateProxy {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "paired wire-frame relay and selective owned fault injection"
+    )]
     pub async fn start(stream: &str, state_subject: &str, old_sequence: u64) -> TestResult<Self> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
@@ -48,6 +52,8 @@ impl StateProxy {
         let task = tokio::spawn(async move {
             let (client, _) = listener.accept().await?;
             let upstream = tokio::net::TcpStream::connect(upstream).await?;
+            client.set_nodelay(true)?;
+            upstream.set_nodelay(true)?;
             let (client_read, mut client_write) = client.into_split();
             let (upstream_read, mut upstream_write) = upstream.into_split();
             let upload = async {
@@ -63,7 +69,8 @@ impl StateProxy {
                         let mut body = vec![0; length.checked_add(2).ok_or("frame overflow")?];
                         reader.read_exact(&mut body).await?;
                         let header_length = if fields[0] == "HPUB" {
-                            fields[fields.len() - 2].parse()?
+                            fields[fields.len().checked_sub(2).ok_or("short HPUB frame")?]
+                                .parse()?
                         } else {
                             0
                         };
@@ -79,7 +86,9 @@ impl StateProxy {
                             shared.dropped_reads.fetch_add(1, Ordering::SeqCst);
                             continue;
                         }
-                        if subject == state_subject
+                        if (subject == state_subject
+                            || (state_subject.ends_with(".*")
+                                && subject.starts_with(state_subject.trim_end_matches('*'))))
                             && shared.lose_expiry_acks.load(Ordering::SeqCst)
                         {
                             // Armed only after Active was prepared. Record the actual unique

@@ -6,10 +6,11 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei::{
-    CommandBusError, CommandBusErrorKind, CommandBusObserver, CommandBusReceipt,
-    CommandMessageAdapter, CommandProcessor, CommandPublication, EncodedCommand,
+    AuthorizationError, CommandBusError, CommandBusErrorKind, CommandBusObserver,
+    CommandBusReceipt, CommandMessageAdapter, CommandProcessingService, CommandProcessor,
+    CommandProcessorError, CommandPublication, CompletionOrigin, EncodedCommand,
     EncodedIntegrationMessage, IntegrationEventBusError, IntegrationEventBusErrorKind,
-    IntegrationMessageAdapter,
+    IntegrationMessageAdapter, OutcomeLookup, ProcessedCommand, TrustedCommandContext,
 };
 use rostfrei_messaging_core::{
     CommandAddress, CommandPublisher, CommandResponse, CommandResponseOutcome,
@@ -29,6 +30,7 @@ const DELIVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
 pub struct NatsMessagingAdapter {
+    outcome_service: Option<(Arc<dyn CommandProcessingService>, TrustedCommandContext)>,
     command_publisher: Arc<dyn CommandPublisher>,
     response_publisher: Arc<dyn CommandResponsePublisher>,
     integration_publisher: Arc<dyn IntegrationEventPublisher>,
@@ -46,6 +48,7 @@ impl NatsMessagingAdapter {
         let integration_publisher: Arc<dyn IntegrationEventPublisher> = publisher;
         let response_reader: Arc<dyn CommandResponseReader> = Arc::new(response_reader);
         Self {
+            outcome_service: None,
             command_publisher,
             response_publisher,
             integration_publisher,
@@ -63,6 +66,7 @@ impl NatsMessagingAdapter {
         response_reader: Arc<dyn CommandResponseReader>,
     ) -> Self {
         Self {
+            outcome_service: None,
             command_publisher,
             response_publisher,
             integration_publisher,
@@ -88,6 +92,44 @@ impl NatsMessagingAdapter {
             .native_response_publisher
             .clone_from(&self.native_response_publisher);
         handler
+    }
+
+    /// Authorized caller admission. The trusted context is supplied by the application,
+    /// never derived from transport metadata. Each invocation consults current authority.
+    #[must_use]
+    pub fn with_outcome_service(
+        mut self,
+        service: Arc<dyn CommandProcessingService>,
+        caller: TrustedCommandContext,
+    ) -> Self {
+        self.outcome_service = Some((service, caller));
+        self
+    }
+
+    pub fn command_handler_with_resolver(
+        &self,
+        service: Arc<dyn CommandProcessingService>,
+        resolver: Arc<dyn TrustedCommandContextResolver>,
+    ) -> NatsCommandHandler {
+        NatsCommandHandler {
+            processor: HandlerProcessor::Authorized { service, resolver },
+            response_publisher: self.response_publisher.clone(),
+            response_reader: self.response_reader.clone(),
+            execution_gates: CommandExecutionGates::default(),
+            native_response_publisher: self.native_response_publisher.clone(),
+        }
+    }
+
+    async fn authorized_response(
+        &self,
+        command: &EncodedCommand,
+    ) -> Result<Option<CommandResponse>, CommandBusError> {
+        let Some((service, caller)) = &self.outcome_service else {
+            return Ok(None);
+        };
+        authorized_lookup(service.as_ref(), caller, command)
+            .await
+            .map_err(|e| CommandBusError::from_processor(&e))
     }
 
     async fn publish_command(
@@ -180,6 +222,12 @@ impl CommandMessageAdapter for NatsMessagingAdapter {
         command: EncodedCommand,
         observer: Arc<dyn CommandBusObserver>,
     ) -> Result<CommandBusReceipt, CommandBusError> {
+        command
+            .validate()
+            .map_err(|e| CommandBusError::from_processor(&e))?;
+        if let Some(winner) = self.authorized_response(&command).await? {
+            return Ok(CommandBusReceipt::new(true, winner));
+        }
         let publication = self.publish_command(&command).await?;
         observer
             .published(CommandPublication::new(
@@ -188,6 +236,20 @@ impl CommandMessageAdapter for NatsMessagingAdapter {
             ))
             .await;
         let response = self.read_response_with_timeout(&command).await?;
+        if self.outcome_service.is_some() {
+            if let Some(winner) = self.authorized_response(&command).await? {
+                return Ok(CommandBusReceipt::new(publication.duplicate(), winner));
+            }
+            if !matches!(
+                response.outcome(),
+                CommandResponseOutcome::ExecutionFailed(_)
+            ) {
+                return Err(CommandBusError::new(
+                    CommandBusErrorKind::CompletedDetailsBlocked,
+                    "transport result has no authorized authoritative winner",
+                ));
+            }
+        }
         command.validate_response(&response).map_err(|error| {
             CommandBusError::new(CommandBusErrorKind::InvalidResponse, error.to_string())
         })?;
@@ -229,11 +291,53 @@ impl IntegrationMessageAdapter for NatsMessagingAdapter {
 }
 
 pub struct NatsCommandHandler {
-    processor: Arc<CommandProcessor>,
+    processor: HandlerProcessor,
     response_publisher: Arc<dyn CommandResponsePublisher>,
     response_reader: Arc<dyn CommandResponseReader>,
     execution_gates: CommandExecutionGates,
     native_response_publisher: Option<Arc<NatsPublisher>>,
+}
+
+#[async_trait]
+pub trait TrustedCommandContextResolver: Send + Sync {
+    async fn resolve(
+        &self,
+        delivery: &MessageDelivery<CommandAddress>,
+    ) -> Result<TrustedCommandContext, AuthorizationError>;
+}
+
+/// Explicit service-principal profile for already trusted infrastructure deliveries.
+pub struct ServicePrincipalContext(pub TrustedCommandContext);
+#[async_trait]
+impl TrustedCommandContextResolver for ServicePrincipalContext {
+    async fn resolve(
+        &self,
+        _: &MessageDelivery<CommandAddress>,
+    ) -> Result<TrustedCommandContext, AuthorizationError> {
+        Ok(self.0.clone())
+    }
+}
+enum HandlerProcessor {
+    Trusted(Arc<CommandProcessor>),
+    Authorized {
+        service: Arc<dyn CommandProcessingService>,
+        resolver: Arc<dyn TrustedCommandContextResolver>,
+    },
+}
+
+async fn authorized_lookup(
+    service: &dyn CommandProcessingService,
+    caller: &TrustedCommandContext,
+    command: &EncodedCommand,
+) -> Result<Option<CommandResponse>, CommandProcessorError> {
+    match service.lookup(caller, command).await.into_result()? {
+        OutcomeLookup::Missing => Ok(None),
+        OutcomeLookup::Completed(outcome) => Ok(Some(
+            ProcessedCommand::new(CompletionOrigin::Replayed, outcome)
+                .admit(caller, command)?
+                .clone(),
+        )),
+    }
 }
 
 impl NatsCommandHandler {
@@ -243,11 +347,47 @@ impl NatsCommandHandler {
         response_reader: Arc<dyn CommandResponseReader>,
     ) -> Self {
         Self {
-            processor,
+            processor: HandlerProcessor::Trusted(processor),
             response_publisher,
             response_reader,
             execution_gates: CommandExecutionGates::default(),
             native_response_publisher: None,
+        }
+    }
+
+    async fn reconcile_completed(
+        &self,
+        caller: Option<&TrustedCommandContext>,
+        command: &EncodedCommand,
+    ) -> Result<Option<CommandResponse>, CommandProcessorError> {
+        match (&self.processor, caller) {
+            (HandlerProcessor::Trusted(processor), _) => {
+                processor.reconcile_completed(command).await
+            }
+            (HandlerProcessor::Authorized { service, .. }, Some(caller)) => {
+                authorized_lookup(service.as_ref(), caller, command).await
+            }
+            _ => Err(CommandProcessorError::authorization(
+                AuthorizationError::InvalidConfiguration,
+            )),
+        }
+    }
+    async fn process(
+        &self,
+        caller: Option<&TrustedCommandContext>,
+        command: &EncodedCommand,
+    ) -> Result<CommandResponse, CommandProcessorError> {
+        match (&self.processor, caller) {
+            (HandlerProcessor::Trusted(processor), _) => processor.process(command).await,
+            (HandlerProcessor::Authorized { service, .. }, Some(caller)) => Ok(service
+                .process(caller, command)
+                .await
+                .into_result()?
+                .admit(caller, command)?
+                .clone()),
+            _ => Err(CommandProcessorError::authorization(
+                AuthorizationError::InvalidConfiguration,
+            )),
         }
     }
 
@@ -358,6 +498,21 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
         {
             return quarantine("invalid command correlation identity");
         }
+        if command.validate().is_err() {
+            return quarantine("invalid original command evidence");
+        }
+        let caller = match &self.processor {
+            HandlerProcessor::Trusted(_) => None,
+            HandlerProcessor::Authorized { resolver, .. } => {
+                match resolver.resolve(&delivery).await {
+                    Ok(caller) => Some(caller),
+                    Err(AuthorizationError::Unavailable) => return retry(),
+                    Err(_) => {
+                        return quarantine("trusted command context resolution refused delivery");
+                    }
+                }
+            }
+        };
         let _execution = self.execution_gates.acquire(command.message_id()).await;
         match self.reconcile_response(&command).await {
             Ok(Some(response)) => match response.outcome() {
@@ -366,7 +521,10 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
                     // A diagnostic never overrides an already durable completion. This
                     // lookup cannot invoke a handler; without a winner the existing blocked
                     // repair/redrive policy is unchanged. Keep the old record for audit.
-                    let authoritative = match self.processor.reconcile_completed(&command).await {
+                    let authoritative = match self
+                        .reconcile_completed(caller.as_ref(), &command)
+                        .await
+                    {
                         Ok(Some(response)) => response,
                         Ok(None) => {
                             return quarantine(
@@ -384,7 +542,7 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
                 _ => {
                     // A retained business response is a projection, never an independent
                     // authority. Legacy-only responses require explicit evidence-bound import.
-                    return match self.processor.reconcile_completed(&command).await {
+                    return match self.reconcile_completed(caller.as_ref(), &command).await {
                         Ok(Some(authoritative)) if authoritative == response => {
                             DeliveryDisposition::Acknowledge
                         }
@@ -403,7 +561,7 @@ impl MessageHandler<CommandAddress> for NatsCommandHandler {
             }
         }
 
-        let response = match self.processor.process(&command).await {
+        let response = match self.process(caller.as_ref(), &command).await {
             Ok(response) => response,
             Err(error) => {
                 // Notify the remote caller before asking the existing native consumer to
@@ -510,7 +668,7 @@ mod tests {
 
     use async_trait::async_trait;
     use rostfrei::{
-        CommandBus, DynamicCommandRequest, EventStore, InMemoryEventStore,
+        CommandBackend, CommandBus, DynamicCommandRequest, InMemoryEventStore,
         InMemoryMessagingAdapter, OperationId,
     };
     use rostfrei_messaging_core::{
@@ -843,7 +1001,7 @@ mod tests {
     }
 
     fn empty_processor() -> Arc<CommandProcessor> {
-        let store: Arc<dyn EventStore> = Arc::new(InMemoryEventStore::new());
+        let store: Arc<dyn CommandBackend> = Arc::new(InMemoryEventStore::new());
         let context = rostfrei_messaging_core::BoundedContextName::new("ledger")
             .expect("test command processor context must be valid");
         Arc::new(CommandProcessor::new(context, store))

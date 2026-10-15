@@ -9,6 +9,52 @@ struct RefuseDecision {
     unavailable: AtomicBool,
 }
 #[async_trait]
+impl OutcomeReader for RefuseDecision {
+    async fn lookup_outcome(
+        &self,
+        key: &OutcomeKey,
+    ) -> Result<OutcomeLookup<EncodedOutcomeDetails>, EventStoreError> {
+        self.store.lookup_outcome(key).await
+    }
+}
+#[async_trait]
+impl CommandBackend for RefuseDecision {
+    fn authority(&self) -> &CommandAuthority {
+        self.store.authority()
+    }
+    async fn begin_command(&self) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError> {
+        Ok(Box::new(RefuseSession {
+            fault: self,
+            inner: self.store.begin_command().await?,
+        }))
+    }
+}
+struct RefuseSession<'a> {
+    fault: &'a RefuseDecision,
+    inner: Box<dyn CommandCommitSession + 'a>,
+}
+#[async_trait]
+impl EventHistory for RefuseSession<'_> {
+    async fn load(&self, id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        self.inner.load(id).await
+    }
+}
+#[async_trait]
+impl CommandCommitSession for RefuseSession<'_> {
+    async fn commit_outcome(
+        self: Box<Self>,
+        proposal: EventTransaction,
+    ) -> Result<CompletedCommit, EventStoreError> {
+        if self.fault.unavailable.load(Ordering::SeqCst) {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::Unavailable,
+                "injected outcome-write refusal before persistence",
+            ));
+        }
+        self.inner.commit_outcome(proposal).await
+    }
+}
+#[async_trait]
 impl EventHistory for RefuseDecision {
     async fn load(&self, id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         self.store.load(id).await
@@ -20,7 +66,7 @@ impl EventStore for RefuseDecision {
         &self,
         context: &BoundedContextName,
         operation: &OperationId,
-    ) -> Result<Option<CompletedOutcome>, EventStoreError> {
+    ) -> Result<Option<InlineCompletedOutcome>, EventStoreError> {
         self.store
             .load_completed_outcome_in_context(context, operation)
             .await
@@ -72,7 +118,7 @@ impl EventStore for RefuseDecision {
 async fn unavailable_rejection_write_is_not_completed_or_acked_and_same_id_recovers() -> TestResult
 {
     let fixture = Fixture::new("92-unavailable-decision-write").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let refusal = Arc::new(RefuseDecision {
         store: store.clone(),
         unavailable: AtomicBool::new(true),

@@ -55,7 +55,7 @@ impl CommandHandler<Act> for ConcurrentHandler {
 }
 fn concurrent_processor(
     fixture: &Fixture,
-    store: Arc<dyn EventStore>,
+    store: Arc<dyn CommandBackend>,
     calls: Arc<AtomicUsize>,
 ) -> TestResult<(Arc<CommandProcessor>, Arc<ConcurrencyGate>)> {
     let gate = Arc::new(ConcurrencyGate {
@@ -100,7 +100,7 @@ async fn concurrent_submissions(
 
 async fn rejection_replay(first_remote: bool, first_local: bool) -> TestResult {
     let fixture = Fixture::new("92-rejection").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let processor = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let local = local_bus(&fixture.context, processor.clone());
@@ -190,7 +190,7 @@ async fn local_rejection_replays_through_nats_after_prerequisite_repair() -> Tes
 
 async fn changed_evidence(variant: u8) -> TestResult {
     let fixture = Fixture::new("92-evidence").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let processor = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let local = local_bus(&fixture.context, processor.clone());
@@ -254,7 +254,7 @@ async fn changed_causation_cannot_reuse_a_completed_rejected_identity() -> TestR
 #[tokio::test]
 async fn concurrent_local_and_nats_rejections_have_one_stable_outcome() -> TestResult {
     let fixture = Fixture::new("92-concurrent-reject").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let (processor, gate) = concurrent_processor(&fixture, store.clone(), calls.clone())?;
     let local = local_bus(&fixture.context, processor.clone());
@@ -288,7 +288,7 @@ async fn concurrent_local_and_nats_rejections_have_one_stable_outcome() -> TestR
 #[tokio::test]
 async fn concurrent_local_and_nats_acceptance_commits_at_most_one_effect() -> TestResult {
     let fixture = Fixture::new("92-concurrent-accept").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let (processor, gate) =
         concurrent_processor(&fixture, store.clone(), Arc::new(AtomicUsize::new(0)))?;
     let local = local_bus(&fixture.context, processor.clone());
@@ -305,7 +305,7 @@ async fn concurrent_local_and_nats_acceptance_commits_at_most_one_effect() -> Te
 #[tokio::test]
 async fn lost_accepted_response_replays_across_adapters_without_second_commit() -> TestResult {
     let fixture = Fixture::new("92-lost-response").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let original = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let local = local_bus(&fixture.context, original.clone());
@@ -360,7 +360,7 @@ async fn lost_accepted_response_replays_across_adapters_without_second_commit() 
 #[tokio::test]
 async fn accepted_no_event_receipt_replays_below_local_and_nats_adapters() -> TestResult {
     let fixture = Fixture::new("92-noevent").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let processor = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let local = local_bus(&fixture.context, processor.clone());
@@ -448,7 +448,7 @@ async fn technical_failure_does_not_cache_a_completed_business_rejection() -> Te
 #[tokio::test]
 async fn fresh_operation_after_rejection_and_prerequisite_repair_can_succeed() -> TestResult {
     let fixture = Fixture::new("92-fresh-attempt").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let processor = processor(
         &fixture.context,
         store.clone(),
@@ -492,7 +492,7 @@ async fn exhausted_outcome_store() -> TestResult<(
 )> {
     let fixture = Fixture::new("92-full-outcome-store").await?;
     let config = NatsEventStoreConfig::for_bounded_context(&fixture.context)?
-        .with_fresh_completed_outcome_epoch("private-capacity-fixture")?
+        .with_fresh_split_outcome_epoch("private-capacity-fixture")?
         .with_storage_limits(8192, 2048)?;
     provision_event_store(&fixture.js, &config).await?;
     let store = Arc::new(NatsEventStore::connect(fixture.js.clone(), config).await?);
@@ -608,7 +608,7 @@ impl CommandHandler<Act> for GuardedRejection {
 #[tokio::test]
 async fn rejection_read_guard_is_validated_before_outcome_becomes_authoritative() -> TestResult {
     let fixture = Fixture::new("92-rejection-read-guard").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let loaded = Arc::new(tokio::sync::Semaphore::new(0));
     let resume = Arc::new(tokio::sync::Semaphore::new(0));
     let mut guarded = CommandProcessor::new(fixture.context.name().clone(), store.clone());

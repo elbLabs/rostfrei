@@ -42,7 +42,10 @@ pub use event_store_config::{
     DEFAULT_EVENT_STORE_MAX_EVENT_BYTES, DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
     DEFAULT_EVENT_STORE_PUBACK_TIMEOUT, DEFAULT_EVENT_STORE_REPLICAS, NatsEventStoreConfig,
 };
-pub use messaging_adapter::{NatsCommandHandler, NatsMessagingAdapter};
+pub use messaging_adapter::{
+    NatsCommandHandler, NatsMessagingAdapter, ServicePrincipalContext,
+    TrustedCommandContextResolver,
+};
 pub use messaging_config::{
     MINIMUM_NATS_SERVER_VERSION, MessagingTopology, NatsConnectionConfig, QueueGroup,
     ServerVersion, StreamName, SubjectFilter,

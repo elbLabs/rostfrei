@@ -149,7 +149,7 @@ async fn native_acl_excludes_old_mutable_writer_and_rollback_but_allows_read_onl
     let context =
         ApplicationName::new("fenced-outcome-epoch")?.bounded_context("release-contract")?;
     let config = NatsEventStoreConfig::for_bounded_context(&context)?
-        .with_fresh_completed_outcome_epoch("epoch92")?;
+        .with_fresh_split_outcome_epoch("epoch92")?;
     provision_event_store(&js, &config).await?;
     let store = Arc::new(NatsEventStore::connect(js.clone(), config.clone()).await?);
     let calls = Arc::new(AtomicUsize::new(0));
@@ -181,7 +181,7 @@ async fn native_acl_excludes_old_mutable_writer_and_rollback_but_allows_read_onl
         broker.directory.join("native-acl-errors.json"),
         serde_json::to_vec_pretty(&*errors.lock().await)?,
     )?;
-    let readonly_config = NatsEventStoreConfig::for_bounded_context(&context)?;
+    let readonly_config = config.clone().with_read_only_outcomes();
     let readonly = Arc::new(NatsEventStore::connect(old_js, readonly_config).await?);
     let readonly_processor = processor_for(&context, readonly.clone(), calls.clone())?;
     assert_eq!(readonly_processor.process(&command).await?, rejected);

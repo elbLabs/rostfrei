@@ -366,12 +366,21 @@ fn aggregate_event_filter_matches_family(filter: &str, family_filter: &str) -> b
     let Some(remainder) = filter.strip_prefix(prefix) else {
         return false;
     };
-    let mut tokens = remainder.split('.');
-    matches!(
-        (tokens.next(), tokens.next(), tokens.next(), tokens.next()),
-        (Some(context), Some("aggregate"), Some(identity), None)
-            if !context.is_empty() && !identity.is_empty() && identity != ">"
-    )
+    let tokens: Vec<_> = remainder.split('.').collect();
+    let (context, identity) = match tokens.as_slice() {
+        [context, "aggregate", identity] => (context, identity),
+        [context, "split", epoch, "aggregate", identity]
+            if epoch.len() == 64 && epoch.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+        {
+            (context, identity)
+        }
+        _ => return false,
+    };
+    !context.is_empty()
+        && *context != "*"
+        && *context != ">"
+        && !identity.is_empty()
+        && *identity != ">"
 }
 
 fn stream_subjects_match_family(subjects: &[String], family_filter: &str) -> bool {
@@ -461,6 +470,23 @@ mod tests {
         assert!(aggregate_event_filter_matches_family(
             "bike-rental.test.domain.bike-rental.aggregate.*",
             &filter,
+        ));
+        let epoch = "a".repeat(64);
+        assert!(aggregate_event_filter_matches_family(
+            &format!("bike-rental.test.domain.bike-rental.split.{epoch}.aggregate.*"),
+            &filter
+        ));
+        assert!(!aggregate_event_filter_matches_family(
+            "bike-rental.test.domain.bike-rental.split.*.aggregate.*",
+            &filter
+        ));
+        assert!(!aggregate_event_filter_matches_family(
+            &format!("bike-rental.domain.bike-rental.split.{epoch}.aggregate.*"),
+            &filter
+        ));
+        assert!(!aggregate_event_filter_matches_family(
+            &format!("bike-rental.test.domain.bike-rental.split.{epoch}.outcome.*"),
+            &filter
         ));
         assert!(!aggregate_event_filter_matches_family(
             "bike-rental.test.domain.>",

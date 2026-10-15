@@ -107,7 +107,7 @@ async fn matrix(accepted: bool) -> TestResult {
         "92-evidence-rejected"
     })
     .await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let processor = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let bus = local_bus(&fixture.context, processor.clone());
@@ -193,7 +193,7 @@ async fn rejected_complete_identity_matrix_and_audit_timestamp() -> TestResult {
 
 async fn expired_projection(accepted: bool) -> TestResult {
     let fixture = Fixture::new("92-transport-expiry").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let first = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let worker = fixture.command_worker(first).await?;

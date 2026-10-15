@@ -14,7 +14,7 @@ fn decode_domain_rejection(rejection: &CommandRejection) -> Result<&'static str,
 
 async fn generic_processor_interop(direct_first: bool) -> TestResult {
     let fixture = Fixture::new("92-generic-processor-shared-authority").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     fixture
         .js
         .delete_stream(fixture.messaging.topology().command_stream().as_str())
@@ -106,7 +106,7 @@ async fn processor_rejection_replays_in_generic_executor_with_explicit_mapping_c
 #[tokio::test]
 async fn real_nats_completed_outcome_store_and_session_conformance() -> TestResult {
     let fixture = Fixture::new("92-store-conformance").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     rostfrei_testing::completed_outcome_contract::run(store.as_ref(), fixture.context.name()).await
 }
 
@@ -140,7 +140,7 @@ impl CommandHandler<Act> for CompetingDecision {
 async fn concurrent_direct_accept_and_native_reject_have_one_durable_decision_and_effect()
 -> TestResult {
     let fixture = Fixture::new("92-mixed-competing-decisions").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let barrier = Arc::new(tokio::sync::Barrier::new(2));
     let mut accept = CommandProcessor::new(fixture.context.name().clone(), store.clone());
     accept.register::<Act, _>(
@@ -186,7 +186,7 @@ async fn concurrent_direct_accept_and_native_reject_have_one_durable_decision_an
 async fn direct_nats_store_rejects_and_replays_without_any_command_or_response_stream() -> TestResult
 {
     let fixture = Fixture::new("92-direct-no-command-queue").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     fixture
         .js
         .delete_stream(fixture.messaging.topology().command_stream().as_str())
@@ -253,7 +253,7 @@ impl CommandHandler<Act> for RequestRefusalAfterRead {
 #[tokio::test]
 async fn framework_request_rejection_keeps_the_original_missing_read_guard() -> TestResult {
     let fixture = Fixture::new("92-request-guard").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let loaded = Arc::new(tokio::sync::Semaphore::new(0));
     let resume = Arc::new(tokio::sync::Semaphore::new(0));
     let calls = Arc::new(AtomicUsize::new(0));

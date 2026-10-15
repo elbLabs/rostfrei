@@ -1,5 +1,10 @@
 //! Future-API native acceptance. Every broker is owned/authenticated via the release runner.
 #![allow(
+    clippy::too_many_lines,
+    clippy::redundant_pub_crate,
+    clippy::if_not_else,
+    clippy::ignored_unit_patterns,
+    clippy::items_after_statements,
     clippy::panic_in_result_fn,
     clippy::unwrap_used,
     clippy::indexing_slicing
@@ -213,7 +218,11 @@ async fn native_expiry_replaces_active_preserves_integrity_and_blocks_cached_bus
         );
         modular_native_delta::assert_state_config(&details.cached_info().config);
         let active = modular_native_delta::capture_latest(&mut details).await?;
-        let outcome_key = key(&store, &fixture.context, command.operation_id());
+        let outcome_key = key(
+            &store,
+            &fixture.context,
+            &OperationId::new(command.operation_id().as_str())?,
+        );
         let expiry = store
             .expire_details(&outcome_key, completed.outcome().marker().revision())
             .await?;
@@ -350,7 +359,11 @@ async fn native_worker_uses_verified_context_even_when_a_shared_response_already
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert!(matches!(
         store
-            .lookup_outcome(&key(&store, &fixture.context, command.operation_id()))
+            .lookup_outcome(&key(
+                &store,
+                &fixture.context,
+                &OperationId::new(command.operation_id().as_str())?
+            ))
             .await?,
         OutcomeLookup::Missing
     ));

@@ -20,7 +20,7 @@ impl EventStore for SessionStore {
         &self,
         context: &rostfrei_messaging_core::BoundedContextName,
         operation: &OperationId,
-    ) -> Result<Option<rostfrei_core::CompletedOutcome>, EventStoreError> {
+    ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, EventStoreError> {
         self.0
             .load_completed_outcome_in_context(context, operation)
             .await

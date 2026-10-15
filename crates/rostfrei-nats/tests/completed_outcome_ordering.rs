@@ -39,7 +39,7 @@ fn decode_rejection(rejection: &CommandRejection) -> Result<&'static str, String
 
 async fn recreated_session_winner(accepted: bool) -> TestResult {
     let fixture = Fixture::new("92-rejected-session-winner-ordering").await?;
-    let store = fixture.event_store().await?;
+    let store = fixture.split_event_store().await?;
     let calls = Arc::new(AtomicUsize::new(0));
     let original_processor = processor(&fixture.context, store.clone(), calls.clone(), None)?;
     let encoded = local_bus(&fixture.context, original_processor).encode(request(
@@ -74,12 +74,16 @@ async fn recreated_session_winner(accepted: bool) -> TestResult {
     // supported rolling upgrade. A new winner must not hide the observed incarnation loss.
     let original = fixture.js.get_stream(store.config().stream_name()).await?;
     assert_eq!(original.cached_info().state.messages, 0);
-    let config = original.cached_info().config.clone();
     fixture
         .js
         .delete_stream(store.config().stream_name())
         .await?;
-    let recreated = fixture.js.create_stream(config).await?;
+    fixture
+        .js
+        .delete_stream(store.config().outcome_state_stream_name())
+        .await?;
+    provision_event_store(&fixture.js, store.config()).await?;
+    let recreated = fixture.js.get_stream(store.config().stream_name()).await?;
     assert_ne!(
         original.cached_info().created,
         recreated.cached_info().created
