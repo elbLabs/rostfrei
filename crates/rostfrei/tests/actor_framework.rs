@@ -38,6 +38,7 @@ async fn simulation_preserves_claim_and_history_rejects_intra_commit_actor_drift
         OperationId::new("simulation")?,
         ContentFingerprint::digest("same"),
     )
+    .with_bounded_context(context()?.name().clone())
     .with_actor(alice.clone());
     let outcome = CommandExecutor::new(HistoryOnly(Vec::new()))
         .simulate(&SimulateClaim(alice.clone()), metadata.clone(), &())
