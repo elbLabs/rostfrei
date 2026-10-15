@@ -122,13 +122,14 @@ export class CommandSubmissionIndeterminateError extends Error {
 }
 
 export async function submitCommand(
-  mode: "preview" | "test",
+  mode: "test",
   hrefTemplate: string,
   schemaVersion: number,
   payloadJson: string,
   idempotencyKey?: string
 ): Promise<CommandExecutionResult> {
-  if (mode === "test" && !idempotencyKey) {
+  if (mode !== "test") throw new Error("Unsupported command execution mode")
+  if (!idempotencyKey) {
     throw new Error("Test publication requires an idempotency key")
   }
   const submitHref = advertisedHref(hrefTemplate)
@@ -162,8 +163,7 @@ export async function submitCommand(
     const location = response.headers.get("location")
     if (!location) throw new Error("Missing operation Location")
     operationHref = advertisedHref(location)
-    const expectedMode = mode === "preview" ? "simulate" : "test"
-    if (operation.mode !== expectedMode) {
+    if (operation.mode !== "test") {
       throw new Error("Unexpected operation mode")
     }
   } catch (error) {

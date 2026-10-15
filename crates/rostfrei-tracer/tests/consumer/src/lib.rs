@@ -210,42 +210,15 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
             history[1].correlation_id().unwrap().as_str()
         );
     }
-    // Preview executes the same injected handler without committing anything.
-    let preview = catalog["contexts"][0]["commands"][0]["versions"][0]["simulateHref"]
-        .as_str()
-        .or_else(|| {
-            catalog["contexts"][0]["commands"][0]["versions"][0]["simulateHrefTemplate"].as_str()
-        })
-        .unwrap();
+    // Retired clients cannot invoke the handler or fall back to real publication.
+    assert!(catalog["contexts"][0]["commands"][0]["versions"][0].get("simulateHrefTemplate").is_none());
     let response = client
-        .post(format!("http://{address}{preview}"))
+        .post(format!("http://{address}/contexts/counter/commands/increment/simulate"))
         .bearer_auth("external-consumer-token")
         .json(&serde_json::json!({"schemaVersion":1,"payload":{"id":"one"}}))
         .send()
-        .await?
-        .error_for_status()?;
-    let location = response
-        .headers()
-        .get("location")
-        .unwrap()
-        .to_str()?
-        .to_owned();
-    let mut completed = false;
-    for _ in 0..100 {
-        let operation: serde_json::Value = get(&location)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        if operation["status"] == "completed" {
-            assert_eq!(operation["result"]["decision"], "accepted");
-            completed = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    assert!(completed, "Preview did not complete");
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
     let stream = rostfrei::StreamId::new(
         rostfrei::StreamAggregateType::new("counter/counter")?,
         rostfrei::StreamAggregateId::new("one")?,

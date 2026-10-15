@@ -67,7 +67,7 @@ the same meanings. ADR 0001 makes this language an architectural constraint.
 | **Causation** | The direct parent relationship explaining which message caused another message. | Correlation, ordering |
 | **Correlation trace** | The commands, domain events, integration events, and outcomes observed for one correlation. Observation order alone does not establish causality. | Event log, aggregate stream |
 | **Test environment** | An isolated target system in which test runs may append state without affecting production. | Test mode, simulation |
-| **Simulation (Preview)** | A command decision evaluated against test history without appending its resulting domain events. | Test run, dry-run dispatch |
+| **Handler simulation** | Core test primitive that evaluates a handler without appending authoritative domain events or an acceptance receipt. Not a Tracer action or a sandbox for arbitrary injected dependencies. | Test run, dry-run dispatch |
 | **Production dispatch** | An explicitly authorized command execution against the production target system. | Test, simulation |
 
 ## Relationships

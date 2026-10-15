@@ -18,7 +18,7 @@ pub enum ApplicationBindingError {
     #[error(transparent)]
     Registry(#[from] rostfrei::RegistrationError),
     #[error(transparent)]
-    Preview(#[from] RuntimeRegistrationError),
+    Metadata(#[from] RuntimeRegistrationError),
     #[error(transparent)]
     Fixture(#[from] rostfrei_fixtures::FixtureCodecRegistrationError),
     #[error(transparent)]
@@ -84,10 +84,10 @@ impl IntegrationHandlerBinding {
     }
 }
 
-/// Executable application composition shared by Preview and transported execution.
+/// Single application composition for metadata, payloads and transported execution.
 /// Handler instances (and their dependencies) are retained, not reconstructed.
 pub struct ApplicationBindings {
-    pub(crate) preview: RuntimeBindings,
+    pub(crate) metadata: RuntimeBindings,
     pub(crate) fixtures: MessageSeriesEngine,
     processors: Vec<ProcessorBinding>,
     pub(crate) commands: Vec<rostfrei::CommandRegistrationDescriptor>,
@@ -107,7 +107,7 @@ impl Default for ApplicationBindings {
 impl ApplicationBindings {
     pub fn new() -> Self {
         Self {
-            preview: RuntimeBindings::new(DomainRegistry::new()),
+            metadata: RuntimeBindings::new(DomainRegistry::new()),
             fixtures: MessageSeriesEngine::new(),
             processors: Vec::new(),
             commands: Vec::new(),
@@ -129,7 +129,7 @@ impl ApplicationBindings {
         A: Aggregate + 'static,
         A::Event: Event,
     {
-        self.preview.registry.register_aggregate::<A>()?;
+        self.metadata.registry.register_aggregate::<A>()?;
         self.fixtures.register_json::<A>()?;
         Ok(self)
     }
@@ -145,8 +145,8 @@ impl ApplicationBindings {
         H::Rejection: rostfrei::JsonErrorPayload + 'static,
     {
         let handler = SharedHandler(Arc::new(handler));
-        self.preview.registry.register_command::<C, H>()?;
-        self.preview
+        self.metadata.registry.register_command::<C, H>()?;
+        self.metadata
             .register_shared_json::<C, _>(handler.0.clone())?;
         self.commands
             .push(<C as rostfrei::CommandDefinition<H>>::descriptor());
@@ -169,7 +169,7 @@ impl ApplicationBindings {
         C: rostfrei::Command + Sync,
         P: CommandInputOptions<C> + 'static,
     {
-        self.preview.register_input_options::<C, P>(provider)?;
+        self.metadata.register_input_options::<C, P>(provider)?;
         Ok(self)
     }
 
@@ -186,8 +186,8 @@ impl ApplicationBindings {
     }
 
     pub fn tracer_builder(&self, history: Arc<dyn EventHistory>) -> TracerBuilder {
-        let mut builder = TracerBuilder::new(history, self.preview.registry.clone())
-            .with_bindings(self.preview.clone());
+        let mut builder = TracerBuilder::new(history, self.metadata.registry.clone())
+            .with_bindings(self.metadata.clone());
         if let Some(model) = &self.domain_model {
             builder = builder.with_domain_model(model.clone());
         }
@@ -195,7 +195,7 @@ impl ApplicationBindings {
     }
 
     pub const fn registry(&self) -> &DomainRegistry {
-        &self.preview.registry
+        &self.metadata.registry
     }
 
     pub fn register_integration_event<A, D, M>(&mut self, mapper: M) -> &mut Self

@@ -753,7 +753,7 @@ try {
   console.log("Verified API request deadlines and partial capture evidence")
   await checkContinuousObservation()
   console.log(
-    `PASS: explicit connection failures and read-only retry; no demo fallback; canonical bicycle-added fixtures; behavioral runs and offline history; layouts and hotkeys; inspector and causal edges; 6 responsive widths; Preview/Test command forms, exact numeric payloads, idempotency, input refresh and operation identities; failed expectations, ambiguous responses and storage failure. All API responses were mocked. Screenshots: ${path.join(tmpdir(), "rostfrei-studio-*.png")}`
+    `PASS: explicit connection failures and read-only retry; no demo fallback; canonical bicycle-added fixtures; behavioral runs and offline history; layouts and hotkeys; inspector and causal edges; 6 responsive widths; Test-only command forms, retired Preview absence, exact numeric payloads, idempotency, input refresh and operation identities; failed expectations, ambiguous responses and storage failure. All API responses were mocked. Screenshots: ${path.join(tmpdir(), "rostfrei-studio-*.png")}`
   )
 } catch (error) {
   console.error(error)

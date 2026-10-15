@@ -110,7 +110,6 @@ export interface CatalogCommandVersion {
   fields: CatalogCommandField[]
   payloadTemplate: unknown
   testInputsHrefTemplate: string
-  simulateHrefTemplate: string
   testHrefTemplate?: string
   dispatchHrefTemplate?: string
 }

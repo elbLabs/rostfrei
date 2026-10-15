@@ -22,6 +22,14 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- **Breaking (Tracer Preview retirement):** remove simulation discovery and HTTP
+  routes, Studio's Preview action and synthetic operation generation. Retired
+  requests return 404 rather than publishing to Test or production. The legacy
+  Rust submission method returns `ModeUnavailable("simulate")`. Core
+  `CommandExecutor::simulate`/`SimulationOutcome` remain supported for focused
+  tests. Historical simulation evidence remains explicitly uncommitted.
+  Catalog stays v1 (capability discovery); behavior/MessageSeries v2 and fixture
+  v1 are unchanged. Release-matched clients must handle missing action links.
 - NATS aggregate histories now replay in bounded, exact-subject batches instead of
   issuing one broker request per event. Reads preserve snapshot cutoffs and integrity
   checks and do not advance application durable consumers. Reader credentials now
@@ -82,7 +90,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-- Tracer Studio command Preview and isolated Test-bus execution, with
+- Tracer Studio isolated Test-bus execution, with
   catalog-driven forms, draggable Command/Tests/Runs panels, exact payload
   encoding, and stable idempotency keys for ambiguous submissions.
 - Scoped quarantine readers and Tracer list/detail APIs for Test and production.

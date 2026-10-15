@@ -6,9 +6,10 @@ Accepted.
 
 ## Decision
 
-rostfrei will expose domain descriptors, stream inspection, state
-reconstruction, command simulation, operation tracing, scenario execution, and
-authorized dispatch through the protocol-independent Tracer service.
+rostfrei exposes domain descriptors, stream discovery, operation tracing,
+continuous observation, real isolated scenario execution, and authorized
+dispatch through the protocol-independent Tracer service. Core handler simulation
+remains outside Tracer for focused tests (ADR 0010).
 AI-facing adapters, including a possible MCP server, are clients of that service
 and do not bypass its capability boundaries.
 
@@ -18,11 +19,12 @@ aggregates and handlers, and they do not receive a privileged path around normal
 authorization. Redaction, environment capabilities, validation, and audit are
 enforced by the service before results reach any protocol adapter.
 
-The API may support HTTP, WebSocket, MCP, or other transports without moving
-protocol details into the aggregate kernel. Read-only simulation, isolated
-stateful test execution, and production dispatch are explicit modes. Test state
-is resettable without affecting production, and dispatch requires a separate
-capability. These operations can be deployed independently.
+The implemented adapter is HTTP JSON plus SSE; there is no implemented MCP server.
+Future transports need not move protocol details into the aggregate kernel.
+Read-only inspection, isolated stateful Test execution, and production dispatch
+are separate capabilities. Test state is resettable without affecting production,
+and dispatch requires a separate capability. Preview is retired, not a prerequisite
+or fallback for Test. These capabilities can be deployed independently.
 
 ## Consequences
 

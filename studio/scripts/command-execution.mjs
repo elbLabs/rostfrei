@@ -25,7 +25,6 @@ export async function checkCommandExecution(browser, url) {
       attempt: 0,
     },
     testInputsHrefTemplate: `${base}/inputs`,
-    simulateHrefTemplate: `${base}/simulate`,
     testHrefTemplate: `${base}/test`,
   }
   const catalog = {
@@ -38,8 +37,8 @@ export async function checkCommandExecution(browser, url) {
         commands: [
           { id: "rent-bicycle", label: "Rent bicycle", versions: [version] },
           {
-            id: "preview-only",
-            label: "Preview only",
+            id: "metadata-only",
+            label: "Metadata only",
             versions: [{ ...version, testHrefTemplate: undefined }],
           },
         ],
@@ -104,7 +103,7 @@ export async function checkCommandExecution(browser, url) {
           observationOrder: 1,
           payload: { bicycle_id: "bike-42" },
         },
-        ...(mode === "simulate"
+        ...(mode === "test"
           ? [
               {
                 kind: "command",
@@ -179,12 +178,6 @@ export async function checkCommandExecution(browser, url) {
             request.headers().authorization?.startsWith("Bearer ")
           ),
         })
-        if (pathname === `${base}/simulate`) {
-          void respond(operation("simulate", "queued"), 202, {
-            location: "/op/simulate",
-          })
-          return
-        }
         if (pathname === `${base}/test`) {
           testCount += 1
           void (testCount === 1
@@ -219,15 +212,15 @@ export async function checkCommandExecution(browser, url) {
       "a catalog without a test repository must still support commands"
     )
     await page.click('button[aria-controls="studio-command-panel"]')
-    assert.equal(await page.$('[data-command-mode="preview"]'), null,
-      "Studio must not offer the retired Preview execution mode")
-    const choice = 'select[aria-label="Command and schema"]'
-    await page.select(choice, "bike-rental/preview-only@2")
     assert.equal(
-      await page.$eval(
-        '[data-command-mode="test"]',
-        (button) => button.disabled
-      ),
+      await page.$('[data-command-mode="preview"]'),
+      null,
+      "Studio must not offer the retired Preview execution mode"
+    )
+    const choice = 'select[aria-label="Command and schema"]'
+    await page.select(choice, "bike-rental/metadata-only@2")
+    assert.equal(
+      await page.$eval(".command-submit", (button) => button.disabled),
       true
     )
     await page.select(choice, "bike-rental/rent-bicycle@2")
@@ -236,13 +229,6 @@ export async function checkCommandExecution(browser, url) {
         document.querySelector('input[aria-label="Payload Fleet"]')?.value ===
           "city-fleet" &&
         !document.querySelector('input[aria-label="Payload Fleet"]').disabled
-    )
-    assert.equal(
-      await page.$eval('[data-command-mode="test"]', (button) =>
-        button.getAttribute("aria-pressed")
-      ),
-      "true",
-      "Test preference survives Preview-only commands"
     )
     const requestId = await page.$eval(
       'input[aria-label="Payload Request id"]',
@@ -265,40 +251,6 @@ export async function checkCommandExecution(browser, url) {
       Math.abs(after.x - before.x) > 20 && Math.abs(after.y - before.y) > 20,
       "command panel remains draggable"
     )
-    await page.click('[data-command-mode="preview"]')
-    await page.click('#studio-command-panel button[type="submit"]')
-    await page.waitForSelector(
-      '[data-node-id="ui-simulate-root"][data-status="accepted"]'
-    )
-    assert.deepEqual(requests[0], {
-      path: `${base}/simulate`,
-      body: expectedBody,
-      key: undefined,
-      authorized: true,
-    })
-    assert.match(
-      await page.$eval(".flow-heading", (element) => element.textContent),
-      /Preview flow/
-    )
-    assert.equal(
-      await page.$eval(
-        '[data-node-id="downstream-command"]',
-        (node) => node.dataset.status
-      ),
-      "idle"
-    )
-    assert.equal(
-      await page.$$eval(
-        '[data-target-id="unlinked-message"]',
-        (edges) => edges.length
-      ),
-      0
-    )
-    assert.equal(
-      await page.$$eval("[data-graph-edge]", (edges) => edges.length),
-      2
-    )
-
     const subjects = await page.evaluate(async () => {
       const { operationGraph } = await import("/src/lib/graph.ts")
       const operation = {
@@ -348,7 +300,6 @@ export async function checkCommandExecution(browser, url) {
       )
     )
 
-    await page.click('[data-command-mode="test"]')
     const keySelector = 'input[aria-label="Idempotency key"]'
     const key = await page.$eval(keySelector, (input) => input.value)
     const setKey = (value) =>
@@ -372,7 +323,7 @@ export async function checkCommandExecution(browser, url) {
     await page.waitForSelector(
       '[data-node-id="ui-test-root"][data-status="accepted"]'
     )
-    assert.deepEqual(requests[1], {
+    assert.deepEqual(requests[0], {
       path: `${base}/test`,
       body: expectedBody,
       key,
@@ -385,10 +336,25 @@ export async function checkCommandExecution(browser, url) {
       ),
       "false"
     )
-    assert.deepEqual(captures, [
-      "/capture/simulate?within=10s&settleFor=500ms",
-      "/capture/test?within=10s&settleFor=500ms",
-    ])
+    assert.deepEqual(captures, ["/capture/test?within=10s&settleFor=500ms"])
+    assert.equal(
+      await page.$eval(
+        '[data-node-id="downstream-command"]',
+        (node) => node.dataset.status
+      ),
+      "idle"
+    )
+    assert.equal(
+      await page.$$eval(
+        '[data-target-id="unlinked-message"]',
+        (edges) => edges.length
+      ),
+      0
+    )
+    assert.equal(
+      await page.$$eval("[data-graph-edge]", (edges) => edges.length),
+      2
+    )
     await page.click('button[aria-controls="studio-command-panel"]')
     await page.waitForFunction(
       (previous) =>
@@ -408,7 +374,7 @@ export async function checkCommandExecution(browser, url) {
         ?.textContent.includes("may have reached the bus")
     )
     assert.equal(await page.$eval(keySelector, (input) => input.value), nextKey)
-    assert.equal(requests[2].body, expectedBody)
+    assert.equal(requests[1].body, expectedBody)
     assert.equal(
       testCount,
       2,

@@ -22,6 +22,7 @@ pub enum OperationStatus {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum OperationMode {
+    /// Historical capture compatibility only. Tracer cannot submit simulations.
     Simulate,
     Test,
     Dispatch,

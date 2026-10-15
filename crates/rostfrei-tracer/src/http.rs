@@ -21,9 +21,9 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    CommandInputError, CorrelationError, DiscoveryError, MAX_COMMAND_PAYLOAD_LEN,
+    CommandInputError, CommandRequest, CorrelationError, DiscoveryError, MAX_COMMAND_PAYLOAD_LEN,
     MessageSeriesCaptureError, OperationMode, OperationSnapshot, QuarantineInspectionError,
-    QuarantineScope, SimulationRequest, SubmissionError, TestDefinition, TestDefinitionError,
+    QuarantineScope, SubmissionError, TestDefinition, TestDefinitionError,
     TestDefinitionValidationError, TestRepositoryError, TestRunError, TestScenarioResetError,
     TestTimeout, Tracer, behavioral_test_schema,
 };
@@ -137,10 +137,6 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
         .route(
             "/contexts/{context}/commands/{command}/schemas/{schema_version}/inputs",
             get(get_command_inputs),
-        )
-        .route(
-            "/contexts/{context}/commands/{command}/simulate",
-            post(submit_simulation),
         )
         .route(
             "/contexts/{context}/commands/{command}/test",
@@ -654,27 +650,11 @@ async fn authorize_inspection_request(
     }
 }
 
-async fn submit_simulation(
-    State(state): State<HttpState>,
-    Path((context, command)): Path<(String, String)>,
-    headers: HeaderMap,
-    request: Result<Json<SimulationRequest>, JsonRejection>,
-) -> Response {
-    submit_command(
-        &state.tracer,
-        OperationMode::Simulate,
-        (context, command),
-        &headers,
-        request,
-    )
-    .await
-}
-
 async fn submit_test(
     State(state): State<HttpState>,
     Path(path): Path<(String, String)>,
     headers: HeaderMap,
-    request: Result<Json<SimulationRequest>, JsonRejection>,
+    request: Result<Json<CommandRequest>, JsonRejection>,
 ) -> Response {
     submit_command(&state.tracer, OperationMode::Test, path, &headers, request).await
 }
@@ -683,7 +663,7 @@ async fn submit_dispatch(
     State(state): State<HttpState>,
     Path(path): Path<(String, String)>,
     headers: HeaderMap,
-    request: Result<Json<SimulationRequest>, JsonRejection>,
+    request: Result<Json<CommandRequest>, JsonRejection>,
 ) -> Response {
     submit_command(
         &state.tracer,
@@ -700,7 +680,7 @@ async fn submit_command(
     mode: OperationMode,
     (context, command): (String, String),
     headers: &HeaderMap,
-    request: Result<Json<SimulationRequest>, JsonRejection>,
+    request: Result<Json<CommandRequest>, JsonRejection>,
 ) -> Response {
     let Json(request) = match request {
         Ok(request) => request,
@@ -711,11 +691,7 @@ async fn submit_command(
         Err(message) => return bad_request(&message),
     };
     let result = match mode {
-        OperationMode::Simulate => {
-            tracer
-                .submit_simulation(&context, &command, request, idempotency_key)
-                .await
-        }
+        OperationMode::Simulate => Err(SubmissionError::ModeUnavailable("simulate")),
         OperationMode::Test => {
             tracer
                 .submit_test(&context, &command, request, idempotency_key)

@@ -6,32 +6,40 @@ Accepted.
 
 ## Decision
 
-Developer tooling distinguishes three capabilities: inspect, simulate, and
-dispatch. Inspect reads history and reconstructs aggregate state without
-mutation. Simulate replays history into an isolated in-memory branch and runs
-the normal typed command handler without appending authoritative events or
-publishing messages. Dispatch executes or publishes a real command and is
-available only through an explicit environment capability.
+The core distinguishes inspection, handler simulation, and real execution.
+Inspect reads history and reconstructs aggregate state without mutation.
+`CommandExecutor::simulate` remains a focused handler-test primitive: it replays
+history and runs the typed handler without appending authoritative events or
+creating an authoritative acceptance receipt. Injected handler dependencies are
+not universally sandboxed; simulation does not establish end-to-end behavior.
+Real execution is available only through an explicit environment capability.
+
+Tracer's user-facing Preview workflow is retired. Tracer discovers contracts,
+executes real Test commands/suites, observes actual activity and supports separately
+authorized production dispatch. It does not expose core simulation or manufacture
+command/event evidence from predictions. Retired HTTP simulation routes return
+404, never silently publish. The legacy Rust submission entry point returns
+`ModeUnavailable("simulate")` without invoking a handler.
 
 Aggregate inspection is separate from persistence and event codecs. Aggregates
 are not required to implement Serde or expose their internal state as a durable
 wire contract. An inspection adapter produces a developer-facing document and
 supports explicit field omission and redaction before data leaves the runtime.
 
-Simulation returns the base stream version, command outcome, rejection or
-predicted events, and an inspected state difference. A simulated branch never
-rewrites authoritative history. Tooling must technically separate simulation
-from live dispatch. Live dispatch is disabled unless deployment
-configuration, authorization, and auditing permit it.
+Core simulation returns the decision and simulated stream participants/events.
+A simulated branch never rewrites authoritative history. Historical Tracer
+simulation records remain explicitly predicted/uncommitted; readers must not
+reinterpret their synthetic identities as observed messages. Live dispatch is
+disabled unless deployment configuration and authorization permit it.
 
-Tracer mounts Dispatch separately from Simulate and requires a distinct bearer
+Tracer mounts Dispatch separately from Test and requires a distinct bearer
 capability. Test and Dispatch use separate instances of the same asynchronous
 `CommandTransport`. A publication-backed transport reports broker confirmation
 through `CommandTransportObserver` while it continues waiting for a durable
 command response. Tracer completes the operation as accepted or rejected only
 from that command-execution response; transported results do not claim local
-append evidence or invent a base stream version, while simulations explicitly
-report `appended: false`. A transport must report publication before returning,
+append evidence or invent a base stream version. Historical simulation records
+retain `appended: false`. A transport must report publication before returning,
 and Tracer verifies that the observation matches the terminal receipt. The
 idempotency key is mandatory for transported commands and is included in a
 mode-specific request fingerprint.

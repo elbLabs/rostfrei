@@ -54,11 +54,10 @@ Infrastructure is provisioned through explicit APIs; the example calls them
 during local startup. See [subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
 for the routing conventions.
 
-Tracer exposes three command actions:
+Tracer exposes two real command actions:
 
 | Action | Effect |
 | --- | --- |
-| Preview (`simulate`) | Evaluate against test history without appending events. |
 | Test | Execute through the command pipeline against isolated test state. |
 | Production dispatch | Execute against the production target with a separate capability token. |
 

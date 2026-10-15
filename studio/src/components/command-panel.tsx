@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
-import { ListTree, LoaderCircle, Play, RotateCcw, Send } from "lucide-react"
+import { ListTree, LoaderCircle, RotateCcw, Send } from "lucide-react"
 
 import { DraggablePanel } from "@/components/draggable-panel"
 import "./command-panel.css"
@@ -26,18 +26,11 @@ interface CommandExecutionRequestBase {
   schemaVersion: number
 }
 
-export type CommandExecutionRequest = CommandExecutionRequestBase &
-  (
-    | {
-        mode: "preview"
-        submitHrefTemplate: string
-      }
-    | {
-        mode: "test"
-        submitHrefTemplate: string
-        idempotencyKey: string
-      }
-  )
+export type CommandExecutionRequest = CommandExecutionRequestBase & {
+  mode: "test"
+  submitHrefTemplate: string
+  idempotencyKey: string
+}
 
 interface CommandPanelProps {
   open: boolean
@@ -73,7 +66,6 @@ export function CommandPanel({
 }: CommandPanelProps) {
   const choices = commandChoices(catalog)
   const [choiceKey, setChoiceKey] = useState("")
-  const [mode, setMode] = useState<"preview" | "test">("test")
   const [payloadValues, setPayloadValues] = useState<Record<string, string>>({})
   const previousInputs = useRef<CommandInputField[]>([])
   const [validationError, setValidationError] = useState<string>()
@@ -90,8 +82,6 @@ export function CommandPanel({
   const testAvailable = selected
     ? Boolean(selected.version.testHrefTemplate)
     : choices.some((choice) => choice.version.testHrefTemplate !== undefined)
-  // Keep the user's Test preference when switching through Preview-only commands.
-  const executionMode = testAvailable ? mode : "preview"
   const selectedFields = selected?.version.fields
   const inputsHrefTemplate = selected?.version.testInputsHrefTemplate
   const inputsKey = inputsHrefTemplate
@@ -173,15 +163,6 @@ export function CommandPanel({
         schemaVersion: selected.version.schemaVersion,
       }
       setValidationError(undefined)
-      if (executionMode === "preview") {
-        void onExecute({
-          ...request,
-          mode: "preview",
-          submitHrefTemplate: selected.version.simulateHrefTemplate,
-        })
-        return
-      }
-
       if (!selected.version.testHrefTemplate) {
         throw new Error("Test publication is not available for this command")
       }
@@ -228,42 +209,11 @@ export function CommandPanel({
       <div className="command-panel-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         <form className="command-form" onSubmit={submit}>
           <div className="command-mode-row">
-            <div
-              className="command-mode-options"
-              role="group"
-              aria-label="Command execution mode"
-            >
-              <button
-                type="button"
-                className="command-mode-option"
-                data-command-mode="preview"
-                aria-pressed={executionMode === "preview"}
-                disabled={busy}
-                onClick={() => {
-                  setMode("preview")
-                  markEdited()
-                }}
-              >
-                Preview
-              </button>
-              <button
-                type="button"
-                className="command-mode-option"
-                data-command-mode="test"
-                aria-pressed={executionMode === "test"}
-                disabled={busy || !testAvailable}
-                onClick={() => {
-                  setMode("test")
-                  markEdited()
-                }}
-              >
-                Test bus
-              </button>
-            </div>
+            <span data-command-mode="test">Isolated Test</span>
             <p>
-              {executionMode === "test"
+              {testAvailable
                 ? "Publishes through the isolated Test command bus and may append Test events."
-                : "Reads the connected event history. Nothing is published or appended."}
+                : "Test publication is not available for this command."}
             </p>
           </div>
 
@@ -337,7 +287,7 @@ export function CommandPanel({
             )}
           </div>
 
-          {executionMode === "test" && (
+          {testAvailable && (
             <label className="command-field">
               <span>Idempotency key</span>
               <div className="command-idempotency-field">
@@ -387,21 +337,11 @@ export function CommandPanel({
               busy ||
               inputsLoading ||
               !selected ||
-              (executionMode === "test" && !selected.version.testHrefTemplate)
+              !selected.version.testHrefTemplate
             }
           >
-            {busy ? (
-              <LoaderCircle className="animate-spin" />
-            ) : executionMode === "test" ? (
-              <Send />
-            ) : (
-              <Play />
-            )}
-            {busy
-              ? "Waiting for result"
-              : executionMode === "test"
-                ? "Push to Test bus"
-                : "Preview command"}
+            {busy ? <LoaderCircle className="animate-spin" /> : <Send />}
+            {busy ? "Waiting for result" : "Push to Test bus"}
           </Button>
         </form>
 
@@ -864,7 +804,7 @@ function CommandResult({ result }: { result: CommandExecutionResult }) {
             ? "Test result"
             : operation.mode === "dispatch"
               ? "Production result"
-              : "Preview result"}
+              : "Historical simulation (uncommitted)"}
         </span>
         <Badge
           variant={

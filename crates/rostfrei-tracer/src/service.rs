@@ -4,13 +4,13 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    AggregateType, CommandHandler, ContentFingerprint, EventHistory, EventStore,
-    EventStoreErrorKind, OperationId, SimulationError, StreamDirectory,
+    AggregateType, CommandHandler, ContentFingerprint, EventHistory, EventStore, OperationId,
+    StreamDirectory,
 };
 use rostfrei_fixtures::Fixture;
 use rostfrei_messaging_core::{
@@ -28,8 +28,8 @@ use crate::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandReceipt, CommandTransport,
     CommandTransportError, CommandTransportErrorKind, CommandTransportObserver,
     CorrelationCommandOutcome, CorrelationError, CorrelationObserver, CorrelationSubscription,
-    DomainEventObservation, OperationEventKind, OperationMode, OperationResult, OperationSnapshot,
-    OperationSubscription, PredictedDomainEvent, RuntimeRegistrationError, SubscriptionError,
+    OperationEventKind, OperationMode, OperationResult, OperationSnapshot, OperationSubscription,
+    PredictedDomainEvent, RuntimeRegistrationError, SubscriptionError,
     behavioral::{
         TestCommand, TestDefinition, TestDefinitionCollection, TestDefinitionRevision, TestReport,
         TestReportStatus, TestRepository, TestRepositoryError, TestTimeout,
@@ -51,10 +51,7 @@ use crate::{
         self, DefaultQuarantinePayloadPolicy, QuarantineCollection, QuarantineDetail,
         QuarantineInspectionError, QuarantinePayloadPolicy, QuarantineScope,
     },
-    runtime::{
-        CommandKey, ErasedCommandInputOptions, ErasedCommandSimulator, RuntimeBindings,
-        RuntimeDecision, RuntimeSimulationError,
-    },
+    runtime::{CommandKey, ErasedCommandInputOptions, ErasedCommandPayload, RuntimeBindings},
     transport::canonical_json_payload,
 };
 
@@ -67,7 +64,7 @@ const TEST_EVALUATION_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SimulationRequest {
+pub struct CommandRequest {
     pub schema_version: u32,
     pub payload: Value,
 }
@@ -309,9 +306,11 @@ pub enum CommandInputError {
     Runtime(String),
 }
 
+/// Legacy name for the shared command envelope. Simulation submission is retired.
+pub type SimulationRequest = CommandRequest;
+
 pub struct TracerBuilder {
     observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
-    history: Arc<dyn EventHistory>,
     test_event_store: Option<Arc<dyn EventStore>>,
     test_transport: Option<Arc<dyn CommandTransport>>,
     dispatch_transport: Option<Arc<dyn CommandTransport>>,
@@ -337,10 +336,9 @@ impl TracerBuilder {
         self
     }
 
-    pub fn new(history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
+    pub fn new(_history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
         Self {
             observation: BTreeMap::new(),
-            history,
             test_event_store: None,
             test_transport: None,
             dispatch_transport: None,
@@ -384,7 +382,6 @@ impl TracerBuilder {
     where
         Store: EventStore + 'static,
     {
-        self.history = store.clone();
         self.test_event_store = Some(store);
         self
     }
@@ -474,12 +471,18 @@ impl TracerBuilder {
     }
 
     #[must_use]
+    pub const fn with_maximum_concurrent_operations(mut self, maximum: usize) -> Self {
+        self.maximum_concurrent_operations = maximum;
+        self
+    }
+
+    /// Legacy spelling; limits real Test/Dispatch operations, not simulation.
+    #[must_use]
     pub const fn with_maximum_concurrent_simulations(
-        mut self,
+        self,
         maximum_concurrent_simulations: usize,
     ) -> Self {
-        self.maximum_concurrent_operations = maximum_concurrent_simulations;
-        self
+        self.with_maximum_concurrent_operations(maximum_concurrent_simulations)
     }
 
     #[must_use]
@@ -566,7 +569,7 @@ impl TracerBuilder {
             validate_test_repository(
                 repository.as_ref(),
                 &self.test_fixtures,
-                &self.bindings.simulators,
+                &self.bindings.payloads,
                 test_transport_payload_limit(self.test_transport.as_deref()),
             )?;
         }
@@ -609,7 +612,6 @@ impl TracerBuilder {
         Ok(Tracer {
             inner: Arc::new(TracerInner {
                 observation: self.observation,
-                history: self.history,
                 test_backing_configured: self.test_event_store.is_some(),
                 test_transport: self.test_transport,
                 dispatch_transport: self.dispatch_transport,
@@ -619,7 +621,7 @@ impl TracerBuilder {
                 test_repository: self.test_repository,
                 test_scenario_gate: Arc::new(RwLock::new(())),
                 test_run_gate: Mutex::new(()),
-                simulators: self.bindings.simulators,
+                payloads: self.bindings.payloads,
                 input_options: self.bindings.input_options,
                 catalog,
                 stream_directory: self.stream_directory,
@@ -629,7 +631,6 @@ impl TracerBuilder {
                 maximum_operation_payload_bytes,
                 non_dispatch_permits: Arc::new(Semaphore::new(maximum_concurrent_operations)),
                 dispatch_permits: Arc::new(Semaphore::new(maximum_concurrent_operations)),
-                generated_ids: AtomicU64::new(0),
                 test_generation: AtomicU64::new(0),
                 test_run_sequence: AtomicU64::new(0),
                 test_scenario_healthy: AtomicBool::new(true),
@@ -647,7 +648,7 @@ impl TracerBuilder {
 fn validate_test_repository(
     repository: &dyn TestRepository,
     fixtures: &BTreeMap<String, Fixture>,
-    simulators: &HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
+    payloads: &HashMap<CommandKey, Arc<dyn ErasedCommandPayload>>,
     maximum_payload_len: usize,
 ) -> Result<(), RuntimeRegistrationError> {
     for summary in repository.list().items {
@@ -661,7 +662,7 @@ fn validate_test_repository(
         validate_test_definition_against_runtime(
             definition,
             fixtures,
-            simulators,
+            payloads,
             maximum_payload_len,
         )
         .map_err(|error| match error {
@@ -680,7 +681,7 @@ fn validate_test_repository(
 fn validate_test_definition_against_runtime(
     definition: &TestDefinition,
     fixtures: &BTreeMap<String, Fixture>,
-    simulators: &HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
+    payloads: &HashMap<CommandKey, Arc<dyn ErasedCommandPayload>>,
     maximum_payload_len: usize,
 ) -> Result<(), TestDefinitionValidationError> {
     let setup = definition.setup();
@@ -709,7 +710,7 @@ fn validate_test_definition_against_runtime(
         definition.id(),
         &subject.to_test_command(),
         &format!("/expected/graphs/0/nodes/{root_index}"),
-        simulators,
+        payloads,
         maximum_payload_len,
     )
 }
@@ -718,12 +719,12 @@ fn validate_test_command(
     test_id: &str,
     command: &TestCommand,
     path: &str,
-    simulators: &HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
+    payloads: &HashMap<CommandKey, Arc<dyn ErasedCommandPayload>>,
     maximum_payload_len: usize,
 ) -> Result<(), TestDefinitionValidationError> {
     let key = CommandKey::new(&command.context, &command.name, command.schema_version);
-    let simulator =
-        simulators
+    let binding =
+        payloads
             .get(&key)
             .ok_or_else(|| TestDefinitionValidationError::UnknownCommand {
                 test_id: test_id.to_owned(),
@@ -732,7 +733,7 @@ fn validate_test_command(
                 command: command.name.clone(),
                 schema_version: command.schema_version,
             })?;
-    simulator
+    binding
         .validate_payload(&command.payload)
         .map_err(
             |message| TestDefinitionValidationError::InvalidCommandPayload {
@@ -763,7 +764,6 @@ fn test_transport_payload_limit(transport: Option<&dyn CommandTransport>) -> usi
 
 struct TracerInner {
     observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
-    history: Arc<dyn EventHistory>,
     test_backing_configured: bool,
     test_transport: Option<Arc<dyn CommandTransport>>,
     dispatch_transport: Option<Arc<dyn CommandTransport>>,
@@ -773,7 +773,7 @@ struct TracerInner {
     test_repository: Option<Arc<dyn TestRepository>>,
     test_scenario_gate: Arc<RwLock<()>>,
     test_run_gate: Mutex<()>,
-    simulators: HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
+    payloads: HashMap<CommandKey, Arc<dyn ErasedCommandPayload>>,
     input_options: HashMap<CommandKey, Arc<dyn ErasedCommandInputOptions>>,
     catalog: TracerCatalog,
     stream_directory: Option<Arc<dyn StreamDirectory>>,
@@ -783,7 +783,6 @@ struct TracerInner {
     maximum_operation_payload_bytes: usize,
     non_dispatch_permits: Arc<Semaphore>,
     dispatch_permits: Arc<Semaphore>,
-    generated_ids: AtomicU64,
     test_generation: AtomicU64,
     test_run_sequence: AtomicU64,
     test_scenario_healthy: AtomicBool,
@@ -1078,7 +1077,7 @@ impl Tracer {
         validate_test_definition_against_runtime(
             definition,
             &self.inner.test_fixtures,
-            &self.inner.simulators,
+            &self.inner.payloads,
             test_transport_payload_limit(self.inner.test_transport.as_deref()),
         )
     }
@@ -1170,7 +1169,7 @@ impl Tracer {
             self.submit_test_unlocked_pinned(
                 &command.context,
                 &command.name,
-                SimulationRequest {
+                CommandRequest {
                     schema_version: command.schema_version,
                     payload: command.payload.clone(),
                 },
@@ -1492,7 +1491,7 @@ impl Tracer {
             return Err(CommandInputError::TestScenarioUnavailable);
         }
         let key = CommandKey::new(context, command, schema_version);
-        if !self.inner.simulators.contains_key(&key) {
+        if !self.inner.payloads.contains_key(&key) {
             return Err(CommandInputError::UnknownCommand {
                 context: context.to_owned(),
                 command: command.to_owned(),
@@ -1566,28 +1565,23 @@ impl Tracer {
         result
     }
 
-    pub async fn submit_simulation(
+    /// Compatibility entry point for retired clients. Never executes a handler,
+    /// creates evidence, or falls back to Test/Dispatch publication.
+    pub fn submit_simulation(
         &self,
-        context: &str,
-        command: &str,
-        request: SimulationRequest,
-        idempotency_key: Option<&str>,
-    ) -> Result<OperationSnapshot, SubmissionError> {
-        self.submit_operation(
-            OperationMode::Simulate,
-            context,
-            command,
-            request,
-            idempotency_key,
-        )
-        .await
+        _context: &str,
+        _command: &str,
+        _request: SimulationRequest,
+        _idempotency_key: Option<&str>,
+    ) -> std::future::Ready<Result<OperationSnapshot, SubmissionError>> {
+        std::future::ready(Err(SubmissionError::ModeUnavailable("simulate")))
     }
 
     pub async fn submit_test(
         &self,
         context: &str,
         command: &str,
-        request: SimulationRequest,
+        request: CommandRequest,
         idempotency_key: Option<&str>,
     ) -> Result<OperationSnapshot, SubmissionError> {
         let _test_run = self.inner.test_run_gate.lock().await;
@@ -1599,7 +1593,7 @@ impl Tracer {
         &self,
         context: &str,
         command: &str,
-        request: SimulationRequest,
+        request: CommandRequest,
         idempotency_key: Option<&str>,
     ) -> Result<OperationSnapshot, SubmissionError> {
         self.submit_operation(
@@ -1616,7 +1610,7 @@ impl Tracer {
         &self,
         context: &str,
         command: &str,
-        request: SimulationRequest,
+        request: CommandRequest,
         idempotency_key: Option<&str>,
     ) -> Result<(OperationSnapshot, CorrelationSubscription), SubmissionError> {
         let submission = self
@@ -1641,7 +1635,7 @@ impl Tracer {
         &self,
         context: &str,
         command: &str,
-        request: SimulationRequest,
+        request: CommandRequest,
         idempotency_key: Option<&str>,
     ) -> Result<OperationSnapshot, SubmissionError> {
         self.submit_operation(
@@ -1659,7 +1653,7 @@ impl Tracer {
         mode: OperationMode,
         context: &str,
         command: &str,
-        request: SimulationRequest,
+        request: CommandRequest,
         idempotency_key: Option<&str>,
     ) -> Result<OperationSnapshot, SubmissionError> {
         self.submit_operation_internal(mode, context, command, request, idempotency_key, false)
@@ -1677,35 +1671,30 @@ impl Tracer {
         mode: OperationMode,
         context: &str,
         command: &str,
-        request: SimulationRequest,
+        request: CommandRequest,
         idempotency_key: Option<&str>,
         pin_correlation: bool,
     ) -> Result<OperationSubmission, SubmissionError> {
         let transport = match mode {
-            OperationMode::Simulate => None,
+            OperationMode::Simulate => return Err(SubmissionError::ModeUnavailable("simulate")),
             OperationMode::Test => {
                 if !self.inner.test_backing_configured {
                     return Err(SubmissionError::ModeUnavailable("test"));
                 }
-                Some(
-                    self.inner
-                        .test_transport
-                        .clone()
-                        .ok_or(SubmissionError::ModeUnavailable("test"))?,
-                )
-            }
-            OperationMode::Dispatch => Some(
                 self.inner
-                    .dispatch_transport
+                    .test_transport
                     .clone()
-                    .ok_or(SubmissionError::ModeUnavailable("dispatch"))?,
-            ),
+                    .ok_or(SubmissionError::ModeUnavailable("test"))?
+            }
+            OperationMode::Dispatch => self
+                .inner
+                .dispatch_transport
+                .clone()
+                .ok_or(SubmissionError::ModeUnavailable("dispatch"))?,
         };
-        if mode != OperationMode::Simulate && idempotency_key.is_none() {
-            return Err(SubmissionError::IdempotencyKeyRequired);
-        }
+        let idempotency_key = idempotency_key.ok_or(SubmissionError::IdempotencyKeyRequired)?;
         let key = CommandKey::new(context, command, request.schema_version);
-        let simulator = self.inner.simulators.get(&key).cloned().ok_or_else(|| {
+        let binding = self.inner.payloads.get(&key).cloned().ok_or_else(|| {
             SubmissionError::UnknownCommand {
                 context: context.to_owned(),
                 command: command.to_owned(),
@@ -1728,40 +1717,19 @@ impl Tracer {
         if scenario_guard.is_some() && !self.inner.test_scenario_healthy.load(Ordering::Acquire) {
             return Err(SubmissionError::TestScenarioUnavailable);
         }
-        let operation_id = match idempotency_key {
-            Some(value) => {
-                let value = validate_http_operation_id(value)?;
-                if mode == OperationMode::Simulate {
-                    if value.starts_with("test:") || value.starts_with("dispatch:") {
-                        return Err(SubmissionError::InvalidOperationId(
-                            "simulation idempotency keys cannot use a transported-operation namespace"
-                                .to_owned(),
-                        ));
-                    }
-                    OperationId::new(value)
-                        .map_err(|error| SubmissionError::InvalidOperationId(error.to_string()))?
-                } else {
-                    operation_id_from_key(
-                        mode,
-                        if mode == OperationMode::Test {
-                            self.inner.test_generation.load(Ordering::Acquire)
-                        } else {
-                            0
-                        },
-                        context,
-                        command,
-                        value,
-                    )?
-                }
-            }
-            None => self.generated_operation_id(mode)?,
-        };
+        let operation_id = operation_id_from_key(
+            mode,
+            if mode == OperationMode::Test {
+                self.inner.test_generation.load(Ordering::Acquire)
+            } else {
+                0
+            },
+            context,
+            command,
+            validate_http_operation_id(idempotency_key)?,
+        )?;
         let request_bytes = canonical_json_payload(&request.payload);
-        let maximum_payload_len = transport
-            .as_ref()
-            .map_or(MAX_COMMAND_PAYLOAD_LEN, |transport| {
-                transport.maximum_payload_len().min(MAX_COMMAND_PAYLOAD_LEN)
-            });
+        let maximum_payload_len = transport.maximum_payload_len().min(MAX_COMMAND_PAYLOAD_LEN);
         if request_bytes.len() > maximum_payload_len {
             return Err(SubmissionError::PayloadTooLarge {
                 maximum: maximum_payload_len,
@@ -1902,8 +1870,7 @@ impl Tracer {
             tracer
                 .run_operation(
                     record,
-                    simulator,
-                    mode,
+                    binding,
                     transport,
                     context,
                     command,
@@ -2170,9 +2137,8 @@ impl Tracer {
     async fn run_operation(
         &self,
         record: Arc<OperationRecord>,
-        simulator: Arc<dyn ErasedCommandSimulator>,
-        mode: OperationMode,
-        transport: Option<Arc<dyn CommandTransport>>,
+        binding: Arc<dyn ErasedCommandPayload>,
+        transport: Arc<dyn CommandTransport>,
         context: String,
         command: String,
         schema_version: u32,
@@ -2182,269 +2148,141 @@ impl Tracer {
         payload: Value,
     ) {
         record.start().await;
-        if let Some(transport) = transport {
-            if let Err(error) = simulator.validate_payload(&payload) {
-                record
-                    .fail(
-                        "invalid-command-payload",
-                        bounded_failure_message(
-                            self.inner.trace_payload_policy.as_ref(),
-                            error,
-                            self.inner.maximum_operation_payload_bytes,
-                        ),
-                    )
-                    .await;
-                return;
-            }
-            let invocation = CommandInvocation::new(
-                operation_id,
-                correlation_id.clone(),
-                execution_fingerprint,
-                context.clone(),
-                command.clone(),
-                schema_version,
-                payload.clone(),
-            );
-            let observer = Arc::new(OperationTransportObserver::new(
-                Arc::clone(&record),
-                Arc::clone(&self.inner.correlations),
-                invocation.operation_id().as_str().to_owned(),
-                correlation_id.clone(),
-                context,
-                command,
-                schema_version,
-                payload,
-            ));
-            match transport.invoke(invocation, observer.clone()).await {
-                Ok(receipt) if observer.matches(&receipt).await => {
-                    if let Some(error) = observer.observation_error().await {
-                        record
-                            .fail_after_possible_publication(
-                                "invalid-command-observation",
-                                bounded_failure_message(
-                                    self.inner.trace_payload_policy.as_ref(),
-                                    error.to_string(),
-                                    self.inner.maximum_operation_payload_bytes,
-                                ),
-                            )
-                            .await;
-                        return;
-                    }
-                    let outcome = match command_response_outcome(&receipt) {
-                        Ok(outcome) => outcome,
-                        Err(message) => {
-                            record
-                                .fail_after_possible_publication(
-                                    "invalid-command-transport-response",
-                                    bounded_failure_message(
-                                        self.inner.trace_payload_policy.as_ref(),
-                                        message,
-                                        self.inner.maximum_operation_payload_bytes,
-                                    ),
-                                )
-                                .await;
-                            return;
-                        }
-                    };
-                    if let Err(error) = self
-                        .inner
-                        .correlations
-                        .observe_command_outcome(
-                            &correlation_id,
-                            receipt.response_message_id().to_owned(),
-                            receipt.command_message_id().to_owned(),
-                            outcome,
-                        )
-                        .await
-                    {
-                        record
-                            .fail_after_possible_publication(
-                                "invalid-command-outcome-observation",
-                                bounded_failure_message(
-                                    self.inner.trace_payload_policy.as_ref(),
-                                    error.to_string(),
-                                    self.inner.maximum_operation_payload_bytes,
-                                ),
-                            )
-                            .await;
-                        return;
-                    }
-                    complete_transport(
-                        &record,
-                        receipt,
+        if let Err(error) = binding.validate_payload(&payload) {
+            record
+                .fail(
+                    "invalid-command-payload",
+                    bounded_failure_message(
                         self.inner.trace_payload_policy.as_ref(),
+                        error,
                         self.inner.maximum_operation_payload_bytes,
-                    )
-                    .await;
+                    ),
+                )
+                .await;
+            return;
+        }
+        let invocation = CommandInvocation::new(
+            operation_id,
+            correlation_id.clone(),
+            execution_fingerprint,
+            context.clone(),
+            command.clone(),
+            schema_version,
+            payload.clone(),
+        );
+        let observer = Arc::new(OperationTransportObserver::new(
+            Arc::clone(&record),
+            Arc::clone(&self.inner.correlations),
+            invocation.operation_id().as_str().to_owned(),
+            correlation_id.clone(),
+            context,
+            command,
+            schema_version,
+            payload,
+        ));
+        match transport.invoke(invocation, observer.clone()).await {
+            Ok(receipt) if observer.matches(&receipt).await => {
+                if let Some(error) = observer.observation_error().await {
+                    record
+                        .fail_after_possible_publication(
+                            "invalid-command-observation",
+                            bounded_failure_message(
+                                self.inner.trace_payload_policy.as_ref(),
+                                error.to_string(),
+                                self.inner.maximum_operation_payload_bytes,
+                            ),
+                        )
+                        .await;
+                    return;
                 }
-                Ok(_) => {
-                    let message = bounded_failure_message(
+                let outcome = match command_response_outcome(&receipt) {
+                    Ok(outcome) => outcome,
+                    Err(message) => {
+                        record
+                            .fail_after_possible_publication(
+                                "invalid-command-transport-response",
+                                bounded_failure_message(
+                                    self.inner.trace_payload_policy.as_ref(),
+                                    message,
+                                    self.inner.maximum_operation_payload_bytes,
+                                ),
+                            )
+                            .await;
+                        return;
+                    }
+                };
+                if let Err(error) = self
+                    .inner
+                    .correlations
+                    .observe_command_outcome(
+                        &correlation_id,
+                        receipt.response_message_id().to_owned(),
+                        receipt.command_message_id().to_owned(),
+                        outcome,
+                    )
+                    .await
+                {
+                    record
+                        .fail_after_possible_publication(
+                            "invalid-command-outcome-observation",
+                            bounded_failure_message(
+                                self.inner.trace_payload_policy.as_ref(),
+                                error.to_string(),
+                                self.inner.maximum_operation_payload_bytes,
+                            ),
+                        )
+                        .await;
+                    return;
+                }
+                complete_transport(
+                    &record,
+                    receipt,
+                    self.inner.trace_payload_policy.as_ref(),
+                    self.inner.maximum_operation_payload_bytes,
+                )
+                .await;
+            }
+            Ok(_) => {
+                let message = bounded_failure_message(
                         self.inner.trace_payload_policy.as_ref(),
                         "command transport returned a receipt without a matching publication observation"
                             .to_owned(),
                         self.inner.maximum_operation_payload_bytes,
                     );
-                    if let Some(publication) = observer.publication().await {
-                        record
-                            .indeterminate(
-                                "invalid-command-transport-receipt",
-                                message,
-                                publication.command_message_id().to_owned(),
-                                publication.duplicate(),
-                            )
-                            .await;
-                    } else {
-                        record
-                            .fail("invalid-command-transport-receipt", message)
-                            .await;
-                    }
-                }
-                Err(error) => {
-                    let (code, message) = transport_failure(&error);
-                    let message = bounded_failure_message(
-                        self.inner.trace_payload_policy.as_ref(),
-                        message,
-                        self.inner.maximum_operation_payload_bytes,
-                    );
-                    if let Some(publication) = observer.publication().await {
-                        record
-                            .indeterminate(
-                                code,
-                                message,
-                                publication.command_message_id().to_owned(),
-                                publication.duplicate(),
-                            )
-                            .await;
-                    } else {
-                        record.fail(code, message).await;
-                    }
-                }
-            }
-            return;
-        }
-
-        let simulated_command_id = synthetic_message_id(&correlation_id, "preview-command");
-        let simulated_response_id = synthetic_message_id(&correlation_id, "preview-response");
-        if let Err(error) = self
-            .inner
-            .correlations
-            .observe_simulated_command(
-                &correlation_id,
-                simulated_command_id.clone(),
-                context,
-                command,
-                schema_version,
-                Some(payload.clone()),
-            )
-            .await
-        {
-            let _ = self
-                .correlation_observer(OperationMode::Simulate)
-                .record_observation_failure(
-                    &correlation_id,
-                    &simulated_command_id,
-                    error.to_string(),
-                )
-                .await;
-        }
-
-        match simulator
-            .simulate(
-                Arc::clone(&self.inner.history),
-                operation_id,
-                execution_fingerprint,
-                payload,
-            )
-            .await
-        {
-            Ok(RuntimeDecision::Accepted {
-                participants,
-                events,
-            }) => {
-                let mut events: Vec<PredictedDomainEvent> = events
-                    .into_iter()
-                    .map(|event| self.inner.trace_payload_policy.domain_event(event))
-                    .collect();
-                bound_predicted_event_payloads(
-                    &mut events,
-                    self.inner.maximum_operation_payload_bytes,
-                );
-                for event in &events {
-                    let message_id = ContentFingerprint::digest(format!(
-                        "{correlation_id}:predicted-domain-event:{}:{}:{}",
-                        event.aggregate_type, event.aggregate_id, event.ordinal
-                    ))
-                    .to_hex();
-                    let mut observation = DomainEventObservation::new(
-                        message_id,
-                        event.event_type.clone(),
-                        event.schema_version,
-                    )
-                    .with_causation_id(&simulated_command_id)
-                    .with_aggregate(event.aggregate_type.clone(), event.aggregate_id.clone())
-                    .with_stream_version(event.predicted_stream_version);
-                    if let Some(payload) = event.payload.clone() {
-                        observation = observation.with_payload(payload);
-                    }
-                    let _ = self
-                        .inner
-                        .correlations
-                        .observer(mode, Arc::clone(&self.inner.trace_payload_policy))
-                        .observe_domain_event(&correlation_id, observation)
-                        .await;
-                }
-                self.record_simulated_command_outcome(
-                    &correlation_id,
-                    simulated_response_id,
-                    simulated_command_id,
-                    CommandResponseOutcome::Accepted,
-                )
-                .await;
-                complete_simulation_accepted(&record, participants, events).await;
-            }
-            Ok(RuntimeDecision::Rejected {
-                participants,
-                rejection,
-            }) => {
-                let rejection = bounded_rejection(
-                    self.inner.trace_payload_policy.rejection(rejection),
-                    self.inner.maximum_operation_payload_bytes,
-                );
-                match simulated_rejection_outcome(rejection.clone()) {
-                    Ok(outcome) => {
-                        self.record_simulated_command_outcome(
-                            &correlation_id,
-                            simulated_response_id,
-                            simulated_command_id,
-                            outcome,
+                if let Some(publication) = observer.publication().await {
+                    record
+                        .indeterminate(
+                            "invalid-command-transport-receipt",
+                            message,
+                            publication.command_message_id().to_owned(),
+                            publication.duplicate(),
                         )
                         .await;
-                    }
-                    Err(message) => {
-                        let _ = self
-                            .correlation_observer(OperationMode::Simulate)
-                            .record_observation_failure(
-                                &correlation_id,
-                                &simulated_command_id,
-                                message,
-                            )
-                            .await;
-                    }
+                } else {
+                    record
+                        .fail("invalid-command-transport-receipt", message)
+                        .await;
                 }
-                complete_simulation_rejected(&record, participants, rejection).await;
             }
             Err(error) => {
-                let (code, message) = runtime_failure(error);
-                record
-                    .fail(
-                        code,
-                        bounded_failure_message(
-                            self.inner.trace_payload_policy.as_ref(),
+                let (code, message) = transport_failure(&error);
+                let message = bounded_failure_message(
+                    self.inner.trace_payload_policy.as_ref(),
+                    message,
+                    self.inner.maximum_operation_payload_bytes,
+                );
+                if let Some(publication) = observer.publication().await {
+                    record
+                        .indeterminate(
+                            code,
                             message,
-                            self.inner.maximum_operation_payload_bytes,
-                        ),
-                    )
-                    .await;
+                            publication.command_message_id().to_owned(),
+                            publication.duplicate(),
+                        )
+                        .await;
+                } else {
+                    record.fail(code, message).await;
+                }
             }
         }
     }
@@ -2478,46 +2316,6 @@ impl Tracer {
             .command_result(correlation_id, snapshot.operation_id, outcome, result)
             .await;
         record.mark_correlation_recorded();
-    }
-
-    async fn record_simulated_command_outcome(
-        &self,
-        correlation_id: &str,
-        response_message_id: String,
-        command_message_id: String,
-        outcome: CommandResponseOutcome,
-    ) {
-        if let Err(error) = self
-            .inner
-            .correlations
-            .observe_command_outcome(
-                correlation_id,
-                response_message_id.clone(),
-                command_message_id,
-                outcome,
-            )
-            .await
-        {
-            let _ = self
-                .correlation_observer(OperationMode::Simulate)
-                .record_observation_failure(correlation_id, response_message_id, error.to_string())
-                .await;
-        }
-    }
-
-    fn generated_operation_id(&self, mode: OperationMode) -> Result<OperationId, SubmissionError> {
-        let sequence = self.inner.generated_ids.fetch_add(1, Ordering::Relaxed);
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let prefix = match mode {
-            OperationMode::Simulate => "simulation",
-            OperationMode::Test => "test",
-            OperationMode::Dispatch => "dispatch",
-        };
-        OperationId::new(format!("{prefix}-{nanos:x}-{sequence:x}"))
-            .map_err(|error| SubmissionError::InvalidOperationId(error.to_string()))
     }
 }
 
@@ -2583,7 +2381,7 @@ fn message_series_note(
     }
     if operation.mode == OperationMode::Simulate {
         return Some(
-            "Preview messages use synthetic identities and are grouped with the operation; only explicit causation links are causal"
+            "Historical simulation uses synthetic identities and uncommitted predictions, not observed execution"
                 .to_owned(),
         );
     }
@@ -2888,28 +2686,6 @@ fn validate_http_operation_id(value: &str) -> Result<&str, SubmissionError> {
     Ok(value)
 }
 
-fn synthetic_message_id(correlation_id: &str, kind: &str) -> String {
-    ContentFingerprint::digest(format!("{correlation_id}:{kind}")).to_hex()
-}
-
-fn simulated_rejection_outcome(rejection: Value) -> Result<CommandResponseOutcome, String> {
-    let fallback =
-        ApplicationErrorCode::new("SIMULATED_REJECTION").map_err(|error| error.to_string())?;
-    let code = rejection
-        .get("code")
-        .and_then(Value::as_str)
-        .and_then(|code| ApplicationErrorCode::new(code).ok())
-        .unwrap_or(fallback);
-    MessagingCommandRejection::new(
-        CommandRejectionClassification::Conflict,
-        code,
-        "simulated command was rejected",
-        Some(rejection),
-    )
-    .map(CommandResponseOutcome::Rejected)
-    .map_err(|error| error.to_string())
-}
-
 fn operation_id_from_key(
     mode: OperationMode,
     generation: u64,
@@ -2927,55 +2703,6 @@ fn operation_id_from_key(
     ]);
     OperationId::new(format!("{}:{}", mode.as_str(), digest.to_hex()))
         .map_err(|error| SubmissionError::InvalidOperationId(error.to_string()))
-}
-
-async fn complete_simulation_accepted(
-    record: &OperationRecord,
-    participants: Vec<crate::TouchedStreamParticipant>,
-    events: Vec<PredictedDomainEvent>,
-) {
-    let mut trace = vec![OperationEventKind::CommandAccepted];
-    trace.extend(
-        events
-            .iter()
-            .cloned()
-            .map(|event| OperationEventKind::PredictedDomainEvent { event }),
-    );
-    record
-        .complete(
-            OperationResult::Accepted {
-                participants,
-                predicted_events: events,
-                appended: Some(false),
-                published: false,
-                command_message_id: None,
-                response_message_id: None,
-                duplicate: None,
-            },
-            trace,
-        )
-        .await;
-}
-
-async fn complete_simulation_rejected(
-    record: &OperationRecord,
-    participants: Vec<crate::TouchedStreamParticipant>,
-    rejection: Value,
-) {
-    record
-        .complete(
-            OperationResult::Rejected {
-                participants,
-                rejection: rejection.clone(),
-                appended: Some(false),
-                published: false,
-                command_message_id: None,
-                response_message_id: None,
-                duplicate: None,
-            },
-            vec![OperationEventKind::CommandRejected { rejection }],
-        )
-        .await;
 }
 
 fn command_response_outcome(receipt: &CommandReceipt) -> Result<CommandResponseOutcome, String> {
@@ -3067,22 +2794,6 @@ fn operation_payload_budget(maximum_operations: usize) -> usize {
         .min(DEFAULT_MAXIMUM_OPERATION_PAYLOAD_BYTES)
 }
 
-fn bound_predicted_event_payloads(events: &mut [PredictedDomainEvent], maximum_bytes: usize) {
-    // The operation result and event journal each retain a copy of every exposed payload.
-    let mut remaining = maximum_bytes / 2;
-    for event in events {
-        let Some(payload) = event.payload.as_ref() else {
-            continue;
-        };
-        let bytes = serialized_value_len(payload);
-        if bytes > remaining {
-            event.payload = None;
-        } else {
-            remaining = remaining.saturating_sub(bytes);
-        }
-    }
-}
-
 fn bounded_rejection(rejection: Value, maximum_bytes: usize) -> Value {
     if serialized_value_len(&rejection) <= maximum_bytes / 2 {
         rejection
@@ -3122,36 +2833,6 @@ fn transport_failure(error: &CommandTransportError) -> (&'static str, String) {
         CommandTransportErrorKind::InvalidResponse => "invalid-command-transport-response",
     };
     (code, error.message().to_owned())
-}
-
-fn runtime_failure(error: RuntimeSimulationError) -> (&'static str, String) {
-    match error {
-        RuntimeSimulationError::InvalidPayload(error) => ("invalid-command-payload", error),
-        RuntimeSimulationError::InvalidBoundedContext(error) => {
-            ("invalid-runtime-configuration", error)
-        }
-        RuntimeSimulationError::Simulation(SimulationError::Codec(error)) => {
-            ("event-json-failed", error.to_string())
-        }
-        RuntimeSimulationError::Simulation(SimulationError::Store(error)) => {
-            let code = match error.kind() {
-                EventStoreErrorKind::CorruptHistory => "corrupt-history",
-                EventStoreErrorKind::Unavailable
-                | EventStoreErrorKind::CapacityExhausted
-                | EventStoreErrorKind::ConfigurationMismatch => "history-unavailable",
-                EventStoreErrorKind::Conflict | EventStoreErrorKind::IdentityConflict => {
-                    "history-conflict"
-                }
-                EventStoreErrorKind::InvalidRequest => "invalid-runtime",
-            };
-            (code, error.to_string())
-        }
-        RuntimeSimulationError::RejectionEncoding(error) => ("rejection-encoding-failed", error),
-        RuntimeSimulationError::InvalidEventPayload(error) => ("event-json-failed", error),
-        RuntimeSimulationError::StreamVersionOverflow => {
-            ("stream-version-overflow", error.to_string())
-        }
-    }
 }
 
 fn request_fingerprint(

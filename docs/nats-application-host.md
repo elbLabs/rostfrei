@@ -2,8 +2,8 @@
 
 Enable `rostfrei-tracer`'s `nats-host` feature. `ApplicationBindings` is the
 executable composition: register aggregate fixture codecs, command instances and
-rejection mappers once. Those same handler instances supply catalog metadata,
-read-only Preview and `CommandProcessor` execution. Dependencies stay in your
+rejection mappers once. Those same registrations supply catalog metadata,
+payload decoding and `CommandProcessor` execution. Dependencies stay in your
 handlers. Integration mappings and handlers remain application-owned; the host
 supplies their buses, durable consumers and fixture-event suppression.
 
@@ -146,7 +146,7 @@ HTTP and correlation-observer workers are absent and HTTP tokens are unnecessary
 - Framework observers validate event identity, correlation and causation against
   delivery headers and envelopes. Integration events use the registered typed
   codecs, including provenance-derived identity checks. Evidence uses actual
-  committed events; Preview does not append.
+  committed events; retired simulation requests return 404 without publication.
 - Production Dispatch/inspection is attached only with an explicitly supplied
   Normal `NatsRuntime` through `TracerConfig::with_dispatch_runtime`. The host
   supervises that runtime too. Test reset cannot select Normal resources.

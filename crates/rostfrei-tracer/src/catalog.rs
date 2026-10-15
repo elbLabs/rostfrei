@@ -113,7 +113,6 @@ pub struct CatalogCommandVersion {
     pub fields: Vec<Value>,
     pub payload_template: Value,
     pub test_inputs_href_template: String,
-    pub simulate_href_template: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_href_template: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -196,10 +195,6 @@ pub fn build_catalog<'a>(
             test_inputs_href_template: format!(
                 "/contexts/{context_id}/commands/{}/schemas/{}/inputs",
                 descriptor.command_name, descriptor.schema_version
-            ),
-            simulate_href_template: format!(
-                "/contexts/{context_id}/commands/{}/simulate",
-                descriptor.command_name
             ),
             test_href_template: test_enabled.then(|| {
                 format!(

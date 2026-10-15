@@ -29,7 +29,7 @@ Applications normally depend on `rostfrei` and the adapters they need.
 | --- | --- |
 | [`rostfrei`](../crates/rostfrei) | Application facade, typed buses, runtime, registry, and public macros. |
 | [`rostfrei-http`](../crates/rostfrei-http) | Explicitly mounted HTTP command and query routes. |
-| [`rostfrei-tracer`](../crates/rostfrei-tracer) | Command discovery, Preview, Test, production dispatch, behavioral tests, and bounded traces. |
+| [`rostfrei-tracer`](../crates/rostfrei-tracer) | Command discovery, real Test execution, production dispatch, behavioral tests, and bounded observation. |
 | [`rostfrei-core`](../crates/rostfrei-core) | Aggregate execution, event-store contracts, and the in-memory store. |
 | [`rostfrei-domain`](../crates/rostfrei-domain) | Compiled domain model, descriptors, ownership rules, and domain-test metadata; imported as `domain`. |
 | [`rostfrei-domain-macros`](../crates/rostfrei-domain-macros) | Domain derives and behavior attributes. |

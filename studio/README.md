@@ -20,9 +20,9 @@ Keyboard shortcuts: **1** selects Canvas and **2** selects Workbench. Shortcuts
 are ignored while editing text or using modifier keys.
 
 Open **Command** (or **Ctrl/⌘ Shift K**) to use the catalog-driven command form.
-**Preview** reads isolated Test history without publishing; **Test bus** uses
+**Test bus** uses
 the isolated command pipeline and can append events and trigger integrations.
-Test bus is the default for commands that advertise that capability. Commands
+Test bus is the only command action; submission is disabled when unavailable. Commands
 remain available even when the catalog has no behavioral-test repository.
 Identifiers are editable, discovered payload options refresh after Test runs,
 and numeric options retain their exact JSON representation. An unconfirmed Test
@@ -78,7 +78,7 @@ pnpm inspect:ui --scene narrow --out artifacts/after
 The inspector starts Vite on an available port and launches a fresh Chrome
 session. Named scenarios intercept every API request and label their synthetic
 responses as visual fixtures. They cover the workbench overview, command form,
-accepted/rejected Preview, pending and indeterminate results, a 25-message
+accepted/rejected Test, pending and indeterminate results, a 25-message
 branching graph, long payloads, continuous observation, and the narrow-screen inspector. Unknown API
 requests fail rather than reaching a backend.
 

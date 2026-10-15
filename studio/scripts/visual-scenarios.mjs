@@ -10,9 +10,9 @@ import {
 export const scenarios = {
   overview: "Expected rental flow in the Workbench layout",
   command: "Populated catalog-driven Command panel",
-  accepted: "Accepted Preview with command details open",
+  accepted: "Accepted Test with command details open",
   rejected: "Business rejection with command details open",
-  loading: "Pending Preview with observing indicator",
+  loading: "Pending Test with observing indicator",
   indeterminate: "Unconfirmed Test submission with retry details",
   branching: "A 25-message synthetic branching flow after Fit graph to view",
   "long-payload": "Nested, long payload values in the message inspector",
@@ -45,7 +45,6 @@ const catalog = {
               })),
               payloadTemplate: { fleet_id: null, bicycle_id: null },
               testInputsHrefTemplate: `${commandPath}/schemas/2/inputs`,
-              simulateHrefTemplate: `${commandPath}/simulate`,
               testHrefTemplate: `${commandPath}/test`,
             },
           ],
@@ -172,7 +171,11 @@ export async function installScenario(page, scene, samples, diagnostics) {
           options: [{ value, label: value }],
         })),
       }
-    } else if (method === "POST" && pathname === `${commandPath}/simulate`) {
+    } else if (
+      method === "POST" &&
+      pathname === `${commandPath}/test` &&
+      scene !== "indeterminate"
+    ) {
       status = 202
       headers = { location: operationPath }
       body = operation("queued")
@@ -263,8 +266,6 @@ export async function prepareScenario(page, scene) {
         "bike-42"
   )
   if (scene === "command") return
-  if (scene !== "indeterminate")
-    await page.click('[data-command-mode="preview"]')
   await page.click('#studio-command-panel button[type="submit"]')
 
   if (scene === "loading") {
@@ -363,8 +364,11 @@ function operation(status, scene) {
     operationEventsHref: `${operationPath}/events`,
     correlationEventsHref: "/correlations/visual-correlation/events",
     messageSeriesHref: `${operationPath}/message-series`,
-    events: { kind: "predicted", href: `${operationPath}/events` },
-    mode: "simulate",
+    events: {
+      kind: "observed",
+      href: "/correlations/visual-correlation/events",
+    },
+    mode: "test",
     status,
     context: "bike-rental",
     command: "rent-bicycle",
@@ -374,7 +378,9 @@ function operation(status, scene) {
       ? {
           result: {
             decision: scene === "rejected" ? "rejected" : "accepted",
-            published: false,
+            published: true,
+            commandMessageId: "visual-command",
+            responseMessageId: "visual-response",
           },
         }
       : {}),
@@ -459,7 +465,7 @@ function messageSeries(scene) {
   return {
     operationId: "visual-inspection",
     correlationId: "visual-correlation",
-    mode: "simulate",
+    mode: "test",
     messageSeries: {
       messages,
       commandOutcomes: [
@@ -490,7 +496,7 @@ function messageSeries(scene) {
     capture: {
       settled: true,
       settledFor: "500ms",
-      fidelity: "grouped",
+      fidelity: "exact",
       note: "Synthetic visual fixture identities; explicit links only.",
     },
   }
