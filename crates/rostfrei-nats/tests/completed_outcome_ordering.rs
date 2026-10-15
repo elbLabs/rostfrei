@@ -110,7 +110,11 @@ async fn recreated_session_winner(accepted: bool) -> TestResult {
         original.cached_info().created,
         recreated.cached_info().created
     );
-    let error = result.expect_err("a concurrent winner must not bypass stale-session validation");
+    assert!(
+        result.is_err(),
+        "a concurrent winner must not bypass stale-session validation"
+    );
+    let error = result.unwrap_err();
     assert!(
         matches!(&error, CommandExecutionError::RejectedOutcomePersistence(error)
         if error.kind() == EventStoreErrorKind::ConfigurationMismatch)
