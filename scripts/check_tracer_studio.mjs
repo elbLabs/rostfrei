@@ -34,11 +34,11 @@ try {
   }
    await page.click('[aria-controls="studio-command-panel"]')
    await page.select('[aria-label="Command and schema"]', 'bike-rental/rent-bicycle@2')
-   await page.waitForFunction(() => [...document.querySelectorAll('.command-field select')].every(select => !select.disabled && select.options.length > 1))
-   for (const field of ['fleet_id', 'bicycle_id']) {
-     const selector = `[data-payload-field="${field}"] select`
-     const value = await page.$eval(selector, select => [...select.options].find(option => option.value.startsWith('option:')).value)
-     await page.select(selector, value)
+   for (const [field, value] of [['fleet_id', 'city-fleet'], ['bicycle_id', 'bike-42']]) {
+     const selector = `[data-payload-field="${field}"] input`
+     await page.waitForSelector(`${selector}:not(:disabled)`)
+     await page.click(selector, {clickCount:3})
+     await page.type(selector, value)
    }
    const graphBefore = await page.$$eval('[data-graph-node]', nodes => nodes.map(node => node.dataset.nodeId))
    assert.equal(await page.$eval('[data-command-mode="test"]', button => button.getAttribute('aria-pressed')), 'true')
