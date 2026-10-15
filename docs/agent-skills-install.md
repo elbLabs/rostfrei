@@ -147,7 +147,10 @@ downloads and needs neither Cargo/Git/Python nor the source checkout when invoke
 directly. Exit 0/1 means a supported reported pass/fail with retrieved evidence;
 exit 2 means typed blocked/incomplete execution. Uncertain submissions are never
 retried and existing evidence is never overwritten. Later capture failure retains
-the complete report/verdict. Preview is prediction, not acceptance.
+the complete report/verdict. Real isolated Test/suite execution is the normal
+agent workflow. Preview submission is retired; core handler simulation remains
+available for focused unit tests, outside Tracer. It cannot replace real execution
+or recorded evidence.
 Malformed capture envelopes or observations are typed `invalid_response` errors
 in the capture phase, retain the received verdict and exit 2. Observations are
 validated against the runtime-generated MessageSeries v2 schema; valid empty
@@ -155,10 +158,21 @@ collections remain supported.
 
 Use the application's actual handlers, workers, fixtures and NATS event store on
 an authorized disposable NATS 2.12.1+ broker with JetStream. The verified baseline
-host is `cargo run --locked -p bike-rental --bin bike-rental-api`; supply
-`ROSTFREI_NATS_URL` and distinct control/dispatch tokens. Default bind is
+host uses `cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`;
+supply `ROSTFREI_NATS_URL` and distinct control/dispatch tokens. Optional
+`ROSTFREI_INSPECTION_TOKEN` enables read-only production observation/quarantine.
+The shared host runs without HTTP when `--tracer` is omitted; the earlier
+always-on baseline accepts and ignores that flag. Default bind is
 `127.0.0.1:1309`. Runs reset the entire configured Test scenario. See each skill's
 runtime reference for isolation, reset scope and broker cleanup.
+
+Tracer currently exposes **HTTP JSON and SSE**, with no implemented MCP adapter.
+The Rust CLI executes suites; the installed Tracer skill teaches direct
+Bash/curl discovery, operation inspection, scoped observation snapshots/bounded
+watches, quarantine and causal explanations. Optional capabilities come from the
+live catalog, not assumptions about a global CLI version. Read-only observation
+is a partial event window, never a business-completion verdict. See
+[shared-host qualification and independent-trial instructions](agent-skills-harmony.md).
 
 ## New-project release blocker
 
@@ -202,5 +216,6 @@ ignored/untracked junk is excluded. Tests install an independently verified Carg
 package outside the workspace, remove its source, validate installed skills using
 the pinned upstream Agent Skills validator, exercise dependency upgrades, and run
 real NATS controls. The draft-release workflow attaches the archive/checksum but
-does not publish. Final combined #107 host qualification, fresh-session trials with
-human feedback and final release rehearsal remain explicit release gates.
+does not publish. Combined #107 functional evidence is recorded separately from
+the still-required independent installed-skill trial, human feedback, final
+release rehearsal and draft-release attachment verification.

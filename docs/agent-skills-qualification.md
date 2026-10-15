@@ -2,6 +2,15 @@
 
 ## Scope and evidence
 
+**Current integration:** #106's real-execution skills have been qualified together
+with #107's shared host and #112's Preview retirement in a clean isolated snapshot.
+See [exact revisions, commands and evidence](agent-skills-harmony.md). Installed,
+fresh-source and pinned external-consumer paths each passed actual NATS
+pass/mismatch/pass controls; scoped observation and quarantine were exercised.
+Historical sections below retain the evidence available at each earlier stage.
+Independent installed-skill agent competence/human feedback and final release
+rehearsal remain unexecuted.
+
 Framework/application baseline: `1d7d86153d0dc96d461454a26902b14caf737d39`,
 Rostfrei workspace version **0.0.5-alpha** (target milestone 0.1.0); bike-rental
 application from that same revision. The kit follows the existing version source;
@@ -53,8 +62,9 @@ Owned host/broker were cleaned up; consumer PATH excluded Python/Cargo/Git and
 the extracted kit was removed before execution. This pre-commit package records
 `12e2f57` plus dirty repair inputs. Final clean-head CI is linked on PR #106.
 
-Independent fresh-session human trials, combined #107
-qualification and the published-starter release blocker remain separate gates.
+At this earlier repair stage, combined #107 qualification was still pending;
+the later combined result is recorded above. Independent fresh-session human
+trials and the published-starter release blocker remain separate gates.
 
 ### Explicit dependency-aware setup (2026-10-15)
 
@@ -133,9 +143,10 @@ ready for a qualified published skills-enabled pin; this PR does not attach a
 mismatched current bundle or invent/publish a future release. The promised
 new-project skills inclusion remains pending that publication/pin qualification.
 
-Combined #107 qualification, independent fresh-session/human feedback, final
-external-consumer release rehearsal and draft-release attachment verification
-remain unexecuted release gates.
+At this earlier onboarding stage, combined #107 qualification was unexecuted;
+it is now covered by the integration record above. Independent fresh-session/human
+feedback, final external-consumer release rehearsal and draft-release attachment
+verification remain unexecuted release gates.
 
 ### Rust consumer migration (2026-10-14)
 
@@ -473,11 +484,10 @@ Mark each item observed-pass / observed-fail / blocked / unexecuted:
 
 ## Outstanding 0.1.0 qualification
 
-- Integrate #107/#69's actual standard application-linked host API and startup path;
-  update both skill prerequisites and this guide, then rerun installed-kit checks
-  plus the real-NATS example against it.
-- Resolve Catalog version discrepancy with the final runtime; validate live
-  discovery/schema/fixture/operation links against the release's protocol.
+- Completed for the recorded integration snapshot: #107/#69 host startup and
+  #112 real-execution model, installed/source/default external setup, and live
+  Catalog 1 / behavior and MessageSeries 2 / fixture 1 links. Repeat as part of
+  final release qualification if those inputs change.
 - Execute at least one independent fresh-session trial, capture human feedback
   and retain the holdout. Scripted protocol checks do not satisfy this item.
 - Rehearse the combined release in a standalone external application consuming
