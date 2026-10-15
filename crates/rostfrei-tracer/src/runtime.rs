@@ -151,7 +151,7 @@ where
     Handler: CommandHandler<C>,
     C: CommandDefinition<Handler> + Sync,
 {
-    handler: Handler,
+    handler: Arc<Handler>,
     marker: std::marker::PhantomData<fn() -> C>,
 }
 
@@ -181,7 +181,7 @@ where
         let metadata =
             CommandExecutionMetadata::new(operation_id, fingerprint).with_bounded_context(context);
         let (decision, simulated) = CommandExecutor::new(history)
-            .simulate(&self.handler, metadata, &command)
+            .simulate(self.handler.as_ref(), metadata, &command)
             .await?
             .into_parts();
         let participants = simulated
@@ -248,6 +248,7 @@ fn predicted_event(
     })
 }
 
+#[derive(Clone)]
 pub struct RuntimeBindings {
     pub registry: DomainRegistry,
     pub simulators: HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
@@ -266,6 +267,18 @@ impl RuntimeBindings {
     pub fn register_json<C, Handler>(
         &mut self,
         handler: Handler,
+    ) -> Result<(), RuntimeRegistrationError>
+    where
+        Handler: CommandHandler<C> + 'static,
+        C: CommandDefinition<Handler> + JsonCommandPayload + Sync,
+        Handler::Rejection: JsonErrorPayload,
+    {
+        self.register_shared_json::<C, Handler>(Arc::new(handler))
+    }
+
+    pub fn register_shared_json<C, Handler>(
+        &mut self,
+        handler: Arc<Handler>,
     ) -> Result<(), RuntimeRegistrationError>
     where
         Handler: CommandHandler<C> + 'static,

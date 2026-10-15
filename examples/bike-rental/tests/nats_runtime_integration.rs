@@ -501,7 +501,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             let mut mismatched_definition = canonical_definition.clone();
             mismatched_definition["id"] = json!("rent-available-bicycle-payload-mismatch");
             mismatched_definition["name"] = json!("Report a child payload mismatch");
-            mismatched_definition["expected"]["within"] = json!("3s");
+            // Retain the canonical real-NATS budget: it includes resource reset,
+            // fixture replay and transport retries, not just comparison. This
+            // regression checks payload diagnostics rather than execution latency.
             mismatched_definition["expected"]["settleFor"] = json!("50ms");
             *mismatched_definition
                 .pointer_mut("/expected/graphs/0/nodes/1/payload/bicycle_id")
@@ -533,7 +535,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                     && failed_report["operation"]["status"] == "completed"
                     && failed_report["operation"]["result"]["decision"] == "accepted"
                     && failed_report["commandOutcome"]["outcome"]["status"] == "accepted",
-                "behavioral mismatch did not return a typed failed report for a valid root",
+                &format!("behavioral mismatch did not return a typed failed report for a valid root: {failed_report}"),
             )?;
             let payload_diagnostic = failed_report["comparison"]["diagnostics"]
                 .as_array()
@@ -1494,10 +1496,10 @@ fn unique_scope() -> TestResult<String> {
     Ok(format!("brt-{:x}-{nanos:x}", process::id()))
 }
 
-fn ensure(condition: bool, message: &'static str) -> TestResult {
+fn ensure(condition: bool, message: &str) -> TestResult {
     if condition {
         Ok(())
     } else {
-        Err(io::Error::other(message).into())
+        Err(io::Error::other(message.to_owned()).into())
     }
 }

@@ -196,18 +196,18 @@ pub enum RegistrationError {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct RegisteredAggregate {
     rust_aggregate_type: &'static str,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct RegisteredQuery {
     module_name: &'static str,
     descriptor: QueryDescriptor,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct DomainRegistry {
     aggregates: BTreeMap<String, RegisteredAggregate>,
     commands: BTreeMap<&'static str, BTreeMap<&'static str, BTreeMap<u32, CommandDescriptor>>>,

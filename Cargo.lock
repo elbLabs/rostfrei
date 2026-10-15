@@ -1338,6 +1338,7 @@ dependencies = [
  "rostfrei-domain",
  "rostfrei-fixtures",
  "rostfrei-messaging-core",
+ "rostfrei-nats",
  "rostfrei-registry",
  "schemars",
  "serde",
