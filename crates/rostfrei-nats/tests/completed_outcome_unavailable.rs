@@ -18,7 +18,7 @@ impl OutcomeReader for RefuseDecision {
     }
 }
 #[async_trait]
-impl CommandBackend for RefuseDecision {
+impl ExecutionStore for RefuseDecision {
     fn authority(&self) -> &CommandAuthority {
         self.store.authority()
     }

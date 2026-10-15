@@ -118,7 +118,7 @@ fn request(operation: &str, content: &str, guarded: bool) -> TestResult<CommandR
 }
 
 fn processor(
-    store: Arc<dyn rostfrei_core::CommandBackend>,
+    store: Arc<dyn rostfrei_core::ExecutionStore>,
     calls: Arc<AtomicUsize>,
 ) -> TestResult<Arc<CommandProcessor>> {
     let mut processor = CommandProcessor::new(context()?.name().clone(), store);

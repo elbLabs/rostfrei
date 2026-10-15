@@ -7,10 +7,11 @@ use thiserror::Error;
 
 use crate::identity::{derive_commit_id, derive_event_id};
 use crate::{
-    Aggregate, AggregateCodecs, AggregateId, AggregateInstance, AggregateType, CommandBackend,
+    Aggregate, AggregateCodecs, AggregateId, AggregateInstance, AggregateType,
     CommandCommitSession, CommandExecutionMetadata, Event, EventBatch, EventCodec, EventCodecError,
-    EventHistory, EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion,
-    NewEvent, RecordedEvent, StreamId, StreamVersion, TransactionParticipant, TransactionReceipt,
+    EventHistory, EventStoreError, EventStoreErrorKind, EventTransaction, ExecutionStore,
+    ExpectedVersion, NewEvent, RecordedEvent, StreamId, StreamVersion, TransactionParticipant,
+    TransactionReceipt,
 };
 
 pub struct CommandExecutor<S> {
@@ -660,7 +661,7 @@ where
 
 impl<S> CommandExecutor<S>
 where
-    S: CommandBackend,
+    S: ExecutionStore,
 {
     pub async fn reconcile_with_rejection_codec<R>(
         &self,
@@ -871,7 +872,7 @@ async fn append_transaction(
     }
 }
 
-async fn reconcile_completed<S: CommandBackend, R>(
+async fn reconcile_completed<S: ExecutionStore, R>(
     store: &S,
     metadata: &CommandExecutionMetadata,
     codec: &dyn crate::RejectionCodec<R>,
@@ -882,7 +883,7 @@ async fn reconcile_completed<S: CommandBackend, R>(
         .transpose()
 }
 
-async fn lookup_completed<S: CommandBackend>(
+async fn lookup_completed<S: ExecutionStore>(
     store: &S,
     metadata: &CommandExecutionMetadata,
 ) -> Result<Option<crate::CompletedOutcome>, CommandExecutionError> {
@@ -2044,7 +2045,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl CommandBackend for ConflictOnceStore {
+    impl ExecutionStore for ConflictOnceStore {
         fn authority(&self) -> &crate::CommandAuthority {
             self.inner.authority()
         }
@@ -2064,7 +2065,7 @@ mod tests {
         let attempts = Arc::new(AtomicUsize::new(0));
         let sessions = Arc::new(AtomicUsize::new(0));
         let session_loads = Arc::new(AtomicUsize::new(0));
-        let store: Arc<dyn CommandBackend> = Arc::new(ConflictOnceStore {
+        let store: Arc<dyn ExecutionStore> = Arc::new(ConflictOnceStore {
             inner: InMemoryEventStore::new(),
             failure_kind: EventStoreErrorKind::Conflict,
             attempts: Arc::clone(&attempts),
@@ -2116,7 +2117,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl CommandBackend for ReceiptAfterDecisionStore {
+    impl ExecutionStore for ReceiptAfterDecisionStore {
         fn authority(&self) -> &crate::CommandAuthority {
             self.inner.authority()
         }

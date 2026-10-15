@@ -781,7 +781,7 @@ impl OutcomeReader for CountAuthority {
     }
 }
 #[async_trait]
-impl CommandBackend for CountAuthority {
+impl ExecutionStore for CountAuthority {
     fn authority(&self) -> &CommandAuthority {
         self.inner.authority()
     }

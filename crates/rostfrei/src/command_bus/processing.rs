@@ -7,10 +7,10 @@ use rostfrei_core::{
 };
 
 use super::{
-    AggregateCodecs, Arc, BindingError, BoundedContext, CommandBackend, CommandExecutionMetadata,
-    CommandExecutor, CommandProcessor, CommandProcessorError, CommandProcessorErrorKind,
-    CommandRejection, CommandRejectionClassification, CommandResponse, CommandResponseOutcome,
-    EncodedCommand, FixedRejection, INVALID_PAYLOAD_CODE, UNKNOWN_COMMAND_CODE, async_trait,
+    AggregateCodecs, Arc, BindingError, BoundedContext, CommandExecutionMetadata, CommandExecutor,
+    CommandProcessor, CommandProcessorError, CommandProcessorErrorKind, CommandRejection,
+    CommandRejectionClassification, CommandResponse, CommandResponseOutcome, EncodedCommand,
+    ExecutionStore, FixedRejection, INVALID_PAYLOAD_CODE, UNKNOWN_COMMAND_CODE, async_trait,
     build_response, framework_rejection, validate_command,
 };
 use crate::command_service::{
@@ -91,7 +91,7 @@ fn configuration(message: impl Into<String>) -> CommandProcessorError {
 impl CommandProcessor {
     pub fn builder(
         context: BoundedContext,
-        backend: Arc<dyn CommandBackend>,
+        backend: Arc<dyn ExecutionStore>,
     ) -> CommandProcessorBuilder {
         let mut processor = Self::new(context.name().clone(), backend);
         processor.configuration.route = Some(context);

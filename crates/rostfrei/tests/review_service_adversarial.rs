@@ -30,7 +30,7 @@ fn encoded(id: &str, reject: bool) -> TestResult<EncodedCommand> {
         .encode(request(id, reject)?)?,
     )
 }
-fn processor(store: Arc<dyn CommandBackend>) -> TestResult<CommandProcessor> {
+fn processor(store: Arc<dyn ExecutionStore>) -> TestResult<CommandProcessor> {
     let mut service = CommandProcessor::builder(context()?, store)
         .authorizer(Arc::new(AllowAllCommands))
         .build()?;
@@ -254,7 +254,7 @@ impl OutcomeReader for SpyBackend {
     }
 }
 #[async_trait]
-impl CommandBackend for SpyBackend {
+impl ExecutionStore for SpyBackend {
     fn authority(&self) -> &CommandAuthority {
         self.inner.authority()
     }

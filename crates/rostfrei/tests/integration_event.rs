@@ -198,7 +198,7 @@ fn stream_id() -> TestResult<StreamId> {
 }
 
 fn registered_processor(store: &InMemoryEventStore) -> TestResult<CommandProcessor> {
-    let erased_store: Arc<dyn rostfrei::CommandBackend> = Arc::new(store.clone());
+    let erased_store: Arc<dyn rostfrei::ExecutionStore> = Arc::new(store.clone());
     let processor_context = ApplicationName::new("integration-flow-test")?
         .bounded_context("ledger")?
         .name()

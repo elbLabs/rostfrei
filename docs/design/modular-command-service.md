@@ -8,7 +8,7 @@ and broad D3 validation remain pending.
 ## Processing boundary
 
 `CommandProcessor::builder(context, backend)` takes the full application, traffic
-scope and bounded context and an `Arc<dyn CommandBackend>`. An explicit
+scope and bounded context and an `Arc<dyn ExecutionStore>`. An explicit
 `CommandAuthorizer` is required; trusted applications may install `AllowAllCommands`.
 The object-safe `CommandProcessingService` exposes `process` and `lookup` with a
 per-call `TrustedCommandContext`. Application ingress establishes that context;

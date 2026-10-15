@@ -5,7 +5,7 @@ independent native review remain the next gates.
 
 ## Coordinated execution
 
-`CommandExecutor<S>` executes when `S: CommandBackend`. The backend combines
+`CommandExecutor<S>` executes when `S: ExecutionStore`. The backend combines
 `EventHistory`, `OutcomeReader`, an explicit `CommandAuthority`, and
 `begin_command() -> Box<dyn CommandCommitSession>`. The consuming session supplies
 attempt-local history and atomically commits the existing `EventTransaction`.

@@ -32,7 +32,7 @@ impl OutcomeReader for ForeignBackend {
     }
 }
 #[async_trait]
-impl CommandBackend for ForeignBackend {
+impl ExecutionStore for ForeignBackend {
     fn authority(&self) -> &CommandAuthority {
         self.local.authority()
     }

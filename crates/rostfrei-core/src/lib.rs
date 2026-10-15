@@ -1,11 +1,11 @@
 mod aggregate;
 mod append_session;
 mod codecs;
-mod command_backend;
 mod completed_outcome;
 mod conflict_retry;
 mod domain_event;
 mod envelope;
+mod execution_store;
 mod executor;
 mod identity;
 mod memory;
@@ -21,7 +21,6 @@ pub use aggregate::{
 };
 pub use append_session::AppendSession;
 pub use codecs::{AggregateCodecs, CodecRegistrationError, CodecValidationError};
-pub use command_backend::*;
 pub use completed_outcome::{
     CommandCompletion, CompletedAppendOutcome, EncodedRejection, InlineCompletedOutcome,
     JsonRejectionCodec, MAX_REJECTION_BYTES, OutcomeEvidence, RejectionCodec,
@@ -36,6 +35,7 @@ pub use envelope::{
     EnvelopeError, EventBatch, ExpectedVersion, MAX_BATCH_PAYLOAD_LEN, MAX_EVENT_PAYLOAD_LEN,
     MAX_EVENT_TYPE_LEN, MAX_EVENTS_PER_BATCH, NewEvent, RecordedEvent, StreamVersion,
 };
+pub use execution_store::*;
 pub use executor::{
     CommandDecision, CommandExecution, CommandExecutionError, CommandExecutor, CommandHandler,
     CommandHandlingResult, CommandOutcome, CommandReceipt, CommandResult, LoadedAggregate,

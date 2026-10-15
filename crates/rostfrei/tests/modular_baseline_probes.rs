@@ -85,7 +85,7 @@ impl OutcomeReader for AuthorityGate {
     }
 }
 #[async_trait]
-impl CommandBackend for AuthorityGate {
+impl ExecutionStore for AuthorityGate {
     fn authority(&self) -> &CommandAuthority {
         self.inner.authority()
     }

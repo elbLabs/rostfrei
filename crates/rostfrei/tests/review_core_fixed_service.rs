@@ -45,7 +45,7 @@ impl OutcomeReader for Backend {
     }
 }
 #[async_trait]
-impl CommandBackend for Backend {
+impl ExecutionStore for Backend {
     fn authority(&self) -> &CommandAuthority {
         self.local.authority()
     }

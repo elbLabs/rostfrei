@@ -778,7 +778,7 @@ impl BikeRentalNatsRuntime {
     }
 
     fn command_processor(&self) -> Result<Arc<CommandProcessor>, BikeRentalNatsError> {
-        let event_store: Arc<dyn rostfrei::CommandBackend> = Arc::new(self.store());
+        let event_store: Arc<dyn rostfrei::ExecutionStore> = Arc::new(self.store());
         let mut processor =
             CommandProcessor::new(self.config.context().name().clone(), event_store);
         processor.register::<RentBicycle, _>(

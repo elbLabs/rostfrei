@@ -668,7 +668,7 @@ mod tests {
 
     use async_trait::async_trait;
     use rostfrei::{
-        CommandBackend, CommandBus, DynamicCommandRequest, InMemoryEventStore,
+        CommandBus, DynamicCommandRequest, ExecutionStore, InMemoryEventStore,
         InMemoryMessagingAdapter, OperationId,
     };
     use rostfrei_messaging_core::{
@@ -1001,7 +1001,7 @@ mod tests {
     }
 
     fn empty_processor() -> Arc<CommandProcessor> {
-        let store: Arc<dyn CommandBackend> = Arc::new(InMemoryEventStore::new());
+        let store: Arc<dyn ExecutionStore> = Arc::new(InMemoryEventStore::new());
         let context = rostfrei_messaging_core::BoundedContextName::new("ledger")
             .expect("test command processor context must be valid");
         Arc::new(CommandProcessor::new(context, store))

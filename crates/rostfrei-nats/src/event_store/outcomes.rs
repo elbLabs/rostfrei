@@ -1,10 +1,10 @@
 //! Coordinated native outcome authority: permanent journal plus terminal last-value state.
 use super::*;
 use rostfrei_core::{
-    CommandAuthority, CommandBackend, CommandCommitSession, CompletedCommit, CompletedOutcome,
-    EncodedOutcomeDetails, OutcomeDetails, OutcomeExpiry, OutcomeKey, OutcomeLifecycle,
-    OutcomeLifecycleError, OutcomeLookup, OutcomeMarker, OutcomeReader, OutcomeRevision,
-    ProposalDigest, ReclamationStatus,
+    CommandAuthority, CommandCommitSession, CompletedCommit, CompletedOutcome,
+    EncodedOutcomeDetails, ExecutionStore, OutcomeDetails, OutcomeExpiry, OutcomeKey,
+    OutcomeLifecycle, OutcomeLifecycleError, OutcomeLookup, OutcomeMarker, OutcomeReader,
+    OutcomeRevision, ProposalDigest, ReclamationStatus,
 };
 
 pub(super) const JOURNAL_BINDING: &str = "rostfrei.split.journal-incarnation";
@@ -596,7 +596,7 @@ impl OutcomeReader for NatsEventStore {
 }
 
 #[async_trait]
-impl CommandBackend for NatsEventStore {
+impl ExecutionStore for NatsEventStore {
     fn authority(&self) -> &CommandAuthority {
         &self.authority
     }

@@ -167,17 +167,17 @@ struct LocalCommandTransport<Store> {
 // never advertise a stable authority over a concurrently replaceable store.
 #[async_trait]
 trait ExecutionSnapshot: EventStore {
-    async fn execution_snapshot(&self) -> Arc<dyn rostfrei::CommandBackend>;
+    async fn execution_snapshot(&self) -> Arc<dyn rostfrei::ExecutionStore>;
 }
 #[async_trait]
 impl ExecutionSnapshot for ResettableStore {
-    async fn execution_snapshot(&self) -> Arc<dyn rostfrei::CommandBackend> {
+    async fn execution_snapshot(&self) -> Arc<dyn rostfrei::ExecutionStore> {
         Arc::new(self.snapshot().await)
     }
 }
 #[async_trait]
 impl ExecutionSnapshot for InMemoryEventStore {
-    async fn execution_snapshot(&self) -> Arc<dyn rostfrei::CommandBackend> {
+    async fn execution_snapshot(&self) -> Arc<dyn rostfrei::ExecutionStore> {
         Arc::new(self.clone())
     }
 }

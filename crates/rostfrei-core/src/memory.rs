@@ -14,8 +14,8 @@ use crate::{
     TransactionAppendOutcome, TransactionReceipt, TransactionStreamReceipt,
 };
 use crate::{
-    CommandAuthority, CommandBackend, CommandCommitSession, CompletedCommit, CompletedOutcome,
-    DetailRead, DetailReadError, EncodedOutcomeDetails, OutcomeDecision, OutcomeDetailReader,
+    CommandAuthority, CommandCommitSession, CompletedCommit, CompletedOutcome, DetailRead,
+    DetailReadError, EncodedOutcomeDetails, ExecutionStore, OutcomeDecision, OutcomeDetailReader,
     OutcomeDetailReference, OutcomeDetails, OutcomeKey, OutcomeLifecycle, OutcomeLifecycleError,
     OutcomeLookup, OutcomeMarker, OutcomeReader, OutcomeRevision, ProposalDigest,
 };
@@ -650,7 +650,7 @@ impl CommandCommitSession for MemoryCommandSession<'_> {
 }
 
 #[async_trait]
-impl CommandBackend for InMemoryEventStore {
+impl ExecutionStore for InMemoryEventStore {
     fn authority(&self) -> &CommandAuthority {
         &self.authority
     }

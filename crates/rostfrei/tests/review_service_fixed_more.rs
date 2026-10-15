@@ -29,7 +29,7 @@ fn encode(route: BoundedContext, request: CommandRequest<Change>) -> TestResult<
 }
 fn processor(
     route: BoundedContext,
-    store: Arc<dyn CommandBackend>,
+    store: Arc<dyn ExecutionStore>,
     calls: Arc<AtomicUsize>,
 ) -> TestResult<CommandProcessor> {
     let mut service = CommandProcessor::builder(route, store)
@@ -205,7 +205,7 @@ impl OutcomeReader for FaultBackend {
     }
 }
 #[async_trait]
-impl CommandBackend for FaultBackend {
+impl ExecutionStore for FaultBackend {
     fn authority(&self) -> &CommandAuthority {
         self.inner.authority()
     }

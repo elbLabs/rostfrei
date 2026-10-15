@@ -21,7 +21,7 @@ fn caller(scope: &str) -> TestResult<TrustedCommandContext> {
 }
 fn service(
     f: &Fixture,
-    backend: Arc<dyn CommandBackend>,
+    backend: Arc<dyn ExecutionStore>,
     calls: Arc<AtomicUsize>,
 ) -> TestResult<Arc<dyn CommandProcessingService>> {
     let mut processor = CommandProcessor::builder(f.context.clone(), backend)

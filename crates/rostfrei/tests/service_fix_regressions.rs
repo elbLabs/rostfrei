@@ -117,7 +117,7 @@ async fn commit_recovery_and_conflict_recovery_keep_blocked_origin_for_both_deci
                     starts: AtomicUsize::new(0),
                     conflicts: AtomicUsize::new(0),
                 });
-                let backend: Arc<dyn CommandBackend> = if race {
+                let backend: Arc<dyn ExecutionStore> = if race {
                     racing.clone()
                 } else {
                     Arc::new(faulty)

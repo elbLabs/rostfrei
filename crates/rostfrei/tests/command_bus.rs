@@ -177,7 +177,7 @@ fn context() -> TestResult<rostfrei_messaging_core::BoundedContext> {
 
 #[test]
 fn processor_rejects_commands_registered_for_another_context() -> TestResult {
-    let store: Arc<dyn rostfrei::CommandBackend> = Arc::new(InMemoryEventStore::new());
+    let store: Arc<dyn rostfrei::ExecutionStore> = Arc::new(InMemoryEventStore::new());
     let mut processor = CommandProcessor::new(context()?.name().clone(), store);
 
     let result = processor.register::<ForeignCommand, ForeignCommandHandler>(
@@ -199,7 +199,7 @@ fn processor_rejects_commands_registered_for_another_context() -> TestResult {
 }
 
 fn registered_processor(store: InMemoryEventStore) -> TestResult<CommandProcessor> {
-    let store: Arc<dyn rostfrei::CommandBackend> = Arc::new(store);
+    let store: Arc<dyn rostfrei::ExecutionStore> = Arc::new(store);
     let mut processor = CommandProcessor::new(context()?.name().clone(), store);
     processor.register::<CreditAccount, CreditAccountHandler>(
         CreditAccountHandler,

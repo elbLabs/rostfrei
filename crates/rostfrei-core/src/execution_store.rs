@@ -93,7 +93,7 @@ pub trait OutcomeReader: Send + Sync {
 
 /// One coordinator commits events, read guards and the permanent winning marker.
 #[async_trait]
-pub trait CommandBackend: EventHistory + OutcomeReader {
+pub trait ExecutionStore: EventHistory + OutcomeReader {
     fn authority(&self) -> &CommandAuthority;
     async fn begin_command(&self) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError>;
 }
@@ -175,7 +175,7 @@ impl<T: OutcomeReader + ?Sized> OutcomeReader for Arc<T> {
 }
 
 #[async_trait]
-impl<T: CommandBackend + ?Sized> CommandBackend for Arc<T> {
+impl<T: ExecutionStore + ?Sized> ExecutionStore for Arc<T> {
     fn authority(&self) -> &CommandAuthority {
         self.as_ref().authority()
     }

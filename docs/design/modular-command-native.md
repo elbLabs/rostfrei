@@ -1,6 +1,6 @@
 # Native modular command authority (D2b)
 
-`NatsEventStore` implements `CommandBackend`, `OutcomeReader` and `OutcomeLifecycle`.
+`NatsEventStore` implements `ExecutionStore`, `OutcomeReader` and `OutcomeLifecycle`.
 `begin_command` creates a consuming session over the existing native history cache
 and atomic transaction implementation. `CommandExecutor` remains the retry engine.
 

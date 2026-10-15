@@ -107,7 +107,7 @@ pub fn map_rejection(rejection: &&'static str) -> Result<CommandRejection, Strin
 }
 pub fn processor(
     context: &BoundedContext,
-    store: Arc<dyn CommandBackend>,
+    store: Arc<dyn ExecutionStore>,
     calls: Arc<AtomicUsize>,
     codec: Option<BadCodec>,
 ) -> TestResult<Arc<CommandProcessor>> {
@@ -163,7 +163,7 @@ impl OutcomeReader for FaultStore {
     }
 }
 #[async_trait]
-impl CommandBackend for FaultStore {
+impl ExecutionStore for FaultStore {
     fn authority(&self) -> &CommandAuthority {
         self.inner.authority()
     }

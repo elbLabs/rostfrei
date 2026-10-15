@@ -300,7 +300,7 @@ async fn dispatch_transfer_through_nats(
 
 async fn verify_executor_transfer<S>(store: S) -> TestResult
 where
-    S: EventStore + rostfrei::CommandBackend + Clone,
+    S: EventStore + rostfrei::ExecutionStore + Clone,
 {
     let command = transfer_command("bike-42")?;
     let metadata = metadata("transfer-bike-42")?;

@@ -551,16 +551,16 @@ impl rostfrei_core::OutcomeReader for ForcedConflictStore {
     }
 }
 #[async_trait]
-impl rostfrei_core::CommandBackend for ForcedConflictStore {
+impl rostfrei_core::ExecutionStore for ForcedConflictStore {
     fn authority(&self) -> &rostfrei_core::CommandAuthority {
-        rostfrei_core::CommandBackend::authority(&self.inner)
+        rostfrei_core::ExecutionStore::authority(&self.inner)
     }
     async fn begin_command(
         &self,
     ) -> Result<Box<dyn rostfrei_core::CommandCommitSession + '_>, EventStoreError> {
         Ok(Box::new(ForcedConflictSession {
             store: self,
-            inner: rostfrei_core::CommandBackend::begin_command(&self.inner).await?,
+            inner: rostfrei_core::ExecutionStore::begin_command(&self.inner).await?,
         }))
     }
 }

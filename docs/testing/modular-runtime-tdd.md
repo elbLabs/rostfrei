@@ -75,7 +75,7 @@ trait CommandAuthorizer: Send + Sync {
 // authorization_error(&self) -> Option<&AuthorizationError>
 ```
 
-`CommandProcessor::builder(BoundedContext, Arc<dyn CommandBackend>)` accepts
+`CommandProcessor::builder(BoundedContext, Arc<dyn ExecutionStore>)` accepts
 `event_codecs(Arc<AggregateCodecs>)`,
 `rejection_codec(Arc<dyn RejectionCodec<CommandRejection>>)`,
 `conflict_retry_policy(Arc<dyn ConflictRetryPolicy>)`,
@@ -135,7 +135,7 @@ trait OutcomeReader: Send + Sync {
         -> Result<OutcomeLookup<EncodedOutcomeDetails>, EventStoreError>;
 }
 #[async_trait]
-trait CommandBackend: EventHistory + OutcomeReader {
+trait ExecutionStore: EventHistory + OutcomeReader {
     fn authority(&self) -> &CommandAuthority;
     async fn begin_command(&self) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError>;
 }

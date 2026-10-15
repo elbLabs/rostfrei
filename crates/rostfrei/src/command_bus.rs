@@ -8,9 +8,9 @@ use std::{
 use async_trait::async_trait;
 use domain::{BoundedContextType, DomainError, JsonCommandPayload, JsonErrorPayload};
 use rostfrei_core::{
-    Aggregate, AggregateCodecs, CommandBackend, CommandExecutionError, CommandExecutionMetadata,
-    CommandExecutor, CommandHandler, CommandOutcome, ContentFingerprint, EventCodec,
-    EventStoreErrorKind, OperationId as CoreOperationId,
+    Aggregate, AggregateCodecs, CommandExecutionError, CommandExecutionMetadata, CommandExecutor,
+    CommandHandler, CommandOutcome, ContentFingerprint, EventCodec, EventStoreErrorKind,
+    ExecutionStore, OperationId as CoreOperationId,
 };
 use rostfrei_messaging_core::{
     ApplicationErrorCode, BoundedContext, BoundedContextName, COMMAND_RESPONSE_SCHEMA_VERSION,
@@ -902,7 +902,7 @@ impl CommandRejectionMapper<Infallible> for InfallibleCommandRejectionMapper {
 trait ErasedCommandBinding: Send + Sync {
     async fn execute(
         &self,
-        store: Arc<dyn CommandBackend>,
+        store: Arc<dyn ExecutionStore>,
         codecs: Arc<AggregateCodecs>,
         policy: Arc<dyn rostfrei_core::ConflictRetryPolicy>,
         rejection_codec: Arc<dyn rostfrei_core::RejectionCodec<CommandRejection>>,
@@ -988,7 +988,7 @@ where
 {
     async fn execute(
         &self,
-        store: Arc<dyn CommandBackend>,
+        store: Arc<dyn ExecutionStore>,
         codecs: Arc<AggregateCodecs>,
         policy: Arc<dyn rostfrei_core::ConflictRetryPolicy>,
         rejection_codec: Arc<dyn rostfrei_core::RejectionCodec<CommandRejection>>,
@@ -1222,7 +1222,7 @@ pub enum CommandBindingRegistrationError {
 
 pub struct CommandProcessor {
     context: BoundedContextName,
-    store: Arc<dyn CommandBackend>,
+    store: Arc<dyn ExecutionStore>,
     codecs: Arc<AggregateCodecs>,
     bindings: HashMap<CommandBindingKey, Arc<dyn ErasedCommandBinding>>,
     configuration: processing::Configuration,
@@ -1258,7 +1258,7 @@ impl CommandProcessor {
         build_response(encoded, outcome).map(Some)
     }
     /// Trusted infrastructure compatibility profile. Policy-enabled applications use `builder`.
-    pub fn new(context: BoundedContextName, store: Arc<dyn CommandBackend>) -> Self {
+    pub fn new(context: BoundedContextName, store: Arc<dyn ExecutionStore>) -> Self {
         Self {
             context,
             store,

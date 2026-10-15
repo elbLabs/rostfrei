@@ -509,7 +509,7 @@ impl OutcomeReader for ReadResultBackend {
     }
 }
 #[async_trait]
-impl CommandBackend for ReadResultBackend {
+impl ExecutionStore for ReadResultBackend {
     fn authority(&self) -> &CommandAuthority {
         &self.authority
     }
@@ -749,7 +749,7 @@ impl OutcomeReader for SessionBackend {
     }
 }
 #[async_trait]
-impl CommandBackend for SessionBackend {
+impl ExecutionStore for SessionBackend {
     fn authority(&self) -> &CommandAuthority {
         self.inner.authority()
     }

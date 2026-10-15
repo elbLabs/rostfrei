@@ -55,7 +55,7 @@ impl CommandHandler<Act> for ConcurrentHandler {
 }
 fn concurrent_processor(
     fixture: &Fixture,
-    store: Arc<dyn CommandBackend>,
+    store: Arc<dyn ExecutionStore>,
     calls: Arc<AtomicUsize>,
 ) -> TestResult<(Arc<CommandProcessor>, Arc<ConcurrencyGate>)> {
     let gate = Arc::new(ConcurrencyGate {

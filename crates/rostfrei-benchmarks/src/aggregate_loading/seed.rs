@@ -6,7 +6,7 @@ use rostfrei_core::{
 
 use super::{BenchResult, config::HistoryKind, model};
 
-pub async fn seed<S: EventStore + rostfrei_core::CommandBackend + Clone>(
+pub async fn seed<S: EventStore + rostfrei_core::ExecutionStore + Clone>(
     store: S,
     id: &str,
     kind: HistoryKind,

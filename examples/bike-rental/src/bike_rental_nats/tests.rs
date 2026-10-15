@@ -31,7 +31,7 @@ use serde_json::json;
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 fn processor(store: InMemoryEventStore) -> TestResult<CommandProcessor> {
-    let store: Arc<dyn rostfrei::CommandBackend> = Arc::new(store);
+    let store: Arc<dyn rostfrei::ExecutionStore> = Arc::new(store);
     let context = rostfrei_messaging_core::BoundedContextName::new("bike-rental")?;
     let mut processor = CommandProcessor::new(context, store);
     processor.register::<RentBicycle, _>(

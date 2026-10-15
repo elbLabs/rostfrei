@@ -25,7 +25,7 @@ pub fn encoded(id: &str, reject: bool) -> TestResult<EncodedCommand> {
     )
 }
 pub fn processor(
-    store: Arc<dyn CommandBackend>,
+    store: Arc<dyn ExecutionStore>,
     calls: Arc<AtomicUsize>,
 ) -> TestResult<CommandProcessor> {
     let mut service = CommandProcessor::builder(context()?, store)
@@ -125,7 +125,7 @@ impl OutcomeReader for CommitRace {
     }
 }
 #[async_trait]
-impl CommandBackend for CommitRace {
+impl ExecutionStore for CommitRace {
     fn authority(&self) -> &CommandAuthority {
         self.inner.authority()
     }

@@ -19,7 +19,7 @@ impl OutcomeReader for PostCommitFault {
     }
 }
 #[async_trait]
-impl CommandBackend for PostCommitFault {
+impl ExecutionStore for PostCommitFault {
     fn authority(&self) -> &CommandAuthority {
         self.inner.authority()
     }

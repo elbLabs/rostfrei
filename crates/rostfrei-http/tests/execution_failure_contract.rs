@@ -162,7 +162,7 @@ impl CommandCommitSession for FaultSession<'_> {
     }
 }
 #[async_trait]
-impl CommandBackend for FaultStore {
+impl ExecutionStore for FaultStore {
     fn authority(&self) -> &CommandAuthority {
         self.inner.authority()
     }

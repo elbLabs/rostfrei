@@ -422,7 +422,7 @@ impl CommandCommitSession for Session<'_> {
     }
 }
 #[async_trait]
-impl CommandBackend for Backend {
+impl ExecutionStore for Backend {
     fn authority(&self) -> &CommandAuthority {
         &self.authority
     }
