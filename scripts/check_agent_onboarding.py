@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -84,6 +85,32 @@ class ExistingApplicationTests(unittest.TestCase):
         self.assertTrue((self.root / "selected-skills/rostfrei-tracer/SKILL.md").is_file())
         self.assertFalse((self.root / "one/.agents").exists())
         self.assertFalse((self.root / "two/.agents").exists())
+
+    def test_rooted_workspace_honors_defaults_but_member_selection_is_explicit(self):
+        manifest = self.root / "Cargo.toml"
+        manifest.write_text('[package]\nname="root-tool"\nversion="0.1.0"\nedition="2024"\n'
+                            '[workspace]\nresolver="3"\nmembers=["app", "other"]\ndefault-members=["app"]\n')
+        for name in ("", "app", "other"):
+            package = self.root / name
+            (package / "src").mkdir(parents=True)
+            (package / "src/main.rs").write_text("fn main() {}\n")
+            if name:
+                dependency = '\n[dependencies]\nrostfrei={path=' + json.dumps(str(ROOT / "crates/rostfrei")) + '}\n' if name == "app" else ""
+                (package / "Cargo.toml").write_text('[package]\nname=' + json.dumps(name) + '\nversion="0.1.0"\nedition="2024"\n' + dependency)
+        self.assertEqual(command(["cargo", "generate-lockfile", "--offline"], self.root).returncode, 0)
+        result = command([CLI, "rostfrei", "skills", "install"], self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / "app/.agents/skills/rostfrei-tracer/SKILL.md").is_file())
+        self.assertFalse((self.root / ".agents").exists())
+        for args, cwd in [([], self.root / "other"), (["--manifest-path", self.root / "other/Cargo.toml"], self.root), (["--package", "root-tool"], self.root)]:
+            result = command([CLI, "rostfrei", "skills", "install", *args], cwd)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("no resolved rostfrei dependency", result.stderr)
+        manifest.write_text(manifest.read_text().replace('default-members=["app"]', 'default-members=["app", "other"]'))
+        result = command([CLI, "rostfrei", "skills", "install"], self.root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--package", result.stderr)
+        self.assertEqual(command([CLI, "rostfrei", "skills", "install", "--package", "app"], self.root).returncode, 0)
 
     def test_published_starter_reports_its_real_pre_kit_capability_gap(self):
         app = self.root / "published-starter"
@@ -200,6 +227,10 @@ class ExistingApplicationTests(unittest.TestCase):
         # A Git-backed path checkout can change without advancing its revision.
         # Explicit setup must rebuild it, and a dirty cached build must never be
         # substituted for a later immutable Git dependency at that same revision.
+        immutable_release = json.loads((skills / "rostfrei-tracer/references/release.json").read_text())
+        immutable_tool, = [path for path in (self.root / "tools").rglob("cargo-rostfrei")
+                           if json.loads(command([path, "rostfrei", "skills", "info"], app).stdout)["sourceRevision"] == second_revision]
+        immutable_binary = immutable_tool.read_bytes()
         worked.write_bytes(worked.read_bytes() + b"\nUncommitted local source edit\n")
         manifest.write_text('[package]\nname = "versioned-consumer"\nversion = "0.1.0"\nedition = "2024"\n'
                             '[dependencies]\nframework = { package = "rostfrei", path = '
@@ -209,13 +240,48 @@ class ExistingApplicationTests(unittest.TestCase):
         self.assertEqual(local.returncode, 0, local.stdout + local.stderr)
         self.assertTrue(develop.read_bytes().endswith(b"Uncommitted local source edit\n"))
         self.assertTrue(json.loads((skills / "rostfrei-tracer/references/release.json").read_text())["sourceTreeDirty"])
-        local_baseline = (skills / ".rostfrei-managed.json").read_bytes()
+        local_release = json.loads((skills / "rostfrei-tracer/references/release.json").read_text())
+        self.assertTrue(immutable_tool.read_bytes() == immutable_binary, "Mutable source setup must not replace the immutable cached runner")
+        local_tool, = [path for path in (self.root / "tools").rglob("cargo-rostfrei")
+                      if json.loads(command([path, "rostfrei", "skills", "info"], app).stdout) == local_release]
+        second_source = self.root / "second-local-source"
+        shutil.copytree(source, second_source, symlinks=True)
+        other_worked = second_source / worked.relative_to(source)
+        other_worked.write_bytes(other_worked.read_bytes() + b"\nDifferent local worktree edit\n")
+        manifest.write_text(manifest.read_text().replace(str(source), str(second_source)))
+        lock()
+        other = setup("update")
+        self.assertEqual(other.returncode, 0, other.stderr)
+        other_release = json.loads((skills / "rostfrei-tracer/references/release.json").read_text())
+        self.assertNotEqual(other_release, local_release, "Different dirty worktrees at one commit need distinct build identities")
+        self.assertEqual(json.loads(command([local_tool, "rostfrei", "skills", "info"], app).stdout), local_release)
+        self.assertTrue(immutable_tool.read_bytes() == immutable_binary)
+        # Direct and delegated selection must reject a substituted dirty executable,
+        # before reaching runtime configuration (and with no possible submission).
+        selected = app / "selected-release.json"
+        isolated_cache = self.root / "isolated-tools"
+        for expected in (immutable_release, other_release):
+            selected.write_text(json.dumps(expected))
+            relative = immutable_tool.parent.parent.relative_to(self.root / "tools")
+            if expected == other_release:
+                other_tool, = [path for path in (self.root / "tools").rglob("cargo-rostfrei")
+                               if json.loads(command([path, "rostfrei", "skills", "info"], app).stdout) == other_release]
+                relative = other_tool.parent.parent.relative_to(self.root / "tools")
+            counterfeit = isolated_cache / relative / "bin/cargo-rostfrei"
+            counterfeit.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local_tool, counterfeit)
+            for runner in (local_tool, CLI):
+                rejected = command([runner, "rostfrei", "test", skills / "rostfrei-develop-feature/assets/add-first-bicycle.json",
+                                    "--release", selected, "--output", app / "never-written.json"], app,
+                                   {**environment, "ROSTFREI_TOOLS_DIR": str(isolated_cache), "PATH": "", "ROSTFREI_TRACER_URL": "unsupported://no-submission"})
+                self.assertEqual(rejected.returncode, 2)
+                self.assertNotEqual(json.loads(rejected.stderr)["error"]["phase"], "configuration")
+                self.assertFalse((app / "never-written.json").exists())
         manifest.write_text(single_dependency)
         lock()
-        dirty_cache = setup("update")
-        self.assertNotEqual(dirty_cache.returncode, 0)
-        self.assertIn("pristine framework revision", dirty_cache.stderr)
-        self.assertEqual((skills / ".rostfrei-managed.json").read_bytes(), local_baseline)
+        immutable = setup("update")
+        self.assertEqual(immutable.returncode, 0, immutable.stderr)
+        self.assertEqual(json.loads((skills / "rostfrei-tracer/references/release.json").read_text()), immutable_release)
 
 
 if __name__ == "__main__":

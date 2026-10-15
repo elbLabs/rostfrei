@@ -35,6 +35,9 @@ enum Mode {
     PartialRun,
     PartialCapture,
     PartialFailedCapture,
+    EmptyCapture,
+    InvalidCapture,
+    IncompatibleCapture,
     Malformed,
     Unknown,
     DisconnectRun,
@@ -146,7 +149,7 @@ fn respond(mut socket: TcpStream, mode: Mode, submissions: &AtomicUsize) {
         write!(socket, "HTTP/1.1 302 Found\r\nLocation: http://untrusted.invalid/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
         return;
     }
-    let verdict = if matches!(mode, Mode::Fail | Mode::PartialFailedCapture) {
+    let verdict = if matches!(mode, Mode::Fail | Mode::PartialFailedCapture | Mode::InvalidCapture) {
         "failed"
     } else {
         "passed"
@@ -164,7 +167,18 @@ fn respond(mut socket: TcpStream, mode: Mode, submissions: &AtomicUsize) {
             json!({"status":if mode == Mode::Unknown { "unexpected" } else { verdict },
                 "operation":{"messageSeriesHref":"/series"},"comparison":{"status":verdict}})
         }
-        _ if path.starts_with("/series?") => json!({"capture":{"settled":true,"fidelity":"exact"}}),
+        _ if path.starts_with("/series?") => {
+            let mut capture = json!({"operationId":"operation-1", "correlationId":"correlation-1", "mode":"test",
+                "messageSeries":{"messages":[],"commandOutcomes":[]},
+                "capture":{"settled":true,"settledFor":"500ms","fidelity":"exact"}});
+            match mode {
+                Mode::EmptyCapture => capture = json!({}),
+                Mode::InvalidCapture => capture["messageSeries"]["messages"] = json!([{"kind":"command"}]),
+                Mode::IncompatibleCapture => capture["messageSeries"]["schemaVersion"] = json!(99),
+                _ => {},
+            }
+            capture
+        },
         _ => panic!("unexpected request {path}"),
     };
     let partial = (path == "/run" && mode == Mode::PartialRun)
@@ -253,6 +267,18 @@ fn incomplete_capture_keeps_either_received_verdict() {
         assert_eq!(evidence["captureState"], "incomplete");
         assert_eq!(evidence["report"]["status"], status);
         assert_eq!(evidence["error"]["kind"], "incomplete_response");
+        assert_eq!(evidence["error"]["phase"], "capture");
+    }
+}
+
+#[test]
+fn malformed_capture_retains_verdict_and_never_becomes_complete_or_resubmits() {
+    for (mode, verdict) in [(Mode::EmptyCapture, "passed"), (Mode::InvalidCapture, "failed"), (Mode::IncompatibleCapture, "passed")] {
+        let (_, evidence) = check(mode, 2);
+        assert_eq!(evidence["report"]["status"], verdict);
+        assert_eq!(evidence["runState"], "reported");
+        assert_eq!(evidence["captureState"], "incomplete");
+        assert_eq!(evidence["error"]["kind"], "invalid_response");
         assert_eq!(evidence["error"]["phase"], "capture");
     }
 }
