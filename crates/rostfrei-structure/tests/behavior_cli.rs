@@ -149,7 +149,10 @@ fn respond(mut socket: TcpStream, mode: Mode, submissions: &AtomicUsize) {
         write!(socket, "HTTP/1.1 302 Found\r\nLocation: http://untrusted.invalid/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
         return;
     }
-    let verdict = if matches!(mode, Mode::Fail | Mode::PartialFailedCapture | Mode::InvalidCapture) {
+    let verdict = if matches!(
+        mode,
+        Mode::Fail | Mode::PartialFailedCapture | Mode::InvalidCapture
+    ) {
         "failed"
     } else {
         "passed"
@@ -173,12 +176,14 @@ fn respond(mut socket: TcpStream, mode: Mode, submissions: &AtomicUsize) {
                 "capture":{"settled":true,"settledFor":"500ms","fidelity":"exact"}});
             match mode {
                 Mode::EmptyCapture => capture = json!({}),
-                Mode::InvalidCapture => capture["messageSeries"]["messages"] = json!([{"kind":"command"}]),
+                Mode::InvalidCapture => {
+                    capture["messageSeries"]["messages"] = json!([{"kind":"command"}]);
+                }
                 Mode::IncompatibleCapture => capture["messageSeries"]["schemaVersion"] = json!(99),
-                _ => {},
+                _ => {}
             }
             capture
-        },
+        }
         _ => panic!("unexpected request {path}"),
     };
     let partial = (path == "/run" && mode == Mode::PartialRun)
@@ -273,7 +278,11 @@ fn incomplete_capture_keeps_either_received_verdict() {
 
 #[test]
 fn malformed_capture_retains_verdict_and_never_becomes_complete_or_resubmits() {
-    for (mode, verdict) in [(Mode::EmptyCapture, "passed"), (Mode::InvalidCapture, "failed"), (Mode::IncompatibleCapture, "passed")] {
+    for (mode, verdict) in [
+        (Mode::EmptyCapture, "passed"),
+        (Mode::InvalidCapture, "failed"),
+        (Mode::IncompatibleCapture, "passed"),
+    ] {
         let (_, evidence) = check(mode, 2);
         assert_eq!(evidence["report"]["status"], verdict);
         assert_eq!(evidence["runState"], "reported");
@@ -330,4 +339,49 @@ fn existing_evidence_is_not_overwritten_or_submitted() {
     assert_eq!(result.status.code(), Some(2));
     assert_eq!(server.submissions.load(Ordering::Relaxed), 0);
     assert_eq!(fs::read_to_string(evidence).unwrap(), "consumer work");
+}
+
+#[test]
+fn mismatched_build_identity_is_rejected_before_any_runtime_request() {
+    let directory = TempDir::new().unwrap();
+    let server = Server::start(Mode::Pass);
+    let info = Command::new(env!("CARGO_BIN_EXE_cargo-rostfrei"))
+        .args(["rostfrei", "skills", "info"])
+        .output()
+        .unwrap();
+    let original: Value = serde_json::from_slice(&info.stdout).unwrap();
+    let definition = directory.path().join("definition.json");
+    fs::write(
+        &definition,
+        json!({"schemaVersion":2,"setup":{"fixture":"no-rental-fleets"}}).to_string(),
+    )
+    .unwrap();
+    for fingerprint in [Some("0".repeat(64)), None] {
+        let mut release = original.clone();
+        release["sourceTreeDirty"] = json!(true);
+        if let Some(fingerprint) = fingerprint {
+            release["sourceFingerprint"] = json!(fingerprint);
+        } else {
+            release.as_object_mut().unwrap().remove("sourceFingerprint");
+        }
+        let metadata = directory.path().join("release.json");
+        fs::write(&metadata, release.to_string()).unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_cargo-rostfrei"))
+            .args(["rostfrei", "test"])
+            .arg(&definition)
+            .arg("--release")
+            .arg(metadata)
+            .arg("--output")
+            .arg(directory.path().join("evidence.json"))
+            .env("PATH", "")
+            .env("ROSTFREI_TOOLS_DIR", directory.path().join("empty-cache"))
+            .env("ROSTFREI_TRACER_URL", &server.url)
+            .env("ROSTFREI_API_TOKEN", TOKEN)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(2));
+        assert_eq!(server.requests.load(Ordering::Relaxed), 0);
+        assert_eq!(server.submissions.load(Ordering::Relaxed), 0);
+        assert!(!directory.path().join("evidence.json").exists());
+    }
 }

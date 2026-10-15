@@ -1,9 +1,11 @@
 mod behavior;
 mod bundle_files;
+mod capture;
 mod http;
 mod install;
 mod release;
 mod setup;
+mod source_identity;
 mod transaction;
 
 use serde::Serialize;

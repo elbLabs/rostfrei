@@ -4,6 +4,8 @@ use std::{env, fs, path::Path, process::Command};
 // authoritative resource changes, even if no CLI Rust source changed.
 #[path = "src/agent_tools/bundle_files.rs"]
 mod bundle_files;
+#[path = "src/agent_tools/source_identity.rs"]
+mod source_identity;
 
 fn git(root: &Path, arguments: &[&str]) -> Option<String> {
     let output = Command::new("git")
@@ -19,14 +21,17 @@ fn git(root: &Path, arguments: &[&str]) -> Option<String> {
 
 fn main() {
     let _ = bundle_files::FILES;
+    let _ = bundle_files::OBSERVED_SCHEMA;
     let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap_or_default();
     let directory = Path::new(&manifest);
+    println!("cargo:rerun-if-env-changed=ROSTFREI_SOURCE_STATE");
     // Cargo packages retain provenance without requiring Git at build/runtime.
     let vcs = directory.join(".cargo_vcs_info.json");
     println!("cargo:rerun-if-changed={}", vcs.display());
     let packaged = fs::read(&vcs)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    let is_package = packaged.is_some();
     let (revision, dirty) = packaged.map_or_else(
         || source_metadata(directory),
         |value| {
@@ -45,6 +50,21 @@ fn main() {
     );
     println!("cargo:rustc-env=ROSTFREI_CLI_REVISION={revision}");
     println!("cargo:rustc-env=ROSTFREI_CLI_DIRTY={dirty}");
+    let identity = if is_package {
+        source_identity::package(directory)
+    } else {
+        source_identity::source(directory)
+    };
+    let fingerprint = match identity {
+        Ok((fingerprint, inputs)) => {
+            for input in inputs {
+                println!("cargo:rerun-if-changed={}", input.display());
+            }
+            if dirty { fingerprint } else { String::new() }
+        }
+        Err(_) => String::new(), // Unknown dirty provenance is rejected by Release.
+    };
+    println!("cargo:rustc-env=ROSTFREI_CLI_FINGERPRINT={fingerprint}");
 }
 
 fn source_metadata(directory: &Path) -> (String, bool) {

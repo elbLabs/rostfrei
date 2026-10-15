@@ -74,8 +74,13 @@ fn install(root: &Path, destination: &Path) -> Output {
 
 fn update(root: &Path, destination: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_cargo-rostfrei"))
-        .args(["rostfrei", "skills", "update", "--kit"]).arg(root)
-        .arg("--destination").arg(destination).env("PATH", "").output().unwrap()
+        .args(["rostfrei", "skills", "update", "--kit"])
+        .arg(root)
+        .arg("--destination")
+        .arg(destination)
+        .env("PATH", "")
+        .output()
+        .unwrap()
 }
 
 #[cfg(unix)]
@@ -87,24 +92,61 @@ fn updates_preserve_private_directories_and_skill_root_modes() {
     let destination = temporary.path().join("skills");
     let mut resources = fixture(&kit);
     assert!(install(&kit, &destination).status.success());
-    write(&destination, "rostfrei-tracer/private/nested/notes", b"private consumer notes");
-    let directories = ["rostfrei-tracer", "rostfrei-tracer/private", "rostfrei-tracer/private/nested"];
-    for directory in directories { fs::set_permissions(destination.join(directory), fs::Permissions::from_mode(0o700)).unwrap(); }
-    resources.insert("skills/rostfrei-develop-feature/references/new.md".to_owned(), b"upstream".to_vec());
+    write(
+        &destination,
+        "rostfrei-tracer/private/nested/notes",
+        b"private consumer notes",
+    );
+    let directories = [
+        "rostfrei-tracer",
+        "rostfrei-tracer/private",
+        "rostfrei-tracer/private/nested",
+    ];
+    for directory in directories {
+        fs::set_permissions(
+            destination.join(directory),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+    }
+    resources.insert(
+        "skills/rostfrei-develop-feature/references/new.md".to_owned(),
+        b"upstream".to_vec(),
+    );
     seal(&kit, &resources);
     for _ in 0..2 {
         let result = update(&kit, &destination);
-        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
         for directory in directories {
-            assert_eq!(fs::metadata(destination.join(directory)).unwrap().permissions().mode() & 0o7777, 0o700, "{directory}");
+            assert_eq!(
+                fs::metadata(destination.join(directory))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o700,
+                "{directory}"
+            );
         }
-        assert_eq!(fs::read(destination.join("rostfrei-tracer/private/nested/notes")).unwrap(), b"private consumer notes");
+        assert_eq!(
+            fs::read(destination.join("rostfrei-tracer/private/nested/notes")).unwrap(),
+            b"private consumer notes"
+        );
     }
 }
 
 #[test]
 fn managed_directory_file_transitions_preserve_consumer_collisions_atomically() {
-    for collision in [None, Some("notes"), Some("empty-directory"), Some("edited-managed")] {
+    for collision in [
+        None,
+        Some("notes"),
+        Some("empty-directory"),
+        Some("edited-managed"),
+    ] {
         let temporary = TempDir::new().unwrap();
         let kit = temporary.path().join("kit");
         let destination = temporary.path().join("skills");
@@ -121,22 +163,43 @@ fn managed_directory_file_transitions_preserve_consumer_collisions_atomically() 
             Some("notes") => fs::write(guide.join("notes"), "user notes").unwrap(),
             Some("empty-directory") => fs::create_dir(guide.join("empty-directory")).unwrap(),
             Some("edited-managed") => fs::write(guide.join("intro.md"), "user edit").unwrap(),
-            _ => {},
+            _ => {}
         }
         resources.remove(old);
         fs::remove_dir_all(kit.join("skills/rostfrei-tracer/references/guide")).unwrap();
-        resources.insert("skills/rostfrei-tracer/references/guide".to_owned(), b"consolidated guide".to_vec());
-        resources.insert("skills/rostfrei-develop-feature/SKILL.md".to_owned(), b"upstream first skill".to_vec());
+        resources.insert(
+            "skills/rostfrei-tracer/references/guide".to_owned(),
+            b"consolidated guide".to_vec(),
+        );
+        resources.insert(
+            "skills/rostfrei-develop-feature/SKILL.md".to_owned(),
+            b"upstream first skill".to_vec(),
+        );
         seal(&kit, &resources);
         let result = update(&kit, &destination);
         if collision.is_some() {
             assert!(!result.status.success());
             assert!(String::from_utf8_lossy(&result.stderr).contains("Preserving"));
             assert_eq!(fs::read(&first).unwrap(), original_first);
-            assert_eq!(fs::read(destination.join(".rostfrei-managed.json")).unwrap(), baseline);
-            assert!(guide.join(collision.filter(|name| *name != "edited-managed").unwrap_or("intro.md")).exists());
+            assert_eq!(
+                fs::read(destination.join(".rostfrei-managed.json")).unwrap(),
+                baseline
+            );
+            assert!(
+                guide
+                    .join(
+                        collision
+                            .filter(|name| *name != "edited-managed")
+                            .unwrap_or("intro.md")
+                    )
+                    .exists()
+            );
         } else {
-            assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
             assert_eq!(fs::read(&guide).unwrap(), b"consolidated guide");
             // The reverse managed file -> directory transition is also legitimate.
             fs::remove_file(kit.join("skills/rostfrei-tracer/references/guide")).unwrap();
@@ -144,7 +207,10 @@ fn managed_directory_file_transitions_preserve_consumer_collisions_atomically() 
             resources.insert(old.to_owned(), b"split guide again".to_vec());
             seal(&kit, &resources);
             assert!(update(&kit, &destination).status.success());
-            assert_eq!(fs::read(guide.join("intro.md")).unwrap(), b"split guide again");
+            assert_eq!(
+                fs::read(guide.join("intro.md")).unwrap(),
+                b"split guide again"
+            );
         }
     }
 }

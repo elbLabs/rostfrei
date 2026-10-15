@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Component, Path},
 };
@@ -78,17 +78,26 @@ fn validate_state(state: &Baseline) -> Result<()> {
     Ok(())
 }
 
+struct Plan {
+    files: BTreeMap<String, Vec<u8>>,
+    managed_directories: BTreeSet<String>,
+}
+
 fn plan(
     kit: &Kit,
     current: &BTreeMap<String, Vec<u8>>,
     previous: Option<&[u8]>,
     update: bool,
-) -> Result<BTreeMap<String, Vec<u8>>> {
+) -> Result<Plan> {
     let mut desired = current.clone();
+    let mut managed_directories = BTreeSet::new();
     if let Some(bytes) = previous {
         let state: Baseline = serde_json::from_slice(bytes)
             .map_err(|_| error("Invalid managed skills baseline; preserving all resources"))?;
         validate_state(&state)?;
+        for path in state.sha256.keys() {
+            parents(path, &mut managed_directories);
+        }
         let incoming: BTreeMap<_, _> = kit
             .files
             .iter()
@@ -135,7 +144,10 @@ fn plan(
         }
     }
     desired.extend(kit.files.clone());
-    Ok(desired)
+    Ok(Plan {
+        files: desired,
+        managed_directories,
+    })
 }
 
 struct Lock(std::path::PathBuf);
@@ -145,30 +157,84 @@ impl Drop for Lock {
     }
 }
 
-fn preserve_directories(source: &Path, target: &Path) -> Result<()> {
-    if !source.is_dir() {
-        return Ok(());
+fn parents(path: &str, directories: &mut BTreeSet<String>) {
+    let mut parent = Path::new(path).parent();
+    while let Some(path) = parent.filter(|path| !path.as_os_str().is_empty()) {
+        directories.insert(path.to_string_lossy().replace('\\', "/"));
+        parent = path.parent();
     }
-    fs::create_dir_all(target).map_err(|_| error("Could not preserve consumer directories"))?;
-    for entry in
-        fs::read_dir(source).map_err(|_| error("Could not inspect consumer directories"))?
-    {
-        let entry = entry.map_err(|_| error("Could not inspect consumer directory"))?;
-        if entry
-            .file_type()
-            .map_err(|_| error("Could not inspect consumer resource type"))?
-            .is_dir()
+}
+
+fn directory_modes(root: &Path) -> Result<BTreeMap<String, fs::Permissions>> {
+    fn visit(
+        root: &Path,
+        relative: &str,
+        modes: &mut BTreeMap<String, fs::Permissions>,
+    ) -> Result<()> {
+        let directory = root.join(relative);
+        let metadata = fs::symlink_metadata(&directory)
+            .map_err(|_| error("Could not inspect consumer directory"))?;
+        if !metadata.is_dir() {
+            return Err(conflict(relative));
+        }
+        modes.insert(relative.to_owned(), metadata.permissions());
+        for entry in
+            fs::read_dir(directory).map_err(|_| error("Could not inspect consumer directories"))?
         {
-            preserve_directories(&entry.path(), &target.join(entry.file_name()))?;
+            let entry = entry.map_err(|_| error("Could not inspect consumer directory"))?;
+            if entry
+                .file_type()
+                .map_err(|_| error("Could not inspect consumer resource"))?
+                .is_dir()
+            {
+                visit(
+                    root,
+                    &format!("{relative}/{}", entry.file_name().to_string_lossy()),
+                    modes,
+                )?;
+            }
+        }
+        Ok(())
+    }
+    let mut modes = BTreeMap::new();
+    for name in SKILLS {
+        if root.join(name).exists() {
+            visit(root, name, &mut modes)?;
         }
     }
-    Ok(())
+    Ok(modes)
+}
+
+fn directory_layout(
+    files: &BTreeMap<String, Vec<u8>>,
+    existing: &BTreeMap<String, fs::Permissions>,
+    managed: &BTreeSet<String>,
+) -> Result<BTreeSet<String>> {
+    let mut directories = BTreeSet::new();
+    for path in files.keys() {
+        parents(path, &mut directories);
+    }
+    for path in existing.keys().filter(|path| !managed.contains(*path)) {
+        directories.insert(path.clone());
+        parents(path, &mut directories);
+    }
+    for path in files.keys() {
+        if directories.contains(path) {
+            return Err(conflict(path));
+        }
+    }
+    Ok(directories)
 }
 
 pub(super) fn apply(kit: &Kit, destination: &Path, update: bool) -> Result<()> {
     let original = snapshot(destination)?;
+    let modes = directory_modes(destination)?;
     let previous = state_bytes(destination)?;
-    let desired = plan(kit, &original, previous.as_deref(), update)?;
+    let Plan {
+        files: desired,
+        managed_directories,
+    } = plan(kit, &original, previous.as_deref(), update)?;
+    let directories = directory_layout(&desired, &modes, &managed_directories)?;
     let baseline = Baseline {
         state_version: 1,
         release: kit.release.clone(),
@@ -180,7 +246,10 @@ pub(super) fn apply(kit: &Kit, destination: &Path, update: bool) -> Result<()> {
     };
     let metadata = serde_json::to_vec_pretty(&baseline)
         .map_err(|_| error("Could not encode managed baseline"))?;
-    if desired == original && previous.as_ref() == Some(&metadata) {
+    if desired == original
+        && previous.as_ref() == Some(&metadata)
+        && directories.iter().eq(modes.keys())
+    {
         return Ok(());
     }
     fs::create_dir_all(destination).map_err(|_| error("Could not create skills destination"))?;
@@ -192,11 +261,9 @@ pub(super) fn apply(kit: &Kit, destination: &Path, update: bool) -> Result<()> {
         .prefix(".rostfrei-stage-")
         .tempdir_in(destination)
         .map_err(|_| error("Could not stage skills transaction"))?;
-    for name in SKILLS {
-        preserve_directories(
-            &destination.join(name),
-            &stage.path().join("next").join(name),
-        )?;
+    for path in &directories {
+        fs::create_dir_all(stage.path().join("next").join(path))
+            .map_err(|_| error("Could not stage consumer directories"))?;
     }
     for (path, bytes) in &desired {
         let file = stage.path().join("next").join(path);
@@ -214,7 +281,18 @@ pub(super) fn apply(kit: &Kit, destination: &Path, update: bool) -> Result<()> {
     }
     fs::write(stage.path().join("next").join(STATE), metadata)
         .map_err(|_| error("Could not stage managed baseline"))?;
-    if snapshot(destination)? != original || state_bytes(destination)? != previous {
+    // Populate beneath the private staging root first, then restore children
+    // before their parents so read-only/private modes do not obstruct staging.
+    for path in directories.iter().rev() {
+        if let Some(permissions) = modes.get(path) {
+            fs::set_permissions(stage.path().join("next").join(path), permissions.clone())
+                .map_err(|_| error("Could not preserve consumer directory permissions"))?;
+        }
+    }
+    if snapshot(destination)? != original
+        || state_bytes(destination)? != previous
+        || directory_modes(destination)? != modes
+    {
         return Err(error(
             "Consumer work changed during preflight; no resources replaced",
         ));
@@ -287,6 +365,15 @@ mod tests {
             "replacement",
         )
         .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(
+                stage.join("next/rostfrei-develop-feature"),
+                fs::Permissions::from_mode(0o500),
+            )
+            .unwrap();
+        }
         // No staged second skill: fail after the first replacement, not preflight.
         assert!(commit(&stage, &destination).is_err());
         for name in SKILLS {

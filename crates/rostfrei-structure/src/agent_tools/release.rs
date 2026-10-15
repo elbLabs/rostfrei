@@ -20,6 +20,8 @@ pub struct Release {
     pub framework_version: String,
     pub source_revision: String,
     pub source_tree_dirty: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fingerprint: Option<String>,
     pub contracts: Contracts,
     pub skills: Vec<String>,
 }
@@ -31,6 +33,8 @@ impl Release {
             framework_version: env!("CARGO_PKG_VERSION").to_owned(),
             source_revision: env!("ROSTFREI_CLI_REVISION").to_owned(),
             source_tree_dirty: env!("ROSTFREI_CLI_DIRTY") == "true",
+            source_fingerprint: Some(env!("ROSTFREI_CLI_FINGERPRINT").to_owned())
+                .filter(|value| !value.is_empty()),
             contracts: Contracts {
                 catalog: 1,
                 behavioral_test: 2,
@@ -43,17 +47,7 @@ impl Release {
 
     pub fn check(&self, phase: Phase) -> Result<()> {
         let cli = Self::current();
-        if self.kit_version != cli.kit_version
-            || self.framework_version != cli.framework_version
-            || self.source_revision != cli.source_revision
-            || self.contracts != cli.contracts
-            || self.skills != cli.skills
-            || self.source_revision.len() != 40
-            || !self
-                .source_revision
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
-        {
+        if !self.matches(&cli) {
             return Err(ToolError::new(
                 ErrorKind::SetupFailed,
                 phase,
@@ -61,5 +55,23 @@ impl Release {
             ));
         }
         Ok(())
+    }
+
+    pub fn valid_identity(&self) -> bool {
+        let hexadecimal = |value: &str, length| {
+            value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        };
+        hexadecimal(&self.source_revision, 40)
+            && if self.source_tree_dirty {
+                self.source_fingerprint
+                    .as_deref()
+                    .is_some_and(|value| hexadecimal(value, 64))
+            } else {
+                self.source_fingerprint.is_none()
+            }
+    }
+
+    pub fn matches(&self, other: &Self) -> bool {
+        self.valid_identity() && other.valid_identity() && self == other
     }
 }

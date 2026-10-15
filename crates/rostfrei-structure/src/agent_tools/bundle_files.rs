@@ -1,5 +1,8 @@
 // Source links reference the sole authoritative skill/schema/license inputs.
 // Cargo flattens these links to regular files when producing the .crate.
+pub const OBSERVED_SCHEMA: &[u8] =
+    include_bytes!("../../resources/observed-message-series-v2.schema.json");
+pub const BEHAVIOR_SCHEMA: &[u8] = include_bytes!("../../resources/behavioral-test-v2.schema.json");
 pub const FILES: &[(&str, &[u8])] = &[
     (
         "rostfrei-develop-feature/SKILL.md",
@@ -19,7 +22,7 @@ pub const FILES: &[(&str, &[u8])] = &[
     ),
     (
         "rostfrei-develop-feature/assets/behavioral-test-v2.schema.json",
-        include_bytes!("../../resources/behavioral-test-v2.schema.json"),
+        BEHAVIOR_SCHEMA,
     ),
     (
         "rostfrei-tracer/SKILL.md",

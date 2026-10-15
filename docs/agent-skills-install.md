@@ -33,8 +33,9 @@ reachable package named `rostfrei`, its exact version and source revision. Creat
 or update the lockfile through Cargo first if it does not exist or is stale.
 
 The default destination is the selected application's `.agents/skills`, next to
-its `Cargo.toml`. A single default workspace member is supported. If multiple
-applications are possible, select deliberately:
+its `Cargo.toml`. Workspace-root invocation honors Cargo's configured default
+members even when the root is itself a package; member manifests/cwds retain
+member selection. If multiple defaults are possible, select deliberately:
 
 ```sh
 cargo rostfrei skills install --manifest-path /path/to/workspace/Cargo.toml --package my-app
@@ -61,6 +62,15 @@ Matching native tools are cached under `$CARGO_HOME/rostfrei/tools` (or
 `ROSTFREI_TOOLS_DIR` overrides this cache root. Keep that cache available when
 moving between setup and execution environments. It is not committed to the app.
 
+Mutable local builds are staged separately and cached by a deterministic
+`sourceFingerprint` in addition to version/revision/platform. They never replace
+an immutable release entry or a different local build. Direct and delegated
+runners check this identity before contacting the runtime. Older dirty metadata
+without a fingerprint must be refreshed by explicit setup; clean immutable kits
+retain their revision-based compatibility. Fingerprints hash source content and
+relative paths, not checkout locations or timestamps. A dirty `.crate` build uses
+its packaged inputs as its identity and remains usable after source removal.
+
 ## Explicit updates and consumer work
 
 `skills update` follows the **current application dependency**, not an independent
@@ -75,6 +85,9 @@ User-added files and unrelated skills/instructions are preserved. Edited managed
 files produce conflicts with paths; resolve those deliberately and rerun. All
 skills are preflighted together, staged, and committed with rollback on write or
 rename failure. A conflict does not partially update the other skill.
+Existing directory permission bits are restored after staging is populated.
+Managed-only obsolete directories may become files (and vice versa); consumer
+files or empty directories blocking that transition cause a preflight conflict.
 
 Older installations without a managed baseline are adopted only when complete
 skills are byte-identical. Different/unowned contents are preserved, not assumed
@@ -135,6 +148,10 @@ directly. Exit 0/1 means a supported reported pass/fail with retrieved evidence;
 exit 2 means typed blocked/incomplete execution. Uncertain submissions are never
 retried and existing evidence is never overwritten. Later capture failure retains
 the complete report/verdict. Preview is prediction, not acceptance.
+Malformed capture envelopes or observations are typed `invalid_response` errors
+in the capture phase, retain the received verdict and exit 2. Observations are
+validated against the runtime-generated MessageSeries v2 schema; valid empty
+collections remain supported.
 
 Use the application's actual handlers, workers, fixtures and NATS event store on
 an authorized disposable NATS 2.12.1+ broker with JetStream. The verified baseline

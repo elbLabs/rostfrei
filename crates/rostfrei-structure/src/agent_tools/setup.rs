@@ -8,7 +8,7 @@ use std::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{ErrorKind, Phase, Release, Result, ToolError, install};
+use super::{ErrorKind, Phase, Release, Result, ToolError, install, source_identity};
 
 pub struct SetupOptions {
     pub kit: Option<PathBuf>,
@@ -36,6 +36,7 @@ struct Metadata {
     packages: Vec<Package>,
     workspace_members: Vec<String>,
     workspace_default_members: Vec<String>,
+    workspace_root: PathBuf,
     resolve: Resolve,
 }
 #[derive(Deserialize)]
@@ -185,20 +186,21 @@ fn resolve(manifest: &Path, selection: Option<&str>) -> Result<(Framework, PathB
         }
         selected
     } else {
-        let id = metadata
-            .resolve
-            .root
-            .as_ref()
-            .or_else(|| {
-                if metadata.workspace_default_members.len() == 1 {
-                    metadata.workspace_default_members.first()
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                error("Workspace has multiple application packages; select one with --package")
-            })?;
+        let at_workspace_root = fs::canonicalize(manifest)
+            .map_err(|_| error("Could not resolve application manifest path"))?
+            == metadata.workspace_root.join("Cargo.toml");
+        let id = if at_workspace_root {
+            if metadata.workspace_default_members.len() == 1 {
+                metadata.workspace_default_members.first()
+            } else {
+                None
+            }
+        } else {
+            metadata.resolve.root.as_ref()
+        }
+        .ok_or_else(|| {
+            error("Workspace has multiple application packages; select one with --package")
+        })?;
         metadata
             .packages
             .iter()
@@ -276,6 +278,81 @@ fn executable(root: &Path) -> PathBuf {
         .join(format!("cargo-rostfrei{}", env::consts::EXE_SUFFIX))
 }
 
+fn release_cache(release: &Release) -> Result<PathBuf> {
+    if !release.valid_identity() {
+        return Err(error(
+            "Unknown build identity; run skills update with fingerprint-capable tooling",
+        ));
+    }
+    let mut base =
+        cache_root(&release.framework_version, &release.source_revision)?.into_os_string();
+    if let Some(fingerprint) = &release.source_fingerprint {
+        base.push(format!("-local-{fingerprint}"));
+    }
+    Ok(PathBuf::from(base))
+}
+
+fn local_tool(framework: &Framework, directory: &Path) -> Result<PathBuf> {
+    let cli = directory
+        .parent()
+        .ok_or_else(|| error("Unsupported local framework layout"))?
+        .join("rostfrei-structure");
+    if !cli.join("Cargo.toml").is_file() {
+        return Err(error(
+            "Local framework has no matching rostfrei-structure source",
+        ));
+    }
+    let (before, _) = source_identity::source(directory)
+        .map_err(|_| error("Could not fingerprint local framework source"))?;
+    let tools = tools_root()?;
+    fs::create_dir_all(&tools).map_err(|_| error("Could not create matching tool cache"))?;
+    let staging = tempfile::Builder::new()
+        .prefix(".local-build-")
+        .tempdir_in(&tools)
+        .map_err(|_| error("Could not stage local tool build"))?;
+    let output = Command::new("cargo")
+        .args(["install", "--locked", "--debug", "--path"])
+        .arg(cli)
+        .arg("--root")
+        .arg(staging.path())
+        .arg("rostfrei-structure")
+        .env("ROSTFREI_SOURCE_STATE", &before)
+        .output()
+        .map_err(|_| error("Could not build matching local tool"))?;
+    if !output.status.success() {
+        return Err(error(
+            "Could not build matching local tool; check Cargo access/toolchain",
+        ));
+    }
+    let release = inspect_tool(&executable(staging.path()))?;
+    let (after, _) = source_identity::source(directory)
+        .map_err(|_| error("Could not verify local source after build"))?;
+    if before != after {
+        return Err(error(
+            "Local source changed during build; no skills installed",
+        ));
+    }
+    if release.framework_version != framework.version
+        || release.source_revision != framework.revision
+        || (release.source_tree_dirty && release.source_fingerprint.as_ref() != Some(&after))
+    {
+        return Err(error(
+            "Local source/build identity changed or is unsupported; no skills installed",
+        ));
+    }
+    let destination = release_cache(&release)?;
+    if destination.exists() {
+        if !release.matches(&inspect_tool(&executable(&destination))?) {
+            return Err(error("Cached build identity mismatch; preserve this entry and move it aside before retrying").detail("path", destination.display().to_string()));
+        }
+    } else {
+        fs::rename(staging.path(), &destination).map_err(|_| {
+            error("Could not retain the matching local build; existing cache entries preserved")
+        })?;
+    }
+    Ok(executable(&destination))
+}
+
 fn inspect_tool(path: &Path) -> Result<Release> {
     let output = Command::new(path)
         .args(["rostfrei", "skills", "info"])
@@ -291,6 +368,9 @@ fn inspect_tool(path: &Path) -> Result<Release> {
 }
 
 fn matching_tool(framework: &Framework) -> Result<Option<PathBuf>> {
+    if let Source::Local(directory) = &framework.source {
+        return local_tool(framework, directory).map(Some);
+    }
     let current = Release::current();
     if framework.version == current.framework_version
         && framework.revision == current.source_revision
@@ -301,9 +381,7 @@ fn matching_tool(framework: &Framework) -> Result<Option<PathBuf>> {
     }
     let root = cache_root(&framework.version, &framework.revision)?;
     let binary = executable(&root);
-    // A local checkout may change without advancing HEAD. Rebuild it through
-    // Cargo instead of treating a revision-keyed cached executable as fresh.
-    if !binary.exists() || matches!(framework.source, Source::Local(_)) {
+    if !binary.exists() {
         fs::create_dir_all(&root).map_err(|_| error("Could not create matching tool cache"))?;
         let mut cargo = Command::new("cargo");
         cargo.args(["install", "--locked", "--root"]).arg(&root);
@@ -320,16 +398,7 @@ fn matching_tool(framework: &Framework) -> Result<Option<PathBuf>> {
                 ]);
             }
             Source::Local(directory) => {
-                let cli = directory
-                    .parent()
-                    .ok_or_else(|| error("Unsupported local framework layout"))?
-                    .join("rostfrei-structure");
-                if !cli.join("Cargo.toml").is_file() {
-                    return Err(error(
-                        "Local framework has no matching rostfrei-structure source",
-                    ));
-                }
-                cargo.args(["--force", "--debug", "--path"]).arg(cli);
+                return local_tool(framework, directory).map(Some);
             }
         }
         cargo.arg("rostfrei-structure");
@@ -361,22 +430,14 @@ fn matching_tool(framework: &Framework) -> Result<Option<PathBuf>> {
 }
 
 pub(super) fn cached_runner(release: &Release) -> Result<PathBuf> {
-    let binary = executable(&cache_root(
-        &release.framework_version,
-        &release.source_revision,
-    )?);
+    let binary = executable(&release_cache(release)?);
     if !binary.is_file() {
         return Err(error(
             "Kit/CLI release or protocol mismatch; run explicit application skills install/update to prepare its matching tool",
         ));
     }
     let actual = inspect_tool(&binary)?;
-    if actual.framework_version != release.framework_version
-        || actual.source_revision != release.source_revision
-        || actual.contracts != release.contracts
-        || actual.kit_version != release.kit_version
-        || actual.skills != release.skills
-    {
+    if !release.matches(&actual) {
         return Err(error("Cached runner release or protocol mismatch"));
     }
     Ok(binary)

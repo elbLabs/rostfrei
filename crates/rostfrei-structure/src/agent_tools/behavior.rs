@@ -205,6 +205,7 @@ fn execute(
         None,
         Phase::Capture,
     )?;
+    super::capture::validate(&series)?;
     evidence.message_series = Some(series);
     evidence.capture_state = Some("complete");
     persist(file, evidence)?;

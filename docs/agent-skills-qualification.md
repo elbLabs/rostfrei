@@ -9,6 +9,53 @@ the eventual 0.1.0 release-version bump is separate release preparation.
 Implementation branch: `feat/agent-skills-kit`. Agent/client: GPT-6 Astra in
 OpenCode V2. This implementation session is not a fresh-session workflow trial.
 
+### Bounded independent-review repairs (2026-10-15)
+
+The five independently reproduced defects were specified in focused CLI/HTTP
+acceptance tests before production changes (`12e2f57`). Actual reds:
+
+1. Local setup replaced the immutable cached executable's bytes.
+2. Directory permission assertion observed `0775`, expected `0700`.
+3. Rooted-workspace setup selected the root package and reported no framework,
+   ignoring the configured default app.
+4. HTTP 200 `{}` capture returned exit 0 rather than 2 (one run submission).
+5. A managed directory-to-file transition failed with `Could not stage skill resource`.
+
+Repairs stay at those boundaries: dirty source content fingerprints and isolated
+cache entries with direct/delegated identity checks; staged directory-mode
+restoration; Cargo default/member selection; runtime-generated observed-v2 schema
+validation plus typed capture-envelope validation; and preflight directory layout
+reconciliation preserving consumer files/empty directories. No scaffold pin or
+onboarding design change is included. Old dirty metadata without a fingerprint
+is rejected rather than assumed to identify a unique build; clean immutable
+release compatibility is retained.
+
+Observed local green: **76 Rust tests** (including 9 HTTP/client boundary and 7
+installer tests), **6 real-Cargo onboarding checks**, **4 source regressions**,
+workspace all-target/all-feature clippy and version checks. Cache acceptance
+retains the clean runner while creating two distinct dirty builds at the same
+commit, and rejects substituted executables in direct/delegated selection.
+The HTTP identity regression records zero runtime requests/submissions on
+mismatch. Malformed captures retain either reported verdict, mark capture
+incomplete and never repeat the single submission; valid empty captures and
+truncated-body classification remain covered. Layout tests cover both directions
+and atomic preservation on user-file, empty-directory and edited-managed collisions.
+
+Package qualification passed with **77 `.crate` files** and two external builds
+at different source locations. Both dirty-package builds reported the identical
+fingerprint `84340e00b6ae9b2b8ae7aee176c13c2570dca7c497b0b3da2e920d26bc0dc941`;
+the package sources were then removed. **7 external kit/reference checks** passed
+using that installed executable. Real NATS 2.12.15 on disposable port **33268**
+recorded pass → deliberate expectation failure → unchanged pass, with settled,
+exact captures. Evidence: `/tmp/rostfrei-review-fixes-hno7f76k/live`; fixture
+`no-rental-fleets` revision `1`, namespace `skills-fa2e4dc67fe74be280bc17f8f0548baa`.
+Owned host/broker were cleaned up; consumer PATH excluded Python/Cargo/Git and
+the extracted kit was removed before execution. This pre-commit package records
+`12e2f57` plus dirty repair inputs. Final clean-head CI is linked on PR #106.
+
+Independent fresh-session human trials, combined #107
+qualification and the published-starter release blocker remain separate gates.
+
 ### Explicit dependency-aware setup (2026-10-15)
 
 Agreed scenario: an existing Cargo app resolves Rostfrei; explicit install selects
