@@ -544,11 +544,14 @@ impl OutcomeReader for NatsEventStore {
             .await
             .map_err(EventStoreError::in_outcome_recovery)?
         else {
-            if self.config.completed_outcome_epoch().is_none() || self.config.read_only_outcomes() {
+            if !self.config.split_outcomes() || self.config.read_only_outcomes() {
                 return Err(configuration(
                     "missing outcome in read-only authority is not permission to execute",
                 ));
             }
+            // Absence permits Execute authorization only in the intact bound pair.
+            // Completed reads verify the same pair in read_state, with recovery origin.
+            self.verify_authority().await?;
             return Ok(OutcomeLookup::Missing);
         };
         if let Some(marker) = stored.marker {

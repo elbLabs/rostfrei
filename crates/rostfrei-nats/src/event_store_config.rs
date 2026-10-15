@@ -155,7 +155,8 @@ impl NatsEventStoreConfig {
 
     /// Operator assertion: this is a NEW isolated authority namespace, with old writers
     /// excluded by broker credentials/ACLs. Never use to activate an existing legacy store.
-    /// Provisioning durably binds this epoch at stream creation. Default is legacy/read-only.
+    /// Provisioning durably binds this epoch at stream creation. The default legacy
+    /// profile permits ordinary event writes but blocks unknown command outcomes.
     pub fn with_fresh_completed_outcome_epoch(
         mut self,
         epoch: impl Into<String>,
@@ -225,6 +226,10 @@ impl NatsEventStoreConfig {
     pub(crate) const fn explicit_detail_expiry(&self) -> bool {
         self.explicit_detail_expiry
     }
+    /// Connect a replay-only handle: all persistence mutations are refused, including
+    /// legacy event appends, append sessions, completed/import writes and detail expiry.
+    /// History and known-outcome reads remain available. Provisioning helpers are
+    /// separate explicit operations; this setting grants no provisioning authority.
     #[must_use]
     pub const fn with_read_only_outcomes(mut self) -> Self {
         self.read_only_outcomes = true;

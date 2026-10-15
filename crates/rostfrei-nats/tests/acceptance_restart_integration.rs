@@ -282,7 +282,7 @@ async fn acceptance_child() -> TestResult {
     let js = connect_ready(&std::env::var(URL_ENV)?).await?;
     let mode = std::env::var("ROSTFREI_ACCEPTANCE_RESTART_MODE")?;
     if mode == "failure" {
-        return receipt_failure_does_not_ack(js).await;
+        return capacity_with_failed_diagnostic_publication_retries_without_response(js).await;
     }
     let config = NatsEventStoreConfig::for_bounded_context(&context()?)?
         .with_fresh_split_outcome_epoch("acceptance-restart")?;
@@ -411,7 +411,9 @@ async fn verify_operation(
     Ok(())
 }
 
-async fn receipt_failure_does_not_ack(js: async_nats::jetstream::Context) -> TestResult {
+async fn capacity_with_failed_diagnostic_publication_retries_without_response(
+    js: async_nats::jetstream::Context,
+) -> TestResult {
     // Distinct application subjects keep this capacity fixture independent of accepted operations.
     let capacity_context =
         ApplicationName::new("acceptance-capacity")?.bounded_context("acceptance")?;
@@ -454,9 +456,10 @@ async fn receipt_failure_does_not_ack(js: async_nats::jetstream::Context) -> Tes
         .with_max_bytes(64 * 1024 * 1024)?;
     provision_application_messaging(&js, &messaging).await?;
     let topology = messaging.topology();
-    // #85 makes capacity a blocked diagnostic. Keep the original retry/no-response
-    // assertion by refusing that diagnostic at its sink; successful diagnostic and
-    // quarantine behavior is independently covered by permanent_execution_contract.
+    // Capacity plus failed diagnostic publication yields retry/no durable response.
+    // Capacity alone is not a retry guarantee: with an open sink, #85 publishes a
+    // technical diagnostic and quarantines without a business decision/effects (see
+    // review_native_adversarial's actual_journal_capacity_with_open_response_sink case).
     let mut sink = js
         .get_stream(topology.command_response_stream().as_str())
         .await?

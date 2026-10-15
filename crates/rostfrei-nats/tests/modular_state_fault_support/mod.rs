@@ -13,6 +13,7 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[derive(Default)]
 pub struct Faults {
+    pub block_state_info: AtomicBool,
     pub block_state_reads: AtomicBool,
     pub lose_expiry_acks: AtomicBool,
     pub block_old_sequence: AtomicBool,
@@ -46,6 +47,7 @@ impl StateProxy {
             .ok_or("owned broker address missing")?
             .to_owned();
         let state_get = format!("$JS.API.STREAM.MSG.GET.{stream}");
+        let state_info = format!("$JS.API.STREAM.INFO.{stream}");
         let state_subject = state_subject.to_owned();
         let faults = Arc::new(Faults::default());
         let shared = faults.clone();
@@ -79,9 +81,11 @@ impl StateProxy {
                             &body[header_length..length],
                         )
                         .is_ok_and(|request| request["seq"].as_u64() == Some(old_sequence));
-                        if subject == state_get
-                            && (shared.block_state_reads.load(Ordering::SeqCst)
-                                || (shared.block_old_sequence.load(Ordering::SeqCst) && old_get))
+                        if (subject == state_info && shared.block_state_info.load(Ordering::SeqCst))
+                            || (subject == state_get
+                                && (shared.block_state_reads.load(Ordering::SeqCst)
+                                    || (shared.block_old_sequence.load(Ordering::SeqCst)
+                                        && old_get)))
                         {
                             shared.dropped_reads.fetch_add(1, Ordering::SeqCst);
                             continue;

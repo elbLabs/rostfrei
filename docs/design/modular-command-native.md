@@ -16,7 +16,19 @@ Two mandatory streams are cross-bound by their creation timestamps in metadata.
 The connected authority includes these incarnations, namespace and configured epoch.
 Partial provisioning, unilateral recreation, configuration drift and stale handles
 fail closed. Split policy updates verify the frozen pair rather than rewriting it.
-`with_read_only_outcomes()` supports replay-only handles in the same authority.
+Configured split authority governs every compatibility write regardless of current
+broker metadata. New append sessions retain the handle's original incarnation;
+they cannot adopt a recreated journal. Execution-eligible `Missing` requires the
+intact configured journal/state pair before Execute authorization.
+
+`with_read_only_outcomes()` creates a replay-only handle in the same authority.
+It refuses all persistence mutations, even in an unmarked legacy namespace:
+ordinary append/transaction writes, append sessions, completed/import writes and
+detail expiry. Ordinary history and known-winner replay remain supported; lookup
+does not refresh or update broker metadata. Ordinary writable legacy configuration
+retains its eligible low-level event/import compatibility. Shared provisioning
+helpers are separate explicit operations, not authority granted by a replay-only
+handle.
 
 The journal retains file-backed events, guards and compact schema-4 manifests.
 The state stream uses file/Limits/global DiscardNew, max messages per subject 1,

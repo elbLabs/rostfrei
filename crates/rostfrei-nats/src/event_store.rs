@@ -205,6 +205,7 @@ impl NatsEventStore {
         response: &rostfrei_messaging_core::CommandResponse,
         topology: &crate::MessagingTopology,
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        self.require_mutable_namespace().await?;
         if self.config.completed_outcome_epoch().is_some()
             || command.address().application() != self.config.application().as_str()
             || command.address().traffic_scope() != self.config.traffic_scope()
@@ -257,13 +258,18 @@ impl NatsEventStore {
             .await
             .map(completed_append)
     }
-    async fn require_completed_outcome_writer(&self) -> Result<(), EventStoreError> {
+    fn require_writable_handle(&self) -> Result<(), EventStoreError> {
         if self.config.read_only_outcomes() {
             return Err(EventStoreError::new(
                 EventStoreErrorKind::ConfigurationMismatch,
-                "outcome authority is configured read-only",
+                "event-store handle is configured replay-only",
             ));
         }
+        Ok(())
+    }
+
+    async fn require_completed_outcome_writer(&self) -> Result<(), EventStoreError> {
+        self.require_writable_handle()?;
         if self.config.split_outcomes() {
             return self.verify_authority().await;
         }
@@ -299,6 +305,12 @@ impl NatsEventStore {
     }
 
     async fn require_mutable_namespace(&self) -> Result<(), EventStoreError> {
+        self.require_writable_handle()?;
+        // Configured authority cannot be downgraded by clearing broker metadata.
+        // Split writers must verify their captured pair even on compatibility routes.
+        if self.config.completed_outcome_epoch().is_some() {
+            return self.require_completed_outcome_writer().await;
+        }
         let stream = self
             .context
             .get_stream(self.config.stream_name())
@@ -1604,10 +1616,17 @@ impl EventStore for NatsEventStore {
             .map(completed_append)
     }
     async fn append_session(&self) -> Result<Box<dyn AppendSession + '_>, EventStoreError> {
+        self.require_writable_handle()?;
         Ok(Box::new(NatsAppendSession {
             store: self,
             histories: tokio::sync::Mutex::new(LoadedHistories::default()),
-            incarnation: self.stream_incarnation().await?,
+            // Opening a compatibility session never adopts a replacement split
+            // authority. Its writes still check the full captured pair.
+            incarnation: if self.config.split_outcomes() {
+                self.journal_incarnation.clone()
+            } else {
+                self.stream_incarnation().await?
+            },
         }))
     }
 
