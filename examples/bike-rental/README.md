@@ -190,7 +190,12 @@ Operation resources advertise the observation links:
 - `messageSeriesHref`: finite capture of messages and command outcomes; accepts
   bounded `within` and `settleFor` windows.
 
-Test and dispatch return observed evidence. Preview submission is retired.
+Test and dispatch return observed evidence. Legacy Preview submission is retired.
+For explicit rule diagnostics, follow `simulateHandlerHrefTemplate` and POST the
+same command envelope. **Simulate handler** returns decision, starting versions
+and proposed/uncommitted domain events using the registered handler over Test
+history. It returns no operation or observed trace, and injected dependencies
+are not automatically sandboxed. See [the exact interface](../../docs/tracer-preview-retirement.md).
 An unsettled capture may be partial. Exact causal edges require a message's
 `causationId` to match another message's `messageId`; timestamps and array order
 do not establish causality. `grouped` fidelity means the capture cannot establish

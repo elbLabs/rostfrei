@@ -5,7 +5,7 @@ import { DraggablePanel } from "@/components/draggable-panel"
 import "./command-panel.css"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { getCommandInputs } from "@/lib/api"
+import { getCommandInputs, simulateHandler } from "@/lib/api"
 import type {
   CatalogCommand,
   CatalogCommandField,
@@ -14,6 +14,7 @@ import type {
   CatalogFieldValue,
   CommandInputField,
   CommandExecutionResult,
+  HandlerSimulationResult,
   TracerCatalog,
 } from "@/lib/types"
 
@@ -55,7 +56,7 @@ interface CommandChoice {
 export function CommandPanel({
   open,
   catalog,
-  busy,
+  busy: executionBusy,
   result,
   requestError,
   testStateRevision,
@@ -66,6 +67,11 @@ export function CommandPanel({
 }: CommandPanelProps) {
   const choices = commandChoices(catalog)
   const [choiceKey, setChoiceKey] = useState("")
+  const [mode, setMode] = useState<"test" | "simulate-handler">("test")
+  const [simulating, setSimulating] = useState(false)
+  const [simulation, setSimulation] = useState<HandlerSimulationResult>()
+  const [simulationError, setSimulationError] = useState<string>()
+  const busy = executionBusy || simulating
   const [payloadValues, setPayloadValues] = useState<Record<string, string>>({})
   const previousInputs = useRef<CommandInputField[]>([])
   const [validationError, setValidationError] = useState<string>()
@@ -140,6 +146,8 @@ export function CommandPanel({
 
   const markEdited = () => {
     setValidationError(undefined)
+    setSimulation(undefined)
+    setSimulationError(undefined)
     onEdit()
   }
 
@@ -163,6 +171,30 @@ export function CommandPanel({
         schemaVersion: selected.version.schemaVersion,
       }
       setValidationError(undefined)
+      if (mode === "simulate-handler") {
+        const href = selected.version.simulateHandlerHrefTemplate
+        if (!href)
+          throw new Error("Handler simulation is unavailable for this command")
+        setSimulating(true)
+        setSimulation(undefined)
+        setSimulationError(undefined)
+        void simulateHandler(href, request.schemaVersion, request.payloadJson)
+          .then((value) => {
+            if (
+              value.context !== request.context ||
+              value.command !== request.commandId
+            )
+              throw new Error("Handler simulation returned a different command")
+            setSimulation(value)
+          })
+          .catch((error) =>
+            setSimulationError(
+              `${error instanceof Error ? error.message : "Handler simulation failed"}. Handler dependencies may have run; no automatic retry.`
+            )
+          )
+          .finally(() => setSimulating(false))
+        return
+      }
       if (!selected.version.testHrefTemplate) {
         throw new Error("Test publication is not available for this command")
       }
@@ -193,7 +225,7 @@ export function CommandPanel({
     }
   }
 
-  const error = validationError ?? requestError
+  const error = validationError ?? simulationError ?? requestError
 
   return (
     <DraggablePanel
@@ -209,11 +241,46 @@ export function CommandPanel({
       <div className="command-panel-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         <form className="command-form" onSubmit={submit}>
           <div className="command-mode-row">
-            <span data-command-mode="test">Isolated Test</span>
+            <div
+              className="command-mode-options"
+              role="group"
+              aria-label="Command action"
+            >
+              <button
+                type="button"
+                className="command-mode-option"
+                data-command-mode="test"
+                aria-pressed={mode === "test"}
+                disabled={busy}
+                onClick={() => {
+                  setMode("test")
+                  markEdited()
+                }}
+              >
+                Isolated Test
+              </button>
+              <button
+                type="button"
+                className="command-mode-option"
+                data-command-mode="simulate-handler"
+                aria-pressed={mode === "simulate-handler"}
+                disabled={
+                  busy || !selected?.version.simulateHandlerHrefTemplate
+                }
+                onClick={() => {
+                  setMode("simulate-handler")
+                  markEdited()
+                }}
+              >
+                Simulate handler
+              </button>
+            </div>
             <p>
-              {testAvailable
-                ? "Publishes through the isolated Test command bus and may append Test events."
-                : "Test publication is not available for this command."}
+              {mode === "simulate-handler"
+                ? "Runs the real handler against configured history. Proposed events are uncommitted; injected dependencies are not automatically sandboxed."
+                : testAvailable
+                  ? "Publishes through the isolated Test command bus and may append Test events."
+                  : "Test publication is not available for this command."}
             </p>
           </div>
 
@@ -227,6 +294,7 @@ export function CommandPanel({
                 const nextKey = event.target.value
                 const next = choices.find((choice) => choice.key === nextKey)
                 setChoiceKey(nextKey)
+                setMode("test")
                 previousInputs.current = []
                 setCommandInputs(undefined)
                 setInputsError(undefined)
@@ -287,7 +355,7 @@ export function CommandPanel({
             )}
           </div>
 
-          {testAvailable && (
+          {mode === "test" && testAvailable && (
             <label className="command-field">
               <span>Idempotency key</span>
               <div className="command-idempotency-field">
@@ -337,13 +405,68 @@ export function CommandPanel({
               busy ||
               inputsLoading ||
               !selected ||
-              !selected.version.testHrefTemplate
+              !(mode === "test"
+                ? selected.version.testHrefTemplate
+                : selected.version.simulateHandlerHrefTemplate)
             }
           >
             {busy ? <LoaderCircle className="animate-spin" /> : <Send />}
-            {busy ? "Waiting for result" : "Push to Test bus"}
+            {busy
+              ? "Waiting for result"
+              : mode === "test"
+                ? "Push to Test bus"
+                : "Simulate handler"}
           </Button>
         </form>
+
+        {simulation && (
+          <section
+            className="handler-simulation-result"
+            data-handler-simulation-result
+            aria-live="polite"
+          >
+            <h3>Handler decision: {simulation.outcome.decision}</h3>
+            <Badge variant="neutral">Uncommitted · no acceptance receipt</Badge>
+            <p>
+              Handler computation only. Delivery, atomic persistence,
+              concurrency and downstream integrations were not tested.
+            </p>
+            {simulation.outcome.decision === "rejected" && (
+              <pre>{JSON.stringify(simulation.outcome.rejection, null, 2)}</pre>
+            )}
+            <h4>Starting stream versions</h4>
+            {simulation.streams.length === 0 ? (
+              <p>No streams loaded.</p>
+            ) : (
+              simulation.streams.map((stream, index) => (
+                <p key={index}>
+                  <code>
+                    {stream.aggregateType} / {stream.aggregateId}
+                  </code>{" "}
+                  · v{stream.baseStreamVersion}
+                </p>
+              ))
+            )}
+            <h4>Proposed domain events ({simulation.proposedEvents.length})</h4>
+            {simulation.proposedEvents.length === 0 && (
+              <p>No domain events proposed.</p>
+            )}
+            {simulation.proposedEvents.map((event, index) => (
+              <article key={index}>
+                <strong>
+                  {event.eventType} · schema {event.schemaVersion}
+                </strong>
+                <p>
+                  <code>
+                    {event.aggregateType} / {event.aggregateId}
+                  </code>{" "}
+                  · proposed v{event.proposedStreamVersion}
+                </p>
+                <pre>{event.payloadJson ?? "Payload redacted"}</pre>
+              </article>
+            ))}
+          </section>
+        )}
 
         {!catalog && (
           <p className="command-empty">Connect Tracer to discover commands.</p>

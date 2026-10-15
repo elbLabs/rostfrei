@@ -1,7 +1,11 @@
 use std::{any::type_name, collections::HashMap, sync::Arc};
 
+use async_trait::async_trait;
 use domain::{JsonCommandPayload, JsonErrorPayload};
-use rostfrei_core::CommandHandler;
+use rostfrei_core::{
+    CommandExecutionMetadata, CommandExecutor, CommandHandler, EventHistory, EventStoreErrorKind,
+    SimulationError,
+};
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde_json::Value;
 use thiserror::Error;
@@ -78,8 +82,15 @@ impl CommandKey {
     }
 }
 
+#[async_trait]
 pub trait ErasedCommandPayload: Send + Sync {
     fn validate_payload(&self, payload: &Value) -> Result<(), String>;
+    async fn simulate_handler(
+        &self,
+        history: Arc<dyn EventHistory>,
+        metadata: CommandExecutionMetadata,
+        payload: Value,
+    ) -> Result<crate::HandlerSimulationResult, crate::HandlerSimulationError>;
 }
 
 pub trait ErasedCommandInputOptions: Send + Sync {
@@ -108,10 +119,11 @@ where
     Handler: CommandHandler<C>,
     C: CommandDefinition<Handler> + Sync,
 {
-    _handler: Arc<Handler>,
+    handler: Arc<Handler>,
     marker: std::marker::PhantomData<fn() -> C>,
 }
 
+#[async_trait]
 impl<C, Handler> ErasedCommandPayload for TypedCommandPayload<C, Handler>
 where
     Handler: CommandHandler<C> + 'static,
@@ -120,6 +132,39 @@ where
 {
     fn validate_payload(&self, payload: &Value) -> Result<(), String> {
         C::decode_json(payload).map(|_| ())
+    }
+
+    async fn simulate_handler(
+        &self,
+        history: Arc<dyn EventHistory>,
+        metadata: CommandExecutionMetadata,
+        payload: Value,
+    ) -> Result<crate::HandlerSimulationResult, crate::HandlerSimulationError> {
+        let command =
+            C::decode_json(&payload).map_err(crate::HandlerSimulationError::InvalidPayload)?;
+        let (decision, participants) = CommandExecutor::new(history)
+            .simulate(self.handler.as_ref(), metadata, &command)
+            .await
+            .map_err(|error| {
+                let code = match &error {
+                    SimulationError::Store(error)
+                        if error.kind() == EventStoreErrorKind::CorruptHistory =>
+                    {
+                        "corrupt-history"
+                    }
+                    SimulationError::Store(_) => "history-unavailable",
+                    SimulationError::Codec(_) => "event-codec-failed",
+                };
+                crate::HandlerSimulationError::runtime(code, &error)
+            })?
+            .into_parts();
+        crate::handler_simulation::result(
+            <C as CommandDefinition<Handler>>::descriptor().bounded_context,
+            C::LOCAL_ID,
+            C::SCHEMA_VERSION,
+            decision,
+            participants,
+        )
     }
 }
 
@@ -189,7 +234,7 @@ impl RuntimeBindings {
         self.payloads.insert(
             key,
             Arc::new(TypedCommandPayload::<C, Handler> {
-                _handler: handler,
+                handler,
                 marker: std::marker::PhantomData,
             }),
         );

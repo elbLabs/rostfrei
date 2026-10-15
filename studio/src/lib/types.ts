@@ -110,6 +110,7 @@ export interface CatalogCommandVersion {
   fields: CatalogCommandField[]
   payloadTemplate: unknown
   testInputsHrefTemplate: string
+  simulateHandlerHrefTemplate?: string
   testHrefTemplate?: string
   dispatchHrefTemplate?: string
 }
@@ -332,6 +333,31 @@ export interface OperationMessageSeries {
     fidelity: EdgeFidelity
     note?: string
   }
+}
+
+export interface HandlerSimulationResult {
+  kind: "handlerSimulation"
+  context: string
+  command: string
+  schemaVersion: number
+  committed: false
+  outcome:
+    { decision: "accepted" } | { decision: "rejected"; rejection: unknown }
+  streams: {
+    aggregateType: string
+    aggregateId: string
+    baseStreamVersion: string
+    readGuard: boolean
+  }[]
+  proposedEvents: {
+    aggregateType: string
+    aggregateId: string
+    eventType: string
+    schemaVersion: number
+    proposedStreamVersion: string
+    payload?: unknown
+    payloadJson?: string
+  }[]
 }
 
 export interface CommandExecutionResult {

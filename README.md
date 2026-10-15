@@ -66,6 +66,11 @@ Tracer retains operation status and traces in bounded memory. See the
 It also supports [continuous observation](docs/continuous-observation.md) of
 externally triggered flows and [quarantine inspection](docs/quarantine-inspection.md).
 
+For explicit rule debugging, **Simulate handler** computes the registered
+handler's decision, starting stream versions and proposed/uncommitted events.
+It has a distinct result, no observed trace or acceptance receipt, and does not
+automatically sandbox injected dependencies. See [the interface and limits](docs/tracer-preview-retirement.md).
+
 For saved query views, [read models](https://elblabs.github.io/rostfrei/docs/read-models)
 combine typed event transformations with KV persistence, checkpoints, and
 concurrency retries. Queries use a read-only handle.

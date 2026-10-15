@@ -306,10 +306,11 @@ pub enum CommandInputError {
     Runtime(String),
 }
 
-/// Legacy name for the shared command envelope. Simulation submission is retired.
+/// Legacy envelope name. Operation-shaped Preview submission is retired.
 pub type SimulationRequest = CommandRequest;
 
 pub struct TracerBuilder {
+    history: Arc<dyn EventHistory>,
     observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
     test_event_store: Option<Arc<dyn EventStore>>,
     test_transport: Option<Arc<dyn CommandTransport>>,
@@ -336,8 +337,9 @@ impl TracerBuilder {
         self
     }
 
-    pub fn new(_history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
+    pub fn new(history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
         Self {
+            history,
             observation: BTreeMap::new(),
             test_event_store: None,
             test_transport: None,
@@ -382,6 +384,7 @@ impl TracerBuilder {
     where
         Store: EventStore + 'static,
     {
+        self.history = store.clone();
         self.test_event_store = Some(store);
         self
     }
@@ -476,7 +479,7 @@ impl TracerBuilder {
         self
     }
 
-    /// Legacy spelling; limits real Test/Dispatch operations, not simulation.
+    /// Legacy spelling; configures bounded concurrency for each independent capability.
     #[must_use]
     pub const fn with_maximum_concurrent_simulations(
         self,
@@ -611,6 +614,9 @@ impl TracerBuilder {
             .collect();
         Ok(Tracer {
             inner: Arc::new(TracerInner {
+                history: self.history,
+                handler_permits: Arc::new(Semaphore::new(maximum_concurrent_operations)),
+                handler_sequence: AtomicU64::new(0),
                 observation: self.observation,
                 test_backing_configured: self.test_event_store.is_some(),
                 test_transport: self.test_transport,
@@ -763,6 +769,9 @@ fn test_transport_payload_limit(transport: Option<&dyn CommandTransport>) -> usi
 }
 
 struct TracerInner {
+    history: Arc<dyn EventHistory>,
+    handler_permits: Arc<Semaphore>,
+    handler_sequence: AtomicU64,
     observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
     test_backing_configured: bool,
     test_transport: Option<Arc<dyn CommandTransport>>,
@@ -1575,6 +1584,107 @@ impl Tracer {
         _idempotency_key: Option<&str>,
     ) -> std::future::Ready<Result<OperationSnapshot, SubmissionError>> {
         std::future::ready(Err(SubmissionError::ModeUnavailable("simulate")))
+    }
+
+    /// Invoke the registered handler against configured history, without a Tracer
+    /// operation, publication, acceptance receipt or observed trace. Dependencies
+    /// are real and are not automatically sandboxed. Never automatically retry.
+    pub async fn simulate_handler(
+        &self,
+        context: &str,
+        command: &str,
+        request: CommandRequest,
+    ) -> Result<crate::HandlerSimulationResult, crate::HandlerSimulationError> {
+        use crate::HandlerSimulationError;
+        let binding = self
+            .inner
+            .payloads
+            .get(&CommandKey::new(context, command, request.schema_version))
+            .cloned()
+            .ok_or_else(|| SubmissionError::UnknownCommand {
+                context: context.to_owned(),
+                command: command.to_owned(),
+                schema_version: request.schema_version,
+            })?;
+        if canonical_json_payload(&request.payload).len() > MAX_COMMAND_PAYLOAD_LEN {
+            return Err(SubmissionError::PayloadTooLarge {
+                maximum: MAX_COMMAND_PAYLOAD_LEN,
+            }
+            .into());
+        }
+        let permit = self
+            .inner
+            .handler_permits
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| SubmissionError::ConcurrencyExhausted)?;
+        let context_name = rostfrei_messaging_core::BoundedContextName::new(context)
+            .map_err(|_| HandlerSimulationError::Failed)?;
+        // Private computation identity required by core metadata; never exposed or recorded.
+        let sequence = self.inner.handler_sequence.fetch_add(1, Ordering::Relaxed);
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let id = OperationId::new(format!("handler-computation:{timestamp:x}:{sequence:x}"))
+            .map_err(|_| HandlerSimulationError::Failed)?;
+        let metadata = rostfrei_core::CommandExecutionMetadata::new(
+            id,
+            command_execution_fingerprint(
+                context,
+                command,
+                request.schema_version,
+                &request.payload,
+            ),
+        )
+        .with_bounded_context(context_name);
+        let inner = self.inner.clone();
+        let mut tasks = tokio::task::JoinSet::new();
+        tasks.spawn(async move {
+            let _permit = permit;
+            let _guard = inner.test_scenario_gate.read().await;
+            if !inner.test_scenario_healthy.load(Ordering::Acquire) {
+                return Err(SubmissionError::TestScenarioUnavailable.into());
+            }
+            let mut result = binding
+                .simulate_handler(inner.history.clone(), metadata, request.payload)
+                .await
+                .map_err(|error| match error {
+                    HandlerSimulationError::InvalidPayload(message) => {
+                        HandlerSimulationError::InvalidPayload(bounded_failure_message(
+                            inner.trace_payload_policy.as_ref(),
+                            message,
+                            inner.maximum_operation_payload_bytes,
+                        ))
+                    }
+                    HandlerSimulationError::Runtime { code, message } => {
+                        HandlerSimulationError::Runtime {
+                            code,
+                            message: bounded_failure_message(
+                                inner.trace_payload_policy.as_ref(),
+                                message,
+                                inner.maximum_operation_payload_bytes,
+                            ),
+                        }
+                    }
+                    other => other,
+                })?;
+            result.redact(inner.trace_payload_policy.as_ref());
+            if serde_json::to_vec(&result)
+                .map_err(|_| HandlerSimulationError::Failed)?
+                .len()
+                > inner.maximum_operation_payload_bytes
+            {
+                return Err(HandlerSimulationError::ResultTooLarge);
+            }
+            Ok(result)
+        });
+        // Dropping JoinSet aborts unfinished work on deadline or caller cancellation.
+        tokio::time::timeout(Duration::from_secs(30), tasks.join_next())
+            .await
+            .map_err(|_| HandlerSimulationError::Timeout)?
+            .ok_or(HandlerSimulationError::Failed)?
+            .map_err(|_| HandlerSimulationError::Failed)?
     }
 
     pub async fn submit_test(

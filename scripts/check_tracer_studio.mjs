@@ -32,7 +32,29 @@ try {
     assert.ok(await page.$('[data-graph-node]'))
     console.log(`Studio passed: ${name}`)
   }
-  assert.deepEqual(diagnostics.pageErrors, [])
+   await page.click('[aria-controls="studio-command-panel"]')
+   await page.select('[aria-label="Command and schema"]', 'bike-rental/rent-bicycle@2')
+   await page.waitForFunction(() => [...document.querySelectorAll('.command-field select')].every(select => !select.disabled && select.options.length > 1))
+   for (const field of ['fleet_id', 'bicycle_id']) {
+     const selector = `[data-payload-field="${field}"] select`
+     const value = await page.$eval(selector, select => [...select.options].find(option => option.value.startsWith('option:')).value)
+     await page.select(selector, value)
+   }
+   const graphBefore = await page.$$eval('[data-graph-node]', nodes => nodes.map(node => node.dataset.nodeId))
+   assert.equal(await page.$eval('[data-command-mode="test"]', button => button.getAttribute('aria-pressed')), 'true')
+   await page.click('[data-command-mode="simulate-handler"]')
+   const diagnostic = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/simulate-handler'))
+   await page.click('.command-submit')
+   const result = await (await diagnostic).json()
+   assert.equal(result.kind, 'handlerSimulation')
+   assert.equal(result.committed, false)
+   assert.ok(['accepted', 'rejected'].includes(result.outcome.decision))
+   assert.ok(!('operationId' in result))
+   await page.waitForSelector('[data-handler-simulation-result]')
+   assert.match(await page.$eval('[data-handler-simulation-result]', panel => panel.textContent), /Uncommitted.*no acceptance receipt/)
+   assert.deepEqual(await page.$$eval('[data-graph-node]', nodes => nodes.map(node => node.dataset.nodeId)), graphBefore)
+   console.log('Studio passed: live handler diagnostic remains separate from real Test graph')
+   assert.deepEqual(diagnostics.pageErrors, [])
   // Chrome may request an unadvertised optional icon. Keep every application/API
   // failure fatal while allowing that browser-generated request on the live host.
   assert.deepEqual(diagnostics.httpErrors.filter(error =>

@@ -22,10 +22,17 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Add explicit **Simulate handler** diagnostics through the control catalog's
+  `simulateHandlerHrefTemplate` and POST `/simulate-handler`: real registered
+  handler computation with starting versions, typed decision and proposed,
+  uncommitted events. Studio displays a separate diagnostic result; Test remains
+  primary. There is no operation, synthetic causal trace or durable acceptance
+  receipt. Injected dependencies are not automatically sandboxed.
 - **Breaking (Tracer Preview retirement):** remove simulation discovery and HTTP
   routes, Studio's Preview action and synthetic operation generation. Retired
   requests return 404 rather than publishing to Test or production. The legacy
-  Rust submission method returns `ModeUnavailable("simulate")`. Core
+  Rust submission method returns `ModeUnavailable("simulate")`; the new handler-only
+  interface above replaces useful diagnostics, not legacy operation semantics. Core
   `CommandExecutor::simulate`/`SimulationOutcome` remain supported for focused
   tests. Historical simulation evidence remains explicitly uncommitted.
   Catalog stays v1 (capability discovery); behavior/MessageSeries v2 and fixture

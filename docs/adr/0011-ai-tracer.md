@@ -8,8 +8,9 @@ Accepted.
 
 rostfrei exposes domain descriptors, stream discovery, operation tracing,
 continuous observation, real isolated scenario execution, and authorized
-dispatch through the protocol-independent Tracer service. Core handler simulation
-remains outside Tracer for focused tests (ADR 0010).
+dispatch through the protocol-independent Tracer service. Optional **Simulate
+handler** exposes core handler computation for explicit rule diagnostics, with
+a distinct uncommitted result and no fabricated observed trace (ADR 0010).
 AI-facing adapters, including a possible MCP server, are clients of that service
 and do not bypass its capability boundaries.
 
@@ -23,8 +24,9 @@ The implemented adapter is HTTP JSON plus SSE; there is no implemented MCP serve
 Future transports need not move protocol details into the aggregate kernel.
 Read-only inspection, isolated stateful Test execution, and production dispatch
 are separate capabilities. Test state is resettable without affecting production,
-and dispatch requires a separate capability. Preview is retired, not a prerequisite
-or fallback for Test. These capabilities can be deployed independently.
+and dispatch requires a separate capability. Legacy Preview is retired. Handler
+simulation is neither a prerequisite nor fallback for Test, and injected
+dependencies are not automatically sandboxed. These capabilities can be deployed independently.
 
 ## Consequences
 

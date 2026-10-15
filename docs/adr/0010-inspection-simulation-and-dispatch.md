@@ -16,10 +16,19 @@ Real execution is available only through an explicit environment capability.
 
 Tracer's user-facing Preview workflow is retired. Tracer discovers contracts,
 executes real Test commands/suites, observes actual activity and supports separately
-authorized production dispatch. It does not expose core simulation or manufacture
-command/event evidence from predictions. Retired HTTP simulation routes return
+authorized production dispatch. Optional **Simulate handler** exposes core
+simulation as a distinct handler diagnostic: decision, starting stream versions
+and proposed/uncommitted domain events. It uses the same registered handler and
+dependencies; it creates no command/response identities, operation capture or
+observed MessageSeries. It is never a Test prerequisite/fallback or feature
+acceptance. Retired legacy HTTP simulation routes return
 404, never silently publish. The legacy Rust submission entry point returns
 `ModeUnavailable("simulate")` without invoking a handler.
+
+The new advertised `simulateHandlerHrefTemplate` uses `/simulate-handler` and
+returns a direct typed `handlerSimulation` document, not the legacy operation
+shape. Injected dependencies are not automatically sandboxed. Payload policies,
+response bounds and configured history still govern this diagnostic capability.
 
 Aggregate inspection is separate from persistence and event codecs. Aggregates
 are not required to implement Serde or expose their internal state as a durable

@@ -22,11 +22,16 @@ are ignored while editing text or using modifier keys.
 Open **Command** (or **Ctrl/⌘ Shift K**) to use the catalog-driven command form.
 **Test bus** uses
 the isolated command pipeline and can append events and trigger integrations.
-Test bus is the only command action; submission is disabled when unavailable. Commands
+Test bus is the default; submission is disabled when unavailable. Commands
 remain available even when the catalog has no behavioral-test repository.
 Identifiers are editable, discovered payload options refresh after Test runs,
 and numeric options retain their exact JSON representation. An unconfirmed Test
 submission keeps its idempotency key and payload for an explicit retry.
+**Simulate handler** is an optional explicit choice when advertised. It shows
+the real handler decision, starting stream versions and proposed domain events
+in a separate **Uncommitted · no acceptance receipt** panel, never an observed
+message graph. Injected dependencies are not automatically sandboxed; this does
+not test delivery, persistence/concurrency or downstream integrations.
 Start with the [bike-rental walkthrough](https://elblabs.github.io/rostfrei/docs/getting-started)
 for a connected application. Studio requires a reachable Tracer API; synthetic
 responses are limited to the browser-test and visual-inspection fixtures below.

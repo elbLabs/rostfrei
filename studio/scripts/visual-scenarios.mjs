@@ -10,6 +10,9 @@ import {
 export const scenarios = {
   overview: "Expected rental flow in the Workbench layout",
   command: "Populated catalog-driven Command panel",
+  handler: "Uncommitted handler decision and proposed domain events",
+  "handler-rejected": "Rejected handler diagnostic with no proposed events",
+  "handler-empty": "Accepted handler diagnostic with no proposed events",
   accepted: "Accepted Test with command details open",
   rejected: "Business rejection with command details open",
   loading: "Pending Test with observing indicator",
@@ -46,6 +49,7 @@ const catalog = {
               payloadTemplate: { fleet_id: null, bicycle_id: null },
               testInputsHrefTemplate: `${commandPath}/schemas/2/inputs`,
               testHrefTemplate: `${commandPath}/test`,
+              simulateHandlerHrefTemplate: `${commandPath}/simulate-handler`,
             },
           ],
         },
@@ -173,6 +177,45 @@ export async function installScenario(page, scene, samples, diagnostics) {
       }
     } else if (
       method === "POST" &&
+      pathname === `${commandPath}/simulate-handler`
+    ) {
+      body = {
+        kind: "handlerSimulation",
+        committed: false,
+        context: "bike-rental",
+        command: "rent-bicycle",
+        schemaVersion: 2,
+        outcome:
+          scene === "handler-rejected"
+            ? {
+                decision: "rejected",
+                rejection: { code: "BICYCLE_UNAVAILABLE" },
+              }
+            : { decision: "accepted" },
+        streams: [
+          {
+            aggregateType: "bike-rental/rental-fleet",
+            aggregateId: "city-fleet",
+            baseStreamVersion: 2,
+            readGuard: false,
+          },
+        ],
+        proposedEvents:
+          scene === "handler"
+            ? [
+                {
+                  aggregateType: "bike-rental/rental-fleet",
+                  aggregateId: "city-fleet",
+                  eventType: "bicycle-rented",
+                  schemaVersion: 1,
+                  proposedStreamVersion: 3,
+                  payload,
+                },
+              ]
+            : [],
+      }
+    } else if (
+      method === "POST" &&
       pathname === `${commandPath}/test` &&
       scene !== "indeterminate"
     ) {
@@ -266,6 +309,15 @@ export async function prepareScenario(page, scene) {
         "bike-42"
   )
   if (scene === "command") return
+  if (scene.startsWith("handler")) {
+    await page.click('[data-command-mode="simulate-handler"]')
+    await page.click('#studio-command-panel button[type="submit"]')
+    await page.waitForSelector("[data-handler-simulation-result]")
+    await page.$eval("[data-handler-simulation-result]", (element) =>
+      element.scrollIntoView({ block: "end" })
+    )
+    return
+  }
   await page.click('#studio-command-panel button[type="submit"]')
 
   if (scene === "loading") {

@@ -142,6 +142,10 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
             "/contexts/{context}/commands/{command}/test",
             post(submit_test),
         )
+        .route(
+            "/contexts/{context}/commands/{command}/simulate-handler",
+            post(simulate_handler),
+        )
         .route("/tests", get(get_tests))
         .route("/tests/validate", post(validate_inline_test))
         .route("/tests/{test_id}", get(get_test))
@@ -657,6 +661,54 @@ async fn submit_test(
     request: Result<Json<CommandRequest>, JsonRejection>,
 ) -> Response {
     submit_command(&state.tracer, OperationMode::Test, path, &headers, request).await
+}
+
+async fn simulate_handler(
+    State(state): State<HttpState>,
+    Path((context, command)): Path<(String, String)>,
+    request: Result<Json<CommandRequest>, JsonRejection>,
+) -> Response {
+    use crate::HandlerSimulationError;
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(error) => return json_rejection(&error),
+    };
+    match state
+        .tracer
+        .simulate_handler(&context, &command, request)
+        .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(HandlerSimulationError::Submission(error)) => error_response(&error),
+        Err(error) => {
+            let (status, code) = match &error {
+                HandlerSimulationError::InvalidPayload(_) => {
+                    (StatusCode::BAD_REQUEST, "invalid-command-payload")
+                }
+                HandlerSimulationError::ResultTooLarge => {
+                    (StatusCode::PAYLOAD_TOO_LARGE, "handler-result-too-large")
+                }
+                HandlerSimulationError::Timeout => {
+                    (StatusCode::GATEWAY_TIMEOUT, "handler-simulation-timeout")
+                }
+                HandlerSimulationError::Runtime { code, .. } => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, *code)
+                }
+                _ => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "handler-simulation-failed",
+                ),
+            };
+            (
+                status,
+                Json(ErrorBody {
+                    code,
+                    message: error.to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
 }
 
 async fn submit_dispatch(

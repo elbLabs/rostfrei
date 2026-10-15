@@ -60,79 +60,289 @@ struct DiagnosticHandler {
     injected: String,
 }
 
+struct WaitingDiagnosticHandler(Arc<tokio::sync::Notify>);
+
+#[async_trait]
+impl CommandHandler<TestCommand> for WaitingDiagnosticHandler {
+    type Rejection = TestRejection;
+    async fn handle(
+        &self,
+        command: &TestCommand,
+        execution: &mut CommandExecution<'_>,
+    ) -> Result<CommandDecision<TestRejection>, CommandExecutionError> {
+        if command.padding.as_deref() == Some("wait") {
+            self.0.notify_one();
+            std::future::pending::<()>().await;
+        }
+        TestCommandHandler.handle(command, execution).await
+    }
+}
+
+#[tokio::test]
+async fn handler_cancellation_releases_reset_gate_and_independent_capacity() {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let reset = Arc::new(RecordingReset::default());
+    let store = Arc::new(InMemoryEventStore::new());
+    let mut registry = DomainRegistry::new();
+    registry.register_aggregate::<TestAggregate>().unwrap();
+    registry
+        .register_command::<TestCommand, WaitingDiagnosticHandler>()
+        .unwrap();
+    let mut configured = TracerBuilder::new(store.clone(), registry)
+        .with_test_event_store(store)
+        .with_maximum_concurrent_operations(1)
+        .with_test_transport(Arc::new(FakeTransport::accepted("test", false)))
+        .with_test_scenario_reset(reset.clone())
+        .with_default_test_fixture(empty_fixture("default"));
+    configured
+        .register_json::<TestCommand, _>(WaitingDiagnosticHandler(entered.clone()))
+        .unwrap();
+    let tracer = configured.build().unwrap();
+    let task_tracer = tracer.clone();
+    let task = tokio::spawn(async move {
+        task_tracer
+            .simulate_handler(
+                "test-context",
+                COMMAND_NAME,
+                SimulationRequest {
+                    schema_version: 1,
+                    payload: json!({"reject":false,"padding":"wait"}),
+                },
+            )
+            .await
+    });
+    entered.notified().await;
+    assert!(matches!(
+        tracer
+            .simulate_handler("test-context", COMMAND_NAME, simulation_request(false))
+            .await,
+        Err(rostfrei_tracer::HandlerSimulationError::Submission(
+            SubmissionError::ConcurrencyExhausted
+        ))
+    ));
+    let test = tracer
+        .submit_test(
+            "test-context",
+            COMMAND_NAME,
+            simulation_request(false),
+            Some("independent"),
+        )
+        .await
+        .unwrap();
+    terminal_operation(&tracer, &test.operation_id).await;
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            tracer.reset_test_scenario()
+        )
+        .await
+        .is_err()
+    );
+    assert!(reset.fixture_ids.lock().await.is_empty());
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        tracer.reset_test_scenario(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(reset.fixture_ids.lock().await.len(), 1);
+    tracer
+        .simulate_handler("test-context", COMMAND_NAME, simulation_request(false))
+        .await
+        .unwrap();
+}
+
 #[async_trait]
 impl CommandHandler<TestCommand> for DiagnosticHandler {
     type Rejection = TestRejection;
-    async fn handle(&self, command: &TestCommand, execution: &mut CommandExecution<'_>) -> Result<CommandDecision<TestRejection>, CommandExecutionError> {
-        self.calls.lock().await.push(execution.metadata().operation_id().clone());
+    async fn handle(
+        &self,
+        command: &TestCommand,
+        execution: &mut CommandExecution<'_>,
+    ) -> Result<CommandDecision<TestRejection>, CommandExecutionError> {
+        self.calls
+            .lock()
+            .await
+            .push(execution.metadata().operation_id().clone());
         let mut aggregate = execution.load::<TestAggregate>("aggregate-1").await?;
         if command.padding.as_deref() != Some("noop") {
-            aggregate.aggregate_mut().raise(TestEvent { sensitive: self.injected.clone() });
+            aggregate.aggregate_mut().raise(TestEvent {
+                sensitive: self.injected.clone(),
+            });
         }
-        if command.reject { Ok(CommandDecision::Rejected(TestRejection)) }
-        else { Ok(CommandDecision::Accepted) }
+        if command.reject {
+            Ok(CommandDecision::Rejected(TestRejection))
+        } else {
+            Ok(CommandDecision::Accepted)
+        }
     }
 }
 
 #[cfg(feature = "http")]
-async fn handler_request(app: &axum::Router, token: &str, payload: Value) -> axum::response::Response {
-    app.clone().oneshot(Request::builder().method("POST").uri(HANDLER_PATH)
-        .header("authorization", format!("Bearer {token}"))
-        .header("content-type", "application/json")
-        .body(Body::from(json!({"schemaVersion":1,"payload":payload}).to_string())).unwrap()).await.unwrap()
+#[allow(clippy::unwrap_used, reason = "test request construction must succeed")]
+async fn handler_request(
+    app: &axum::Router,
+    token: &str,
+    payload: Value,
+) -> axum::response::Response {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(HANDLER_PATH)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"schemaVersion":1,"payload":payload}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
 }
 
 #[cfg(feature = "http")]
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one seeded diagnostic scenario checks all non-publication invariants"
+)]
 async fn simulate_handler_returns_uncommitted_decisions_without_operations_or_receipts() {
-    use rostfrei_core::{CommandExecutionMetadata, CommandExecutor, ContentFingerprint, EventStore, OperationId};
+    use rostfrei_core::{
+        CommandExecutionMetadata, CommandExecutor, ContentFingerprint, EventStore, OperationId,
+    };
     let store = Arc::new(InMemoryEventStore::new());
     let calls = Arc::new(Mutex::new(Vec::new()));
-    let handler = DiagnosticHandler { calls: calls.clone(), injected: "private injected dependency".into() };
+    let handler = DiagnosticHandler {
+        calls: calls.clone(),
+        injected: "private injected dependency".into(),
+    };
     let context = rostfrei_messaging_core::BoundedContextName::new("test-context").unwrap();
-    CommandExecutor::new(store.clone()).execute(&handler,
-        CommandExecutionMetadata::new(OperationId::new("seed").unwrap(), ContentFingerprint::digest("seed")).with_bounded_context(context.clone()),
-        &TestCommand {reject:false, panic:None, padding:None, secondary_aggregate_id:None}).await.unwrap();
+    CommandExecutor::new(store.clone())
+        .execute(
+            &handler,
+            CommandExecutionMetadata::new(
+                OperationId::new("seed").unwrap(),
+                ContentFingerprint::digest("seed"),
+            )
+            .with_bounded_context(context.clone()),
+            &TestCommand {
+                reject: false,
+                panic: None,
+                padding: None,
+                secondary_aggregate_id: None,
+            },
+        )
+        .await
+        .unwrap();
     let mut bindings = rostfrei_tracer::ApplicationBindings::new();
     bindings.register_aggregate::<TestAggregate>().unwrap();
-    bindings.register_command::<TestCommand, _>(handler, rostfrei::JsonDomainRejectionMapper::new(rostfrei::CommandRejectionClassification::Conflict)).unwrap();
+    bindings
+        .register_command::<TestCommand, _>(
+            handler,
+            rostfrei::JsonDomainRejectionMapper::new(
+                rostfrei::CommandRejectionClassification::Conflict,
+            ),
+        )
+        .unwrap();
     let transport = Arc::new(FakeTransport::accepted("unused", false));
-    let tracer = bindings.tracer_builder(store.clone()).with_test_event_store(store.clone())
-        .with_test_transport(transport.clone()).with_dispatch_transport(transport.clone())
-        .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment)).build().unwrap();
-    let version = serde_json::to_value(tracer.catalog()).unwrap()["contexts"][0]["commands"][0]["versions"][0].clone();
+    let tracer = bindings
+        .tracer_builder(store.clone())
+        .with_test_event_store(store.clone())
+        .with_test_transport(transport.clone())
+        .with_dispatch_transport(transport.clone())
+        .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment))
+        .build()
+        .unwrap();
+    let version =
+        serde_json::to_value(tracer.catalog()).unwrap()["contexts"][0]["commands"][0]["versions"]
+            [0]
+        .clone();
     assert_eq!(version["simulateHandlerHrefTemplate"], HANDLER_PATH);
     assert!(version.get("simulateHrefTemplate").is_none());
-    let app = http::router(tracer.clone(), HttpConfig::new(API_TOKEN).unwrap().with_inspection_token("inspect").unwrap().with_dispatch_token("dispatch").unwrap());
-    let stream = StreamId::new(rostfrei_core::AggregateType::new(AGGREGATE_TYPE).unwrap(), rostfrei_core::AggregateId::new("aggregate-1").unwrap());
+    let app = http::router(
+        tracer.clone(),
+        HttpConfig::new(API_TOKEN)
+            .unwrap()
+            .with_inspection_token("inspect")
+            .unwrap()
+            .with_dispatch_token("dispatch")
+            .unwrap(),
+    );
+    let stream = StreamId::new(
+        rostfrei_core::AggregateType::new(AGGREGATE_TYPE).unwrap(),
+        rostfrei_core::AggregateId::new("aggregate-1").unwrap(),
+    );
     let before = store.load(&stream).await.unwrap();
     for (reject, padding, events) in [(false, None, 1), (true, None, 0), (false, Some("noop"), 0)] {
-        let response = handler_request(&app, API_TOKEN, json!({"reject":reject,"padding":padding})).await;
+        let response =
+            handler_request(&app, API_TOKEN, json!({"reject":reject,"padding":padding})).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().get("location").is_none());
         let result = json_body(response).await;
         assert_eq!(result["kind"], "handlerSimulation");
         assert_eq!(result["committed"], false);
-        assert_eq!(result["outcome"]["decision"], if reject {"rejected"} else {"accepted"});
+        assert_eq!(
+            result["outcome"]["decision"],
+            if reject { "rejected" } else { "accepted" }
+        );
         assert_eq!(result["streams"][0]["baseStreamVersion"], 1);
         assert_eq!(result["streams"][0]["aggregateId"], "aggregate-1");
         assert_eq!(result["proposedEvents"].as_array().unwrap().len(), events);
         if events == 1 {
-            assert_eq!(result["proposedEvents"][0]["payload"]["sensitive"], "private injected dependency");
+            assert_eq!(
+                result["proposedEvents"][0]["payload"]["sensitive"],
+                "private injected dependency"
+            );
             assert_eq!(result["proposedEvents"][0]["proposedStreamVersion"], 2);
         }
-        for field in ["operationId", "correlationId", "messageSeries", "capture", "commandMessageId", "responseMessageId", "receipt"] {
+        for field in [
+            "operationId",
+            "correlationId",
+            "messageSeries",
+            "capture",
+            "commandMessageId",
+            "responseMessageId",
+            "receipt",
+        ] {
             assert!(result.get(field).is_none(), "{field}");
         }
     }
-    for token in ["inspect", "dispatch"] {
-        assert_eq!(handler_request(&app, token, json!({"reject":false})).await.status(), StatusCode::FORBIDDEN);
+    for (token, status) in [
+        ("inspect", StatusCode::FORBIDDEN),
+        ("dispatch", StatusCode::UNAUTHORIZED),
+    ] {
+        assert_eq!(
+            handler_request(&app, token, json!({"reject":false}))
+                .await
+                .status(),
+            status
+        );
     }
-    assert_eq!(calls.lock().await.len(), 4, "same injected instance: seed and three simulations only");
+    assert_eq!(
+        calls.lock().await.len(),
+        4,
+        "same injected instance: seed and three simulations only"
+    );
     for id in calls.lock().await.iter().skip(1) {
-        assert!(store.load_transaction_receipt_in_context(&context, id).await.unwrap().is_none());
-        assert!(matches!(tracer.operation(id.as_str()).await, Err(SubmissionError::NotFound)));
-        assert!(matches!(tracer.subscribe_correlation(id.as_str(), 0).await, Err(CorrelationError::NotFound)));
+        assert!(
+            store
+                .load_transaction_receipt_in_context(&context, id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            tracer.operation(id.as_str()).await,
+            Err(SubmissionError::NotFound)
+        ));
+        assert!(matches!(
+            tracer.subscribe_correlation(id.as_str(), 0).await,
+            Err(CorrelationError::NotFound)
+        ));
     }
     assert_eq!(store.load(&stream).await.unwrap(), before);
     assert!(transport.invocations.lock().await.is_empty());
@@ -150,11 +360,78 @@ async fn simulate_handler_redacts_and_rejects_invalid_payloads_without_publicati
     assert!(result["proposedEvents"][0].get("payload").is_none());
     let result = json_body(handler_request(&app, API_TOKEN, json!({"reject":true})).await).await;
     assert_eq!(result["outcome"]["rejection"], json!({"redacted":true}));
-    let response = handler_request(&app, API_TOKEN, json!({"reject":"private invalid value"})).await;
+    let response =
+        handler_request(&app, API_TOKEN, json!({"reject":"private invalid value"})).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let error = json_body(response).await;
     assert_eq!(error["code"], "invalid-command-payload");
     assert!(!error.to_string().contains("private invalid value"));
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn simulate_handler_bounds_results_and_returns_typed_failures() {
+    let mut fixture_builder = builder(Arc::new(InMemoryEventStore::new()))
+        .with_trace_payload_policy(Arc::new(OversizedTracePayloads));
+    fixture_builder
+        .register_json::<TestCommand, _>(TestCommandHandler)
+        .unwrap();
+    let app = http::router(
+        fixture_builder.build().unwrap(),
+        HttpConfig::new(API_TOKEN).unwrap(),
+    );
+    let response = handler_request(&app, API_TOKEN, json!({"reject":false})).await;
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        json_body(response).await["code"],
+        "handler-result-too-large"
+    );
+    for (kind, code) in [
+        (EventStoreErrorKind::CorruptHistory, "corrupt-history"),
+        (EventStoreErrorKind::Unavailable, "history-unavailable"),
+    ] {
+        let mut builder = builder(Arc::new(FailedHistory(kind)));
+        builder
+            .register_json::<TestCommand, _>(TestCommandHandler)
+            .unwrap();
+        let app = http::router(
+            builder.build().unwrap(),
+            HttpConfig::new(API_TOKEN).unwrap(),
+        );
+        let response = handler_request(&app, API_TOKEN, json!({"reject":false})).await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let error = json_body(response).await;
+        assert_eq!(error["code"], code);
+        assert_eq!(error["message"], "operation failure details are redacted");
+    }
+    let tracer = tracer(4);
+    let app = http::router(tracer.clone(), HttpConfig::new(API_TOKEN).unwrap());
+    let response = handler_request(&app, API_TOKEN, json!({"reject":false,"panic":true})).await;
+    assert_eq!(
+        json_body(response).await["code"],
+        "handler-simulation-failed"
+    );
+    assert_eq!(
+        handler_request(&app, API_TOKEN, json!({"reject":false}))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert!(matches!(
+        tracer
+            .simulate_handler(
+                "test-context",
+                COMMAND_NAME,
+                SimulationRequest {
+                    schema_version: 999,
+                    payload: json!({"reject":false})
+                }
+            )
+            .await,
+        Err(rostfrei_tracer::HandlerSimulationError::Submission(
+            SubmissionError::UnknownCommand { .. }
+        ))
+    ));
 }
 
 #[cfg(feature = "http")]
@@ -2729,6 +3006,14 @@ async fn reset_invalidates_test_identities_even_when_the_runtime_reset_fails() {
         ));
 
         if first_reset.is_err() {
+            assert!(matches!(
+                tracer
+                    .simulate_handler("test-context", COMMAND_NAME, simulation_request(false))
+                    .await,
+                Err(rostfrei_tracer::HandlerSimulationError::Submission(
+                    SubmissionError::TestScenarioUnavailable
+                ))
+            ));
             assert_eq!(
                 tracer
                     .submit_test(

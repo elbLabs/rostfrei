@@ -3,6 +3,7 @@ mod bindings;
 mod catalog;
 mod command_bus;
 mod correlation;
+mod handler_simulation;
 mod input;
 mod message_series;
 mod observation;
@@ -44,6 +45,10 @@ pub use correlation::{
     CorrelationCommandOutcome, CorrelationError, CorrelationEvent, CorrelationEventKind,
     CorrelationObserver, CorrelationSubscription, DomainEventObservation,
     IntegrationEventObservation,
+};
+pub use handler_simulation::{
+    HandlerDecision, HandlerSimulationError, HandlerSimulationKind, HandlerSimulationResult,
+    ProposedDomainEvent,
 };
 pub use input::{CommandInputDocument, CommandInputField, CommandInputOption, CommandInputOptions};
 pub use message_series::{
