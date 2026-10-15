@@ -456,6 +456,25 @@ async fn detail_capacity_failure_prevents_any_atomic_journal_decision() -> TestR
         message_count(&fixture, store.config().outcome_state_stream_name()).await?,
         0
     );
+    // N2: deliberately reduced capacity is configuration drift, so authoritative
+    // absence is blocked until the bound pair's original configuration is restored.
+    // Actual unchanged-config capacity exhaustion is covered by review_native_adversarial.
+    assert_eq!(
+        store
+            .lookup_outcome(&key(
+                &store,
+                &fixture.context,
+                &OperationId::new("prepared-only")?
+            ))
+            .await
+            .unwrap_err()
+            .kind(),
+        EventStoreErrorKind::ConfigurationMismatch
+    );
+    fixture
+        .js
+        .update_stream(detail.cached_info().config.clone())
+        .await?;
     assert!(matches!(
         store
             .lookup_outcome(&key(
