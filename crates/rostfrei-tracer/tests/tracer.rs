@@ -53,6 +53,109 @@ const API_TOKEN: &str = "integration-test-capability";
 #[cfg(feature = "http")]
 const SIMULATION_PATH: &str = "/contexts/test-context/commands/test-command/simulate";
 const TEST_PATH: &str = "/contexts/test-context/commands/test-command/test";
+const HANDLER_PATH: &str = "/contexts/test-context/commands/test-command/simulate-handler";
+
+struct DiagnosticHandler {
+    calls: Arc<Mutex<Vec<rostfrei_core::OperationId>>>,
+    injected: String,
+}
+
+#[async_trait]
+impl CommandHandler<TestCommand> for DiagnosticHandler {
+    type Rejection = TestRejection;
+    async fn handle(&self, command: &TestCommand, execution: &mut CommandExecution<'_>) -> Result<CommandDecision<TestRejection>, CommandExecutionError> {
+        self.calls.lock().await.push(execution.metadata().operation_id().clone());
+        let mut aggregate = execution.load::<TestAggregate>("aggregate-1").await?;
+        if command.padding.as_deref() != Some("noop") {
+            aggregate.aggregate_mut().raise(TestEvent { sensitive: self.injected.clone() });
+        }
+        if command.reject { Ok(CommandDecision::Rejected(TestRejection)) }
+        else { Ok(CommandDecision::Accepted) }
+    }
+}
+
+#[cfg(feature = "http")]
+async fn handler_request(app: &axum::Router, token: &str, payload: Value) -> axum::response::Response {
+    app.clone().oneshot(Request::builder().method("POST").uri(HANDLER_PATH)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"schemaVersion":1,"payload":payload}).to_string())).unwrap()).await.unwrap()
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn simulate_handler_returns_uncommitted_decisions_without_operations_or_receipts() {
+    use rostfrei_core::{CommandExecutionMetadata, CommandExecutor, ContentFingerprint, EventStore, OperationId};
+    let store = Arc::new(InMemoryEventStore::new());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let handler = DiagnosticHandler { calls: calls.clone(), injected: "private injected dependency".into() };
+    let context = rostfrei_messaging_core::BoundedContextName::new("test-context").unwrap();
+    CommandExecutor::new(store.clone()).execute(&handler,
+        CommandExecutionMetadata::new(OperationId::new("seed").unwrap(), ContentFingerprint::digest("seed")).with_bounded_context(context.clone()),
+        &TestCommand {reject:false, panic:None, padding:None, secondary_aggregate_id:None}).await.unwrap();
+    let mut bindings = rostfrei_tracer::ApplicationBindings::new();
+    bindings.register_aggregate::<TestAggregate>().unwrap();
+    bindings.register_command::<TestCommand, _>(handler, rostfrei::JsonDomainRejectionMapper::new(rostfrei::CommandRejectionClassification::Conflict)).unwrap();
+    let transport = Arc::new(FakeTransport::accepted("unused", false));
+    let tracer = bindings.tracer_builder(store.clone()).with_test_event_store(store.clone())
+        .with_test_transport(transport.clone()).with_dispatch_transport(transport.clone())
+        .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment)).build().unwrap();
+    let version = serde_json::to_value(tracer.catalog()).unwrap()["contexts"][0]["commands"][0]["versions"][0].clone();
+    assert_eq!(version["simulateHandlerHrefTemplate"], HANDLER_PATH);
+    assert!(version.get("simulateHrefTemplate").is_none());
+    let app = http::router(tracer.clone(), HttpConfig::new(API_TOKEN).unwrap().with_inspection_token("inspect").unwrap().with_dispatch_token("dispatch").unwrap());
+    let stream = StreamId::new(rostfrei_core::AggregateType::new(AGGREGATE_TYPE).unwrap(), rostfrei_core::AggregateId::new("aggregate-1").unwrap());
+    let before = store.load(&stream).await.unwrap();
+    for (reject, padding, events) in [(false, None, 1), (true, None, 0), (false, Some("noop"), 0)] {
+        let response = handler_request(&app, API_TOKEN, json!({"reject":reject,"padding":padding})).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("location").is_none());
+        let result = json_body(response).await;
+        assert_eq!(result["kind"], "handlerSimulation");
+        assert_eq!(result["committed"], false);
+        assert_eq!(result["outcome"]["decision"], if reject {"rejected"} else {"accepted"});
+        assert_eq!(result["streams"][0]["baseStreamVersion"], 1);
+        assert_eq!(result["streams"][0]["aggregateId"], "aggregate-1");
+        assert_eq!(result["proposedEvents"].as_array().unwrap().len(), events);
+        if events == 1 {
+            assert_eq!(result["proposedEvents"][0]["payload"]["sensitive"], "private injected dependency");
+            assert_eq!(result["proposedEvents"][0]["proposedStreamVersion"], 2);
+        }
+        for field in ["operationId", "correlationId", "messageSeries", "capture", "commandMessageId", "responseMessageId", "receipt"] {
+            assert!(result.get(field).is_none(), "{field}");
+        }
+    }
+    for token in ["inspect", "dispatch"] {
+        assert_eq!(handler_request(&app, token, json!({"reject":false})).await.status(), StatusCode::FORBIDDEN);
+    }
+    assert_eq!(calls.lock().await.len(), 4, "same injected instance: seed and three simulations only");
+    for id in calls.lock().await.iter().skip(1) {
+        assert!(store.load_transaction_receipt_in_context(&context, id).await.unwrap().is_none());
+        assert!(matches!(tracer.operation(id.as_str()).await, Err(SubmissionError::NotFound)));
+        assert!(matches!(tracer.subscribe_correlation(id.as_str(), 0).await, Err(CorrelationError::NotFound)));
+    }
+    assert_eq!(store.load(&stream).await.unwrap(), before);
+    assert!(transport.invocations.lock().await.is_empty());
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn simulate_handler_redacts_and_rejects_invalid_payloads_without_publication() {
+    let tracer = tracer(1024);
+    let app = http::router(tracer, HttpConfig::new(API_TOKEN).unwrap());
+    let response = handler_request(&app, API_TOKEN, json!({"reject":false})).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let result = json_body(response).await;
+    assert_eq!(result["kind"], "handlerSimulation");
+    assert!(result["proposedEvents"][0].get("payload").is_none());
+    let result = json_body(handler_request(&app, API_TOKEN, json!({"reject":true})).await).await;
+    assert_eq!(result["outcome"]["rejection"], json!({"redacted":true}));
+    let response = handler_request(&app, API_TOKEN, json!({"reject":"private invalid value"})).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let error = json_body(response).await;
+    assert_eq!(error["code"], "invalid-command-payload");
+    assert!(!error.to_string().contains("private invalid value"));
+}
 
 #[cfg(feature = "http")]
 #[tokio::test]

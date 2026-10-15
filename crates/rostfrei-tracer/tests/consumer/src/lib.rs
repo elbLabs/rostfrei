@@ -224,6 +224,25 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
         rostfrei::StreamAggregateId::new("one")?,
     );
     assert_eq!(host.runtime().store().load(&stream).await?.len(), 2);
+    // Same registered handler and injected step (2), against persisted Test history.
+    let before = host.runtime().store().load(&stream).await?;
+    let observation_before = serde_json::to_value(feed.snapshot())?;
+    let href = catalog["contexts"][0]["commands"][0]["versions"][0]["simulateHandlerHrefTemplate"].as_str().unwrap();
+    let response = client.post(format!("http://{address}{href}"))
+        .bearer_auth("external-consumer-token")
+        .json(&serde_json::json!({"schemaVersion":1,"payload":{"id":"one"}}))
+        .send().await?.error_for_status()?;
+    assert!(response.headers().get("location").is_none());
+    let simulation: serde_json::Value = response.json().await?;
+    assert_eq!(simulation["kind"], "handlerSimulation");
+    assert_eq!(simulation["committed"], false);
+    assert_eq!(simulation["outcome"]["decision"], "accepted");
+    assert_eq!(simulation["streams"][0]["baseStreamVersion"], 2);
+    assert_eq!(simulation["proposedEvents"][0]["payload"]["value"], 9);
+    assert!(simulation.get("operationId").is_none());
+    assert!(simulation.get("messageSeries").is_none());
+    assert_eq!(host.runtime().store().load(&stream).await?, before);
+    assert_eq!(serde_json::to_value(feed.snapshot())?, observation_before);
     let events = get(&events_href).send().await?.error_for_status()?;
     let runtime = host.runtime().clone();
     tokio::time::timeout(std::time::Duration::from_secs(5), host.shutdown()).await??;

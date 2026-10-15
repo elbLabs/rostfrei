@@ -26,6 +26,7 @@ export async function checkCommandExecution(browser, url) {
     },
     testInputsHrefTemplate: `${base}/inputs`,
     testHrefTemplate: `${base}/test`,
+    simulateHandlerHrefTemplate: `${base}/simulate-handler`,
   }
   const catalog = {
     catalogVersion: 1,
@@ -219,6 +220,8 @@ export async function checkCommandExecution(browser, url) {
     )
     const choice = 'select[aria-label="Command and schema"]'
     await page.select(choice, "bike-rental/metadata-only@2")
+    assert.equal(await page.$eval('[data-command-mode="test"]', button => button.getAttribute("aria-pressed")), "true", "Test stays selected even when unavailable")
+    assert.ok(await page.$('[data-command-mode="simulate-handler"]'), "Handler simulation is an explicit choice")
     assert.equal(
       await page.$eval(".command-submit", (button) => button.disabled),
       true
