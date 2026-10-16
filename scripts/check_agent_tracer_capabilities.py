@@ -5,6 +5,7 @@ consumer tooling or an agent-usability trial. Normal-state preservation submits
 only to this driver's disposable application/broker, never an existing app.
 """
 
+from http.client import IncompleteRead
 import json
 import re
 import subprocess
@@ -39,7 +40,7 @@ class Capabilities:
             raise ValueError("Host advertised an unsafe or unresolved href")
         return self.origin + href
 
-    def request(self, href, scope="test", payload=None, expected=200, idempotency_key=None):
+    def request(self, href, scope="test", payload=None, expected=200, idempotency_key=None, evidence=None):
         request = Request(self.url(href), headers={"Authorization": "Bearer " + self.tokens[scope]})
         if idempotency_key is not None:
             request.add_header("Idempotency-Key", idempotency_key)
@@ -51,8 +52,23 @@ class Capabilities:
         except HTTPError as error:
             response = error
         with response:
+            def retain(body, complete, error=None):
+                if evidence is not None:
+                    # Retain response evidence before decoding/validation, never
+                    # credentials or arbitrary request/response headers.
+                    self.save(evidence, {"status": response.status,
+                        "location": response.headers.get("Location"),
+                        "contentType": response.headers.get("Content-Type"),
+                        "body": body.decode("utf-8", errors="replace"),
+                        "bodyComplete": complete, "readError": error})
+
+            try:
+                body = response.read()
+            except (IncompleteRead, OSError) as error:
+                retain(getattr(error, "partial", b""), False, type(error).__name__)
+                raise RuntimeError("Incomplete HTTP response; do not resubmit") from error
+            retain(body, True)
             assert response.status == expected, f"{scope} {href}: HTTP {response.status}, expected {expected}"
-            body = response.read()
             return (json.loads(body) if body and "json" in response.headers.get("Content-Type", "") else None), response.headers
 
     def save(self, name, value):
@@ -172,21 +188,62 @@ class Capabilities:
                                        "evidenceScope":"HTTP history/observation and response shape; native no-publication boundary tested separately"})
         return "passed"
 
+    def normal_operation(self, operation, root, identity=None):
+        # Submission and operation GET both serialize OperationSnapshot at the
+        # top level. Validate the fields needed for this owned dispatch check;
+        # HTTP 202 alone is not a terminal business decision.
+        if not isinstance(operation, dict) or "operation" in operation:
+            raise ValueError("Expected a flattened Normal operation document; do not resubmit")
+        for field in ("operationId", "correlationId", "messageSeriesHref"):
+            if not isinstance(operation.get(field), str) or not operation[field]:
+                raise ValueError(f"Normal operation missing {field}; do not resubmit")
+        if (operation.get("mode") != "dispatch" or operation.get("context") != root["context"]
+                or operation.get("command") != root["name"] or type(operation.get("schemaVersion")) is not int
+                or operation["schemaVersion"] != root["schemaVersion"]):
+            raise ValueError("Normal operation command coordinates differ; do not resubmit")
+        current = operation["operationId"], operation["correlationId"]
+        if identity is not None and current != identity:
+            raise ValueError("Normal operation identity changed while polling; do not resubmit")
+        self.url(operation["messageSeriesHref"])
+        if operation.get("status") not in ("queued", "running", "completed", "failed", "indeterminate"):
+            raise ValueError("Invalid Normal operation status; do not resubmit")
+        if operation["status"] == "completed":
+            result = operation.get("result")
+            if (not isinstance(result, dict) or result.get("decision") not in ("accepted", "rejected")
+                    or result.get("published") is not True):
+                raise ValueError("Completed Normal operation lacks a published business result; do not resubmit")
+        return current
+
     def normal_command(self, root, key, decision):
         _, version = self.command_version(root)
-        submitted, headers = self.request(version["dispatchHrefTemplate"], "dispatch",
+        operation, headers = self.request(version["dispatchHrefTemplate"], "dispatch",
             payload={"schemaVersion": root["schemaVersion"], "payload": root["payload"]},
-            expected=202, idempotency_key=key)
-        operation = submitted["operation"]
+            expected=202, idempotency_key=key, evidence=f"{key}-submission")
+        identity = self.normal_operation(operation, root)
+        location = headers.get("Location")
+        if not isinstance(location, str) or not location:
+            raise ValueError("Normal submission missing Location; do not resubmit")
+        self.url(location)
         deadline = time.monotonic() + 35
+        poll = 0
         while operation["status"] not in ("completed", "failed", "indeterminate"):
-            assert time.monotonic() < deadline, "Normal command incomplete; do not resubmit"
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Normal command incomplete; do not resubmit")
             time.sleep(0.05)
-            operation, _ = self.request(headers["Location"], "dispatch")
-        assert operation["status"] == "completed", operation
+            operation, _ = self.request(location, "dispatch", evidence=f"{key}-poll-{poll}")
+            poll += 1
+            self.normal_operation(operation, root, identity)
+        if operation["status"] != "completed":
+            raise RuntimeError(f'Normal command {operation["status"]}; do not resubmit')
         assert operation["result"]["decision"] == decision, operation
-        capture, _ = self.request(operation["messageSeriesHref"] + "?within=10s&settleFor=500ms", "dispatch")
-        assert capture["capture"]["settled"] and capture["capture"]["fidelity"] == "exact"
+        href = operation["messageSeriesHref"]
+        capture, _ = self.request(href + ("&" if "?" in href else "?") + "within=10s&settleFor=500ms",
+                                  "dispatch", evidence=f"{key}-capture")
+        if (not isinstance(capture, dict) or (capture.get("operationId"), capture.get("correlationId")) != identity
+                or capture.get("mode") != "dispatch" or not isinstance(capture.get("messageSeries"), dict)
+                or not isinstance(capture.get("capture"), dict) or capture["capture"].get("settled") is not True
+                or capture["capture"].get("fidelity") != "exact"):
+            raise ValueError("Normal operation capture is invalid or incomplete; do not resubmit")
         self.save(key, {"operation": operation, "capture": capture})
         return operation
 
