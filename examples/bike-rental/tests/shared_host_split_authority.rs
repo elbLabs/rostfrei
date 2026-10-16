@@ -61,8 +61,14 @@ async fn paired_reset_reconnects_authority_preserves_normal_and_cannot_bypass_fa
             old.lookup_outcome(&key).await.is_err(),
             "old incarnation must remain fenced"
         );
+        let current = runtime.store();
+        let current_key = OutcomeKey::new(
+            current.authority().clone(),
+            key.bounded_context().clone(),
+            key.operation_id().clone(),
+        );
         assert!(
-            runtime.store().lookup_outcome(&key).await.is_ok(),
+            current.lookup_outcome(&current_key).await.is_ok(),
             "new handle must admit its fresh pair"
         );
         assert_eq!(normal.store().load(&stream).await?, normal_history);
