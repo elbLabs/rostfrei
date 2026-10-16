@@ -103,7 +103,7 @@ class NormalPublicationTests(unittest.TestCase):
                      "mode": "dispatch", "status": status, "command": "add-bicycle", "schemaVersion": 2,
                      "context": "bike-rental", "latestEventId": 1}
         if status == "completed":
-            operation["result"] = {"decision": "accepted", "appended": True, "published": True,
+            operation["result"] = {"decision": "accepted", "published": True,
                                    "commandMessageId": "owned-command", "responseMessageId": "owned-response", "duplicate": False}
         return operation
 
@@ -111,7 +111,7 @@ class NormalPublicationTests(unittest.TestCase):
     def host(self, submission, polled=None, location="/returned-operation", truncated=False):
         requests = []
         capture = {"operationId": "owned-operation", "correlationId": "owned-correlation", "mode": "dispatch",
-                   "messageSeries": {"schemaVersion": 2, "messages": [], "commandOutcomes": []},
+                   "messageSeries": {"messages": [], "commandOutcomes": []},
                    "capture": {"settled": True, "settledFor": "500ms", "fidelity": "exact"}}
 
         class Handler(BaseHTTPRequestHandler):
