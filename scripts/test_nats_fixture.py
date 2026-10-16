@@ -5,7 +5,11 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
 import sys
+import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlsplit
@@ -14,6 +18,68 @@ import test_nats
 
 
 class ContractFixtureTests(unittest.TestCase):
+    def check_inherited_output(self, exit_code):
+        with tempfile.TemporaryDirectory(prefix="rostfrei-output-regression-") as directory:
+            marker = Path(directory) / "processes.json"
+            secret = "fragmented-password-\N{LOCK}"
+            child = (
+                "import json, os, pathlib, subprocess, sys, time; "
+                "descendant = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)']); "
+                f"pathlib.Path({str(marker)!r}).write_text(json.dumps([os.getpid(), descendant.pid])); "
+                f"data = {('start ' + secret + chr(10) + 'tail ' + secret).encode()!r}; "
+                "[(os.write(1, bytes([byte])), time.sleep(0.001)) for byte in data]; "
+                f"sys.exit({exit_code})"
+            )
+            runner = (
+                "import os, sys; "
+                f"sys.path.insert(0, {str(Path(test_nats.__file__).parent)!r}); "
+                "import test_nats; "
+                f"sys.exit(test_nats.run_command([sys.executable, '-c', {child!r}], "
+                f"dict(os.environ), redactions=({secret!r},)))"
+            )
+            process = subprocess.Popen([sys.executable, "-c", runner],
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            try:
+                output, _ = process.communicate(timeout=5)
+                self.assertEqual(process.returncode, exit_code, output)
+                self.assertEqual(output, "start [redacted]\ntail [redacted]")
+                pids = json.loads(marker.read_text())
+
+                def running(pid):
+                    try:
+                        return Path(f"/proc/{pid}/stat").read_text().split()[2] != "Z"
+                    except FileNotFoundError:
+                        return False
+
+                deadline = time.monotonic() + 1
+                while any(running(pid) for pid in pids) and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertFalse(any(running(pid) for pid in pids), pids)
+            finally:
+                if process.poll() is None:
+                    process.send_signal(signal.SIGINT)
+                    try:
+                        process.communicate(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        if marker.exists():
+                            try:
+                                os.killpg(json.loads(marker.read_text())[0], signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        process.kill()
+                        process.communicate(timeout=5)
+                if marker.exists():
+                    try:
+                        os.killpg(json.loads(marker.read_text())[0], signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_failed_child_with_inherited_output_returns_and_cleans_descendant(self):
+        self.check_inherited_output(7)
+
+    def test_successful_child_with_inherited_output_returns_and_cleans_descendant(self):
+        self.check_inherited_output(0)
+
     def check_fixture(self, command, **options):
         calls = []
         captured = {}

@@ -9,12 +9,15 @@ managed as an external broker.
 """
 
 import argparse
+import codecs
 from contextlib import suppress
 import json
+import locale
 import math
 import os
 from pathlib import Path
 import secrets
+import selectors
 import shutil
 import signal
 import subprocess
@@ -82,6 +85,51 @@ def redact(text, redactions):
     return text
 
 
+def forward_output(process, redactions):
+    # Observe the direct child independently of EOF: descendants may inherit the
+    # pipe after that child exits. Nonblocking reads also bound the final drain.
+    decoder = codecs.getincrementaldecoder(locale.getpreferredencoding(False))(errors="replace")
+    pending = ""
+    deadline = None
+    eof = False
+    with process.stdout, selectors.DefaultSelector() as selector:
+        os.set_blocking(process.stdout.fileno(), False)
+        selector.register(process.stdout, selectors.EVENT_READ)
+        try:
+            while not eof:
+                if deadline is None and process.poll() is not None:
+                    with suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    deadline = time.monotonic() + 1
+                if deadline is not None and time.monotonic() >= deadline:
+                    print("Test output remained open after child exit; ending output drain", file=sys.stderr)
+                    break
+                for _key, _events in selector.select(timeout=0.1):
+                    try:
+                        chunk = os.read(process.stdout.fileno(), 65536)
+                    except (BlockingIOError, InterruptedError):
+                        continue
+                    except OSError as error:
+                        # Preserve the direct child's exit status even if its
+                        # output pipe fails; closing it prevents blocked writers.
+                        print(f"Could not read test output: {error}", file=sys.stderr)
+                        eof = True
+                        break
+                    if not chunk:
+                        eof = True
+                        break
+                    pending += decoder.decode(chunk)
+                    *lines, pending = pending.split("\n")
+                    for line in lines:
+                        print(redact(line, redactions), flush=True)
+        finally:
+            # Decode and redact complete lines, plus the final unterminated line,
+            # so credentials and multibyte characters can span arbitrary reads.
+            pending += decoder.decode(b"", final=True)
+            if pending:
+                print(redact(pending, redactions), end="", flush=True)
+
+
 def run_command(command, environment, *, redactions=()):
     # A separate process group lets cancellation clean up Cargo's test children too.
     # Defer cancellation during Popen so a signal cannot orphan a just-spawned
@@ -94,7 +142,7 @@ def run_command(command, environment, *, redactions=()):
     process = None
     try:
         try:
-            output = {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "text": True} if redactions else {}
+            output = {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "bufsize": 0} if redactions else {}
             process = subprocess.Popen(command, cwd=ROOT, env=environment, start_new_session=True, **output)
         finally:
             for signum, handler in previous.items():
@@ -102,8 +150,7 @@ def run_command(command, environment, *, redactions=()):
         if pending:
             raise SystemExit(128 + pending[0])
         if redactions:
-            for line in process.stdout:
-                print(redact(line, redactions), end="", flush=True)
+            forward_output(process, redactions)
         code = process.wait()
         return code if code >= 0 else 128 - code
     except BaseException:
