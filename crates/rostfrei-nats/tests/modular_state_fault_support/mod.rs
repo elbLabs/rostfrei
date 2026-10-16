@@ -1,6 +1,6 @@
 //! Fault only owned NATS frames; never fabricate product state or a server response.
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::oneshot;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -20,6 +21,44 @@ pub struct Faults {
     pub dropped_reads: AtomicUsize,
     pub dropped_acks: AtomicUsize,
     replies: Mutex<HashSet<String>>,
+    requests: Mutex<RequestControl>,
+}
+
+#[derive(Default)]
+struct RequestControl {
+    gate: Option<OutgoingGate>,
+    counts: Option<BTreeMap<String, usize>>,
+}
+struct OutgoingGate {
+    subject: String,
+    remaining: usize,
+    reached: oneshot::Sender<()>,
+    resume: oneshot::Receiver<()>,
+}
+
+/// Holds one complete outgoing frame; the eventual reply still comes from NATS.
+#[allow(
+    dead_code,
+    reason = "optional boundary gate used by native consolidation tests"
+)]
+pub struct RequestGate {
+    reached: oneshot::Receiver<()>,
+    resume: oneshot::Sender<()>,
+}
+#[allow(
+    dead_code,
+    reason = "optional boundary gate used by native consolidation tests"
+)]
+impl RequestGate {
+    pub async fn wait(&mut self) -> TestResult {
+        tokio::time::timeout(Duration::from_secs(8), &mut self.reached).await??;
+        Ok(())
+    }
+    pub fn release(self) -> TestResult {
+        self.resume
+            .send(())
+            .map_err(|()| "request gate disconnected".into())
+    }
 }
 
 pub struct StateProxy {
@@ -35,10 +74,30 @@ impl Drop for TaskGuard {
 }
 impl StateProxy {
     #[allow(
+        dead_code,
+        reason = "existing fault targets use the original short deadline"
+    )]
+    pub async fn start(stream: &str, state_subject: &str, old_sequence: u64) -> TestResult<Self> {
+        Self::start_with_timeout(
+            stream,
+            state_subject,
+            old_sequence,
+            Duration::from_millis(250),
+        )
+        .await
+    }
+
+    /// Longer request deadlines let a bounded, independent-client mutation finish at a gate.
+    #[allow(
         clippy::too_many_lines,
         reason = "paired wire-frame relay and selective owned fault injection"
     )]
-    pub async fn start(stream: &str, state_subject: &str, old_sequence: u64) -> TestResult<Self> {
+    pub async fn start_with_timeout(
+        stream: &str,
+        state_subject: &str,
+        old_sequence: u64,
+        timeout: Duration,
+    ) -> TestResult<Self> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
         let upstream = std::env::var("ROSTFREI_NATS_URL")?
@@ -77,6 +136,34 @@ impl StateProxy {
                             0
                         };
                         let subject = fields[1];
+                        // Extract the one-shot under the lock, then wait without the lock.
+                        let gate = {
+                            let mut requests = shared.requests.lock().unwrap();
+                            if let Some(counts) = &mut requests.counts {
+                                let count = counts.entry(subject.to_owned()).or_default();
+                                *count = count.checked_add(1).ok_or("request count overflow")?;
+                            }
+                            if let Some(gate) = &mut requests.gate
+                                && gate.subject == subject
+                            {
+                                gate.remaining = gate.remaining.saturating_sub(1);
+                            }
+                            if requests
+                                .gate
+                                .as_ref()
+                                .is_some_and(|gate| gate.remaining == 0)
+                            {
+                                requests.gate.take()
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(gate) = gate {
+                            gate.reached
+                                .send(())
+                                .map_err(|()| "request gate waiter dropped")?;
+                            tokio::time::timeout(Duration::from_secs(8), gate.resume).await??;
+                        }
                         let old_get = serde_json::from_slice::<serde_json::Value>(
                             &body[header_length..length],
                         )
@@ -142,15 +229,57 @@ impl StateProxy {
             std::env::var("ROSTFREI_CONTRACT_NATS_PASSWORD")?,
         )
         // Context's timeout governs PubAck, while raw GET uses the client's timeout.
-        .request_timeout(Some(Duration::from_millis(250)))
+        .request_timeout(Some(timeout))
         .connect(format!("nats://{address}"))
         .await?;
         let mut js = async_nats::jetstream::new(client);
-        js.set_timeout(Duration::from_millis(250));
+        js.set_timeout(timeout);
         Ok(Self {
             _task: task,
             faults,
             js,
         })
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "opt-in wire diagnostics used only by consolidation acceptance"
+)]
+impl StateProxy {
+    /// Ordinals are one-based and relative to arming, for this exact request subject.
+    pub fn gate_request(&self, subject: String, ordinal: usize) -> TestResult<RequestGate> {
+        if ordinal == 0 {
+            return Err("request gate ordinal must be positive".into());
+        }
+        let (reached, wait) = oneshot::channel();
+        let (resume, release) = oneshot::channel();
+        let mut requests = self.faults.requests.lock().unwrap();
+        if requests.gate.is_some() {
+            return Err("request gate already armed".into());
+        }
+        requests.gate = Some(OutgoingGate {
+            subject,
+            remaining: ordinal,
+            reached,
+            resume: release,
+        });
+        drop(requests);
+        Ok(RequestGate {
+            reached: wait,
+            resume,
+        })
+    }
+    pub fn start_counting(&self) {
+        self.faults.requests.lock().unwrap().counts = Some(BTreeMap::new());
+    }
+    pub fn finish_counting(&self) -> BTreeMap<String, usize> {
+        self.faults
+            .requests
+            .lock()
+            .unwrap()
+            .counts
+            .take()
+            .unwrap_or_default()
     }
 }

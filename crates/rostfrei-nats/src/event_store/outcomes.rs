@@ -48,6 +48,19 @@ pub(super) async fn connect_split(
     config: &NatsEventStoreConfig,
     journal: &jetstream::stream::Stream,
 ) -> Result<Option<SplitAuthority>, EventStoreError> {
+    Ok(inspect_split_state(context, config, journal)
+        .await?
+        .map(|state| SplitAuthority {
+            state_incarnation: state.cached_info().created.to_string(),
+        }))
+}
+
+// Return the checked handle for the immediate reader, not a session-wide lease.
+async fn inspect_split_state(
+    context: &jetstream::Context,
+    config: &NatsEventStoreConfig,
+    journal: &jetstream::stream::Stream,
+) -> Result<Option<jetstream::stream::Stream>, EventStoreError> {
     if !config.split_outcomes() {
         return Ok(None);
     }
@@ -83,9 +96,7 @@ pub(super) async fn connect_split(
             "journal/state incarnation binding differs; authority cannot be reopened",
         ));
     }
-    Ok(Some(SplitAuthority {
-        state_incarnation: state_id,
-    }))
+    Ok(Some(state))
 }
 
 pub(super) async fn provision_split(
@@ -217,15 +228,16 @@ impl NatsEventStore {
         }
         Ok(stream)
     }
-    pub(super) async fn verify_authority(&self) -> Result<(), EventStoreError> {
+    pub(super) async fn verify_authority(
+        &self,
+    ) -> Result<Option<jetstream::stream::Stream>, EventStoreError> {
         let journal = self.verify_journal().await?;
-        let current = connect_split(&self.context, &self.config, &journal).await?;
-        if current.as_ref().map(|s| &s.state_incarnation)
-            != self.split.as_ref().map(|s| &s.state_incarnation)
-        {
+        let state = inspect_split_state(&self.context, &self.config, &journal).await?;
+        let incarnation = state.as_ref().map(|s| s.cached_info().created.to_string());
+        if incarnation.as_ref() != self.split.as_ref().map(|s| &s.state_incarnation) {
             return Err(configuration("outcome state authority was recreated"));
         }
-        Ok(())
+        Ok(state)
     }
     fn validate_key(&self, key: &OutcomeKey) -> Result<(), EventStoreError> {
         if key.authority() != &self.authority
@@ -238,14 +250,12 @@ impl NatsEventStore {
         Ok(())
     }
     async fn read_state(&self, marker: &OutcomeMarker) -> Result<ObservedState, EventStoreError> {
-        self.verify_authority().await?;
+        let stream = self
+            .verify_authority()
+            .await?
+            .ok_or_else(|| configuration("outcome state requires split authority"))?;
         let manifest = marker.detail_reference().encode()?;
         let subject = self.config.outcome_state_subject(&manifest);
-        let stream = self
-            .context
-            .get_stream(self.config.outcome_state_stream_name())
-            .await
-            .map_err(|e| unavailable(e.to_string()))?;
         let message = stream
             .get_last_raw_message_by_subject(&subject)
             .await
@@ -435,11 +445,20 @@ impl NatsEventStore {
             .load_transaction_receipt_materialized(transaction.operation_id(), true)
             .await?
             .ok_or_else(|| corrupt("winner missing"))?;
-        if let Some(marker) = stored.marker {
-            Ok(marker.proposal_digest() == ProposalDigest::of(transaction)?)
-        } else {
-            Ok(transaction_matches_receipt(transaction, receipt))
+        self.matches_checked_receipt(transaction, receipt, stored.marker.as_ref())
+    }
+    pub(super) fn matches_checked_receipt(
+        &self,
+        transaction: &EventTransaction,
+        receipt: &TransactionReceipt,
+        marker: Option<&OutcomeMarker>,
+    ) -> Result<bool, EventStoreError> {
+        if self.config.split_outcomes()
+            && let Some(marker) = marker
+        {
+            return Ok(marker.proposal_digest() == ProposalDigest::of(transaction)?);
         }
+        Ok(transaction_matches_receipt(transaction, receipt))
     }
     pub(super) async fn resolve_identity_after_conflict(
         &self,
@@ -471,7 +490,6 @@ impl NatsEventStore {
         rostfrei_core::validate_completed_transaction(&proposal)?;
         self.validate_completed_scope(&proposal)?;
         self.require_completed_outcome_writer().await?;
-        self.verify_authority().await?;
         let operation = proposal.operation_id().clone();
         let result = self
             .append_transaction_with_histories(proposal, histories)
@@ -538,9 +556,16 @@ impl OutcomeReader for NatsEventStore {
         key: &OutcomeKey,
     ) -> Result<OutcomeLookup<EncodedOutcomeDetails>, EventStoreError> {
         self.validate_key(key)?;
-        self.verify_journal().await?;
+        let journal = self.verify_journal().await?;
+        let mut raw_histories = RawHistoryCache::default();
         let Some(stored) = self
-            .load_transaction_receipt_materialized(key.operation_id(), false)
+            .load_transaction_receipt_from_stream(
+                &journal,
+                key.operation_id(),
+                false,
+                &mut raw_histories,
+                TransactionSubjectLayout::Operation,
+            )
             .await
             .map_err(EventStoreError::in_outcome_recovery)?
         else {
@@ -607,7 +632,6 @@ impl ExecutionStore for NatsEventStore {
             ));
         }
         self.require_completed_outcome_writer().await?;
-        self.verify_authority().await?;
         Ok(Box::new(NatsAppendSession {
             store: self,
             histories: tokio::sync::Mutex::new(LoadedHistories::default()),

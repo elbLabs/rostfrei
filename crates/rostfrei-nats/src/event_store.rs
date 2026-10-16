@@ -282,7 +282,7 @@ impl NatsEventStore {
     async fn require_completed_outcome_writer(&self) -> Result<(), EventStoreError> {
         self.require_writable_handle()?;
         if self.config.split_outcomes() {
-            return self.verify_authority().await;
+            return self.verify_authority().await.map(|_| ());
         }
         let epoch = self.config.completed_outcome_epoch().ok_or_else(|| EventStoreError::new(EventStoreErrorKind::ConfigurationMismatch, "legacy/read-only outcome namespace: import original evidence or use a fresh fenced identity epoch"))?;
         let stream = self
@@ -2090,13 +2090,18 @@ impl NatsEventStore {
                     "published transaction receipt contains different batch metadata",
                 ));
             }
-            let receipt = materialized.receipt;
-            if !self.matches_stored(&transaction, &receipt).await? {
+            // This receipt and marker have just passed history and batch verification.
+            // Recovery paths still discover their winner independently in matches_stored.
+            if !self.matches_checked_receipt(
+                &transaction,
+                &materialized.receipt,
+                materialized.marker.as_ref(),
+            )? {
                 return Err(corrupt(
                     "published transaction receipt contains different content",
                 ));
             }
-            Ok(TransactionAppendOutcome::Appended(receipt))
+            Ok(TransactionAppendOutcome::Appended(materialized.receipt))
         }
         .await;
         verification.map_err(|error: EventStoreError| {
