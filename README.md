@@ -58,6 +58,13 @@ old-writer credential/ACL exclusion. Read the
 and [cutover runbook](docs/completed-outcome-cutover.md); do not activate an old
 namespace just because its cached responses have expired.
 
+For an owned fresh bike-rental application, explicitly set
+`ROSTFREI_COMPLETED_OUTCOME_EPOCH` before starting
+`cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`.
+The epoch selects split authority for both isolated Test and Normal scopes;
+omitting it retains legacy/read-only semantics. See the
+[host configuration](docs/nats-application-host.md).
+
 Domain events form private aggregate history. Integration events are separately
 versioned public contracts published after commit. NATS JetStream adapters
 provide durable command delivery, integration-event messaging, and event storage.

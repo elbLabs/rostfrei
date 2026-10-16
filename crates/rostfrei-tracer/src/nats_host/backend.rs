@@ -80,7 +80,9 @@ impl Backend {
                 let service = Arc::new(processor);
                 let handler =
                     messaging.command_handler_with_resolver(service.clone(), resolver.clone());
-                let messaging = messaging.with_outcome_service(service, sender.clone());
+                let messaging = messaging
+                    .with_outcome_service(service, sender.clone())
+                    .with_replay_publication();
                 (messaging, handler)
             }
         };
