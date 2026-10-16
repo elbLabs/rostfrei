@@ -72,7 +72,7 @@ export function GitHubStarButton() {
   return (
     <a
       aria-label={accessibleLabel}
-      className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/20 bg-[#302e3c] px-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#3a3748]"
+      className="inline-flex h-8 items-center gap-2 border border-border bg-muted px-2 text-xs text-link hover:bg-accent"
       href={REPOSITORY_URL}
       target="_blank"
       rel="noreferrer"
