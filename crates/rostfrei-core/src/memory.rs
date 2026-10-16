@@ -13,6 +13,12 @@ use crate::{
     RecordedEvent, StreamDirectory, StreamId, StreamSummary, StreamVersion,
     TransactionAppendOutcome, TransactionReceipt, TransactionStreamReceipt,
 };
+use crate::{
+    CommandAuthority, CommandCommitSession, CompletedCommit, CompletedOutcome, DetailRead,
+    DetailReadError, EncodedOutcomeDetails, ExecutionStore, OutcomeDecision, OutcomeDetailReader,
+    OutcomeDetailReference, OutcomeDetails, OutcomeKey, OutcomeLifecycle, OutcomeLifecycleError,
+    OutcomeLookup, OutcomeMarker, OutcomeReader, OutcomeRevision, ProposalDigest,
+};
 
 #[derive(Clone)]
 struct StoredAppend {
@@ -28,9 +34,35 @@ enum AppendProvenance {
 }
 
 #[derive(Clone)]
-struct StoredTransaction {
-    transaction: EventTransaction,
-    receipt: TransactionReceipt,
+enum StoredTransaction {
+    Scoped(Box<OutcomeMarker>),
+    Unscoped {
+        proposal: ProposalDigest,
+        receipt: Box<TransactionReceipt>,
+    },
+}
+
+impl StoredTransaction {
+    const fn proposal(&self) -> ProposalDigest {
+        match self {
+            Self::Scoped(marker) => marker.proposal_digest(),
+            Self::Unscoped { proposal, .. } => *proposal,
+        }
+    }
+    fn acceptance(&self) -> Result<TransactionReceipt, EventStoreError> {
+        match self {
+            Self::Scoped(marker) if marker.decision() == OutcomeDecision::Rejected => Err(
+                identity_conflict("operation has a completed rejection, not acceptance"),
+            ),
+            Self::Scoped(marker) => Ok(marker.integrity_receipt().clone()),
+            Self::Unscoped { receipt, .. } => Ok(receipt.as_ref().clone()),
+        }
+    }
+}
+
+enum DetailState {
+    Active(Vec<u8>),
+    Expired,
 }
 
 #[derive(Default)]
@@ -40,13 +72,18 @@ struct State {
     commits: HashMap<(StreamId, CommitId), OperationId>,
     event_ids: HashSet<(StreamId, EventId)>,
     transactions: HashMap<(Option<BoundedContextName>, OperationId), StoredTransaction>,
+    details: HashMap<OutcomeDetailReference, DetailState>,
     event_count: usize,
 }
 
 #[derive(Clone)]
 pub struct InMemoryEventStore {
     state: Arc<Mutex<State>>,
+    authority: CommandAuthority,
+    hot: Arc<dyn OutcomeDetailReader>,
+    cold: Option<Arc<dyn OutcomeDetailReader>>,
     maximum_events: usize,
+    maximum_outcomes: usize,
 }
 
 impl Default for InMemoryEventStore {
@@ -57,21 +94,51 @@ impl Default for InMemoryEventStore {
 
 impl InMemoryEventStore {
     pub fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let incarnation = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let state = Arc::new(Mutex::new(State::default()));
         Self {
-            state: Arc::new(Mutex::new(State::default())),
+            authority: CommandAuthority::memory(incarnation),
+            hot: Arc::new(MemoryDetails(Arc::clone(&state))),
+            cold: None,
+            state,
             maximum_events: usize::MAX,
+            maximum_outcomes: usize::MAX,
         }
     }
 
     pub fn with_capacity(maximum_events: usize) -> Self {
         Self {
-            state: Arc::new(Mutex::new(State::default())),
             maximum_events,
+            ..Self::new()
         }
+    }
+
+    /// Raw trusted storage access, not an authorized command endpoint.
+    pub fn detail_reader(&self) -> Arc<dyn OutcomeDetailReader> {
+        Arc::new(MemoryDetails(Arc::clone(&self.state)))
+    }
+
+    /// Substitutes readers only; the coordinator and lifecycle authority remain shared.
+    #[must_use]
+    pub fn with_detail_readers(
+        mut self,
+        hot: Arc<dyn OutcomeDetailReader>,
+        cold: Option<Arc<dyn OutcomeDetailReader>>,
+    ) -> Self {
+        self.hot = hot;
+        self.cold = cold;
+        self
     }
 
     pub async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         <Self as EventHistory>::load(self, stream_id).await
+    }
+
+    #[must_use]
+    pub const fn with_outcome_capacity(mut self, maximum_outcomes: usize) -> Self {
+        self.maximum_outcomes = maximum_outcomes;
+        self
     }
 }
 
@@ -114,6 +181,45 @@ impl StreamDirectory for InMemoryEventStore {
 #[async_trait]
 #[allow(clippy::too_many_lines)]
 impl EventStore for InMemoryEventStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<crate::InlineCompletedOutcome>, EventStoreError> {
+        match self
+            .lookup_outcome(&OutcomeKey::new(
+                self.authority.clone(),
+                context.clone(),
+                operation.clone(),
+            ))
+            .await?
+        {
+            OutcomeLookup::Missing => Ok(None),
+            OutcomeLookup::Completed(outcome) => {
+                Ok(Some(outcome.to_inline().map_err(|e| recovery_error(&e))?))
+            }
+        }
+    }
+
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<crate::CompletedAppendOutcome, EventStoreError> {
+        let committed = self
+            .begin_command()
+            .await?
+            .commit_outcome(transaction)
+            .await?;
+        let inline = committed
+            .outcome()
+            .to_inline()
+            .map_err(|e| recovery_error(&e))?;
+        Ok(if committed.is_exact_replay() {
+            crate::CompletedAppendOutcome::ExactReplay(inline)
+        } else {
+            crate::CompletedAppendOutcome::Appended(inline)
+        })
+    }
     async fn append(
         &self,
         stream_id: &StreamId,
@@ -250,7 +356,8 @@ impl EventStore for InMemoryEventStore {
         Ok(state
             .transactions
             .get(&(None, operation_id.clone()))
-            .map(|stored| stored.receipt.clone()))
+            .map(StoredTransaction::acceptance)
+            .transpose()?)
     }
 
     async fn load_transaction_receipt_in_context(
@@ -262,27 +369,52 @@ impl EventStore for InMemoryEventStore {
         Ok(state
             .transactions
             .get(&(Some(bounded_context.clone()), operation_id.clone()))
-            .map(|stored| stored.receipt.clone()))
+            .map(StoredTransaction::acceptance)
+            .transpose()?)
     }
 
     async fn append_transaction(
         &self,
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        if transaction.completion().is_some() {
+            return Err(invalid("use commit_outcome for completed decisions"));
+        }
+        let (stored, replay) = self.append_transaction_inner(transaction).await?;
+        let receipt = stored.acceptance()?;
+        Ok(if replay {
+            TransactionAppendOutcome::ExactReplay(receipt)
+        } else {
+            TransactionAppendOutcome::Appended(receipt)
+        })
+    }
+}
+
+impl InMemoryEventStore {
+    #[allow(clippy::too_many_lines)]
+    async fn append_transaction_inner(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<(StoredTransaction, bool), EventStoreError> {
         let total_events = validate_transaction_item_limit(&transaction)?;
+        let proposal = ProposalDigest::of(&transaction)?;
         let mut state = self.state.lock().await;
         let transaction_key = (
             transaction.bounded_context().cloned(),
             transaction.operation_id().clone(),
         );
         if let Some(previous) = state.transactions.get(&transaction_key) {
-            if transaction_content_matches(&previous.transaction, &transaction) {
-                return Ok(TransactionAppendOutcome::ExactReplay(
-                    previous.receipt.clone(),
-                ));
+            if previous.proposal() == proposal {
+                return Ok((previous.clone(), true));
             }
             return Err(identity_conflict(
                 "transaction identity was reused with different content",
+            ));
+        }
+        if state.transactions.len() >= self.maximum_outcomes {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::CapacityExhausted,
+                "in-memory completed outcome capacity exhausted",
             ));
         }
         validate_transaction(&state, &transaction)?;
@@ -335,6 +467,31 @@ impl EventStore for InMemoryEventStore {
         if let Some(causation_id) = transaction.causation_id() {
             receipt = receipt.with_causation_id(causation_id.clone());
         }
+        if let Some(scope) = transaction.security_scope() {
+            receipt = receipt.with_security_scope(scope.clone());
+        }
+        if let Some(actor) = transaction.actor() {
+            receipt = receipt.with_actor(actor.clone());
+        }
+        // Prepare before mutating any journal state. No full proposal or inline
+        // completion survives in permanent storage, even before expiry.
+        let (stored, detail) = if transaction.bounded_context().is_some() {
+            let (marker, bytes) =
+                OutcomeMarker::prepare(self.authority.clone(), &transaction, receipt)?;
+            let detail = (
+                marker.detail_reference().clone(),
+                DetailState::Active(bytes),
+            );
+            (StoredTransaction::Scoped(Box::new(marker)), Some(detail))
+        } else {
+            (
+                StoredTransaction::Unscoped {
+                    proposal,
+                    receipt: Box::new(receipt),
+                },
+                None,
+            )
+        };
 
         for (participant, _, events) in staged {
             let Some(batch) = participant.batch() else {
@@ -362,32 +519,198 @@ impl EventStore for InMemoryEventStore {
             state.streams.entry(stream_id).or_default().extend(events);
         }
         state.event_count = new_count;
-        state.transactions.insert(
-            transaction_key,
-            StoredTransaction {
-                transaction,
-                receipt: receipt.clone(),
-            },
-        );
+        state.transactions.insert(transaction_key, stored.clone());
+        if let Some((reference, detail)) = detail {
+            state.details.insert(reference, detail);
+        }
         drop(state);
-        Ok(TransactionAppendOutcome::Appended(receipt))
+        Ok((stored, false))
     }
 }
 
-fn transaction_content_matches(first: &EventTransaction, second: &EventTransaction) -> bool {
-    first.bounded_context() == second.bounded_context()
-        && first.operation_id() == second.operation_id()
-        && first.operation_fingerprint() == second.operation_fingerprint()
-        && first.correlation_id() == second.correlation_id()
-        && first.causation_id() == second.causation_id()
-        && first.participants().len() == second.participants().len()
-        && first
-            .participants()
-            .iter()
-            .zip(second.participants())
-            .all(|(first, second)| {
-                first.stream_id() == second.stream_id() && first.batch() == second.batch()
-            })
+struct MemoryDetails(Arc<Mutex<State>>);
+
+#[async_trait]
+impl OutcomeDetailReader for MemoryDetails {
+    async fn get(&self, reference: &OutcomeDetailReference) -> Result<DetailRead, DetailReadError> {
+        Ok(match self.0.lock().await.details.get(reference) {
+            Some(DetailState::Active(bytes)) => DetailRead::Found(bytes.clone()),
+            Some(DetailState::Expired) | None => DetailRead::AbsentHere,
+        })
+    }
+}
+
+impl InMemoryEventStore {
+    fn validate_authority(&self, key: &OutcomeKey) -> Result<(), EventStoreError> {
+        if key.authority() != &self.authority {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::ConfigurationMismatch,
+                "outcome key belongs to another authority",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn resolve_marker(
+        &self,
+        marker: OutcomeMarker,
+    ) -> Result<CompletedOutcome, EventStoreError> {
+        // Every invocation consults the coordinator, even on reader-only clones.
+        // An admitted read may finish across a concurrent expiry; no permit is cached.
+        let expired = match self
+            .state
+            .lock()
+            .await
+            .details
+            .get(marker.detail_reference())
+        {
+            Some(DetailState::Expired) => true,
+            Some(DetailState::Active(_)) => false,
+            None => {
+                return Err(EventStoreError::new(
+                    EventStoreErrorKind::CorruptHistory,
+                    "completed outcome lifecycle authority is missing",
+                ));
+            }
+        };
+        let details = if expired {
+            OutcomeDetails::Expired
+        } else {
+            crate::outcome::resolve_details(
+                marker.detail_reference(),
+                self.hot.as_ref(),
+                self.cold.as_deref(),
+            )
+            .await?
+        };
+        CompletedOutcome::new(marker, details).map_err(|e| recovery_error(&e))
+    }
+}
+
+#[async_trait]
+impl OutcomeReader for InMemoryEventStore {
+    async fn lookup_outcome(
+        &self,
+        key: &OutcomeKey,
+    ) -> Result<OutcomeLookup<EncodedOutcomeDetails>, EventStoreError> {
+        self.validate_authority(key)?;
+        let stored = self
+            .state
+            .lock()
+            .await
+            .transactions
+            .get(&(
+                Some(key.bounded_context().clone()),
+                key.operation_id().clone(),
+            ))
+            .cloned();
+        match stored {
+            None => Ok(OutcomeLookup::Missing),
+            Some(StoredTransaction::Scoped(marker)) => Ok(OutcomeLookup::Completed(
+                self.resolve_marker(*marker)
+                    .await
+                    .map_err(EventStoreError::in_outcome_recovery)?,
+            )),
+            Some(StoredTransaction::Unscoped { .. }) => Err(EventStoreError::new(
+                EventStoreErrorKind::CorruptHistory,
+                "scoped outcome has no marker",
+            )),
+        }
+    }
+}
+
+struct MemoryCommandSession<'a>(&'a InMemoryEventStore);
+
+#[async_trait]
+impl EventHistory for MemoryCommandSession<'_> {
+    async fn load(&self, stream: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        self.0.load(stream).await
+    }
+}
+
+#[async_trait]
+impl CommandCommitSession for MemoryCommandSession<'_> {
+    async fn commit_outcome(
+        self: Box<Self>,
+        proposal: EventTransaction,
+    ) -> Result<CompletedCommit, EventStoreError> {
+        crate::validate_completed_transaction(&proposal)?;
+        let (stored, replay) = self.0.append_transaction_inner(proposal).await?;
+        let StoredTransaction::Scoped(marker) = stored else {
+            return Err(invalid("completed command requires scoped marker"));
+        };
+        let outcome = self
+            .0
+            .resolve_marker(*marker)
+            .await
+            .map_err(EventStoreError::in_outcome_recovery)?;
+        Ok(if replay {
+            CompletedCommit::ExactReplay(outcome)
+        } else {
+            CompletedCommit::Appended(outcome)
+        })
+    }
+}
+
+#[async_trait]
+impl ExecutionStore for InMemoryEventStore {
+    fn authority(&self) -> &CommandAuthority {
+        &self.authority
+    }
+    async fn begin_command(&self) -> Result<Box<dyn CommandCommitSession + '_>, EventStoreError> {
+        Ok(Box::new(MemoryCommandSession(self)))
+    }
+}
+
+#[async_trait]
+impl OutcomeLifecycle for InMemoryEventStore {
+    async fn expire_details(
+        &self,
+        key: &OutcomeKey,
+        expected: &OutcomeRevision,
+    ) -> Result<crate::OutcomeExpiry, OutcomeLifecycleError> {
+        self.validate_authority(key)?;
+        let mut state = self.state.lock().await;
+        let Some(StoredTransaction::Scoped(marker)) = state.transactions.get(&(
+            Some(key.bounded_context().clone()),
+            key.operation_id().clone(),
+        )) else {
+            return Err(OutcomeLifecycleError::Missing);
+        };
+        if marker.revision() != expected {
+            return Err(OutcomeLifecycleError::RevisionMismatch);
+        }
+        let reference = marker.detail_reference().clone();
+        let detail = state.details.get_mut(&reference).ok_or_else(|| {
+            EventStoreError::new(
+                EventStoreErrorKind::CorruptHistory,
+                "cannot expire missing lifecycle evidence",
+            )
+        })?;
+        // Atomic withdrawal and reclamation. Retain an occupied, payload-free slot.
+        // No API can prepare or reinsert bytes for this reference afterwards.
+        *detail = DetailState::Expired;
+        drop(state);
+        Ok(crate::OutcomeExpiry::new(
+            expected.clone(),
+            crate::ReclamationStatus::Reclaimed,
+        ))
+    }
+}
+
+fn recovery_error(error: &crate::OutcomeRecoveryError) -> EventStoreError {
+    EventStoreError::new(
+        match error {
+            crate::OutcomeRecoveryError::IntegrityMismatch => EventStoreErrorKind::CorruptHistory,
+            crate::OutcomeRecoveryError::Expired => EventStoreErrorKind::CompletedDetailsExpired,
+            crate::OutcomeRecoveryError::Archived { .. }
+            | crate::OutcomeRecoveryError::Unavailable { .. } => {
+                EventStoreErrorKind::CompletedDetailsUnavailable
+            }
+        },
+        error.to_string(),
+    )
+    .in_outcome_recovery()
 }
 
 fn validate_transaction(
@@ -408,6 +731,7 @@ fn validate_transaction(
             || batch.operation_fingerprint() != transaction.operation_fingerprint()
             || batch.correlation_id() != transaction.correlation_id()
             || batch.causation_id() != transaction.causation_id()
+            || batch.actor() != transaction.actor()
         {
             return Err(invalid(
                 "participant commit metadata does not match its transaction",
@@ -543,4 +867,169 @@ fn identity_conflict(message: &'static str) -> EventStoreError {
 
 fn invalid(message: impl Into<String>) -> EventStoreError {
     EventStoreError::new(EventStoreErrorKind::InvalidRequest, message)
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use crate::{
+        CommandCompletion, CommandExecutionMetadata, ContentFingerprint, EncodedRejection,
+    };
+
+    fn proposal() -> EventTransaction {
+        let metadata = CommandExecutionMetadata::new(
+            OperationId::new("secret-operation").unwrap(),
+            ContentFingerprint::digest("command"),
+        )
+        .with_default_outcome_evidence::<()>();
+        EventTransaction::new(
+            metadata.operation_id().clone(),
+            metadata.operation_fingerprint(),
+            Vec::new(),
+        )
+        .with_bounded_context(BoundedContextName::new("life").unwrap())
+        .with_completion(CommandCompletion::new(
+            metadata.outcome_evidence().cloned(),
+            Some(EncodedRejection {
+                codec_id: "raw".to_owned(),
+                codec_version: 1,
+                bytes: b"sensitive-rejection-body".repeat(1000),
+            }),
+        ))
+    }
+
+    struct DetachedReader {
+        bytes: Vec<u8>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    #[async_trait]
+    impl OutcomeDetailReader for DetachedReader {
+        async fn get(&self, _: &OutcomeDetailReference) -> Result<DetailRead, DetailReadError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(DetailRead::Found(self.bytes.clone()))
+        }
+    }
+
+    #[tokio::test]
+    async fn expiry_reclaims_the_only_owned_completion_body_and_retains_no_proposal_copy() {
+        let store = InMemoryEventStore::new();
+        let proposal = proposal();
+        let commit = store
+            .begin_command()
+            .await
+            .unwrap()
+            .commit_outcome(proposal.clone())
+            .await
+            .unwrap();
+        let marker = commit.outcome().marker();
+        let reference = marker.detail_reference();
+        // Compact detail encoding grows by raw bytes, not a JSON numeric byte array.
+        let body_len = proposal
+            .completion()
+            .unwrap()
+            .rejection
+            .as_ref()
+            .unwrap()
+            .bytes
+            .len();
+        assert!(reference.length() < body_len.saturating_add(1024));
+        store
+            .expire_details(reference.key(), marker.revision())
+            .await
+            .unwrap();
+        let state = store.state.lock().await;
+        assert_eq!(state.transactions.len(), 1);
+        assert_eq!(state.details.len(), 1);
+        assert!(matches!(
+            state.details.get(reference),
+            Some(DetailState::Expired)
+        ));
+        // The permanent enum contains only marker/integrity or legacy acceptance;
+        // there is no EventTransaction field in either branch.
+        for stored in state.transactions.values() {
+            match stored {
+                StoredTransaction::Scoped(marker) => {
+                    assert!(marker.integrity_receipt().completion().is_none());
+                    assert!(marker.integrity_receipt().events().is_empty());
+                    assert!(!format!("{marker:?}").contains("sensitive-rejection-body"));
+                }
+                StoredTransaction::Unscoped { receipt, .. } => {
+                    assert!(receipt.completion().is_none());
+                }
+            }
+        }
+        drop(state);
+        // The legacy full-result wrapper also fails closed; it cannot invent acceptance.
+        assert_eq!(
+            store
+                .load_completed_outcome_in_context(
+                    reference.key().bounded_context(),
+                    reference.key().operation_id()
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            EventStoreErrorKind::CompletedDetailsExpired
+        );
+        assert_eq!(
+            store
+                .load_transaction_receipt_in_context(
+                    reference.key().bounded_context(),
+                    reference.key().operation_id()
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            EventStoreErrorKind::IdentityConflict
+        );
+        assert_eq!(
+            store.commit_outcome(proposal).await.unwrap_err().kind(),
+            EventStoreErrorKind::CompletedDetailsExpired
+        );
+        assert!(matches!(
+            store.detail_reader().get(reference).await.unwrap(),
+            DetailRead::AbsentHere
+        ));
+    }
+
+    #[tokio::test]
+    async fn missing_lifecycle_blocks_detached_hot_and_cold_even_with_a_valid_copy() {
+        let store = InMemoryEventStore::new();
+        let commit = store
+            .begin_command()
+            .await
+            .unwrap()
+            .commit_outcome(proposal())
+            .await
+            .unwrap();
+        let marker = commit.outcome().marker();
+        let reference = marker.detail_reference();
+        let DetailRead::Found(bytes) = store.detail_reader().get(reference).await.unwrap() else {
+            panic!("missing detail")
+        };
+        let reader = Arc::new(DetachedReader {
+            bytes,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let resolver = store
+            .clone()
+            .with_detail_readers(reader.clone(), Some(reader.clone()));
+        // Fault injection, not an exported maintenance operation.
+        store.state.lock().await.details.remove(reference);
+        assert_eq!(
+            resolver
+                .lookup_outcome(reference.key())
+                .await
+                .unwrap_err()
+                .kind(),
+            EventStoreErrorKind::CorruptHistory
+        );
+        assert!(
+            store
+                .expire_details(reference.key(), marker.revision())
+                .await
+                .is_err()
+        );
+        assert_eq!(reader.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
 }

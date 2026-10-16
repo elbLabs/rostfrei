@@ -119,6 +119,7 @@ pub trait ErasedCommandSimulator: Send + Sync {
     async fn simulate(
         &self,
         history: Arc<dyn EventHistory>,
+        codecs: Arc<rostfrei_core::AggregateCodecs>,
         operation_id: OperationId,
         fingerprint: ContentFingerprint,
         payload: Value,
@@ -169,6 +170,7 @@ where
     async fn simulate(
         &self,
         history: Arc<dyn EventHistory>,
+        codecs: Arc<rostfrei_core::AggregateCodecs>,
         operation_id: OperationId,
         fingerprint: ContentFingerprint,
         payload: Value,
@@ -180,7 +182,7 @@ where
         .map_err(|error| RuntimeSimulationError::InvalidBoundedContext(error.to_string()))?;
         let metadata =
             CommandExecutionMetadata::new(operation_id, fingerprint).with_bounded_context(context);
-        let (decision, simulated) = CommandExecutor::new(history)
+        let (decision, simulated) = CommandExecutor::with_codecs(history, codecs)
             .simulate(&self.handler, metadata, &command)
             .await?
             .into_parts();

@@ -177,7 +177,7 @@ fn context() -> TestResult<rostfrei_messaging_core::BoundedContext> {
 
 #[test]
 fn processor_rejects_commands_registered_for_another_context() -> TestResult {
-    let store: Arc<dyn EventStore> = Arc::new(InMemoryEventStore::new());
+    let store: Arc<dyn rostfrei::ExecutionStore> = Arc::new(InMemoryEventStore::new());
     let mut processor = CommandProcessor::new(context()?.name().clone(), store);
 
     let result = processor.register::<ForeignCommand, ForeignCommandHandler>(
@@ -199,7 +199,7 @@ fn processor_rejects_commands_registered_for_another_context() -> TestResult {
 }
 
 fn registered_processor(store: InMemoryEventStore) -> TestResult<CommandProcessor> {
-    let store: Arc<dyn EventStore> = Arc::new(store);
+    let store: Arc<dyn rostfrei::ExecutionStore> = Arc::new(store);
     let mut processor = CommandProcessor::new(context()?.name().clone(), store);
     processor.register::<CreditAccount, CreditAccountHandler>(
         CreditAccountHandler,
@@ -246,6 +246,23 @@ async fn direct_and_bus_execution_preserve_root_and_inherited_correlation() -> T
     Ok(())
 }
 
+fn credit_execution_metadata(
+    operation_id: OperationId,
+    causation: &CausationId,
+) -> TestResult<CommandExecutionMetadata> {
+    Ok(CommandExecutionMetadata::new(
+        operation_id,
+        command_execution_fingerprint(
+            "ledger",
+            "credit-account",
+            1,
+            &json!({ "account_id": "account-1", "amount": 7 }),
+        )?,
+    )
+    .with_bounded_context(context()?.name().clone())
+    .with_causation_id(causation.clone()))
+}
+
 async fn assert_execution_metadata_parity(
     direct_store: &InMemoryEventStore,
     bus_store: &InMemoryEventStore,
@@ -260,18 +277,11 @@ async fn assert_execution_metadata_parity(
     };
     let operation_id = OperationId::new(operation)?;
     let mut request = CommandRequest::new(operation_id.clone(), command.clone())
-        .with_causation_id(causation.clone());
-    let mut metadata = CommandExecutionMetadata::new(
-        operation_id.clone(),
-        command_execution_fingerprint(
-            "ledger",
-            "credit-account",
-            1,
-            &json!({ "account_id": "account-1", "amount": 7 }),
-        )?,
-    )
-    .with_bounded_context(context()?.name().clone())
-    .with_causation_id(causation.clone());
+        .with_causation_id(causation.clone())
+        .with_created_at(rostfrei::MessageTimestamp::from_unix_milliseconds(
+            1_700_000_000_000,
+        )?);
+    let mut metadata = credit_execution_metadata(operation_id.clone(), causation)?;
     if let Some(correlation) = correlation {
         request = request.with_correlation_id(correlation.clone());
         metadata = metadata.with_correlation_id(correlation.clone());
@@ -280,6 +290,13 @@ async fn assert_execution_metadata_parity(
         .cloned()
         .unwrap_or(CorrelationId::new(operation)?);
     let encoded = bus.encode(request.clone())?;
+    metadata = metadata.with_outcome_evidence(
+        encoded
+            .validated_execution_metadata()?
+            .outcome_evidence()
+            .ok_or("validated command evidence absent")?
+            .clone(),
+    );
     assert_eq!(encoded.correlation_id(), &expected_correlation);
     let executor = CommandExecutor::new(direct_store.clone());
     let direct = executor

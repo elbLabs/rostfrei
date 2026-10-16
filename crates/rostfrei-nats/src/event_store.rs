@@ -27,7 +27,9 @@ use rostfrei_core::{
     TransactionParticipant, TransactionReceipt, TransactionStreamReceipt, derive_commit_id,
     derive_event_id, validate_transaction_item_limit,
 };
-use rostfrei_messaging_core::{BoundedContextName, CausationId, CorrelationId};
+use rostfrei_messaging_core::{
+    BoundedContextName, CausationId, CommandResponseReader as _, CorrelationId,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -42,13 +44,29 @@ mod history_reader;
 #[path = "event_store/history_reads.rs"]
 mod history_reads;
 use history_reader::HistoryReader;
+#[path = "event_store/outcomes.rs"]
+mod outcomes;
+use outcomes::SplitAuthority;
 
 const LEGACY_EVENT_SCHEMA_VERSION: u16 = 1;
 const CORRELATION_EVENT_SCHEMA_VERSION: u16 = 2;
 const EVENT_SCHEMA_VERSION: u16 = 3;
 const TRANSACTION_EVENT_SCHEMA_VERSION: u16 = 4;
+const ACTOR_EVENT_SCHEMA_VERSION: u16 = 5;
+const ACTOR_TRANSACTION_EVENT_SCHEMA_VERSION: u16 = 6;
+const ACTOR_RECEIPT_SCHEMA_VERSION: u16 = 5;
+
+#[cfg(test)]
+#[path = "event_store/attribution_tests.rs"]
+mod attribution_tests;
+
+#[cfg(test)]
+#[path = "event_store/legacy_vectors.rs"]
+mod legacy_vectors;
 const TRANSACTION_RECEIPT_SCHEMA_VERSION: u16 = 1;
 const EVENT_FREE_RECEIPT_SCHEMA_VERSION: u16 = 2;
+const COMPLETED_OUTCOME_SCHEMA_VERSION: u16 = 3;
+const SPLIT_OUTCOME_SCHEMA_VERSION: u16 = 4;
 const ATOMIC_BATCH_API_LEVEL: &str = "2";
 const MINIMUM_ATOMIC_BATCH_SERVER_VERSION: (i64, i64, i64) = (2, 12, 1);
 const NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT: &str =
@@ -60,6 +78,21 @@ struct NatsAppendSession<'a> {
     store: &'a NatsEventStore,
     histories: tokio::sync::Mutex<LoadedHistories>,
     incarnation: String,
+}
+
+fn completed_append(outcome: TransactionAppendOutcome) -> rostfrei_core::CompletedAppendOutcome {
+    match outcome {
+        TransactionAppendOutcome::Appended(receipt) => {
+            rostfrei_core::CompletedAppendOutcome::Appended(
+                rostfrei_core::InlineCompletedOutcome::new(receipt),
+            )
+        }
+        TransactionAppendOutcome::ExactReplay(receipt) => {
+            rostfrei_core::CompletedAppendOutcome::ExactReplay(
+                rostfrei_core::InlineCompletedOutcome::new(receipt),
+            )
+        }
+    }
 }
 
 impl NatsAppendSession<'_> {
@@ -90,12 +123,33 @@ impl EventHistory for NatsAppendSession<'_> {
 
 #[async_trait]
 impl AppendSession for NatsAppendSession<'_> {
+    async fn commit_outcome(
+        self: Box<Self>,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        if self.store.config.split_outcomes() {
+            self.validate_incarnation().await?;
+            return self
+                .store
+                .commit_inline(transaction, self.histories.into_inner())
+                .await;
+        }
+        rostfrei_core::validate_completed_transaction(&transaction)?;
+        self.store.validate_completed_scope(&transaction)?;
+        self.store.require_completed_outcome_writer().await?;
+        self.validate_incarnation().await?;
+        self.store
+            .append_transaction_with_histories(transaction, self.histories.into_inner())
+            .await
+            .map(completed_append)
+    }
     async fn append(
         mut self: Box<Self>,
         stream_id: &StreamId,
         expected_version: ExpectedVersion,
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
+        self.store.require_mutable_namespace().await?;
         let history = self
             .store
             .load_session_history(stream_id, self.histories.get_mut())
@@ -110,6 +164,10 @@ impl AppendSession for NatsAppendSession<'_> {
         self: Box<Self>,
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        self.store.require_mutable_namespace().await?;
+        if transaction.completion().is_some() {
+            return Err(invalid("use commit_outcome for completed decisions"));
+        }
         self.validate_incarnation().await?;
         self.store
             .append_transaction_with_histories(transaction, self.histories.into_inner())
@@ -122,6 +180,10 @@ pub struct NatsEventStore {
     context: jetstream::Context,
     config: NatsEventStoreConfig,
     history_auditing: bool,
+    authority: rostfrei_core::CommandAuthority,
+    journal_incarnation: String,
+    split: Option<SplitAuthority>,
+    detail_readers: Option<DetailReaders>,
     #[cfg(test)]
     transaction_receipt_miss_hook: Option<ReadBarrierHook>,
     #[cfg(test)]
@@ -132,6 +194,11 @@ pub struct NatsEventStore {
     history_snapshot_hook: Option<ReadBarrierHook>,
 }
 
+type DetailReaders = (
+    Arc<dyn rostfrei_core::OutcomeDetailReader>,
+    Option<Arc<dyn rostfrei_core::OutcomeDetailReader>>,
+);
+
 #[cfg(test)]
 #[derive(Clone)]
 struct ReadBarrierHook {
@@ -140,6 +207,162 @@ struct ReadBarrierHook {
 }
 
 impl NatsEventStore {
+    /// Quiesced, credential-fenced legacy maintenance only. Imports a retained business
+    /// rejection bound to its ORIGINAL validated envelope. The legacy epoch remains blocked
+    /// for unknown identities (including expired/invisible rejections); no activation shortcut.
+    pub async fn import_legacy_rejected_outcome(
+        &self,
+        command: &rostfrei::EncodedCommand,
+        response: &rostfrei_messaging_core::CommandResponse,
+        topology: &crate::MessagingTopology,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        self.require_mutable_namespace().await?;
+        if self.config.completed_outcome_epoch().is_some()
+            || command.address().application() != self.config.application().as_str()
+            || command.address().traffic_scope() != self.config.traffic_scope()
+        {
+            return Err(invalid(
+                "legacy import requires matching legacy application/traffic namespace",
+            ));
+        }
+        let stream = self
+            .context
+            .get_stream(self.config.stream_name())
+            .await
+            .map_err(|error| unavailable(format!("legacy namespace inspection failed: {error}")))?;
+        if stream
+            .cached_info()
+            .config
+            .metadata
+            .contains_key("rostfrei.completed-outcomes.epoch")
+        {
+            return Err(invalid(
+                "legacy imports cannot write a fresh completed outcome epoch",
+            ));
+        }
+        let transaction = command
+            .legacy_rejection_transaction(response)
+            .map_err(|error| invalid(error.to_string()))?;
+        let retained =
+            crate::NatsCommandResponseReader::new(self.context.clone(), topology.clone())
+                .read_command_response(
+                    &command
+                        .response_address()
+                        .map_err(|error| invalid(error.to_string()))?,
+                    command.operation_id(),
+                    command.message_id(),
+                    self.config.puback_timeout(),
+                )
+                .await
+                .map_err(|error| {
+                    unavailable(format!(
+                        "original retained legacy rejection is unavailable: {error}"
+                    ))
+                })?;
+        if &retained != response {
+            return Err(identity_conflict(
+                "supplied legacy response differs from retained authority",
+            ));
+        }
+        rostfrei_core::validate_completed_transaction(&transaction)?;
+        Box::pin(self.append_transaction_with_histories(transaction, LoadedHistories::default()))
+            .await
+            .map(completed_append)
+    }
+    fn require_writable_handle(&self) -> Result<(), EventStoreError> {
+        if self.config.read_only_outcomes() {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::ConfigurationMismatch,
+                "event-store handle is configured replay-only",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn require_completed_outcome_writer(&self) -> Result<(), EventStoreError> {
+        self.require_writable_handle()?;
+        if self.config.split_outcomes() {
+            return self.verify_authority().await.map(|_| ());
+        }
+        let epoch = self.config.completed_outcome_epoch().ok_or_else(|| EventStoreError::new(EventStoreErrorKind::ConfigurationMismatch, "legacy/read-only outcome namespace: import original evidence or use a fresh fenced identity epoch"))?;
+        let stream = self
+            .context
+            .get_stream(self.config.stream_name())
+            .await
+            .map_err(|error| {
+                unavailable(format!("failed to verify completed outcome epoch: {error}"))
+            })?;
+        if stream
+            .cached_info()
+            .config
+            .metadata
+            .get("rostfrei.completed-outcomes.epoch")
+            .map(String::as_str)
+            != Some(epoch)
+            || stream
+                .cached_info()
+                .config
+                .metadata
+                .get("rostfrei.completed-outcomes.version")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::ConfigurationMismatch,
+                "durable completed outcome epoch/version differs",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn require_mutable_namespace(&self) -> Result<(), EventStoreError> {
+        self.require_writable_handle()?;
+        // Configured authority cannot be downgraded by clearing broker metadata.
+        // Split writers must verify their captured pair even on compatibility routes.
+        if self.config.completed_outcome_epoch().is_some() {
+            return self.require_completed_outcome_writer().await;
+        }
+        let stream = self
+            .context
+            .get_stream(self.config.stream_name())
+            .await
+            .map_err(|error| unavailable(format!("failed to inspect write namespace: {error}")))?;
+        if stream
+            .cached_info()
+            .config
+            .metadata
+            .contains_key("rostfrei.completed-outcomes.epoch")
+        {
+            self.require_completed_outcome_writer().await?;
+        }
+        Ok(())
+    }
+
+    fn validate_completed_scope(
+        &self,
+        transaction: &EventTransaction,
+    ) -> Result<(), EventStoreError> {
+        let expected = format!(
+            "{}:{}",
+            self.config.application().as_str(),
+            self.config
+                .traffic_scope()
+                .subject_segment()
+                .unwrap_or("normal")
+        );
+        if transaction
+            .completion()
+            .and_then(|completion| completion.evidence.as_ref())
+            .and_then(|evidence| evidence.authority_scope.as_ref())
+            .is_some_and(|scope| scope != &expected)
+        {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::ConfigurationMismatch,
+                "completed evidence belongs to another application/traffic authority",
+            ));
+        }
+        Ok(())
+    }
     async fn stream_incarnation(&self) -> Result<String, EventStoreError> {
         let stream = self
             .context
@@ -162,10 +385,17 @@ impl NatsEventStore {
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
         verify_stream_config(&config.stream_config(), &stream.cached_info().config)?;
+        let journal_incarnation = stream.cached_info().created.to_string();
+        let split = outcomes::connect_split(&context, &config, &stream).await?;
+        let authority = outcomes::authority(&config, &journal_incarnation, split.as_ref())?;
         Ok(Self {
             context,
             config,
             history_auditing: false,
+            authority,
+            journal_incarnation,
+            split,
+            detail_readers: None,
             #[cfg(test)]
             transaction_receipt_miss_hook: None,
             #[cfg(test)]
@@ -1061,6 +1291,7 @@ impl NatsEventStore {
                 fingerprint,
                 correlation_id.as_ref(),
                 causation_id.as_ref(),
+                content.actor.as_ref(),
                 &batch_id,
                 transaction_event_ordinal,
                 transaction_event_count,
@@ -1109,8 +1340,31 @@ impl NatsEventStore {
         if let Some(causation_id) = causation_id {
             receipt = receipt.with_causation_id(causation_id);
         }
+        if let Some(actor) = content.actor {
+            receipt = receipt.with_actor(actor);
+        }
+        if let Some(scope) = content.security_scope {
+            receipt = receipt.with_security_scope(
+                rostfrei_core::SecurityScope::new(scope).map_err(|e| corrupt(e.to_string()))?,
+            );
+        }
+        if let Some(completion) = content.completion {
+            receipt = receipt.with_completion(completion);
+        }
+        receipt.validate_integrity()?;
+        let marker = content
+            .manifest
+            .map(|encoded| {
+                let bytes = STANDARD
+                    .decode(encoded)
+                    .map_err(|e| corrupt(e.to_string()))?;
+                let key = self.outcome_key(receipt.operation_id());
+                rostfrei_core::OutcomeMarker::restore_manifest(&key, &bytes, receipt.clone())
+            })
+            .transpose()?;
         Ok(MaterializedTransactionReceipt {
             receipt,
+            marker,
             batch_id,
             batch_start_stream_sequence,
             transaction_event_count,
@@ -1125,7 +1379,7 @@ impl NatsEventStore {
             .load_transaction_receipt_inner(transaction.operation_id())
             .await?
         {
-            if transaction_matches_receipt(transaction, &receipt) {
+            if self.matches_stored(transaction, &receipt).await? {
                 return Ok(TransactionAppendOutcome::ExactReplay(receipt));
             }
             return Err(identity_conflict(
@@ -1138,10 +1392,9 @@ impl NatsEventStore {
                 let receipt = self
                     .load_transaction_receipt_inner(transaction.operation_id())
                     .await?;
-                return resolve_transaction_identity_after_participant_conflict(
-                    transaction,
-                    receipt,
-                );
+                return self
+                    .resolve_identity_after_conflict(transaction, receipt)
+                    .await;
             }
         }
         Err(conflict("an aggregate changed during transaction append"))
@@ -1158,7 +1411,7 @@ impl NatsEventStore {
             &original,
         )?;
         match receipt {
-            Some(receipt) if transaction_matches_receipt(transaction, &receipt) => {
+            Some(receipt) if self.matches_stored(transaction, &receipt).await? => {
                 return Ok(TransactionAppendOutcome::ExactReplay(receipt));
             }
             Some(_) => {
@@ -1183,10 +1436,9 @@ impl NatsEventStore {
                         .await,
                     &original,
                 )?;
-                return resolve_transaction_identity_after_participant_conflict(
-                    transaction,
-                    receipt,
-                );
+                return self
+                    .resolve_identity_after_conflict(transaction, receipt)
+                    .await;
             }
         }
         Err(original)
@@ -1337,11 +1589,60 @@ impl NatsEventStore {
 
 #[async_trait]
 impl EventStore for NatsEventStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, EventStoreError> {
+        if context != self.config.bounded_context() {
+            return Err(invalid("completed outcome context does not match store"));
+        }
+        if self.config.split_outcomes() {
+            return self.inline_lookup(operation).await;
+        }
+        if let Some(receipt) = self.load_transaction_receipt_inner(operation).await? {
+            if self.config.completed_outcome_epoch().is_none() && receipt.completion().is_none() {
+                // A legacy acceptance can coexist with a contradictory transport-only
+                // rejection. Do not choose between them without an audited migration.
+                return Err(EventStoreError::new(
+                    EventStoreErrorKind::ConfigurationMismatch,
+                    "legacy acceptance/cache authority is unaudited; command replay blocked",
+                ));
+            }
+            return Ok(Some(rostfrei_core::InlineCompletedOutcome::new(receipt)));
+        }
+        self.require_completed_outcome_writer().await?;
+        Ok(None)
+    }
+
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        if self.config.split_outcomes() {
+            return self
+                .commit_inline(transaction, LoadedHistories::default())
+                .await;
+        }
+        rostfrei_core::validate_completed_transaction(&transaction)?;
+        self.validate_completed_scope(&transaction)?;
+        self.require_completed_outcome_writer().await?;
+        self.append_transaction_with_histories(transaction, LoadedHistories::default())
+            .await
+            .map(completed_append)
+    }
     async fn append_session(&self) -> Result<Box<dyn AppendSession + '_>, EventStoreError> {
+        self.require_writable_handle()?;
         Ok(Box::new(NatsAppendSession {
             store: self,
             histories: tokio::sync::Mutex::new(LoadedHistories::default()),
-            incarnation: self.stream_incarnation().await?,
+            // Opening a compatibility session never adopts a replacement split
+            // authority. Its writes still check the full captured pair.
+            incarnation: if self.config.split_outcomes() {
+                self.journal_incarnation.clone()
+            } else {
+                self.stream_incarnation().await?
+            },
         }))
     }
 
@@ -1351,6 +1652,7 @@ impl EventStore for NatsEventStore {
         expected_version: ExpectedVersion,
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
+        self.require_mutable_namespace().await?;
         let history = self.load_history(stream_id).await?;
         self.append_with_history(stream_id, expected_version, batch, history)
             .await
@@ -1360,7 +1662,7 @@ impl EventStore for NatsEventStore {
         &self,
         operation_id: &OperationId,
     ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-        self.load_transaction_receipt_inner(operation_id).await
+        self.acceptance_receipt(operation_id).await
     }
 
     async fn load_transaction_receipt_in_context(
@@ -1375,13 +1677,17 @@ impl EventStore for NatsEventStore {
                 self.config.bounded_context().as_str()
             )));
         }
-        self.load_transaction_receipt_inner(operation_id).await
+        self.acceptance_receipt(operation_id).await
     }
 
     async fn append_transaction(
         &self,
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
+        self.require_mutable_namespace().await?;
+        if transaction.completion().is_some() {
+            return Err(invalid("use commit_outcome for completed decisions"));
+        }
         self.append_transaction_with_histories(transaction, LoadedHistories::default())
             .await
     }
@@ -1533,7 +1839,7 @@ impl NatsEventStore {
             .load_transaction_receipt_inner(transaction.operation_id())
             .await?
         {
-            if transaction_matches_receipt(&transaction, &receipt) {
+            if self.matches_stored(&transaction, &receipt).await? {
                 return Ok(TransactionAppendOutcome::ExactReplay(receipt));
             }
             return Err(identity_conflict(
@@ -1553,10 +1859,9 @@ impl NatsEventStore {
                 let receipt = self
                     .load_transaction_receipt_inner(transaction.operation_id())
                     .await?;
-                return resolve_transaction_identity_after_participant_conflict(
-                    &transaction,
-                    receipt,
-                );
+                return self
+                    .resolve_identity_after_conflict(&transaction, receipt)
+                    .await;
             }
             let base_version = history
                 .events
@@ -1662,7 +1967,18 @@ impl NatsEventStore {
             });
         }
 
-        let receipt_content = transaction_receipt_content(&self.config, &transaction, &staged)?;
+        let mut receipt_content = transaction_receipt_content(&self.config, &transaction, &staged)?;
+        if self.config.split_outcomes() && transaction.completion().is_some() {
+            let receipt = outcomes::staged_receipt(&transaction, &staged);
+            let (marker, bytes) = rostfrei_core::OutcomeMarker::prepare(
+                self.authority.clone(),
+                &transaction,
+                receipt,
+            )?;
+            self.prepare_details(&marker, &bytes).await?;
+            receipt_content.completion = None;
+            receipt_content.manifest = Some(STANDARD.encode(marker.encode_manifest()?));
+        }
         let receipt_payload = encode_transaction_receipt(&receipt_content)?;
         if receipt_payload.len() > self.config.max_event_bytes() {
             return Err(invalid(format!(
@@ -1719,67 +2035,82 @@ impl NatsEventStore {
         }
         let item_count = u64::try_from(transaction_item_count)
             .map_err(|_| invalid("transaction item count cannot be represented"))?;
-        let batch_start = ack
-            .sequence
-            .checked_sub(item_count)
-            .and_then(|sequence| sequence.checked_add(1))
-            .ok_or_else(|| corrupt("transaction PubAck contains an invalid sequence"))?;
-        let mut histories = histories.by_stream;
-        let mut next_sequence = batch_start;
-        for participant in &staged {
-            if participant.batch.is_none() {
-                continue;
+        let verification = async {
+            let batch_start = ack
+                .sequence
+                .checked_sub(item_count)
+                .and_then(|sequence| sequence.checked_add(1))
+                .ok_or_else(|| corrupt("transaction PubAck contains an invalid sequence"))?;
+            let mut histories = histories.by_stream;
+            let mut next_sequence = batch_start;
+            for participant in &staged {
+                if participant.batch.is_none() {
+                    continue;
+                }
+                let event_count = u64::try_from(participant.recorded.len())
+                    .map_err(|_| invalid("participant event count cannot be represented"))?;
+                next_sequence = next_sequence
+                    .checked_add(event_count)
+                    .ok_or_else(|| corrupt("transaction sequence space overflowed"))?;
+                let last_sequence = next_sequence.checked_sub(1).ok_or_else(|| {
+                    corrupt("transaction contains an invalid participant sequence")
+                })?;
+                let previous = histories
+                    .get(&participant.stream_id)
+                    .ok_or_else(|| corrupt("staged participant history is missing"))?;
+                let history = self
+                    .extend_history(
+                        &participant.stream_id,
+                        previous,
+                        last_sequence,
+                        &batch_id,
+                        participant.recorded.len(),
+                    )
+                    .await?;
+                histories.insert(participant.stream_id.clone(), history);
             }
-            let event_count = u64::try_from(participant.recorded.len())
-                .map_err(|_| invalid("participant event count cannot be represented"))?;
-            next_sequence = next_sequence
-                .checked_add(event_count)
-                .ok_or_else(|| corrupt("transaction sequence space overflowed"))?;
-            let last_sequence = next_sequence
-                .checked_sub(1)
-                .ok_or_else(|| corrupt("transaction contains an invalid participant sequence"))?;
-            let previous = histories
-                .get(&participant.stream_id)
-                .ok_or_else(|| corrupt("staged participant history is missing"))?;
-            let history = self
-                .extend_history(
-                    &participant.stream_id,
-                    previous,
-                    last_sequence,
-                    &batch_id,
-                    participant.recorded.len(),
+            let mut raw_histories = RawHistoryCache {
+                histories,
+                maximum_stream_sequence: None,
+            };
+            let materialized = self
+                .load_transaction_receipt_materialized_with_raw_histories(
+                    transaction.operation_id(),
+                    true,
+                    &mut raw_histories,
+                    TransactionSubjectLayout::Operation,
                 )
-                .await?;
-            histories.insert(participant.stream_id.clone(), history);
+                .await?
+                .ok_or_else(|| corrupt("published transaction receipt is not visible"))?;
+            if materialized.batch_id != batch_id
+                || materialized.batch_start_stream_sequence != batch_start
+                || materialized.transaction_event_count != domain_event_count
+            {
+                return Err(corrupt(
+                    "published transaction receipt contains different batch metadata",
+                ));
+            }
+            // This receipt and marker have just passed history and batch verification.
+            // Recovery paths still discover their winner independently in matches_stored.
+            if !self.matches_checked_receipt(
+                &transaction,
+                &materialized.receipt,
+                materialized.marker.as_ref(),
+            )? {
+                return Err(corrupt(
+                    "published transaction receipt contains different content",
+                ));
+            }
+            Ok(TransactionAppendOutcome::Appended(materialized.receipt))
         }
-        let mut raw_histories = RawHistoryCache {
-            histories,
-            maximum_stream_sequence: None,
-        };
-        let materialized = self
-            .load_transaction_receipt_materialized_with_raw_histories(
-                transaction.operation_id(),
-                true,
-                &mut raw_histories,
-                TransactionSubjectLayout::Operation,
-            )
-            .await?
-            .ok_or_else(|| corrupt("published transaction receipt is not visible"))?;
-        if materialized.batch_id != batch_id
-            || materialized.batch_start_stream_sequence != batch_start
-            || materialized.transaction_event_count != domain_event_count
-        {
-            return Err(corrupt(
-                "published transaction receipt contains different batch metadata",
-            ));
-        }
-        let receipt = materialized.receipt;
-        if !transaction_matches_receipt(&transaction, &receipt) {
-            return Err(corrupt(
-                "published transaction receipt contains different content",
-            ));
-        }
-        Ok(TransactionAppendOutcome::Appended(receipt))
+        .await;
+        verification.map_err(|error: EventStoreError| {
+            if transaction.completion().is_some() {
+                error.in_outcome_recovery()
+            } else {
+                error
+            }
+        })
     }
 }
 
@@ -1794,6 +2125,9 @@ pub async fn provision_event_store(
 ) -> Result<(), EventStoreError> {
     validate_server_compatibility(context)?;
     validate_server_payload_capacity(context, config)?;
+    if config.split_outcomes() {
+        return Box::pin(outcomes::provision_split(context, config)).await;
+    }
     let expected = config.stream_config();
     match context.get_stream(config.stream_name()).await {
         Ok(existing) => {
@@ -1846,7 +2180,23 @@ pub async fn update_event_store(
             ))
         })?;
     let actual = &existing.cached_info().config;
+    if config.split_outcomes() {
+        verify_stream_config(&config.stream_config(), actual)?;
+        outcomes::connect_split(context, config, &existing).await?;
+        return Ok(());
+    }
     let mut expected = config.stream_config();
+    for key in [
+        "rostfrei.completed-outcomes.epoch",
+        "rostfrei.completed-outcomes.version",
+    ] {
+        if actual.metadata.get(key) != expected.metadata.get(key) {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::ConfigurationMismatch,
+                "policy update cannot activate/change a completed outcome epoch; use a fresh fenced namespace",
+            ));
+        }
+    }
     if actual.subjects != expected.subjects
         && actual.subjects != vec![config.aggregate_subject_filter()]
     {
@@ -1920,6 +2270,7 @@ struct StoredTransactionProvenance {
 #[derive(Clone)]
 struct MaterializedTransactionReceipt {
     receipt: TransactionReceipt,
+    marker: Option<rostfrei_core::OutcomeMarker>,
     batch_id: String,
     batch_start_stream_sequence: u64,
     transaction_event_count: usize,
@@ -2026,6 +2377,12 @@ struct StoredEventContentWire {
     correlation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     causation_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_actor"
+    )]
+    actor: Option<rostfrei_core::ActorRef>,
     commit_event_ordinal: u32,
     commit_event_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2063,6 +2420,12 @@ struct StoredTransactionReceiptWire {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TransactionReceiptContentWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    manifest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    security_scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completion: Option<rostfrei_core::CommandCompletion>,
     event_store_stream: String,
     application: String,
     bounded_context: String,
@@ -2072,7 +2435,27 @@ struct TransactionReceiptContentWire {
     correlation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     causation_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_actor"
+    )]
+    actor: Option<rostfrei_core::ActorRef>,
     participants: Vec<TransactionParticipantWire>,
+}
+
+// Missing is legacy unknown; present null is never an admissible attribution field.
+fn present_actor<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<rostfrei_core::ActorRef>, D::Error> {
+    rostfrei_core::ActorRef::deserialize(deserializer).map(Some)
+}
+
+const fn transactional_event_schema(version: u16) -> bool {
+    matches!(
+        version,
+        TRANSACTION_EVENT_SCHEMA_VERSION | ACTOR_TRANSACTION_EVENT_SCHEMA_VERSION
+    )
 }
 
 struct DecodedTransactionReceipt {
@@ -2226,6 +2609,7 @@ fn encode_events_inner(
                 causation_id: batch
                     .causation_id()
                     .map(|identity| identity.as_str().to_owned()),
+                actor: batch.actor().cloned(),
                 commit_event_ordinal: ordinal,
                 commit_event_count: event_count,
                 transaction_event_ordinal,
@@ -2235,10 +2619,11 @@ fn encode_events_inner(
                 event_schema_version: event.schema_version(),
                 payload_base64: STANDARD.encode(event.payload()),
             };
-            let schema_version = if transaction.is_some() {
-                TRANSACTION_EVENT_SCHEMA_VERSION
-            } else {
-                EVENT_SCHEMA_VERSION
+            let schema_version = match (transaction.is_some(), batch.actor().is_some()) {
+                (true, true) => ACTOR_TRANSACTION_EVENT_SCHEMA_VERSION,
+                (false, true) => ACTOR_EVENT_SCHEMA_VERSION,
+                (true, false) => TRANSACTION_EVENT_SCHEMA_VERSION,
+                (false, false) => EVENT_SCHEMA_VERSION,
             };
             let checksum = event_checksum(schema_version, &content)
                 .map_err(|error| invalid(format!("failed to checksum event: {error}")))?;
@@ -2304,8 +2689,17 @@ fn decode_event_inner(
             | CORRELATION_EVENT_SCHEMA_VERSION
             | EVENT_SCHEMA_VERSION
             | TRANSACTION_EVENT_SCHEMA_VERSION
+            | ACTOR_EVENT_SCHEMA_VERSION
+            | ACTOR_TRANSACTION_EVENT_SCHEMA_VERSION
     ) {
         return Err(corrupt("stored event has an unsupported schema version"));
+    }
+    if matches!(
+        wire.schema_version,
+        ACTOR_EVENT_SCHEMA_VERSION | ACTOR_TRANSACTION_EVENT_SCHEMA_VERSION
+    ) != wire.event.actor.is_some()
+    {
+        return Err(corrupt("stored event actor/schema mismatch"));
     }
     if wire.schema_version == LEGACY_EVENT_SCHEMA_VERSION
         && (wire.event.correlation_id.is_some() || wire.event.causation_id.is_some())
@@ -2321,7 +2715,7 @@ fn decode_event_inner(
             "legacy stored events cannot contain application scope metadata",
         ));
     }
-    if wire.schema_version < TRANSACTION_EVENT_SCHEMA_VERSION
+    if !transactional_event_schema(wire.schema_version)
         && (wire.event.transaction_event_ordinal.is_some()
             || wire.event.transaction_event_count.is_some())
     {
@@ -2373,7 +2767,7 @@ fn decode_event_inner(
         return Err(corrupt("stored event has invalid commit coordinates"));
     }
     let (transaction_event_ordinal, transaction_event_count) =
-        if wire.schema_version == TRANSACTION_EVENT_SCHEMA_VERSION {
+        if transactional_event_schema(wire.schema_version) {
             let ordinal = wire
                 .event
                 .transaction_event_ordinal
@@ -2448,6 +2842,9 @@ fn decode_event_inner(
     if let Some(causation_id) = causation_id {
         recorded = recorded.with_causation_id(causation_id);
     }
+    if let Some(actor) = wire.event.actor {
+        recorded = recorded.with_actor(actor);
+    }
     let batch_id = validate_atomic_headers(
         config.stream_name(),
         headers,
@@ -2468,11 +2865,11 @@ fn decode_event_inner(
             event_count,
             transaction_event_ordinal,
             transaction_event_count,
-            is_transactional: wire.schema_version == TRANSACTION_EVENT_SCHEMA_VERSION,
+            is_transactional: transactional_event_schema(wire.schema_version),
             recorded,
         },
         global_stream_sequence: 0,
-        is_transactional: wire.schema_version == TRANSACTION_EVENT_SCHEMA_VERSION,
+        is_transactional: transactional_event_schema(wire.schema_version),
     })
 }
 
@@ -2644,6 +3041,7 @@ impl PendingCommit {
             || decoded.operation_fingerprint != self.operation_fingerprint
             || decoded.recorded.correlation_id() != first.correlation_id()
             || decoded.recorded.causation_id() != first.causation_id()
+            || decoded.recorded.actor() != first.actor()
             || !transaction_matches
         {
             return Err(corrupt("stored commit metadata is inconsistent"));
@@ -2689,6 +3087,9 @@ impl PendingCommit {
         }
         if let Some(causation_id) = causation_id {
             batch = batch.with_causation_id(causation_id);
+        }
+        if let Some(actor) = first.actor() {
+            batch = batch.with_actor(actor.clone());
         }
         let commit = StoredCommit {
             batch,
@@ -2971,7 +3372,7 @@ fn validate_atomic_headers(
         ));
     }
     let commit = optional_single_header(headers, "Nats-Batch-Commit")?;
-    if schema_version == TRANSACTION_EVENT_SCHEMA_VERSION {
+    if transactional_event_schema(schema_version) {
         if commit.is_some() {
             return Err(corrupt(
                 "transactional domain event finalized before its receipt",
@@ -3063,6 +3464,9 @@ fn record_batch(
         if let Some(causation_id) = batch.causation_id() {
             recorded_event = recorded_event.with_causation_id(causation_id.clone());
         }
+        if let Some(actor) = batch.actor() {
+            recorded_event = recorded_event.with_actor(actor.clone());
+        }
         recorded.push(recorded_event);
     }
     RecordedBatch::new(recorded)
@@ -3074,6 +3478,7 @@ fn same_batch(stored: &EventBatch, incoming: &EventBatch) -> bool {
         && stored.operation_fingerprint() == incoming.operation_fingerprint()
         && stored.correlation_id() == incoming.correlation_id()
         && stored.causation_id() == incoming.causation_id()
+        && stored.actor() == incoming.actor()
         && stored.events() == incoming.events()
 }
 
@@ -3102,6 +3507,12 @@ fn validate_derived_identities(
 fn validate_transaction_shape(transaction: &EventTransaction) -> Result<(), EventStoreError> {
     let mut streams = HashSet::with_capacity(transaction.participants().len());
     for participant in transaction.participants() {
+        if participant
+            .batch()
+            .is_some_and(|batch| batch.actor() != transaction.actor())
+        {
+            return Err(invalid("participant actor does not match its transaction"));
+        }
         if !streams.insert(participant.stream_id()) {
             return Err(invalid(
                 "an event transaction must not contain duplicate streams",
@@ -3162,6 +3573,9 @@ fn transaction_receipt_content(
     staged: &[StagedTransactionParticipant],
 ) -> Result<TransactionReceiptContentWire, EventStoreError> {
     Ok(TransactionReceiptContentWire {
+        manifest: None,
+        security_scope: transaction.security_scope().map(|v| v.as_str().to_owned()),
+        completion: transaction.completion().cloned(),
         event_store_stream: config.stream_name().to_owned(),
         application: config.application().as_str().to_owned(),
         bounded_context: config.bounded_context().as_str().to_owned(),
@@ -3173,6 +3587,7 @@ fn transaction_receipt_content(
         causation_id: transaction
             .causation_id()
             .map(|identity| identity.as_str().to_owned()),
+        actor: transaction.actor().cloned(),
         participants: staged
             .iter()
             .map(|participant| {
@@ -3227,6 +3642,7 @@ fn transaction_receipt_covers_commit(
         || commit.batch.operation_fingerprint() != materialized.receipt.operation_fingerprint()
         || commit.batch.correlation_id() != materialized.receipt.correlation_id()
         || commit.batch.causation_id() != materialized.receipt.causation_id()
+        || commit.batch.actor() != materialized.receipt.actor()
     {
         return false;
     }
@@ -3276,6 +3692,7 @@ fn materialize_transaction_participant(
     operation_fingerprint: ContentFingerprint,
     correlation_id: Option<&CorrelationId>,
     causation_id: Option<&CausationId>,
+    actor: Option<&rostfrei_core::ActorRef>,
     batch_id: &str,
     transaction_event_ordinal: usize,
     transaction_event_count: usize,
@@ -3353,6 +3770,7 @@ fn materialize_transaction_participant(
         || stored.batch.operation_fingerprint() != operation_fingerprint
         || stored.batch.correlation_id() != correlation_id
         || stored.batch.causation_id() != causation_id
+        || stored.batch.actor() != actor
         || provenance.batch_id != batch_id
         || provenance.event_ordinals != (transaction_event_ordinal..transaction_event_end)
         || provenance.transaction_event_count != transaction_event_count
@@ -3493,7 +3911,13 @@ fn global_sequence_at_version(
 fn encode_transaction_receipt(
     content: &TransactionReceiptContentWire,
 ) -> Result<Vec<u8>, EventStoreError> {
-    let schema_version = if content
+    let schema_version = if content.actor.is_some() {
+        ACTOR_RECEIPT_SCHEMA_VERSION
+    } else if content.manifest.is_some() {
+        SPLIT_OUTCOME_SCHEMA_VERSION
+    } else if content.completion.is_some() {
+        COMPLETED_OUTCOME_SCHEMA_VERSION
+    } else if content
         .participants
         .iter()
         .any(|participant| participant.event_count > 0)
@@ -3512,6 +3936,10 @@ fn encode_transaction_receipt(
     .map_err(|error| invalid(format!("failed to encode transaction receipt: {error}")))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "versioned journal boundary validates all wire coordinates together"
+)]
 fn decode_transaction_receipt(
     config: &NatsEventStoreConfig,
     stream_sequence: u64,
@@ -3560,11 +3988,18 @@ fn decode_transaction_receipt(
     })?;
     if !matches!(
         wire.schema_version,
-        TRANSACTION_RECEIPT_SCHEMA_VERSION | EVENT_FREE_RECEIPT_SCHEMA_VERSION
+        TRANSACTION_RECEIPT_SCHEMA_VERSION
+            | EVENT_FREE_RECEIPT_SCHEMA_VERSION
+            | COMPLETED_OUTCOME_SCHEMA_VERSION
+            | SPLIT_OUTCOME_SCHEMA_VERSION
+            | ACTOR_RECEIPT_SCHEMA_VERSION
     ) {
         return Err(corrupt(
             "stored transaction receipt has an unsupported schema version",
         ));
+    }
+    if (wire.schema_version == ACTOR_RECEIPT_SCHEMA_VERSION) != wire.receipt.actor.is_some() {
+        return Err(corrupt("stored transaction receipt actor/schema mismatch"));
     }
     let checksum =
         transaction_receipt_checksum(wire.schema_version, &wire.receipt).map_err(|error| {
@@ -3586,6 +4021,33 @@ fn decode_transaction_receipt(
         ));
     }
     validate_receipt_participant_shape(&wire, batch_sequence)?;
+    if (wire.schema_version != ACTOR_RECEIPT_SCHEMA_VERSION
+        && (wire.schema_version == SPLIT_OUTCOME_SCHEMA_VERSION) != wire.receipt.manifest.is_some())
+        || (wire.receipt.manifest.is_some()
+            && (!config.split_outcomes() || wire.receipt.completion.is_some()))
+    {
+        return Err(corrupt("split outcome schema/authority mismatch"));
+    }
+    if wire.schema_version != ACTOR_RECEIPT_SCHEMA_VERSION
+        && (wire.schema_version == COMPLETED_OUTCOME_SCHEMA_VERSION)
+            != wire.receipt.completion.is_some()
+    {
+        return Err(corrupt("completed outcome schema/decision mismatch"));
+    }
+    if let Some(completion) = &wire.receipt.completion {
+        completion
+            .validate()
+            .map_err(|error| corrupt(error.to_string()))?;
+        if completion.rejection.is_some()
+            && wire
+                .receipt
+                .participants
+                .iter()
+                .any(|participant| participant.event_count != 0)
+        {
+            return Err(corrupt("rejected outcome contains domain events"));
+        }
+    }
     Ok(DecodedTransactionReceipt {
         batch_id: batch_id.to_owned(),
         batch_sequence,
@@ -3603,7 +4065,12 @@ fn validate_receipt_participant_shape(
         .participants
         .iter()
         .any(|participant| participant.event_count > 0);
-    if (wire.schema_version == TRANSACTION_RECEIPT_SCHEMA_VERSION) != has_events
+    if (!matches!(
+        wire.schema_version,
+        COMPLETED_OUTCOME_SCHEMA_VERSION
+            | SPLIT_OUTCOME_SCHEMA_VERSION
+            | ACTOR_RECEIPT_SCHEMA_VERSION
+    ) && (wire.schema_version == TRANSACTION_RECEIPT_SCHEMA_VERSION) != has_events)
         || wire
             .receipt
             .participants
@@ -3679,7 +4146,9 @@ fn transaction_matches_receipt(
         && transaction.operation_id() == receipt.operation_id()
         && transaction.operation_fingerprint() == receipt.operation_fingerprint()
         && transaction.correlation_id() == receipt.correlation_id()
-        && transaction.causation_id() == receipt.causation_id();
+        && transaction.causation_id() == receipt.causation_id()
+        && transaction.actor() == receipt.actor();
+    let metadata_matches = metadata_matches && transaction.completion() == receipt.completion();
     metadata_matches
         && transaction.participants().len() == receipt.streams().len()
         && transaction
@@ -3728,6 +4197,7 @@ fn batch_matches_recorded(batch: &EventBatch, recorded: &[RecordedEvent]) -> boo
                     && batch.operation_fingerprint() == stored.operation_fingerprint()
                     && batch.correlation_id() == stored.correlation_id()
                     && batch.causation_id() == stored.causation_id()
+                    && batch.actor() == stored.actor()
             })
 }
 
@@ -3743,7 +4213,27 @@ fn event_checksum(
 }
 
 fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventStoreError> {
+    if expected
+        .metadata
+        .iter()
+        .any(|(key, value)| actual.metadata.get(key) != Some(value))
+    {
+        return Err(EventStoreError::new(
+            EventStoreErrorKind::ConfigurationMismatch,
+            "existing stream does not carry the requested completed outcome epoch; legacy activation is forbidden",
+        ));
+    }
     let mut compatible = expected.clone();
+    for key in [outcomes::JOURNAL_BINDING, outcomes::STATE_BINDING] {
+        if let Some(value) = actual.metadata.get(key) {
+            compatible.metadata.insert(key.to_owned(), value.clone());
+        }
+    }
+    if expected.metadata.is_empty() {
+        // A new reader may inspect/replay a fresh epoch in explicit default read-only
+        // mode. Every mutable API independently requires its configured durable epoch.
+        compatible.metadata.clone_from(&actual.metadata);
+    }
     if actual.max_message_size == -1 || actual.max_message_size > expected.max_message_size {
         compatible.max_message_size = actual.max_message_size;
     }
@@ -3896,6 +4386,10 @@ mod tests {
 
     fn transaction_receipt_fixture() -> TransactionReceiptContentWire {
         TransactionReceiptContentWire {
+            actor: None,
+            manifest: None,
+            security_scope: None,
+            completion: None,
             event_store_stream: "EVENTS".to_owned(),
             application: "acme".to_owned(),
             bounded_context: "orders".to_owned(),
@@ -4419,6 +4913,7 @@ mod tests {
                 fingerprint,
                 None,
                 None,
+                None,
                 "atomic-transaction",
                 1,
                 2,
@@ -4452,6 +4947,7 @@ mod tests {
                 StreamVersion::ZERO,
                 &operation_id,
                 fingerprint,
+                None,
                 None,
                 None,
                 "atomic-transaction",
@@ -4499,6 +4995,7 @@ mod tests {
                 fingerprint,
                 None,
                 None,
+                None,
                 "atomic-transaction",
                 1,
                 2,
@@ -4524,6 +5021,7 @@ mod tests {
                 StreamVersion::ZERO,
                 &operation_id,
                 fingerprint,
+                None,
                 None,
                 None,
                 "atomic-transaction",

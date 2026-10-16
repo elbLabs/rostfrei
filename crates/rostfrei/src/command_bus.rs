@@ -9,15 +9,16 @@ use async_trait::async_trait;
 use domain::{BoundedContextType, DomainError, JsonCommandPayload, JsonErrorPayload};
 use rostfrei_core::{
     Aggregate, AggregateCodecs, CommandExecutionError, CommandExecutionMetadata, CommandExecutor,
-    CommandHandler, CommandOutcome, ContentFingerprint, EventCodec, EventStore,
-    EventStoreErrorKind, OperationId as CoreOperationId,
+    CommandHandler, CommandOutcome, ContentFingerprint, EventCodec, EventStoreErrorKind,
+    ExecutionStore, OperationId as CoreOperationId,
 };
 use rostfrei_messaging_core::{
     ApplicationErrorCode, BoundedContext, BoundedContextName, COMMAND_RESPONSE_SCHEMA_VERSION,
-    CausationId, CommandAddress, CommandEnvelope, CommandRejection, CommandRejectionClassification,
-    CommandResponse, CommandResponseOutcome, ContractError, CorrelationId, EnvelopeContext,
-    MessageBuildError, MessageBuildErrorKind, MessageId, MessageTimestamp, OperationId,
-    OutboundMessage, SchemaVersion, derive_command_response_address,
+    CausationId, CodecFailureKind, CommandAddress, CommandEnvelope, CommandRejection,
+    CommandRejectionClassification, CommandResponse, CommandResponseOutcome, ContractError,
+    CorrelationId, EnvelopeContext, ExecutionFailure, MessageBuildError, MessageBuildErrorKind,
+    MessageId, MessageTimestamp, OperationId, OutboundMessage, ProcessorFailureKind, SchemaVersion,
+    StoreFailureKind, TECHNICAL_RESPONSE_SCHEMA_VERSION, derive_command_response_address,
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use serde_json::Value;
@@ -28,10 +29,13 @@ const INVALID_PAYLOAD_CODE: &str = "rostfrei.command.invalid-payload";
 const UNKNOWN_COMMAND_CODE: &str = "rostfrei.command.unknown";
 const OPERATION_CONFLICT_CODE: &str = "rostfrei.operation.identity-conflict";
 
+pub mod processing;
+
 /// A command submission whose correlation defaults to its operation ID when omitted.
 /// Explicit correlation and causation are preserved in the outgoing envelope.
 #[derive(Clone, Debug)]
 pub struct CommandRequest<C> {
+    actor: Option<crate::ActorRef>,
     operation_id: CoreOperationId,
     command: C,
     correlation_id: Option<CorrelationId>,
@@ -41,9 +45,20 @@ pub struct CommandRequest<C> {
 }
 
 impl<C> CommandRequest<C> {
+    #[must_use]
+    pub fn with_actor(mut self, actor: crate::ActorRef) -> Self {
+        self.actor = Some(actor);
+        self
+    }
+
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     pub const fn new(operation_id: CoreOperationId, command: C) -> Self {
         Self {
             operation_id,
+            actor: None,
             command,
             correlation_id: None,
             causation_id: None,
@@ -78,6 +93,7 @@ impl<C> CommandRequest<C> {
 
 #[derive(Clone, Debug)]
 pub struct DynamicCommandRequest {
+    actor: Option<crate::ActorRef>,
     operation_id: CoreOperationId,
     command: String,
     schema_version: u32,
@@ -89,6 +105,16 @@ pub struct DynamicCommandRequest {
 }
 
 impl DynamicCommandRequest {
+    #[must_use]
+    pub fn with_actor(mut self, actor: crate::ActorRef) -> Self {
+        self.actor = Some(actor);
+        self
+    }
+
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     pub fn new(
         operation_id: CoreOperationId,
         command: impl Into<String>,
@@ -102,6 +128,7 @@ impl DynamicCommandRequest {
             .map_err(|error| CommandBusError::encoding(error.to_string()))?;
         Ok(Self {
             operation_id,
+            actor: None,
             command,
             schema_version,
             payload,
@@ -219,6 +246,7 @@ pub enum RoutedCommandError {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncodedCommand {
+    actor: Option<crate::ActorRef>,
     message: OutboundMessage<CommandAddress>,
     operation_id: OperationId,
     correlation_id: CorrelationId,
@@ -226,6 +254,67 @@ pub struct EncodedCommand {
 }
 
 impl EncodedCommand {
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
+    /// Pure, full-envelope execution evidence for direct generic execution against
+    /// the same authority as a processor. Supply its matching typed command and a
+    /// compatible rejection codec; this does not dispatch or authorize the command.
+    pub fn validated_execution_metadata(
+        &self,
+    ) -> Result<CommandExecutionMetadata, CommandProcessorError> {
+        let context = BoundedContextName::new(self.address().context())
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+        validate_command(self, &context).map(|(_, metadata, _)| metadata)
+    }
+    /// Maintenance-only evidence-bound legacy import. No authority is inferred from hashes.
+    pub fn legacy_rejection_transaction(
+        &self,
+        response: &CommandResponse,
+    ) -> Result<rostfrei_core::EventTransaction, CommandProcessorError> {
+        self.validate()?;
+        if self.actor().is_some() {
+            return Err(CommandProcessorError::execution(
+                &CommandExecutionError::Store(rostfrei_core::EventStoreError::new(
+                    EventStoreErrorKind::InvalidRequest,
+                    "historical rejection import cannot assert actor attribution",
+                )),
+            ));
+        }
+        self.validate_response(response)
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+        let CommandResponseOutcome::Rejected(rejection) = response.outcome() else {
+            return Err(CommandProcessorError::invalid_message(
+                "legacy import requires a completed business rejection",
+            ));
+        };
+        let context = BoundedContextName::new(self.address().context())
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+        let (_, metadata, _) = validate_command(self, &context)?;
+        let encoded = rostfrei_core::RejectionCodec::<CommandRejection>::encode(
+            &rostfrei_core::JsonRejectionCodec::new("rostfrei.command-rejection", 1),
+            rejection,
+        )
+        .map_err(|error| CommandProcessorError::execution(&CommandExecutionError::Codec(error)))?;
+        let mut transaction = rostfrei_core::EventTransaction::new(
+            metadata.operation_id().clone(),
+            metadata.operation_fingerprint(),
+            Vec::new(),
+        )
+        .with_bounded_context(context)
+        .with_completion(rostfrei_core::CommandCompletion::new(
+            metadata.outcome_evidence().cloned(),
+            Some(encoded),
+        ));
+        if let Some(correlation) = metadata.correlation_id() {
+            transaction = transaction.with_correlation_id(correlation.clone());
+        }
+        if let Some(causation) = metadata.causation_id() {
+            transaction = transaction.with_causation_id(causation.clone());
+        }
+        Ok(transaction)
+    }
     pub(crate) const fn new(
         message: OutboundMessage<CommandAddress>,
         operation_id: OperationId,
@@ -234,6 +323,7 @@ impl EncodedCommand {
     ) -> Self {
         Self {
             message,
+            actor: None,
             operation_id,
             correlation_id,
             fingerprint,
@@ -247,17 +337,23 @@ impl EncodedCommand {
     ) -> Result<Self, CommandProcessorError> {
         let envelope: CommandEnvelope<RoutedCommand> = serde_json::from_slice(&payload)
             .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
-        let fingerprint =
-            routed_command_execution_fingerprint(address.context(), envelope.payload())
-                .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+        let fingerprint = routed_command_execution_fingerprint(
+            address.context(),
+            envelope.payload(),
+            envelope.actor(),
+        )
+        .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
         let message = OutboundMessage::new(address, message_id, payload)
-            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
-        Ok(Self::new(
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?
+            .with_correlation_id(envelope.correlation_id().clone());
+        let mut command = Self::new(
             message,
             envelope.operation_id().clone(),
             envelope.correlation_id().clone(),
             fingerprint,
-        ))
+        );
+        command.actor = envelope.actor().cloned();
+        Ok(command)
     }
 
     pub const fn message(&self) -> &OutboundMessage<CommandAddress> {
@@ -288,6 +384,21 @@ impl EncodedCommand {
         self.fingerprint
     }
 
+    /// Pure validation of the entire command's canonical identity, route, schema, provenance,
+    /// inner/outer IDs and normalized metadata. Does not read a store, publish, or run a handler.
+    /// Application/traffic-scope authorization is additionally the caller's boundary policy.
+    pub fn validate(&self) -> Result<(), CommandProcessorError> {
+        self.validated_metadata().map(|_| ())
+    }
+
+    pub(crate) fn validated_metadata(
+        &self,
+    ) -> Result<CommandExecutionMetadata, CommandProcessorError> {
+        let context = BoundedContextName::new(self.address().context())
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+        validate_command(self, &context).map(|(_, metadata, _)| metadata)
+    }
+
     pub fn response_address(
         &self,
     ) -> Result<rostfrei_messaging_core::CommandResponseAddress, ContractError> {
@@ -298,9 +409,18 @@ impl EncodedCommand {
         &self,
         response: &CommandResponse,
     ) -> Result<(), InvalidCommandResponse> {
+        let technical = matches!(
+            response.outcome(),
+            CommandResponseOutcome::ExecutionFailed(_)
+        );
+        let expected_message_id = match response.outcome() {
+            CommandResponseOutcome::ExecutionFailed(failure) => {
+                command_technical_response_message_id(self.message_id(), *failure)
+            }
+            _ => command_response_message_id(self.message_id()),
+        };
         if response.message_id()
-            != &command_response_message_id(self.message_id())
-                .map_err(|_| InvalidCommandResponse::ResponseMessageId)?
+            != &expected_message_id.map_err(|_| InvalidCommandResponse::ResponseMessageId)?
         {
             return Err(InvalidCommandResponse::ResponseMessageId);
         }
@@ -313,7 +433,12 @@ impl EncodedCommand {
         if response.operation_id() != self.operation_id() {
             return Err(InvalidCommandResponse::OperationId);
         }
-        if response.schema_version().get() != COMMAND_RESPONSE_SCHEMA_VERSION {
+        let expected_version = if technical {
+            TECHNICAL_RESPONSE_SCHEMA_VERSION
+        } else {
+            COMMAND_RESPONSE_SCHEMA_VERSION
+        };
+        if response.schema_version().get() != expected_version {
             return Err(InvalidCommandResponse::SchemaVersion);
         }
         if response.correlation_id() != self.correlation_id() {
@@ -433,6 +558,54 @@ impl CommandBus {
         self.adapter.maximum_payload_len()
     }
 
+    /// Dispatches an existing envelope without regenerating timestamp or provenance.
+    /// All route, scope, canonical identity, and adapter-size checks precede publication.
+    pub async fn dispatch_encoded(
+        &self,
+        command: EncodedCommand,
+    ) -> Result<CommandBusReceipt, CommandBusError> {
+        self.dispatch_encoded_observed(command, Arc::new(IgnoreCommandPublications))
+            .await
+    }
+
+    pub async fn dispatch_encoded_observed(
+        &self,
+        command: EncodedCommand,
+        observer: Arc<dyn CommandBusObserver>,
+    ) -> Result<CommandBusReceipt, CommandBusError> {
+        if command.payload().len() > self.maximum_payload_len() {
+            return Err(CommandBusError::new(
+                CommandBusErrorKind::PayloadTooLarge,
+                "command envelope exceeds the adapter limit",
+            ));
+        }
+        let expected_address = self
+            .context
+            .command_address(command.address().name())
+            .map_err(|error| {
+                CommandBusError::new(CommandBusErrorKind::InvalidMessage, error.to_string())
+            })?;
+        if command.address() != &expected_address {
+            return Err(CommandBusError::new(
+                CommandBusErrorKind::InvalidMessage,
+                "command envelope belongs to another application, context, or traffic scope",
+            ));
+        }
+        command.validate().map_err(|error| {
+            CommandBusError::new(CommandBusErrorKind::InvalidMessage, error.to_string())
+        })?;
+        let receipt = self.adapter.dispatch(command.clone(), observer).await?;
+        command
+            .validate_response(receipt.response())
+            .map_err(|error| {
+                CommandBusError::new(CommandBusErrorKind::InvalidResponse, error.to_string())
+            })?;
+        if let CommandResponseOutcome::ExecutionFailed(failure) = receipt.response().outcome() {
+            return Err(CommandBusError::execution_failed(*failure));
+        }
+        Ok(receipt)
+    }
+
     pub async fn dispatch<C>(
         &self,
         request: CommandRequest<C>,
@@ -453,7 +626,7 @@ impl CommandBus {
         C: JsonCommandPayload,
     {
         let encoded = self.encode::<C>(request)?;
-        self.adapter.dispatch(encoded, observer).await
+        self.dispatch_encoded_observed(encoded, observer).await
     }
 
     pub fn encode<C>(&self, request: CommandRequest<C>) -> Result<EncodedCommand, CommandBusError>
@@ -472,6 +645,7 @@ impl CommandBus {
             .encode_json()
             .map_err(CommandBusError::encoding)?;
         self.encode_dynamic(DynamicCommandRequest {
+            actor: request.actor,
             operation_id: request.operation_id,
             command: C::LOCAL_ID.to_owned(),
             schema_version: C::SCHEMA_VERSION,
@@ -497,7 +671,7 @@ impl CommandBus {
         observer: Arc<dyn CommandBusObserver>,
     ) -> Result<CommandBusReceipt, CommandBusError> {
         let encoded = self.encode_dynamic(request)?;
-        self.adapter.dispatch(encoded, observer).await
+        self.dispatch_encoded_observed(encoded, observer).await
     }
 
     pub fn encode_dynamic(
@@ -517,8 +691,11 @@ impl CommandBus {
         let routed = RoutedCommand::new(request.command, request.schema_version, request.payload)
             .map_err(|error| CommandBusError::encoding(error.to_string()))?
             .with_events_caused_by_command(request.events_caused_by_command);
-        let fingerprint =
-            routed_command_execution_fingerprint(self.context.name().as_str(), &routed)?;
+        let fingerprint = routed_command_execution_fingerprint(
+            self.context.name().as_str(),
+            &routed,
+            request.actor.as_ref(),
+        )?;
         let mut metadata = CommandExecutionMetadata::new(request.operation_id, fingerprint);
         if let Some(correlation_id) = request.correlation_id {
             metadata = metadata.with_correlation_id(correlation_id);
@@ -533,7 +710,7 @@ impl CommandBus {
             &correlation_id,
             request.causation_id.as_ref(),
         )?;
-        let envelope = CommandEnvelope::new(
+        let mut envelope = CommandEnvelope::new(
             EnvelopeContext::new(
                 message_id.clone(),
                 SchemaVersion::new(routed.schema_version())
@@ -546,6 +723,11 @@ impl CommandBus {
             routed,
         )
         .map_err(|error| command_message_build_error(&error))?;
+        if let Some(actor) = request.actor.as_ref() {
+            envelope = envelope
+                .with_actor(actor.clone())
+                .map_err(|error| command_message_build_error(&error))?;
+        }
         let payload = canonical_serialize(&envelope)?;
         if payload.len() > self.maximum_payload_len() {
             return Err(CommandBusError::new(
@@ -559,12 +741,9 @@ impl CommandBus {
         let message = OutboundMessage::new(address, message_id, payload)
             .map_err(|error| CommandBusError::encoding(error.to_string()))?
             .with_correlation_id(correlation_id.clone());
-        Ok(EncodedCommand::new(
-            message,
-            operation_id,
-            correlation_id,
-            fingerprint,
-        ))
+        let mut command = EncodedCommand::new(message, operation_id, correlation_id, fingerprint);
+        command.actor = request.actor;
+        Ok(command)
     }
 }
 
@@ -580,6 +759,14 @@ fn command_message_build_error(error: &MessageBuildError) -> CommandBusError {
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum CommandBusErrorKind {
+    #[error("command access denied")]
+    Authorization,
+    #[error("completed command details expired")]
+    CompletedDetailsExpired,
+    #[error("completed command details temporarily unavailable")]
+    CompletedDetailsUnavailable,
+    #[error("completed command recovery blocked")]
+    CompletedDetailsBlocked,
     #[error("command encoding failed")]
     Encoding,
     #[error("command payload is too large")]
@@ -596,20 +783,26 @@ pub enum CommandBusErrorKind {
     InvalidConfiguration,
     #[error("command response is invalid")]
     InvalidResponse,
+    #[error("command execution is blocked")]
+    ExecutionFailed,
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error("{message}")]
 pub struct CommandBusError {
+    authorization: Option<crate::AuthorizationError>,
     kind: CommandBusErrorKind,
     message: String,
+    execution_failure: Option<ExecutionFailure>,
 }
 
 impl CommandBusError {
     pub fn new(kind: CommandBusErrorKind, message: impl Into<String>) -> Self {
         Self {
+            authorization: None,
             kind,
             message: message.into(),
+            execution_failure: None,
         }
     }
 
@@ -623,6 +816,67 @@ impl CommandBusError {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    pub fn execution_failed(failure: ExecutionFailure) -> Self {
+        Self {
+            authorization: None,
+            kind: if failure.is_retryable() {
+                CommandBusErrorKind::Unavailable
+            } else {
+                CommandBusErrorKind::ExecutionFailed
+            },
+            message: "Technical command execution failure".to_owned(),
+            execution_failure: Some(failure),
+        }
+    }
+
+    pub const fn execution_failure(&self) -> Option<ExecutionFailure> {
+        self.execution_failure
+    }
+
+    pub const fn authorization_error(&self) -> Option<&crate::AuthorizationError> {
+        self.authorization.as_ref()
+    }
+
+    pub fn from_processor(error: &CommandProcessorError) -> Self {
+        let kind = match error.kind() {
+            CommandProcessorErrorKind::Authorization => CommandBusErrorKind::Authorization,
+            CommandProcessorErrorKind::CompletedDetailsExpired => {
+                CommandBusErrorKind::CompletedDetailsExpired
+            }
+            CommandProcessorErrorKind::CompletedDetailsUnavailable => {
+                CommandBusErrorKind::CompletedDetailsUnavailable
+            }
+            CommandProcessorErrorKind::CompletedDetailsBlocked => {
+                CommandBusErrorKind::CompletedDetailsBlocked
+            }
+            CommandProcessorErrorKind::IdentityConflict
+            | CommandProcessorErrorKind::InvalidMessage => CommandBusErrorKind::InvalidMessage,
+            CommandProcessorErrorKind::Unavailable => CommandBusErrorKind::Unavailable,
+            CommandProcessorErrorKind::InvalidConfiguration => {
+                CommandBusErrorKind::InvalidConfiguration
+            }
+            CommandProcessorErrorKind::ExecutionFailed => CommandBusErrorKind::ExecutionFailed,
+        };
+        Self {
+            kind,
+            message: error.to_string(),
+            authorization: error.authorization,
+            execution_failure: error.execution_failure,
+        }
+    }
+
+    pub const fn is_retryable(&self) -> bool {
+        matches!(
+            self.kind,
+            CommandBusErrorKind::Timeout
+                | CommandBusErrorKind::Unavailable
+                | CommandBusErrorKind::CompletedDetailsUnavailable
+        ) || matches!(
+            self.authorization,
+            Some(crate::AuthorizationError::Unavailable)
+        )
     }
 }
 
@@ -697,17 +951,81 @@ impl CommandRejectionMapper<Infallible> for InfallibleCommandRejectionMapper {
 trait ErasedCommandBinding: Send + Sync {
     async fn execute(
         &self,
-        store: Arc<dyn EventStore>,
+        store: Arc<dyn ExecutionStore>,
         codecs: Arc<AggregateCodecs>,
+        policy: Arc<dyn rostfrei_core::ConflictRetryPolicy>,
+        rejection_codec: Arc<dyn rostfrei_core::RejectionCodec<CommandRejection>>,
         metadata: CommandExecutionMetadata,
         payload: &Value,
-    ) -> Result<CommandResponseOutcome, BindingError>;
+    ) -> Result<rostfrei_core::CompletedCommit, BindingError>;
 }
 
 struct TypedCommandBinding<C, H, M> {
     handler: H,
     rejection_mapper: M,
     marker: std::marker::PhantomData<fn() -> C>,
+}
+
+struct MappedCommandHandler<'a, H, M> {
+    handler: &'a H,
+    mapper: &'a M,
+}
+
+struct FixedRejection(CommandRejection);
+#[async_trait]
+impl CommandHandler<()> for FixedRejection {
+    type Rejection = CommandRejection;
+    async fn handle(
+        &self,
+        (): &(),
+        _: &mut rostfrei_core::CommandExecution<'_>,
+    ) -> rostfrei_core::CommandHandlingResult<Self::Rejection> {
+        Ok(rostfrei_core::CommandDecision::Rejected(self.0.clone()))
+    }
+}
+
+#[async_trait]
+impl<C, H, M> CommandHandler<C> for MappedCommandHandler<'_, H, M>
+where
+    C: Sync,
+    H: CommandHandler<C>,
+    M: CommandRejectionMapper<H::Rejection>,
+{
+    type Rejection = CommandRejection;
+    async fn handle(
+        &self,
+        command: &C,
+        execution: &mut rostfrei_core::CommandExecution<'_>,
+    ) -> rostfrei_core::CommandHandlingResult<Self::Rejection> {
+        let decision = match self.handler.handle(command, execution).await {
+            Ok(decision) => decision,
+            Err(CommandExecutionError::Store(error))
+                if error.kind() == EventStoreErrorKind::InvalidRequest =>
+            {
+                // Translate request refusal while the original execution still owns every
+                // successful read. A separate zero-read handler would lose these guards.
+                let rejection = framework_rejection(
+                    CommandRejectionClassification::InvalidRequest,
+                    INVALID_COMMAND_CODE,
+                    "The command cannot be executed for the requested unit of work.",
+                    Some(serde_json::json!({ "reason": error.message() })),
+                )
+                .map_err(|error| CommandExecutionError::RejectionMapping(error.to_string()))?;
+                return Ok(rostfrei_core::CommandDecision::Rejected(rejection));
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(match decision {
+            rostfrei_core::CommandDecision::Accepted => rostfrei_core::CommandDecision::Accepted,
+            rostfrei_core::CommandDecision::Rejected(rejection) => {
+                rostfrei_core::CommandDecision::Rejected(
+                    self.mapper
+                        .map(&rejection)
+                        .map_err(CommandExecutionError::RejectionMapping)?,
+                )
+            }
+        })
+    }
 }
 
 #[async_trait]
@@ -719,55 +1037,81 @@ where
 {
     async fn execute(
         &self,
-        store: Arc<dyn EventStore>,
+        store: Arc<dyn ExecutionStore>,
         codecs: Arc<AggregateCodecs>,
+        policy: Arc<dyn rostfrei_core::ConflictRetryPolicy>,
+        rejection_codec: Arc<dyn rostfrei_core::RejectionCodec<CommandRejection>>,
         metadata: CommandExecutionMetadata,
         payload: &Value,
-    ) -> Result<CommandResponseOutcome, BindingError> {
+    ) -> Result<rostfrei_core::CompletedCommit, BindingError> {
         let command = C::decode_json(payload).map_err(BindingError::InvalidPayload)?;
-        match CommandExecutor::with_codecs(store, codecs)
-            .execute(&self.handler, metadata, &command)
+        CommandExecutor::with_codecs(store, codecs)
+            .with_conflict_retry_policy(policy)
+            .execute_completed_with_rejection_codec(
+                &MappedCommandHandler {
+                    handler: &self.handler,
+                    mapper: &self.rejection_mapper,
+                },
+                metadata,
+                &command,
+                rejection_codec.as_ref(),
+            )
             .await
-            .map_err(BindingError::Execution)?
-        {
-            CommandOutcome::Accepted(_) => Ok(CommandResponseOutcome::Accepted),
-            CommandOutcome::Rejected(rejection) => self
-                .rejection_mapper
-                .map(&rejection)
-                .map(CommandResponseOutcome::Rejected)
-                .map_err(BindingError::RejectionMapping),
-        }
+            .map_err(BindingError::Execution)
     }
 }
 
 enum BindingError {
     InvalidPayload(String),
     Execution(CommandExecutionError),
-    RejectionMapping(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum CommandProcessorErrorKind {
+    #[error("authorization failed")]
+    Authorization,
+    #[error("operation identity conflicts with its winner")]
+    IdentityConflict,
+    #[error("completed details expired")]
+    CompletedDetailsExpired,
+    #[error("completed details temporarily unavailable")]
+    CompletedDetailsUnavailable,
+    #[error("completed details recovery blocked")]
+    CompletedDetailsBlocked,
     #[error("invalid command message")]
     InvalidMessage,
     #[error("command processing is unavailable")]
     Unavailable,
     #[error("command processor configuration is invalid")]
     InvalidConfiguration,
+    #[error("command execution is blocked")]
+    ExecutionFailed,
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error("{message}")]
 pub struct CommandProcessorError {
+    authorization: Option<crate::AuthorizationError>,
+    rejected_outcome_persistence_failed: bool,
     kind: CommandProcessorErrorKind,
     message: String,
+    execution_failure: Option<ExecutionFailure>,
 }
 
 impl CommandProcessorError {
     pub fn new(kind: CommandProcessorErrorKind, message: impl Into<String>) -> Self {
         Self {
+            authorization: None,
+            rejected_outcome_persistence_failed: false,
             kind,
             message: message.into(),
+            execution_failure: if kind == CommandProcessorErrorKind::InvalidConfiguration {
+                Some(ExecutionFailure::Processor(
+                    ProcessorFailureKind::InvalidConfiguration,
+                ))
+            } else {
+                None
+            },
         }
     }
 
@@ -784,7 +1128,125 @@ impl CommandProcessorError {
     }
 
     pub const fn is_retryable(&self) -> bool {
-        matches!(self.kind, CommandProcessorErrorKind::Unavailable)
+        matches!(
+            self.kind,
+            CommandProcessorErrorKind::Unavailable
+                | CommandProcessorErrorKind::CompletedDetailsUnavailable
+        ) || matches!(
+            self.authorization,
+            Some(crate::AuthorizationError::Unavailable)
+        )
+    }
+
+    pub const fn execution_failure(&self) -> Option<ExecutionFailure> {
+        self.execution_failure
+    }
+
+    pub const fn authorization_error(&self) -> Option<&crate::AuthorizationError> {
+        self.authorization.as_ref()
+    }
+
+    pub fn authorization(error: crate::AuthorizationError) -> Self {
+        let mut result = Self::new(CommandProcessorErrorKind::Authorization, error.to_string());
+        result.authorization = Some(error);
+        result
+    }
+
+    pub fn recovery(error: &rostfrei_core::OutcomeRecoveryError) -> Self {
+        use rostfrei_core::{DetailUnavailableReason, OutcomeRecoveryError};
+        let kind = match error {
+            OutcomeRecoveryError::Expired => CommandProcessorErrorKind::CompletedDetailsExpired,
+            OutcomeRecoveryError::Archived { .. }
+            | OutcomeRecoveryError::Unavailable {
+                reason: DetailUnavailableReason::BackendUnavailable,
+            } => CommandProcessorErrorKind::CompletedDetailsUnavailable,
+            OutcomeRecoveryError::IntegrityMismatch
+            | OutcomeRecoveryError::Unavailable {
+                reason: DetailUnavailableReason::MissingDetails,
+            } => CommandProcessorErrorKind::CompletedDetailsBlocked,
+        };
+        Self::new(kind, error.to_string())
+    }
+
+    fn execution(error: &CommandExecutionError) -> Self {
+        if let CommandExecutionError::OutcomeRecovery(error) = error {
+            return Self::recovery(error);
+        }
+        if let CommandExecutionError::Store(error) = error
+            && error.kind() == EventStoreErrorKind::IdentityConflict
+        {
+            return Self::new(
+                CommandProcessorErrorKind::IdentityConflict,
+                error.to_string(),
+            );
+        }
+        if let CommandExecutionError::Store(source)
+        | CommandExecutionError::RejectedOutcomePersistence(source) = error
+            && source.origin() == rostfrei_core::EventStoreErrorOrigin::OutcomeRecovery
+        {
+            let kind = match source.kind() {
+                EventStoreErrorKind::CorruptHistory
+                | EventStoreErrorKind::DetailForbidden
+                | EventStoreErrorKind::ConfigurationMismatch => {
+                    Some(CommandProcessorErrorKind::CompletedDetailsBlocked)
+                }
+                EventStoreErrorKind::CompletedDetailsExpired => {
+                    Some(CommandProcessorErrorKind::CompletedDetailsExpired)
+                }
+                EventStoreErrorKind::CompletedDetailsUnavailable => {
+                    Some(CommandProcessorErrorKind::CompletedDetailsUnavailable)
+                }
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                return Self::new(kind, source.to_string());
+            }
+        }
+        let Some(failure) = error.execution_failure() else {
+            // A request failure reaching this branch is a processor mapping/configuration bug,
+            // not an infrastructure outage. Never panic or manufacture a business outcome.
+            return Self::new(
+                CommandProcessorErrorKind::InvalidConfiguration,
+                error.to_string(),
+            );
+        };
+        Self {
+            authorization: None,
+            rejected_outcome_persistence_failed: matches!(
+                error,
+                CommandExecutionError::RejectedOutcomePersistence(_)
+            ),
+            kind: if failure.is_retryable() {
+                CommandProcessorErrorKind::Unavailable
+            } else {
+                CommandProcessorErrorKind::ExecutionFailed
+            },
+            message: error.to_string(),
+            execution_failure: Some(failure),
+        }
+    }
+
+    /// Builds a typed diagnostic response, never a completed business outcome.
+    pub fn technical_response(
+        &self,
+        command: &EncodedCommand,
+    ) -> Result<Option<CommandResponse>, Self> {
+        // No response publication can establish a rejected decision whose authoritative
+        // write failed. Keep it out of the business/diagnostic response projection.
+        if self.rejected_outcome_persistence_failed {
+            return Ok(None);
+        }
+        self.execution_failure
+            .map(|failure| {
+                build_response(command, CommandResponseOutcome::ExecutionFailed(failure))
+            })
+            .transpose()
+    }
+}
+
+impl From<rostfrei_core::OutcomeRecoveryError> for CommandProcessorError {
+    fn from(error: rostfrei_core::OutcomeRecoveryError) -> Self {
+        Self::recovery(&error)
     }
 }
 
@@ -809,28 +1271,65 @@ pub enum CommandBindingRegistrationError {
 
 pub struct CommandProcessor {
     context: BoundedContextName,
-    store: Arc<dyn EventStore>,
+    store: Arc<dyn ExecutionStore>,
     codecs: Arc<AggregateCodecs>,
     bindings: HashMap<CommandBindingKey, Arc<dyn ErasedCommandBinding>>,
+    configuration: processing::Configuration,
 }
 
 impl CommandProcessor {
-    pub fn new(context: BoundedContextName, store: Arc<dyn EventStore>) -> Self {
+    /// Reads shared authority without invoking a binding, handler, mapper or event codec.
+    pub async fn reconcile_completed(
+        &self,
+        encoded: &EncodedCommand,
+    ) -> Result<Option<CommandResponse>, CommandProcessorError> {
+        self.require_trusted_profile()?;
+        let (_, metadata, _) = validate_command(encoded, &self.context)?;
+        let result = CommandExecutor::new(Arc::clone(&self.store))
+            .reconcile_with_rejection_codec::<CommandRejection>(
+                metadata,
+                self.configuration.rejection_codec.as_ref(),
+            )
+            .await;
+        let outcome = match result {
+            Ok(None) => return Ok(None),
+            Ok(Some(CommandOutcome::Accepted(_))) => CommandResponseOutcome::Accepted,
+            Ok(Some(CommandOutcome::Rejected(rejection))) => {
+                CommandResponseOutcome::Rejected(rejection)
+            }
+            Err(CommandExecutionError::Store(error))
+                if error.kind() == EventStoreErrorKind::IdentityConflict =>
+            {
+                CommandResponseOutcome::Rejected(operation_conflict()?)
+            }
+            Err(error) => return Err(CommandProcessorError::execution(&error)),
+        };
+        build_response(encoded, outcome).map(Some)
+    }
+    /// Trusted infrastructure compatibility profile. Policy-enabled applications use `builder`.
+    pub fn new(context: BoundedContextName, store: Arc<dyn ExecutionStore>) -> Self {
         Self {
             context,
             store,
             codecs: Arc::new(AggregateCodecs::default()),
             bindings: HashMap::new(),
+            configuration: processing::Configuration::trusted(),
         }
     }
 
-    pub fn register_codec<A, C>(&mut self, codec: C) -> &mut Self
+    pub fn register_codec<A, C>(
+        &mut self,
+        codec: C,
+    ) -> Result<&mut Self, rostfrei_core::CodecRegistrationError>
     where
         A: Aggregate + 'static,
         C: EventCodec<A> + 'static,
     {
-        Arc::make_mut(&mut self.codecs).register::<A, C>(codec);
-        self
+        if self.configuration.shared_codecs {
+            return Err(rostfrei_core::CodecRegistrationError::SharedConfiguration);
+        }
+        Arc::make_mut(&mut self.codecs).register::<A, C>(codec)?;
+        Ok(self)
     }
 
     pub fn register<C, H>(
@@ -872,72 +1371,25 @@ impl CommandProcessor {
         &self,
         encoded: &EncodedCommand,
     ) -> Result<CommandResponse, CommandProcessorError> {
-        let (envelope, metadata, key) = validate_command(encoded, &self.context)?;
-        let routed = envelope.payload();
-        let outcome = match self.bindings.get(&key) {
-            None => CommandResponseOutcome::Rejected(framework_rejection(
-                CommandRejectionClassification::InvalidRequest,
-                UNKNOWN_COMMAND_CODE,
-                "The command name or schema version is not registered.",
-                Some(serde_json::json!({
-                    "context": encoded.address().context(),
-                    "command": routed.command(),
-                    "schema_version": routed.schema_version(),
-                })),
-            )?),
-            Some(binding) => match binding
-                .execute(
-                    Arc::clone(&self.store),
-                    Arc::clone(&self.codecs),
-                    metadata,
-                    routed.payload(),
+        if let Some(response) = self.reconcile_completed(encoded).await? {
+            return Ok(response);
+        }
+        let (_, metadata, _) = validate_command(encoded, &self.context)?;
+        match self.execute_missing(encoded, metadata).await {
+            Ok(processed) => processed
+                .outcome()
+                .details()
+                .available()
+                .cloned()
+                .map_err(|error| CommandProcessorError::recovery(&error)),
+            Err(error) if error.kind() == CommandProcessorErrorKind::IdentityConflict => {
+                build_response(
+                    encoded,
+                    CommandResponseOutcome::Rejected(operation_conflict()?),
                 )
-                .await
-            {
-                Ok(outcome) => outcome,
-                Err(BindingError::InvalidPayload(message)) => {
-                    CommandResponseOutcome::Rejected(framework_rejection(
-                        CommandRejectionClassification::InvalidRequest,
-                        INVALID_PAYLOAD_CODE,
-                        "The command payload is invalid.",
-                        Some(serde_json::json!({ "reason": message })),
-                    )?)
-                }
-                Err(BindingError::Execution(CommandExecutionError::Store(error)))
-                    if error.kind() == EventStoreErrorKind::IdentityConflict =>
-                {
-                    CommandResponseOutcome::Rejected(framework_rejection(
-                        CommandRejectionClassification::Conflict,
-                        OPERATION_CONFLICT_CODE,
-                        "The operation ID was already used for different command content or context.",
-                        None,
-                    )?)
-                }
-                Err(BindingError::Execution(CommandExecutionError::Store(error)))
-                    if error.kind() == EventStoreErrorKind::InvalidRequest =>
-                {
-                    CommandResponseOutcome::Rejected(framework_rejection(
-                        CommandRejectionClassification::InvalidRequest,
-                        INVALID_COMMAND_CODE,
-                        "The command cannot be executed for the requested unit of work.",
-                        Some(serde_json::json!({ "reason": error.message() })),
-                    )?)
-                }
-                Err(BindingError::Execution(error)) => {
-                    return Err(CommandProcessorError::new(
-                        CommandProcessorErrorKind::Unavailable,
-                        error.to_string(),
-                    ));
-                }
-                Err(BindingError::RejectionMapping(message)) => {
-                    return Err(CommandProcessorError::new(
-                        CommandProcessorErrorKind::InvalidConfiguration,
-                        message,
-                    ));
-                }
-            },
-        };
-        build_response(encoded, outcome)
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -962,8 +1414,9 @@ fn validate_command(
     let envelope: CommandEnvelope<RoutedCommand> = serde_json::from_slice(encoded.payload())
         .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
     let routed = envelope.payload();
-    let fingerprint = routed_command_execution_fingerprint(encoded.address().context(), routed)
-        .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+    let fingerprint =
+        routed_command_execution_fingerprint(encoded.address().context(), routed, envelope.actor())
+            .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
     let expected_message_id = command_message_id(
         encoded.address(),
         envelope.operation_id(),
@@ -976,9 +1429,14 @@ fn validate_command(
         || encoded.message_id() != &expected_message_id
         || envelope.operation_id() != encoded.operation_id()
         || envelope.correlation_id() != encoded.correlation_id()
+        || encoded
+            .message()
+            .correlation_id()
+            .is_some_and(|outer| outer != envelope.correlation_id())
         || envelope.schema_version().get() != routed.schema_version()
         || encoded.address().name() != routed.command()
         || encoded.fingerprint() != fingerprint
+        || encoded.actor() != envelope.actor()
     {
         return Err(CommandProcessorError::invalid_message(
             "command envelope identity, route, or fingerprint is inconsistent",
@@ -1001,6 +1459,26 @@ fn validate_command(
         }
     };
     metadata = metadata.with_causation_id(causation_id);
+    if let Some(actor) = envelope.actor() {
+        metadata = metadata.with_actor(actor.clone());
+    }
+    metadata = metadata.with_outcome_evidence(rostfrei_core::OutcomeEvidence {
+        authority_scope: Some(format!(
+            "{}:{}",
+            encoded.address().application(),
+            encoded
+                .address()
+                .traffic_scope()
+                .subject_segment()
+                .unwrap_or("normal")
+        )),
+        created_at_millis: Some(envelope.created_at().unix_milliseconds()),
+        fingerprint_version: if envelope.actor().is_some() { 3 } else { 2 },
+        command_type: routed.command().to_owned(),
+        command_schema: routed.schema_version(),
+        events_caused_by_command: routed.events_caused_by_command(),
+        original_causation: envelope.causation_id().map(|id| id.as_str().to_owned()),
+    });
 
     let key = CommandBindingKey::new(
         encoded.address().context(),
@@ -1014,8 +1492,13 @@ fn build_response(
     encoded: &EncodedCommand,
     outcome: CommandResponseOutcome,
 ) -> Result<CommandResponse, CommandProcessorError> {
-    let message_id = command_response_message_id(encoded.message_id())
-        .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
+    let message_id = match &outcome {
+        CommandResponseOutcome::ExecutionFailed(failure) => {
+            command_technical_response_message_id(encoded.message_id(), *failure)
+        }
+        _ => command_response_message_id(encoded.message_id()),
+    }
+    .map_err(|error| CommandProcessorError::invalid_message(error.to_string()))?;
     match outcome {
         CommandResponseOutcome::Accepted => CommandResponse::accepted(
             message_id,
@@ -1031,6 +1514,14 @@ fn build_response(
             encoded.operation_id().clone(),
             encoded.correlation_id().clone(),
             rejection,
+        ),
+        CommandResponseOutcome::ExecutionFailed(failure) => CommandResponse::execution_failed(
+            message_id,
+            encoded.message_id().clone(),
+            encoded.address().clone(),
+            encoded.operation_id().clone(),
+            encoded.correlation_id().clone(),
+            failure,
         ),
     }
     .map_err(|error| {
@@ -1061,6 +1552,15 @@ fn framework_rejection(
     })
 }
 
+fn operation_conflict() -> Result<CommandRejection, CommandProcessorError> {
+    framework_rejection(
+        CommandRejectionClassification::Conflict,
+        OPERATION_CONFLICT_CODE,
+        "The operation ID was already used for different command content or context.",
+        None,
+    )
+}
+
 pub fn command_execution_fingerprint(
     bounded_context: &str,
     command: &str,
@@ -1073,6 +1573,7 @@ pub fn command_execution_fingerprint(
         schema_version,
         payload,
         false,
+        None,
     )
 }
 
@@ -1082,23 +1583,34 @@ fn command_execution_fingerprint_with_provenance(
     schema_version: u32,
     payload: &Value,
     events_caused_by_command: bool,
+    actor: Option<&crate::ActorRef>,
 ) -> Result<ContentFingerprint, CommandBusError> {
     let schema_version = schema_version.to_be_bytes();
     let payload = canonical_json_bytes(payload)?;
     let provenance = [u8::from(events_caused_by_command)];
-    Ok(framed_fingerprint(&[
-        b"rostfrei:command-execution:v2",
+    let mut fields: Vec<&[u8]> = vec![
+        if actor.is_some() {
+            b"rostfrei:command-execution:v3"
+        } else {
+            b"rostfrei:command-execution:v2"
+        },
         bounded_context.as_bytes(),
         command.as_bytes(),
         &schema_version,
         &payload,
         &provenance,
-    ]))
+    ];
+    if let Some(actor) = actor {
+        fields.push(actor.namespace().as_bytes());
+        fields.push(actor.id().as_bytes());
+    }
+    Ok(framed_fingerprint(&fields))
 }
 
 fn routed_command_execution_fingerprint(
     bounded_context: &str,
     command: &RoutedCommand,
+    actor: Option<&crate::ActorRef>,
 ) -> Result<ContentFingerprint, CommandBusError> {
     command_execution_fingerprint_with_provenance(
         bounded_context,
@@ -1106,6 +1618,7 @@ fn routed_command_execution_fingerprint(
         command.schema_version(),
         command.payload(),
         command.events_caused_by_command(),
+        actor,
     )
 }
 
@@ -1135,6 +1648,39 @@ pub fn command_response_message_id(
     let digest = framed_fingerprint(&[
         b"rostfrei:command-response-message:v1",
         command_message_id.as_str().as_bytes(),
+    ]);
+    MessageId::new(digest.to_hex())
+}
+
+/// A separate diagnostic identity prevents a technical response from suppressing a later
+/// completed outcome in broker publication deduplication after explicit redrive.
+pub fn command_technical_response_message_id(
+    command_message_id: &MessageId,
+    failure: ExecutionFailure,
+) -> Result<MessageId, ContractError> {
+    let source = match failure {
+        ExecutionFailure::Store(StoreFailureKind::CorruptHistory) => "store.corrupt_history",
+        ExecutionFailure::Store(StoreFailureKind::CapacityExhausted) => "store.capacity_exhausted",
+        ExecutionFailure::Store(StoreFailureKind::ConfigurationMismatch) => {
+            "store.configuration_mismatch"
+        }
+        ExecutionFailure::Store(StoreFailureKind::Conflict) => "store.conflict",
+        ExecutionFailure::Store(StoreFailureKind::Unavailable) => "store.unavailable",
+        ExecutionFailure::Codec(CodecFailureKind::UnknownEventType) => "codec.unknown_event_type",
+        ExecutionFailure::Codec(CodecFailureKind::UnsupportedSchemaVersion) => {
+            "codec.unsupported_schema_version"
+        }
+        ExecutionFailure::Codec(CodecFailureKind::MalformedPayload) => "codec.malformed_payload",
+        ExecutionFailure::Codec(CodecFailureKind::InvalidEnvelope) => "codec.invalid_envelope",
+        ExecutionFailure::Codec(CodecFailureKind::EncodingFailed) => "codec.encoding_failed",
+        ExecutionFailure::Processor(ProcessorFailureKind::InvalidConfiguration) => {
+            "processor.invalid_configuration"
+        }
+    };
+    let digest = framed_fingerprint(&[
+        b"rostfrei:command-technical-response-message:v1",
+        command_message_id.as_str().as_bytes(),
+        source.as_bytes(),
     ]);
     MessageId::new(digest.to_hex())
 }
@@ -1209,4 +1755,52 @@ fn current_timestamp() -> Result<MessageTimestamp, CommandBusError> {
     })?;
     MessageTimestamp::from_unix_milliseconds(milliseconds)
         .map_err(|error| CommandBusError::encoding(error.to_string()))
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "assertions express the pure validator contract"
+    )]
+    fn pure_validation_refuses_contradictory_outer_correlation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let context = rostfrei_messaging_core::ApplicationName::new("validation")?
+            .bounded_context("orders")?;
+        let processor = Arc::new(CommandProcessor::new(
+            context.name().clone(),
+            Arc::new(rostfrei_core::InMemoryEventStore::new()),
+        ));
+        let bus = CommandBus::new(
+            context,
+            Arc::new(crate::InMemoryMessagingAdapter::new(processor)),
+        );
+        let original = bus.encode_dynamic(
+            DynamicCommandRequest::new(
+                CoreOperationId::new("operation")?,
+                "act",
+                1,
+                serde_json::json!({}),
+            )?
+            .with_correlation_id(CorrelationId::new("original")?),
+        )?;
+        original.validate()?;
+        let invalid = EncodedCommand::new(
+            original
+                .message()
+                .clone()
+                .with_correlation_id(CorrelationId::new("contradictory")?),
+            original.operation_id().clone(),
+            original.correlation_id().clone(),
+            original.fingerprint(),
+        );
+        assert_eq!(
+            invalid.validate().err().map(|error| error.kind()),
+            Some(CommandProcessorErrorKind::InvalidMessage)
+        );
+        Ok(())
+    }
 }

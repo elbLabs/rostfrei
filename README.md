@@ -21,6 +21,8 @@ framework.
   project structure.
 - [Reference index](docs/README.md): workspace crates, terminology, and
   architecture decisions.
+- [Runtime stack and checklist](docs/design/command-runtime-stack-and-consolidation.md):
+  command execution, persistence, validation, and measured consolidation results.
 - [Tracer Studio](studio): inspect behavioral tests and their message graphs.
 - [Changelog](CHANGELOG.md): release changes and migration notes.
 
@@ -42,6 +44,19 @@ Its handler loads those aggregates and calls domain behavior. The runtime
 atomically appends the resulting domain events at the expected stream versions.
 A rejection appends no domain events. Accepted commands persist a receipt even
 when they emit no events. Queries read state without changing it.
+
+Completed business rejections now share that atomic operation authority across
+direct, local, NATS and HTTP execution. Retry a completed operation with unchanged
+evidence to replay it; a new attempt after repair needs a new operation ID. Permanent
+decisions outlive transport TTL/dedup caches; result details have an explicit expiry
+lifecycle, and unreadable completed results never permit reevaluation. Generic executors require an
+explicit rejection codec; processor bindings use their existing rejection mapper
+before persistence. **NATS defaults to fail-closed legacy/read-only processing.**
+New mutable namespaces require an explicit fresh outcome epoch and operator-enforced
+old-writer credential/ACL exclusion. Read the
+[completed-outcome contract](docs/adr/0044-completed-outcomes-and-envelope-ingress.md)
+and [cutover runbook](docs/completed-outcome-cutover.md); do not activate an old
+namespace just because its cached responses have expired.
 
 Domain events form private aggregate history. Integration events are separately
 versioned public contracts published after commit. NATS JetStream adapters
@@ -73,6 +88,11 @@ concurrency retries. Queries use a read-only handle.
 
 See the [runtime reference](docs/runtime.md) for NATS authentication, history
 reads and audits, command correlation, and worker delivery.
+
+Technical command failures expose typed source and recovery information through
+the processor, local/NATS command buses, and HTTP. They are not business
+rejections. See the [classification, response compatibility, and redrive contract](docs/adr/0043-typed-technical-command-failures.md)
+before upgrading response readers or replaying quarantined commands.
 
 ## HTTP API
 

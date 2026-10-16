@@ -1,4 +1,5 @@
 pub mod command_acceptance_contract;
+pub mod completed_outcome_contract;
 mod domain_event_handler;
 pub mod event_store_contract;
 mod given_when_then;

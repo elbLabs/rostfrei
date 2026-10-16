@@ -1,5 +1,6 @@
 #[path = "../src/hex.rs"]
 mod hex;
+mod native_connection_support;
 
 #[path = "domain_event_consumer/worker_pool.rs"]
 mod worker_pool;
@@ -190,7 +191,9 @@ impl DomainEventHandler<TestEvent> for RecordingHandler {
 #[allow(clippy::too_many_lines)]
 async fn durable_domain_event_consumers_preserve_history_order_and_independent_progress() {
     let url = rostfrei_testing::integration::nats_url().expect("NATS test configuration");
-    let client = async_nats::connect(url).await.expect("NATS connection");
+    let client = native_connection_support::client(url)
+        .await
+        .expect("NATS connection");
     assert!(client.is_server_compatible(2, 12, 1));
     let context = async_nats::jetstream::new(client.clone());
     let suffix = unique_suffix().expect("unique test suffix");
@@ -685,7 +688,7 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
 #[tokio::test]
 async fn schema_four_events_without_a_valid_receipt_are_not_dispatched() -> TestResult<()> {
     let url = rostfrei_testing::integration::nats_url()?;
-    let client = async_nats::connect(url).await?;
+    let client = native_connection_support::client(url).await?;
     if !client.is_server_compatible(2, 12, 1) {
         return Err("NATS Server 2.12.1 or newer is required".into());
     }

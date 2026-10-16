@@ -136,7 +136,7 @@ enum AccountCommand {
     NoOp,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 enum AccountRejection {
     AlreadyImported,
     Deliberate,
@@ -540,6 +540,63 @@ struct ForcedConflictStore {
     remaining_conflicts: AtomicUsize,
     append_attempts: AtomicUsize,
 }
+#[async_trait]
+impl rostfrei_core::OutcomeReader for ForcedConflictStore {
+    async fn lookup_outcome(
+        &self,
+        key: &rostfrei_core::OutcomeKey,
+    ) -> Result<rostfrei_core::OutcomeLookup<rostfrei_core::EncodedOutcomeDetails>, EventStoreError>
+    {
+        rostfrei_core::OutcomeReader::lookup_outcome(&self.inner, key).await
+    }
+}
+#[async_trait]
+impl rostfrei_core::ExecutionStore for ForcedConflictStore {
+    fn authority(&self) -> &rostfrei_core::CommandAuthority {
+        rostfrei_core::ExecutionStore::authority(&self.inner)
+    }
+    async fn begin_command(
+        &self,
+    ) -> Result<Box<dyn rostfrei_core::CommandCommitSession + '_>, EventStoreError> {
+        Ok(Box::new(ForcedConflictSession {
+            store: self,
+            inner: rostfrei_core::ExecutionStore::begin_command(&self.inner).await?,
+        }))
+    }
+}
+struct ForcedConflictSession<'a> {
+    store: &'a ForcedConflictStore,
+    inner: Box<dyn rostfrei_core::CommandCommitSession + 'a>,
+}
+#[async_trait]
+impl EventHistory for ForcedConflictSession<'_> {
+    async fn load(&self, id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
+        self.inner.load(id).await
+    }
+}
+#[async_trait]
+impl rostfrei_core::CommandCommitSession for ForcedConflictSession<'_> {
+    async fn commit_outcome(
+        self: Box<Self>,
+        proposal: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedCommit, EventStoreError> {
+        self.store.append_attempts.fetch_add(1, Ordering::Relaxed);
+        if self
+            .store
+            .remaining_conflicts
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::Conflict,
+                "forced test conflict",
+            ));
+        }
+        self.inner.commit_outcome(proposal).await
+    }
+}
 
 impl ForcedConflictStore {
     fn new(remaining_conflicts: usize) -> Self {
@@ -560,6 +617,34 @@ impl EventHistory for ForcedConflictStore {
 
 #[async_trait]
 impl EventStore for ForcedConflictStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, EventStoreError> {
+        self.inner
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        self.append_attempts.fetch_add(1, Ordering::Relaxed);
+        if self
+            .remaining_conflicts
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::Conflict,
+                "forced test conflict",
+            ));
+        }
+        self.inner.commit_outcome(transaction).await
+    }
     async fn append(
         &self,
         stream_id: &StreamId,
@@ -620,6 +705,21 @@ impl EventHistory for AppendOnlyStore {
 
 #[async_trait]
 impl EventStore for AppendOnlyStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, EventStoreError> {
+        self.0
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
+        self.0.commit_outcome(transaction).await
+    }
     async fn append(
         &self,
         stream_id: &StreamId,
@@ -915,8 +1015,9 @@ fn given_when_then_exposes_live_state_and_replay_equivalence() {
 #[tokio::test]
 async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
     let stream = stream("imported-account").expect("valid imported account stream fixture");
-    let executor =
-        CommandExecutor::new(InMemoryEventStore::new()).with_codec::<Account, _>(AccountCodec);
+    let executor = CommandExecutor::new(InMemoryEventStore::new())
+        .with_codec::<Account, _>(AccountCodec)
+        .expect("valid standalone codec");
     let handler = AccountCommandHandler::for_stream(&stream);
     let import_metadata = metadata("import-operation", "stable-import-command")
         .expect("valid import execution metadata fixture");
@@ -994,11 +1095,12 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
         .await
         .expect("load should succeed");
     let rejection = executor
-        .execute(
+        .execute_with_rejection_codec(
             &handler,
             metadata("rejected-operation", "record-then-reject")
                 .expect("valid rejected execution metadata fixture"),
             &AccountCommand::RecordThenReject,
+            &rostfrei_core::JsonRejectionCodec::new("test.account-rejection", 1),
         )
         .await
         .expect("domain rejection is a completed command outcome");
@@ -1020,7 +1122,8 @@ async fn executor_replays_retries_rejections_and_preserves_import_provenance() {
 async fn command_execution_uses_the_registered_aggregate_codec_for_write_and_replay() {
     let stream = stream("schema-99-account").expect("valid custom-codec stream fixture");
     let executor = CommandExecutor::new(InMemoryEventStore::new())
-        .with_codec::<Account, _>(Schema99AccountCodec);
+        .with_codec::<Account, _>(Schema99AccountCodec)
+        .expect("valid standalone codec");
     let handler = AccountCommandHandler::for_stream(&stream);
 
     let written = executor
@@ -1060,8 +1163,9 @@ async fn command_execution_uses_the_registered_aggregate_codec_for_write_and_rep
 #[tokio::test]
 async fn executor_rejects_commands_that_exceed_the_atomic_commit_limit() {
     let stream = stream("oversized-command").expect("valid oversized command stream fixture");
-    let executor =
-        CommandExecutor::new(InMemoryEventStore::new()).with_codec::<Account, _>(AccountCodec);
+    let executor = CommandExecutor::new(InMemoryEventStore::new())
+        .with_codec::<Account, _>(AccountCodec)
+        .expect("valid standalone codec");
     let event_count = MAX_EVENTS_PER_BATCH.saturating_add(1);
 
     let error = executor
@@ -1172,8 +1276,9 @@ async fn executor_uses_derived_json_events_without_codec_configuration() {
 #[tokio::test]
 async fn executor_returns_an_accepted_no_events_receipt_without_appending() {
     let stream = stream("no-op-execution").expect("valid no-op execution stream fixture");
-    let executor =
-        CommandExecutor::new(InMemoryEventStore::new()).with_codec::<Account, _>(AccountCodec);
+    let executor = CommandExecutor::new(InMemoryEventStore::new())
+        .with_codec::<Account, _>(AccountCodec)
+        .expect("valid standalone codec");
 
     let result: CommandResult<AccountRejection> = executor
         .execute(
@@ -1201,7 +1306,9 @@ async fn executor_returns_an_accepted_no_events_receipt_without_appending() {
 async fn simulation_replays_history_and_returns_encoded_predictions_without_appending() {
     let stream = stream("simulated-account").expect("valid simulated account stream fixture");
     let store = InMemoryEventStore::new();
-    let executor = CommandExecutor::new(store.clone()).with_codec::<Account, _>(AccountCodec);
+    let executor = CommandExecutor::new(store.clone())
+        .with_codec::<Account, _>(AccountCodec)
+        .expect("valid standalone codec");
     let seed = executor
         .execute(
             &AccountCommandHandler::for_stream(&stream),
@@ -1258,8 +1365,9 @@ async fn simulation_replays_history_and_returns_encoded_predictions_without_appe
 #[tokio::test]
 async fn simulation_returns_typed_rejection_and_discards_pending_events_without_appending() {
     let stream = stream("rejected-simulation").expect("valid rejected simulation stream fixture");
-    let executor =
-        CommandExecutor::new(ForcedConflictStore::new(1)).with_codec::<Account, _>(AccountCodec);
+    let executor = CommandExecutor::new(ForcedConflictStore::new(1))
+        .with_codec::<Account, _>(AccountCodec)
+        .expect("valid standalone codec");
 
     let outcome = executor
         .simulate(
@@ -1295,7 +1403,9 @@ async fn simulation_returns_typed_rejection_and_discards_pending_events_without_
 async fn simulation_accepts_zero_events_with_read_only_object_safe_history() {
     let stream = stream("no-op-simulation").expect("valid no-op simulation stream fixture");
     let history: Arc<dyn EventHistory> = Arc::new(EmptyEventHistory);
-    let executor = CommandExecutor::new(history).with_codec::<Account, _>(AccountCodec);
+    let executor = CommandExecutor::new(history)
+        .with_codec::<Account, _>(AccountCodec)
+        .expect("valid standalone codec");
 
     let outcome = executor
         .simulate(
@@ -1328,8 +1438,9 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
     )
     .await
     .expect("unknown-event history seed should append");
-    let unknown_executor =
-        CommandExecutor::new(unknown_store).with_codec::<Account, _>(AccountCodec);
+    let unknown_executor = CommandExecutor::new(unknown_store)
+        .with_codec::<Account, _>(AccountCodec)
+        .expect("valid standalone codec");
     let error = unknown_executor
         .execute(
             &AccountCommandHandler::for_stream(&unknown_stream),
@@ -1355,8 +1466,9 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
     )
     .await
     .expect("malformed-event history seed should append");
-    let malformed_executor =
-        CommandExecutor::new(malformed_store).with_codec::<Account, _>(AccountCodec);
+    let malformed_executor = CommandExecutor::new(malformed_store)
+        .with_codec::<Account, _>(AccountCodec)
+        .expect("valid standalone codec");
     let error = malformed_executor
         .execute(
             &AccountCommandHandler::for_stream(&malformed_stream),
@@ -1385,8 +1497,9 @@ async fn executor_fails_closed_for_unknown_and_malformed_events() {
     )
     .await
     .expect("unknown-version history seed should append");
-    let unknown_version_executor =
-        CommandExecutor::new(unknown_version_store).with_codec::<Account, _>(AccountCodec);
+    let unknown_version_executor = CommandExecutor::new(unknown_version_store)
+        .with_codec::<Account, _>(AccountCodec)
+        .expect("valid standalone codec");
     let error = unknown_version_executor
         .execute(
             &AccountCommandHandler::for_stream(&unknown_version_stream),
@@ -1408,6 +1521,7 @@ async fn executor_retries_conflicts_with_a_hard_bound() {
     let successful_stream = stream("retry-conflict").expect("valid retry stream fixture");
     let successful = CommandExecutor::new(ForcedConflictStore::new(1))
         .with_codec::<Account, _>(AccountCodec)
+        .expect("valid standalone codec")
         .with_max_conflict_retries(1);
     let outcome = successful
         .execute(
@@ -1433,6 +1547,7 @@ async fn executor_retries_conflicts_with_a_hard_bound() {
         stream("exhaust-conflict").expect("valid exhausted-retry stream fixture");
     let exhausted = CommandExecutor::new(ForcedConflictStore::new(3))
         .with_codec::<Account, _>(AccountCodec)
+        .expect("valid standalone codec")
         .with_max_conflict_retries(2);
     let error = exhausted
         .execute(
