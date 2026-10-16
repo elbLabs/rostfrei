@@ -358,6 +358,95 @@ async fn opt_in_replay_publishes_original_command_and_reconciles_durable_decisio
 }
 
 #[tokio::test]
+async fn opt_in_replay_admits_live_winner_after_response_ttl_inside_command_dedup_window()
+-> TestResult {
+    // Adapted from the independent review's executed R1 reproduction. A real
+    // duplicate PubAck queues no delivery to regenerate an expired raw response.
+    for action in ["create", "add", "noop"] {
+        let replay = Replay::new(action).await?;
+        let _worker = replay.start_worker().await?;
+        let sender = replay.sender(true)?;
+        let original = sender.dispatch_encoded(replay.command.clone()).await?;
+        assert!(!original.publication_duplicate());
+        assert_eq!(rejected(original.response().outcome()), action == "add");
+        replay.wait_acknowledged().await?;
+        assert_eq!(&replay.raw_response().await?, original.response());
+
+        let before = replay
+            .service
+            .lookup(&caller("sender")?, &replay.command)
+            .await
+            .into_result()?;
+        assert!(matches!(before, OutcomeLookup::Completed(_)));
+        let history = replay.store.load(&stream("target")?).await?;
+        assert_eq!(history.len(), usize::from(action == "create"));
+
+        let mut responses = replay
+            .fixture
+            .js
+            .get_stream(
+                replay
+                    .fixture
+                    .messaging
+                    .topology()
+                    .command_response_stream()
+                    .as_str(),
+            )
+            .await?;
+        let mut response_config = responses.info().await?.config.clone();
+        // Accelerate only projection expiry, after observing its actual publication.
+        // Keep the ordinary command dedup window and the live authoritative outcome.
+        response_config.max_age = Duration::from_millis(150);
+        response_config.duplicate_window = Duration::from_millis(100);
+        replay.fixture.js.update_stream(response_config).await?;
+        tokio::time::timeout(WAIT, async {
+            while responses.info().await?.state.messages != 0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            TestResult::Ok(())
+        })
+        .await??;
+
+        let fast_observer = Arc::new(Publications::default());
+        let fast = replay
+            .sender(false)?
+            .dispatch_encoded_observed(replay.command.clone(), fast_observer.clone())
+            .await?;
+        assert_eq!(fast.response(), original.response());
+        assert!(fast_observer.records.lock().await.is_empty());
+
+        let observer = Arc::new(Publications::default());
+        let result = sender
+            .dispatch_encoded_observed(replay.command.clone(), observer.clone())
+            .await;
+        assert_eq!(
+            observer.records.lock().await.as_slice(),
+            &[CommandPublication::new(
+                replay.command.message_id().clone(),
+                true
+            )]
+        );
+        assert_eq!(replay.commands().await?.info().await?.state.messages, 0);
+        assert_eq!(responses.info().await?.state.messages, 0);
+        assert_eq!(replay.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(replay.resolver.0.load(Ordering::SeqCst), 1);
+        assert_eq!(replay.store.load(&stream("target")?).await?, history);
+        assert_eq!(
+            replay
+                .service
+                .lookup(&caller("sender")?, &replay.command)
+                .await
+                .into_result()?,
+            before
+        );
+        let receipt = result?;
+        assert!(receipt.publication_duplicate());
+        assert_eq!(receipt.response(), original.response());
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn opt_in_fresh_commands_still_execute_once_through_native_worker() -> TestResult {
     for action in ["create", "add", "noop"] {
         let replay = Replay::new(action).await?;

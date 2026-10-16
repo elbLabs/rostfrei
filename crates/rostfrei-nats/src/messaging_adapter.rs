@@ -90,9 +90,11 @@ impl NatsMessagingAdapter {
     /// With [`Self::with_outcome_service`], current authorization and outcome-detail
     /// lifecycle checks still precede publication. The original command is published
     /// through the normal bounded retry path; the observer and receipt use its actual
-    /// broker acknowledgement's duplicate flag. After reading the response, current
-    /// authority is consulted again before admitting a business result. Native workers
-    /// reconcile completed commands without reevaluating their handlers.
+    /// broker acknowledgement's duplicate flag. After the awaited publication callback,
+    /// current authority is consulted again, independently of the raw response's lifetime.
+    /// If no winner is available, response reading and subsequent authoritative admission
+    /// proceed normally. Native workers reconcile completed commands without reevaluating
+    /// their handlers.
     ///
     /// By default, authorized completed replay returns without publication or an observer
     /// callback. This option does not itself configure an outcome service or caller.
@@ -257,6 +259,13 @@ impl CommandMessageAdapter for NatsMessagingAdapter {
                 publication.duplicate(),
             ))
             .await;
+        // A duplicate PubAck may enqueue no delivery to recreate an expired response.
+        // Admit current authority before depending on that transport projection.
+        if self.replay_publication
+            && let Some(winner) = self.authorized_response(&command).await?
+        {
+            return Ok(CommandBusReceipt::new(publication.duplicate(), winner));
+        }
         let response = self.read_response_with_timeout(&command).await?;
         if self.outcome_service.is_some() {
             if let Some(winner) = self.authorized_response(&command).await? {
