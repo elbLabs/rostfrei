@@ -23,6 +23,8 @@ framework.
   architecture decisions.
 - [Runtime stack and checklist](docs/design/command-runtime-stack-and-consolidation.md):
   command execution, persistence, validation, and measured consolidation results.
+- [Worker concurrency and shared delivery capacity](docs/consumer-concurrency.md):
+  configure workers across multiple pods.
 - [Tracer Studio](studio): inspect behavioral tests and their message graphs.
 - [Changelog](CHANGELOG.md): release changes and migration notes.
 
