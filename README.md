@@ -25,6 +25,8 @@ framework.
   command execution, persistence, validation, and measured consolidation results.
 - [Worker concurrency and shared delivery capacity](docs/consumer-concurrency.md):
   configure workers across multiple pods.
+- [Bounded command-response waiting](docs/command-response-timeout.md):
+  set response budgets and recover after a timeout.
 - [Tracer Studio](studio): inspect behavioral tests and their message graphs.
 - [Changelog](CHANGELOG.md): release changes and migration notes.
 
