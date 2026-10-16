@@ -161,14 +161,23 @@ validated against the runtime-generated MessageSeries v2 schema; valid empty
 collections remain supported.
 
 Use the application's actual handlers, workers, fixtures and NATS event store on
-an authorized disposable NATS 2.12.1+ broker with JetStream. The verified baseline
+an authorized disposable NATS 2.12.1+ broker with JetStream. The supported shared
 host uses `cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`;
-supply `ROSTFREI_NATS_URL` and distinct control/dispatch tokens. Optional
+supply `ROSTFREI_NATS_URL`, a unique owned `ROSTFREI_APPLICATION`, a new explicit
+`ROSTFREI_COMPLETED_OUTCOME_EPOCH`, and distinct control/dispatch tokens. Optional
 `ROSTFREI_INSPECTION_TOKEN` enables read-only production observation/quarantine.
 The shared host runs without HTTP when `--tracer` is omitted; the earlier
 always-on baseline accepts and ignores that flag. Default bind is
 `127.0.0.1:1309`. Runs reset the entire configured Test scenario. See each skill's
 runtime reference for isolation, reset scope and broker cleanup.
+
+The epoch selects fresh writable split authority; a unique app name alone is
+insufficient. Existing namespaces retain their default read-only semantics;
+fresh setup is not an existing-history migration. Test reset replaces both the
+authoritative journal and completed-outcome state and reconnects backend-bound
+services; Normal resources must survive repeated resets. For clean combined
+candidate builds, exact crate/tool/host provenance, local archives and external
+onboarding, follow [the release-kit qualification recipe](release-01-kit.md).
 
 Tracer currently exposes **HTTP JSON and SSE**, with no implemented MCP adapter.
 The Rust CLI executes suites; the installed Tracer skill teaches direct

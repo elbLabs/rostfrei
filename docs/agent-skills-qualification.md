@@ -1,5 +1,19 @@
 # Agent Skills qualification — issue #105
 
+## Combined runtime candidate checkpoint (2026-10-16)
+
+Earlier executed records below are historical component/PR-only evidence, not
+proof of the complete modular-runtime composition. The selected composition
+requires handler diagnostics, explicit fresh split authority, repeated Test reset
+with Normal preservation and one clean identity across app, native CLI, kit and
+external dependencies. The runnable matrix and separate host provenance are in
+[release-01-kit.md](release-01-kit.md). Component tooling checks are distinct from
+that still-pending final-candidate execution.
+
+The parent owns the fresh installed-skill scenario B after freeze. Its real
+behavioral red/green and human feedback remain pending; scripted comparison
+controls do not satisfy that acceptance. The documented holdout remains unused.
+
 ## Scope and evidence
 
 **Current integration:** #106's real-execution skills have been qualified together

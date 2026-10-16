@@ -260,10 +260,12 @@ qualification, not an independent agent-usability trial or human feedback.
 
 ## Reproduce functional qualification
 
-In a fresh temporary detached worktree, combine the recorded skill/code and host
-heads (or restore the retained combined Git bundle), then use that combined
-revision for **both** the app dependencies and CLI. Do not install from an
-unrelated global tool's bundle. Typical repository-maintenance commands:
+The earlier results above describe their historical PR-only snapshots. The
+modular-runtime composition requires one new clean freeze containing the complete
+runtime lineage and selected host/diagnostics/skills changes. Use that exact
+revision for app, CLI, kit and every external Rostfrei crate. Follow the executable
+[candidate recipe](release-01-kit.md); older snapshot passes do not qualify it.
+Typical repository-maintenance commands on the clean freeze:
 
 ```sh
 cargo package --locked -p rostfrei-structure
@@ -272,16 +274,17 @@ cargo install --locked --debug --path "$EXTRACTED_PACKAGE" --root "$EXTERNAL_CLI
 # Remove only that owned extraction directory before running the consumer checks.
 export ROSTFREI_CLI="$EXTERNAL_CLI/bin/cargo-rostfrei"
 python3 scripts/check_agent_skills.py
-python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --output "$NEW_EVIDENCE/installed"
-python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --source-checkout --output "$NEW_EVIDENCE/source"
+python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --require-handler-simulation --output "$NEW_EVIDENCE/installed"
+python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --source-checkout --require-handler-simulation --output "$NEW_EVIDENCE/source"
 python3 scripts/test_nats.py -- cargo test --locked -p bike-rental --test shared_host_observation -- --test-threads=1
 python3 scripts/test_nats.py -- python3 scripts/check_bike_rental_host.py
 ```
 
-The last two checks belong to the combined host tree. Individual #106 CI runs
-the installed/source driver against its own application-linked host. That older
-host accepts and ignores `--tracer`; the combined shared host requires it. An
-explicit `--host-command` must include the flag itself and use the matched host.
+The last two checks belong to the combined host tree. The live driver selects an
+explicit fresh split-authority epoch and standard shared host, checks three real
+suite resets and retained Normal history, and requires selected handler diagnostics.
+An explicit `--host-command` must include `--tracer` and provide a matching
+`--host-build-provenance` record; HTTP alone does not attest a host's Git SHA.
 Python here is repository-only orchestration. Native suite execution runs with
 an empty tools PATH; rich HTTP exploration uses bounded curl with pipe-fed headers.
 
@@ -312,14 +315,18 @@ Preparation for the teammate:
 2. Start a new disposable JetStream broker with loopback-only ports and no volume:
    `docker run --rm --detach --name <unique-owned-name> -p 127.0.0.1::4222 nats:2.12.15-alpine -js`.
    Read the assigned port with `docker port <unique-owned-name> 4222/tcp` and set
-   `ROSTFREI_NATS_URL`. Give the app a unique `ROSTFREI_APPLICATION` too.
+   `ROSTFREI_NATS_URL`. Give the app a unique `ROSTFREI_APPLICATION` and a new
+   explicit `ROSTFREI_COMPLETED_OUTCOME_EPOCH`. The unique name alone does not
+   select writable authority; existing namespaces remain read-only by default.
 3. Generate distinct control/dispatch/inspection tokens into environment variables
    without echoing, tracing or saving them. Set the host's loopback
    `ROSTFREI_API_ADDR`, and the agent's matching `ROSTFREI_TRACER_URL` and scoped
    capability variables. Start the supplied host; the framework bike-rental
    command is `cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`.
    Do not assume another app enables observation merely because this example does.
-4. Agree once on the isolated TDD fixture/reset scope. Observe whether the agent
+4. The parent owns scenario B from `agent-skills-qualification.md`, after actual
+   human confirmation of its behavior. Use the exact external app setup in
+   [release-01-kit.md](release-01-kit.md). Agree once on the isolated TDD fixture/reset scope. Observe whether the agent
    discovers actual capabilities, executes real red/green, uses read-only evidence
    appropriately, recognizes partial/unavailable data, and explains only explicit
    causality. Record misunderstandings and human feedback, not just exit codes.

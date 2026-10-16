@@ -1,8 +1,8 @@
 """Repository-only live acceptance for the HTTP/SSE workflows taught by the skills.
 
 Called by check_agent_skills_live.py on its owned bike-rental host. This is not
-consumer tooling or an agent-usability trial; no extra command is submitted to
-production. The host integration suite separately exercises external publishers.
+consumer tooling or an agent-usability trial. Normal-state preservation submits
+only to this driver's disposable application/broker, never an existing app.
 """
 
 import json
@@ -10,7 +10,7 @@ import re
 import subprocess
 import time
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
@@ -25,6 +25,8 @@ class Capabilities:
         self.application = environment["ROSTFREI_APPLICATION"]
         self.tokens = {"test": environment["ROSTFREI_API_TOKEN"],
                        "production": environment["ROSTFREI_INSPECTION_TOKEN"]}
+        if "ROSTFREI_DISPATCH_TOKEN" in environment:
+            self.tokens["dispatch"] = environment["ROSTFREI_DISPATCH_TOKEN"]
         self.output = output
         self.opener = build_opener(ProxyHandler({}), NoRedirects())
         self.feeds = {}
@@ -37,8 +39,10 @@ class Capabilities:
             raise ValueError("Host advertised an unsafe or unresolved href")
         return self.origin + href
 
-    def request(self, href, scope="test", payload=None, expected=200):
+    def request(self, href, scope="test", payload=None, expected=200, idempotency_key=None):
         request = Request(self.url(href), headers={"Authorization": "Bearer " + self.tokens[scope]})
+        if idempotency_key is not None:
+            request.add_header("Idempotency-Key", idempotency_key)
         if payload is not None:
             request.data = json.dumps(payload).encode()
             request.add_header("Content-Type", "application/json")
@@ -48,7 +52,8 @@ class Capabilities:
             response = error
         with response:
             assert response.status == expected, f"{scope} {href}: HTTP {response.status}, expected {expected}"
-            return json.load(response), response.headers
+            body = response.read()
+            return (json.loads(body) if body and "json" in response.headers.get("Content-Type", "") else None), response.headers
 
     def save(self, name, value):
         (self.output / f"{name}.json").write_text(json.dumps(value, indent=2) + "\n")
@@ -65,7 +70,7 @@ class Capabilities:
         return snapshot
 
     def discover(self):
-        for scope in self.tokens:
+        for scope in ("test", "production"):
             catalog, _ = self.request("/catalog", scope)
             self.catalogs[scope] = catalog
             assert catalog["catalogVersion"] == 1
@@ -115,17 +120,28 @@ class Capabilities:
         self.save("observation-test-after-run", detail)
         return detail
 
-    def simulate_handler(self, definition):
-        root = definition["expected"]["graphs"][0]["nodes"][0]
+    def command_version(self, root):
         context = next(item for item in self.catalogs["test"]["contexts"] if item["id"] == root["context"])
         command = next(item for item in context["commands"] if item["id"] == root["name"])
         version = next(item for item in command["versions"] if item["schemaVersion"] == root["schemaVersion"])
+        return context, version
+
+    def simulate_handler(self, definition, required=False):
+        root = definition["expected"]["graphs"][0]["nodes"][0]
+        context, version = self.command_version(root)
         href = version.get("simulateHandlerHrefTemplate")
         if href is None:
             result = {"status": "unavailable", "reason": "No simulateHandlerHrefTemplate; legacy Preview is not a substitute"}
             self.save("handler-simulation", result)
+            if required:
+                raise ValueError("Selected candidate required simulateHandlerHrefTemplate, but it is unavailable")
             return result["status"]
-        assert "simulateHrefTemplate" not in version
+        assert all("simulateHrefTemplate" not in item for context in self.catalogs["test"]["contexts"]
+                   for command in context["commands"] for item in command["versions"])
+        # Only this negative retirement check names an unadvertised legacy route.
+        # Every supported action uses the current catalog's relation.
+        retired = f'/contexts/{quote(root["context"], safe="")}/commands/{quote(root["name"], safe="")}/simulate'
+        self.request(retired, payload={"schemaVersion": root["schemaVersion"], "payload": root["payload"]}, expected=404)
         aggregate = next(item for item in context["aggregates"] if item["aggregateType"] == "bike-rental/rental-fleet")
         before, _ = self.request(aggregate["testInstancesHref"])
         observation = self.snapshot("test")
@@ -138,22 +154,71 @@ class Capabilities:
         stream, = proposal["streams"]
         current = next(item for item in before["items"] if item["aggregateId"] == stream["aggregateId"])
         assert stream["baseStreamVersion"] == current["streamVersion"]
-        rejection, _ = self.request(href, payload={"schemaVersion": root["schemaVersion"], "payload": root["payload"]})
+        rejection, rejection_headers = self.request(href, payload={"schemaVersion": root["schemaVersion"], "payload": root["payload"]})
+        assert "Location" not in rejection_headers
         assert rejection["outcome"]["decision"] == "rejected" and rejection["proposedEvents"] == []
         for result in (proposal, rejection):
-            assert not any(field in result for field in ("operationId", "correlationId", "messageSeries", "capture", "receipt"))
+            assert result["kind"] == "handlerSimulation" and result["committed"] is False
+            assert not any(field in result for field in ("operation", "operationId", "correlationId", "messageSeries",
+                "capture", "receipt", "publication", "commandMessageId", "responseMessageId"))
         after, _ = self.request(aggregate["testInstancesHref"])
         assert after == before, "Handler diagnostics must not append history"
-        assert self.snapshot("test")["items"] == observation["items"], "No invented observation"
+        after_observation = self.snapshot("test")
+        assert after_observation == observation, "No invented observation or observation generation change"
         self.save("handler-simulation", {"status":"passed", "proposal":proposal, "rejection":rejection,
-                                       "historyBefore":before, "historyAfter":after})
+                                       "historyBefore":before, "historyAfter":after,
+                                       "observationBefore":observation, "observationAfter":after_observation,
+                                       "legacyPreviewHttpStatus":404,
+                                       "evidenceScope":"HTTP history/observation and response shape; native no-publication boundary tested separately"})
         return "passed"
 
-    def after_reset(self, previous):
+    def normal_command(self, root, key, decision):
+        _, version = self.command_version(root)
+        submitted, headers = self.request(version["dispatchHrefTemplate"], "dispatch",
+            payload={"schemaVersion": root["schemaVersion"], "payload": root["payload"]},
+            expected=202, idempotency_key=key)
+        operation = submitted["operation"]
+        deadline = time.monotonic() + 35
+        while operation["status"] not in ("completed", "failed", "indeterminate"):
+            assert time.monotonic() < deadline, "Normal command incomplete; do not resubmit"
+            time.sleep(0.05)
+            operation, _ = self.request(headers["Location"], "dispatch")
+        assert operation["status"] == "completed", operation
+        assert operation["result"]["decision"] == decision, operation
+        capture, _ = self.request(operation["messageSeriesHref"] + "?within=10s&settleFor=500ms", "dispatch")
+        assert capture["capture"]["settled"] and capture["capture"]["fidelity"] == "exact"
+        self.save(key, {"operation": operation, "capture": capture})
+        return operation
+
+    def seed_normal(self, definition):
+        root = definition["expected"]["graphs"][0]["nodes"][0]
+        self.normal_root = {**root, "payload": {**root["payload"],
+            "fleet_id": "skills-normal-preserved", "bicycle_id": "skills-normal-bicycle"}}
+        operation = self.normal_command(self.normal_root, "normal-preservation-seed", "accepted")
+        deadline = time.monotonic() + 10
+        while True:
+            self.normal_snapshot = self.snapshot("production")
+            if any(item["correlationId"] == operation["correlationId"] for item in self.normal_snapshot["items"]):
+                break
+            assert time.monotonic() < deadline, "Normal seed missing from observation"
+            time.sleep(0.05)
+        self.save("normal-before-resets", self.normal_snapshot)
+
+    def normal_preserved(self, name):
+        current = self.snapshot("production")
+        assert current == self.normal_snapshot, "Test reset changed Normal observation"
+        self.save(f"normal-after-{name}", current)
+
+    def verify_normal_history(self):
+        # A new command identity must still see the bicycle committed before all
+        # three resets. This is a real business decision, not just a retained feed.
+        self.normal_command(self.normal_root, "normal-preservation-after-resets", "rejected")
+
+    def after_reset(self, previous, name="reset"):
         error, _ = self.request(previous["detailHref"], expected=410)
         assert error["code"] == "observation-expired"
         assert self.snapshot("test")["generation"] != previous["generation"]
         production = self.snapshot("production")
         original = json.loads((self.output / "observation-production-initial.json").read_text())
         assert production["generation"] == original["generation"]
-        self.save("observation-test-expired", error)
+        self.save(f"observation-test-expired-{name}", error)

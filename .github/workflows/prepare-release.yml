@@ -58,7 +58,7 @@ jobs:
       - name: Qualify the installable Agent Skills kit
         run: python3 scripts/check_agent_skills.py
       - name: Build release-matched Agent Skills archive and checksum
-        run: python3 scripts/package_agent_skills.py --output "$RUNNER_TEMP/agent-skills"
+        run: python3 scripts/package_agent_skills.py --require-clean --output "$RUNNER_TEMP/agent-skills"
 
       - name: Create draft GitHub release
         env:
