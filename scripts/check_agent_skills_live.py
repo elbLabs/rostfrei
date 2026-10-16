@@ -169,7 +169,7 @@ def qualify(output, source_checkout=False, host_command=None, require_handler_si
                 checked([*runner, str(negative), *release_args, "--output", str(output / "negative-control-failed.json")], consumer, client_environment, expected=1, output=output)
                 capabilities.after_reset(observed, "second-suite")
                 capabilities.normal_preserved("second-suite")
-                second_observed = capabilities.observed_run(json.loads((output / "negative-control-failed.json").read_text()))
+                second_observed = capabilities.observed_run(json.loads((output / "negative-control-failed.json").read_text()), "second-suite")
                 assert definition.read_bytes() == original_definition, "Passing definition changed"
                 checked([*runner, str(definition), "--output", str(output / "example-rerun-passed.json")], consumer, client_environment, output=output)
                 for filename, verdict in [("negative-control-failed.json", "failed"), ("example-rerun-passed.json", "passed")]:
@@ -240,6 +240,10 @@ def main():
         parser.error("Evidence must be outside the immutable source checkout")
     if output.exists() and any(output.iterdir()):
         parser.error("Preserving existing evidence: choose a new or empty output directory")
+    def terminate(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    previous = signal.signal(signal.SIGTERM, terminate)
     try:
         if args.source_checkout and (args.external_app or args.host_command):
             parser.error("Source-checkout qualification builds its own matched standard host")
@@ -247,6 +251,8 @@ def main():
                 args.host_build_provenance, args.external_app.resolve() if args.external_app else None)
     except (OSError, ValueError, RuntimeError, AssertionError) as error:
         parser.exit(1, f"Live qualification failed: {error}\n")
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 if __name__ == "__main__":

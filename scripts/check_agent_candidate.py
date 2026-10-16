@@ -184,6 +184,16 @@ def qualify(output):
     with tarfile.open(crate) as package:
         package.extractall(extraction, filter="data")
     packaged, = extraction.iterdir()
+    vcs = json.loads((packaged / ".cargo_vcs_info.json").read_text())
+    if vcs["git"]["sha1"] != revision or vcs["git"].get("dirty", False):
+        raise ValueError("Packaged CLI source provenance differs from the clean candidate")
+    record.save("packaged-cli-vcs.json", vcs)
+    packaged_metadata = json.loads(record.run(["cargo", "metadata", "--locked", "--format-version", "1"], packaged, environment))
+    record.save("packaged-cli-metadata.json", packaged_metadata)
+    record.save("packaged-cli-rostfrei-crates.json", [
+        {key: package[key] for key in ("id", "name", "version", "source", "manifest_path")}
+        for package in packaged_metadata["packages"] if package["name"].startswith("rostfrei")])
+    record.run(["cargo", "tree", "--locked", "-i", "rustls"], packaged, environment)
     shutil.copy2(packaged / "Cargo.lock", output / "packaged-cli-Cargo.lock")
     record.save("packaged-cli-rustls.json", verify_rustls(packaged / "Cargo.lock"))
     record.run(["cargo", "install", "--locked", "--path", packaged, "--debug", "--root", output / "cli",

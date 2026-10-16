@@ -78,6 +78,8 @@ def build(output, require_clean=False):
     files = {
         "README.md": (ROOT / "docs/agent-skills-install.md").read_bytes(),
         "QUALIFICATION.md": (ROOT / "docs/agent-skills-qualification.md").read_bytes(),
+        "release-01-kit.md": (ROOT / "docs/release-01-kit.md").read_bytes(),
+        "starter-skills-followup.md": (ROOT / "docs/starter-skills-followup.md").read_bytes(),
         "LICENSE": (ROOT / "LICENSE").read_bytes(),
         "release.json": resources["rostfrei-develop-feature/references/release.json"],
     }

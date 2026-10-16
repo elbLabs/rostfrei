@@ -95,7 +95,7 @@ class Capabilities:
             assert snapshot["scope"] == scope and snapshot["status"] == "live"
             self.save(f"observation-{scope}-sse-initial", snapshot)
 
-    def observed_run(self, evidence):
+    def observed_run(self, evidence, name="run"):
         correlation = evidence["report"]["operation"]["correlationId"]
         deadline = time.monotonic() + 10
         while True:
@@ -117,7 +117,7 @@ class Capabilities:
         event, = [message for message in messages if message["name"] == "bicycle-added"]
         assert event["causationId"] == command["messageId"]
         assert all(message["messageId"] != command["messageId"] for message in messages)
-        self.save("observation-test-after-run", detail)
+        self.save(f"observation-test-after-{name}", detail)
         return detail
 
     def command_version(self, root):

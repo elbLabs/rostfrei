@@ -14,8 +14,11 @@ change dirty-build provenance. The in-workspace source-fingerprint feedback
 limitation remains deferred. Do not edit the freeze during qualification.
 
 ```bash
-export TMPDIR=/tmp/opencode
-export NEW_EVIDENCE="$(mktemp -d /tmp/opencode/rostfrei-01-qualification-XXXXXX)"
+# Set this to your owned writable evidence parent, outside the checkout.
+export QUALIFICATION_PARENT=/path/to/owned/writable/evidence
+export NEW_EVIDENCE="$(mktemp -d "$QUALIFICATION_PARENT/rostfrei-01-qualification-XXXXXX")"
+mkdir "$NEW_EVIDENCE/tmp"
+export TMPDIR="$NEW_EVIDENCE/tmp"
 git rev-parse HEAD > "$NEW_EVIDENCE/frozen-revision.txt"
 git status --porcelain > "$NEW_EVIDENCE/frozen-status.txt"
 python3 scripts/test_agent_skill_candidate.py
@@ -110,7 +113,7 @@ Do not infer them from these HTTP/packaging results.
 After the freeze and preceding qualification, prepare **another** external app:
 
 ```bash
-export TRIAL_APP="$(mktemp -d /tmp/opencode/rostfrei-01-trial-parent-XXXXXX)/app"
+export TRIAL_APP="$(mktemp -d "$QUALIFICATION_PARENT/rostfrei-01-trial-parent-XXXXXX")/app"
 python3 scripts/check_agent_candidate.py --prepare-app "$TRIAL_APP"
 # Run these commands in TRIAL_APP (or supply --manifest-path where supported):
 cd "$TRIAL_APP"
