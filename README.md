@@ -21,6 +21,8 @@ framework.
   project structure.
 - [Reference index](docs/README.md): workspace crates, terminology, and
   architecture decisions.
+- [Runtime stack and checklist](docs/design/command-runtime-stack-and-consolidation.md):
+  command execution, persistence, validation, and measured consolidation results.
 - [Tracer Studio](studio): inspect behavioral tests and their message graphs.
 - [Changelog](CHANGELOG.md): release changes and migration notes.
 
@@ -45,8 +47,9 @@ when they emit no events. Queries read state without changing it.
 
 Completed business rejections now share that atomic operation authority across
 direct, local, NATS and HTTP execution. Retry a completed operation with unchanged
-evidence to replay it; a new attempt after repair needs a new operation ID. Outcomes
-are append-only and outlive transport TTL/dedup caches. Generic executors require an
+evidence to replay it; a new attempt after repair needs a new operation ID. Permanent
+decisions outlive transport TTL/dedup caches; result details have an explicit expiry
+lifecycle, and unreadable completed results never permit reevaluation. Generic executors require an
 explicit rejection codec; processor bindings use their existing rejection mapper
 before persistence. **NATS defaults to fail-closed legacy/read-only processing.**
 New mutable namespaces require an explicit fresh outcome epoch and operator-enforced

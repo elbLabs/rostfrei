@@ -1,5 +1,8 @@
 # Native modular command authority (D2b)
 
+For current implementation status, ordered call paths and performance work, see the
+[runtime stack and consolidation checklist](command-runtime-stack-and-consolidation.md).
+
 `NatsEventStore` implements `ExecutionStore`, `OutcomeReader` and `OutcomeLifecycle`.
 `begin_command` creates a consuming session over the existing native history cache
 and atomic transaction implementation. `CommandExecutor` remains the retry engine.
@@ -30,7 +33,9 @@ retains its eligible low-level event/import compatibility. Shared provisioning
 helpers are separate explicit operations, not authority granted by a replay-only
 handle.
 
-The journal retains file-backed events, guards and compact schema-4 manifests.
+The journal retains file-backed events, guards and compact manifest-bearing receipts
+(schema 4 actor-less, schema 5 attributed). See [actor attribution](actor-attribution.md)
+for the complete version map, including attributed event and integrity formats.
 The state stream uses file/Limits/global DiscardNew, max messages per subject 1,
 `discard_new_per_subject=false`, finite byte/message bounds, delete/purge denied,
 and no age/TTL/rollup/direct access. It uses the journal's configured capacity,
@@ -49,15 +54,16 @@ Events, read guards and the permanent manifest then win through the original ato
 journal CAS. The manifest stores a versioned strict proposal digest, full detail
 reference, identity evidence and event-integrity digest, without rejection/command
 body or retainable timestamp. Checked restoration validates all required fields,
-receipt/key/scope bindings and hashes. Opaque revision v2 binds the complete
-reference, proposal digest/version, permanent evidence and event-integrity digest;
-`ProposalDigest` itself retains its intentional expected-version exclusion.
+receipt/key/scope bindings and hashes. Opaque revision v2 (actor-less) or v3
+(attributed) binds the complete reference, proposal digest/version, permanent evidence
+and event-integrity digest; `ProposalDigest` itself retains its intentional
+expected-version exclusion.
 Available details are decoded and used to reconstruct and compare the original
 proposal/marker before full-result admission.
 
-Every full result reads current leader-served state. One returned Active record
-provides lifecycle and body together. Expired refuses hot, cold and transport-cache
-results. Missing/corrupt/unavailable state is recovery failure, never permission to
+Every split-storage full result reads current leader-served state. One returned
+Active record provides lifecycle and body together. Expired refuses hot, cold and
+transport-cache results. Missing/corrupt/unavailable state is recovery failure, never permission to
 evaluate again. Optional injected detail readers still require current lifecycle
 evidence and exact winning-reference validation. No archive exporter is included.
 Known durable-result failures use `OutcomeRecovery`; ordinary history and uncertain
@@ -102,5 +108,8 @@ The bike-rental epoch option now selects split storage. Test reset recreates its
 owned pair and reconnects workers to the new incarnation. Correlation subscriptions
 recognize the split aggregate subject layout while excluding outcome subjects.
 
-Independent native review, broad D3 workspace/developer/package/standalone gates
-and request/storage accounting follow this development checkpoint.
+Independent integrated runtime review, broad workspace/developer/package/standalone gates
+and request/storage measurements are complete through runtime checkpoint `95ce943`.
+The bounded consolidation at `27c571b` reuses stage-local stream handles and checked
+publication evidence. Independent review, affected validation and current-to-optimized
+measurements are complete; the tracker records gains and remaining timing regressions.

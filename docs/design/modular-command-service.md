@@ -2,8 +2,12 @@
 
 Core and service corrections have independently passed. Native split storage,
 trusted resolver and authorized sender admission now use these checked boundaries;
-see [the D2b native protocol](modular-command-native.md). Independent native review
-and broad D3 validation remain pending.
+see [the D2b native protocol](modular-command-native.md). Independent integrated runtime review,
+broad validation and measurements are complete through runtime checkpoint `95ce943`.
+The bounded native consolidation at `27c571b` has independent review, affected
+validation and current-to-optimized measurements.
+The [stack and consolidation checklist](command-runtime-stack-and-consolidation.md)
+maps current calls and tracks performance work.
 
 ## Processing boundary
 

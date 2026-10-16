@@ -1,5 +1,8 @@
 # Original actor attribution
 
+The [runtime stack and consolidation checklist](command-runtime-stack-and-consolidation.md)
+shows how actor metadata travels through processing, persistence and result admission.
+
 `ActorRef` records a claimed original actor as two opaque, case-sensitive UTF-8
 strings: namespace (1–128 bytes) and id (1–256 bytes). Surrounding whitespace and
 control characters are rejected. The shared type is exported by messaging-core,

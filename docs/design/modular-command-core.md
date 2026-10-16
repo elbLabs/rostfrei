@@ -1,7 +1,12 @@
 # Modular command core (D1 checkpoint)
 
-Core, service and native D2b integration are implemented. Broad D3 validation and
-independent native review remain the next gates.
+Core, service and native integration are implemented and independently reviewed
+through runtime checkpoint `95ce943`. Broad validation and initial measurements are
+complete. The bounded native consolidation at `27c571b` has independent review,
+affected validation and current-to-optimized measurements; see the
+[current stack and checklist](command-runtime-stack-and-consolidation.md).
+Format-1 recipes below describe actor-less records; attributed formats are documented
+in [actor attribution](actor-attribution.md).
 
 ## Coordinated execution
 
@@ -137,6 +142,7 @@ retain the selected historical meaning after those rejected override attempts.
 D2a supplies facade, local/HTTP service and shared codecs; core and service repairs
 have independently passed. D2b supplies checked native restoration, authority fencing,
 two-stream CAS/last-value outcomes, explicit expiry and authorized sender admission.
-See [native protocol and migration](modular-command-native.md). D3 retains broad
-regressions, request/storage accounting, standalone-consumer validation and exact-head
-independent native review.
+See [native protocol and migration](modular-command-native.md). Broad regressions,
+request/storage accounting, standalone-consumer validation and independent review
+are complete for the recorded checkpoint; the [consolidation tracker](command-runtime-stack-and-consolidation.md)
+records the completed bounded pass and deferred performance follow-up.
