@@ -14,11 +14,17 @@ fn adapter(publisher: NatsPublisher, reader: NatsCommandResponseReader) -> NatsM
 }
 ```
 
-The response budget starts **after command publication and the publication
-observer finish**. It bounds response-reader retries, including absent responses
-and temporary read failures. Preflight authorization, publication and its retries,
-observer work, and post-response authorization are outside this budget. A host
-that needs an end-to-end request deadline must set that separately.
+The response budget starts **when response reading begins**, after command
+publication, the publication observer and any replay-authority admission. It
+bounds response-reader retries, including absent responses and temporary read
+failures. Authorization, publication and its retries, and observer work are outside
+this budget. A host that needs an end-to-end request deadline must set that
+separately.
+
+With `with_replay_publication()`, an authorized completed command is published and
+its current durable winner is checked again before response reading. A usable
+winner returns immediately even if the raw response has expired; the response-wait
+budget is used only when reading a response is still necessary.
 
 ## Meaning of a timeout
 

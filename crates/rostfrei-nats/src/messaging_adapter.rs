@@ -28,7 +28,7 @@ const RESPONSE_READ_SLICE: Duration = Duration::from_secs(1);
 const RESPONSE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(100);
 const DELIVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
 
-/// Default wait for a durable command response after publication and its observer.
+/// Default time budget for reading a durable command response.
 ///
 /// This is not an end-to-end dispatch deadline or a command cancellation deadline.
 pub const DEFAULT_COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -90,8 +90,9 @@ impl NatsMessagingAdapter {
 
     /// Override the response-wait budget (default: 30 seconds).
     ///
-    /// The budget starts after command publication and its observer complete. It
-    /// does not bound authorization or publication, cancel the durable command,
+    /// The budget starts when response reading begins, after publication, its
+    /// observer and any replay admission. It does not bound authorization or
+    /// publication, cancel the durable command,
     /// publish a rejection, or authorize automatic redrive. Use a host deadline
     /// for the entire request and preserve the original identity when reconciling.
     #[must_use]
