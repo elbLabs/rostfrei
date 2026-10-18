@@ -187,10 +187,12 @@ async fn completed_rejection_and_acceptance_survive_process_and_broker_restart()
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     let config = directory.join("nats.conf");
+    // Keep owned restart reservation accounting independent of builder free disk;
+    // 128 GiB is nominal capacity, not allocated data or a stream-policy change.
     std::fs::write(
         &config,
         format!(
-            "host: \"127.0.0.1\"\nport: {port}\nmax_payload: 2113536\nauthorization {{ user: \"restart-user\", password: \"restart-pass\" }}\njetstream {{ store_dir: \"{}\" }}\n",
+            "host: \"127.0.0.1\"\nport: {port}\nmax_payload: 2113536\nauthorization {{ user: \"restart-user\", password: \"restart-pass\" }}\njetstream {{ store_dir: \"{}\", max_file_store: 137438953472 }}\n",
             directory.join("jetstream").display()
         ),
     )?;

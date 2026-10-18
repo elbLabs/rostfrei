@@ -31,6 +31,7 @@ const DELIVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
 #[derive(Clone)]
 pub struct NatsMessagingAdapter {
     outcome_service: Option<(Arc<dyn CommandProcessingService>, TrustedCommandContext)>,
+    replay_publication: bool,
     command_publisher: Arc<dyn CommandPublisher>,
     response_publisher: Arc<dyn CommandResponsePublisher>,
     integration_publisher: Arc<dyn IntegrationEventPublisher>,
@@ -49,6 +50,7 @@ impl NatsMessagingAdapter {
         let response_reader: Arc<dyn CommandResponseReader> = Arc::new(response_reader);
         Self {
             outcome_service: None,
+            replay_publication: false,
             command_publisher,
             response_publisher,
             integration_publisher,
@@ -67,6 +69,7 @@ impl NatsMessagingAdapter {
     ) -> Self {
         Self {
             outcome_service: None,
+            replay_publication: false,
             command_publisher,
             response_publisher,
             integration_publisher,
@@ -79,6 +82,25 @@ impl NatsMessagingAdapter {
     #[must_use]
     pub const fn with_response_timeout(mut self, response_timeout: Duration) -> Self {
         self.response_timeout = Some(response_timeout);
+        self
+    }
+
+    /// Requires actual command publication even when authorized admission finds a winner.
+    ///
+    /// With [`Self::with_outcome_service`], current authorization and outcome-detail
+    /// lifecycle checks still precede publication. The original command is published
+    /// through the normal bounded retry path; the observer and receipt use its actual
+    /// broker acknowledgement's duplicate flag. After the awaited publication callback,
+    /// current authority is consulted again, independently of the raw response's lifetime.
+    /// If no winner is available, response reading and subsequent authoritative admission
+    /// proceed normally. Native workers reconcile completed commands without reevaluating
+    /// their handlers.
+    ///
+    /// By default, authorized completed replay returns without publication or an observer
+    /// callback. This option does not itself configure an outcome service or caller.
+    #[must_use]
+    pub const fn with_replay_publication(mut self) -> Self {
+        self.replay_publication = true;
         self
     }
 
@@ -225,7 +247,9 @@ impl CommandMessageAdapter for NatsMessagingAdapter {
         command
             .validate()
             .map_err(|e| CommandBusError::from_processor(&e))?;
-        if let Some(winner) = self.authorized_response(&command).await? {
+        if let Some(winner) = self.authorized_response(&command).await?
+            && !self.replay_publication
+        {
             return Ok(CommandBusReceipt::new(true, winner));
         }
         let publication = self.publish_command(&command).await?;
@@ -235,6 +259,13 @@ impl CommandMessageAdapter for NatsMessagingAdapter {
                 publication.duplicate(),
             ))
             .await;
+        // A duplicate PubAck may enqueue no delivery to recreate an expired response.
+        // Admit current authority before depending on that transport projection.
+        if self.replay_publication
+            && let Some(winner) = self.authorized_response(&command).await?
+        {
+            return Ok(CommandBusReceipt::new(publication.duplicate(), winner));
+        }
         let response = self.read_response_with_timeout(&command).await?;
         if self.outcome_service.is_some() {
             if let Some(winner) = self.authorized_response(&command).await? {
