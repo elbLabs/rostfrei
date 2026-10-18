@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
-"""Run tests against an isolated NATS container (Python 3.11+ and Docker)."""
+"""Run tests against an owned, isolated NATS container (Python 3.11+ and Docker).
+
+The default workspace command and --contracts use real authentication plus private
+restart storage. They require a cached native nats-server on PATH or supplied via
+ROSTFREI_NATS_SERVER; this runner never downloads it. Other commands keep the
+ordinary host fixture. An inherited ROSTFREI_NATS_URL is always overridden, never
+managed as an external broker.
+"""
 
 import argparse
+import codecs
 from contextlib import suppress
 import json
+import locale
 import math
 import os
 from pathlib import Path
+import secrets
+import selectors
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
@@ -66,7 +79,58 @@ def wait_ready(port, timeout):
     raise RuntimeError(f"NATS JetStream did not become ready within {timeout:g}s")
 
 
-def run_command(command, environment):
+def redact(text, redactions):
+    for value in redactions:
+        text = text.replace(value, "[redacted]")
+    return text
+
+
+def forward_output(process, redactions):
+    # Observe the direct child independently of EOF: descendants may inherit the
+    # pipe after that child exits. Nonblocking reads also bound the final drain.
+    decoder = codecs.getincrementaldecoder(locale.getpreferredencoding(False))(errors="replace")
+    pending = ""
+    deadline = None
+    eof = False
+    with process.stdout, selectors.DefaultSelector() as selector:
+        os.set_blocking(process.stdout.fileno(), False)
+        selector.register(process.stdout, selectors.EVENT_READ)
+        try:
+            while not eof:
+                if deadline is None and process.poll() is not None:
+                    with suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    deadline = time.monotonic() + 1
+                if deadline is not None and time.monotonic() >= deadline:
+                    print("Test output remained open after child exit; ending output drain", file=sys.stderr)
+                    break
+                for _key, _events in selector.select(timeout=0.1):
+                    try:
+                        chunk = os.read(process.stdout.fileno(), 65536)
+                    except (BlockingIOError, InterruptedError):
+                        continue
+                    except OSError as error:
+                        # Preserve the direct child's exit status even if its
+                        # output pipe fails; closing it prevents blocked writers.
+                        print(f"Could not read test output: {error}", file=sys.stderr)
+                        eof = True
+                        break
+                    if not chunk:
+                        eof = True
+                        break
+                    pending += decoder.decode(chunk)
+                    *lines, pending = pending.split("\n")
+                    for line in lines:
+                        print(redact(line, redactions), flush=True)
+        finally:
+            # Decode and redact complete lines, plus the final unterminated line,
+            # so credentials and multibyte characters can span arbitrary reads.
+            pending += decoder.decode(b"", final=True)
+            if pending:
+                print(redact(pending, redactions), end="", flush=True)
+
+
+def run_command(command, environment, *, redactions=()):
     # A separate process group lets cancellation clean up Cargo's test children too.
     # Defer cancellation during Popen so a signal cannot orphan a just-spawned
     # child before we have its PID. The child inherits normal, unblocked signals.
@@ -78,12 +142,15 @@ def run_command(command, environment):
     process = None
     try:
         try:
-            process = subprocess.Popen(command, cwd=ROOT, env=environment, start_new_session=True)
+            output = {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "bufsize": 0} if redactions else {}
+            process = subprocess.Popen(command, cwd=ROOT, env=environment, start_new_session=True, **output)
         finally:
             for signum, handler in previous.items():
                 signal.signal(signum, handler)
         if pending:
             raise SystemExit(128 + pending[0])
+        if redactions:
+            forward_output(process, redactions)
         code = process.wait()
         return code if code >= 0 else 128 - code
     except BaseException:
@@ -99,9 +166,45 @@ def run_command(command, environment):
                     os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
         raise
+    finally:
+        if process is not None:
+            # Also contain descendants left behind by a failing test process.
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            if redactions and process.stdout is not None:
+                process.stdout.close()
 
 
-def run(command, ready_timeout=30):
+def run(command, ready_timeout=30, *, contracts=False):
+    environment = {**os.environ, **LIMITS}
+    environment.setdefault("RUST_BACKTRACE", "1")
+    config = ROOT / "scripts/nats-test.conf"
+    if not (contracts or command == DEFAULT_COMMAND):
+        return run_container(command, ready_timeout, config, environment)
+
+    binary = shutil.which(os.environ.get("ROSTFREI_NATS_SERVER", "nats-server"))
+    if binary is None:
+        raise RuntimeError("contract tests require native NATS: set ROSTFREI_NATS_SERVER to a cached nats-server binary")
+    binary = str(Path(binary).resolve())
+    user, password = "contract-tests", secrets.token_hex(24)
+    with tempfile.TemporaryDirectory(prefix="rostfrei-contract-") as directory:
+        private_config = Path(directory) / "nats.conf"
+        with private_config.open("x") as output:
+            os.chmod(private_config, 0o600)
+            output.write(config.read_text())
+            output.write(f'\nauthorization {{ user: "{user}", password: "{password}" }}\n')
+        environment.update({
+            "ROSTFREI_CONTRACT_NATS_USER": user,
+            "ROSTFREI_CONTRACT_NATS_PASSWORD": password,
+            "ROSTFREI_CONTRACT_NATS_BINARY": binary,
+            "ROSTFREI_NATS_SERVER": binary,
+            "ROSTFREI_CONTRACT_EVIDENCE_DIR": directory,
+        })
+        return run_container(command, ready_timeout, private_config, environment, (user, password))
+
+
+def run_container(command, ready_timeout, config, environment, credentials=None):
+    redactions = (credentials[1],) if credentials else ()
     docker("info", timeout=20)
     name = f"rostfrei-test-nats-{uuid4().hex}"
     created = False
@@ -110,25 +213,25 @@ def run(command, ready_timeout=30):
         docker(
             "run", "--detach", "--rm", "--name", name,
             "--publish", "127.0.0.1::4222", "--publish", "127.0.0.1::8222",
-            "--mount", f"type=bind,src={ROOT / 'scripts/nats-test.conf'},dst=/etc/nats/test.conf,readonly",
+            "--mount", f"type=bind,src={config},dst=/etc/nats/test.conf,readonly",
             IMAGE, "--config", "/etc/nats/test.conf", timeout=240,
         )
         created = True
         ports = json.loads(docker("inspect", "--format", "{{json .NetworkSettings.Ports}}", name))
         nats_port = mapped_port(ports, 4222)
         wait_ready(mapped_port(ports, 8222), ready_timeout)
-        environment = {**os.environ, **LIMITS, "ROSTFREI_NATS_URL": f"nats://127.0.0.1:{nats_port}"}
-        environment.setdefault("RUST_BACKTRACE", "1")
+        userinfo = f"{credentials[0]}:{credentials[1]}@" if credentials else ""
+        environment["ROSTFREI_NATS_URL"] = f"nats://{userinfo}127.0.0.1:{nats_port}"
         print(f"{IMAGE.split('@', 1)[0]} ready on isolated port {nats_port}; running tests", flush=True)
-        result = run_command(command, environment)
+        result = run_command(command, environment, redactions=redactions) if redactions else run_command(command, environment)
         succeeded = result == 0
         return result
     finally:
         if created and not succeeded:
             try:
-                print(docker("logs", name), file=sys.stderr)
+                print(redact(docker("logs", name), redactions), file=sys.stderr)
             except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
-                print(f"Could not retrieve NATS logs: {error}", file=sys.stderr)
+                print(redact(f"Could not retrieve NATS logs: {error}", redactions), file=sys.stderr)
         # Also try cleanup if docker run timed out after creating the container.
         try:
             docker("rm", "--force", "--volumes", name)
@@ -140,6 +243,7 @@ def run(command, ready_timeout=30):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ready-timeout", type=float, default=30)
+    parser.add_argument("--contracts", action="store_true", help="authenticated fault/restart fixture (automatic for the default workspace command)")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="optional command after --")
     args = parser.parse_args()
     if not math.isfinite(args.ready_timeout) or args.ready_timeout <= 0:
@@ -162,6 +266,8 @@ def main():
             )
             if result:
                 return result
+        if args.contracts:
+            return run(command or DEFAULT_COMMAND, args.ready_timeout, contracts=True)
         return run(command or DEFAULT_COMMAND, args.ready_timeout)
     except KeyboardInterrupt:
         return 130

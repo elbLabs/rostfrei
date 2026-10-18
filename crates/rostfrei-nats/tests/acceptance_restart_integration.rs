@@ -229,10 +229,12 @@ async fn acceptance_survives_process_and_broker_restart_beyond_deduplication() -
     std::fs::create_dir(&directory)?;
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
+    // Nominal 128-GiB reservation budget admits the default 20-GiB split pair;
+    // this does not allocate disk or change the failure phase's stream quotas.
     std::fs::write(
         directory.join("nats.conf"),
         format!(
-            "host: \"127.0.0.1\"\nport: {port}\nmax_payload: 2113536\nauthorization {{ user: \"acceptance\", password: \"owned\" }}\njetstream {{ store_dir: \"{}\" }}\n",
+            "host: \"127.0.0.1\"\nport: {port}\nmax_payload: 2113536\nauthorization {{ user: \"acceptance\", password: \"owned\" }}\njetstream {{ store_dir: \"{}\", max_file_store: 137438953472 }}\n",
             directory.join("data").display()
         ),
     )?;
