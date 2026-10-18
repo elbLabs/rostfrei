@@ -1,7 +1,9 @@
 mod behavioral;
+mod bindings;
 mod catalog;
 mod command_bus;
 mod correlation;
+mod handler_simulation;
 mod input;
 mod message_series;
 mod observation;
@@ -10,6 +12,15 @@ mod quarantine;
 mod runtime;
 mod service;
 pub mod transport;
+
+#[cfg(feature = "nats-host")]
+mod nats_host;
+pub use bindings::{ApplicationBindingError, ApplicationBindings};
+#[cfg(feature = "nats-host")]
+pub use nats_host::{
+    NatsApplication, NatsApplicationBuilder, NatsExecutionProfile, NatsHostError, NatsRuntime,
+    NatsRuntimeConfig, TracerConfig,
+};
 
 #[cfg(feature = "http")]
 pub mod http;
@@ -34,6 +45,10 @@ pub use correlation::{
     CorrelationCommandOutcome, CorrelationError, CorrelationEvent, CorrelationEventKind,
     CorrelationObserver, CorrelationSubscription, DomainEventObservation,
     IntegrationEventObservation,
+};
+pub use handler_simulation::{
+    HandlerDecision, HandlerSimulationError, HandlerSimulationKind, HandlerSimulationResult,
+    ProposedDomainEvent,
 };
 pub use input::{CommandInputDocument, CommandInputField, CommandInputOption, CommandInputOptions};
 pub use message_series::{
@@ -66,7 +81,7 @@ pub use rostfrei_fixtures::{
 };
 pub use runtime::RuntimeRegistrationError;
 pub use service::{
-    CommandInputError, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
+    CommandInputError, CommandRequest, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
     MAX_COMMAND_PAYLOAD_LEN, MessageSeriesCapture, MessageSeriesCaptureError,
     MessageSeriesFidelity, OperationMessageSeries, RedactTracePayloads, SimulationRequest,
     SubmissionError, TestDefinitionValidationError, TestRunError, TestScenarioReset,

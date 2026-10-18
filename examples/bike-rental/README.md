@@ -7,24 +7,47 @@ for a walkthrough. Run the commands below from the repository root. Requirements
 the pinned Rust toolchain and NATS Server 2.12.1 or newer (the supplied Docker
 Compose configuration provides NATS).
 
+## Completed-outcome cutover
+
+NATS now defaults to a fail-closed legacy/read-only outcome namespace. For a **new
+isolated application** (not an existing demo namespace), explicitly set both
+`ROSTFREI_APPLICATION=bike-rental-epoch92` and
+`ROSTFREI_COMPLETED_OUTCOME_EPOCH=epoch92` for provision/API processes. Fence old
+credentials before starting new mutable workers. Programmatic fixtures use
+`BikeRentalNatsConfig::with_fresh_completed_outcome_epoch` with
+`BikeRentalNatsRuntime::provision_config`. This now selects the fresh two-stream
+split authority, deriving disjoint journal/state namespaces. Do not use it to
+reinterpret old retries or migrate histories implicitly; each belongs to its
+original authority. The pair is verified by configuration and incarnation.
+Old retries stay in their original namespace; a repaired business attempt uses a
+new operation ID. See the [cutover runbook](../../docs/completed-outcome-cutover.md).
+The [native modular protocol](../../docs/design/modular-command-native.md) describes
+explicit detail expiry, legacy scope mapping and authorized sender/worker APIs.
+
 ## Run locally
 
 ```sh
 docker compose -f examples/bike-rental/compose.yaml up -d
 
 ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
+  ROSTFREI_APPLICATION=bike-rental-epoch92 \
+  ROSTFREI_COMPLETED_OUTCOME_EPOCH=epoch92 \
   ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES=67108864 \
   ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES=268435456 \
   ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES=524288 \
   ROSTFREI_API_TOKEN=local-development-token \
   ROSTFREI_DISPATCH_TOKEN=local-dispatch-token \
-  cargo run --locked -p bike-rental
+  cargo run --locked -p bike-rental -- --tracer
 ```
 
 Tracer listens at `http://127.0.0.1:1309`. Startup provisions local resources,
 verifies the NATS topology, and seeds `city-fleet` with serviceable `bike-42` and
 maintenance-required `bike-99`. Normal state persists across restarts; isolated
-test state is recreated at startup.
+test state is recreated at startup when `--tracer` is enabled.
+
+Omit `--tracer` to start the same Normal command runtime without HTTP tokens,
+endpoints or correlation observers. Both modes reuse one executable binding
+definition. See the [shared host API and measured reduction](../../docs/nats-application-host.md).
 
 Use [Tracer Studio](../../studio/README.md) to inspect and run behavioral tests.
 
@@ -73,6 +96,11 @@ it, and a separate durable consumer handles it.
 For the routing details, see [subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
 or the [offline HTML guide](../../docs/subjects.html).
 
+This development entry point explicitly provisions its NATS topology. The shared
+host also offers a verify/connect-only startup for operator-provisioned resources.
+It supervises command, domain-event, integration-event, observer and HTTP tasks,
+and shuts down the owned group if any exits unexpectedly.
+
 ### Stable command subscription identities
 
 Command consumer and durable names use `COMMAND_SUBSCRIPTION_GENERATION = 2`,
@@ -113,7 +141,6 @@ runs independently of Tracer.
 
 | Action | State | Authorization |
 | --- | --- | --- |
-| Preview (`simulate`) | Reads test history; appends nothing. | Control token |
 | Test (`test`) | Publishes a command and appends to isolated test history. | Control token |
 | Production dispatch (`dispatch`) | Uses the same pipeline against normal application state. | Dispatch token |
 
@@ -150,7 +177,7 @@ The application has two traffic scopes:
 `POST /test-scenario/reset` restores the `demo-fleet` fixture.
 `POST /test-scenario/reset/{fixtureId}` selects another registered fixture.
 Reset stops test workers, recreates test resources, replays the fixture's domain
-events, and restarts the workers. A failed reset leaves Test, Preview, test
+events, and restarts the workers. A failed reset leaves Test, test
 instances, and dynamic inputs unavailable until a reset succeeds.
 
 The `demo-fleet` fixture builds `city-fleet` from two ordered `bicycle-added`
@@ -158,8 +185,8 @@ events. There is no legacy event decoder; incompatible demo histories require a
 fresh `ROSTFREI_APPLICATION` namespace or deletion of disposable NATS streams.
 
 For example, renting `bike-42` once succeeds. A second rental with a new
-idempotency key is rejected with `BICYCLE_UNAVAILABLE`. Preview then reports the
-same rejection without changing history. Reset restores the initial state.
+idempotency key is rejected with `BICYCLE_UNAVAILABLE`. Inspect that recorded
+outcome without submitting again. Reset restores the initial state.
 
 ### Submission and observation
 
@@ -182,7 +209,12 @@ Operation resources advertise the observation links:
 - `messageSeriesHref`: finite capture of messages and command outcomes; accepts
   bounded `within` and `settleFor` windows.
 
-Preview returns predicted events. Test and dispatch return observed evidence.
+Test and dispatch return observed evidence. Legacy Preview submission is retired.
+For explicit rule diagnostics, follow `simulateHandlerHrefTemplate` and POST the
+same command envelope. **Simulate handler** returns decision, starting versions
+and proposed/uncommitted domain events using the registered handler over Test
+history. It returns no operation or observed trace, and injected dependencies
+are not automatically sandboxed. See [the exact interface](../../docs/tracer-preview-retirement.md).
 An unsettled capture may be partial. Exact causal edges require a message's
 `causationId` to match another message's `messageId`; timestamps and array order
 do not establish causality. `grouped` fidelity means the capture cannot establish
@@ -223,12 +255,12 @@ Example requests:
 
 ```text
 List the available behavioral tests and summarize their intent.
-Preview renting bike-42 from city-fleet and show the causal Mermaid flow.
+Rent bike-42 from city-fleet in the agreed isolated Test scope and explain the observed flow.
 Run rent-available-bicycle and explain the observed result.
 ```
 
-The skill asks for confirmation before Test publication, reset, or a behavioral
-test run. Production dispatch requires separately confirmed production inputs
+The skill establishes the isolated execution/reset scope, reusing an already
+agreed TDD scope. Production dispatch requires separately confirmed production inputs
 and the dispatch token. Test-state discoveries are not production inputs.
 
 ## Configuration

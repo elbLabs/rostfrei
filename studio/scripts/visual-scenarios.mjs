@@ -10,9 +10,12 @@ import {
 export const scenarios = {
   overview: "Expected rental flow in the Workbench layout",
   command: "Populated catalog-driven Command panel",
-  accepted: "Accepted Preview with command details open",
+  handler: "Uncommitted handler decision and proposed domain events",
+  "handler-rejected": "Rejected handler diagnostic with no proposed events",
+  "handler-empty": "Accepted handler diagnostic with no proposed events",
+  accepted: "Accepted Test with command details open",
   rejected: "Business rejection with command details open",
-  loading: "Pending Preview with observing indicator",
+  loading: "Pending Test with observing indicator",
   indeterminate: "Unconfirmed Test submission with retry details",
   branching: "A 25-message synthetic branching flow after Fit graph to view",
   "long-payload": "Nested, long payload values in the message inspector",
@@ -45,8 +48,8 @@ const catalog = {
               })),
               payloadTemplate: { fleet_id: null, bicycle_id: null },
               testInputsHrefTemplate: `${commandPath}/schemas/2/inputs`,
-              simulateHrefTemplate: `${commandPath}/simulate`,
               testHrefTemplate: `${commandPath}/test`,
+              simulateHandlerHrefTemplate: `${commandPath}/simulate-handler`,
             },
           ],
         },
@@ -172,7 +175,50 @@ export async function installScenario(page, scene, samples, diagnostics) {
           options: [{ value, label: value }],
         })),
       }
-    } else if (method === "POST" && pathname === `${commandPath}/simulate`) {
+    } else if (
+      method === "POST" &&
+      pathname === `${commandPath}/simulate-handler`
+    ) {
+      body = {
+        kind: "handlerSimulation",
+        committed: false,
+        context: "bike-rental",
+        command: "rent-bicycle",
+        schemaVersion: 2,
+        outcome:
+          scene === "handler-rejected"
+            ? {
+                decision: "rejected",
+                rejection: { code: "BICYCLE_UNAVAILABLE" },
+              }
+            : { decision: "accepted" },
+        streams: [
+          {
+            aggregateType: "bike-rental/rental-fleet",
+            aggregateId: "city-fleet",
+            baseStreamVersion: 2,
+            readGuard: false,
+          },
+        ],
+        proposedEvents:
+          scene === "handler"
+            ? [
+                {
+                  aggregateType: "bike-rental/rental-fleet",
+                  aggregateId: "city-fleet",
+                  eventType: "bicycle-rented",
+                  schemaVersion: 1,
+                  proposedStreamVersion: 3,
+                  payload,
+                },
+              ]
+            : [],
+      }
+    } else if (
+      method === "POST" &&
+      pathname === `${commandPath}/test` &&
+      scene !== "indeterminate"
+    ) {
       status = 202
       headers = { location: operationPath }
       body = operation("queued")
@@ -263,8 +309,15 @@ export async function prepareScenario(page, scene) {
         "bike-42"
   )
   if (scene === "command") return
-  if (scene !== "indeterminate")
-    await page.click('[data-command-mode="preview"]')
+  if (scene.startsWith("handler")) {
+    await page.click('[data-command-mode="simulate-handler"]')
+    await page.click('#studio-command-panel button[type="submit"]')
+    await page.waitForSelector("[data-handler-simulation-result]")
+    await page.$eval("[data-handler-simulation-result]", (element) =>
+      element.scrollIntoView({ block: "end" })
+    )
+    return
+  }
   await page.click('#studio-command-panel button[type="submit"]')
 
   if (scene === "loading") {
@@ -363,8 +416,11 @@ function operation(status, scene) {
     operationEventsHref: `${operationPath}/events`,
     correlationEventsHref: "/correlations/visual-correlation/events",
     messageSeriesHref: `${operationPath}/message-series`,
-    events: { kind: "predicted", href: `${operationPath}/events` },
-    mode: "simulate",
+    events: {
+      kind: "observed",
+      href: "/correlations/visual-correlation/events",
+    },
+    mode: "test",
     status,
     context: "bike-rental",
     command: "rent-bicycle",
@@ -374,7 +430,9 @@ function operation(status, scene) {
       ? {
           result: {
             decision: scene === "rejected" ? "rejected" : "accepted",
-            published: false,
+            published: true,
+            commandMessageId: "visual-command",
+            responseMessageId: "visual-response",
           },
         }
       : {}),
@@ -459,7 +517,7 @@ function messageSeries(scene) {
   return {
     operationId: "visual-inspection",
     correlationId: "visual-correlation",
-    mode: "simulate",
+    mode: "test",
     messageSeries: {
       messages,
       commandOutcomes: [
@@ -490,7 +548,7 @@ function messageSeries(scene) {
     capture: {
       settled: true,
       settledFor: "500ms",
-      fidelity: "grouped",
+      fidelity: "exact",
       note: "Synthetic visual fixture identities; explicit links only.",
     },
   }

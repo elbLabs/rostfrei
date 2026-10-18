@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
-import { PanelLeft, Radio, Send, Workflow } from "lucide-react"
+import { PanelLeft, Radio, Send } from "lucide-react"
+import { Brand } from "@rostfrei/ui/brand"
+import { ThemeToggle } from "@rostfrei/ui/theme"
 
 import { ConnectionNotice } from "@/components/connection-notice"
 import {
@@ -425,9 +427,7 @@ function App() {
       : resultUnavailable || activeCommand?.error
         ? "unavailable"
         : activeCommand
-          ? activeCommand.request.mode === "preview"
-            ? "predicted"
-            : "observed"
+          ? "observed"
           : selectedRun
             ? "observed"
             : "expected"
@@ -464,10 +464,8 @@ function App() {
             <PanelLeft />
           </Button>
           <div className="studio-logo" aria-label="Rostfrei Tracer Studio">
-            <Workflow size={19} />
-            <span>
-              rostfrei <strong>Tracer Studio</strong>
-            </span>
+            <Brand compact className="studio-brand" />
+            <strong>Tracer Studio</strong>
           </div>
           <Button
             className="command-panel-trigger"
@@ -511,7 +509,9 @@ function App() {
             role="group"
             aria-label="Studio layout"
           >
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               type="button"
               data-layout="canvas"
               aria-keyshortcuts="1"
@@ -520,8 +520,10 @@ function App() {
               onClick={() => changeLayout("canvas")}
             >
               Canvas<kbd aria-hidden="true">1</kbd>
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               type="button"
               data-layout="workbench"
               aria-keyshortcuts="2"
@@ -530,7 +532,7 @@ function App() {
               onClick={() => changeLayout("workbench")}
             >
               Workbench<kbd aria-hidden="true">2</kbd>
-            </button>
+            </Button>
           </div>
           <div
             className="connection-status"
@@ -538,17 +540,20 @@ function App() {
             data-tracer-source={source}
           >
             <span className="connection-dot" />
-            {observationActive
-              ? `Observation · ${observationConnection}`
-              : source === "connecting"
-                ? "Connecting"
-                : source === "live"
-                  ? "Isolated Test"
-                  : "Disconnected"}
+            <span className="connection-label">
+              {observationActive
+                ? `Observation · ${observationConnection}`
+                : source === "connecting"
+                  ? "Connecting"
+                  : source === "live"
+                    ? "Isolated Test"
+                    : "Disconnected"}
+            </span>
             {!observationActive && selectedRun && (
               <span className="connection-detail">Saved run</span>
             )}
           </div>
+          <ThemeToggle className="studio-theme-toggle" />
         </header>
 
         <StudioSidebar

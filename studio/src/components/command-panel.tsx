@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
-import { ListTree, LoaderCircle, Play, RotateCcw, Send } from "lucide-react"
+import { ListTree, LoaderCircle, RotateCcw, Send } from "lucide-react"
+import { Input } from "@rostfrei/ui/components/input"
+import { NativeSelect } from "@rostfrei/ui/components/native-select"
+import { Textarea } from "@rostfrei/ui/components/textarea"
 
 import { DraggablePanel } from "@/components/draggable-panel"
 import "./command-panel.css"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { getCommandInputs } from "@/lib/api"
+import { getCommandInputs, simulateHandler } from "@/lib/api"
 import type {
   CatalogCommand,
   CatalogCommandField,
@@ -14,6 +17,7 @@ import type {
   CatalogFieldValue,
   CommandInputField,
   CommandExecutionResult,
+  HandlerSimulationResult,
   TracerCatalog,
 } from "@/lib/types"
 
@@ -26,18 +30,11 @@ interface CommandExecutionRequestBase {
   schemaVersion: number
 }
 
-export type CommandExecutionRequest = CommandExecutionRequestBase &
-  (
-    | {
-        mode: "preview"
-        submitHrefTemplate: string
-      }
-    | {
-        mode: "test"
-        submitHrefTemplate: string
-        idempotencyKey: string
-      }
-  )
+export type CommandExecutionRequest = CommandExecutionRequestBase & {
+  mode: "test"
+  submitHrefTemplate: string
+  idempotencyKey: string
+}
 
 interface CommandPanelProps {
   open: boolean
@@ -59,10 +56,17 @@ interface CommandChoice {
   version: CatalogCommandVersion
 }
 
+interface HandlerComputation {
+  origin: string
+  pending?: boolean
+  result?: HandlerSimulationResult
+  error?: string
+}
+
 export function CommandPanel({
   open,
   catalog,
-  busy,
+  busy: executionBusy,
   result,
   requestError,
   testStateRevision,
@@ -73,7 +77,7 @@ export function CommandPanel({
 }: CommandPanelProps) {
   const choices = commandChoices(catalog)
   const [choiceKey, setChoiceKey] = useState("")
-  const [mode, setMode] = useState<"preview" | "test">("test")
+  const [mode, setMode] = useState<"test" | "simulate-handler">("test")
   const [payloadValues, setPayloadValues] = useState<Record<string, string>>({})
   const previousInputs = useRef<CommandInputField[]>([])
   const [validationError, setValidationError] = useState<string>()
@@ -90,8 +94,6 @@ export function CommandPanel({
   const testAvailable = selected
     ? Boolean(selected.version.testHrefTemplate)
     : choices.some((choice) => choice.version.testHrefTemplate !== undefined)
-  // Keep the user's Test preference when switching through Preview-only commands.
-  const executionMode = testAvailable ? mode : "preview"
   const selectedFields = selected?.version.fields
   const inputsHrefTemplate = selected?.version.testInputsHrefTemplate
   const inputsKey = inputsHrefTemplate
@@ -108,6 +110,32 @@ export function CommandPanel({
     commandInputs?.key !== inputsKey &&
     inputsError?.key !== inputsKey
   )
+
+  const simulationOrigin = JSON.stringify([
+    choiceKey,
+    selected?.version,
+    mode,
+    payloadValues,
+    currentCommandInputs,
+    inputsKey,
+    inputsLoading,
+    testStateRevision,
+    executionBusy,
+  ])
+  const [computation, setComputation] = useState<HandlerComputation>({
+    origin: simulationOrigin,
+  })
+  // Discard obsolete ownership during render, before displaying a changed form.
+  // Each pending object also identifies one request, so late completions cannot
+  // restore a result or clear the busy state of a newer computation.
+  if (computation.origin !== simulationOrigin) {
+    setComputation({ origin: simulationOrigin })
+  }
+  const currentComputation =
+    computation.origin === simulationOrigin ? computation : undefined
+  const simulation = currentComputation?.result
+  const simulationError = currentComputation?.error
+  const busy = executionBusy || currentComputation?.pending === true
 
   useEffect(() => {
     if (!inputsHrefTemplate || !inputsKey) return
@@ -150,6 +178,7 @@ export function CommandPanel({
 
   const markEdited = () => {
     setValidationError(undefined)
+    setComputation({ origin: simulationOrigin })
     onEdit()
   }
 
@@ -173,15 +202,41 @@ export function CommandPanel({
         schemaVersion: selected.version.schemaVersion,
       }
       setValidationError(undefined)
-      if (executionMode === "preview") {
-        void onExecute({
-          ...request,
-          mode: "preview",
-          submitHrefTemplate: selected.version.simulateHrefTemplate,
-        })
+      if (mode === "simulate-handler") {
+        const href = selected.version.simulateHandlerHrefTemplate
+        if (!href)
+          throw new Error("Handler simulation is unavailable for this command")
+        const pending: HandlerComputation = {
+          origin: simulationOrigin,
+          pending: true,
+        }
+        setComputation(pending)
+        void simulateHandler(href, request.schemaVersion, request.payloadJson)
+          .then((value) => {
+            if (
+              value.context !== request.context ||
+              value.command !== request.commandId
+            )
+              throw new Error("Handler simulation returned a different command")
+            setComputation((current) =>
+              current === pending
+                ? { ...pending, pending: false, result: value }
+                : current
+            )
+          })
+          .catch((error) =>
+            setComputation((current) =>
+              current === pending
+                ? {
+                    ...pending,
+                    pending: false,
+                    error: `${error instanceof Error ? error.message : "Handler simulation failed"}. Handler dependencies may have run; no automatic retry.`,
+                  }
+                : current
+            )
+          )
         return
       }
-
       if (!selected.version.testHrefTemplate) {
         throw new Error("Test publication is not available for this command")
       }
@@ -212,7 +267,7 @@ export function CommandPanel({
     }
   }
 
-  const error = validationError ?? requestError
+  const error = validationError ?? simulationError ?? requestError
 
   return (
     <DraggablePanel
@@ -231,45 +286,53 @@ export function CommandPanel({
             <div
               className="command-mode-options"
               role="group"
-              aria-label="Command execution mode"
+              aria-label="Command action"
             >
-              <button
-                type="button"
-                className="command-mode-option"
-                data-command-mode="preview"
-                aria-pressed={executionMode === "preview"}
-                disabled={busy}
-                onClick={() => {
-                  setMode("preview")
-                  markEdited()
-                }}
-              >
-                Preview
-              </button>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 type="button"
                 className="command-mode-option"
                 data-command-mode="test"
-                aria-pressed={executionMode === "test"}
-                disabled={busy || !testAvailable}
+                aria-pressed={mode === "test"}
+                disabled={busy}
                 onClick={() => {
                   setMode("test")
                   markEdited()
                 }}
               >
-                Test bus
-              </button>
+                Isolated Test
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                className="command-mode-option"
+                data-command-mode="simulate-handler"
+                aria-pressed={mode === "simulate-handler"}
+                disabled={
+                  busy || !selected?.version.simulateHandlerHrefTemplate
+                }
+                onClick={() => {
+                  setMode("simulate-handler")
+                  markEdited()
+                }}
+              >
+                Simulate handler
+              </Button>
             </div>
             <p>
-              {executionMode === "test"
-                ? "Publishes through the isolated Test command bus and may append Test events."
-                : "Reads the connected event history. Nothing is published or appended."}
+              {mode === "simulate-handler"
+                ? "Runs the real handler against configured history. Proposed events are uncommitted; injected dependencies are not automatically sandboxed."
+                : testAvailable
+                  ? "Publishes through the isolated Test command bus and may append Test events."
+                  : "Test publication is not available for this command."}
             </p>
           </div>
 
           <label className="command-field">
             <span>Command and schema</span>
-            <select
+            <NativeSelect
               aria-label="Command and schema"
               value={choiceKey}
               disabled={busy || choices.length === 0}
@@ -277,6 +340,7 @@ export function CommandPanel({
                 const nextKey = event.target.value
                 const next = choices.find((choice) => choice.key === nextKey)
                 setChoiceKey(nextKey)
+                setMode("test")
                 previousInputs.current = []
                 setCommandInputs(undefined)
                 setInputsError(undefined)
@@ -295,7 +359,7 @@ export function CommandPanel({
                   {choice.version.schemaVersion}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </label>
 
           <div className="command-payload-fields">
@@ -337,11 +401,11 @@ export function CommandPanel({
             )}
           </div>
 
-          {executionMode === "test" && (
+          {mode === "test" && testAvailable && (
             <label className="command-field">
               <span>Idempotency key</span>
               <div className="command-idempotency-field">
-                <input
+                <Input
                   aria-label="Idempotency key"
                   value={idempotencyKey}
                   disabled={busy}
@@ -387,23 +451,69 @@ export function CommandPanel({
               busy ||
               inputsLoading ||
               !selected ||
-              (executionMode === "test" && !selected.version.testHrefTemplate)
+              !(mode === "test"
+                ? selected.version.testHrefTemplate
+                : selected.version.simulateHandlerHrefTemplate)
             }
           >
-            {busy ? (
-              <LoaderCircle className="animate-spin" />
-            ) : executionMode === "test" ? (
-              <Send />
-            ) : (
-              <Play />
-            )}
+            {busy ? <LoaderCircle className="animate-spin" /> : <Send />}
             {busy
               ? "Waiting for result"
-              : executionMode === "test"
+              : mode === "test"
                 ? "Push to Test bus"
-                : "Preview command"}
+                : "Simulate handler"}
           </Button>
         </form>
+
+        {simulation && (
+          <section
+            className="handler-simulation-result"
+            data-handler-simulation-result
+            data-handler-decision={simulation.outcome.decision}
+            aria-live="polite"
+          >
+            <h3>Handler decision: {simulation.outcome.decision}</h3>
+            <Badge variant="warning">Uncommitted · no acceptance receipt</Badge>
+            <p>
+              Handler computation only. Delivery, atomic persistence,
+              concurrency and downstream integrations were not tested.
+            </p>
+            {simulation.outcome.decision === "rejected" && (
+              <pre>{JSON.stringify(simulation.outcome.rejection, null, 2)}</pre>
+            )}
+            <h4>Starting stream versions</h4>
+            {simulation.streams.length === 0 ? (
+              <p>No streams loaded.</p>
+            ) : (
+              simulation.streams.map((stream, index) => (
+                <p key={index}>
+                  <code>
+                    {stream.aggregateType} / {stream.aggregateId}
+                  </code>{" "}
+                  · v{stream.baseStreamVersion}
+                </p>
+              ))
+            )}
+            <h4>Proposed domain events ({simulation.proposedEvents.length})</h4>
+            {simulation.proposedEvents.length === 0 && (
+              <p>No domain events proposed.</p>
+            )}
+            {simulation.proposedEvents.map((event, index) => (
+              <article key={index}>
+                <strong>
+                  {event.eventType} · schema {event.schemaVersion}
+                </strong>
+                <p>
+                  <code>
+                    {event.aggregateType} / {event.aggregateId}
+                  </code>{" "}
+                  · proposed v{event.proposedStreamVersion}
+                </p>
+                <pre>{event.payloadJson ?? "Payload redacted"}</pre>
+              </article>
+            ))}
+          </section>
+        )}
 
         {!catalog && (
           <p className="command-empty">Connect Tracer to discover commands.</p>
@@ -453,7 +563,7 @@ function PayloadField({
     <div className="command-field" data-payload-field={field.name}>
       <span>{label}</span>
       {identifier && !selectionInput ? (
-        <input
+        <Input
           type="text"
           aria-label={`Payload ${label}`}
           value={controlValue ?? ""}
@@ -464,7 +574,7 @@ function PayloadField({
           onChange={(event) => onChange(event.target.value)}
         />
       ) : selectionInput ? (
-        <select
+        <NativeSelect
           aria-label={`Payload ${label}`}
           value={controlValue ?? ""}
           disabled={
@@ -484,9 +594,9 @@ function PayloadField({
               {option.label}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       ) : descriptor.kind === "scalar" && scalarType(descriptor) === "bool" ? (
-        <select
+        <NativeSelect
           aria-label={`Payload ${label}`}
           value={controlValue ?? ""}
           disabled={disabled}
@@ -496,10 +606,10 @@ function PayloadField({
           {isOptional(field.value) && <option value="null">None</option>}
           <option value="true">True</option>
           <option value="false">False</option>
-        </select>
+        </NativeSelect>
       ) : simpleList ? (
         <div className="command-list-field">
-          <textarea
+          <Textarea
             aria-label={`Payload ${label}`}
             value={emptyList || noValue || unavailable ? "" : (value ?? "")}
             disabled={disabled || emptyList || noValue}
@@ -519,7 +629,7 @@ function PayloadField({
           </Button>
         </div>
       ) : descriptor.kind !== "scalar" ? (
-        <textarea
+        <Textarea
           aria-label={`Payload ${label}`}
           value={controlValue ?? ""}
           disabled={disabled || noValue}
@@ -529,7 +639,7 @@ function PayloadField({
           onChange={(event) => onChange(event.target.value)}
         />
       ) : (
-        <input
+        <Input
           aria-label={`Payload ${label}`}
           value={controlValue ?? ""}
           disabled={disabled || noValue}
@@ -864,7 +974,7 @@ function CommandResult({ result }: { result: CommandExecutionResult }) {
             ? "Test result"
             : operation.mode === "dispatch"
               ? "Production result"
-              : "Preview result"}
+              : "Historical simulation (uncommitted)"}
         </span>
         <Badge
           variant={

@@ -1,19 +1,16 @@
 use std::{any::type_name, collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use domain::{BoundedContextType, JsonCommandPayload, JsonErrorPayload};
+use domain::{JsonCommandPayload, JsonErrorPayload};
 use rostfrei_core::{
-    CommandDecision, CommandExecutionMetadata, CommandExecutor, CommandHandler, ContentFingerprint,
-    EventHistory, NewEvent, OperationId, SimulationError, StreamId,
+    CommandExecutionMetadata, CommandExecutor, CommandHandler, EventHistory, EventStoreErrorKind,
+    SimulationError,
 };
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::{
-    input::{CommandInputDocument, CommandInputOptions},
-    operation::{PredictedDomainEvent, TouchedStreamParticipant},
-};
+use crate::input::{CommandInputDocument, CommandInputOptions};
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum RuntimeRegistrationError {
@@ -36,7 +33,7 @@ pub enum RuntimeRegistrationError {
         command: &'static str,
         schema_version: u32,
     },
-    #[error("registered command `{command}` version {schema_version} has no simulation binding")]
+    #[error("registered command `{command}` version {schema_version} has no payload binding")]
     MissingBinding {
         command: &'static str,
         schema_version: u32,
@@ -64,33 +61,6 @@ pub enum RuntimeRegistrationError {
     InvalidTestDefinition { id: String, message: String },
 }
 
-#[derive(Clone, Debug, Error)]
-pub enum RuntimeSimulationError {
-    #[error("invalid command payload: {0}")]
-    InvalidPayload(String),
-    #[error("invalid command bounded context: {0}")]
-    InvalidBoundedContext(String),
-    #[error(transparent)]
-    Simulation(#[from] SimulationError),
-    #[error("rejection encoding failed: {0}")]
-    RejectionEncoding(String),
-    #[error("event payload is not valid JSON: {0}")]
-    InvalidEventPayload(String),
-    #[error("predicted stream version overflow")]
-    StreamVersionOverflow,
-}
-
-pub enum RuntimeDecision {
-    Accepted {
-        participants: Vec<TouchedStreamParticipant>,
-        events: Vec<PredictedDomainEvent>,
-    },
-    Rejected {
-        participants: Vec<TouchedStreamParticipant>,
-        rejection: Value,
-    },
-}
-
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CommandKey {
     pub context: String,
@@ -113,16 +83,15 @@ impl CommandKey {
 }
 
 #[async_trait]
-pub trait ErasedCommandSimulator: Send + Sync {
+pub trait ErasedCommandPayload: Send + Sync {
     fn validate_payload(&self, payload: &Value) -> Result<(), String>;
-
-    async fn simulate(
+    async fn simulate_handler(
         &self,
         history: Arc<dyn EventHistory>,
-        operation_id: OperationId,
-        fingerprint: ContentFingerprint,
+        codecs: Arc<rostfrei_core::AggregateCodecs>,
+        metadata: CommandExecutionMetadata,
         payload: Value,
-    ) -> Result<RuntimeDecision, RuntimeSimulationError>;
+    ) -> Result<crate::HandlerSimulationResult, crate::HandlerSimulationError>;
 }
 
 pub trait ErasedCommandInputOptions: Send + Sync {
@@ -146,17 +115,17 @@ where
     }
 }
 
-struct TypedCommandSimulator<C, Handler>
+struct TypedCommandPayload<C, Handler>
 where
     Handler: CommandHandler<C>,
     C: CommandDefinition<Handler> + Sync,
 {
-    handler: Handler,
+    handler: Arc<Handler>,
     marker: std::marker::PhantomData<fn() -> C>,
 }
 
 #[async_trait]
-impl<C, Handler> ErasedCommandSimulator for TypedCommandSimulator<C, Handler>
+impl<C, Handler> ErasedCommandPayload for TypedCommandPayload<C, Handler>
 where
     Handler: CommandHandler<C> + 'static,
     C: CommandDefinition<Handler> + JsonCommandPayload + Sync,
@@ -166,91 +135,47 @@ where
         C::decode_json(payload).map(|_| ())
     }
 
-    async fn simulate(
+    async fn simulate_handler(
         &self,
         history: Arc<dyn EventHistory>,
-        operation_id: OperationId,
-        fingerprint: ContentFingerprint,
+        codecs: Arc<rostfrei_core::AggregateCodecs>,
+        metadata: CommandExecutionMetadata,
         payload: Value,
-    ) -> Result<RuntimeDecision, RuntimeSimulationError> {
-        let command = C::decode_json(&payload).map_err(RuntimeSimulationError::InvalidPayload)?;
-        let context = rostfrei_messaging_core::BoundedContextName::new(
-            <C::Context as BoundedContextType>::DESCRIPTOR.id.0,
-        )
-        .map_err(|error| RuntimeSimulationError::InvalidBoundedContext(error.to_string()))?;
-        let metadata =
-            CommandExecutionMetadata::new(operation_id, fingerprint).with_bounded_context(context);
-        let (decision, simulated) = CommandExecutor::new(history)
-            .simulate(&self.handler, metadata, &command)
-            .await?
+    ) -> Result<crate::HandlerSimulationResult, crate::HandlerSimulationError> {
+        let command =
+            C::decode_json(&payload).map_err(crate::HandlerSimulationError::InvalidPayload)?;
+        let (decision, participants) = CommandExecutor::with_codecs(history, codecs)
+            .simulate(self.handler.as_ref(), metadata, &command)
+            .await
+            .map_err(|error| {
+                let code = match &error {
+                    SimulationError::Store(error)
+                        if error.kind() == EventStoreErrorKind::CorruptHistory =>
+                    {
+                        "corrupt-history"
+                    }
+                    SimulationError::Store(_) => "history-unavailable",
+                    SimulationError::Codec(_) => "event-codec-failed",
+                    SimulationError::OutcomeRecovery(_) => "outcome-recovery-failed",
+                    SimulationError::RejectionMapping(_) => "rejection-encoding-failed",
+                };
+                crate::HandlerSimulationError::runtime(code, &error)
+            })?
             .into_parts();
-        let participants = simulated
-            .iter()
-            .map(|participant| TouchedStreamParticipant {
-                aggregate_type: participant.stream_id().aggregate_type().as_str().to_owned(),
-                aggregate_id: participant.stream_id().aggregate_id().as_str().to_owned(),
-                base_stream_version: participant.base_version().value(),
-                read_guard: participant.is_read_guard(),
-            })
-            .collect();
-        match decision {
-            CommandDecision::Accepted => Ok(RuntimeDecision::Accepted {
-                participants,
-                events: simulated
-                    .iter()
-                    .flat_map(|participant| {
-                        participant
-                            .events()
-                            .iter()
-                            .enumerate()
-                            .map(|(ordinal, event)| {
-                                predicted_event(
-                                    participant.stream_id(),
-                                    participant.base_version().value(),
-                                    ordinal,
-                                    event,
-                                )
-                            })
-                    })
-                    .collect::<Result<_, _>>()?,
-            }),
-            CommandDecision::Rejected(rejection) => Ok(RuntimeDecision::Rejected {
-                participants,
-                rejection: rejection
-                    .encode_json()
-                    .map_err(RuntimeSimulationError::RejectionEncoding)?,
-            }),
-        }
+        crate::handler_simulation::result(
+            <C as CommandDefinition<Handler>>::descriptor().bounded_context,
+            C::LOCAL_ID,
+            C::SCHEMA_VERSION,
+            decision,
+            participants,
+        )
     }
 }
 
-fn predicted_event(
-    stream_id: &StreamId,
-    base_version: u64,
-    ordinal: usize,
-    event: &NewEvent,
-) -> Result<PredictedDomainEvent, RuntimeSimulationError> {
-    let ordinal =
-        u32::try_from(ordinal).map_err(|_| RuntimeSimulationError::StreamVersionOverflow)?;
-    let predicted_stream_version = base_version
-        .checked_add(u64::from(ordinal) + 1)
-        .ok_or(RuntimeSimulationError::StreamVersionOverflow)?;
-    let payload = serde_json::from_slice(event.payload())
-        .map_err(|error| RuntimeSimulationError::InvalidEventPayload(error.to_string()))?;
-    Ok(PredictedDomainEvent {
-        aggregate_type: stream_id.aggregate_type().as_str().to_owned(),
-        aggregate_id: stream_id.aggregate_id().as_str().to_owned(),
-        ordinal,
-        predicted_stream_version,
-        event_type: event.event_type().to_owned(),
-        schema_version: event.schema_version(),
-        payload: Some(payload),
-    })
-}
-
+#[derive(Clone)]
 pub struct RuntimeBindings {
     pub registry: DomainRegistry,
-    pub simulators: HashMap<CommandKey, Arc<dyn ErasedCommandSimulator>>,
+    pub payloads: HashMap<CommandKey, Arc<dyn ErasedCommandPayload>>,
     pub input_options: HashMap<CommandKey, Arc<dyn ErasedCommandInputOptions>>,
 }
 
@@ -258,7 +183,7 @@ impl RuntimeBindings {
     pub fn new(registry: DomainRegistry) -> Self {
         Self {
             registry,
-            simulators: HashMap::new(),
+            payloads: HashMap::new(),
             input_options: HashMap::new(),
         }
     }
@@ -266,6 +191,18 @@ impl RuntimeBindings {
     pub fn register_json<C, Handler>(
         &mut self,
         handler: Handler,
+    ) -> Result<(), RuntimeRegistrationError>
+    where
+        Handler: CommandHandler<C> + 'static,
+        C: CommandDefinition<Handler> + JsonCommandPayload + Sync,
+        Handler::Rejection: JsonErrorPayload,
+    {
+        self.register_shared_json::<C, Handler>(Arc::new(handler))
+    }
+
+    pub fn register_shared_json<C, Handler>(
+        &mut self,
+        handler: Arc<Handler>,
     ) -> Result<(), RuntimeRegistrationError>
     where
         Handler: CommandHandler<C> + 'static,
@@ -292,15 +229,15 @@ impl RuntimeBindings {
             });
         }
         let key = CommandKey::new(descriptor.bounded_context, C::LOCAL_ID, C::SCHEMA_VERSION);
-        if self.simulators.contains_key(&key) {
+        if self.payloads.contains_key(&key) {
             return Err(RuntimeRegistrationError::DuplicateBinding {
                 command: C::LOCAL_ID,
                 schema_version: C::SCHEMA_VERSION,
             });
         }
-        self.simulators.insert(
+        self.payloads.insert(
             key,
-            Arc::new(TypedCommandSimulator::<C, Handler> {
+            Arc::new(TypedCommandPayload::<C, Handler> {
                 handler,
                 marker: std::marker::PhantomData,
             }),
@@ -356,7 +293,7 @@ impl RuntimeBindings {
                 descriptor.command_name,
                 descriptor.schema_version,
             );
-            if !self.simulators.contains_key(&key) {
+            if !self.payloads.contains_key(&key) {
                 return Err(RuntimeRegistrationError::MissingBinding {
                     command: descriptor.command_name,
                     schema_version: descriptor.schema_version,

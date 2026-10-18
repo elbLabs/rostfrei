@@ -3,7 +3,7 @@ use rostfrei::DomainError;
 use super::BicycleTransferRejectionReason;
 use crate::domain::rental_fleet::{BicycleId, FleetId};
 
-#[derive(DomainError, Clone, Debug, Eq, PartialEq)]
+#[derive(DomainError, Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[domain(
     id = "bicycle-transfer-rejected",
     label = "Bicycle transfer rejected",

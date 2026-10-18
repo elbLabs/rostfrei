@@ -51,14 +51,18 @@ setup CLI does not change the starter pin or make a skills-enabled release avail
 Start the application's own Tracer host with its real handlers, workers, fixtures
 and NATS event store on **NATS 2.12.1+ with JetStream**. For the framework example,
 follow [bike-rental startup](https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/README.md#run-locally):
-set `ROSTFREI_NATS_URL` and distinct `ROSTFREI_API_TOKEN` / `ROSTFREI_DISPATCH_TOKEN`,
-then run `cargo run --locked -p bike-rental --bin bike-rental-api` from the checkout.
-A consuming application supplies its own application-linked host.
+export `ROSTFREI_NATS_URL`, a unique owned `ROSTFREI_APPLICATION`, a new explicit
+`ROSTFREI_COMPLETED_OUTCOME_EPOCH`, and distinct `ROSTFREI_API_TOKEN` /
+`ROSTFREI_DISPATCH_TOKEN`. Run `cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`.
+Without the flag there is no Tracer HTTP. The epoch selects fresh writable authority;
+omitting it retains legacy/read-only semantics. Do not apply this fresh setup to an
+existing history. A consuming application supplies its own application-linked host.
 
 Use a disposable broker or uniquely owned application namespace and serialize Test
 runs. Every behavior run resets the **entire configured Test scenario**, including
-event history, receipts, messaging streams, quarantine, consumers and retained Test
-evidence, then applies its fixture. Normal resources are separate. External stores
+paired journal/outcome authority, messaging streams, quarantine, consumers and retained
+Test evidence, reconnects bound services, then applies its fixture. Normal resources
+must survive these resets. External stores
 and read models reset only if the application implements that support; a run ID
 alone provides no isolation. Stop the owned host/broker after use.
 

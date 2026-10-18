@@ -3,7 +3,9 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use bike_rental::{BikeRentalNatsResourceLimits, BikeRentalNatsRuntime, demo::demo_fixture};
+use bike_rental::{
+    BikeRentalNatsConfig, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime, demo::demo_fixture,
+};
 use http_body_util::BodyExt as _;
 use rostfrei::DomainRegistry;
 use rostfrei_nats::{NatsConnectionConfig, connect};
@@ -51,18 +53,21 @@ async fn poisoned_test_delivery_is_inspectable_through_catalog_and_cleared_by_re
     let connection = connect(&NatsConnectionConfig::new("quarantine-api-test", url))
         .await
         .unwrap();
+    let config = BikeRentalNatsConfig::new_test_with_resource_limits(
+        &application,
+        BikeRentalNatsResourceLimits::new(16 * 1024 * 1024, 32 * 1024 * 1024, 512 * 1024),
+    )
+    .unwrap()
+    .with_fresh_completed_outcome_epoch("quarantine-api-fixture")
+    .unwrap();
     let runtime = Arc::new(
-        BikeRentalNatsRuntime::provision_test_with_resource_limits(
-            connection.clone(),
-            &application,
-            BikeRentalNatsResourceLimits::new(16 * 1024 * 1024, 32 * 1024 * 1024, 512 * 1024),
-        )
-        .await
-        .unwrap(),
+        BikeRentalNatsRuntime::provision_config(connection.clone(), config)
+            .await
+            .unwrap(),
     );
     let fixture = demo_fixture().unwrap();
     runtime.reset(&fixture).await.unwrap();
-    let store = Arc::new(runtime.store().clone());
+    let store = Arc::new(runtime.store());
     let tracer = TracerBuilder::new(store.clone(), DomainRegistry::new())
         .with_test_event_store(store)
         .with_test_transport(runtime.transport())
@@ -126,10 +131,12 @@ async fn poisoned_test_delivery_is_inspectable_through_catalog_and_cleared_by_re
             .await
             .unwrap();
     }
-    connection
-        .delete_stream_if_exists(runtime.config().event_store().stream_name())
-        .await
-        .unwrap();
+    for stream in [
+        runtime.config().event_store().stream_name(),
+        runtime.config().event_store().outcome_state_stream_name(),
+    ] {
+        connection.delete_stream_if_exists(stream).await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -146,13 +153,13 @@ async fn production_evidence_is_inspectable_after_workers_stop_and_survives_test
     .await
     .unwrap();
     let limits = BikeRentalNatsResourceLimits::new(16 * 1024 * 1024, 32 * 1024 * 1024, 512 * 1024);
-    let production = BikeRentalNatsRuntime::provision_with_resource_limits(
-        connection.clone(),
-        &application,
-        limits,
-    )
-    .await
-    .unwrap();
+    let config = BikeRentalNatsConfig::new_with_resource_limits(&application, limits)
+        .unwrap()
+        .with_fresh_completed_outcome_epoch("quarantine-api-fixture")
+        .unwrap();
+    let production = BikeRentalNatsRuntime::provision_config(connection.clone(), config)
+        .await
+        .unwrap();
     production.start_workers().await.unwrap();
     let address = production
         .config()
@@ -216,13 +223,13 @@ async fn production_evidence_is_inspectable_after_workers_stop_and_survives_test
     assert!(detail["payload"].get("json").is_none());
     assert!(!detail.to_string().contains("production-sensitive-payload"));
 
-    let test = BikeRentalNatsRuntime::provision_test_with_resource_limits(
-        connection.clone(),
-        &application,
-        limits,
-    )
-    .await
-    .unwrap();
+    let config = BikeRentalNatsConfig::new_test_with_resource_limits(&application, limits)
+        .unwrap()
+        .with_fresh_completed_outcome_epoch("quarantine-api-fixture")
+        .unwrap();
+    let test = BikeRentalNatsRuntime::provision_config(connection.clone(), config)
+        .await
+        .unwrap();
     test.reset(&demo_fixture().unwrap()).await.unwrap();
     assert_eq!(request(&app, "GET", detail_href).await.1, detail);
     test.stop_workers().await;
@@ -233,9 +240,11 @@ async fn production_evidence_is_inspectable_after_workers_stop_and_survives_test
                 .await
                 .unwrap();
         }
-        connection
-            .delete_stream_if_exists(runtime.config().event_store().stream_name())
-            .await
-            .unwrap();
+        for stream in [
+            runtime.config().event_store().stream_name(),
+            runtime.config().event_store().outcome_state_stream_name(),
+        ] {
+            connection.delete_stream_if_exists(stream).await.unwrap();
+        }
     }
 }

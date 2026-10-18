@@ -68,8 +68,11 @@ def bundled_resources(release):
     return resources
 
 
-def build(output):
+def build(output, require_clean=False):
     release = release_metadata()
+    if require_clean:
+        from check_agent_candidate import clean_revision, verify_release
+        verify_release(release, clean_revision(ROOT), release["frameworkVersion"])
     resources = bundled_resources(release)
     version = release["frameworkVersion"]
     files = {
@@ -102,9 +105,10 @@ def build(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--require-clean", action="store_true", help="release gate: reject dirty source or build provenance")
     args = parser.parse_args()
     try:
-        build(args.output.resolve())
+        build(args.output.resolve(), args.require_clean)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Kit build failed: {error}\n")
 

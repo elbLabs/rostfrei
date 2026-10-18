@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use rostfrei::{DomainRegistry, EventHistory, RegistrationError};
+use rostfrei::{CommandRejectionClassification, EventHistory, JsonDomainRejectionMapper};
+use rostfrei_tracer::{ApplicationBindingError, ApplicationBindings};
 use rostfrei_tracer::{CommandInputField, CommandInputOption, CommandInputOptions, TracerBuilder};
 
 use crate::rental_fleet::{
@@ -23,12 +24,36 @@ impl CommandInputOptions<AddBicycle> for AddBicycleInputOptions {
     }
 }
 
-pub fn builder(history: Arc<dyn EventHistory>) -> Result<TracerBuilder, RegistrationError> {
-    let mut registry = DomainRegistry::new();
-    registry.register_aggregate::<RentalFleetAggregate>()?;
-    registry.register_command::<RentBicycle, RentBicycleHandler>()?;
-    registry.register_command::<ReturnBicycle, ReturnBicycleHandler>()?;
-    registry.register_command::<AddBicycle, AddBicycleHandler>()?;
-    registry.register_command::<TransferBicycle, TransferBicycleHandler>()?;
-    Ok(TracerBuilder::new(history, registry))
+pub fn bindings() -> Result<ApplicationBindings, Box<dyn std::error::Error + Send + Sync>> {
+    let mut bindings = command_bindings()?;
+    bindings = bindings.with_domain_model(crate::domain_model()?);
+    Ok(bindings)
+}
+
+pub fn command_bindings() -> Result<ApplicationBindings, ApplicationBindingError> {
+    let mut bindings = ApplicationBindings::new();
+    bindings.register_aggregate::<RentalFleetAggregate>()?;
+    let rejections = JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict);
+    bindings.register_command::<RentBicycle, _>(RentBicycleHandler, rejections)?;
+    bindings.register_command::<ReturnBicycle, _>(ReturnBicycleHandler, rejections)?;
+    bindings.register_command::<AddBicycle, _>(AddBicycleHandler, rejections)?;
+    bindings.register_command::<TransferBicycle, _>(TransferBicycleHandler, rejections)?;
+    bindings.register_input_options::<AddBicycle, _>(AddBicycleInputOptions)?;
+    bindings
+        .register_integration_event::<RentalFleetAggregate, crate::rental_fleet::BicycleRented, _>(
+            crate::BicycleRentedIntegrationMapper,
+        );
+    bindings.register_integration_handler::<crate::BicycleRentalStarted, _>(
+        crate::BicycleRentalStartedHandler,
+    );
+    Ok(bindings)
+}
+
+// Low-level test fixtures deliberately replace registered handlers. The runnable
+// application uses `bindings()` directly and never repeats registrations.
+pub fn builder(history: Arc<dyn EventHistory>) -> Result<TracerBuilder, ApplicationBindingError> {
+    Ok(TracerBuilder::new(
+        history,
+        command_bindings()?.registry().clone(),
+    ))
 }

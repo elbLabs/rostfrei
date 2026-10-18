@@ -20,6 +20,10 @@ mod provisioning;
 mod publish;
 #[path = "../src/query.rs"]
 mod query;
+#[path = "../src/response_publication.rs"]
+mod response_publication;
+#[path = "../src/response_storage.rs"]
+mod response_storage;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
 

@@ -100,7 +100,9 @@ struct Recovery {
 
 impl Recovery {
     async fn new(label: &str, kind: ReadModelErrorKind) -> ExampleResult<Self> {
-        let client = async_nats::connect(rostfrei_testing::integration::nats_url()?).await?;
+        let client =
+            super::native_connection_support::client(rostfrei_testing::integration::nats_url()?)
+                .await?;
         let context = jetstream::new(client);
         let application = ApplicationName::new(format!(
             "read-model-recovery-{}-{label}",

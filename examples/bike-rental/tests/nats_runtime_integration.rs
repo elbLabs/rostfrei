@@ -109,9 +109,11 @@ async fn command_workers_and_test_reset_are_subject_scope_isolated() -> TestResu
     let nats_url = required_nats_url()?;
     let scope = unique_scope()?;
     let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
-    let test_config = BikeRentalNatsConfig::new_test_with_resource_limits(&scope, resource_limits)?;
+    let test_config = BikeRentalNatsConfig::new_test_with_resource_limits(&scope, resource_limits)?
+        .with_fresh_completed_outcome_epoch("isolated-runtime-fixture")?;
     let production_config =
-        BikeRentalNatsConfig::new_with_resource_limits(&scope, resource_limits)?;
+        BikeRentalNatsConfig::new_with_resource_limits(&scope, resource_limits)?
+            .with_fresh_completed_outcome_epoch("isolated-runtime-fixture")?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-integration"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -120,20 +122,12 @@ async fn command_workers_and_test_reset_are_subject_scope_isolated() -> TestResu
 
     let result = async {
         let test_runtime = Arc::new(
-            BikeRentalNatsRuntime::provision_test_with_resource_limits(
-                connection.clone(),
-                &scope,
-                resource_limits,
-            )
-            .await?,
+            BikeRentalNatsRuntime::provision_config(connection.clone(), test_config.clone())
+                .await?,
         );
         let production_runtime = Arc::new(
-            BikeRentalNatsRuntime::provision_with_resource_limits(
-                connection.clone(),
-                &scope,
-                resource_limits,
-            )
-            .await?,
+            BikeRentalNatsRuntime::provision_config(connection.clone(), production_config.clone())
+                .await?,
         );
         let fixture = demo_fixture()?;
         test_runtime.apply_fixture(&fixture).await?;
@@ -161,7 +155,8 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
     let nats_url = required_nats_url()?;
     let scope = unique_scope()?;
     let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
-    let test_config = BikeRentalNatsConfig::new_test_with_resource_limits(&scope, resource_limits)?;
+    let test_config = BikeRentalNatsConfig::new_test_with_resource_limits(&scope, resource_limits)?
+        .with_fresh_completed_outcome_epoch("isolated-runtime-fixture")?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-behavioral-integration"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -170,14 +165,10 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
 
     let result: TestResult = async {
         let test_runtime = Arc::new(
-            BikeRentalNatsRuntime::provision_test_with_resource_limits(
-                connection.clone(),
-                &scope,
-                resource_limits,
-            )
-            .await?,
+            BikeRentalNatsRuntime::provision_config(connection.clone(), test_config.clone())
+                .await?,
         );
-        let test_store = Arc::new(test_runtime.store().clone());
+        let test_store = Arc::new(test_runtime.store());
         let history: Arc<dyn EventHistory> = test_store.clone();
         let test_reset: Arc<dyn TestScenarioReset> = test_runtime.clone();
         let test_repository: Arc<dyn TestRepository> = Arc::new(FilesystemTestRepository::load(
@@ -501,7 +492,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             let mut mismatched_definition = canonical_definition.clone();
             mismatched_definition["id"] = json!("rent-available-bicycle-payload-mismatch");
             mismatched_definition["name"] = json!("Report a child payload mismatch");
-            mismatched_definition["expected"]["within"] = json!("3s");
+            // Retain the canonical real-NATS budget: it includes resource reset,
+            // fixture replay and transport retries, not just comparison. This
+            // regression checks payload diagnostics rather than execution latency.
             mismatched_definition["expected"]["settleFor"] = json!("50ms");
             *mismatched_definition
                 .pointer_mut("/expected/graphs/0/nodes/1/payload/bicycle_id")
@@ -533,7 +526,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                     && failed_report["operation"]["status"] == "completed"
                     && failed_report["operation"]["result"]["decision"] == "accepted"
                     && failed_report["commandOutcome"]["outcome"]["status"] == "accepted",
-                "behavioral mismatch did not return a typed failed report for a valid root",
+                &format!("behavioral mismatch did not return a typed failed report for a valid root: {failed_report}"),
             )?;
             let payload_diagnostic = failed_report["comparison"]["diagnostics"]
                 .as_array()
@@ -626,7 +619,8 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
     let scope = unique_scope()?;
     let application = format!("{scope}-reaction");
     let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
-    let config = BikeRentalNatsConfig::new_with_resource_limits(&application, resource_limits)?;
+    let config = BikeRentalNatsConfig::new_with_resource_limits(&application, resource_limits)?
+        .with_fresh_completed_outcome_epoch("isolated-runtime-fixture")?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-reaction-integration"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -635,12 +629,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
 
     let result: TestResult = async {
         let runtime = Arc::new(
-            BikeRentalNatsRuntime::provision_with_resource_limits(
-                connection.clone(),
-                &application,
-                resource_limits,
-            )
-            .await?,
+            BikeRentalNatsRuntime::provision_config(connection.clone(), config.clone()).await?,
         );
         runtime.apply_fixture(&demo_fixture()?).await?;
 
@@ -686,7 +675,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
             rostfrei_tracer::ObservationScope::Production,
         );
         let tracer = rostfrei_tracer::TracerBuilder::new(
-            Arc::new(runtime.store().clone()),
+            Arc::new(runtime.store()),
             rostfrei::DomainRegistry::new(),
         )
         .with_continuous_observation(Arc::clone(&feed))
@@ -1494,10 +1483,10 @@ fn unique_scope() -> TestResult<String> {
     Ok(format!("brt-{:x}-{nanos:x}", process::id()))
 }
 
-fn ensure(condition: bool, message: &'static str) -> TestResult {
+fn ensure(condition: bool, message: &str) -> TestResult {
     if condition {
         Ok(())
     } else {
-        Err(io::Error::other(message).into())
+        Err(io::Error::other(message.to_owned()).into())
     }
 }

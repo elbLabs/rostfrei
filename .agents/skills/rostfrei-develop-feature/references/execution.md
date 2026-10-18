@@ -58,8 +58,8 @@ or uniquely owned application namespace is required; a run/correlation ID does
 not isolate resources. Do not reset an unknown shared broker. Serialize Test runs
 until independent run isolation is available.
 
-Every behavior run resets **all configured Test resources**: event history and
-receipts, command/response and integration streams, quarantine and consumers,
+Every behavior run resets **all configured Test resources**: paired authoritative
+journal and completed-outcome state, command/response and integration streams, quarantine and consumers,
 plus retained Test operation and correlation evidence. It applies the
 selected fixture's domain events. Normal resources are separate; external
 stores/read models require explicit application reset support. Reuse the already
@@ -68,23 +68,29 @@ authorized specific fixture/suite TDD scope without redundant confirmations.
 Use the consuming application's application-linked Tracer host and documented
 startup configuration. The following Rust-only recipe is specifically for the
 framework's `bike-rental-api` example, with distinct control/dispatch capabilities
-already available in the environment:
+and an owned unique application/epoch already available in the environment:
 
 ```sh
 # Separate terminal; disposable broker, no persistent volume:
-docker run --rm --name rostfrei-skills-nats -p 127.0.0.1:14222:4222 nats:2.12.1-alpine -js
+docker run --rm --name "$OWNED_BROKER" -p 127.0.0.1:14222:4222 nats:2.12.15-alpine -js
 # Framework checkout, while that broker runs:
+: "${ROSTFREI_APPLICATION:?Set a unique owned application name}"
+: "${ROSTFREI_COMPLETED_OUTCOME_EPOCH:?Set a new explicit fresh-authority epoch}"
 ROSTFREI_NATS_URL=nats://127.0.0.1:14222 \
-  cargo run --locked -p bike-rental --bin bike-rental-api
+  cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer
 ```
 
 The host defaults to `127.0.0.1:1309` (`ROSTFREI_API_ADDR` overrides it). It requires
 distinct `ROSTFREI_API_TOKEN` and `ROSTFREI_DISPATCH_TOKEN`, provisions both traffic
 scopes, and resets Test at startup. Optional `ROSTFREI_INSPECTION_TOKEN` enables
 read-only production observation/quarantine; Test inspection uses the control
-token. Stop the host and the owned broker after use
-(`docker stop rostfrei-skills-nats`). A consuming application supplies its own
-application-linked host. This example host always enables Tracer HTTP.
+token. Export the application and epoch variables before startup. The epoch
+selects fresh writable split authority; a unique app alone is insufficient.
+Existing namespaces remain read-only by default: do not use this fresh setup as
+an implicit migration. Repeated Test resets must retain Normal history/authority.
+Stop the host and the owned broker after use
+(`docker stop "$OWNED_BROKER"`). A consuming application supplies its own
+application-linked host. Without `--tracer`, the example runs without Tracer HTTP.
 Startup does not install skills.
 
 ## Installed skill execution

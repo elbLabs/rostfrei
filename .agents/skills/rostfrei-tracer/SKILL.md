@@ -235,8 +235,8 @@ Use a stable idempotency key. If the response is ambiguous, do not create a new 
 
 ### Isolated Test Reset
 
-A reset recreates the host's complete configured Test topology: authoritative
-event history and receipts, command/response and integration streams, quarantine,
+A reset recreates the host's complete configured Test topology: paired authoritative
+journal and completed-outcome state, command/response and integration streams, quarantine,
 and their consumers. It invalidates retained Test operations/captures
 and the continuous Test observation window, and resets fixture state; it is not limited to one aggregate or definition. External stores
 and read models are only reset if the application's host explicitly does so.

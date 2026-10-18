@@ -83,19 +83,25 @@ application namespace; never reset unknown shared resources. Run suites serially
 until independent Test-run isolation is available.
 
 The framework example's Tracer-enabled startup is
-`cargo run --locked -p bike-rental --bin bike-rental-api`, with
-`ROSTFREI_NATS_URL` pointing to the disposable broker and distinct
+`cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`, with
+`ROSTFREI_NATS_URL` pointing to the disposable broker, a unique owned
+`ROSTFREI_APPLICATION`, an explicit new `ROSTFREI_COMPLETED_OUTCOME_EPOCH`, and distinct
 `ROSTFREI_API_TOKEN` / `ROSTFREI_DISPATCH_TOKEN` available in the host environment.
 Set optional `ROSTFREI_INSPECTION_TOKEN` on the host and client for read-only
 production observation/quarantine. Test inspection uses the control token.
+The epoch explicitly selects fresh writable split authority. A unique application
+name alone does not select it. Existing/legacy namespaces remain read-only by
+default; never add an epoch to an existing history as an implicit migration.
 It provisions both Normal and Test topology and resets Test on startup. Default
 bind: `127.0.0.1:1309`, configurable via `ROSTFREI_API_ADDR`.
-This example host always enables Tracer HTTP. Consumer applications supply their
-own entry point and explicitly configured observation feeds; discover optional
-relations in their live catalog.
+Without `--tracer`, the example runs without Tracer HTTP. Consumer applications
+supply their own entry point and explicitly configured observation feeds; discover
+optional relations in their live catalog.
 
-Reset recreates the configured Test topology, including event history/receipts,
-messaging/quarantine streams and consumers, and invalidates Test evidence.
+Reset recreates the configured Test topology, including the paired authoritative
+journal and completed-outcome state, messaging/quarantine streams and consumers,
+then reconnects the store and rebuilds backend-bound services. It invalidates Test
+evidence. Normal history and authority are separate and must survive repeated resets.
 It is not limited to a named fixture or aggregate. External stores/read models
 are covered only by explicit application reset support. Production capabilities
 remain separate from authorization for a specific isolated TDD loop.

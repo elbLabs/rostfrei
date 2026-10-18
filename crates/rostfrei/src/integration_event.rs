@@ -88,11 +88,14 @@ impl<Mapper> IntegrationEventProcessor<Mapper> {
             .map_err(|error| IntegrationEventProcessingError::MessageIdentity(error.to_string()))?;
         let causation_id = CausationId::new(envelope.message_id().as_str())
             .map_err(|error| IntegrationEventProcessingError::MessageIdentity(error.to_string()))?;
-        let request = CommandRequest::new(operation_id, command)
+        let mut request = CommandRequest::new(operation_id, command)
             .with_correlation_id(envelope.correlation_id().clone())
             .with_causation_id(causation_id)
             .with_created_at(envelope.occurred_at())
             .with_events_caused_by_command();
+        if let Some(actor) = envelope.actor() {
+            request = request.with_actor(actor.clone());
+        }
         let receipt = self
             .command_bus
             .dispatch::<Mapper::Command>(request)
@@ -149,16 +152,16 @@ where
 
         match self.processor.process(&envelope).await {
             Ok(_) => DeliveryDisposition::Acknowledge,
-            Err(IntegrationEventProcessingError::CommandBus(error))
-                if matches!(
-                    error.kind(),
-                    crate::CommandBusErrorKind::Timeout | crate::CommandBusErrorKind::Unavailable
-                ) =>
-            {
+            Err(IntegrationEventProcessingError::CommandBus(error)) if error.is_retryable() => {
                 DeliveryDisposition::RetryAfter(self.retry_delay)
             }
             Err(IntegrationEventProcessingError::Mapper(_)) => {
                 quarantine("integration command mapping failed")
+            }
+            Err(IntegrationEventProcessingError::CommandBus(error))
+                if error.execution_failure().is_some() =>
+            {
+                quarantine("technical command execution is blocked; repair and redrive required")
             }
             Err(_) => quarantine("integration command mapping produced an invalid command"),
         }

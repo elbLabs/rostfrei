@@ -1,0 +1,76 @@
+use serde::{Deserialize, Serialize};
+
+/// Technical execution failures are not completed business outcomes.
+///
+/// The source kind, rather than diagnostic text, determines recovery policy.
+/// A failure can follow a durable commit; it does not prove the absence of a receipt/events.
+/// Preserve the operation and canonical evidence for reconciliation after uncertainty.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "source",
+    content = "kind",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum ExecutionFailure {
+    Store(StoreFailureKind),
+    Codec(CodecFailureKind),
+    Processor(ProcessorFailureKind),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessorFailureKind {
+    InvalidConfiguration,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoreFailureKind {
+    CorruptHistory,
+    CapacityExhausted,
+    ConfigurationMismatch,
+    Conflict,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodecFailureKind {
+    UnknownEventType,
+    UnsupportedSchemaVersion,
+    MalformedPayload,
+    InvalidEnvelope,
+    EncodingFailed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionRecovery {
+    /// Retry/reconcile unchanged canonical evidence with the same operation ID.
+    /// Completion may already be durable when a technical result is uncertain.
+    Retry,
+    /// Isolate the trigger durably; operator repair and explicit redrive are required.
+    Blocked,
+}
+
+impl ExecutionFailure {
+    pub const fn recovery(self) -> ExecutionRecovery {
+        match self {
+            Self::Store(StoreFailureKind::Conflict | StoreFailureKind::Unavailable) => {
+                ExecutionRecovery::Retry
+            }
+            Self::Store(
+                StoreFailureKind::CorruptHistory
+                | StoreFailureKind::CapacityExhausted
+                | StoreFailureKind::ConfigurationMismatch,
+            )
+            | Self::Codec(_)
+            | Self::Processor(_) => ExecutionRecovery::Blocked,
+        }
+    }
+
+    pub const fn is_retryable(self) -> bool {
+        matches!(self.recovery(), ExecutionRecovery::Retry)
+    }
+}

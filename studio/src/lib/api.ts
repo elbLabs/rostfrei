@@ -3,6 +3,7 @@ import type {
   CommandExecutionResult,
   CommandInputDocument,
   Fixture,
+  HandlerSimulationResult,
   OperationMessageSeries,
   OperationSnapshot,
   TestDefinitionRevision,
@@ -121,14 +122,92 @@ export class CommandSubmissionIndeterminateError extends Error {
   override name = "CommandSubmissionIndeterminateError"
 }
 
+export async function simulateHandler(
+  href: string,
+  schemaVersion: number,
+  payloadJson: string
+): Promise<HandlerSimulationResult> {
+  const response = await request(advertisedHref(href), {
+    method: "POST",
+    timeoutMs: 35_000,
+    headers: { "content-type": "application/json" },
+    body: `{"schemaVersion":${schemaVersion},"payload":${payloadJson}}`,
+  })
+  const source = await response.text()
+  const result = JSON.parse(source) as HandlerSimulationResult
+  if (
+    response.status !== 200 ||
+    response.headers.has("location") ||
+    result.kind !== "handlerSimulation" ||
+    result.committed !== false ||
+    result.schemaVersion !== schemaVersion ||
+    typeof result.context !== "string" ||
+    typeof result.command !== "string" ||
+    !["accepted", "rejected"].includes(result.outcome?.decision) ||
+    !Array.isArray(result.streams) ||
+    !Array.isArray(result.proposedEvents) ||
+    (result.outcome.decision === "rejected" &&
+      (result.proposedEvents.length !== 0 ||
+        !("rejection" in result.outcome))) ||
+    ["operationId", "correlationId", "messageSeries", "capture"].some(
+      (key) => key in result
+    )
+  ) {
+    throw new Error(
+      "Tracer did not return a distinct uncommitted handler simulation"
+    )
+  }
+  const root = parseJsonNode(source)
+  const raw = (node: JsonNode | undefined) =>
+    node ? source.slice(node.start, node.end) : undefined
+  const version = (node: JsonNode | undefined) => {
+    const value = raw(node)
+    if (
+      !value ||
+      !/^(0|[1-9][0-9]*)$/.test(value) ||
+      BigInt(value) > 18446744073709551615n
+    )
+      throw new Error("Invalid handler simulation stream version")
+    return value
+  }
+  const streams = root.properties?.get("streams")?.items ?? []
+  result.streams.forEach((stream, index) => {
+    if (
+      typeof stream.aggregateType !== "string" ||
+      typeof stream.aggregateId !== "string" ||
+      typeof stream.readGuard !== "boolean"
+    )
+      throw new Error("Invalid handler simulation stream")
+    stream.baseStreamVersion = version(
+      streams[index]?.properties?.get("baseStreamVersion")
+    )
+  })
+  const events = root.properties?.get("proposedEvents")?.items ?? []
+  result.proposedEvents.forEach((event, index) => {
+    if (
+      typeof event.aggregateType !== "string" ||
+      typeof event.aggregateId !== "string" ||
+      typeof event.eventType !== "string" ||
+      !Number.isInteger(event.schemaVersion)
+    )
+      throw new Error("Invalid proposed domain event")
+    event.proposedStreamVersion = version(
+      events[index]?.properties?.get("proposedStreamVersion")
+    )
+    event.payloadJson = raw(events[index]?.properties?.get("payload"))
+  })
+  return result
+}
+
 export async function submitCommand(
-  mode: "preview" | "test",
+  mode: "test",
   hrefTemplate: string,
   schemaVersion: number,
   payloadJson: string,
   idempotencyKey?: string
 ): Promise<CommandExecutionResult> {
-  if (mode === "test" && !idempotencyKey) {
+  if (mode !== "test") throw new Error("Unsupported command execution mode")
+  if (!idempotencyKey) {
     throw new Error("Test publication requires an idempotency key")
   }
   const submitHref = advertisedHref(hrefTemplate)
@@ -162,8 +241,7 @@ export async function submitCommand(
     const location = response.headers.get("location")
     if (!location) throw new Error("Missing operation Location")
     operationHref = advertisedHref(location)
-    const expectedMode = mode === "preview" ? "simulate" : "test"
-    if (operation.mode !== expectedMode) {
+    if (operation.mode !== "test") {
       throw new Error("Unexpected operation mode")
     }
   } catch (error) {

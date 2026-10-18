@@ -29,6 +29,8 @@ jobs:
           key: agent-skills
       - name: Check Rust CLI installation and typed HTTP failure boundaries
         run: cargo test --locked -p rostfrei-structure
+      - name: Reject missing selected capabilities and mixed candidate provenance
+        run: python3 scripts/test_agent_skill_candidate.py
       - name: Verify the published CLI package is self-contained
         run: cargo package --locked -p rostfrei-structure
       - name: Install the packaged native CLI externally and remove its source
@@ -47,9 +49,9 @@ jobs:
       - name: Build the current application-linked host
         run: cargo build --locked -p bike-rental --bin bike-rental-api
       - name: Qualify installed suites and catalog-driven HTTP/SSE capabilities through real NATS
-        run: python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --output "$RUNNER_TEMP/skills-evidence"
+        run: python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --require-handler-simulation --output "$RUNNER_TEMP/skills-evidence"
       - name: Qualify fresh source CLI and matching application host through real NATS
-        run: python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --source-checkout --output "$RUNNER_TEMP/skills-source-evidence"
+        run: python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py --source-checkout --require-handler-simulation --output "$RUNNER_TEMP/skills-source-evidence"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

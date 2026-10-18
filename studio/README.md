@@ -19,14 +19,24 @@ message selection; the layout preference is saved in this browser.
 Keyboard shortcuts: **1** selects Canvas and **2** selects Workbench. Shortcuts
 are ignored while editing text or using modifier keys.
 
+The theme picker in the top bar supports **Light**, **Dark**, and **System**.
+System is the default; the browser preference is shared with the website through
+`rostfrei-theme`. Reference ’15 colors, controls, typography, and duck branding
+come from the workspace package `@rostfrei/ui`.
+
 Open **Command** (or **Ctrl/⌘ Shift K**) to use the catalog-driven command form.
-**Preview** reads isolated Test history without publishing; **Test bus** uses
+**Test bus** uses
 the isolated command pipeline and can append events and trigger integrations.
-Test bus is the default for commands that advertise that capability. Commands
+Test bus is the default; submission is disabled when unavailable. Commands
 remain available even when the catalog has no behavioral-test repository.
 Identifiers are editable, discovered payload options refresh after Test runs,
 and numeric options retain their exact JSON representation. An unconfirmed Test
 submission keeps its idempotency key and payload for an explicit retry.
+**Simulate handler** is an optional explicit choice when advertised. It shows
+the real handler decision, starting stream versions and proposed domain events
+in a separate **Uncommitted · no acceptance receipt** panel, never an observed
+message graph. Injected dependencies are not automatically sandboxed; this does
+not test delivery, persistence/concurrency or downstream integrations.
 Start with the [bike-rental walkthrough](https://elblabs.github.io/rostfrei/docs/getting-started)
 for a connected application. Studio requires a reachable Tracer API; synthetic
 responses are limited to the browser-test and visual-inspection fixtures below.
@@ -42,14 +52,14 @@ the observation sidebar does not stop capture.
 
 ## Run locally
 
-From `studio/`:
+From the repository root:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm dev
+pnpm --dir studio dev
 ```
 
-Run the Chrome/Puppeteer interaction smoke test with:
+From `studio/`, run the Chrome/Puppeteer interaction smoke test with:
 
 ```sh
 pnpm test:ui
@@ -58,6 +68,9 @@ pnpm test:ui
 The smoke test intercepts every Tracer request and uses deterministic HTTP
 fixtures from `scripts/fixtures.mjs`, including connection failures and retry,
 reruns, rejection, failed expectations, storage failure, and responsive layouts.
+It also checks pre-paint theme initialization, theme selection/persistence,
+system-theme changes, canvas colors, and the mobile theme picker above raised
+command panels.
 These fixtures are test-only and are not included in the application bundle.
 The smoke test does not publish to a running Tracer. Set `CHROME_BIN` if Chrome
 is installed outside the standard
@@ -73,18 +86,20 @@ pnpm inspect:ui --scene accepted
 pnpm inspect:ui --scene all
 pnpm inspect:ui --scene command --viewport 390x844
 pnpm inspect:ui --scene narrow --out artifacts/after
+pnpm inspect:ui --scene all --theme light --out artifacts/after-light
+pnpm inspect:ui --scene all --theme dark --out artifacts/after-dark
 ```
 
 The inspector starts Vite on an available port and launches a fresh Chrome
 session. Named scenarios intercept every API request and label their synthetic
 responses as visual fixtures. They cover the workbench overview, command form,
-accepted/rejected Preview, pending and indeterminate results, a 25-message
+accepted/rejected Test, pending and indeterminate results, a 25-message
 branching graph, long payloads, continuous observation, and the narrow-screen inspector. Unknown API
 requests fail rather than reaching a backend.
 
 Each capture writes `screenshot.png`, `state.json`, `accessibility.json`, and
 `diagnostics.json` under the gitignored `artifacts/inspect/` directory (or `--out`).
-State includes panel/card bounds, selection, inspector content, and viewport
+State includes the resolved theme, panel/card bounds, selection, inspector content, and viewport
 visibility. Inspect the screenshot to evaluate wrapping, clipping, and contrast;
 browser exceptions, failed requests, unexpected HTTP errors, and missing fixture
 routes fail the capture. Fixture sessions freeze wall time/UUIDs and disable motion.

@@ -2,7 +2,7 @@ use rostfrei::DomainError;
 
 use crate::domain::rental_fleet::BicycleId;
 
-#[derive(DomainError, Clone, Debug, Eq, PartialEq)]
+#[derive(DomainError, Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[domain(
     id = "bicycle-unavailable",
     label = "Bicycle unavailable",

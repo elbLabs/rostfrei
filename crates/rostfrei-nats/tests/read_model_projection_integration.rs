@@ -2,6 +2,7 @@
 
 #[path = "../examples/read_model_storage/application.rs"]
 mod application;
+mod native_connection_support;
 
 #[path = "read_model/recovery.rs"]
 mod recovery;
@@ -64,7 +65,8 @@ fn billing_delivery(
 #[allow(clippy::too_many_lines)]
 async fn multiple_handlers_merge_checkpoints_and_rebuild_from_authoritative_history()
 -> ExampleResult {
-    let client = async_nats::connect(rostfrei_testing::integration::nats_url()?).await?;
+    let client =
+        native_connection_support::client(rostfrei_testing::integration::nats_url()?).await?;
     let jetstream = async_nats::jetstream::new(client);
     let context = ApplicationName::new(format!("read-model-projection-{}", std::process::id()))?
         .bounded_context("access")?;
