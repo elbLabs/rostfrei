@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { useTheme } from "@rostfrei/ui/theme"
 import {
   ArrowRight,
   CircleDot,
@@ -87,6 +88,7 @@ export function MessageGraph({
   emptyMessage,
   capture,
 }: MessageGraphProps) {
+  const { resolvedTheme } = useTheme()
   const compact = useMediaQuery("(max-width: 1100px)")
   const canvas = layoutMode === "canvas"
   const [selectedId, setSelectedId] = useState<string>()
@@ -305,6 +307,7 @@ export function MessageGraph({
           ) : (
             <ReactFlow<MessageFlowNode, MessageFlowEdge>
               className="message-flow"
+              colorMode={resolvedTheme}
               nodes={flowNodes}
               edges={flowEdges}
               nodeTypes={nodeTypes}
@@ -326,7 +329,7 @@ export function MessageGraph({
               zoomOnDoubleClick={false}
               proOptions={{ hideAttribution: true }}
             >
-              <Background color="#39434f" gap={24} size={1} />
+              <Background color="var(--border)" gap={24} size={1} />
               <GraphControls container={controlsRoot} />
             </ReactFlow>
           )}
