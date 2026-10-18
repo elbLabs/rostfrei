@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { ListTree, LoaderCircle, RotateCcw, Send } from "lucide-react"
+import { Input } from "@rostfrei/ui/components/input"
+import { NativeSelect } from "@rostfrei/ui/components/native-select"
+import { Textarea } from "@rostfrei/ui/components/textarea"
 
 import { DraggablePanel } from "@/components/draggable-panel"
 import "./command-panel.css"
@@ -285,7 +288,9 @@ export function CommandPanel({
               role="group"
               aria-label="Command action"
             >
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 type="button"
                 className="command-mode-option"
                 data-command-mode="test"
@@ -297,8 +302,10 @@ export function CommandPanel({
                 }}
               >
                 Isolated Test
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 type="button"
                 className="command-mode-option"
                 data-command-mode="simulate-handler"
@@ -312,7 +319,7 @@ export function CommandPanel({
                 }}
               >
                 Simulate handler
-              </button>
+              </Button>
             </div>
             <p>
               {mode === "simulate-handler"
@@ -325,7 +332,7 @@ export function CommandPanel({
 
           <label className="command-field">
             <span>Command and schema</span>
-            <select
+            <NativeSelect
               aria-label="Command and schema"
               value={choiceKey}
               disabled={busy || choices.length === 0}
@@ -352,7 +359,7 @@ export function CommandPanel({
                   {choice.version.schemaVersion}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </label>
 
           <div className="command-payload-fields">
@@ -398,7 +405,7 @@ export function CommandPanel({
             <label className="command-field">
               <span>Idempotency key</span>
               <div className="command-idempotency-field">
-                <input
+                <Input
                   aria-label="Idempotency key"
                   value={idempotencyKey}
                   disabled={busy}
@@ -555,7 +562,7 @@ function PayloadField({
     <div className="command-field" data-payload-field={field.name}>
       <span>{label}</span>
       {identifier && !selectionInput ? (
-        <input
+        <Input
           type="text"
           aria-label={`Payload ${label}`}
           value={controlValue ?? ""}
@@ -566,7 +573,7 @@ function PayloadField({
           onChange={(event) => onChange(event.target.value)}
         />
       ) : selectionInput ? (
-        <select
+        <NativeSelect
           aria-label={`Payload ${label}`}
           value={controlValue ?? ""}
           disabled={
@@ -586,9 +593,9 @@ function PayloadField({
               {option.label}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       ) : descriptor.kind === "scalar" && scalarType(descriptor) === "bool" ? (
-        <select
+        <NativeSelect
           aria-label={`Payload ${label}`}
           value={controlValue ?? ""}
           disabled={disabled}
@@ -598,10 +605,10 @@ function PayloadField({
           {isOptional(field.value) && <option value="null">None</option>}
           <option value="true">True</option>
           <option value="false">False</option>
-        </select>
+        </NativeSelect>
       ) : simpleList ? (
         <div className="command-list-field">
-          <textarea
+          <Textarea
             aria-label={`Payload ${label}`}
             value={emptyList || noValue || unavailable ? "" : (value ?? "")}
             disabled={disabled || emptyList || noValue}
@@ -621,7 +628,7 @@ function PayloadField({
           </Button>
         </div>
       ) : descriptor.kind !== "scalar" ? (
-        <textarea
+        <Textarea
           aria-label={`Payload ${label}`}
           value={controlValue ?? ""}
           disabled={disabled || noValue}
@@ -631,7 +638,7 @@ function PayloadField({
           onChange={(event) => onChange(event.target.value)}
         />
       ) : (
-        <input
+        <Input
           aria-label={`Payload ${label}`}
           value={controlValue ?? ""}
           disabled={disabled || noValue}

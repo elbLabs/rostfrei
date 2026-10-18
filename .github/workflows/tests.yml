@@ -87,8 +87,14 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: studio/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+        working-directory: .
+      - name: Check shared UI
+        working-directory: .
+        run: |
+          pnpm --filter @rostfrei/ui lint
+          pnpm --filter @rostfrei/ui typecheck
       - uses: Swatinem/rust-cache@v2
         with:
           key: studio-live-host
@@ -103,12 +109,46 @@ jobs:
         run: python3 ../scripts/test_nats.py -- python3 scripts/check_bike_rental_host.py --studio
       - name: Inspect desktop and mobile layouts
         run: |
-          pnpm inspect:ui --scene all
-          pnpm inspect:ui --scene rejected --viewport 390x844
-          pnpm inspect:ui --scene long-payload --viewport 390x844
+          pnpm inspect:ui --scene all --theme light
+          pnpm inspect:ui --scene all --theme dark --out artifacts/inspect-dark
+          pnpm inspect:ui --scene rejected --viewport 390x844 --theme light
+          pnpm inspect:ui --scene long-payload --viewport 390x844 --theme light
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: studio-inspection
-          path: studio/artifacts/inspect/
+          path: |
+            studio/artifacts/inspect/
+            studio/artifacts/inspect-dark/
+          if-no-files-found: ignore
+
+  website:
+    name: Website and shared components
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir website lint
+      - name: Build with deployment base path
+        env:
+          VITE_BASE_PATH: /rostfrei/
+        run: pnpm --dir website build
+      - name: Check website and component gallery in Chrome
+        env:
+          VITE_BASE_PATH: /rostfrei/
+        run: pnpm test:website
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: website-inspection
+          path: artifacts/website/
           if-no-files-found: ignore

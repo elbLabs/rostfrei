@@ -32,11 +32,11 @@ export function MacroCarousel() {
     <>
       <div
         aria-label="Macro carousel controls"
-        className="mb-4 flex flex-wrap items-center gap-2 border-y border-[#3b3127] px-1 py-3"
+        className="mb-3 flex flex-wrap items-center gap-2 border-y border-border py-2"
       >
         <Button
           aria-label="Previous macro"
-          className="border-[#44372b] bg-transparent text-stone-400 hover:bg-white/5 hover:text-stone-100"
+          className="text-muted-foreground"
           onClick={() => api?.scrollPrev()}
           size="icon-sm"
           variant="outline"
@@ -45,7 +45,7 @@ export function MacroCarousel() {
         </Button>
         <Button
           aria-label="Next macro"
-          className="border-[#44372b] bg-transparent text-stone-400 hover:bg-white/5 hover:text-stone-100"
+          className="text-muted-foreground"
           onClick={() => api?.scrollNext()}
           size="icon-sm"
           variant="outline"
@@ -54,16 +54,16 @@ export function MacroCarousel() {
         </Button>
         <div
           aria-label="Choose macro slide"
-          className="ml-1 flex max-w-[210px] flex-wrap gap-1.5 sm:max-w-none"
+          className="flex max-w-full flex-wrap gap-0.5"
         >
           {MACROS.map((item, dotIndex) => (
             <button
               aria-current={dotIndex === current ? "true" : undefined}
               aria-label={`Show ${item.name}`}
-              className={`size-1.5 rounded-full transition-colors ${
+              className={`grid size-5 place-items-center transition-colors after:size-1.5 after:bg-current ${
                 dotIndex === current
-                  ? "bg-primary"
-                  : "bg-stone-700 hover:bg-stone-500"
+                  ? "text-primary"
+                  : "text-muted-foreground hover:text-primary"
               }`}
               key={item.name}
               onClick={() => api?.scrollTo(dotIndex)}
@@ -71,8 +71,8 @@ export function MacroCarousel() {
             />
           ))}
         </div>
-        <span className="ml-auto font-mono text-xs text-stone-600">
-          <strong className="text-stone-200">
+        <span className="ml-auto font-mono text-xs text-muted-foreground">
+          <strong className="text-foreground">
             {String(current + 1).padStart(2, "0")}
           </strong>
           {" / "}

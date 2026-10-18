@@ -10,11 +10,13 @@ import rehypeSlug from "rehype-slug"
 import remarkGfm from "remark-gfm"
 import tailwindcss from "@tailwindcss/vite"
 import { metadataPlugin } from "./metadata-plugin.ts"
+import { referenceTheme } from "@rostfrei/ui/vite"
 
 const config = defineConfig({
   base: process.env.VITE_BASE_PATH ?? "/",
   resolve: { tsconfigPaths: true },
   plugins: [
+    referenceTheme(),
     devtools(),
     tanstackRouter({ target: "react", autoCodeSplitting: true }),
     {
