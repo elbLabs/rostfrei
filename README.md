@@ -61,6 +61,15 @@ old-writer credential/ACL exclusion. Read the
 [completed-outcome contract](docs/adr/0044-completed-outcomes-and-envelope-ingress.md)
 and [cutover runbook](docs/completed-outcome-cutover.md); do not activate an old
 namespace just because its cached responses have expired.
+Journal and outcome-state streams form one incarnation-fenced authority pair;
+see the [native protocol](docs/design/modular-command-native.md).
+
+For an owned fresh bike-rental application, explicitly set
+`ROSTFREI_COMPLETED_OUTCOME_EPOCH` before starting
+`cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`.
+The epoch selects split authority for both isolated Test and Normal scopes;
+omitting it retains legacy/read-only semantics. See the
+[host configuration](docs/nats-application-host.md).
 
 Domain events form private aggregate history. Integration events are separately
 versioned public contracts published after commit. NATS JetStream adapters
@@ -92,6 +101,11 @@ concurrency retries. Queries use a read-only handle.
 
 See the [runtime reference](docs/runtime.md) for NATS authentication, history
 reads and audits, command correlation, and worker delivery.
+
+History reads validate local envelopes and commit structure. Deep historical checks
+remain available through `audit_history`, `audit_streams`, and
+`with_history_auditing(true)`; reads alone do not verify writable authority. See
+[read/audit trust boundaries](docs/adr/0040-trusted-event-store-reads-and-explicit-audits.md).
 
 Technical command failures expose typed source and recovery information through
 the processor, local/NATS command buses, and HTTP. They are not business

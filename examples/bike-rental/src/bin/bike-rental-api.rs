@@ -1,128 +1,101 @@
-use std::{env, path::PathBuf, sync::Arc};
-
 use bike_rental::{
-    APPLICATION_NAME, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
+    APPLICATION_NAME, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
     demo::{demo_fixture, no_rental_fleets_fixture, rented_demo_fixture},
-    domain_model,
-    rental_fleet::{
-        AddBicycle, AddBicycleHandler, RentBicycle, RentBicycleHandler, ReturnBicycle,
-        ReturnBicycleHandler, TransferBicycle, TransferBicycleHandler,
-    },
     tracer,
 };
-use rostfrei::EventHistory;
-use rostfrei_messaging_core::ApplicationName;
 use rostfrei_nats::{NatsConnectionConfig, ServerVersion, connect};
 use rostfrei_tracer::{
-    ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, OperationMode,
-    TestRepository, TestScenarioReset,
-    http::{self, HttpConfig},
+    ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, NatsApplication, NatsRuntime,
+    ObservationFeed, ObservationScope, TracerConfig, http::HttpConfig,
 };
+use std::{env, path::PathBuf, sync::Arc};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let nats_url = env::var("ROSTFREI_NATS_URL")?;
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let enabled = env::args().skip(1).any(|argument| argument == "--tracer");
     let application =
         env::var("ROSTFREI_APPLICATION").unwrap_or_else(|_| APPLICATION_NAME.to_owned());
-    let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
+    let limits = BikeRentalNatsResourceLimits::from_env()?;
     let connection = connect(
-        &NatsConnectionConfig::new("bike-rental-api", nats_url)
+        &NatsConnectionConfig::new("bike-rental", env::var("ROSTFREI_NATS_URL")?)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
     )
     .await?;
-
-    let test_runtime = Arc::new(
-        BikeRentalNatsRuntime::provision_test_with_resource_limits(
-            connection.clone(),
-            &application,
-            resource_limits,
-        )
-        .await?,
-    );
-    let default_test_fixture = demo_fixture()?;
-    let empty_test_fixture = no_rental_fleets_fixture()?;
-    let rented_test_fixture = rented_demo_fixture()?;
-    test_runtime.reset(&default_test_fixture).await?;
-
-    let dispatch_runtime = Arc::new(
-        BikeRentalNatsRuntime::provision_with_resource_limits(
-            connection,
-            &application,
-            resource_limits,
-        )
-        .await?,
-    );
-    dispatch_runtime
-        .apply_fixture(&default_test_fixture)
-        .await?;
-    dispatch_runtime.start_workers().await?;
-
-    let test_store = Arc::new(test_runtime.store());
-    let history: Arc<dyn EventHistory> = test_store.clone();
-    let test_reset: Arc<dyn TestScenarioReset> = test_runtime.clone();
-    let test_repository: Arc<dyn TestRepository> = Arc::new(FilesystemTestRepository::load(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer"),
-    )?);
-    let mut builder = tracer::builder(history)?
-        .with_continuous_observation(rostfrei_tracer::ObservationFeed::new(
-            ApplicationName::new(&application)?,
-            rostfrei_tracer::ObservationScope::Test,
-        ))
-        .with_continuous_observation(rostfrei_tracer::ObservationFeed::new(
-            ApplicationName::new(&application)?,
-            rostfrei_tracer::ObservationScope::Production,
-        ))
-        .with_domain_model(domain_model()?)
-        .with_test_event_store(test_store.clone())
-        .with_stream_directory(test_store)
-        .with_test_transport(test_runtime.transport())
-        .with_test_quarantine_reader(test_runtime.quarantine_reader())
-        .with_production_quarantine_reader(dispatch_runtime.quarantine_reader())
-        .with_dispatch_transport(dispatch_runtime.transport())
-        .with_test_scenario_reset(test_reset)
-        .with_default_test_fixture(default_test_fixture)
-        .with_test_fixture(empty_test_fixture)
-        .with_test_fixture(rented_test_fixture)
-        .with_test_repository(test_repository)
-        .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
-    builder.register_json::<RentBicycle, _>(RentBicycleHandler)?;
-    builder.register_json::<ReturnBicycle, _>(ReturnBicycleHandler)?;
-    builder.register_json::<AddBicycle, _>(AddBicycleHandler)?;
-    builder.register_input_options::<AddBicycle, _>(tracer::AddBicycleInputOptions)?;
-    builder.register_json::<TransferBicycle, _>(TransferBicycleHandler)?;
-    let tracer = builder.build()?;
-    let mut test_correlation_observer = test_runtime
-        .start_correlation_observer(tracer.correlation_observer(OperationMode::Test))
-        .await?;
-    let mut dispatch_correlation_observer = dispatch_runtime
-        .start_correlation_observer(tracer.correlation_observer(OperationMode::Dispatch))
-        .await?;
-    let api_token = env::var("ROSTFREI_API_TOKEN")?;
-    let dispatch_token = env::var("ROSTFREI_DISPATCH_TOKEN")?;
-    let mut http_config = HttpConfig::new(api_token)?.with_dispatch_token(dispatch_token)?;
-    match env::var("ROSTFREI_INSPECTION_TOKEN") {
-        Ok(token) => http_config = http_config.with_inspection_token(token)?,
-        Err(env::VarError::NotPresent) => {}
-        Err(error) => return Err(error.into()),
+    let bindings = Arc::new(tracer::bindings()?);
+    let mut normal = BikeRentalNatsConfig::for_bindings(
+        &application,
+        rostfrei::TrafficScope::Normal,
+        limits,
+        &bindings,
+    )?;
+    let epoch = env::var("ROSTFREI_COMPLETED_OUTCOME_EPOCH").ok();
+    if let Some(epoch) = &epoch {
+        normal = normal.with_fresh_completed_outcome_epoch(epoch)?;
     }
-    let app = http::router(tracer, http_config);
-
-    let address = env::var("ROSTFREI_API_ADDR").unwrap_or_else(|_| "127.0.0.1:1309".to_owned());
-    let listener = tokio::net::TcpListener::bind(&address).await?;
-    println!("bike-rental tracer listening on http://{address}");
-    tokio::select! {
-        result = axum::serve(listener, app) => result.map_err(Into::into),
-        () = test_runtime.wait_for_worker_exit() => {
-            Err(std::io::Error::other("a test NATS worker stopped unexpectedly").into())
+    let host = if enabled {
+        let mut test = BikeRentalNatsConfig::for_bindings(
+            &application,
+            rostfrei::TrafficScope::Test,
+            limits,
+            &bindings,
+        )?;
+        if let Some(epoch) = &epoch {
+            test = test.with_fresh_completed_outcome_epoch(epoch)?;
         }
-        () = dispatch_runtime.wait_for_worker_exit() => {
-            Err(std::io::Error::other("a dispatch NATS worker stopped unexpectedly").into())
+        let dispatch = Arc::new(
+            NatsRuntime::provision(
+                connection.clone(),
+                normal.host_config().clone(),
+                bindings.clone(),
+            )
+            .await?,
+        );
+        dispatch.apply_fixture(&demo_fixture()?).await?;
+        let address = env::var("ROSTFREI_API_ADDR").unwrap_or_else(|_| "127.0.0.1:1309".to_owned());
+        let listener = tokio::net::TcpListener::bind(&address).await?;
+        let mut http = HttpConfig::new(env::var("ROSTFREI_API_TOKEN")?)?
+            .with_dispatch_token(env::var("ROSTFREI_DISPATCH_TOKEN")?)?;
+        match env::var("ROSTFREI_INSPECTION_TOKEN") {
+            Ok(token) => http = http.with_inspection_token(token)?,
+            Err(env::VarError::NotPresent) => {}
+            Err(error) => return Err(error.into()),
         }
-        result = &mut test_correlation_observer => {
-            Err(std::io::Error::other(format!("the test correlation observer stopped: {result:?}")).into())
-        }
-        result = &mut dispatch_correlation_observer => {
-            Err(std::io::Error::other(format!("the dispatch correlation observer stopped: {result:?}")).into())
-        }
-    }
+        let tracer = TracerConfig::new(listener, http)
+            .with_dispatch_runtime(dispatch)
+            .with_continuous_observation(ObservationFeed::new(
+                test.application().clone(),
+                ObservationScope::Test,
+            ))
+            .with_continuous_observation(ObservationFeed::new(
+                normal.application().clone(),
+                ObservationScope::Production,
+            ))
+            .with_test_repository(Arc::new(FilesystemTestRepository::load(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer"),
+            )?))
+            .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
+        let host = NatsApplication::builder(test.context().clone(), connection.clone(), bindings)?
+            .with_runtime_config(test.host_config().clone())
+            .with_default_test_fixture(demo_fixture()?)
+            .with_test_fixture(no_rental_fleets_fixture()?)
+            .with_test_fixture(rented_demo_fixture()?)
+            .with_tracer(Some(tracer))
+            .provision_and_start()
+            .await?;
+        println!("bike-rental tracer listening on http://{address}");
+        host
+    } else {
+        NatsApplication::builder(normal.context().clone(), connection.clone(), bindings)?
+            .with_runtime_config(normal.host_config().clone())
+            .with_initial_fixture(demo_fixture()?)
+            .provision_and_start()
+            .await?
+    };
+    let result = host
+        .run_until(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await;
+    connection.drain().await?;
+    result.map_err(Into::into)
 }
