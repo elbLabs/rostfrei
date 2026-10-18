@@ -1,0 +1,1 @@
+../../../.agents/skills/rostfrei-develop-feature/SKILL.md

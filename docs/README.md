@@ -6,6 +6,7 @@
 - [Getting started](https://elblabs.github.io/rostfrei/docs/getting-started)
 - [Bike-rental setup and Tracer workflow](../examples/bike-rental/README.md)
 - [Tracer Studio](../studio/README.md)
+- [Agent Skills setup and use](agent-skills-install.md)
 - [Project terminology](../UBIQUITOUS_LANGUAGE.md)
 - [Release changes](../CHANGELOG.md)
 - [Development and releases](development.md)

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 2,
+  "id": "skills-add-first-bicycle",
+  "name": "Add the first serviceable bicycle to an empty fleet",
+  "setup": { "fixture": "no-rental-fleets" },
+  "expected": {
+    "within": "35s",
+    "settleFor": "1s",
+    "graphs": [{
+      "nodes": [
+        {
+          "kind": "command",
+          "key": "add",
+          "context": "bike-rental",
+          "name": "add-bicycle",
+          "schemaVersion": 2,
+          "payload": {
+            "fleet_id": "city-fleet",
+            "bicycle_id": "skills-bike-01",
+            "condition": "serviceable"
+          },
+          "outcome": "accepted"
+        },
+        {
+          "kind": "domain-event",
+          "key": "added",
+          "parentKey": "add",
+          "name": "bicycle-added",
+          "schemaVersion": 1,
+          "payload": {
+            "fleet_id": "city-fleet",
+            "bicycle_id": "skills-bike-01",
+            "condition": "serviceable"
+          }
+        }
+      ]
+    }]
+  }
+}

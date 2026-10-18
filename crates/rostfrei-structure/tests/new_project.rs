@@ -174,11 +174,35 @@ fn cargo_new_command_generates_a_project() {
     );
     assert!(stdout.contains("Created Rostfrei project `customer-support`"));
     assert!(stdout.contains("  cargo check\n  cargo test\n"));
+    assert!(stdout.contains("published starter v0.0.5-alpha"));
+    assert!(stdout.contains("predates skills-enabled tooling"));
+    assert!(
+        !destination.join(".agents").exists(),
+        "Never attach current skills to an older pinned framework"
+    );
     assert!(destination.join("Cargo.toml").is_file());
     assert!(
         destination
             .join("src/domain/customer_support/context.rs")
             .is_file()
+    );
+}
+
+#[test]
+fn failed_project_setup_never_commits_a_partial_scaffold() {
+    let Ok(temporary) = tempfile::tempdir() else {
+        panic!("could not create temporary fixture");
+    };
+    let destination = temporary.path().join("example");
+    let created = rostfrei_structure::create_project_with_setup(&destination, |staged| {
+        assert!(staged.join("Cargo.toml").is_file());
+        Err("matched skill installation failed".to_owned())
+    });
+    assert!(matches!(created, Err(NewProjectError::Setup(_))));
+    assert!(!destination.exists());
+    assert_eq!(
+        fs::read_dir(temporary.path()).map(Iterator::count).ok(),
+        Some(0)
     );
 }
 
