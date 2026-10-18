@@ -144,11 +144,10 @@ must remain compatible with the selected release; new runtime APIs require an
 available release and a pin update, not a future tag or local fallback.
 
 The current pin predates bundled Agent Skills setup. `new` reports that skills
-were not installed; [existing-application setup](agent-skills-install.md) also
-reports that older dependency's capability gap. Once a skills-enabled release is
-published, qualify its matching resources and enable `scaffold_dependency()`'s
-skills capability alongside the pin update. The shared setup runs inside staged
-project creation, so a failure cannot leave a partial destination.
+were not installed; see the [Agent Skills guide](agent-skills-install.md) for setup,
+source commands and kit checks. After publishing a skills-enabled release, qualify
+its matching resources and enable `scaffold_dependency()`'s skills capability
+alongside the starter pin update.
 
 To generate from this checkout:
 

@@ -18,6 +18,10 @@ Read the request and relevant repository instructions. Briefly inspect the ownin
 context and nearby tests so questions use the application's language. Keep
 business choices with the human teammate.
 
+Explain who needs the change and the observable before/after in a few sentences.
+Use the application's domain, commands and registered fixtures; a bundled example
+illustrates test syntax, not the feature to build or its business rules.
+
 Ask only the next missing part, one at a time, in this order:
 
 1. **Given:** What situation are we starting from? Who is acting, and what state
@@ -60,7 +64,7 @@ their bundled example. For an application-owned definition, pass that metadata
 explicitly with `--release <installed-skill>/references/release.json`.
 
 Locate the application's behavior suite, fixtures and NATS-backed Tracer runtime.
-Read [the worked JSON v2 example](references/worked-example.md) and
+Read [the behavior-to-JSON guide](references/worked-example.md) and
 [execution instructions](references/execution.md). Read the schema through the
 live catalog's `behavioralTest.schemaHref`; installed kits also bundle a snapshot
 as `assets/behavioral-test-v2.schema.json`. Match the application framework revision
@@ -131,6 +135,10 @@ test misses the agreed boundary. Explain that finding before deciding with the
 teammate what still needs to change.
 
 Make the explanation and actual behavioral red visible before implementation.
+Summarize them directly in the conversation, with a focused expected-versus-actual
+comparison and a link to the retained evidence. A log path or an agent's completion
+notice alone is not a walkthrough. Keep the red definition and capture so the
+teammate can compare them with green after the next Test reset.
 If the request ends at specifying/building the test, stop there. Otherwise
 continue once behavior is clear; keep unresolved business questions with the human.
 
@@ -146,8 +154,28 @@ Use the Tracer workflow above to diagnose failures from actual evidence;
 [execution instructions](references/execution.md) also stand alone.
 Simulation cannot substitute for this acceptance run.
 
-Finish with Given/When/Then, test and implementation locations, commands/results,
-application/framework revisions, fixture revision, isolation and cleanup status.
-Retain non-secret operation/message-series evidence for both teammates. State
-blocked, failed and unexecuted checks separately from passing checks. Do not
-claim fresh-session effectiveness or human feedback unless actually observed.
+## 5. Present the walkthrough and invite feedback
+
+Finish with a short walkthrough directly in the conversation:
+
+1. **Behavior:** the agreed Given/When/Then in the application's language.
+2. **Test:** its location and how its fixture, command and assertions express that
+   behavior; include the exact reproduction command.
+3. **Red:** the actual observed outcome/messages and the assertion they failed,
+   with a link to the retained run evidence.
+4. **Change:** the implementation location and why the change satisfies the rule.
+5. **Green:** the same test's observed result and evidence, stating whether its
+   definition stayed unchanged. Explain any agreed expectation revisions.
+
+Include affected checks, application/framework revisions, fixture revision,
+isolation and cleanup status. State blocked, failed and unexecuted checks separately
+from passing checks. Retain non-secret operation/message-series evidence for both
+teammates. Put a durable walkthrough beside the project's test evidence when useful
+and link it prominently; the human should not need to search logs for the story.
+
+Invite feedback on whether the behavior, test and red-to-green change were clear.
+Record actual feedback and unresolved concerns. Approval of the business rule,
+technical test success and feedback on the workflow are separate observations;
+claim each only when observed. When proposing improvements to this skill, capture
+reusable workflow lessons; keep application-specific rules and trial evidence in
+the application.

@@ -74,7 +74,6 @@ def build(output):
     version = release["frameworkVersion"]
     files = {
         "README.md": (ROOT / "docs/agent-skills-install.md").read_bytes(),
-        "QUALIFICATION.md": (ROOT / "docs/agent-skills-qualification.md").read_bytes(),
         "LICENSE": (ROOT / "LICENSE").read_bytes(),
         "release.json": resources["rostfrei-develop-feature/references/release.json"],
     }
