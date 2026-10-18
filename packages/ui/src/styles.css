@@ -1,0 +1,198 @@
+/* Reference ’15. Import after tailwindcss; applications own their layout. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-sans: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --font-heading: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --font-mono: Consolas, "Liberation Mono", "Courier New", monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-control-border: var(--control-border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-link: var(--link);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-command: var(--command);
+  --color-command-soft: var(--command-soft);
+  --color-domain-event: var(--domain-event);
+  --color-domain-event-soft: var(--domain-event-soft);
+  --color-integration-event: var(--integration-event);
+  --color-integration-event-soft: var(--integration-event-soft);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: 0px;
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: 3px;
+  --radius-2xl: 4px;
+  --radius-3xl: 4px;
+  --radius-4xl: 4px;
+}
+
+:root,
+.light {
+  color-scheme: light;
+  --radius: 0px;
+  --layer-overlay: 100;
+  --background: #edf0f2;
+  --foreground: #242b33;
+  --card: #ffffff;
+  --card-foreground: #242b33;
+  --popover: #ffffff;
+  --popover-foreground: #242b33;
+  --primary: #9f421f;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f3f5;
+  --secondary-foreground: #242b33;
+  --muted: #f1f3f5;
+  --muted-foreground: #53606b;
+  --accent: #f4e6db;
+  --accent-foreground: #9f421f;
+  --border: #c9d0d6;
+  --control-border: #778794;
+  --input: #778794;
+  --ring: #9f421f;
+  --link: #245b82;
+  --success: #326341;
+  --success-soft: #e7f0e8;
+  --warning: #805719;
+  --warning-soft: #f7eedb;
+  --info: #245b82;
+  --info-soft: #e5eef6;
+  --destructive: #a12f35;
+  --destructive-foreground: #ffffff;
+  --destructive-soft: #f8e7e8;
+  --command: #245b82;
+  --command-soft: #e5eef6;
+  --domain-event: #326341;
+  --domain-event-soft: #e7f0e8;
+  --integration-event: #765324;
+  --integration-event-soft: #f6eddf;
+  --chart-1: var(--command);
+  --chart-2: var(--domain-event);
+  --chart-3: var(--integration-event);
+  --chart-4: var(--primary);
+  --chart-5: var(--muted-foreground);
+  --sidebar: var(--muted);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #141b22;
+  --foreground: #eaf0f5;
+  --card: #1c252e;
+  --card-foreground: #eaf0f5;
+  --popover: #1c252e;
+  --popover-foreground: #eaf0f5;
+  --primary: #f0a479;
+  --primary-foreground: #281b13;
+  --secondary: #26323e;
+  --secondary-foreground: #eaf0f5;
+  --muted: #26323e;
+  --muted-foreground: #adbdcc;
+  --accent: #423127;
+  --accent-foreground: #f0a479;
+  --border: #455768;
+  --control-border: #7a93aa;
+  --input: #7a93aa;
+  --ring: #f0a479;
+  --link: #97c8ed;
+  --success: #a0cba4;
+  --success-soft: #253c30;
+  --warning: #e3c184;
+  --warning-soft: #403725;
+  --info: #97c8ed;
+  --info-soft: #243a4b;
+  --destructive: #f0a0a4;
+  --destructive-foreground: #30191b;
+  --destructive-soft: #472a31;
+  --command: #97c8ed;
+  --command-soft: #243a4b;
+  --domain-event: #a0cba4;
+  --domain-event-soft: #253c30;
+  --integration-event: #dfbf87;
+  --integration-event-soft: #403725;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  code, kbd, pre, samp {
+    font-family: Consolas, "Liberation Mono", "Courier New", monospace;
+  }
+
+  a {
+    color: var(--link);
+    text-underline-offset: 3px;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-foreground);
+  }
+}
+
+/* Explicit theme classes, rather than OS media queries, select the artwork. */
+@layer components {
+  .rf-duck-dark { display: none; }
+  .rf-duck-light { display: block; }
+  .dark .rf-duck-dark { display: block; }
+  .dark .rf-duck-light { display: none; }
+  .light .rf-duck-dark { display: none; }
+  .light .rf-duck-light { display: block; }
+}

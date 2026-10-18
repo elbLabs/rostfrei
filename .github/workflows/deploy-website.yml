@@ -32,15 +32,17 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: website/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Configure GitHub Pages
         id: pages
         uses: actions/configure-pages@v5
 
       - name: Install dependencies
-        working-directory: website
         run: pnpm install --frozen-lockfile
+
+      - name: Check shared UI
+        run: pnpm --filter @rostfrei/ui typecheck
 
       - name: Build website
         working-directory: website
