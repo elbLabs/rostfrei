@@ -1,4 +1,4 @@
-# Rostfrei
+# <img src="packages/ui/src/brand/duck-icon.png" width="36" height="36" alt="" align="absmiddle" /> rostfrei
 
 **Understand your code. Even when AI wrote it.**
 
@@ -138,6 +138,22 @@ cargo clippy --workspace --all-targets --all-features
 The structure check validates configured domain directories and runs each
 participating package's `rostfrei-domain-check` target. For frontend development,
 see [website](website/README.md) and [Studio](studio/README.md).
+
+The website and Tracer Studio share the Reference ’15 theme and components in
+[`@rostfrei/ui`](packages/ui/README.md). Use Node.js 24 (or 22.13+ on the 22.x line) and
+pnpm 10.10.0. Install the frontend workspace from this repository root:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm dev:website
+# In another terminal, when working on Studio:
+pnpm dev:studio
+```
+
+`pnpm build` checks the shared library and builds both apps; `pnpm lint` checks
+all frontend packages. `pnpm dev:ui` opens the local component gallery on port
+4177. See the [rollout plan](docs/design/reference-15-rollout.md) for the shared
+contract and verification checklist.
 
 The [development guide](docs/development.md) covers broker-backed tests,
 benchmarks, shared crate versions, release preparation, and the starter's pinned

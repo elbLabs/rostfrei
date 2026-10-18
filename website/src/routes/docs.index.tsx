@@ -21,7 +21,7 @@ function DocsIndexPage() {
   const page = Route.useLoaderData()
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 py-10 lg:px-10 lg:py-14">
+    <div className="min-w-0">
       <MdxContent component={page.default} />
     </div>
   )

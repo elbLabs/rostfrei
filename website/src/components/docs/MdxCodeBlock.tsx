@@ -8,10 +8,11 @@ import {
   type ReactNode,
 } from "react"
 import { Check, Copy } from "lucide-react"
-import { Highlight, themes, type Language } from "prism-react-renderer"
+import { Highlight, type Language } from "prism-react-renderer"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { codeTheme } from "@/lib/code-theme"
 
 const languageAliases: Record<string, Language> = {
   html: "markup",
@@ -101,7 +102,7 @@ export function MdxCodeBlock({
 
   return (
     <div
-      className="my-6 overflow-hidden rounded-xl border border-border bg-[#14110d]"
+      className="my-5 min-w-0 overflow-hidden border border-border bg-muted"
       data-slot="mdx-code-block"
     >
       <div className="flex items-center justify-between border-b border-border/70 px-4 py-2">
@@ -120,11 +121,7 @@ export function MdxCodeBlock({
           <span aria-live="polite">{copied ? "Copied" : "Copy"}</span>
         </Button>
       </div>
-      <Highlight
-        code={code}
-        language={language}
-        theme={themes.gruvboxMaterialDark}
-      >
+      <Highlight code={code} language={language} theme={codeTheme}>
         {({
           className: prismClassName,
           getLineProps,
