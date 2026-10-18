@@ -28,6 +28,15 @@ const RESPONSE_READ_SLICE: Duration = Duration::from_secs(1);
 const RESPONSE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(100);
 const DELIVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
 
+/// Default time budget for reading a durable command response.
+///
+/// This is not an end-to-end dispatch deadline or a command cancellation deadline.
+pub const DEFAULT_COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// NATS transport with a finite, configurable command-response wait.
+///
+/// A timeout leaves the command's completion unknown to this caller; the original
+/// command may still finish and must retain its identity during recovery.
 #[derive(Clone)]
 pub struct NatsMessagingAdapter {
     outcome_service: Option<(Arc<dyn CommandProcessingService>, TrustedCommandContext)>,
@@ -36,7 +45,7 @@ pub struct NatsMessagingAdapter {
     response_publisher: Arc<dyn CommandResponsePublisher>,
     integration_publisher: Arc<dyn IntegrationEventPublisher>,
     response_reader: Arc<dyn CommandResponseReader>,
-    response_timeout: Option<Duration>,
+    response_timeout: Duration,
     native_response_publisher: Option<Arc<NatsPublisher>>,
 }
 
@@ -55,7 +64,7 @@ impl NatsMessagingAdapter {
             response_publisher,
             integration_publisher,
             response_reader,
-            response_timeout: None,
+            response_timeout: DEFAULT_COMMAND_RESPONSE_TIMEOUT,
             native_response_publisher,
         }
     }
@@ -74,14 +83,21 @@ impl NatsMessagingAdapter {
             response_publisher,
             integration_publisher,
             response_reader,
-            response_timeout: None,
+            response_timeout: DEFAULT_COMMAND_RESPONSE_TIMEOUT,
             native_response_publisher: None,
         }
     }
 
+    /// Override the response-wait budget (default: 30 seconds).
+    ///
+    /// The budget starts when response reading begins, after publication, its
+    /// observer and any replay admission. It does not bound authorization or
+    /// publication, cancel the durable command,
+    /// publish a rejection, or authorize automatic redrive. Use a host deadline
+    /// for the entire request and preserve the original identity when reconciling.
     #[must_use]
     pub const fn with_response_timeout(mut self, response_timeout: Duration) -> Self {
-        self.response_timeout = Some(response_timeout);
+        self.response_timeout = response_timeout;
         self
     }
 
@@ -223,10 +239,7 @@ impl NatsMessagingAdapter {
         &self,
         command: &EncodedCommand,
     ) -> Result<CommandResponse, CommandBusError> {
-        let Some(timeout) = self.response_timeout else {
-            return self.read_response(command).await;
-        };
-        tokio::time::timeout(timeout, self.read_response(command))
+        tokio::time::timeout(self.response_timeout, self.read_response(command))
             .await
             .map_err(|_| {
                 CommandBusError::new(
@@ -861,6 +874,33 @@ mod tests {
 
     struct NoopCommandObserver;
 
+    struct DelayedCommandObserver;
+
+    #[async_trait]
+    impl CommandBusObserver for DelayedCommandObserver {
+        async fn published(&self, _publication: CommandPublication) {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    }
+
+    struct WaitingResponseReader;
+
+    #[async_trait]
+    impl CommandResponseReader for WaitingResponseReader {
+        async fn read_command_response(
+            &self,
+            _address: &CommandResponseAddress,
+            _operation_id: &rostfrei_messaging_core::OperationId,
+            _command_message_id: &MessageId,
+            read_timeout: Duration,
+        ) -> Result<CommandResponse, CommandResponseReadError> {
+            tokio::time::sleep(read_timeout).await;
+            Err(CommandResponseReadError::new(
+                CommandResponseReadErrorKind::Timeout,
+            ))
+        }
+    }
+
     #[async_trait]
     impl CommandBusObserver for NoopCommandObserver {
         async fn published(&self, _publication: CommandPublication) {}
@@ -1092,7 +1132,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn response_timeout_starts_after_command_publication() -> TestResult {
+    async fn response_timeout_starts_after_command_publication_and_observer() -> TestResult {
         let reader = Arc::new(AcceptedAfterTimeoutReader {
             command_address: context()?.command_address("credit-account")?,
             attempts: AtomicUsize::new(0),
@@ -1111,13 +1151,42 @@ mod tests {
         let command = encoded_command(Arc::clone(&adapter))?;
 
         let receipt = adapter
-            .dispatch(command, Arc::new(NoopCommandObserver))
+            .dispatch(command, Arc::new(DelayedCommandObserver))
             .await?;
 
         assert!(matches!(
             receipt.response().outcome(),
             rostfrei::CommandResponseOutcome::Accepted
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn response_wait_expiry_does_not_restart_command_publication() -> TestResult {
+        let publisher = Arc::new(FlakyCommandPublisher::default());
+        let adapter = Arc::new(
+            NatsMessagingAdapter::with_components(
+                publisher.clone(),
+                Arc::new(NoopResponsePublisher),
+                Arc::new(NoopIntegrationPublisher),
+                Arc::new(WaitingResponseReader),
+            )
+            .with_response_timeout(Duration::from_millis(20)),
+        );
+        let command = encoded_command(Arc::clone(&adapter))?;
+        let id = command.message_id().clone();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            adapter.dispatch(command, Arc::new(NoopCommandObserver)),
+        )
+        .await?;
+        let Err(error) = result else {
+            return Err("missing response unexpectedly completed dispatch".into());
+        };
+        assert_eq!(error.kind(), CommandBusErrorKind::Timeout);
+        assert!(error.execution_failure().is_none());
+        assert_eq!(publisher.attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(*publisher.message_ids.lock().await, vec![id.clone(), id]);
         Ok(())
     }
 
