@@ -65,6 +65,9 @@ The epoch selects split authority for both isolated Test and Normal scopes;
 omitting it retains legacy/read-only semantics. See the
 [host configuration](docs/nats-application-host.md).
 
+For matched host, CLI and Skills artifacts, follow the
+[local candidate qualification recipe](docs/release-01-kit.md).
+
 Domain events form private aggregate history. Integration events are separately
 versioned public contracts published after commit. NATS JetStream adapters
 provide durable command delivery, integration-event messaging, and event storage.
