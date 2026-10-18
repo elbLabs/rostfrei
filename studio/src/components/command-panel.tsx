@@ -469,10 +469,11 @@ export function CommandPanel({
           <section
             className="handler-simulation-result"
             data-handler-simulation-result
+            data-handler-decision={simulation.outcome.decision}
             aria-live="polite"
           >
             <h3>Handler decision: {simulation.outcome.decision}</h3>
-            <Badge variant="neutral">Uncommitted · no acceptance receipt</Badge>
+            <Badge variant="warning">Uncommitted · no acceptance receipt</Badge>
             <p>
               Handler computation only. Delivery, atomic persistence,
               concurrency and downstream integrations were not tested.

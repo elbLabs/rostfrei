@@ -102,7 +102,7 @@
         <section class="principles page-width" aria-label="How rostfrei works">
           <div class="principle"><span class="section-index">01 / MODEL</span><h2>Keep the rules close.</h2><p>Define aggregates, commands, events, and policies in Rust. Keep domain logic independent of storage and brokers.</p></div>
           <div class="principle"><span class="section-index">02 / EXECUTE</span><h2>Make decisions explicit.</h2><p>Commands are accepted or rejected. Accepted commands may emit events; acceptance does not require an event.</p></div>
-          <div class="principle"><span class="section-index">03 / INSPECT</span><h2>See what follows.</h2><p>Explore the compiled model in Tracer. Simulate read-only, run isolated tests, or dispatch with separate authorization.</p></div>
+          <div class="principle"><span class="section-index">03 / INSPECT</span><h2>See what follows.</h2><p>Explore the compiled model in Tracer. Run Isolated Test, or Simulate handler for uncommitted proposals. Handler dependencies are not automatically sandboxed. Production dispatch is server-only with separate authorization.</p></div>
         </section>
 
         <section class="era-only getting-started" id="getting-started" aria-labelledby="quickstart-heading">
@@ -138,13 +138,13 @@
           <div class="studio-main">
             <div class="studio-breadcrumb"><span>BikeRental</span><span>/</span><span>RentalFleet</span><span>/</span><strong id="breadcrumb-command">RentBicycle</strong></div>
             <div class="command-heading"><div><p class="eyebrow">Command / schema v2</p><h1 id="command-title">Rent bicycle<span>.</span></h1></div><span class="context-badge">bike-rental</span></div>
-            <div class="mode-row"><div class="mode-switch" role="group" aria-label="Tracer mode"><button data-mode="simulate" aria-pressed="false">Simulate</button><button data-mode="test" aria-pressed="true">Test</button><button data-mode="dispatch" aria-pressed="false">Dispatch</button></div><span id="mode-note">Isolated state · resettable fixtures</span></div>
+            <div class="mode-row"><div class="mode-switch" role="group" aria-label="Tracer mode"><button data-mode="simulate" aria-pressed="false">Simulate handler</button><button data-mode="test" aria-pressed="true">Isolated Test</button><button data-mode="dispatch" aria-pressed="false">Dispatch</button></div><span id="mode-note">Isolated state · resettable fixtures</span></div>
             <div class="workbench">
               <section class="input-pane" aria-labelledby="input-title">
                 <div class="pane-heading"><h2 id="input-title">Command input</h2><span>JSON</span></div>
                 <div class="payload-fields"><label>fleet_id <input value="city-fleet" readonly /></label><label>bicycle_id <input value="bike-42" readonly /></label></div>
                 <div class="fixture-row"><span>Fixture</span><code id="fixture-name">demo-fleet</code></div>
-                <div class="run-area"><button class="primary-button" id="sample-run">Preview test <span aria-hidden="true">→</span></button><p id="run-note">Illustrative result from the repository fixture. No runtime request.</p></div>
+                <div class="run-area"><button class="primary-button" id="sample-run">Show Test example <span aria-hidden="true">→</span></button><p id="run-note">Illustrative result from the repository fixture. No runtime request.</p></div>
               </section>
               <section class="trace-pane" aria-labelledby="trace-title">
                 <div class="pane-heading"><h2 id="trace-title">Expected message flow</h2><span id="trace-count">03 messages</span></div>
