@@ -34,13 +34,15 @@ async fn broker() -> TestResult<(Broker, String)> {
     let port = socket.local_addr()?.port();
     drop(socket);
     let config = directory.join("nats.conf");
+    // Nominal 128-GiB reservation budget: the default split pair needs 20 GiB,
+    // regardless of builder free disk. Actual records remain fixture-sized.
     std::fs::write(
         &config,
         format!(
             r#"host: "127.0.0.1"
 port: {port}
 max_payload: 2113536
-jetstream {{ store_dir: "{}" }}
+jetstream {{ store_dir: "{}", max_file_store: 137438953472 }}
 authorization {{ users: [
  {{ user: "new-writer", password: "private-new-writer" }},
  {{ user: "old-writer", password: "private-old-writer", permissions: {{
