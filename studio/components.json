@@ -14,8 +14,8 @@
   "rtl": false,
   "aliases": {
     "components": "@/components",
-    "utils": "@/lib/utils",
-    "ui": "@/components/ui",
+    "utils": "@rostfrei/ui/lib/utils",
+    "ui": "@rostfrei/ui/components",
     "lib": "@/lib",
     "hooks": "@/hooks"
   },

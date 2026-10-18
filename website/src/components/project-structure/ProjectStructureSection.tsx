@@ -32,41 +32,32 @@ export function ProjectStructureSection() {
   return (
     <section
       aria-labelledby="project-structure-title"
-      className="bg-[#f3eee6] px-4 py-16 text-[#221f1a] sm:px-6 sm:py-24 lg:px-8"
+      className="content-section"
     >
       <div className="mx-auto max-w-7xl">
-        <div className="mb-8 max-w-3xl sm:mb-10">
-          <p className="mb-3 font-mono text-xs font-semibold tracking-[0.18em] text-[#9a5729] uppercase">
-            Project structure
-          </p>
-          <h2
-            id="project-structure-title"
-            className="text-3xl font-semibold tracking-[-0.035em] text-[#201d18] sm:text-5xl"
-          >
+        <div className="mb-5">
+          <p className="section-kicker">Project structure</p>
+          <h2 id="project-structure-title" className="section-heading">
             Make ownership visible. Keep it checked.
           </h2>
-          <p className="mt-5 max-w-2xl text-base leading-7 text-[#625b51] sm:text-lg">
-            Explore the directory conventions for declarations and behavior.
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+            Explore the directory conventions for declarations and behavior.{" "}
             <code>cargo rostfrei check</code> validates their placement and
             implementation targets. This tree shows selected modules from the
             bike-rental example.
           </p>
         </div>
 
-        <div className="overflow-hidden rounded-[26px] border border-[#332f28] bg-[#1a1815] text-[#f4eee5] shadow-[0_24px_70px_rgba(44,34,23,0.18)]">
-          <div className="flex items-center justify-between border-b border-white/10 px-5 py-3 sm:px-7">
-            <div className="flex items-center gap-2" aria-hidden="true">
-              <span className="size-2.5 rounded-full bg-[#dd7754]" />
-              <span className="size-2.5 rounded-full bg-[#d8aa52]" />
-              <span className="size-2.5 rounded-full bg-[#668f69]" />
-            </div>
-            <code className="font-mono text-[11px] tracking-wide text-[#827b70]">
+        <div className="min-w-0 overflow-hidden border border-border bg-card">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted px-4 py-2">
+            <span className="text-xs font-semibold">Bike-rental project</span>
+            <code className="font-mono text-[11px] text-muted-foreground">
               cargo rostfrei check
             </code>
           </div>
 
           <div className="grid lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
-            <div className="max-h-[650px] overflow-auto border-b border-white/10 p-4 sm:p-6 lg:border-r lg:border-b-0">
+            <div className="max-h-[510px] min-w-0 overflow-auto border-b border-border bg-muted p-3 lg:border-r lg:border-b-0">
               <StructureTree
                 nodes={STRUCTURE}
                 expanded={expanded}
