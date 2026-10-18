@@ -19,9 +19,9 @@ Updates preserve user-added files and block all skills on edited-file conflicts.
 Adding the library or starting the host never installs skills.
 
 Initial compilation requires Rust 1.98+, Cargo, Git, a native linker and source
-access; consumer setup/execution requires no Python. PR #106 must be merged or
-selected by its reviewed revision; published `v0.0.5-alpha` predates this setup
-capability. Do not substitute a newer CLI's bundle for an unsupported dependency.
+access; consumer setup/execution requires no Python. The published `v0.0.5-alpha`
+revision predates skills setup; select a skills-enabled framework revision.
+Do not substitute a newer CLI's bundle for an unsupported dependency.
 From this checkout, `cargo install --locked --path crates/rostfrei-structure`
 installs the setup tool. `skills info` reports that executable's own provenance;
 `references/release.json` records the selected installed skills' provenance.
@@ -35,11 +35,12 @@ when used outside a Cargo project).
 ## Source discovery
 
 When this skill is discovered in the framework checkout, no generated metadata,
-schema or Python bootstrap is needed. Use the local Rust CLI:
+schema or Python bootstrap is needed. Use the local Rust CLI with the definition
+authored for the application (replace the example path below):
 
 ```sh
 cargo rostfrei-dev skills info
-cargo rostfrei-dev test .agents/skills/rostfrei-develop-feature/assets/add-first-bicycle.json \
+cargo rostfrei-dev test path/to/application-behavior.json \
   --output source-evidence.json
 ```
 
@@ -64,9 +65,10 @@ selected fixture's domain events. Normal resources are separate; external
 stores/read models require explicit application reset support. Reuse the already
 authorized specific fixture/suite TDD scope without redundant confirmations.
 
-The current baseline framework host is the implemented `bike-rental-api` binary.
-One Rust-only local recipe, with distinct control/dispatch capabilities and an
-owned unique application/epoch already available in the environment, is:
+Use the consuming application's application-linked Tracer host and documented
+startup configuration. The following Rust-only recipe is specifically for the
+framework's `bike-rental-api` example, with distinct control/dispatch capabilities
+and an owned unique application/epoch already available in the environment:
 
 ```sh
 # Separate terminal; disposable broker, no persistent volume:
@@ -88,22 +90,25 @@ Existing namespaces remain read-only by default: do not use this fresh setup as
 an implicit migration. Repeated Test resets must retain Normal history/authority.
 Stop the host and the owned broker after use
 (`docker stop "$OWNED_BROKER"`). A consuming application supplies its own
-application-linked host. The shared host also supports `cargo run --locked -p
-bike-rental -- --tracer` through its default binary. Without the flag it runs the
-normal application with no Tracer HTTP; older baseline hosts always enabled
-Tracer and ignored the flag. Startup does not install skills.
+application-linked host. Without `--tracer`, the example runs without Tracer HTTP.
+Startup does not install skills.
 
 ## Installed skill execution
 
-Set `ROSTFREI_TRACER_URL` and `ROSTFREI_API_TOKEN` in the agent environment:
+Set `ROSTFREI_TRACER_URL` and `ROSTFREI_API_TOKEN` in the agent environment. Run
+the application's own definition (replace the example path below) with the
+installed skill's release metadata:
 
 ```sh
 SKILL="$PWD/.agents/skills/rostfrei-develop-feature"
-cargo rostfrei test "$SKILL/assets/add-first-bicycle.json" --output behavior-evidence.json
+cargo rostfrei test path/to/application-behavior.json \
+  --release "$SKILL/references/release.json" --output behavior-evidence.json
 ```
 
-For application-owned definitions, add `--release "$SKILL/references/release.json"`.
-The CLI checks framework version, source revision and independent protocol
+The optional bundled bike-rental definition in the
+[behavior-to-JSON guide](worked-example.md) uses release metadata beside the skill;
+run it only against that application's suite. The CLI checks framework version,
+source revision and independent protocol
 versions. Use clean release builds; dirty build flags are retained in evidence.
 Match the application's framework revision too: the catalog alone identifies a
 protocol, not an application release.

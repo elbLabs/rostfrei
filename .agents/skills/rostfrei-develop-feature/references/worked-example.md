@@ -1,13 +1,52 @@
-# Given/When/Then → executable JSON v2
+# From application behavior to executable JSON v2
+
+## Start with the application's contracts
+
+Choose the feature from the human's request. Discover its owning bounded context,
+registered command and payload schema, fixture IDs/revisions and observable
+messages through the application's suite and live catalog. Use those contracts
+to turn the agreed scenario into a test:
+
+| Agreed behavior | Executable construction |
+| --- | --- |
+| **Given** the starting facts | A registered fixture whose ordered domain events establish those facts in the isolated Test store. Inspect its contents, not just its name. |
+| **When** the actor takes an action | One root command with the application's context, command name, schema version and complete payload. |
+| **Then** the agreed result occurs | The root's business outcome and expected causally related domain events or integration messages, with the relevant payload assertions. |
+
+Choose assertions for the behavior, rather than adapting every feature to one
+kind of success:
+
+- **State change:** check the agreed decision and committed facts, including the
+  identities and changed values that matter.
+- **Rule refusal:** check the agreed rejection code and message graph. HTTP success
+  alone does not establish business acceptance or refusal.
+- **Downstream consequence:** check the expected integration messages and causal
+  relationships. Discover the actual contract; do not infer causation from order.
+
+These are assertion patterns, not prescribed business rules. Add relevant boundary
+scenarios only after their behavior is clear. Claims of no emitted events/messages
+need complete, exact, settled captures to establish absence. If an observable result
+is outside the suite's message-graph capabilities, explain the coverage gap rather
+than inventing a JSON assertion.
+
+Explain this mapping to the teammate before running the test. After execution,
+show the actual expected-versus-observed difference inline. The feature-development
+walkthrough is the application's agreed behavior → test → real failure → change →
+same-test pass, with evidence links for both runs.
+
+## Optional concrete syntax example: bike rental
+
+The bundled example below demonstrates the JSON shape for one application. Use
+it only with the bike-rental example's registrations. In another application,
+author a definition from its discovered contracts; these fixture IDs, commands,
+payloads and acceptance rules are not defaults or a checklist for all features.
 
 **Given** there are no rental fleets, **When** I add serviceable bicycle
 `skills-bike-01` to `city-fleet`, **Then** the command is accepted and commits
 `bicycle-added` with those identities and condition.
 
 Read `assets/add-first-bicycle.json` relative to this skill's root. This is a
-complete inline definition accepted by the bike-rental application's actual
-suite. Use its shape with your application's registrations; these are example
-business identities, not inferred application defaults.
+complete inline definition accepted by the bike-rental application's actual suite.
 
 Execute with `cargo rostfrei test <skill>/assets/add-first-bicycle.json --output
 <new-evidence.json>`. In the framework checkout use `cargo rostfrei-dev test`

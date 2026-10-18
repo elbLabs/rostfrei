@@ -140,34 +140,19 @@ Install macro support once at the root of each crate declaring domain types:
 rostfrei::install_macro_support!();
 ```
 
-## Agent Skills development kit
+## Agent Skills
 
-Rostfrei remains a library dependency; skills setup is explicit. Install the Rust
-setup tool once, then run these commands inside your existing Cargo application:
+- **`rostfrei-develop-feature`** guides Given/When/Then and test-first development
+  through the application's real NATS-backed behavior suite.
+- **`rostfrei-tracer`** discovers runtime capabilities and explains tests,
+  recorded operations, observations and quarantine.
 
-```sh
-# Once this feature is merged into the selected source:
-cargo install --locked --git https://github.com/elbLabs/rostfrei rostfrei-structure
-cargo rostfrei skills install
-# After updating the app's Rostfrei dependency and Cargo.lock:
-cargo rostfrei skills update
-```
+Install the CLI separately from the library, then explicitly install skills
+matched to the application's locked dependency. The published `v0.0.5-alpha`
+starter predates skills support and reports that skills were not installed.
 
-PR #106 is currently pre-merge: use its reviewed `--rev` or install from its
-checkout with `cargo install --locked --path crates/rostfrei-structure`.
-Setup resolves the application's actual dependency, caches its matching native
-tool and installs bundled skills into the app's `.agents/skills`. Updates preserve
-consumer edits and unrelated files; commit the managed baseline with the skills.
-Neither library builds nor application startup installs anything. Consumer setup
-and `cargo rostfrei test` execution require no Python.
-
-The published `v0.0.5-alpha` starter predates skills support, so `cargo rostfrei
-new` reports that skills are unavailable until a skills-enabled release is
-published and its starter pin qualified. See the [setup guide](docs/agent-skills-install.md)
-for version selection, offline overrides and this release blocker. The sole
-authoritative source remains `.agents/skills/`; Cargo packages include flattened
-resource references. [Qualification evidence](docs/agent-skills-qualification.md)
-tracks observed checks and remaining 0.1.0 integration work.
+The [Agent Skills guide](docs/agent-skills-install.md) covers setup, managed updates,
+application test execution and optional kits. It also serves as the kit's README.
 
 ## Development
 

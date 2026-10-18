@@ -18,9 +18,9 @@ user-added files and reject edited managed-file conflicts before changing any
 skill. Merely adding the dependency or starting the app writes no skills.
 
 Initial compilation requires Rust 1.98+, Cargo, Git, a native linker and source
-access. Consumer installation/execution needs no Python. PR #106 must be merged
-or selected by its reviewed revision; published `v0.0.5-alpha` predates setup
-support. Unsupported older dependencies do not receive a newer tool's skills.
+access. Consumer installation/execution needs no Python. The published
+`v0.0.5-alpha` revision predates skills setup; select a skills-enabled framework
+revision. Unsupported older dependencies do not receive a newer tool's skills.
 `skills info` identifies the invoked tool; installed `references/release.json`
 identifies the selected skills. Native execution dispatches to the already-cached
 matching tool without Cargo, Git, downloads or source files. Keep
@@ -32,17 +32,18 @@ In the framework checkout use `cargo rostfrei-dev skills info` and
 skills need no generated resources or bootstrap. Cargo refreshes the CLI's build
 revision after checkout changes; the CLI fetches the actual live schema.
 
-Installed example execution:
+Run an application-owned definition using the installed release metadata (replace
+the example definition path):
 
 ```sh
-cargo rostfrei test /path/to/rostfrei-develop-feature/assets/add-first-bicycle.json \
+cargo rostfrei test path/to/application-behavior.json \
+  --release .agents/skills/rostfrei-tracer/references/release.json \
   --output behavior-evidence.json
 ```
 
-For an application-owned definition add
-`--release /path/to/rostfrei-tracer/references/release.json`. The CLI checks the
-kit/framework version, source revision and protocol versions. Match the
-application dependency revision too; the live catalog does not identify a release.
+The CLI checks the kit/framework version, source revision and protocol versions.
+Match the application dependency revision too; the live catalog does not identify
+a release.
 
 ## HTTP, CLI and runtime capabilities
 
@@ -93,11 +94,9 @@ name alone does not select it. Existing/legacy namespaces remain read-only by
 default; never add an epoch to an existing history as an implicit migration.
 It provisions both Normal and Test topology and resets Test on startup. Default
 bind: `127.0.0.1:1309`, configurable via `ROSTFREI_API_ADDR`.
-The shared host's ordinary startup without `--tracer` runs the application with
-no Tracer HTTP surface. Its `default-run` also allows `cargo run --locked -p
-bike-rental -- --tracer`. Older baseline hosts always enabled Tracer and ignored
-this flag. Consumer applications supply their own entry point and explicitly
-configured observation feeds; discover optional relations in their live catalog.
+Without `--tracer`, the example runs without Tracer HTTP. Consumer applications
+supply their own entry point and explicitly configured observation feeds; discover
+optional relations in their live catalog.
 
 Reset recreates the configured Test topology, including the paired authoritative
 journal and completed-outcome state, messaging/quarantine streams and consumers,
