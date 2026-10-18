@@ -300,6 +300,12 @@ try {
     await page.waitForSelector('[role="dialog"]', { visible: true })
     await page.keyboard.press("Escape")
     await page.waitForSelector('[role="dialog"]', { hidden: true })
+    // Radix restores focus in deferred unmount cleanup, after the surface hides.
+    await page.waitForFunction(
+      (element) => document.activeElement === element,
+      {},
+      trigger
+    )
     assert.ok(
       await trigger.evaluate((element) => document.activeElement === element),
       "Overlay should restore trigger focus"
