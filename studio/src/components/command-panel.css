@@ -97,6 +97,32 @@
   border-radius: 5px;
   background: #18232f;
 }
+.handler-simulation-result {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #a48b59;
+  border-radius: 7px;
+  background: #292a28;
+  color: #e8dfcd;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.handler-simulation-result h3,
+.handler-simulation-result h4 {
+  font-weight: 600;
+  margin: 8px 0;
+}
+.handler-simulation-result pre {
+  white-space: pre-wrap;
+  font-size: 11px;
+  margin-top: 8px;
+}
+.handler-simulation-result article {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #655c49;
+}
 .command-mode-option {
   height: 30px;
   border: 1px solid transparent;
