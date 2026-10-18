@@ -4,7 +4,10 @@
 //! (#68) is available, use a dedicated broker or unique application namespace per
 //! independent host. The reset gate coordinates this runtime's submissions only.
 
+mod backend;
 mod observation;
+pub use backend::NatsExecutionProfile;
+use backend::{Backend, CurrentBackend};
 
 use crate::{
     ApplicationBindings, CommandBusTransport, CommandInvocation, CommandReceipt, CommandTransport,
@@ -15,7 +18,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use rostfrei::{
-    CommandBus, CommandMessageAdapter, DomainEventDispatcher, EventStore, IntegrationEventBus,
+    CommandBus, CommandMessageAdapter, DomainEventDispatcher, IntegrationEventBus,
     IntegrationMessageAdapter,
 };
 use rostfrei_fixtures::{Fixture, FixtureApplyReport, FixtureEventSet};
@@ -47,6 +50,8 @@ pub enum NatsHostError {
     #[error(transparent)]
     Binding(#[from] crate::ApplicationBindingError),
     #[error(transparent)]
+    Processor(#[from] rostfrei::CommandProcessorError),
+    #[error(transparent)]
     Registration(#[from] crate::RuntimeRegistrationError),
     #[error(transparent)]
     Contract(#[from] rostfrei_messaging_core::ContractError),
@@ -76,6 +81,7 @@ pub enum NatsHostError {
 /// Command generations are independent of payload schema versions.
 #[derive(Clone)]
 pub struct NatsRuntimeConfig {
+    pub execution_profile: NatsExecutionProfile,
     pub context: BoundedContext,
     pub messaging: ApplicationMessagingConfig,
     pub event_store: NatsEventStoreConfig,
@@ -88,6 +94,16 @@ pub struct NatsRuntimeConfig {
 }
 
 impl NatsRuntimeConfig {
+    /// Explicitly select a new writable split authority. This never migrates an
+    /// existing history or excludes old writers on the operator's behalf.
+    pub fn with_fresh_completed_outcome_epoch(
+        mut self,
+        epoch: &str,
+    ) -> Result<Self, NatsHostError> {
+        self.event_store = self.event_store.with_fresh_split_outcome_epoch(epoch)?;
+        Ok(self)
+    }
+
     fn validate(&self) -> Result<(), NatsHostError> {
         let scope = self.context.traffic_scope();
         let application = self.context.application();
@@ -178,6 +194,7 @@ impl NatsRuntimeConfig {
             RetryDelay::new(Duration::from_secs(1))?,
         )?;
         Ok(Self {
+            execution_profile: NatsExecutionProfile::TrustedCompatibility,
             context,
             messaging,
             event_store,
@@ -214,7 +231,7 @@ impl NatsRuntimeConfig {
 }
 
 struct ScopedTransport {
-    inner: CommandBusTransport,
+    backend: CurrentBackend,
     gate: Arc<RwLock<()>>,
     available: Arc<AtomicBool>,
     shutting_down: Arc<AtomicBool>,
@@ -234,7 +251,7 @@ impl ScopedTransport {
 #[async_trait]
 impl CommandTransport for ScopedTransport {
     fn maximum_payload_len(&self) -> usize {
-        self.inner.maximum_payload_len()
+        self.backend.snapshot().transport.maximum_payload_len()
     }
     async fn invoke(
         &self,
@@ -245,7 +262,11 @@ impl CommandTransport for ScopedTransport {
         self.ensure_available()?;
         let _scope = self.gate.read().await;
         self.ensure_available()?;
-        self.inner.invoke(invocation, observer).await
+        self.backend
+            .snapshot()
+            .transport
+            .invoke(invocation, observer)
+            .await
     }
 }
 
@@ -257,8 +278,7 @@ pub struct NatsRuntime {
     connection: NatsConnection,
     config: NatsRuntimeConfig,
     bindings: Arc<ApplicationBindings>,
-    store: NatsEventStore,
-    messaging: Arc<NatsMessagingAdapter>,
+    backend: CurrentBackend,
     transport: Arc<ScopedTransport>,
     gate: Arc<RwLock<()>>,
     available: Arc<AtomicBool>,
@@ -292,17 +312,12 @@ impl NatsRuntime {
         let store =
             NatsEventStore::connect(connection.jetstream().clone(), config.event_store.clone())
                 .await?;
-        let messaging = Arc::new(
-            connection
-                .messaging_adapter(config.messaging.topology().clone())
-                .with_response_timeout(Duration::from_secs(30)),
-        );
-        let adapter: Arc<dyn CommandMessageAdapter> = messaging.clone();
+        let backend = CurrentBackend::new(Backend::new(&connection, &config, &bindings, store)?);
         let gate = Arc::new(RwLock::new(()));
         let available = Arc::new(AtomicBool::new(false));
         let shutting_down = Arc::new(AtomicBool::new(false));
         let transport = Arc::new(ScopedTransport {
-            inner: CommandBusTransport::new(CommandBus::new(config.context.clone(), adapter)),
+            backend: backend.clone(),
             gate: gate.clone(),
             available: available.clone(),
             shutting_down: shutting_down.clone(),
@@ -311,8 +326,7 @@ impl NatsRuntime {
             connection,
             config,
             bindings,
-            store,
-            messaging,
+            backend,
             transport,
             gate,
             available,
@@ -340,8 +354,19 @@ impl NatsRuntime {
         }
         Ok(())
     }
-    pub const fn store(&self) -> &NatsEventStore {
-        &self.store
+    /// Owned snapshot of the current connected authority. Retained snapshots are
+    /// intentionally fenced after reset; request a new snapshot for new work.
+    pub fn store(&self) -> NatsEventStore {
+        self.backend.snapshot().store.clone()
+    }
+    /// Compose a Tracer whose history and directory follow this runtime's current
+    /// Test backend across resets, while diagnostics remain history-only.
+    pub fn tracer_builder(&self) -> crate::TracerBuilder {
+        let current = Arc::new(self.backend.clone());
+        self.bindings
+            .tracer_builder(current.clone())
+            .with_test_event_store(current.clone())
+            .with_stream_directory(current)
     }
     pub fn transport(&self) -> Arc<dyn CommandTransport> {
         self.transport.clone()
@@ -371,7 +396,7 @@ impl NatsRuntime {
         let plan = FixtureEventSet::new(std::slice::from_ref(fixture))?;
         let mut events = self.fixture_events.write().await;
         events.extend(plan);
-        let result = self.bindings.fixtures.apply(&self.store, fixture).await;
+        let result = self.bindings.fixtures.apply(&self.store(), fixture).await;
         drop(events);
         Ok(result?)
     }
@@ -409,12 +434,8 @@ impl NatsRuntime {
         let factory = self
             .connection
             .consumer_factory(self.config.messaging.topology().clone());
-        let store: Arc<dyn EventStore> = Arc::new(self.store.clone());
-        let processor = self
-            .bindings
-            .command_processor(self.config.context.name().clone(), store)?;
-        let handler: Arc<dyn MessageHandler<CommandAddress>> =
-            Arc::new(self.messaging.command_handler(Arc::new(processor)));
+        let backend = self.backend.snapshot();
+        let handler = backend.handler.clone();
         let mut commands = Vec::new();
         for config in &self.config.commands {
             factory.verify_consumer(config).await?;
@@ -438,7 +459,7 @@ impl NatsRuntime {
                 ));
             }
             factory.verify_consumer(config).await?;
-            let adapter: Arc<dyn CommandMessageAdapter> = self.messaging.clone();
+            let adapter: Arc<dyn CommandMessageAdapter> = backend.messaging.clone();
             let bus = CommandBus::new(self.config.context.clone(), adapter);
             let handler = (binding.handler)(
                 bus,
@@ -448,9 +469,9 @@ impl NatsRuntime {
             integrations.push((factory.create(config.clone())?, handler));
         }
         let domain = if self.config.domain_events_required {
-            let adapter: Arc<dyn IntegrationMessageAdapter> = self.messaging.clone();
+            let adapter: Arc<dyn IntegrationMessageAdapter> = backend.messaging.clone();
             let bus = IntegrationEventBus::new(self.config.context.clone(), adapter);
-            let mut dispatcher = DomainEventDispatcher::new();
+            let mut dispatcher = DomainEventDispatcher::with_codecs(self.bindings.codecs.clone());
             for register in &self.bindings.integration_mappings {
                 register(bus.clone(), &mut dispatcher)?;
             }
@@ -538,7 +559,7 @@ impl NatsRuntime {
             subscription,
             Arc::new(observation::TracerCorrelationHandler {
                 observer,
-                store: self.store.clone(),
+                store: self.store(),
                 bindings: self.bindings.clone(),
                 source,
             }),
@@ -632,10 +653,22 @@ impl NatsRuntime {
             topology.integration_event_stream().as_str(),
             topology.quarantine_stream().as_str(),
             self.config.event_store.stream_name(),
+            self.config.event_store.outcome_state_stream_name(),
         ] {
             self.connection.delete_stream_if_exists(stream).await?;
         }
         self.config.provision(&self.connection).await?;
+        let store = NatsEventStore::connect(
+            self.connection.jetstream().clone(),
+            self.config.event_store.clone(),
+        )
+        .await?;
+        self.backend.replace(Backend::new(
+            &self.connection,
+            &self.config,
+            &self.bindings,
+            store,
+        )?);
         self.apply_fixture_in_scope(fixture).await?;
         self.start_in_scope().await?;
         self.reset_required.store(false, Ordering::Release);
@@ -742,6 +775,14 @@ pub struct NatsApplicationBuilder {
     tracer: Option<TracerConfig>,
 }
 impl NatsApplicationBuilder {
+    pub fn with_fresh_completed_outcome_epoch(
+        mut self,
+        epoch: &str,
+    ) -> Result<Self, NatsHostError> {
+        self.config = self.config.with_fresh_completed_outcome_epoch(epoch)?;
+        Ok(self)
+    }
+
     /// Explicit, idempotent initialization without deleting resources, also in Normal scope.
     #[must_use]
     pub fn with_initial_fixture(mut self, fixture: Fixture) -> Self {
@@ -770,10 +811,10 @@ impl NatsApplicationBuilder {
     }
 
     pub async fn provision_and_start(self) -> Result<NatsApplication, NatsHostError> {
-        self.start(true).await
+        Box::pin(self.start(true)).await
     }
     pub async fn connect_and_start(self) -> Result<NatsApplication, NatsHostError> {
-        self.start(false).await
+        Box::pin(self.start(false)).await
     }
 
     #[allow(
@@ -813,12 +854,8 @@ impl NatsApplicationBuilder {
                 let fixture = self.fixture.ok_or_else(|| {
                     NatsHostError::Configuration("Tracer requires a default Test fixture".into())
                 })?;
-                let store = Arc::new(runtime.store.clone());
-                let mut builder = self
-                    .bindings
-                    .tracer_builder(store.clone())
-                    .with_test_event_store(store.clone())
-                    .with_stream_directory(store)
+                let mut builder = runtime
+                    .tracer_builder()
                     .with_test_transport(runtime.transport())
                     .with_test_quarantine_reader(runtime.quarantine_reader())
                     .with_test_scenario_reset(runtime.clone())

@@ -111,7 +111,8 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
     let normal = Arc::new(
         NatsRuntime::provision(
             connection.clone(),
-            NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?,
+            NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
+                .with_fresh_completed_outcome_epoch("observation")?,
             bindings.clone(),
         )
         .await?,
@@ -132,6 +133,7 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
         connection.clone(),
         bindings,
     )?
+    .with_fresh_completed_outcome_epoch("observation")?
     .with_default_test_fixture(demo_fixture()?)
     .with_tracer(Some(config))
     .provision_and_start()
@@ -243,14 +245,14 @@ async fn runtime_observation_reports_interruption_and_failed_reset_then_recovers
         application.test_bounded_context("bike-rental")?,
         &bindings,
         1,
-    )?;
+    )?
+    .with_fresh_completed_outcome_epoch("observation")?;
     let runtime = Arc::new(
         NatsRuntime::provision(connection.clone(), config.clone(), bindings.clone()).await?,
     );
     let feed = ObservationFeed::new(application, ObservationScope::Test);
-    let tracer = bindings
-        .tracer_builder(Arc::new(runtime.store().clone()))
-        .with_test_event_store(Arc::new(runtime.store().clone()))
+    let tracer = runtime
+        .tracer_builder()
         .with_test_transport(runtime.transport())
         .with_continuous_observation(feed.clone())
         .with_default_test_fixture(demo_fixture()?)

@@ -173,6 +173,14 @@ pub struct BikeRentalNatsConfig {
     integration_event_route: BikeRentalIntegrationEventRoute,
 }
 impl BikeRentalNatsConfig {
+    pub fn with_fresh_completed_outcome_epoch(
+        mut self,
+        epoch: &str,
+    ) -> Result<Self, BikeRentalNatsError> {
+        self.runtime = self.runtime.with_fresh_completed_outcome_epoch(epoch)?;
+        Ok(self)
+    }
+
     pub fn new(application: &str) -> Result<Self, BikeRentalNatsError> {
         Self::new_with_resource_limits(application, BikeRentalNatsResourceLimits::default())
     }
@@ -412,7 +420,7 @@ impl BikeRentalNatsRuntime {
         application: &str,
         limits: BikeRentalNatsResourceLimits,
     ) -> Result<Self, BikeRentalNatsError> {
-        Self::from_config(
+        Self::provision_config(
             connection,
             BikeRentalNatsConfig::new_with_resource_limits(application, limits)?,
         )
@@ -423,13 +431,13 @@ impl BikeRentalNatsRuntime {
         application: &str,
         limits: BikeRentalNatsResourceLimits,
     ) -> Result<Self, BikeRentalNatsError> {
-        Self::from_config(
+        Self::provision_config(
             connection,
             BikeRentalNatsConfig::new_test_with_resource_limits(application, limits)?,
         )
         .await
     }
-    async fn from_config(
+    pub async fn provision_config(
         connection: NatsConnection,
         config: BikeRentalNatsConfig,
     ) -> Result<Self, BikeRentalNatsError> {
@@ -446,7 +454,7 @@ impl BikeRentalNatsRuntime {
     pub const fn config(&self) -> &BikeRentalNatsConfig {
         &self.config
     }
-    pub fn store(&self) -> &NatsEventStore {
+    pub fn store(&self) -> NatsEventStore {
         self.inner.store()
     }
     pub fn transport(&self) -> Arc<dyn CommandTransport> {

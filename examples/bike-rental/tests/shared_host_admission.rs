@@ -124,7 +124,8 @@ async fn reject_without_publication(
 #[tokio::test]
 async fn dropping_raw_runtime_closes_retained_transport_without_publishing() -> TestResult {
     let (connection, context, bindings, _) = setup().await?;
-    let config = NatsRuntimeConfig::new(context, &bindings, 1)?;
+    let config = NatsRuntimeConfig::new(context, &bindings, 1)?
+        .with_fresh_completed_outcome_epoch("admission")?;
     let stream = config.messaging.topology().command_stream().to_string();
     let runtime = NatsRuntime::provision(connection.clone(), config, bindings).await?;
     runtime.start_workers().await?;
@@ -140,7 +141,8 @@ async fn explicit_stop_closes_admission_before_waiting_for_admitted_commands() -
     let (connection, context, bindings, pause) = setup().await?;
     let runtime = NatsRuntime::provision(
         connection.clone(),
-        NatsRuntimeConfig::new(context, &bindings, 1)?,
+        NatsRuntimeConfig::new(context, &bindings, 1)?
+            .with_fresh_completed_outcome_epoch("admission")?,
         bindings,
     )
     .await?;
@@ -199,7 +201,8 @@ async fn host_shutdown_and_drop_close_retained_transport_at_initiation() -> Test
                     context.application().bounded_context("bike-rental")?,
                     &bindings,
                     1,
-                )?,
+                )?
+                .with_fresh_completed_outcome_epoch("admission")?,
                 bindings.clone(),
             )
             .await?,
@@ -210,6 +213,7 @@ async fn host_shutdown_and_drop_close_retained_transport_at_initiation() -> Test
         )
         .with_dispatch_runtime(normal.clone());
         let host = NatsApplication::builder(context, connection.clone(), bindings)?
+            .with_fresh_completed_outcome_epoch("admission")?
             .with_default_test_fixture(demo_fixture()?)
             .with_tracer(Some(config))
             .provision_and_start()

@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use rostfrei::{
     CommandHandler, CommandProcessor, CommandRejectionMapper, DomainRegistry, EventHistory,
-    EventStore,
+    ExecutionStore,
 };
 use rostfrei_core::{Aggregate, CommandExecution, CommandHandlingResult, Event};
 use rostfrei_fixtures::MessageSeriesEngine;
@@ -23,6 +23,10 @@ pub enum ApplicationBindingError {
     Fixture(#[from] rostfrei_fixtures::FixtureCodecRegistrationError),
     #[error(transparent)]
     Command(#[from] rostfrei::CommandBindingRegistrationError),
+    #[error(transparent)]
+    Codec(#[from] rostfrei_core::CodecRegistrationError),
+    #[error(transparent)]
+    EventCodec(#[from] rostfrei_core::EventCodecError),
 }
 
 type ProcessorBinding =
@@ -89,6 +93,8 @@ impl IntegrationHandlerBinding {
 pub struct ApplicationBindings {
     pub(crate) preview: RuntimeBindings,
     pub(crate) fixtures: MessageSeriesEngine,
+    pub(crate) codecs: Arc<rostfrei_core::AggregateCodecs>,
+    shared_codecs: bool,
     processors: Vec<ProcessorBinding>,
     pub(crate) commands: Vec<rostfrei::CommandRegistrationDescriptor>,
     domain_model: Option<serde_json::Value>,
@@ -109,6 +115,8 @@ impl ApplicationBindings {
         Self {
             preview: RuntimeBindings::new(DomainRegistry::new()),
             fixtures: MessageSeriesEngine::new(),
+            codecs: Arc::new(rostfrei_core::AggregateCodecs::default()),
+            shared_codecs: false,
             processors: Vec::new(),
             commands: Vec::new(),
             domain_model: None,
@@ -124,13 +132,30 @@ impl ApplicationBindings {
         self
     }
 
+    /// Install the application's frozen codec registry across fixtures, execution,
+    /// private-event dispatch and diagnostics. Include fixture aggregate codecs in
+    /// this registry; descriptor registration never mutates a shared configuration.
+    #[must_use]
+    pub fn with_event_codecs(mut self, codecs: Arc<rostfrei_core::AggregateCodecs>) -> Self {
+        self.fixtures = MessageSeriesEngine::with_codecs(codecs.clone());
+        self.codecs = codecs;
+        self.shared_codecs = true;
+        self
+    }
+
     pub fn register_aggregate<A>(&mut self) -> Result<&mut Self, ApplicationBindingError>
     where
         A: Aggregate + 'static,
         A::Event: Event,
     {
         self.preview.registry.register_aggregate::<A>()?;
-        self.fixtures.register_json::<A>()?;
+        if self.shared_codecs {
+            // Also reject a codec registered for another Rust model under this name.
+            self.codecs.resolve::<A>()?;
+        } else {
+            Arc::make_mut(&mut self.codecs).register_json::<A>()?;
+            self.fixtures = MessageSeriesEngine::with_codecs(self.codecs.clone());
+        }
         Ok(self)
     }
 
@@ -176,17 +201,27 @@ impl ApplicationBindings {
     pub fn command_processor(
         &self,
         context: rostfrei::BoundedContextName,
-        store: Arc<dyn EventStore>,
+        store: Arc<dyn ExecutionStore>,
     ) -> Result<CommandProcessor, ApplicationBindingError> {
-        let mut processor = CommandProcessor::new(context, store);
-        for register in &self.processors {
-            register(&mut processor)?;
-        }
+        let mut processor =
+            CommandProcessor::new(context, store).with_event_codecs(self.codecs.clone());
+        self.bind_processor(&mut processor)?;
         Ok(processor)
+    }
+
+    pub(crate) fn bind_processor(
+        &self,
+        processor: &mut CommandProcessor,
+    ) -> Result<(), ApplicationBindingError> {
+        for register in &self.processors {
+            register(processor)?;
+        }
+        Ok(())
     }
 
     pub fn tracer_builder(&self, history: Arc<dyn EventHistory>) -> TracerBuilder {
         let mut builder = TracerBuilder::new(history, self.preview.registry.clone())
+            .with_event_codecs(self.codecs.clone())
             .with_bindings(self.preview.clone());
         if let Some(model) = &self.domain_model {
             builder = builder.with_domain_model(model.clone());

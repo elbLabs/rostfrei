@@ -29,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         connection.clone(),
         tracer_host_consumer::bindings()?,
     )?
+    .with_fresh_completed_outcome_epoch(&env::var("ROSTFREI_COMPLETED_OUTCOME_EPOCH")?)?
     .with_default_test_fixture(serde_json::from_str(include_str!("../fixture.json"))?)
     .with_tracer(Some(config))
     .provision_and_start()

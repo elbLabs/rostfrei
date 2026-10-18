@@ -143,6 +143,7 @@ async fn standalone_host_discovers_and_executes_behavior_through_real_nats()
         connection.clone(),
         bindings()?,
     )?
+    .with_fresh_completed_outcome_epoch("external-host")?
     .with_default_test_fixture(fixture)
     .with_tracer(Some(config))
     .provision_and_start()
@@ -317,6 +318,7 @@ async fn disabled_commands_work_and_failed_test_reset_fails_closed_without_touch
         connection.clone(),
         bindings.clone(),
     )?
+    .with_fresh_completed_outcome_epoch("external-host")?
     .with_tracer(None)
     .provision_and_start()
     .await?;
@@ -332,6 +334,7 @@ async fn disabled_commands_work_and_failed_test_reset_fails_closed_without_touch
         connection.clone(),
         bindings,
     )?
+    .with_fresh_completed_outcome_epoch("external-host")?
     .with_default_test_fixture(fixture)
     .provision_and_start()
     .await?;
@@ -391,6 +394,7 @@ async fn reset_waits_for_active_submissions() -> Result<(), Box<dyn std::error::
         connection.clone(),
         bindings_with_pause(Some(pause.clone()))?,
     )?
+    .with_fresh_completed_outcome_epoch("external-host")?
     .with_default_test_fixture(serde_json::from_str(include_str!("../fixture.json"))?)
     .provision_and_start()
     .await?;
@@ -437,7 +441,8 @@ async fn worker_startup_failure_and_unexpected_exit_are_surfaced()
     let context = rostfrei::ApplicationName::new(format!("worker-failure-{}", std::process::id()))?
         .bounded_context("counter")?;
     let bindings = bindings()?;
-    let config = NatsRuntimeConfig::new(context.clone(), &bindings, 1)?;
+    let config = NatsRuntimeConfig::new(context.clone(), &bindings, 1)?
+        .with_fresh_completed_outcome_epoch("external-host")?;
     config.provision(&connection).await?;
     let stream = connection
         .jetstream()
@@ -447,11 +452,13 @@ async fn worker_startup_failure_and_unexpected_exit_are_surfaced()
     stream.delete_consumer(durable).await?;
     assert!(
         NatsApplication::builder(context.clone(), connection.clone(), bindings.clone())?
+            .with_runtime_config(config.clone())
             .connect_and_start()
             .await
             .is_err()
     );
     let host = NatsApplication::builder(context, connection.clone(), bindings)?
+        .with_runtime_config(config.clone())
         .provision_and_start()
         .await?;
     let runtime = host.runtime().clone();
@@ -489,6 +496,7 @@ async fn observer_startup_failure_stops_previously_active_workers()
             .test_bounded_context("counter")?;
     let bindings = bindings()?;
     let host = NatsApplication::builder(context, connection.clone(), bindings.clone())?
+        .with_fresh_completed_outcome_epoch("external-host")?
         .with_default_test_fixture(serde_json::from_str(include_str!("../fixture.json"))?)
         .provision_and_start()
         .await?;

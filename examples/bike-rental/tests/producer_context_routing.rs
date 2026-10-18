@@ -83,6 +83,7 @@ async fn typed_handler_subscribes_to_declared_producer() -> Result<(), Box<dyn E
         connection.clone(),
         Arc::new(bindings),
     )?
+    .with_fresh_completed_outcome_epoch("producer-routing")?
     .with_default_test_fixture(demo_fixture()?)
     .provision_and_start()
     .await?;
@@ -141,7 +142,8 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
     let normal = Arc::new(
         NatsRuntime::provision(
             connection.clone(),
-            NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?,
+            NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
+                .with_fresh_completed_outcome_epoch("producer-routing")?,
             bindings.clone(),
         )
         .await?,
@@ -160,6 +162,7 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
         connection.clone(),
         bindings,
     )?
+    .with_fresh_completed_outcome_epoch("producer-routing")?
     .with_default_test_fixture(demo_fixture()?)
     .with_tracer(Some(tracer_config))
     .provision_and_start()
@@ -227,7 +230,18 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
                     .as_str(),
             )
             .await?;
-        let sequence = responses.info().await?.state.last_sequence;
+        // Domain commit precedes response publication; wait for actual response
+        // evidence rather than treating readable history as its acknowledgement.
+        let sequence = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let sequence = responses.info().await?.state.last_sequence;
+                if sequence > 0 {
+                    return Ok::<_, Box<dyn Error + Send + Sync>>(sequence);
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await??;
         let response = responses.get_raw_message(sequence).await?;
         let response: rostfrei_messaging_core::CommandResponse =
             serde_json::from_slice(&response.payload)?;

@@ -17,8 +17,8 @@ mod nats_host;
 pub use bindings::{ApplicationBindingError, ApplicationBindings};
 #[cfg(feature = "nats-host")]
 pub use nats_host::{
-    NatsApplication, NatsApplicationBuilder, NatsHostError, NatsRuntime, NatsRuntimeConfig,
-    TracerConfig,
+    NatsApplication, NatsApplicationBuilder, NatsExecutionProfile, NatsHostError, NatsRuntime,
+    NatsRuntimeConfig, TracerConfig,
 };
 
 #[cfg(feature = "http")]

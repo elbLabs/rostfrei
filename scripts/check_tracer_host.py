@@ -65,6 +65,7 @@ def main():
     args = parser.parse_args()
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     environment = dict(os.environ)
+    environment["ROSTFREI_COMPLETED_OUTCOME_EPOCH"] = f"host-{uuid4().hex}"
     environment["CARGO_TARGET_DIR"] = str(ROOT / "target/host-consumer")
     with tempfile.TemporaryDirectory(prefix="rostfrei-host-", dir=os.environ.get("TMPDIR")) as directory:
         consumer = Path(directory) / "consumer"

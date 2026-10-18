@@ -39,7 +39,8 @@ async fn independent_provisioning_prepares_the_complete_mapping_pipeline()
     let context = ApplicationName::new(format!("split-provisioning-{suffix}"))?
         .test_bounded_context("bike-rental")?;
     let bindings = Arc::new(tracer::bindings()?);
-    let config = NatsRuntimeConfig::new(context.clone(), &bindings, 1)?;
+    let config = NatsRuntimeConfig::new(context.clone(), &bindings, 1)?
+        .with_fresh_completed_outcome_epoch("split-provisioning")?;
     config.provision(&connection).await?;
     config.provision(&connection).await?;
     let host = NatsApplication::builder(context.clone(), connection.clone(), bindings.clone())?

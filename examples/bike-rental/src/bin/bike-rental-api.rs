@@ -22,19 +22,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     )
     .await?;
     let bindings = Arc::new(tracer::bindings()?);
-    let normal = BikeRentalNatsConfig::for_bindings(
+    let mut normal = BikeRentalNatsConfig::for_bindings(
         &application,
         rostfrei::TrafficScope::Normal,
         limits,
         &bindings,
     )?;
+    let epoch = env::var("ROSTFREI_COMPLETED_OUTCOME_EPOCH").ok();
+    if let Some(epoch) = &epoch {
+        normal = normal.with_fresh_completed_outcome_epoch(epoch)?;
+    }
     let host = if enabled {
-        let test = BikeRentalNatsConfig::for_bindings(
+        let mut test = BikeRentalNatsConfig::for_bindings(
             &application,
             rostfrei::TrafficScope::Test,
             limits,
             &bindings,
         )?;
+        if let Some(epoch) = &epoch {
+            test = test.with_fresh_completed_outcome_epoch(epoch)?;
+        }
         let dispatch = Arc::new(
             NatsRuntime::provision(
                 connection.clone(),

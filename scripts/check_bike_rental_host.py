@@ -31,6 +31,7 @@ def main():
     inspection_token = secrets.token_urlsafe(32)
     origin = f"http://127.0.0.1:{port}"
     environment = {**os.environ, "ROSTFREI_APPLICATION": f"host-{uuid4().hex}",
+                   "ROSTFREI_COMPLETED_OUTCOME_EPOCH": f"host-{uuid4().hex}",
                    "ROSTFREI_API_ADDR": f"127.0.0.1:{port}", "ROSTFREI_API_TOKEN": token,
                    "ROSTFREI_DISPATCH_TOKEN": dispatch_token,
                    "ROSTFREI_INSPECTION_TOKEN": inspection_token}

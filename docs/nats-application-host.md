@@ -18,6 +18,7 @@ let tracer = TracerConfig::new(listener, HttpConfig::new(control_token)?)
     .with_test_repository(Arc::new(FilesystemTestRepository::load("tests/tracer")?))
     .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
 let host = NatsApplication::builder(test_context, connection, bindings)?
+    .with_fresh_completed_outcome_epoch("owned-disposable-test")?
     .with_default_test_fixture(fixture)
     .with_tracer(Some(tracer))
     .provision_and_start().await?;
@@ -117,6 +118,48 @@ HTTP and correlation-observer workers are absent and HTTP tokens are unnecessary
 
 ## Lifecycle and ownership
 
+Writable startup requires explicit fresh split authority selection through
+`with_fresh_completed_outcome_epoch`. Bike rental reads
+`ROSTFREI_COMPLETED_OUTCOME_EPOCH` for both isolated Test and Normal configurations.
+Use an owned disposable application/broker for qualification. Existing histories
+remain legacy/read-only unless the operator performs an explicit fenced cutover;
+an application name alone is not authority selection.
+
+### Effective codecs and execution profile
+
+`ApplicationBindings::new()` assembles default JSON aggregate codecs.
+`with_event_codecs(Arc<AggregateCodecs>)` installs one frozen custom registry for
+fixture validation, real execution, private-event dispatch and Preview simulation.
+Register/replace codecs before sharing it and include fixture aggregate codecs.
+Registering descriptors afterward does not mutate shared codec configuration.
+
+`NatsRuntimeConfig.execution_profile` defaults explicitly to
+`NatsExecutionProfile::TrustedCompatibility`: durable decisions, without configured
+per-call policy admission. Configure the existing service path with:
+
+```rust,ignore
+config.execution_profile = NatsExecutionProfile::configured(
+    move |builder| builder.authorizer(authorizer.clone())
+        .audit_sink(audit.clone())
+        .conflict_retry_policy(retry.clone())
+        .rejection_codec(rejections.clone()),
+    resolver, // Arc<dyn TrustedCommandContextResolver>
+    sender,   // TrustedCommandContext, explicitly supplied by trusted ingress
+);
+```
+
+The retained builder configuration is reapplied against the reconnected backend
+after reset. Workers use the resolver, and senders use current outcome admission.
+The host installs its effective event registry after the callback. Principal
+identity is never inferred from actor attribution or HTTP capability tokens.
+Configured Tracer replay requires real command republication and its actual PubAck,
+followed by current winner admission; completed handlers are not reevaluated.
+
+`NatsRuntime::store()` returns an owned current snapshot. Retained old snapshots
+remain fenced after reset. `NatsRuntime::tracer_builder()` supplies current-history
+and directory indirection for manually composed diagnostics; the application host
+uses it automatically. History reads do not themselves verify authority health.
+
 - `NatsRuntimeConfig::new(context, &bindings, subscription_generation)` derives
   consumers from registrations. Its explicit resource/consumer fields support
   application policies and retention of legacy names and delivery settings.
@@ -140,8 +183,9 @@ HTTP and correlation-observer workers are absent and HTTP tokens are unnecessary
   connection is caller-owned; the host does not drain other users' connections.
 - A reset takes an exclusive process-local submission gate, waits for active
   transported commands, stops the group, deletes only configured Test streams,
-  reprovisions, registers fixture event identities **before** replay, then
-  restarts. Domain history and receipts are reset together. Any failure keeps
+  recreates both journal and outcome-state streams, reconnects and rebuilds the
+  processor, service, transports and observers, registers fixture event identities
+  **before** replay, then restarts. Domain history and outcomes reset together. Any failure keeps
   publication unavailable; `start_workers` cannot bypass a failed reset.
 - Framework observers validate event identity, correlation and causation against
   delivery headers and envelopes. Integration events use the registered typed
