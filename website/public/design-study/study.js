@@ -85,9 +85,9 @@ const commands = {
 }
 
 const modes = {
-  simulate: { note: "Read-only · no persisted events", environment: "Simulate / read-only", button: "Preview simulation" },
-  test: { note: "Isolated state · resettable fixtures", environment: "Test / isolated", button: "Preview test" },
-  dispatch: { note: "Production · separate authorization required", environment: "Dispatch / production", button: "Dispatch unavailable" },
+  simulate: { note: "Uncommitted proposals · dependencies not sandboxed", environment: "Handler diagnostic / uncommitted", button: "Show handler example" },
+  test: { note: "Isolated state · resettable fixtures", environment: "Test / isolated", button: "Show Test example" },
+  dispatch: { note: "Server-only · separate authorization required", environment: "Dispatch / production", button: "Dispatch unavailable" },
 }
 
 const root = document.documentElement
@@ -199,15 +199,15 @@ function renderStudio() {
   element("run-note").textContent = state.mode === "dispatch"
     ? "This design sample has no connection or production authorization."
     : state.mode === "simulate"
-      ? "Illustrative proposal only. No writes or integration-event delivery."
+      ? "Illustrative handler diagnostic; no runtime request. A real handler's injected dependencies are not automatically sandboxed."
       : "Illustrative result from the repository fixture. No runtime request."
-  // Simulation previews the command decision and proposed domain event only.
+  // This static study illustrates a handler decision and proposed domain event.
   const nodes = state.mode === "simulate" ? command.nodes.slice(0, 2) : command.nodes
   if (state.node >= nodes.length) state.node = 1
   element("trace-title").textContent = state.mode === "simulate" ? "Proposed domain events" : "Expected message flow"
   element("trace-count").textContent = state.mode === "simulate" ? "01 proposed event" : `${String(nodes.length).padStart(2, "0")} messages`
   element("trace-footnote").textContent = state.mode === "simulate"
-    ? "Illustrative decision and proposed event. Nothing is committed or published."
+    ? "Illustrative uncommitted proposals, not a live trace or acceptance receipt."
     : `Expected messages from ${command.source}; not a live trace.`
   element("fixture-source").href = `https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/tests/tracer/${command.source}`
   element("trace-nodes").replaceChildren(...nodes.map((node, index) => {
@@ -276,7 +276,7 @@ document.querySelectorAll("button[data-mode]").forEach((button) => {
 
 element("sample-run").addEventListener("click", () => {
   element("sample-status").textContent = state.mode === "simulate"
-    ? "Sample simulation: accepted · one proposed domain event · no writes."
+    ? "Sample handler diagnostic: accepted · one uncommitted proposal · no runtime contacted."
     : `Sample test: accepted · ${commands[state.command].nodes.length} expected messages · no runtime contacted.`
 })
 

@@ -8,6 +8,7 @@ import {
   settlePage,
 } from "./browser.mjs"
 import { checkCommandRefresh } from "./command-refresh.mjs"
+import { checkHandlerRefresh } from "./handler-refresh.mjs"
 import { checkCommandExecution } from "./command-execution.mjs"
 import { checkApiTimeouts } from "./api-timeouts.mjs"
 import {
@@ -752,11 +753,12 @@ try {
   assert.deepEqual(errors, [], "no browser runtime errors")
   await checkCommandExecution(browser, url)
   await checkCommandRefresh(browser, url)
+  await checkHandlerRefresh(browser, url)
   await checkApiTimeouts(browser, url)
   console.log("Verified API request deadlines and partial capture evidence")
   await checkContinuousObservation()
   console.log(
-    `PASS: explicit connection failures and read-only retry; no demo fallback; canonical bicycle-added fixtures; behavioral runs and offline history; layouts and hotkeys; inspector and causal edges; 6 responsive widths; Preview/Test command forms, exact numeric payloads, idempotency, input refresh and operation identities; failed expectations, ambiguous responses and storage failure. All API responses were mocked. Screenshots: ${path.join(tmpdir(), "rostfrei-studio-*.png")}`
+    `PASS: explicit connection failures and read-only retry; no demo fallback; canonical bicycle-added fixtures; behavioral runs and offline history; layouts and hotkeys; inspector and causal edges; 6 responsive widths; Test-default command forms, explicit uncommitted handler diagnostics without graph/capture, retired Preview absence, exact numeric payloads, idempotency, input refresh and operation identities; failed expectations, ambiguous responses and storage failure. All API responses were mocked. Screenshots: ${path.join(tmpdir(), "rostfrei-studio-*.png")}`
   )
 } catch (error) {
   console.error(error)

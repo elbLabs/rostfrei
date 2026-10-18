@@ -1,4 +1,4 @@
-//! One registry shared by fixtures, executor/processor, Preview and private-event dispatch.
+//! One registry shared by fixtures, executor/processor, diagnostics and private-event dispatch.
 //! Future-API target; see docs/testing/modular-runtime-tdd.md.
 #![allow(
     clippy::panic_in_result_fn,
@@ -183,7 +183,7 @@ async fn historical_meaning_and_original_facts_are_shared_across_all_consumers()
     assert_eq!(&history[..1], &original);
     assert_eq!(history[1].schema_version(), 2);
     assert_eq!(history[1].payload(), 7_i64.to_le_bytes());
-    // Preview observes mixed v1/v2 state, uses opaque encoding, and never appends.
+    // Diagnostics observe mixed v1/v2 state, use opaque encoding, and never append.
     let states = Arc::new(Mutex::new(Vec::new()));
     let mut registry = DomainRegistry::new();
     registry.register_command::<Change, PreviewHandler>()?;
@@ -194,40 +194,29 @@ async fn historical_meaning_and_original_facts_are_shared_across_all_consumers()
         ));
     builder.register_json::<Change, _>(PreviewHandler(states.clone()))?;
     let tracer = builder.build()?;
-    tracer
-        .submit_simulation(
+    let error = tracer
+        .simulate_handler(
             "modular",
             "change",
             SimulationRequest {
                 schema_version: 1,
                 payload: json!({"amount":7,"reject":false}),
             },
-            Some("opaque-preview"),
         )
-        .await?;
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        let mut subscription = tracer.subscribe("opaque-preview", 0).await.unwrap();
-        while subscription.next().await.is_some() {}
-    })
-    .await?;
+        .await
+        .unwrap_err();
     assert_eq!(*states.lock().unwrap(), [207]);
-    let snapshot = serde_json::to_value(tracer.operation("opaque-preview").await?)?;
-    // Both frozen display choices are valid: explicit opaque rendering or the existing typed
-    // InvalidEventPayload display failure, after the custom codec has actually been used.
-    if snapshot["status"] == "failed" {
-        assert!(
-            snapshot
-                .to_string()
-                .contains("event payload is not valid JSON"),
-            "unexpected Preview failure: {snapshot}"
-        );
-    } else {
-        assert_eq!(snapshot["status"], "completed");
-        assert!(
-            snapshot.to_string().contains("base64"),
-            "opaque payload needs an explicit encoding tag: {snapshot}"
-        );
-    }
+    assert!(
+        matches!(
+            error,
+            rostfrei_tracer::HandlerSimulationError::Runtime {
+                code: "invalid-event-payload",
+                ..
+            }
+        ),
+        "opaque output must fail display only after using the custom codec: {error}"
+    );
+    assert!(tracer.operation("opaque-preview").await.is_err());
     assert_eq!(store.load(&stream()?).await?, history);
     assert!(observations.lock().unwrap().is_empty());
     for event in &history {

@@ -25,13 +25,18 @@ System is the default; the browser preference is shared with the website through
 come from the workspace package `@rostfrei/ui`.
 
 Open **Command** (or **Ctrl/⌘ Shift K**) to use the catalog-driven command form.
-**Preview** reads isolated Test history without publishing; **Test bus** uses
+**Test bus** uses
 the isolated command pipeline and can append events and trigger integrations.
-Test bus is the default for commands that advertise that capability. Commands
+Test bus is the default; submission is disabled when unavailable. Commands
 remain available even when the catalog has no behavioral-test repository.
 Identifiers are editable, discovered payload options refresh after Test runs,
 and numeric options retain their exact JSON representation. An unconfirmed Test
 submission keeps its idempotency key and payload for an explicit retry.
+**Simulate handler** is an optional explicit choice when advertised. It shows
+the real handler decision, starting stream versions and proposed domain events
+in a separate **Uncommitted · no acceptance receipt** panel, never an observed
+message graph. Injected dependencies are not automatically sandboxed; this does
+not test delivery, persistence/concurrency or downstream integrations.
 Start with the [bike-rental walkthrough](https://elblabs.github.io/rostfrei/docs/getting-started)
 for a connected application. Studio requires a reachable Tracer API; synthetic
 responses are limited to the browser-test and visual-inspection fixtures below.
@@ -88,7 +93,7 @@ pnpm inspect:ui --scene all --theme dark --out artifacts/after-dark
 The inspector starts Vite on an available port and launches a fresh Chrome
 session. Named scenarios intercept every API request and label their synthetic
 responses as visual fixtures. They cover the workbench overview, command form,
-accepted/rejected Preview, pending and indeterminate results, a 25-message
+accepted/rejected Test, pending and indeterminate results, a 25-message
 branching graph, long payloads, continuous observation, and the narrow-screen inspector. Unknown API
 requests fail rather than reaching a backend.
 

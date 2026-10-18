@@ -427,9 +427,7 @@ function App() {
       : resultUnavailable || activeCommand?.error
         ? "unavailable"
         : activeCommand
-          ? activeCommand.request.mode === "preview"
-            ? "predicted"
-            : "observed"
+          ? "observed"
           : selectedRun
             ? "observed"
             : "expected"

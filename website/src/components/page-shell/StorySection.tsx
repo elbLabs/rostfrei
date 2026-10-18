@@ -19,7 +19,7 @@ const capabilities = [
   {
     title: "Check the behavior",
     description:
-      "Review an implementation against what it does. Discover commands through Tracer, Preview a decision without appending events, then use isolated Test execution and Studio to inspect the resulting message flow.",
+      "Review an implementation against what it does. Discover commands through Tracer, use isolated Test execution and Studio to inspect the resulting message flow, and observe activity initiated by other clients.",
     link: "Try the bike-rental example",
     slug: "getting-started",
   },

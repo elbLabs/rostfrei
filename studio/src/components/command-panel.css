@@ -97,6 +97,41 @@
   border-radius: var(--radius);
   background: var(--card);
 }
+.handler-simulation-result {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.handler-simulation-result h3,
+.handler-simulation-result h4 {
+  font-weight: 600;
+  margin: 8px 0;
+}
+.handler-simulation-result[data-handler-decision="accepted"] h3 {
+  color: var(--success);
+}
+.handler-simulation-result[data-handler-decision="rejected"] h3 {
+  color: var(--destructive);
+}
+.handler-simulation-result pre {
+  white-space: pre-wrap;
+  font-size: 11px;
+  margin-top: 8px;
+}
+.handler-simulation-result article {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.handler-simulation-result article strong {
+  color: var(--domain-event);
+}
 .command-mode-option {
   height: 30px;
   border: 1px solid transparent;
