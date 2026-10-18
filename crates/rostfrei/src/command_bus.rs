@@ -1317,6 +1317,14 @@ impl CommandProcessor {
         }
     }
 
+    /// Install one frozen codec configuration, including for trusted infrastructure.
+    #[must_use]
+    pub fn with_event_codecs(mut self, codecs: Arc<AggregateCodecs>) -> Self {
+        self.codecs = codecs;
+        self.configuration.shared_codecs = true;
+        self
+    }
+
     pub fn register_codec<A, C>(
         &mut self,
         codec: C,
