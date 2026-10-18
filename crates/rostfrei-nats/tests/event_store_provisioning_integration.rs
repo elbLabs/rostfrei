@@ -1,3 +1,5 @@
+mod native_connection_support;
+
 use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
@@ -15,7 +17,8 @@ type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 async fn fixture() -> TestResult<(jetstream::Context, NatsEventStoreConfig)> {
-    let client = async_nats::connect(rostfrei_testing::integration::nats_url()?).await?;
+    let client =
+        native_connection_support::client(rostfrei_testing::integration::nats_url()?).await?;
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let context = ApplicationName::new(format!("policy-test-{nanos}-{sequence}"))?

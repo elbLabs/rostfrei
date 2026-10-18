@@ -9,16 +9,15 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
-    marker::PhantomData,
     sync::Arc,
 };
 
 use rostfrei_core::{
-    Aggregate, AggregateId, AggregateType, CommandExecutionMetadata, ContentFingerprint,
-    EnvelopeError, Event, EventBatch, EventCodec, EventCodecError, EventId, EventStore,
-    EventStoreError, ExpectedVersion, IdentityError, JsonEventCodec, MAX_EVENT_PAYLOAD_LEN,
-    MAX_EVENT_TYPE_LEN, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
-    derive_commit_id, derive_event_id,
+    Aggregate, AggregateCodecs, AggregateId, AggregateType, CommandExecutionMetadata,
+    ContentFingerprint, EnvelopeError, Event, EventBatch, EventCodecError, EventId, EventStore,
+    EventStoreError, ExpectedVersion, IdentityError, MAX_EVENT_PAYLOAD_LEN, MAX_EVENT_TYPE_LEN,
+    NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion, derive_commit_id,
+    derive_event_id,
 };
 use rostfrei_messaging_core::{
     CausationId, ContractError, CorrelationId, MessageId, MessageSeries, MessageSeriesNode,
@@ -446,13 +445,19 @@ fn validate_message(message: &FixtureDomainEvent) -> Result<(), FixtureValidatio
 /// A registry of typed aggregate event codecs used to apply fixtures.
 #[derive(Clone, Default)]
 pub struct MessageSeriesEngine {
-    codecs: BTreeMap<AggregateType, Arc<dyn RegisteredAggregateCodec>>,
+    codecs: Arc<AggregateCodecs>,
+    shared: bool,
 }
 
 impl MessageSeriesEngine {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub const fn with_codecs(codecs: Arc<AggregateCodecs>) -> Self {
         Self {
-            codecs: BTreeMap::new(),
+            codecs,
+            shared: true,
         }
     }
 
@@ -461,15 +466,22 @@ impl MessageSeriesEngine {
         A: Aggregate + 'static,
         A::Event: Event,
     {
-        let aggregate_type = AggregateType::new(A::aggregate_type())
-            .map_err(|source| FixtureCodecRegistrationError::InvalidAggregateType { source })?;
-        if self.codecs.contains_key(&aggregate_type) {
-            return Err(FixtureCodecRegistrationError::DuplicateAggregateType { aggregate_type });
+        if self.shared {
+            return Err(FixtureCodecRegistrationError::Configuration(
+                rostfrei_core::CodecRegistrationError::SharedConfiguration,
+            ));
         }
-        self.codecs.insert(
-            aggregate_type,
-            Arc::new(JsonAggregateCodec::<A>(PhantomData)),
-        );
+        Arc::make_mut(&mut self.codecs)
+            .register_json::<A>()
+            .map_err(|error| match error {
+                rostfrei_core::CodecRegistrationError::InvalidAggregateType(source) => {
+                    FixtureCodecRegistrationError::InvalidAggregateType { source }
+                }
+                rostfrei_core::CodecRegistrationError::Duplicate { aggregate_type } => {
+                    FixtureCodecRegistrationError::DuplicateAggregateType { aggregate_type }
+                }
+                other => FixtureCodecRegistrationError::Configuration(other),
+            })?;
         Ok(self)
     }
 
@@ -479,7 +491,7 @@ impl MessageSeriesEngine {
             .iter()
             .map(|message| message.aggregate.aggregate_type())
         {
-            if !self.codecs.contains_key(aggregate_type) {
+            if !self.codecs.contains(aggregate_type) {
                 return Err(FixtureApplyError::UnknownAggregateCodec {
                     aggregate_type: aggregate_type.clone(),
                 });
@@ -511,18 +523,27 @@ impl MessageSeriesEngine {
         }
 
         for (stream_id, events) in &events_by_stream {
-            let codec = self.codecs.get(stream_id.aggregate_type()).ok_or_else(|| {
-                FixtureApplyError::UnknownAggregateCodec {
-                    aggregate_type: stream_id.aggregate_type().clone(),
-                }
-            })?;
-            codec
-                .validate(stream_id, events)
-                .map_err(|failure| FixtureApplyError::Codec {
-                    stream_id: stream_id.clone(),
-                    event_type: failure.event_type,
-                    schema_version: failure.schema_version,
-                    source: failure.source,
+            let events: Vec<_> = events
+                .iter()
+                .map(|planned| planned.recorded.clone())
+                .collect();
+            self.codecs
+                .validate_history(stream_id, &events)
+                .map_err(|error| match error {
+                    rostfrei_core::CodecValidationError::Unregistered { aggregate_type } => {
+                        FixtureApplyError::UnknownAggregateCodec { aggregate_type }
+                    }
+                    rostfrei_core::CodecValidationError::Event {
+                        stream_id,
+                        event_type,
+                        schema_version,
+                        source,
+                    } => FixtureApplyError::Codec {
+                        stream_id,
+                        event_type,
+                        schema_version,
+                        source,
+                    },
                 })?;
         }
 
@@ -599,7 +620,11 @@ impl fmt::Debug for MessageSeriesEngine {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("MessageSeriesEngine")
-            .field("aggregate_types", &self.codecs.keys().collect::<Vec<_>>())
+            .field("shared", &self.shared)
+            .field(
+                "aggregate_types",
+                &self.codecs.aggregate_types().collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -607,6 +632,8 @@ impl fmt::Debug for MessageSeriesEngine {
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FixtureCodecRegistrationError {
+    #[error(transparent)]
+    Configuration(rostfrei_core::CodecRegistrationError),
     #[error("fixture codec aggregate type is invalid: {source}")]
     InvalidAggregateType { source: IdentityError },
     #[error("a fixture codec is already registered for `{aggregate_type}`")]
@@ -737,47 +764,6 @@ impl FixtureApplyReport {
     pub fn into_fixture(self) -> Fixture {
         self.fixture
     }
-}
-
-trait RegisteredAggregateCodec: Send + Sync {
-    fn validate(
-        &self,
-        stream_id: &StreamId,
-        events: &[&PlannedEvent],
-    ) -> Result<(), CodecValidationFailure>;
-}
-
-struct JsonAggregateCodec<A>(PhantomData<fn() -> A>);
-
-impl<A> RegisteredAggregateCodec for JsonAggregateCodec<A>
-where
-    A: Aggregate,
-    A::Event: Event,
-{
-    fn validate(
-        &self,
-        stream_id: &StreamId,
-        events: &[&PlannedEvent],
-    ) -> Result<(), CodecValidationFailure> {
-        let mut state = A::initial(stream_id);
-        for planned in events {
-            let event =
-                <JsonEventCodec as EventCodec<A>>::decode(&JsonEventCodec, &planned.recorded)
-                    .map_err(|source| CodecValidationFailure {
-                        event_type: planned.recorded.event_type().to_owned(),
-                        schema_version: planned.recorded.schema_version(),
-                        source,
-                    })?;
-            A::apply(&mut state, &event);
-        }
-        Ok(())
-    }
-}
-
-struct CodecValidationFailure {
-    event_type: String,
-    schema_version: u32,
-    source: EventCodecError,
 }
 
 struct PlannedEvent {

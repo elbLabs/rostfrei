@@ -620,30 +620,6 @@ impl CorrelationHub {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn observe_simulated_command(
-        &self,
-        correlation_id: &str,
-        message_id: String,
-        context: String,
-        command: String,
-        schema_version: u32,
-        payload: Option<Value>,
-    ) -> Result<(), CorrelationError> {
-        let message = ObservedMessageNode::command(
-            message_id,
-            correlation_id,
-            None,
-            command,
-            schema_version,
-            context,
-            payload,
-        );
-        self.observe_message(correlation_id, message)
-            .await
-            .map(|_| ())
-    }
-
     pub(crate) async fn observe_command_outcome(
         &self,
         correlation_id: &str,

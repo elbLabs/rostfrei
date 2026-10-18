@@ -35,7 +35,6 @@ export function CommandExecutionHeader({
           : "indeterminate"
         : result?.operation.status) ??
       "unavailable")
-  const preview = request.mode === "preview"
   const title =
     status === "running" || status === "queued"
       ? "Execution in progress"
@@ -54,12 +53,9 @@ export function CommandExecutionHeader({
       <div className="execution-title-row">
         <div>
           <p className="eyebrow">
-            Command execution <span>/</span>{" "}
-            {preview ? "Preview" : "Isolated Test"}
+            Command execution <span>/</span> Isolated Test
           </p>
-          <h1>
-            {request.commandLabel} · {preview ? "Preview" : "Test"}
-          </h1>
+          <h1>{request.commandLabel} · Test</h1>
         </div>
         <Button variant="outline" onClick={onEdit}>
           <Pencil /> Edit command
@@ -74,11 +70,7 @@ export function CommandExecutionHeader({
           <CircleDot size={16} />
         )}
         <strong>{title}</strong>
-        <span>
-          {preview
-            ? "Read-only preview · no messages published"
-            : "Isolated Test command bus"}
-        </span>
+        <span>Isolated Test command bus</span>
       </div>
       {(error || result?.inspectionError) && (
         <p className="execution-error" role="alert">

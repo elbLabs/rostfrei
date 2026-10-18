@@ -62,7 +62,7 @@ async fn poisoned_test_delivery_is_inspectable_through_catalog_and_cleared_by_re
     );
     let fixture = demo_fixture().unwrap();
     runtime.reset(&fixture).await.unwrap();
-    let store = Arc::new(runtime.store().clone());
+    let store = Arc::new(runtime.store());
     let tracer = TracerBuilder::new(store.clone(), DomainRegistry::new())
         .with_test_event_store(store)
         .with_test_transport(runtime.transport())
