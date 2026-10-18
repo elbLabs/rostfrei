@@ -1,11 +1,20 @@
+pub use rostfrei_messaging_core::{ActorRef, MAX_ACTOR_ID_BYTES, MAX_ACTOR_NAMESPACE_BYTES};
+
 mod aggregate;
 mod append_session;
+mod codecs;
+mod completed_outcome;
+mod conflict_retry;
 mod domain_event;
 mod envelope;
+mod execution_store;
 mod executor;
 mod identity;
 mod memory;
+mod outcome;
+mod proposal;
 mod read_model;
+mod receipt_validation;
 mod store;
 
 pub use aggregate::{
@@ -13,6 +22,13 @@ pub use aggregate::{
     EventVariant, JsonEventCodec,
 };
 pub use append_session::AppendSession;
+pub use codecs::{AggregateCodecs, CodecRegistrationError, CodecValidationError};
+pub use completed_outcome::{
+    CommandCompletion, CompletedAppendOutcome, EncodedRejection, InlineCompletedOutcome,
+    JsonRejectionCodec, MAX_REJECTION_BYTES, OutcomeEvidence, RejectionCodec,
+    validate_completed_transaction,
+};
+pub use conflict_retry::*;
 pub use domain_event::{
     CommittedDomainEvent, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
     DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError,
@@ -21,23 +37,30 @@ pub use envelope::{
     EnvelopeError, EventBatch, ExpectedVersion, MAX_BATCH_PAYLOAD_LEN, MAX_EVENT_PAYLOAD_LEN,
     MAX_EVENT_TYPE_LEN, MAX_EVENTS_PER_BATCH, NewEvent, RecordedEvent, StreamVersion,
 };
+pub use execution_store::*;
 pub use executor::{
-    AggregateCodecs, CommandDecision, CommandExecution, CommandExecutionError, CommandExecutor,
-    CommandHandler, CommandHandlingResult, CommandOutcome, CommandReceipt, CommandResult,
-    LoadedAggregate, SimulatedParticipant, SimulationError, SimulationOutcome,
+    CommandDecision, CommandExecution, CommandExecutionError, CommandExecutor, CommandHandler,
+    CommandHandlingResult, CommandOutcome, CommandReceipt, CommandResult, LoadedAggregate,
+    SimulatedParticipant, SimulationError, SimulationOutcome,
 };
 pub use identity::{
     AggregateId, AggregateType, CommandExecutionMetadata, CommitId, ContentFingerprint, EventId,
-    IdentityError, OperationId, StreamId, derive_commit_id, derive_event_id,
+    IdentityError, OperationId, SecurityScope, StreamId, derive_commit_id, derive_event_id,
 };
 pub use memory::InMemoryEventStore;
+pub use outcome::{
+    ArchiveReference, CompletedOutcome, DetailRead, DetailReadError, DetailUnavailableReason,
+    EncodedOutcomeDetails, OutcomeDecision, OutcomeDetailReader, OutcomeDetailReference,
+    OutcomeDetails, OutcomeMarker, OutcomeRecoveryError, resolve_details,
+};
+pub use proposal::ProposalDigest;
 pub use read_model::{
     JsonReadModelCodec, ReadModel, ReadModelCodec, ReadModelEntry, ReadModelError,
     ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelStore,
 };
 pub use store::{
     AppendOutcome, EventHistory, EventStore, EventStoreError, EventStoreErrorKind,
-    EventTransaction, MAX_TRANSACTION_ITEMS, StreamDirectory, StreamSummary,
+    EventStoreErrorOrigin, EventTransaction, MAX_TRANSACTION_ITEMS, StreamDirectory, StreamSummary,
     TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
     validate_transaction_item_limit,
 };

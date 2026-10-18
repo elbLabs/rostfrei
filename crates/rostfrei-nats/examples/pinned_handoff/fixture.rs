@@ -3,12 +3,20 @@
 use std::{io, time::Duration};
 
 use async_nats::jetstream::{self, consumer, response::Response};
+use rostfrei_nats::{NatsConnectionConfig, connect};
 use tokio::time::timeout;
 
 use super::protocol::{PinnedReader, Result, admin_unpin, nanos};
 
 pub const DURABLE: &str = "publication";
 pub const GROUP: &str = "domain-events";
+
+// Managed setup decodes URL credentials into connection-wide authentication.
+// Keep the protocol experiment on the raw client/JetStream APIs after connecting.
+async fn connect_client(url: &str) -> Result<async_nats::Client> {
+    let connection = connect(&NatsConnectionConfig::new("pinned-handoff", url)).await?;
+    Ok(connection.client().clone())
+}
 
 pub struct Fixture {
     pub context: jetstream::Context,
@@ -19,7 +27,7 @@ pub struct Fixture {
 
 impl Fixture {
     pub async fn create(url: &str, pin_ttl: Duration, ack_wait: Duration) -> Result<Self> {
-        let client = async_nats::connect(url).await?;
+        let client = connect_client(url).await?;
         let stream = format!("PINNED_HANDOFF{}", client.new_inbox().replace('.', "_"));
         let subject = format!("{stream}.events");
         let context = jetstream::new(client);
@@ -73,7 +81,7 @@ impl Fixture {
 
     pub async fn reader(&self) -> Result<PinnedReader> {
         // Independent connections model two overlapping application instances.
-        let context = jetstream::new(async_nats::connect(&self.url).await?);
+        let context = jetstream::new(connect_client(&self.url).await?);
         Ok(PinnedReader::new(context, &self.stream, DURABLE, GROUP))
     }
 

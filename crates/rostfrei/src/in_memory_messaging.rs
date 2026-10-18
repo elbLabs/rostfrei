@@ -6,25 +6,22 @@ use tokio::sync::Mutex;
 
 use crate::{
     CommandBusError, CommandBusErrorKind, CommandBusObserver, CommandBusReceipt,
-    CommandMessageAdapter, CommandProcessor, CommandProcessorErrorKind, CommandPublication,
+    CommandMessageAdapter, CommandProcessingService, CommandProcessor, CommandPublication,
     EncodedCommand, EncodedIntegrationMessage, IntegrationEventBusError, IntegrationMessageAdapter,
+    TrustedCommandContext,
 };
-
-#[derive(Clone)]
-struct StoredCommand {
-    response: rostfrei_messaging_core::CommandResponse,
-}
 
 #[derive(Default)]
 struct InMemoryMessagingState {
-    commands: HashMap<String, StoredCommand>,
+    commands: std::collections::HashSet<String>,
     command_messages: Vec<EncodedCommand>,
     integration_events: HashMap<String, EncodedIntegrationMessage>,
     integration_messages: Vec<EncodedIntegrationMessage>,
 }
 
 pub struct InMemoryMessagingAdapter {
-    processor: Arc<CommandProcessor>,
+    processor: Option<Arc<CommandProcessor>>,
+    service: Option<Arc<dyn CommandProcessingService>>,
     state: Mutex<InMemoryMessagingState>,
     command_gates: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
@@ -32,10 +29,56 @@ pub struct InMemoryMessagingAdapter {
 impl InMemoryMessagingAdapter {
     pub fn new(processor: Arc<CommandProcessor>) -> Self {
         Self {
-            processor,
+            processor: Some(processor),
+            service: None,
             state: Mutex::new(InMemoryMessagingState::default()),
             command_gates: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn with_service(service: Arc<dyn CommandProcessingService>) -> Self {
+        Self {
+            processor: None,
+            service: Some(service),
+            state: Mutex::new(InMemoryMessagingState::default()),
+            command_gates: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub async fn dispatch_as(
+        &self,
+        caller: &TrustedCommandContext,
+        command: EncodedCommand,
+    ) -> Result<CommandBusReceipt, CommandBusError> {
+        let service = self.service.as_ref().ok_or_else(|| {
+            CommandBusError::new(
+                CommandBusErrorKind::InvalidConfiguration,
+                "context-aware dispatch requires a processing service",
+            )
+        })?;
+        command
+            .validate()
+            .map_err(|e| CommandBusError::from_processor(&e))?;
+        let gate = self.command_gate(command.message_id()).await;
+        let _guard = gate.lock().await;
+        let processed = service
+            .process(caller, &command)
+            .await
+            .into_result()
+            .map_err(|e| CommandBusError::from_processor(&e))?;
+        let response = processed
+            .admit(caller, &command)
+            .map_err(|e| CommandBusError::from_processor(&e))?
+            .clone();
+        let mut state = self.state.lock().await;
+        let duplicate = !state
+            .commands
+            .insert(command.message_id().as_str().to_owned());
+        if !duplicate {
+            state.command_messages.push(command);
+        }
+        drop(state);
+        Ok(CommandBusReceipt::new(duplicate, response))
     }
 
     pub async fn command_messages(&self) -> Vec<EncodedCommand> {
@@ -65,43 +108,37 @@ impl CommandMessageAdapter for InMemoryMessagingAdapter {
     ) -> Result<CommandBusReceipt, CommandBusError> {
         let gate = self.command_gate(command.message_id()).await;
         let _guard = gate.lock().await;
-        let existing = self
+        let processor = self.processor.as_ref().ok_or_else(|| {
+            CommandBusError::new(
+                CommandBusErrorKind::InvalidConfiguration,
+                "context-aware service requires dispatch_as",
+            )
+        })?;
+        let duplicate = self
             .state
             .lock()
             .await
             .commands
-            .get(command.message_id().as_str())
-            .cloned();
-        if let Some(existing) = existing {
-            observer
-                .published(CommandPublication::new(command.message_id().clone(), true))
-                .await;
-            return Ok(CommandBusReceipt::new(true, existing.response));
-        }
-
+            .contains(command.message_id().as_str());
         observer
-            .published(CommandPublication::new(command.message_id().clone(), false))
+            .published(CommandPublication::new(
+                command.message_id().clone(),
+                duplicate,
+            ))
             .await;
-        let response = self.processor.process(&command).await.map_err(|error| {
-            let kind = match error.kind() {
-                CommandProcessorErrorKind::InvalidMessage => CommandBusErrorKind::InvalidMessage,
-                CommandProcessorErrorKind::Unavailable => CommandBusErrorKind::Unavailable,
-                CommandProcessorErrorKind::InvalidConfiguration => {
-                    CommandBusErrorKind::InvalidConfiguration
-                }
-            };
-            CommandBusError::new(kind, error.to_string())
-        })?;
+        let response = processor
+            .process(&command)
+            .await
+            .map_err(|error| CommandBusError::from_processor(&error))?;
         let mut state = self.state.lock().await;
-        state.command_messages.push(command.clone());
-        state.commands.insert(
-            command.message_id().as_str().to_owned(),
-            StoredCommand {
-                response: response.clone(),
-            },
-        );
+        if !duplicate {
+            state.command_messages.push(command.clone());
+        }
+        state
+            .commands
+            .insert(command.message_id().as_str().to_owned());
         drop(state);
-        Ok(CommandBusReceipt::new(false, response))
+        Ok(CommandBusReceipt::new(duplicate, response))
     }
 }
 

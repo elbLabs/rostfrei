@@ -21,8 +21,8 @@ outcome and does not require a fabricated event.
 
 The former transient `NoEvents` variant is removed. Read-only `simulate` returns
 its separate `SimulationOutcome`; it never persists acceptance. Ordinary domain
-rejections still do not create event-store receipts. Retained transport responses
-are a separate concern.
+rejections were outside this ADR's acceptance-only scope. ADR 0044 now records
+them as distinct guarded completed outcomes, never as acceptance receipts.
 
 ## Identity and concurrency
 

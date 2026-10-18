@@ -279,6 +279,7 @@ pub async fn run(options: Options) -> BenchResult {
     let application = ApplicationName::new(format!("bench-{}-{unique}", std::process::id()))?;
     let context = application.test_bounded_context(model::CONTEXT)?;
     let config = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_fresh_split_outcome_epoch("isolated-aggregate-benchmark")?
         .with_storage_limits(options.stream_bytes, 512 * 1024)?;
     let measured: BenchResult<Vec<CaseReport>> = async {
         provision_event_store(connection.jetstream(), &config).await?;

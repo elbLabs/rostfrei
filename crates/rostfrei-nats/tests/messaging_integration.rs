@@ -20,6 +20,10 @@ mod provisioning;
 mod publish;
 #[path = "../src/query.rs"]
 mod query;
+#[path = "../src/response_publication.rs"]
+mod response_publication;
+#[path = "../src/response_storage.rs"]
+mod response_storage;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
 
@@ -286,6 +290,7 @@ async fn durable_consumer_rejects_unsafe_delivery_configuration() -> TestResult<
         "headers-only",
         "memory-storage",
         "inactive-threshold",
+        "max-ack-pending",
         "max-batch",
         "max-bytes",
         "max-expires",
@@ -305,6 +310,7 @@ async fn durable_consumer_rejects_unsafe_delivery_configuration() -> TestResult<
             "headers-only" => actual.headers_only = true,
             "memory-storage" => actual.memory_storage = true,
             "inactive-threshold" => actual.inactive_threshold = Duration::from_secs(60),
+            "max-ack-pending" => actual.max_ack_pending = 1,
             "max-batch" => actual.max_batch = 1,
             "max-bytes" => actual.max_bytes = 1,
             "max-expires" => actual.max_expires = Duration::from_millis(1),

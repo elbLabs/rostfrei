@@ -42,7 +42,10 @@ pub use event_store_config::{
     DEFAULT_EVENT_STORE_MAX_EVENT_BYTES, DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
     DEFAULT_EVENT_STORE_PUBACK_TIMEOUT, DEFAULT_EVENT_STORE_REPLICAS, NatsEventStoreConfig,
 };
-pub use messaging_adapter::{NatsCommandHandler, NatsMessagingAdapter};
+pub use messaging_adapter::{
+    DEFAULT_COMMAND_RESPONSE_TIMEOUT, NatsCommandHandler, NatsMessagingAdapter,
+    ServicePrincipalContext, TrustedCommandContextResolver,
+};
 pub use messaging_config::{
     MINIMUM_NATS_SERVER_VERSION, MessagingTopology, NatsConnectionConfig, QueueGroup,
     ServerVersion, StreamName, SubjectFilter,
@@ -53,6 +56,8 @@ pub use provisioning::{
     verify_application_messaging, verify_stream,
 };
 pub use publish::{CORRELATION_ID_HEADER, NatsPublishAck, NatsPublisher};
+mod response_publication;
+mod response_storage;
 pub use quarantine::NatsQuarantineReader;
 pub use query::{NatsQueryRequester, NatsQueryServer, NatsQueryServerConfig};
 pub use read_model::NatsReadModelStore;
@@ -63,4 +68,7 @@ pub use read_model_config::{
 pub use read_model_worker::{
     NatsReadModelConsumerOptions, NatsReadModelWorker, ReadModelWorkerError,
     provision_read_model_consumers,
+};
+pub use response_publication::{
+    DIAGNOSTIC_TRANSITION_HEADER, DiagnosticTransitionToken, PreparedCommandResponse,
 };

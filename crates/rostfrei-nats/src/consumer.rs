@@ -206,7 +206,7 @@ impl NatsConsumerFactory {
         {
             return Err(ConsumeError::new(ConsumeErrorKind::InvalidConfiguration));
         }
-        i64::try_from(config.concurrency())
+        i64::try_from(config.shared_pending_limit())
             .map_err(|_| ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
         let source_stream = self
             .topology

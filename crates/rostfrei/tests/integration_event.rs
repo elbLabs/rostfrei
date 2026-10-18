@@ -7,8 +7,8 @@ use rostfrei::{
     Aggregate, Apply, BoundedContext, Command, CommandBus, CommandDecision, CommandExecution,
     CommandExecutionMetadata, CommandExecutor, CommandHandler, CommandHandlingResult,
     CommandMessageAdapter, CommandOutcome, CommandProcessor, CommandReceipt, CommandRequest,
-    CommittedDomainEvent, DomainEvent, DomainEventDispatcher, Entity, EventStore,
-    InMemoryEventStore, InMemoryMessagingAdapter, InfallibleCommandRejectionMapper, Initialize,
+    CommittedDomainEvent, DomainEvent, DomainEventDispatcher, Entity, InMemoryEventStore,
+    InMemoryMessagingAdapter, InfallibleCommandRejectionMapper, Initialize,
     IntegrationCommandMapper, IntegrationEvent, IntegrationEventBus,
     IntegrationEventCommandHandler, IntegrationEventDispatcherExt, IntegrationEventMapper,
     IntegrationMessageAdapter, OperationId, RoutedCommand, StreamAggregateId, StreamAggregateType,
@@ -198,7 +198,7 @@ fn stream_id() -> TestResult<StreamId> {
 }
 
 fn registered_processor(store: &InMemoryEventStore) -> TestResult<CommandProcessor> {
-    let erased_store: Arc<dyn EventStore> = Arc::new(store.clone());
+    let erased_store: Arc<dyn rostfrei::ExecutionStore> = Arc::new(store.clone());
     let processor_context = ApplicationName::new("integration-flow-test")?
         .bounded_context("ledger")?
         .name()

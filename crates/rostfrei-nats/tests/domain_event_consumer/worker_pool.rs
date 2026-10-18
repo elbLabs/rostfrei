@@ -27,7 +27,8 @@ struct Fixture {
 impl Fixture {
     async fn new(ack_wait: Duration, processing_timeout: Duration) -> TestResult<Self> {
         let url = rostfrei_testing::integration::nats_url()?;
-        let context = async_nats::jetstream::new(async_nats::connect(&url).await?);
+        let context =
+            async_nats::jetstream::new(crate::native_connection_support::client(&url).await?);
         let suffix = unique_suffix()?;
         let scope = ApplicationName::new(format!("pool-{suffix}"))?
             .bounded_context("domain-event-consumer")?;
@@ -58,7 +59,7 @@ impl Fixture {
         handler: Arc<H>,
     ) -> TestResult<NatsDomainEventConsumer> {
         connect_consumer(
-            async_nats::jetstream::new(async_nats::connect(&self.url).await?),
+            async_nats::jetstream::new(crate::native_connection_support::client(&self.url).await?),
             self.event_store.clone(),
             self.config.clone(),
             handler,
@@ -508,7 +509,8 @@ async fn publishing_handler(
     receipts: mpsc::UnboundedSender<(String, bool)>,
     pause: bool,
 ) -> TestResult<Arc<PublishingHandler>> {
-    let context = async_nats::jetstream::new(async_nats::connect(&fixture.url).await?);
+    let context =
+        async_nats::jetstream::new(crate::native_connection_support::client(&fixture.url).await?);
     let adapter = rostfrei_nats::NatsMessagingAdapter::new(
         rostfrei_nats::NatsPublisher::new(context.clone(), topology.clone()),
         rostfrei_nats::NatsCommandResponseReader::new(context, topology.clone()),

@@ -23,6 +23,9 @@ pub enum EventStoreErrorKind {
     CapacityExhausted,
     ConfigurationMismatch,
     Unavailable,
+    DetailForbidden,
+    CompletedDetailsExpired,
+    CompletedDetailsUnavailable,
 }
 
 impl std::fmt::Display for EventStoreErrorKind {
@@ -36,6 +39,14 @@ impl std::fmt::Display for EventStoreErrorKind {
 pub struct EventStoreError {
     kind: EventStoreErrorKind,
     message: String,
+    origin: EventStoreErrorOrigin,
+}
+
+/// Preserve recovery context without changing the underlying technical failure kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EventStoreErrorOrigin {
+    Backend,
+    OutcomeRecovery,
 }
 
 impl EventStoreError {
@@ -43,6 +54,7 @@ impl EventStoreError {
         Self {
             kind,
             message: message.into(),
+            origin: EventStoreErrorOrigin::Backend,
         }
     }
 
@@ -52,6 +64,18 @@ impl EventStoreError {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    pub const fn origin(&self) -> EventStoreErrorOrigin {
+        self.origin
+    }
+
+    /// Mark an error from outcome lookup, completed-result validation or recovery
+    /// after a committed winner. Do not apply to aggregate reads or uncertain writes.
+    #[must_use]
+    pub const fn in_outcome_recovery(mut self) -> Self {
+        self.origin = EventStoreErrorOrigin::OutcomeRecovery;
+        self
     }
 }
 
@@ -104,6 +128,9 @@ impl TransactionParticipant {
 /// events still persists a receipt; an empty participant list persists only the receipt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventTransaction {
+    actor: Option<crate::ActorRef>,
+    security_scope: Option<crate::SecurityScope>,
+    completion: Option<crate::CommandCompletion>,
     bounded_context: Option<BoundedContextName>,
     operation_id: OperationId,
     operation_fingerprint: ContentFingerprint,
@@ -113,12 +140,25 @@ pub struct EventTransaction {
 }
 
 impl EventTransaction {
+    #[must_use]
+    pub fn with_actor(mut self, actor: crate::ActorRef) -> Self {
+        self.actor = Some(actor);
+        self
+    }
+
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     pub const fn new(
         operation_id: OperationId,
         operation_fingerprint: ContentFingerprint,
         participants: Vec<TransactionParticipant>,
     ) -> Self {
         Self {
+            security_scope: None,
+            actor: None,
+            completion: None,
             bounded_context: None,
             operation_id,
             operation_fingerprint,
@@ -172,6 +212,26 @@ impl EventTransaction {
 
     pub fn into_participants(self) -> Vec<TransactionParticipant> {
         self.participants
+    }
+
+    #[must_use]
+    pub fn with_completion(mut self, completion: crate::CommandCompletion) -> Self {
+        self.completion = Some(completion);
+        self
+    }
+
+    pub const fn completion(&self) -> Option<&crate::CommandCompletion> {
+        self.completion.as_ref()
+    }
+
+    #[must_use]
+    pub fn with_security_scope(mut self, scope: crate::SecurityScope) -> Self {
+        self.security_scope = Some(scope);
+        self
+    }
+
+    pub const fn security_scope(&self) -> Option<&crate::SecurityScope> {
+        self.security_scope.as_ref()
     }
 }
 
@@ -255,6 +315,9 @@ impl TransactionStreamReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransactionReceipt {
+    actor: Option<crate::ActorRef>,
+    security_scope: Option<crate::SecurityScope>,
+    completion: Option<crate::CommandCompletion>,
     bounded_context: Option<BoundedContextName>,
     operation_id: OperationId,
     operation_fingerprint: ContentFingerprint,
@@ -264,12 +327,25 @@ pub struct TransactionReceipt {
 }
 
 impl TransactionReceipt {
+    #[must_use]
+    pub fn with_actor(mut self, actor: crate::ActorRef) -> Self {
+        self.actor = Some(actor);
+        self
+    }
+
+    pub const fn actor(&self) -> Option<&crate::ActorRef> {
+        self.actor.as_ref()
+    }
+
     pub const fn new(
         operation_id: OperationId,
         operation_fingerprint: ContentFingerprint,
         streams: Vec<TransactionStreamReceipt>,
     ) -> Self {
         Self {
+            security_scope: None,
+            actor: None,
+            completion: None,
             bounded_context: None,
             operation_id,
             operation_fingerprint,
@@ -327,6 +403,47 @@ impl TransactionReceipt {
             .flat_map(|stream| stream.events.iter().cloned())
             .collect()
     }
+
+    #[must_use]
+    pub fn with_completion(mut self, completion: crate::CommandCompletion) -> Self {
+        self.completion = Some(completion);
+        self
+    }
+
+    pub const fn completion(&self) -> Option<&crate::CommandCompletion> {
+        self.completion.as_ref()
+    }
+
+    /// Acceptance-only readers must fail closed on rejected outcomes.
+    #[must_use]
+    pub fn with_security_scope(mut self, scope: crate::SecurityScope) -> Self {
+        self.security_scope = Some(scope);
+        self
+    }
+
+    pub const fn security_scope(&self) -> Option<&crate::SecurityScope> {
+        self.security_scope.as_ref()
+    }
+
+    pub(crate) fn without_completion(mut self) -> Self {
+        self.completion = None;
+        self
+    }
+
+    /// Acceptance-only readers must fail closed on rejected outcomes.
+    pub fn require_acceptance(self) -> Result<Self, EventStoreError> {
+        if self
+            .completion
+            .as_ref()
+            .is_some_and(|completion| completion.rejection.is_some())
+        {
+            return Err(EventStoreError::new(
+                EventStoreErrorKind::IdentityConflict,
+                "operation has a completed rejection, not acceptance",
+            ));
+        }
+        Ok(self)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -379,6 +496,18 @@ pub trait EventHistory: Send + Sync {
 
 #[async_trait]
 pub trait EventStore: EventHistory {
+    /// Same authoritative namespace/atomic decision as acceptance receipts. Required API:
+    /// implementations cannot silently omit rejected-outcome durability.
+    async fn load_completed_outcome_in_context(
+        &self,
+        bounded_context: &BoundedContextName,
+        operation_id: &OperationId,
+    ) -> Result<Option<crate::InlineCompletedOutcome>, EventStoreError>;
+
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<crate::CompletedAppendOutcome, EventStoreError>;
     async fn append_session(&self) -> Result<Box<dyn crate::AppendSession + '_>, EventStoreError> {
         Ok(Box::new(crate::append_session::ForwardingAppendSession {
             store: self,
@@ -454,6 +583,21 @@ impl<History: EventHistory + ?Sized> EventHistory for Arc<History> {
 
 #[async_trait]
 impl<Store: EventStore + ?Sized> EventStore for Arc<Store> {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<crate::InlineCompletedOutcome>, EventStoreError> {
+        self.as_ref()
+            .load_completed_outcome_in_context(context, operation)
+            .await
+    }
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<crate::CompletedAppendOutcome, EventStoreError> {
+        self.as_ref().commit_outcome(transaction).await
+    }
     async fn append_session(&self) -> Result<Box<dyn crate::AppendSession + '_>, EventStoreError> {
         self.as_ref().append_session().await
     }

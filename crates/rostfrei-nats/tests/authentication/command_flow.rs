@@ -15,7 +15,9 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei::{
-    CommandBus, CommandExecutor, CommandProcessor, CommandRequest, InfallibleCommandRejectionMapper,
+    AllowAllCommands, CommandBus, CommandExecutor, CommandProcessingService, CommandProcessor,
+    CommandRequest, InfallibleCommandRejectionMapper, PrincipalId, SecurityScope,
+    TrustedCommandContext,
 };
 use rostfrei_core::{
     Aggregate, AggregateId, AggregateType, CommandDecision, CommandExecution, CommandHandler,
@@ -24,14 +26,14 @@ use rostfrei_core::{
     StreamId,
 };
 use rostfrei_messaging_core::{
-    ApplicationName, BoundedContext, CausationId, CommandResponseOutcome, ConsumerConfig,
-    MessageConsumerFactory, RetryDelay,
+    ApplicationName, BoundedContext, CausationId, CommandResponseOutcome, CommandResponseReader,
+    ConsumerConfig, MessageConsumerFactory, RetryDelay,
 };
 use rostfrei_nats::{
     ApplicationMessagingConfig, NatsConnection, NatsDomainEventConsumer,
-    NatsDomainEventConsumerConfig, NatsEventStore, NatsEventStoreConfig, connect,
-    provision_application_messaging, provision_domain_event_consumer, provision_durable_consumer,
-    provision_event_store,
+    NatsDomainEventConsumerConfig, NatsEventStore, NatsEventStoreConfig, ServicePrincipalContext,
+    connect, provision_application_messaging, provision_domain_event_consumer,
+    provision_durable_consumer, provision_event_store,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -128,7 +130,9 @@ fn processor(
     store: &NatsEventStore,
     calls: &Arc<AtomicUsize>,
 ) -> TestResult<CommandProcessor> {
-    let mut processor = CommandProcessor::new(context.name().clone(), Arc::new(store.clone()));
+    let mut processor = CommandProcessor::builder(context.clone(), Arc::new(store.clone()))
+        .authorizer(Arc::new(AllowAllCommands))
+        .build()?;
     processor.register::<Increment, _>(
         IncrementHandler(calls.clone()),
         InfallibleCommandRejectionMapper,
@@ -224,16 +228,29 @@ async fn authenticated_command_flow(explicit: bool) -> TestResult<()> {
     let messaging =
         ApplicationMessagingConfig::new(context.application())?.with_max_bytes(8 * 1024 * 1024)?;
     let store_config = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_fresh_split_outcome_epoch("authenticated-command-flow")?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     provision_application_messaging(connection.jetstream(), &messaging).await?;
     provision_event_store(connection.jetstream(), &store_config).await?;
     let store =
         NatsEventStore::connect(connection.jetstream().clone(), store_config.clone()).await?;
     let calls = Arc::new(AtomicUsize::new(0));
+    // The password-authenticated application is the trusted service principal.
+    // Resolve its fixed context explicitly; never infer it from command metadata.
+    let caller = TrustedCommandContext::new(
+        PrincipalId::new("authenticated-service")?,
+        SecurityScope::new("authenticated-counter")?,
+    );
+    let service = Arc::new(processor(&context, &store, &calls)?);
     let adapter = connection
         .messaging_adapter(messaging.topology().clone())
+        .with_outcome_service(service.clone(), caller.clone())
         .with_response_timeout(WAIT);
-    let handler = Arc::new(adapter.command_handler(Arc::new(processor(&context, &store, &calls)?)));
+    let handler =
+        Arc::new(adapter.command_handler_with_resolver(
+            service,
+            Arc::new(ServicePrincipalContext(caller.clone())),
+        ));
     let bus = CommandBus::new(context.clone(), Arc::new(adapter));
     let operation = OperationId::new("authenticated-increment")?;
     let request = CommandRequest::new(
@@ -315,17 +332,32 @@ async fn authenticated_command_flow(explicit: bool) -> TestResult<()> {
 
     // Invoke a fresh processor so exact command replay is tested independently of
     // JetStream message deduplication and its already-persisted response.
-    let replay = processor(&context, &replay_store, &calls)?
-        .process(&encoded)
-        .await?;
+    let replay_service = Arc::new(processor(&context, &replay_store, &calls)?);
+    let completed = CommandProcessingService::process(replay_service.as_ref(), &caller, &encoded)
+        .await
+        .into_result()?;
+    let replay = completed.admit(&caller, &encoded)?;
     assert_eq!(replay.outcome(), &CommandResponseOutcome::Accepted);
     assert_eq!(calls.load(Ordering::Relaxed), 1);
     assert_eq!(replay_store.load(&stream).await?, history);
+    // Also verify the actual persisted transport projection over the new connection;
+    // the admitted sender below independently consults the authoritative outcome.
+    let persisted_response = replay_connection
+        .command_response_reader(messaging.topology().clone())
+        .read_command_response(
+            &encoded.response_address()?,
+            encoded.operation_id(),
+            encoded.message_id(),
+            WAIT,
+        )
+        .await?;
+    assert_eq!(&persisted_response, result.response());
     let replay_bus = CommandBus::new(
         context.clone(),
         Arc::new(
             replay_connection
                 .messaging_adapter(messaging.topology().clone())
+                .with_outcome_service(replay_service, caller)
                 .with_response_timeout(WAIT),
         ),
     );
