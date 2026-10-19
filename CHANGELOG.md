@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-19
+
+### Changed
+
+- Prepare all 14 public framework/tooling crates for crates.io with descriptions,
+  shared repository/homepage/documentation links and a packaged README. Benchmark
+  and example applications remain private workspace packages.
+- Align the Git release, CLI, Agent Skills kit and registry packages on one 0.1.1
+  source revision. Runtime behavior is unchanged from 0.1.0.
+- Document registry installation and dependency-ordered workspace publication.
+  The generated starter's historical Git pin remains independent of publication.
+
 ## [0.1.0] - 2026-10-19
 
 See the [0.1 migration guide](docs/migration-0.1.md) before upgrading an existing
