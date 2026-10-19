@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The NATS application host rejects several integration handlers for one address,
+  for example typed v1 and v2 handlers of the same contract. They previously
+  shared one durable and quarantined each other's deliveries.
+
 ## [0.1.1] - 2026-10-19
 
 ### Changed
