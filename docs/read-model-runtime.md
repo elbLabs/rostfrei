@@ -85,6 +85,18 @@ Use that form when an event payload does not repeat its aggregate ID. The select
 otherwise dereferences to the typed event, so ordinary `event.organization_id`
 field access works.
 
+Domain events decode with the generated JSON codec by default. An application with
+custom or historical aggregate codecs installs the same frozen registry it gives
+`ApplicationBindings::with_event_codecs`:
+
+```rust
+let read_models = ReadModels::new(context, backend).with_event_codecs(codecs.clone());
+```
+
+Live delivery and history catch-up then decode through that registry. Registering
+a source aggregate without a codec in it is a configuration error; it never falls
+back to generated JSON.
+
 Integration inputs must implement `IntegrationEvent`. Broker ordering is automatic;
 an ordinary event does not need a business version or an `integration_source` call.
 Declare a cross-context producer once with its public event contract:

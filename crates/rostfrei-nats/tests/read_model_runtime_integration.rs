@@ -12,7 +12,10 @@ mod source;
 
 use std::{
     num::NonZeroU32,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -24,7 +27,8 @@ use rostfrei::{
     ReadModelStore, ReadModels, TrafficScope,
 };
 use rostfrei_core::{
-    AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore, ExpectedVersion,
+    AggregateCodecs, AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventCodec,
+    EventCodecError, EventCodecErrorKind, EventId, EventStore, ExpectedVersion, JsonEventCodec,
     NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion, derive_commit_id,
     derive_event_id,
 };
@@ -182,6 +186,19 @@ impl Fixture {
         id: &str,
         changes: Vec<OrganizationEvent>,
     ) -> TestResult<Vec<RecordedEvent>> {
+        let encoded = changes
+            .iter()
+            .map(|event| Ok((event.event_type(), 1, event.encode_json()?)))
+            .collect::<TestResult<Vec<_>>>()?;
+        self.seed_encoded(aggregate, id, encoded).await
+    }
+
+    async fn seed_encoded(
+        &self,
+        aggregate: &str,
+        id: &str,
+        encoded: Vec<(&str, u32, Vec<u8>)>,
+    ) -> TestResult<Vec<RecordedEvent>> {
         let stream = StreamId::new(AggregateType::new(aggregate)?, AggregateId::new(id)?);
         let prior = self.history.load(&stream).await?;
         let operation = OperationId::new(format!("seed-{aggregate}-{id}-{}", prior.len()))?;
@@ -195,15 +212,15 @@ impl Fixture {
             commit.clone(),
             operation,
             ContentFingerprint::digest("runtime-events"),
-            changes
-                .iter()
+            encoded
+                .into_iter()
                 .enumerate()
-                .map(|(ordinal, event)| {
+                .map(|(ordinal, (event_type, schema_version, payload))| {
                     Ok(NewEvent::new(
                         derive_event_id(&commit, u32::try_from(ordinal)?),
-                        event.event_type(),
-                        1,
-                        event.encode_json()?,
+                        event_type,
+                        schema_version,
+                        payload,
                     )?)
                 })
                 .collect::<TestResult<Vec<_>>>()?,
@@ -442,6 +459,81 @@ async fn checkpoints_are_independent_for_aggregate_types_and_identities() -> Tes
             .ok_or("missing")?
             .members,
         12
+    );
+    fixture.cleanup().await
+}
+
+/// Deliberately non-JSON, so the generated codec cannot decode these records.
+struct TextOrganizationCodec;
+impl EventCodec<Organization> for TextOrganizationCodec {
+    fn encode(&self, event: &OrganizationEvent, id: EventId) -> Result<NewEvent, EventCodecError> {
+        <JsonEventCodec as EventCodec<Organization>>::encode(&JsonEventCodec, event, id)
+    }
+    fn decode(&self, event: &RecordedEvent) -> Result<OrganizationEvent, EventCodecError> {
+        std::str::from_utf8(event.payload())
+            .ok()
+            .and_then(|payload| payload.strip_prefix("joined:"))
+            .map(joined)
+            .ok_or_else(|| {
+                EventCodecError::new(EventCodecErrorKind::MalformedPayload, "not a text member")
+            })
+    }
+}
+
+#[tokio::test]
+async fn domain_handlers_and_catch_up_decode_through_the_shared_registry() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let mut codecs = AggregateCodecs::default();
+    codecs.register::<Organization, _>(TextOrganizationCodec)?;
+    let model = ReadModels::new(fixture.context.clone(), fixture.backend())
+        .with_event_codecs(Arc::new(codecs))
+        .register::<OrganizationAccess>()
+        .from_aggregate::<Organization>()
+        .on_domain_event::<MemberJoined>(
+            |event| event.organization_id.clone(),
+            |view, _| view.members = view.members.saturating_add(1),
+        )
+        .build()
+        .await?;
+    let records = fixture
+        .seed_encoded(
+            "organization",
+            "org-1",
+            vec![
+                ("member-joined", 1, b"joined:org-1".to_vec()),
+                ("member-joined", 1, b"joined:org-1".to_vec()),
+            ],
+        )
+        .await?;
+    // The last record catches up the first one from authoritative history.
+    assert_eq!(
+        model
+            .dispatch_domain(records.last().ok_or("missing")?)
+            .await?,
+        rostfrei_core::DomainEventDispatchOutcome::Handled
+    );
+    assert_eq!(
+        model
+            .reader()
+            .read(&ReadModelKey::new("org-1")?)
+            .await?
+            .ok_or("missing")?
+            .members,
+        2
+    );
+    let unregistered = ReadModels::new(fixture.context.clone(), fixture.backend())
+        .with_event_codecs(Arc::new(AggregateCodecs::default()))
+        .register::<OrganizationAccess>()
+        .from_aggregate::<Organization>()
+        .on_domain_event::<MemberJoined>(|event| event.organization_id.clone(), |_, _| {})
+        .build()
+        .await;
+    assert!(
+        matches!(
+            unregistered,
+            Err(ReadModelProcessingError::Configuration(_))
+        ),
+        "a frozen registry must not silently fall back to generated JSON"
     );
     fixture.cleanup().await
 }

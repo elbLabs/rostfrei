@@ -22,6 +22,7 @@
 - [Subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
   ([offline HTML guide](subjects.html))
 - [Event-driven read models](read-model-runtime.md) and [typed storage](read-models.md)
+- [Evolving private domain events](event-schema-evolution.md)
 - [Continuous observation](continuous-observation.md)
 - [Quarantine inspection](quarantine-inspection.md) and [example walkthrough](../examples/bike-rental/QUARANTINE.md)
 - [Domain-event worker pool](design/domain-event-worker-pool.md)

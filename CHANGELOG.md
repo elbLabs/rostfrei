@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `ReadModels::with_event_codecs` decodes live domain events and history catch-up
+  through the application's shared `AggregateCodecs`. Without it, read models keep
+  the generated JSON codec.
+- Maintained private-event evolution example (`cargo run -p bike-rental --example
+  event_evolution`) and [schema evolution guide](docs/event-schema-evolution.md):
+  genuine v1 history, explicit conversions, current-schema writes and mixed reloads,
+  tested in memory and on real NATS.
+
+### Changed
+
+- **Breaking (shared codecs):** with an installed `with_event_codecs` registry,
+  `ApplicationBindings::register_aggregate` and read-model domain registration
+  reject an aggregate without a codec in it instead of silently falling back to
+  generated JSON. Execution now agrees with fixture validation.
+
 ## [0.1.1] - 2026-10-19
 
 ### Changed
