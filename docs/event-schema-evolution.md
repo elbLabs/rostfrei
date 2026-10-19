@@ -78,6 +78,15 @@ Convert to the current representation only where the meaning survives. v1
 the example keeps an explicit `RetirementReason::Unrecorded` instead of inventing
 one. `Apply` and current commands then handle that distinction deliberately.
 
+When no current value can express the historical fact, keep a separate legacy
+event variant and give it its own `Apply` path. The generated event set requires
+unique event IDs, so a v1 and a v2 variant of one event ID currently need a
+hand-written event enum and codec. Typed support for that distinction is tracked
+in [#111](https://github.com/elbLabs/rostfrei/issues/111).
+
+The stored record stays v1 either way: `CommittedDomainEvent::recorded()` still
+exposes its original schema, identity and bytes.
+
 Decoding is pure. It never rewrites records, changes event or provenance
 identities, runs command handlers, raises events, or publishes effects.
 
@@ -135,7 +144,8 @@ instance remains.
 - Each supported schema is an explicit match arm; there are no automatic upcaster
   chains.
 - Post-commit handlers are routed by stored event type. Keep the event ID; a
-  renamed historical event type does not reach the handler of the new name.
+  renamed historical event type does not reach the handler of the new name
+  ([#111](https://github.com/elbLabs/rostfrei/issues/111)).
 - Private schema, integration-event contract, crate release, stream position and
   durable subscription identity stay independent. A schema change never renames
   subjects or durables.
