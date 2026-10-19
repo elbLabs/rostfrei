@@ -33,6 +33,7 @@ the same Markdown/MDX sources without requiring JavaScript.
 - [Message schemas and subscription upgrades](messaging-upgrades.md)
 - [Event-driven read models](read-models/index.mdx), [NATS setup](read-models/nats.mdx),
   [ordering and recovery](read-models/ordering.mdx), and [typed storage](read-models.md)
+- [Evolving private domain events](event-schema-evolution.md)
 - [Continuous observation](continuous-observation.md)
 - [Handler simulation](handler-simulation.md)
 - [Quarantine inspection](quarantine-inspection.md) and [example walkthrough](../examples/bike-rental/QUARANTINE.md)
