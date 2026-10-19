@@ -4,8 +4,36 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-19
+
+See the [0.1 migration guide](docs/migration-0.1.md) before upgrading an existing
+application or NATS authority.
+
 ### Added
 
+- Modular command execution with a coordinated `ExecutionStore`, consuming commit
+  sessions, permanent completed-decision markers and separately recoverable result
+  details. Accepted, rejected and event-free outcomes remain idempotent across
+  direct, local, NATS and HTTP execution, including with conflict retries disabled.
+- Object-safe `CommandProcessingService` with per-call trusted context, explicit
+  authorization, optional bounded audit delivery, shared event/rejection codecs
+  and authorized completed-result lookup. `ActorRef` preserves original attribution
+  independently of the authenticated principal and security scope.
+- Incarnation-fenced NATS journal/outcome-state authority pairs, verified result
+  recovery and explicit detail expiry. Expiry withdraws result details while
+  retaining the decision and event-integrity evidence; it never permits reevaluation.
+- Application-linked `NatsApplication`/`NatsRuntime` host with shared bindings,
+  supervised workers, optional Tracer HTTP, configured execution profiles and
+  paired Test reset. The bike-rental entry point enables Tracer with `--tracer`.
+- Dependency-aware native Agent Skills setup and portable, checksummed release
+  kits. `cargo rostfrei skills install/update` follows the application's locked
+  framework revision, preserves managed-file conflicts, and retains the matching
+  native runner for source-free execution. The development skill guides actual
+  NATS-backed Given/When/Then red/green work and a visible evidence walkthrough.
+- Opt-in continuous observation of application-originated domain and integration
+  events, with scope-isolated retention, health, redacted message series and
+  read-only list/detail/SSE discovery. Studio adds Test/Production observation,
+  filtering, pause/resume, reconnection and retention diagnostics.
 - Non-published `rostfrei-benchmarks` workspace package owning aggregate readiness,
   typed read-model query workloads and paired history comparisons. Its Rust runner
   manages disposable pinned NATS, cancellation/cleanup, subprocess failures and
@@ -17,11 +45,32 @@ All notable changes to this project are documented in this file.
 - `ReadModel` declarations and event-only registration builders with automatic
   persistence, source checkpoints, bounded CAS retries, authoritative domain-gap
   catch-up, broker-default integration ordering with optional business versions,
-  read-only query handles, and
-  managed NATS consumer workers.
+  read-only query handles, and managed NATS consumer workers.
+- `NatsEventStore::with_history_auditing(bool)` selects historical auditing per
+  handle. It defaults to off and never disables local integrity or operation-specific
+  write/retry checks; explicit audit methods always audit.
 
 ### Changed
 
+- **Breaking (runtime ports and results):** executor backends implement
+  `ExecutionStore`; the pre-release `CommandBackend` name is retired.
+  `CompletedOutcome<T>` carries a permanent marker and detail availability;
+  `InlineCompletedOutcome` names the explicit legacy full-result wrapper.
+  Completed-result recovery failures remain technical failures, not permission
+  to evaluate a completed operation again.
+- **Breaking (NATS command authority):** new coordinated execution requires explicit
+  fresh split-outcome authority. Legacy history stays fail-closed for unevidenced
+  execution. Journal and state resources, their incarnations and the configured
+  epoch are one authority; an epoch change is an operator-managed cutover.
+- **Command-response timeout:** `NatsMessagingAdapter::new` now defaults to a
+  30-second response-reading budget instead of waiting indefinitely.
+  `with_response_timeout` remains configurable. Publication, observers and replay
+  admission precede the budget; a timeout is an unconfirmed outcome, not
+  cancellation or automatic republish.
+- **Consumer capacity:** `ConsumerConfig::concurrency()` bounds one worker's
+  handlers. `with_shared_pending_limit` independently sizes the durable's shared
+  unacknowledged-message budget, including prefetch. Its default remains local
+  concurrency for compatibility; it supplies no per-worker reservation or fairness.
 - Add explicit **Simulate handler** diagnostics through the control catalog's
   `simulateHandlerHrefTemplate` and POST `/simulate-handler`: real registered
   handler computation with starting versions, typed decision and proposed,
@@ -46,8 +95,9 @@ All notable changes to this project are documented in this file.
   context-scoped acceptance receipt by default. `CommandReceipt::AcceptedNoEvents`
   replaces transient `NoEvents`; exact retries return `ExactReplay` with no events.
   Empty/read-only transactions are supported by memory and NATS stores, with atomic
-  read guards and normal fingerprint/provenance conflicts. NATS uses receipt schema
-  2 for event-free acceptance and continues reading existing receipts and histories.
+  read guards and normal fingerprint/provenance conflicts. Existing schema-2
+  event-free receipts remain readable; new split execution uses permanent
+  manifest-bearing receipts and separate result state.
   Past transient no-op acceptances cannot be reconstructed retroactively. See
   [ADR 0039](docs/adr/0039-durable-event-free-acceptance.md).
 - **NATS read policy:** ordinary aggregate/session reads and stream discovery now
@@ -57,16 +107,23 @@ All notable changes to this project are documented in this file.
   Missing or inconsistent historical receipts inserted outside the supported
   store API are no longer detected by every ordinary load. Atomic writes,
   operation-specific replay/reconciliation, and stored wire formats are preserved.
-
-### Added
-
-- `NatsEventStore::with_history_auditing(bool)` enables or disables historical
-  auditing per handle. It defaults to off, applies consistently to loads,
-  discovery and append-session histories, and never disables local integrity or
-  operation-specific write/retry checks. Explicit audit methods always audit.
+- Website and Studio share the Reference '15 component library, theme behavior,
+  responsive layouts and Rostfrei branding.
 
 ### Fixed
 
+- Completed replay rechecks current authorization, immutable identity and detail
+  availability before exposing a result, including after publication and response
+  retrieval. Retained transport responses cannot bypass expired result authority.
+- Custom codec/rejection meanings and configured execution policies survive paired
+  Test resets. Reset and teardown fence retained transports and stale store handles.
+- Typed technical failures retain their source, recovery classification and original
+  command evidence. Quarantine remains inspection-first; recovery/redrive is explicit.
+- Rustls is locked to patched 0.23.45; command-fixture authentication and native
+  restart checks run in the real-NATS CI suite. Subprocess output draining observes
+  child exit and retains credential redaction.
+- Website overlay checks wait for actual deferred focus restoration within the
+  existing deadline, retaining the original accessibility assertion.
 - New projects build outside the repository with unmodified manifests by pinning
   Rostfrei dependencies to the available `v0.0.5-alpha` Git release commit.
   The starter pin is independent of CLI version bumps and advances after release
@@ -83,15 +140,16 @@ All notable changes to this project are documented in this file.
   as stable identities and distinguishes command cutover from event replay.
   Startup does not delete or migrate conflicting durables or queued payloads.
 
-### Added
+### Release scope
 
-- Opt-in continuous observation of application-originated domain and integration
-  events, with bounded scope-isolated retention, observer health, redacted
-  canonical message series, and read-only list/detail/SSE discovery.
-- Studio Observe panel with Test/Production selection, live flow updates,
-  filtering, pause/resume, reconnection, and partial/retention diagnostics.
-- Bike-rental observer wiring and real-NATS coverage of externally submitted
-  commands and their integration-triggered reactions.
+- Install Rust crates/CLI from the Git release; the release workflow publishes the
+  Agent Skills archive and checksum, not crates.io packages.
+- The generated starter still pins published `v0.0.5-alpha`, which predates Skills.
+  Upgrade its dependency deliberately before installing 0.1 skills; advancing the
+  default starter pin is a [post-publication follow-up](docs/starter-skills-followup.md).
+- Aggregate snapshots, whole-history completed-result replay optimization and richer
+  integration-event redrive UX remain deferred. Local broker qualification does not
+  establish replicated failover, Kubernetes lifecycle or restore qualification.
 
 ## [0.0.5-alpha] - 2026-09-16
 
