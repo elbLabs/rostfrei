@@ -120,7 +120,9 @@ workers, and retire their durable before provisioning its replacement. A new
 durable cannot replay commands already removed by acknowledgement. Stable names
 preserve progress but do not make incompatible payloads readable: register
 compatibility handlers for supported schemas. This example registers only its
-current schemas. See [durable consumer versions](../../docs/adr/0014-application-scoped-nats-conventions.md#durable-consumer-versions).
+current schemas; [`examples/event_evolution`](examples/event_evolution/main.rs)
+shows evolved private events reading genuine v1 history
+([guide](../../docs/event-schema-evolution.md)). See [durable consumer versions](../../docs/adr/0014-application-scoped-nats-conventions.md#durable-consumer-versions).
 
 ## Quarantine walkthrough
 

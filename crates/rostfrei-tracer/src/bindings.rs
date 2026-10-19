@@ -27,6 +27,10 @@ pub enum ApplicationBindingError {
     Codec(#[from] rostfrei_core::CodecRegistrationError),
     #[error(transparent)]
     EventCodec(#[from] rostfrei_core::EventCodecError),
+    #[error("shared codec registry has no codec for aggregate `{aggregate_type}`")]
+    UnknownAggregateCodec {
+        aggregate_type: rostfrei_core::AggregateType,
+    },
 }
 
 type ProcessorBinding =
@@ -152,6 +156,12 @@ impl ApplicationBindings {
         if self.shared_codecs {
             // Also reject a codec registered for another Rust model under this name.
             self.codecs.resolve::<A>()?;
+            // A frozen registry is complete; never fall back to generated JSON.
+            let aggregate_type = rostfrei_core::AggregateType::new(A::aggregate_type())
+                .map_err(rostfrei_core::CodecRegistrationError::from)?;
+            if !self.codecs.contains(&aggregate_type) {
+                return Err(ApplicationBindingError::UnknownAggregateCodec { aggregate_type });
+            }
         } else {
             Arc::make_mut(&mut self.codecs).register_json::<A>()?;
             self.fixtures = MessageSeriesEngine::with_codecs(self.codecs.clone());

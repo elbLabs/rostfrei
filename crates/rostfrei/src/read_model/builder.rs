@@ -6,7 +6,10 @@ use std::{
 };
 
 use domain::DomainEvent;
-use rostfrei_core::{Aggregate, DomainEventDispatcher, Event, EventVariant, ReadModel};
+use rostfrei_core::{
+    Aggregate, AggregateCodecs, AggregateType, DomainEventDispatcher, Event, EventCodec,
+    EventVariant, JsonEventCodec, ReadModel,
+};
 use rostfrei_messaging_core::{BoundedContext, BoundedContextName};
 
 use super::{
@@ -22,6 +25,7 @@ pub struct ReadModels<B: ReadModelBackend> {
     context: BoundedContext,
     backend: Arc<B>,
     registered: Arc<Mutex<HashSet<String>>>,
+    codecs: Option<Arc<AggregateCodecs>>,
 }
 
 impl<B: ReadModelBackend> ReadModels<B> {
@@ -30,7 +34,16 @@ impl<B: ReadModelBackend> ReadModels<B> {
             context,
             backend: Arc::new(backend),
             registered: Arc::new(Mutex::new(HashSet::new())),
+            codecs: None,
         }
+    }
+
+    /// Decode domain events through the application's frozen codec registry.
+    /// Every registered source aggregate must have a codec in it.
+    #[must_use]
+    pub fn with_event_codecs(mut self, codecs: Arc<AggregateCodecs>) -> Self {
+        self.codecs = Some(codecs);
+        self
     }
 
     pub fn register<M: ReadModel>(&self) -> ReadModelBuilder<M, B> {
@@ -50,7 +63,11 @@ impl<B: ReadModelBackend> ReadModels<B> {
                 resources: OnceLock::new(),
                 retries: 8,
             }),
-            dispatcher: DomainEventDispatcher::new(),
+            dispatcher: self.codecs.clone().map_or_else(
+                DomainEventDispatcher::new,
+                DomainEventDispatcher::with_codecs,
+            ),
+            codecs: self.codecs.clone(),
             domain: BTreeMap::new(),
             integrations: Vec::new(),
             sources: HashMap::new(),
@@ -82,6 +99,7 @@ pub struct ReadModelBuilder<M: ReadModel, B: ReadModelBackend, A = NoDomainSourc
     context: BoundedContext,
     session: Arc<Session<M>>,
     dispatcher: DomainEventDispatcher,
+    codecs: Option<Arc<AggregateCodecs>>,
     domain: DomainReducers<M>,
     integrations: Vec<PendingIntegration>,
     sources: HashMap<TypeId, Source>,
@@ -99,6 +117,7 @@ impl<M: ReadModel, B: ReadModelBackend, A> ReadModelBuilder<M, B, A> {
             context: self.context,
             session: self.session,
             dispatcher: self.dispatcher,
+            codecs: self.codecs,
             domain: self.domain,
             integrations: self.integrations,
             sources: self.sources,
@@ -311,7 +330,18 @@ where
         if A::BOUNDED_CONTEXT != self.context.name().as_str() {
             self.fail("domain aggregate belongs to another bounded context");
         }
+        let codec = match self.codecs.as_deref().map_or_else(
+            || -> Result<Arc<dyn EventCodec<A>>, String> { Ok(Arc::new(JsonEventCodec)) },
+            registered_codec::<A>,
+        ) {
+            Ok(codec) => codec,
+            Err(message) => {
+                self.fail(&message);
+                return self;
+            }
+        };
         let reducer = TypedDomainReducer::<M, A, E> {
+            codec,
             key: Arc::new(key),
             change: Arc::new(change),
             marker: PhantomData,
@@ -328,4 +358,19 @@ where
         }
         self
     }
+}
+
+fn registered_codec<A>(codecs: &AggregateCodecs) -> Result<Arc<dyn EventCodec<A>>, String>
+where
+    A: Aggregate + 'static,
+    A::Event: Event,
+{
+    let aggregate_type =
+        AggregateType::new(A::aggregate_type()).map_err(|error| error.to_string())?;
+    if !codecs.contains(&aggregate_type) {
+        return Err(format!(
+            "no codec registered for domain aggregate `{aggregate_type}`"
+        ));
+    }
+    codecs.resolve::<A>().map_err(|error| error.to_string())
 }

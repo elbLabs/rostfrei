@@ -132,6 +132,9 @@ an application name alone is not authority selection.
 fixture validation, real execution, private-event dispatch and `simulate_handler`.
 Register/replace codecs before sharing it and include fixture aggregate codecs.
 Registering descriptors afterward does not mutate shared codec configuration.
+The installed registry is complete: `register_aggregate` rejects an aggregate
+without a codec in it (`UnknownAggregateCodec`) instead of falling back to
+generated JSON. Pass the same registry to `ReadModels::with_event_codecs`.
 
 `NatsRuntimeConfig.execution_profile` defaults explicitly to
 `NatsExecutionProfile::TrustedCompatibility`: durable decisions, without configured
