@@ -13,6 +13,11 @@ framework. See the [0.1 migration guide](docs/migration-0.1.md) when upgrading.
 
 ## Start here
 
+For the 0.1.1 registry release, add `rostfrei = "0.1.1"` and matching adapters to
+your application's dependencies. Install the development CLI separately with
+`cargo install --locked --version 0.1.1 rostfrei-structure`; see
+[Agent Skills setup](docs/agent-skills-install.md) for dependency-aware installation.
+
 - [Getting started](https://elblabs.github.io/rostfrei/docs/getting-started):
   inspect the model, start NATS, and open Tracer Studio.
 - [Bike-rental example](examples/bike-rental): run a NATS-backed application
