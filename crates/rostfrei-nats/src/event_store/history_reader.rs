@@ -20,6 +20,15 @@ impl HistoryReader {
         stream: &jetstream::stream::Stream,
         subject: &str,
     ) -> Result<Self, EventStoreError> {
+        Self::starting_at(context, stream, subject, 1).await
+    }
+
+    pub(super) async fn starting_at(
+        context: &jetstream::Context,
+        stream: &jetstream::stream::Stream,
+        subject: &str,
+        sequence: u64,
+    ) -> Result<Self, EventStoreError> {
         let name = context.client().new_inbox().replace('.', "_");
         let mut reader = Self {
             messages: None,
@@ -31,7 +40,9 @@ impl HistoryReader {
             .create_consumer(pull::OrderedConfig {
                 name: Some(name),
                 filter_subject: subject.to_owned(),
-                deliver_policy: jetstream::consumer::DeliverPolicy::All,
+                deliver_policy: jetstream::consumer::DeliverPolicy::ByStartSequence {
+                    start_sequence: sequence,
+                },
                 replay_policy: jetstream::consumer::ReplayPolicy::Instant,
                 ..Default::default()
             })

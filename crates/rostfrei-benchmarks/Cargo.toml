@@ -10,7 +10,9 @@ default-run = "rostfrei-benchmarks"
 [dependencies]
 async-nats.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 clap.workspace = true
+futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

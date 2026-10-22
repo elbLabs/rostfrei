@@ -85,6 +85,9 @@ pub use read_model::{
     ReadModelRuntime, ReadModelState, ReadModels,
 };
 pub use rostfrei_core::{
+    AggregateReconstruction, HistoryCheckpoint, InMemorySnapshotStore, JsonSnapshotCodec,
+    RebuildDiagnostics, RebuildReport, ReplayHistory, SnapshotCodec, SnapshotKey, SnapshotPolicy,
+    SnapshotRequest, SnapshotState, SnapshotStatus, SnapshotStore, StoredSnapshot,
     ActorRef, Aggregate, AggregateCodecs, AggregateId as StreamAggregateId, AggregateInstance,
     AggregateType as StreamAggregateType, AppendOutcome, AppendSession, BoundedConflictRetries,
     CommandAuthority, CommandCommitSession, CommandCompletion, CommandDecision, CommandExecution,

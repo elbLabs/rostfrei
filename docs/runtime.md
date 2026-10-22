@@ -40,6 +40,23 @@ history read does not itself verify writable authority.
 See the [subject deployment requirements](messaging/subjects.mdx#fresh-deployments)
 and [retained correlation inspection contract](continuous-observation.md#retained-correlation-inspection).
 
+## Aggregate snapshots
+
+Snapshots are optional derived state at a complete committed event version; original
+events remain authoritative and retained. Configure `AggregateCodecs` with a
+`SnapshotStore` and `register_json_snapshot::<A>(replay_revision, schema, policy)`,
+then share that registry with the executor/processor. For NATS, provision a scoped
+KV bucket, connect `NatsSnapshotStore`, and enable `store.with_snapshotting(true)`.
+Change the replay revision when initialization, event decoding or application changes.
+
+`CommandExecutor::create_snapshot` captures an exact version; `rehydrate_at` restores
+a selected version and `verify_snapshot` compares against original-event replay.
+Compatible snapshots skip the prefix; invalid/incompatible caches fall back to
+original history. `RebuildDiagnostics` reports replay work, and applications drain
+policy requests with `run_snapshot_jobs`. Fixture-v1 `snapshots` entries retain all
+backing events: omit `state` to capture during installation, or supply verified state
+that is rebound to the destination history authority.
+
 ## NATS authentication
 
 `NatsConnectionConfig` supports connection-wide username/password authentication,

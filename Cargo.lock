@@ -1710,7 +1710,9 @@ version = "0.2.2"
 dependencies = [
  "async-nats",
  "async-trait",
+ "base64",
  "clap",
+ "futures-util",
  "rostfrei",
  "rostfrei-core",
  "rostfrei-messaging-core",
@@ -1729,6 +1731,7 @@ name = "rostfrei-core"
 version = "0.2.2"
 dependencies = [
  "async-trait",
+ "base64",
  "rostfrei-messaging-core",
  "serde",
  "serde_json",
