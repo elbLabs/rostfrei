@@ -30,6 +30,15 @@ impl HistoryReader {
         stream: &jetstream::stream::Stream,
         subject: &str,
     ) -> Result<Self, EventStoreError> {
+        Self::starting_at(context, stream, subject, 1).await
+    }
+
+    pub(super) async fn starting_at(
+        context: &jetstream::Context,
+        stream: &jetstream::stream::Stream,
+        subject: &str,
+        sequence: u64,
+    ) -> Result<Self, EventStoreError> {
         // Include delivery/header overhead and preserve readability of older, larger events.
         let maximum_message_bytes = usize::try_from(stream.cached_info().config.max_message_size)
             .unwrap_or(super::MAX_SUPPORTED_EVENT_BYTES);
@@ -40,7 +49,9 @@ impl HistoryReader {
         let consumer = stream
             .create_consumer(jetstream::consumer::pull::Config {
                 filter_subject: subject.to_owned(),
-                deliver_policy: jetstream::consumer::DeliverPolicy::All,
+                deliver_policy: jetstream::consumer::DeliverPolicy::ByStartSequence {
+                    start_sequence: sequence,
+                },
                 ack_policy: jetstream::consumer::AckPolicy::None,
                 replay_policy: jetstream::consumer::ReplayPolicy::Instant,
                 memory_storage: true,

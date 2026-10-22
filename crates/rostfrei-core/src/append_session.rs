@@ -33,6 +33,19 @@ pub struct ForwardingAppendSession<'a, S: ?Sized> {
 
 #[async_trait]
 impl<S: EventStore + ?Sized> EventHistory for ForwardingAppendSession<'_, S> {
+    fn history_authority(&self) -> Option<&str> {
+        self.store.history_authority()
+    }
+
+    async fn load_replay(
+        &self,
+        stream_id: &StreamId,
+        after: Option<&crate::HistoryCheckpoint>,
+        through: Option<crate::StreamVersion>,
+    ) -> Result<crate::ReplayHistory, EventStoreError> {
+        self.store.load_replay(stream_id, after, through).await
+    }
+
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         self.store.load(stream_id).await
     }

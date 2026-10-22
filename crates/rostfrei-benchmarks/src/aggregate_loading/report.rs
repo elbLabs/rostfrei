@@ -28,6 +28,10 @@ pub struct Sample {
     pub events_before: u64,
     pub elapsed_ns: u64,
     pub nats_out_messages: u64,
+    pub nats_in_messages: u64,
+    pub nats_in_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rebuild: Option<rostfrei_core::RebuildReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history_load_ns: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -57,6 +61,8 @@ pub struct CaseReport {
     pub seeded_events: u32,
     pub seeded_domain_payload_bytes: usize,
     pub setup_ns: u64,
+    pub snapshot_creation_ns: Option<u64>,
+    pub snapshot_state_bytes: Option<usize>,
     pub samples: Vec<Sample>,
     pub summaries: Vec<Summary>,
 }

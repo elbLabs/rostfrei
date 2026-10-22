@@ -64,6 +64,9 @@ fn summaries_preserve_sample_counts_growth_and_quantile_definitions() -> suite::
                     events_before: u64::from(index),
                     elapsed_ns: u64::from(index),
                     nats_out_messages: if phase == Phase::ApplyOnly { 0 } else { 3 },
+                    nats_in_messages: 0,
+                    nats_in_bytes: 0,
+                    rebuild: None,
                     history_load_ns: (phase == Phase::Rehydrate).then_some(0),
                     after_history_ns: (phase == Phase::Rehydrate).then_some(u64::from(index)),
                 });

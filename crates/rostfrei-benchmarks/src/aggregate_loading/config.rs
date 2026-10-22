@@ -10,6 +10,8 @@ use super::BenchResult;
 pub enum HistoryKind {
     Direct,
     Commands,
+    /// Efficient large fixture: fifty events per coordinated transaction, checked-prefix sessions.
+    BatchedTransactions,
 }
 
 impl HistoryKind {
@@ -17,6 +19,7 @@ impl HistoryKind {
         match self {
             Self::Direct => "direct",
             Self::Commands => "commands",
+            Self::BatchedTransactions => "batched-transactions",
         }
     }
 }
@@ -40,6 +43,9 @@ pub struct Options {
     /// Audit historical transaction evidence during read phases (writes stay ordinary).
     #[arg(long)]
     pub audit_reads: bool,
+    /// Capture this complete-commit version before measuring snapshot-aware reads/writes.
+    #[arg(long)]
+    pub snapshot_at: Option<u32>,
     /// Bytes in the event's note field; total JSON/wire payload is larger.
     #[arg(long, default_value_t = 128, value_parser = clap::value_parser!(u32).range(0..=65536))]
     pub note_bytes: u32,
@@ -69,6 +75,14 @@ impl Options {
             || self.history.iter().collect::<HashSet<_>>().len() != self.history.len()
         {
             return Err("--history requires unique history kinds".into());
+        }
+        if self
+            .snapshot_at
+            .is_some_and(|version| version == 0 || self.events.iter().any(|count| version > *count))
+        {
+            return Err(
+                "--snapshot-at must be positive and no greater than any --events count".into(),
+            );
         }
         Ok(())
     }

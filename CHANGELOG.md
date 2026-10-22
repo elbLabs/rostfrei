@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in aggregate snapshots with NATS KV storage, version-selected replay,
+  verification, rebuild diagnostics and snapshot-backed fixtures. Original events
+  remain authoritative and retained.
+
 ## [0.1.1] - 2026-10-19
 
 ### Changed

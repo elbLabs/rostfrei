@@ -27,7 +27,7 @@ then cleans it up. The benchmark provisions a uniquely named Test-scoped event
 store and removes it on success or a returned error. A direct invocation requires
 an explicit, nonempty `ROSTFREI_NATS_URL`; the disposable runner is recommended.
 
-The full matrix includes both history kinds. Creating 1,000 command-generated
+The default matrix includes direct and command histories. Creating 1,000 command-generated
 events executes **1,000 real commands**, including their history loads and atomic
 appends, so fixture creation can take considerably longer than the measured
 samples. Setup time is reported separately and excluded from sample timings.
@@ -42,6 +42,10 @@ target/release/rostfrei-benchmarks aggregate-loading -- \
   --history commands --events 1000 --note-bytes 1024 --samples 20 \
   --output target/benchmarks/aggregate-1k-command-history.json
 ```
+
+`--snapshot-at VERSION` creates a NATS KV checkpoint before timed phases and enables
+snapshot-plus-tail rehydration and commands. The target must end a complete commit;
+capture time/state size are reported separately. Original events remain retained.
 
 The `rostfrei-benchmarks` package owns the suite and Rust broker runner.
 Actual broker measurements reject debug builds. The default artifact is the checkout's
@@ -60,12 +64,13 @@ The default note is 128 bytes. **That is not the total event size:** JSON fields
 storage envelopes, headers, receipts, and encoding add bytes. The report records
 the exact seeded domain-payload total.
 
-Two history kinds are supported:
+Three history kinds are supported:
 
 | Kind | Fixture creation |
 | --- | --- |
 | `direct` | Low-level atomic event batches, bounded by both event count and payload bytes; no per-command receipts |
 | `commands` | One typed handler execution and one event-producing transaction per event, with durable receipts |
+| `batched-transactions` | Up to fifty events per coordinated transaction, using checked-prefix sessions to bound fixture-creation work; receipts are retained |
 
 The command-history case is the more representative baseline for ordinary
 command-driven applications. A complex application's apply logic or growing
@@ -92,7 +97,8 @@ controlled A/B measurement on the same 1,000-command history.
 
 - `history_load_ns`: time in the underlying event-history provider.
 - `after_history_ns`: remaining runtime validation, typed decoding,
-  initialization, and apply work before the aggregate is returned.
+  initialization, and apply work before the aggregate is returned; with snapshots,
+  it also includes snapshot lookup and state decoding.
 
 These paired intervals avoid estimating apply cost by subtracting the medians of
 two independent, noisy benchmark phases. The second interval is broader than
@@ -110,8 +116,8 @@ integrations are outside this boundary.
 
 ## Controls and correctness
 
-- Cases use a fresh application/event-store namespace. No snapshots or
-  process-wide aggregate cache shortcut rehydration.
+- Cases use a fresh application/event-store namespace. Snapshots are enabled only
+  with `--snapshot-at`; there is no process-wide aggregate state cache.
 - The benchmark runs on a Tokio worker with an explicit worker count (default 2).
 - Read phases rotate their execution order between samples and share the same
   immutable fixture. Explicit warmup count defaults to 1.
@@ -133,13 +139,16 @@ integrations are outside this boundary.
 ## Report
 
 The JSON artifact is written atomically after a successful run and cleanup.
-Schema version 1 includes:
+Schema version 2 includes:
 
 - Timestamp, Git revision/dirty flag, framework and Rust versions, server version,
   architecture, available CPU count, and configured runtime/workload parameters.
 - Case setup time and exact seeded domain-payload bytes.
+- Optional snapshot capture duration and state size, and the selected target.
 - **Every raw sample**, with phase, iteration, history size, duration in
   nanoseconds, request/publication count, and optional paired rehydration intervals.
+- Incoming NATS messages/bytes across the whole sample and runtime rebuild reports
+  for readiness and commands (snapshot hit/version, events read/applied, phase costs).
 - Sample count, minimum, median, maximum, request counts, and history-size ranges.
 - A nearest-rank `p95_ns` only when at least 20 samples are available. Small runs
   intentionally do not report a misleading percentile.
@@ -164,6 +173,7 @@ not a reliable production p95/p99 under load.
 | `--samples` | `5` | Timed samples per phase |
 | `--warmups` | `1` | Untimed warmups per read phase; writes warm a separate aggregate |
 | `--audit-reads` | off | Audit historical receipts/participants during read phases |
+| `--snapshot-at` | absent | Capture an exact positive complete-commit version and enable snapshots |
 | `--note-bytes` | `128` | JSON note length, up to 65,536 bytes |
 | `--workers` | `2` | Explicit Tokio worker count |
 | `--case-timeout-seconds` | `1800` | Whole-case bound, including fixture generation |
@@ -182,7 +192,7 @@ The fixture and reporting contracts run without a broker:
 cargo test --locked -p rostfrei-benchmarks --test aggregate_benchmark
 ```
 
-They cover direct/command fixture equivalence, usable reconstructed state,
+They cover direct/command/batched fixture equivalence, usable reconstructed state,
 idempotent replay, large-event batch boundaries, CLI validation, sample counts,
 history growth, and quantile definitions. The actual NATS suite is exercised by
 the release benchmark command above; ordinary Cargo tests exercise the in-memory
