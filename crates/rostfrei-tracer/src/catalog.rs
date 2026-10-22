@@ -21,6 +21,8 @@ pub struct TracerCatalog {
     pub quarantine: Option<CatalogQuarantine>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub observation: Vec<crate::CatalogObservation>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub historical: Vec<crate::CatalogHistorical>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -245,6 +247,7 @@ pub fn build_catalog<'a>(
         catalog_version: CATALOG_VERSION,
         quarantine: None,
         observation: Vec::new(),
+        historical: Vec::new(),
         contexts: contexts
             .into_iter()
             .map(|(id, context)| CatalogContext {

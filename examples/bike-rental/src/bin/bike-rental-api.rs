@@ -1,7 +1,6 @@
 use bike_rental::{
     APPLICATION_NAME, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
     demo::{demo_fixture, no_rental_fleets_fixture, rented_demo_fixture},
-    tracer,
 };
 use rostfrei_nats::{NatsConnectionConfig, ServerVersion, connect};
 use rostfrei_tracer::{
@@ -10,9 +9,15 @@ use rostfrei_tracer::{
 };
 use std::{env, path::PathBuf, sync::Arc};
 
+#[path = "bike-rental-api/snapshots.rs"]
+mod snapshots;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let enabled = env::args().skip(1).any(|argument| argument == "--tracer");
+    let snapshots = env::args()
+        .skip(1)
+        .any(|argument| argument == "--snapshots");
     let application =
         env::var("ROSTFREI_APPLICATION").unwrap_or_else(|_| APPLICATION_NAME.to_owned());
     let limits = BikeRentalNatsResourceLimits::from_env()?;
@@ -21,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
     )
     .await?;
-    let bindings = Arc::new(tracer::bindings()?);
+    let bindings = snapshots::bindings(&connection, &application, false, snapshots).await?;
     let mut normal = BikeRentalNatsConfig::for_bindings(
         &application,
         rostfrei::TrafficScope::Normal,
@@ -33,11 +38,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         normal = normal.with_fresh_completed_outcome_epoch(epoch)?;
     }
     let host = if enabled {
+        let test_bindings = snapshots::bindings(&connection, &application, true, snapshots).await?;
         let mut test = BikeRentalNatsConfig::for_bindings(
             &application,
             rostfrei::TrafficScope::Test,
             limits,
-            &bindings,
+            &test_bindings,
         )?;
         if let Some(epoch) = &epoch {
             test = test.with_fresh_completed_outcome_epoch(epoch)?;
@@ -50,7 +56,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             )
             .await?,
         );
-        dispatch.apply_fixture(&demo_fixture()?).await?;
+        dispatch
+            .apply_fixture(&snapshots::fixture(demo_fixture()?, snapshots)?)
+            .await?;
         let address = env::var("ROSTFREI_API_ADDR").unwrap_or_else(|_| "127.0.0.1:1309".to_owned());
         let listener = tokio::net::TcpListener::bind(&address).await?;
         let mut http = HttpConfig::new(env::var("ROSTFREI_API_TOKEN")?)?
@@ -74,20 +82,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer"),
             )?))
             .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
-        let host = NatsApplication::builder(test.context().clone(), connection.clone(), bindings)?
-            .with_runtime_config(test.host_config().clone())
-            .with_default_test_fixture(demo_fixture()?)
-            .with_test_fixture(no_rental_fleets_fixture()?)
-            .with_test_fixture(rented_demo_fixture()?)
-            .with_tracer(Some(tracer))
-            .provision_and_start()
-            .await?;
+        let host =
+            NatsApplication::builder(test.context().clone(), connection.clone(), test_bindings)?
+                .with_runtime_config(test.host_config().clone())
+                .with_default_test_fixture(snapshots::fixture(demo_fixture()?, snapshots)?)
+                .with_test_fixture(no_rental_fleets_fixture()?)
+                .with_test_fixture(snapshots::fixture(rented_demo_fixture()?, snapshots)?)
+                .with_tracer(Some(tracer))
+                .provision_and_start()
+                .await?;
         println!("bike-rental tracer listening on http://{address}");
         host
     } else {
         NatsApplication::builder(normal.context().clone(), connection.clone(), bindings)?
             .with_runtime_config(normal.host_config().clone())
-            .with_initial_fixture(demo_fixture()?)
+            .with_initial_fixture(snapshots::fixture(demo_fixture()?, snapshots)?)
             .provision_and_start()
             .await?
     };

@@ -133,6 +133,11 @@ fixture validation, real execution, private-event dispatch and `simulate_handler
 Register/replace codecs before sharing it and include fixture aggregate codecs.
 Registering descriptors afterward does not mutate shared codec configuration.
 
+When that registry contains snapshot storage and registered snapshot codecs, the
+host enables native snapshot-plus-tail reads for commands and handler simulation.
+Each simulation pins the current history after reset admission; old checkpoints
+remain fenced after reset. See [snapshot configuration](runtime.md#aggregate-snapshots).
+
 `NatsRuntimeConfig.execution_profile` defaults explicitly to
 `NatsExecutionProfile::TrustedCompatibility`: durable decisions, without configured
 per-call policy admission. Configure the existing service path with:
@@ -155,10 +160,11 @@ identity is never inferred from actor attribution or HTTP capability tokens.
 Configured Tracer replay requires real command republication and its actual PubAck,
 followed by current winner admission; completed handlers are not reevaluated.
 
-`NatsRuntime::store()` returns an owned current snapshot. Retained old snapshots
-remain fenced after reset. `NatsRuntime::tracer_builder()` supplies current-history
-and directory indirection for manually composed diagnostics; the application host
-uses it automatically. History reads do not themselves verify authority health.
+`NatsRuntime::store()` returns an owned current store handle; old handles remain
+fenced after reset. `NatsRuntime::tracer_builder()` supplies per-computation history
+and current-directory indirection for manually composed diagnostics; the application
+host uses it automatically. Full-history diagnostic reads alone do not establish
+authority health.
 
 - `NatsRuntimeConfig::new(context, &bindings, subscription_generation)` derives
   consumers from registrations. Its explicit resource/consumer fields support

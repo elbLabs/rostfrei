@@ -179,6 +179,7 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
             authorize_dispatch_request,
         ));
     let operation_routes = Router::new()
+        .merge(historical_routes())
         .route("/observation/{scope}", get(get_observation))
         .route("/observation/{scope}/events", get(observation_events))
         .route(
@@ -218,6 +219,19 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
         .with_state(HttpState { tracer, config })
 }
 
+fn historical_routes() -> Router<HttpState> {
+    Router::new()
+        .route("/historical/{scope}/messages", get(get_historical_messages))
+        .route(
+            "/historical/{scope}/aggregate",
+            get(get_historical_aggregate),
+        )
+        .route(
+            "/historical/{scope}/snapshot-fixture",
+            get(get_historical_snapshot_fixture),
+        )
+}
+
 async fn add_private_no_store(response: Response) -> Response {
     private_no_store(response)
 }
@@ -226,6 +240,9 @@ async fn get_catalog(State(state): State<HttpState>, headers: HeaderMap) -> Resp
     let mut catalog = state.tracer.catalog().clone();
     match capability(&state.config, &headers) {
         Some(Capability::Control) => {
+            catalog
+                .historical
+                .retain(|entry| entry.scope == crate::ObservationScope::Test);
             catalog
                 .observation
                 .retain(|entry| entry.scope == crate::ObservationScope::Test);
@@ -237,6 +254,9 @@ async fn get_catalog(State(state): State<HttpState>, headers: HeaderMap) -> Resp
             }
         }
         Some(Capability::ProductionInspection) => {
+            catalog
+                .historical
+                .retain(|entry| entry.scope == crate::ObservationScope::Production);
             catalog
                 .observation
                 .retain(|entry| entry.scope == crate::ObservationScope::Production);
@@ -271,6 +291,98 @@ async fn get_tests(State(state): State<HttpState>) -> Response {
         Ok(definitions) => private_no_store(Json(definitions).into_response()),
         Err(error) => test_repository_error_response(&error),
     }
+}
+
+async fn get_historical_messages(
+    State(state): State<HttpState>,
+    Path(scope): Path<crate::ObservationScope>,
+    headers: HeaderMap,
+    query: Result<Query<crate::HistoricalQuery>, QueryRejection>,
+) -> Response {
+    if let Err(response) = authorize_historical(&state, scope, &headers) {
+        return response;
+    }
+    let Ok(Query(query)) = query else {
+        return bad_request("invalid historical query");
+    };
+    match state.tracer.historical_messages(scope, query).await {
+        Ok(page) => Json(page).into_response(),
+        Err(error) => historical_error(error),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn authorize_historical(
+    state: &HttpState,
+    scope: crate::ObservationScope,
+    headers: &HeaderMap,
+) -> Result<(), Response> {
+    let required = match scope {
+        crate::ObservationScope::Test => Capability::Control,
+        crate::ObservationScope::Production => Capability::ProductionInspection,
+    };
+    match capability(&state.config, headers) {
+        Some(actual) if actual == required => Ok(()),
+        Some(_) => Err(forbidden()),
+        None => Err(unauthorized()),
+    }
+}
+
+async fn get_historical_aggregate(
+    State(state): State<HttpState>,
+    Path(scope): Path<crate::ObservationScope>,
+    headers: HeaderMap,
+    query: Result<Query<crate::HistoricalAggregateQuery>, QueryRejection>,
+) -> Response {
+    if let Err(response) = authorize_historical(&state, scope, &headers) {
+        return response;
+    }
+    let Ok(Query(query)) = query else {
+        return bad_request("invalid historical aggregate query");
+    };
+    match state.tracer.historical_aggregate(scope, query).await {
+        Ok(aggregate) => Json(aggregate).into_response(),
+        Err(error) => historical_error(error),
+    }
+}
+
+async fn get_historical_snapshot_fixture(
+    State(state): State<HttpState>,
+    Path(scope): Path<crate::ObservationScope>,
+    headers: HeaderMap,
+    query: Result<Query<crate::HistoricalAggregateQuery>, QueryRejection>,
+) -> Response {
+    if let Err(response) = authorize_historical(&state, scope, &headers) {
+        return response;
+    }
+    let Ok(Query(query)) = query else {
+        return bad_request("invalid snapshot fixture query");
+    };
+    match state.tracer.historical_snapshot_fixture(scope, query).await {
+        Ok(fixture) => Json(fixture).into_response(),
+        Err(error) => historical_error(error),
+    }
+}
+
+fn historical_error(error: crate::HistoricalError) -> Response {
+    use crate::HistoricalError as E;
+    let (status, code) = match &error {
+        E::PayloadUnavailable => (StatusCode::FORBIDDEN, "historical-payload-unavailable"),
+        E::NotConfigured => (StatusCode::NOT_IMPLEMENTED, "historical-not-configured"),
+        E::InvalidQuery => (StatusCode::BAD_REQUEST, "invalid-historical-query"),
+        E::Reset => (StatusCode::GONE, "historical-reset"),
+        E::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "historical-unavailable"),
+        E::Timeout => (StatusCode::GATEWAY_TIMEOUT, "historical-timeout"),
+        E::Capacity => (StatusCode::TOO_MANY_REQUESTS, "historical-capacity"),
+    };
+    (
+        status,
+        Json(ErrorBody {
+            code,
+            message: error.to_string(),
+        }),
+    )
+        .into_response()
 }
 
 #[allow(clippy::result_large_err)]

@@ -55,6 +55,7 @@ impl Backend {
         bindings: &ApplicationBindings,
         store: NatsEventStore,
     ) -> Result<Self, NatsHostError> {
+        let store = store.with_snapshotting(bindings.codecs.snapshotting_enabled());
         let messaging = connection
             .messaging_adapter(config.messaging.topology().clone())
             .with_response_timeout(Duration::from_secs(30));
@@ -121,6 +122,8 @@ impl CurrentBackend {
 
 // Diagnostic/discovery and fixture capabilities follow the current Test handle.
 // Reads do not assert authority health, and are not a substitute for admission.
+// Handler computations instead pin the native store via the history provider:
+// a borrowed authority cannot outlive this wrapper's replaceable backend lock.
 #[async_trait]
 impl EventHistory for CurrentBackend {
     async fn load(

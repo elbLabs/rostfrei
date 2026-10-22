@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { historicalCapability, historicalMessages } from "./historical-fixture.mjs"
+import { snapshotCapability, snapshotHistory, snapshotReconstruction } from "./snapshot-fixture.mjs"
+import { timelineCapability, timelineMessages, timelinePage, timelineReconstruction } from "./timeline-fixture.mjs"
 
 import { settlePage } from "./browser.mjs"
 import {
@@ -21,6 +24,10 @@ export const scenarios = {
   "long-payload": "Nested, long payload values in the message inspector",
   narrow: "Accepted command details at 390 × 844",
   observation: "Externally initiated flow in the continuous Observe panel",
+  historical: "Persisted aggregate history and a response-backed historical flow",
+  snapshots: "Stored snapshot, reconstructed state and optional snapshot-assisted replay",
+  timeline: "Historical timeline paused after a command outcome and integration event",
+  "timeline-aggregate": "Aggregate state follows the historical timeline playhead",
 }
 
 const commandPath = "/contexts/bike-rental/commands/rent-bicycle"
@@ -137,7 +144,18 @@ export async function installScenario(page, scene, samples, diagnostics) {
       body =
         scene === "observation"
           ? { ...catalog, observation: [observationCapability] }
-          : catalog
+          : scene === "snapshots" ? { ...catalog, historical: [snapshotCapability] }
+           : ["historical", "timeline", "timeline-aggregate"].includes(scene) ? { ...catalog, historical: [timelineCapability] } : catalog
+    else if (["timeline", "timeline-aggregate"].includes(scene) && pathname === timelineCapability.messagesHref)
+      body = timelinePage(scene === "timeline-aggregate" ? timelineMessages.filter(item => item.kind === "domain-event") : timelineMessages)
+    else if (scene === "timeline-aggregate" && pathname === timelineCapability.aggregateHref)
+      body = timelineReconstruction(new URL(request.url()).searchParams)
+    else if (scene === "snapshots" && pathname === snapshotCapability.messagesHref)
+      body = snapshotHistory
+    else if (scene === "snapshots" && pathname === snapshotCapability.aggregateHref)
+      body = snapshotReconstruction()
+    else if (scene === "historical" && pathname === historicalCapability.messagesHref)
+      body = timelinePage((new URL(request.url()).searchParams.has("aggregateType") ? [historicalMessages[0]] : historicalMessages).map(item => ({ ...item, storedAtUnixNanos: "1790848800000000000" })))
     else if (
       scene === "observation" &&
       pathname === observationFlow().detailHref
@@ -271,6 +289,43 @@ export async function prepareScenario(page, scene) {
   await settlePage(page)
   if (scene === "overview") {
     await page.click('[data-layout="workbench"]')
+    await settlePage(page)
+    return
+  }
+  if (scene === "snapshots") {
+    if (page.viewport().width >= 768) await page.click('[data-layout="workbench"]')
+    await page.click('[data-studio-mode="historical"]')
+    await page.type('[aria-label="Historical aggregate ID"]', "city-fleet")
+    await page.click('[aria-label="Search historical data"]')
+    await page.waitForSelector('[data-reconstruction-status="hit"]')
+    if (page.viewport().width < 1400) await page.click('[aria-label="Collapse sidebar"]')
+    await page.click('[aria-label="Inspect snapshot version 4"]')
+    await settlePage(page)
+    return
+  }
+  if (["timeline", "timeline-aggregate"].includes(scene)) {
+    if (page.viewport().width >= 768) await page.click('[data-layout="workbench"]')
+    await page.click('[data-studio-mode="historical"]')
+    if (scene === "timeline-aggregate") await page.type('[aria-label="Historical aggregate ID"]', "city-fleet")
+    else await page.click('[aria-label="Historical browsing"] button:last-child')
+    await page.click('[aria-label="Search historical data"]')
+    await page.waitForSelector('[aria-label="Historical timeline"]')
+    if (page.viewport().width < 1400) await page.click('[aria-label="Collapse sidebar"]')
+    await page.focus('[aria-label="Historical timeline"]')
+    await page.keyboard.press("Home")
+    for (let i = 0; i < (scene === "timeline-aggregate" ? 1 : 4); i++) await page.keyboard.press("ArrowRight")
+    if (scene === "timeline-aggregate") await page.waitForFunction(() => document.querySelector(".reconstruction-summary")?.textContent.includes("Version 1"))
+    await settlePage(page)
+    return
+  }
+  if (scene === "historical") {
+    if (page.viewport().width >= 768) await page.click('[data-layout="workbench"]')
+    await page.click('[data-studio-mode="historical"]')
+    await page.click('[aria-label="Historical browsing"] button:last-child')
+    await page.click('[aria-label="Search historical data"]')
+    await page.waitForSelector('[data-message-id="response.1"]')
+    if (page.viewport().width < 1400) await page.click('[aria-label="Collapse sidebar"]')
+    if (page.viewport().width >= 1101) await page.click('[data-message-id="response.1"]')
     await settlePage(page)
     return
   }

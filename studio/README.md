@@ -50,6 +50,18 @@ It uses the same Canvas/Workbench message cards and inspector as command and
 test execution. **Executions** returns to the previous execution view; closing
 the observation sidebar does not stop capture.
 
+**Historical** reads retained aggregate events and correlated message flows.
+Drag the timeline or use **Play/Pause** to replay recorded messages/outcomes;
+idle gaps are compressed. **Load more** extends the range, bounded to 100 records
+per request and 1,000 records / 16 MiB per selection; **Refresh** starts a new read.
+Retention makes flow coverage partial. Production uses `VITE_TRACER_INSPECTION_TOKEN`;
+Test uses the control token, and reset invalidates Test history.
+
+For snapshot-enabled aggregates, select an exact instance: reconstructed state
+follows the timeline, and **Use snapshots** switches between checkpoint-plus-tail
+and full replay. Stored snapshots remain inspectable; **Download fixture** exports
+saved state plus all backing events for application registration as a Test fixture.
+
 ## Run locally
 
 From the repository root:
