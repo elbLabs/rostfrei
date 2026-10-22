@@ -1,6 +1,7 @@
 pub use rostfrei_messaging_core::{ActorRef, MAX_ACTOR_ID_BYTES, MAX_ACTOR_NAMESPACE_BYTES};
 
 mod aggregate;
+mod aggregate_loading;
 mod append_session;
 mod codecs;
 mod completed_outcome;
@@ -15,6 +16,8 @@ mod outcome;
 mod proposal;
 mod read_model;
 mod receipt_validation;
+mod replay;
+mod snapshots;
 mod store;
 
 pub use aggregate::{
@@ -57,6 +60,12 @@ pub use proposal::ProposalDigest;
 pub use read_model::{
     JsonReadModelCodec, ReadModel, ReadModelCodec, ReadModelEntry, ReadModelError,
     ReadModelErrorKind, ReadModelKey, ReadModelRevision, ReadModelStore,
+};
+pub use replay::{HistoryCheckpoint, ReplayHistory, replay_from_history};
+pub use snapshots::{
+    AggregateReconstruction, InMemorySnapshotStore, JsonSnapshotCodec, RebuildDiagnostics,
+    RebuildReport, SnapshotCodec, SnapshotKey, SnapshotPolicy, SnapshotRequest, SnapshotState,
+    SnapshotStatus, SnapshotStore, StoredSnapshot,
 };
 pub use store::{
     AppendOutcome, EventHistory, EventStore, EventStoreError, EventStoreErrorKind,

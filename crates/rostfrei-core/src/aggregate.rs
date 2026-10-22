@@ -59,6 +59,24 @@ pub struct AggregateInstance<A: Aggregate> {
 }
 
 impl<A: Aggregate> AggregateInstance<A> {
+    pub(crate) fn restore(
+        stream_id: StreamId,
+        state: A::State,
+        events: impl IntoIterator<Item = A::Event>,
+    ) -> Self {
+        let mut aggregate = Self {
+            stream_id,
+            state,
+            uncommitted_events: Vec::new(),
+            event_start_observer: None,
+            event_observer: None,
+            event_observer_token: None,
+        };
+        for event in events {
+            A::apply(&mut aggregate.state, &event);
+        }
+        aggregate
+    }
     pub fn new(stream_id: StreamId) -> Self {
         let state = A::initial(&stream_id);
         Self {

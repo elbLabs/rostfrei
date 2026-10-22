@@ -30,7 +30,7 @@ pub struct Act {
     pub item: String,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct State {
     pub exists: bool,
     pub items: Vec<String>,

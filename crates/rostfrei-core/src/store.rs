@@ -491,7 +491,28 @@ impl AppendOutcome {
 
 #[async_trait]
 pub trait EventHistory: Send + Sync {
+    /// Return the complete committed history, even after a range read in this session.
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError>;
+
+    /// Stable application/scope/context/incarnation identity. Recreated history
+    /// must have a different authority; `None` disables snapshot selection.
+    fn history_authority(&self) -> Option<&str> {
+        None
+    }
+
+    /// Read `(after.version, through]`, or through a captured head when omitted.
+    /// Both boundaries must end complete commits. Validate the adapter-owned anchor,
+    /// continuity and the authority before returning a usable suffix and head checkpoint.
+    /// The compatibility implementation loads full history and reports that read cost.
+    async fn load_replay(
+        &self,
+        stream_id: &StreamId,
+        after: Option<&crate::HistoryCheckpoint>,
+        through: Option<StreamVersion>,
+    ) -> Result<crate::ReplayHistory, EventStoreError> {
+        let events = self.load(stream_id).await?;
+        crate::replay_from_history(self.history_authority(), stream_id, &events, after, through)
+    }
 }
 
 #[async_trait]
@@ -576,6 +597,17 @@ pub trait StreamDirectory: Send + Sync {
 
 #[async_trait]
 impl<History: EventHistory + ?Sized> EventHistory for Arc<History> {
+    fn history_authority(&self) -> Option<&str> {
+        self.as_ref().history_authority()
+    }
+    async fn load_replay(
+        &self,
+        stream_id: &StreamId,
+        after: Option<&crate::HistoryCheckpoint>,
+        through: Option<StreamVersion>,
+    ) -> Result<crate::ReplayHistory, EventStoreError> {
+        self.as_ref().load_replay(stream_id, after, through).await
+    }
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         self.as_ref().load(stream_id).await
     }

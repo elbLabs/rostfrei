@@ -66,7 +66,7 @@ impl Event for StockReceived {
     }
 }
 
-#[derive(Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Inventory {
     stock: BTreeMap<u64, u64>,
     received: u64,

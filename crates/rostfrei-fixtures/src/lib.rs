@@ -200,6 +200,33 @@ pub struct Fixture {
     id: MessageId,
     revision: MessageId,
     messages: MessageSeries<FixtureDomainEvent>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    snapshots: Vec<FixtureSnapshot>,
+}
+
+/// A derived checkpoint backed by the fixture's complete event history.
+/// Omitting `state` requests capture at this version when the fixture is installed.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FixtureSnapshot {
+    pub aggregate: FixtureAggregate,
+    /// Decimal string so browser-authored checkpoints preserve the u64 range.
+    pub stream_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<rostfrei_core::SnapshotState>,
+}
+
+impl FixtureSnapshot {
+    pub fn from_snapshot(snapshot: &rostfrei_core::StoredSnapshot) -> Result<Self, IdentityError> {
+        Ok(Self {
+            aggregate: FixtureAggregate::new(
+                snapshot.checkpoint.aggregate_type.clone(),
+                snapshot.checkpoint.aggregate_id.clone(),
+            )?,
+            stream_version: snapshot.version().value().to_string(),
+            state: Some(snapshot.into()),
+        })
+    }
 }
 
 impl Fixture {
@@ -225,6 +252,7 @@ impl Fixture {
             id,
             revision,
             messages,
+            snapshots: Vec::new(),
         };
         fixture.validate()?;
         Ok(fixture)
@@ -246,6 +274,19 @@ impl Fixture {
         &self.messages
     }
 
+    pub fn snapshots(&self) -> &[FixtureSnapshot] {
+        &self.snapshots
+    }
+
+    pub fn with_snapshots(
+        mut self,
+        snapshots: Vec<FixtureSnapshot>,
+    ) -> Result<Self, FixtureValidationError> {
+        self.snapshots = snapshots;
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn validate(&self) -> Result<(), FixtureValidationError> {
         if self.schema_version != FIXTURE_SCHEMA_VERSION {
             return Err(FixtureValidationError::UnsupportedSchemaVersion {
@@ -257,6 +298,38 @@ impl Fixture {
         validate_stream_versions(&self.messages)?;
         for message in self.messages.iter() {
             validate_message(message)?;
+        }
+        self.validate_snapshots()?;
+        Ok(())
+    }
+
+    fn validate_snapshots(&self) -> Result<(), FixtureValidationError> {
+        let invalid = || FixtureValidationError::InvalidSnapshot;
+        if self.snapshots.len() > 64 {
+            return Err(invalid());
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for snapshot in &self.snapshots {
+            let version = snapshot
+                .stream_version
+                .parse::<u64>()
+                .map_err(|_| invalid())?;
+            let stream = snapshot.aggregate.stream_id();
+            if version == 0
+                || version.to_string() != snapshot.stream_version
+                || !seen.insert((stream, version))
+                || !self.messages.iter().any(|event| {
+                    event.aggregate == snapshot.aggregate && event.stream_version == version
+                })
+                || snapshot.state.as_ref().is_some_and(|state| {
+                    state.schema_version == 0
+                        || state.replay_revision.is_empty()
+                        || state.replay_revision.len() > 128
+                        || state.data.len() > MAX_EVENT_PAYLOAD_LEN
+                })
+            {
+                return Err(invalid());
+            }
         }
         Ok(())
     }
@@ -274,6 +347,8 @@ impl<'de> Deserialize<'de> for Fixture {
             id: String,
             revision: String,
             messages: MessageSeries<FixtureDomainEvent>,
+            #[serde(default)]
+            snapshots: Vec<FixtureSnapshot>,
         }
 
         let wire = Wire::deserialize(deserializer)?;
@@ -284,13 +359,19 @@ impl<'de> Deserialize<'de> for Fixture {
                 },
             ));
         }
-        Self::new(wire.id, wire.revision, wire.messages).map_err(D::Error::custom)
+        Self::new(wire.id, wire.revision, wire.messages)
+            .and_then(|fixture| fixture.with_snapshots(wire.snapshots))
+            .map_err(D::Error::custom)
     }
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FixtureValidationError {
+    #[error(
+        "fixture snapshots require unique positive versions backed by original events and bounded valid state metadata"
+    )]
+    InvalidSnapshot,
     #[error("unsupported fixture schema version `{actual}`; expected version 1")]
     UnsupportedSchemaVersion { actual: u32 },
     #[error("fixture {field} is invalid: {source}")]
@@ -522,31 +603,7 @@ impl MessageSeriesEngine {
                 .push(event);
         }
 
-        for (stream_id, events) in &events_by_stream {
-            let events: Vec<_> = events
-                .iter()
-                .map(|planned| planned.recorded.clone())
-                .collect();
-            self.codecs
-                .validate_history(stream_id, &events)
-                .map_err(|error| match error {
-                    rostfrei_core::CodecValidationError::Unregistered { aggregate_type } => {
-                        FixtureApplyError::UnknownAggregateCodec { aggregate_type }
-                    }
-                    rostfrei_core::CodecValidationError::Event {
-                        stream_id,
-                        event_type,
-                        schema_version,
-                        source,
-                    } => FixtureApplyError::Codec {
-                        stream_id,
-                        event_type,
-                        schema_version,
-                        source,
-                    },
-                })?;
-        }
-
+        let snapshots = self.prepare_history(fixture, &events_by_stream)?;
         let mut reused_prefixes = BTreeMap::<StreamId, usize>::new();
         for (stream_id, events) in &events_by_stream {
             let history = store.load(stream_id).await?;
@@ -605,6 +662,17 @@ impl MessageSeriesEngine {
             }
         }
 
+        for snapshot in snapshots {
+            self.codecs
+                .install_fixture_snapshot(
+                    store,
+                    &snapshot.stream,
+                    snapshot.version,
+                    &snapshot.state,
+                )
+                .await
+                .map_err(|error| FixtureApplyError::Snapshot(error.to_string()))?;
+        }
         Ok(FixtureApplyReport {
             fixture_id: fixture.id.clone(),
             fixture_revision: fixture.revision.clone(),
@@ -614,6 +682,70 @@ impl MessageSeriesEngine {
             fixture: fixture.clone(),
         })
     }
+
+    fn prepare_history(
+        &self,
+        fixture: &Fixture,
+        events_by_stream: &BTreeMap<StreamId, Vec<&PlannedEvent>>,
+    ) -> Result<Vec<PreparedSnapshot>, FixtureApplyError> {
+        for (stream_id, events) in events_by_stream {
+            let events: Vec<_> = events
+                .iter()
+                .map(|planned| planned.recorded.clone())
+                .collect();
+            self.codecs
+                .validate_history(stream_id, &events)
+                .map_err(|error| match error {
+                    rostfrei_core::CodecValidationError::Unregistered { aggregate_type } => {
+                        FixtureApplyError::UnknownAggregateCodec { aggregate_type }
+                    }
+                    rostfrei_core::CodecValidationError::Event {
+                        stream_id,
+                        event_type,
+                        schema_version,
+                        source,
+                    } => FixtureApplyError::Codec {
+                        stream_id,
+                        event_type,
+                        schema_version,
+                        source,
+                    },
+                })?;
+        }
+
+        let mut snapshots = Vec::new();
+        for snapshot in fixture.snapshots() {
+            let stream = snapshot.aggregate.stream_id();
+            let version = snapshot
+                .stream_version
+                .parse::<u64>()
+                .map_err(|_| FixtureValidationError::InvalidSnapshot)?;
+            let events = events_by_stream
+                .get(&stream)
+                .ok_or(FixtureValidationError::InvalidSnapshot)?;
+            let prefix = events
+                .iter()
+                .take_while(|event| event.recorded.stream_version().value() <= version)
+                .map(|event| event.recorded.clone())
+                .collect::<Vec<_>>();
+            let state = self
+                .codecs
+                .prepare_fixture_snapshot(&stream, &prefix, snapshot.state.as_ref())
+                .map_err(|error| FixtureApplyError::Snapshot(error.to_string()))?;
+            snapshots.push(PreparedSnapshot {
+                stream,
+                version: StreamVersion::new(version),
+                state,
+            });
+        }
+        Ok(snapshots)
+    }
+}
+
+struct PreparedSnapshot {
+    stream: StreamId,
+    version: StreamVersion,
+    state: rostfrei_core::SnapshotState,
 }
 
 impl fmt::Debug for MessageSeriesEngine {
@@ -643,6 +775,8 @@ pub enum FixtureCodecRegistrationError {
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FixtureApplyError {
+    #[error("fixture snapshot failed: {0}")]
+    Snapshot(String),
     #[error(transparent)]
     InvalidFixture(#[from] FixtureValidationError),
     #[error("no fixture codec is registered for aggregate type `{aggregate_type}`")]

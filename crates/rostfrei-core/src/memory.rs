@@ -144,6 +144,9 @@ impl InMemoryEventStore {
 
 #[async_trait]
 impl EventHistory for InMemoryEventStore {
+    fn history_authority(&self) -> Option<&str> {
+        Some(self.authority.as_str())
+    }
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         let state = self.state.lock().await;
         Ok(state.streams.get(stream_id).cloned().unwrap_or_default())
@@ -623,6 +626,9 @@ struct MemoryCommandSession<'a>(&'a InMemoryEventStore);
 
 #[async_trait]
 impl EventHistory for MemoryCommandSession<'_> {
+    fn history_authority(&self) -> Option<&str> {
+        self.0.history_authority()
+    }
     async fn load(&self, stream: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         self.0.load(stream).await
     }

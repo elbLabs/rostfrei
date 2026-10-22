@@ -46,7 +46,10 @@ mod history_reads;
 use history_reader::HistoryReader;
 #[path = "event_store/outcomes.rs"]
 mod outcomes;
+#[path = "event_store/snapshot_reads.rs"]
+mod snapshot_reads;
 use outcomes::SplitAuthority;
+use snapshot_reads::Prefix;
 
 const LEGACY_EVENT_SCHEMA_VERSION: u16 = 1;
 const CORRELATION_EVENT_SCHEMA_VERSION: u16 = 2;
@@ -109,12 +112,39 @@ impl NatsAppendSession<'_> {
 
 #[async_trait]
 impl EventHistory for NatsAppendSession<'_> {
+    fn history_authority(&self) -> Option<&str> {
+        Some(self.store.authority.as_str())
+    }
+    async fn load_replay(
+        &self,
+        stream_id: &StreamId,
+        after: Option<&rostfrei_core::HistoryCheckpoint>,
+        through: Option<StreamVersion>,
+    ) -> Result<rostfrei_core::ReplayHistory, EventStoreError> {
+        let (history, replay) = self
+            .store
+            .snapshot_replay(stream_id, after, through)
+            .await?;
+        self.validate_incarnation().await?;
+        self.histories
+            .lock()
+            .await
+            .by_stream
+            .insert(stream_id.clone(), Arc::new(history));
+        Ok(replay)
+    }
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         let mut histories = self.histories.lock().await;
-        let history = self
+        let mut history = self
             .store
             .load_session_history(stream_id, &mut histories)
             .await?;
+        if history.prefix.is_some() {
+            history = self.store.load_history(stream_id).await?;
+            histories
+                .by_stream
+                .insert(stream_id.clone(), Arc::clone(&history));
+        }
         drop(histories);
         self.validate_incarnation().await?;
         Ok(history.events.clone())
@@ -129,10 +159,11 @@ impl AppendSession for NatsAppendSession<'_> {
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
         if self.store.config.split_outcomes() {
             self.validate_incarnation().await?;
-            return self
-                .store
-                .commit_inline(transaction, self.histories.into_inner())
-                .await;
+            return Box::pin(
+                self.store
+                    .commit_inline(transaction, self.histories.into_inner()),
+            )
+            .await;
         }
         rostfrei_core::validate_completed_transaction(&transaction)?;
         self.store.validate_completed_scope(&transaction)?;
@@ -150,10 +181,13 @@ impl AppendSession for NatsAppendSession<'_> {
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
         self.store.require_mutable_namespace().await?;
-        let history = self
+        let mut history = self
             .store
             .load_session_history(stream_id, self.histories.get_mut())
             .await?;
+        if history.prefix.is_some() {
+            history = self.store.load_history(stream_id).await?;
+        }
         self.validate_incarnation().await?;
         self.store
             .append_with_history(stream_id, expected_version, batch, history)
@@ -180,6 +214,7 @@ pub struct NatsEventStore {
     context: jetstream::Context,
     config: NatsEventStoreConfig,
     history_auditing: bool,
+    snapshotting: bool,
     authority: rostfrei_core::CommandAuthority,
     journal_incarnation: String,
     split: Option<SplitAuthority>,
@@ -207,6 +242,12 @@ struct ReadBarrierHook {
 }
 
 impl NatsEventStore {
+    /// Opt in to checked-prefix replay and bounded operation evidence. Strict audits remain full.
+    #[must_use]
+    pub const fn with_snapshotting(mut self, enabled: bool) -> Self {
+        self.snapshotting = enabled;
+        self
+    }
     /// Quiesced, credential-fenced legacy maintenance only. Imports a retained business
     /// rejection bound to its ORIGINAL validated envelope. The legacy epoch remains blocked
     /// for unknown identities (including expired/invisible rejections); no activation shortcut.
@@ -392,6 +433,7 @@ impl NatsEventStore {
             context,
             config,
             history_auditing: false,
+            snapshotting: false,
             authority,
             journal_incarnation,
             split,
@@ -686,7 +728,8 @@ impl NatsEventStore {
         if audit {
             let mut raw_histories = RawHistoryCache {
                 histories: HashMap::from([(stream_id.clone(), Arc::clone(&history))]),
-                maximum_stream_sequence: None,
+                // Explicit audits never substitute bounded operation evidence for history.
+                maximum_stream_sequence: Some(u64::MAX),
             };
             self.validate_transaction_history(&history, &mut raw_histories)
                 .await?;
@@ -1280,9 +1323,26 @@ impl NatsEventStore {
                 return Err(corrupt("transaction receipt repeats an aggregate stream"));
             }
             let base_version = StreamVersion::new(participant.base_stream_version);
-            let history = self
-                .load_cached_raw_history(&stream_id, raw_histories)
-                .await?;
+            let history = if self.snapshotting
+                && !self.history_auditing
+                && raw_histories.maximum_stream_sequence.is_none()
+            {
+                Box::pin(self.load_operation_history(
+                    stream,
+                    &stream_id,
+                    &participant,
+                    &operation_id,
+                    transaction_event_ordinal,
+                    transaction_event_count,
+                    guard_ordinal,
+                    batch_start_stream_sequence,
+                    layout,
+                ))
+                .await?
+            } else {
+                self.load_cached_raw_history(&stream_id, raw_histories)
+                    .await?
+            };
             let events = materialize_transaction_participant(
                 &history,
                 &participant,
@@ -1447,6 +1507,19 @@ impl NatsEventStore {
 
 #[async_trait]
 impl EventHistory for NatsEventStore {
+    fn history_authority(&self) -> Option<&str> {
+        Some(self.authority.as_str())
+    }
+    async fn load_replay(
+        &self,
+        stream_id: &StreamId,
+        after: Option<&rostfrei_core::HistoryCheckpoint>,
+        through: Option<StreamVersion>,
+    ) -> Result<rostfrei_core::ReplayHistory, EventStoreError> {
+        self.snapshot_replay(stream_id, after, through)
+            .await
+            .map(|(_, replay)| replay)
+    }
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         Ok(Arc::unwrap_or_clone(self.load_history(stream_id).await?).events)
     }
@@ -1620,9 +1693,7 @@ impl EventStore for NatsEventStore {
         transaction: EventTransaction,
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
         if self.config.split_outcomes() {
-            return self
-                .commit_inline(transaction, LoadedHistories::default())
-                .await;
+            return Box::pin(self.commit_inline(transaction, LoadedHistories::default())).await;
         }
         rostfrei_core::validate_completed_transaction(&transaction)?;
         self.validate_completed_scope(&transaction)?;
@@ -1852,9 +1923,20 @@ impl NatsEventStore {
 
         let mut staged = Vec::with_capacity(transaction.participants().len());
         for participant in transaction.participants() {
-            let history = self
+            let mut history = self
                 .load_session_history(participant.stream_id(), &mut histories)
                 .await?;
+            if participant.batch().is_some_and(|batch| {
+                history
+                    .prefix
+                    .as_ref()
+                    .is_some_and(|prefix| prefix.contains(batch.operation_id()))
+            }) {
+                history = self.load_history(participant.stream_id()).await?;
+                histories
+                    .by_stream
+                    .insert(participant.stream_id().clone(), Arc::clone(&history));
+            }
             if Self::transaction_participant_has_conflicting_identity(&history, participant)? {
                 let receipt = self
                     .load_transaction_receipt_inner(transaction.operation_id())
@@ -1863,10 +1945,7 @@ impl NatsEventStore {
                     .resolve_identity_after_conflict(&transaction, receipt)
                     .await;
             }
-            let base_version = history
-                .events
-                .last()
-                .map_or(StreamVersion::ZERO, RecordedEvent::stream_version);
+            let base_version = history.version();
             validate_expected_version(participant.expected_version(), base_version)?;
             let recorded = participant
                 .batch()
@@ -2217,6 +2296,7 @@ pub async fn update_event_store(
 
 #[derive(Clone, Default)]
 struct History {
+    prefix: Option<Prefix>,
     events: Vec<RecordedEvent>,
     global_stream_sequences: Vec<u64>,
     commits: Vec<StoredCommit>,
@@ -2877,10 +2957,7 @@ impl HistoryBuilder {
     fn from_history(history: &History) -> Self {
         Self {
             history: history.clone(),
-            current_version: history
-                .events
-                .last()
-                .map_or(StreamVersion::ZERO, RecordedEvent::stream_version),
+            current_version: history.version(),
             operation_ids: history
                 .commits
                 .iter()
@@ -3706,10 +3783,7 @@ fn materialize_transaction_participant(
                 "transaction receipt read-only participant has a commit identity",
             ));
         }
-        let current_version = history
-            .events
-            .last()
-            .map_or(StreamVersion::ZERO, RecordedEvent::stream_version);
+        let current_version = history.version();
         if base_version > current_version {
             return Err(corrupt(
                 "transaction receipt read-only participant has an invalid base version",
@@ -3896,8 +3970,15 @@ fn global_sequence_at_version(
     if version == StreamVersion::ZERO {
         return Ok(0);
     }
+    if let Some(prefix) = &history.prefix
+        && version.value() == prefix.version
+    {
+        return Ok(prefix.sequence);
+    }
     let index = version
         .value()
+        .checked_sub(history.prefix.as_ref().map_or(0, |prefix| prefix.version))
+        .ok_or_else(|| corrupt("requested version precedes checked history prefix"))?
         .checked_sub(1)
         .and_then(|index| usize::try_from(index).ok())
         .ok_or_else(|| corrupt("transaction read guard base version cannot be represented"))?;
@@ -4811,6 +4892,7 @@ mod tests {
         let history = History {
             events: events.clone(),
             global_stream_sequences: vec![1],
+            prefix: None,
             commits: vec![StoredCommit {
                 batch: batch.clone(),
                 events,
@@ -4820,6 +4902,7 @@ mod tests {
             last_subject_stream_sequence: 1,
         };
         let transactional_history = History {
+            prefix: None,
             events: history.events.clone(),
             global_stream_sequences: vec![1],
             commits: vec![StoredCommit {
@@ -4895,6 +4978,7 @@ mod tests {
         let history = History {
             events: events.clone(),
             global_stream_sequences: vec![11],
+            prefix: None,
             commits: vec![StoredCommit {
                 batch: batch.clone(),
                 events: events.clone(),
@@ -4930,6 +5014,7 @@ mod tests {
         );
 
         let wrong_global_sequence = History {
+            prefix: None,
             events: events.clone(),
             global_stream_sequences: vec![12],
             commits: vec![StoredCommit {
@@ -4979,6 +5064,7 @@ mod tests {
             let history = History {
                 events: events.clone(),
                 global_stream_sequences: vec![11],
+                prefix: None,
                 commits: vec![StoredCommit {
                     batch: batch.clone(),
                     events: events.clone(),

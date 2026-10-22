@@ -4,19 +4,22 @@ pub mod report;
 pub mod seed;
 
 use std::{
+    sync::Arc,
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    AggregateInstance, CommandExecutor, CommandOutcome, CommandReceipt, Event, EventHistory,
-    EventStoreError, InMemoryEventStore, RecordedEvent, StreamId,
+    AggregateCodecs, AggregateInstance, CommandExecutor, CommandOutcome, CommandReceipt, Event,
+    EventHistory, EventStoreError, HistoryCheckpoint, InMemoryEventStore, RebuildDiagnostics,
+    RecordedEvent, ReplayHistory, SnapshotPolicy, SnapshotStore, StreamId, StreamVersion,
 };
 use rostfrei_messaging_core::ApplicationName;
 use rostfrei_nats::{
-    NatsConnection, NatsConnectionConfig, NatsEventStore, NatsEventStoreConfig, ServerVersion,
-    connect, provision_event_store,
+    NatsConnection, NatsConnectionConfig, NatsEventStore, NatsEventStoreConfig,
+    NatsReadModelConfig, NatsSnapshotStore, ServerVersion, connect, provision_event_store,
+    provision_read_model,
 };
 
 use config::HistoryKind;
@@ -33,6 +36,23 @@ struct MeasuredHistory {
 
 #[async_trait]
 impl EventHistory for MeasuredHistory {
+    fn history_authority(&self) -> Option<&str> {
+        self.store.history_authority()
+    }
+    async fn load_replay(
+        &self,
+        stream: &StreamId,
+        after: Option<&HistoryCheckpoint>,
+        through: Option<StreamVersion>,
+    ) -> Result<ReplayHistory, EventStoreError> {
+        let started = Instant::now();
+        let result = self.store.load_replay(stream, after, through).await;
+        self.last_load_ns.store(
+            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        result
+    }
     async fn load(&self, stream: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         let started = Instant::now();
         let result = self.store.load(stream).await;
@@ -51,14 +71,35 @@ struct ReadCase<'a> {
     expected_events: u64,
     note_bytes: u32,
     decoded: Vec<StockReceived>,
+    diagnostics: Arc<RebuildDiagnostics>,
 }
 
 impl ReadCase<'_> {
+    async fn samples(&self, options: &Options) -> BenchResult<Vec<Sample>> {
+        for iteration in 0..options.warmups {
+            for phase in READ_PHASES {
+                self.measure(phase, iteration).await?;
+            }
+        }
+        let mut samples = Vec::new();
+        for iteration in 0..options.samples {
+            let offset = usize::try_from(iteration)?.rem_euclid(READ_PHASES.len());
+            for &phase in READ_PHASES
+                .iter()
+                .skip(offset)
+                .chain(READ_PHASES.iter().take(offset))
+            {
+                samples.push(self.measure(phase, iteration).await?);
+            }
+        }
+        Ok(samples)
+    }
     async fn measure(&self, phase: Phase, iteration: u32) -> BenchResult<Sample> {
         // Repeated apply-only samples own fresh typed inputs before timing starts.
         let apply_input = (phase == Phase::ApplyOnly).then(|| self.decoded.clone());
         self.connection.client().flush().await?;
         let before = outgoing(self.connection);
+        let (in_messages, in_bytes) = incoming(self.connection);
         let started = Instant::now();
         let (elapsed_ns, history_load_ns) = match phase {
             Phase::HistoryLoad => {
@@ -102,6 +143,13 @@ impl ReadCase<'_> {
             nats_out_messages: outgoing(self.connection)
                 .checked_sub(before)
                 .ok_or("request counter regressed")?,
+            nats_in_messages: incoming(self.connection).0.saturating_sub(in_messages),
+            nats_in_bytes: incoming(self.connection).1.saturating_sub(in_bytes),
+            rebuild: if phase == Phase::Rehydrate {
+                self.diagnostics.recent().pop()
+            } else {
+                None
+            },
             history_load_ns,
             after_history_ns: history_load_ns
                 .map(|history| {
@@ -122,18 +170,78 @@ fn outgoing(connection: &NatsConnection) -> u64 {
         .load(Ordering::Relaxed)
 }
 
+fn incoming(connection: &NatsConnection) -> (u64, u64) {
+    let stats = connection.client().statistics();
+    (
+        stats.in_messages.load(Ordering::Relaxed),
+        stats.in_bytes.load(Ordering::Relaxed),
+    )
+}
+
+async fn snapshot_configuration(
+    store: &NatsEventStore,
+    snapshots: Option<Arc<dyn SnapshotStore>>,
+    diagnostics: Arc<RebuildDiagnostics>,
+    stream: &StreamId,
+    at: Option<u32>,
+) -> BenchResult<(Arc<AggregateCodecs>, Option<u64>, Option<usize>)> {
+    let mut codecs = AggregateCodecs::default().with_rebuild_diagnostics(diagnostics);
+    if let Some(snapshots) = snapshots {
+        codecs = codecs.with_snapshot_store(snapshots);
+        codecs.register_json_snapshot::<InventoryAggregate>(
+            "inventory-v1",
+            1,
+            SnapshotPolicy::Manual,
+        )?;
+    }
+    let codecs = Arc::new(codecs);
+    let capture = if let Some(at) = at {
+        let started = Instant::now();
+        let snapshot = CommandExecutor::with_codecs(store.clone(), codecs.clone())
+            .create_snapshot::<InventoryAggregate>(stream, StreamVersion::new(u64::from(at)))
+            .await?;
+        Some((nanos(started.elapsed())?, snapshot.state.len()))
+    } else {
+        None
+    };
+    Ok((
+        codecs,
+        capture.map(|value| value.0),
+        capture.map(|value| value.1),
+    ))
+}
+
 async fn measure_case(
     store: &NatsEventStore,
     connection: &NatsConnection,
     options: &Options,
     kind: HistoryKind,
     count: u32,
+    snapshots: Option<Arc<dyn SnapshotStore>>,
 ) -> BenchResult<CaseReport> {
     let id = format!("{}-{count}-{}", kind.name(), options.note_bytes);
     eprintln!("preparing {id}");
     let setup = Instant::now();
-    seed::seed(store.clone(), &id, kind, count, options.note_bytes).await?;
+    seed::seed(
+        store.clone().with_snapshotting(
+            kind == HistoryKind::BatchedTransactions || options.snapshot_at.is_some(),
+        ),
+        &id,
+        kind,
+        count,
+        options.note_bytes,
+    )
+    .await?;
     let stream = model::stream(&id)?;
+    let diagnostics = Arc::new(RebuildDiagnostics::new(1));
+    let (codecs, snapshot_creation_ns, snapshot_state_bytes) = snapshot_configuration(
+        store,
+        snapshots,
+        diagnostics.clone(),
+        &stream,
+        options.snapshot_at,
+    )
+    .await?;
     let recorded = store.load(&stream).await?;
     let seeded_domain_payload_bytes = recorded
         .iter()
@@ -151,29 +259,18 @@ async fn measure_case(
         stream,
         expected_events: u64::from(count),
         note_bytes: options.note_bytes,
-        executor: CommandExecutor::new(MeasuredHistory {
-            store: store.clone().with_history_auditing(options.audit_reads),
-            last_load_ns: AtomicU64::new(0),
-        }),
+        executor: CommandExecutor::with_codecs(
+            MeasuredHistory {
+                store: store.clone().with_history_auditing(options.audit_reads),
+                last_load_ns: AtomicU64::new(0),
+            },
+            codecs.clone(),
+        ),
         decoded,
+        diagnostics: diagnostics.clone(),
     };
     let setup_ns = nanos(setup.elapsed())?;
-    for iteration in 0..options.warmups {
-        for phase in READ_PHASES {
-            reads.measure(phase, iteration).await?;
-        }
-    }
-    let mut samples = Vec::new();
-    for iteration in 0..options.samples {
-        let offset = usize::try_from(iteration)?.rem_euclid(READ_PHASES.len());
-        for &phase in READ_PHASES
-            .iter()
-            .skip(offset)
-            .chain(READ_PHASES.iter().take(offset))
-        {
-            samples.push(reads.measure(phase, iteration).await?);
-        }
-    }
+    let mut samples = reads.samples(options).await?;
     // Warm writes use another aggregate so read samples and the first timed
     // command retain the advertised base history size.
     let warmup_id = format!("{id}-warmup");
@@ -186,7 +283,19 @@ async fn measure_case(
     )
     .await?;
     for iteration in 0..options.samples {
-        samples.push(measure_command(store, connection, options, &id, count, iteration).await?);
+        let executor = CommandExecutor::with_codecs(store.clone(), codecs.clone());
+        samples.push(
+            measure_command(
+                &executor,
+                connection,
+                options,
+                &id,
+                count,
+                iteration,
+                &diagnostics,
+            )
+            .await?,
+        );
     }
     let final_count = u64::from(count)
         .checked_add(u64::from(options.samples))
@@ -197,7 +306,21 @@ async fn measure_case(
         .await?;
     model::verify(final_state.state(), final_count, options.note_bytes)?;
     let summaries = report::summarize(&samples)?;
-    for summary in &summaries {
+    print_summaries(&id, &summaries);
+    Ok(CaseReport {
+        history: kind,
+        seeded_events: count,
+        seeded_domain_payload_bytes,
+        setup_ns,
+        snapshot_creation_ns,
+        snapshot_state_bytes,
+        samples,
+        summaries,
+    })
+}
+
+fn print_summaries(id: &str, summaries: &[report::Summary]) {
+    for summary in summaries {
         eprintln!(
             "{id} {:?}: median {:.3?}, range {:.3?}..{:.3?}, requests {}..{}",
             summary.phase,
@@ -209,37 +332,30 @@ async fn measure_case(
         );
         if let Some(after) = summary.median_after_history_ns {
             eprintln!(
-                "  median runtime validation + typed decode + apply after history: {:.3?}",
+                "  median readiness work outside history provider: {:.3?}",
                 Duration::from_nanos(after)
             );
         }
     }
-    Ok(CaseReport {
-        history: kind,
-        seeded_events: count,
-        seeded_domain_payload_bytes,
-        setup_ns,
-        samples,
-        summaries,
-    })
 }
 
 async fn measure_command(
-    store: &NatsEventStore,
+    executor: &CommandExecutor<NatsEventStore>,
     connection: &NatsConnection,
     options: &Options,
     id: &str,
     count: u32,
     iteration: u32,
+    diagnostics: &RebuildDiagnostics,
 ) -> BenchResult<Sample> {
     let events_before = u64::from(count)
         .checked_add(u64::from(iteration))
         .ok_or("sample count overflow")?;
     let command = seed::command(id, events_before, options.note_bytes)?;
     let metadata = model::metadata(&format!("{id}:measured:{iteration}"), &command)?;
-    let executor = CommandExecutor::new(store.clone());
     connection.client().flush().await?;
     let before = outgoing(connection);
+    let (in_messages, in_bytes) = incoming(connection);
     let started = Instant::now();
     let outcome = executor
         .execute(&model::ReceiveStockHandler, metadata, &command)
@@ -255,6 +371,9 @@ async fn measure_command(
         nats_out_messages: outgoing(connection)
             .checked_sub(before)
             .ok_or("request counter regressed")?,
+        nats_in_messages: incoming(connection).0.saturating_sub(in_messages),
+        nats_in_bytes: incoming(connection).1.saturating_sub(in_bytes),
+        rebuild: diagnostics.recent().pop(),
         history_load_ns: None,
         after_history_ns: None,
     })
@@ -281,16 +400,36 @@ pub async fn run(options: Options) -> BenchResult {
     let config = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_fresh_split_outcome_epoch("isolated-aggregate-benchmark")?
         .with_storage_limits(options.stream_bytes, 512 * 1024)?;
+    let snapshot_config = NatsReadModelConfig::new(&context, "aggregate-snapshots")?
+        .with_storage_limits(64 * 1024 * 1024, 1024 * 1024)?;
     let measured: BenchResult<Vec<CaseReport>> = async {
         provision_event_store(connection.jetstream(), &config).await?;
-        let store = NatsEventStore::connect(connection.jetstream().clone(), config.clone()).await?;
+        let store = NatsEventStore::connect(connection.jetstream().clone(), config.clone())
+            .await?
+            .with_snapshotting(options.snapshot_at.is_some());
+        let snapshots: Option<Arc<dyn SnapshotStore>> = if options.snapshot_at.is_some() {
+            provision_read_model(connection.jetstream(), &snapshot_config).await?;
+            Some(Arc::new(
+                NatsSnapshotStore::connect(connection.jetstream().clone(), snapshot_config.clone())
+                    .await?,
+            ))
+        } else {
+            None
+        };
         let mut cases = Vec::new();
         for &kind in &options.history {
             for &count in &options.events {
                 cases.push(
                     tokio::time::timeout(
                         Duration::from_secs(options.case_timeout_seconds),
-                        measure_case(&store, &connection, &options, kind, count),
+                        measure_case(
+                            &store,
+                            &connection,
+                            &options,
+                            kind,
+                            count,
+                            snapshots.clone(),
+                        ),
                     )
                     .await
                     .map_err(|_| "benchmark case timed out (including fixture creation)")??,
@@ -304,13 +443,21 @@ pub async fn run(options: Options) -> BenchResult {
         .delete_stream_if_exists(config.stream_name())
         .await;
     let server_version = connection.client().server_info().version;
+    let snapshot_cleanup = connection
+        .delete_stream_if_exists(&snapshot_config.stream_name())
+        .await;
+    let outcome_cleanup = connection
+        .delete_stream_if_exists(config.outcome_state_stream_name())
+        .await;
     let drain = connection.drain().await;
     let cases = measured?;
     cleanup?;
+    snapshot_cleanup?;
+    outcome_cleanup?;
     drain?;
     let rustc = command_output("rustc", &["--version"]).unwrap_or_else(|| "unavailable".to_owned());
     let report = Report {
-        schema_version: 1,
+        schema_version: 2,
         started_at_unix_ms: u64::try_from(started.as_millis())?,
         git_revision: command_output("git", &["rev-parse", "HEAD"]),
         git_dirty: command_output("git", &["status", "--porcelain"])
@@ -342,7 +489,11 @@ fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
 }
 
 pub async fn smoke() -> BenchResult {
-    for kind in [HistoryKind::Direct, HistoryKind::Commands] {
+    for kind in [
+        HistoryKind::Direct,
+        HistoryKind::Commands,
+        HistoryKind::BatchedTransactions,
+    ] {
         for count in [0, 3, 131] {
             let store = InMemoryEventStore::new();
             seed::seed(store.clone(), "smoke", kind, count, 32).await?;

@@ -20,7 +20,9 @@ mod read_model_backend;
 mod read_model_config;
 mod read_model_integration_consumer;
 mod read_model_worker;
+mod snapshots;
 mod stream_policy;
+pub use snapshots::NatsSnapshotStore;
 
 pub use command_response::{
     DEFAULT_COMMAND_RESPONSE_POLL_INTERVAL, MAX_COMMAND_RESPONSE_POLL_INTERVAL,

@@ -231,14 +231,17 @@ impl<'a> CommandExecution<'a> {
             )
             .into());
         }
-        let history = self.history.load(&stream_id).await?;
-        validate_history(&stream_id, &history)?;
         let codec = self.codecs.resolve::<A>()?;
-        let events = history
-            .iter()
-            .map(|event| codec.decode(event))
-            .collect::<Result<Vec<_>, _>>()?;
-        let base_version = current_version(&history);
+        let loaded = crate::aggregate_loading::load::<A>(
+            self.history,
+            self.codecs,
+            &stream_id,
+            codec.as_ref(),
+            None,
+            Some(self.metadata.operation_id().as_str()),
+        )
+        .await?;
+        let base_version = loaded.version;
         let commit_id = derive_commit_id(&stream_id, self.metadata.operation_id());
         let tracker = Arc::new(Mutex::new(ParticipantTracker {
             journal: Vec::new(),
@@ -248,7 +251,7 @@ impl<'a> CommandExecution<'a> {
         let completion_tracker = Arc::clone(&tracker);
         let event_codec = Arc::clone(&codec);
         let observer_token = Arc::new(());
-        let mut aggregate = AggregateInstance::rehydrate(stream_id.clone(), events);
+        let mut aggregate = loaded.aggregate;
         aggregate.observe_raised_events(
             Arc::clone(&observer_token),
             move |ordinal| {
@@ -594,17 +597,18 @@ where
         codec: &C,
     ) -> Result<AggregateInstance<A>, SimulationError>
     where
-        A: Aggregate,
+        A: Aggregate + 'static,
         C: EventCodec<A>,
     {
         validate_aggregate_type::<A>(stream_id)?;
-        let history = self.store.load(stream_id).await?;
-        validate_history(stream_id, &history)?;
-        let events = history
-            .iter()
-            .map(|event| codec.decode(event))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(AggregateInstance::rehydrate(stream_id.clone(), events))
+        // An explicit event-codec override is not certified by the registered replay revision.
+        let mut codecs = AggregateCodecs::default();
+        codecs.diagnostics.clone_from(&self.codecs.diagnostics);
+        Ok(
+            crate::aggregate_loading::load::<A>(&self.store, &codecs, stream_id, codec, None, None)
+                .await?
+                .aggregate,
+        )
     }
 
     pub async fn rehydrate<A>(
@@ -616,14 +620,109 @@ where
         A::Event: Event,
     {
         validate_aggregate_type::<A>(stream_id)?;
-        let history = self.store.load(stream_id).await?;
-        validate_history(stream_id, &history)?;
         let codec = self.codecs.resolve::<A>()?;
-        let events = history
-            .iter()
-            .map(|event| codec.decode(event))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(AggregateInstance::rehydrate(stream_id.clone(), events))
+        Ok(crate::aggregate_loading::load::<A>(
+            &self.store,
+            &self.codecs,
+            stream_id,
+            codec.as_ref(),
+            None,
+            None,
+        )
+        .await?
+        .aggregate)
+    }
+
+    /// Restore state after an exact complete-commit version; zero returns initial state.
+    pub async fn rehydrate_at<A>(
+        &self,
+        stream_id: &StreamId,
+        version: StreamVersion,
+    ) -> Result<AggregateInstance<A>, SimulationError>
+    where
+        A: Aggregate + 'static,
+        A::Event: Event,
+    {
+        validate_aggregate_type::<A>(stream_id)?;
+        let codec = self.codecs.resolve::<A>()?;
+        Ok(crate::aggregate_loading::load::<A>(
+            &self.store,
+            &self.codecs,
+            stream_id,
+            codec.as_ref(),
+            Some(version),
+            None,
+        )
+        .await?
+        .aggregate)
+    }
+
+    /// Materialize and persist an exact positive committed version using registered codecs.
+    /// The supplied version must end a complete commit and must not exceed the head.
+    pub async fn create_snapshot<A>(
+        &self,
+        stream_id: &StreamId,
+        version: StreamVersion,
+    ) -> Result<crate::StoredSnapshot, CommandExecutionError>
+    where
+        A: Aggregate + 'static,
+        A::Event: Event,
+        A::State: Send + Sync,
+    {
+        crate::aggregate_loading::create::<A>(&self.store, &self.codecs, stream_id, version).await
+    }
+
+    /// Compare stored state with a fresh replay of original events at exactly this version.
+    /// This is a maintenance operation, independent of native history/receipt auditing.
+    pub async fn verify_snapshot<A>(
+        &self,
+        stream_id: &StreamId,
+        version: StreamVersion,
+    ) -> Result<bool, CommandExecutionError>
+    where
+        A: Aggregate + 'static,
+        A::Event: Event,
+    {
+        crate::aggregate_loading::verify::<A>(&self.store, &self.codecs, stream_id, version).await
+    }
+
+    /// Drain a bounded number of coalesced policy requests from the shared registry.
+    /// Applications run this on their maintenance task, outside command execution.
+    pub async fn run_snapshot_jobs(
+        &self,
+        maximum: usize,
+    ) -> Vec<Result<crate::StoredSnapshot, CommandExecutionError>> {
+        let requests: Vec<_> = {
+            let mut queue = self
+                .codecs
+                .snapshot_requests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut selected = Vec::new();
+            queue.retain(|request| {
+                if selected.len() < maximum
+                    && Some(request.authority.as_str()) == self.store.history_authority()
+                {
+                    selected.push(request.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            selected
+        };
+        let mut results = Vec::new();
+        for request in requests {
+            if let Some(entry) = self.codecs.snapshots.get(request.stream.aggregate_type()) {
+                results.push(
+                    entry
+                        .materializer
+                        .create(&self.store, &self.codecs, &request.stream, request.version)
+                        .await,
+                );
+            }
+        }
+        results
     }
 
     /// Runs a handler without persistence, applying the same metadata defaults as execution.
@@ -1067,15 +1166,10 @@ fn supported_ordinal(ordinal: usize) -> Result<u32, EventStoreError> {
     })
 }
 
-fn current_version(history: &[RecordedEvent]) -> StreamVersion {
-    history
-        .last()
-        .map_or(StreamVersion::ZERO, RecordedEvent::stream_version)
-}
-
-fn validate_history(
+pub fn validate_history_from(
     stream_id: &StreamId,
     history: &[RecordedEvent],
+    base_version: StreamVersion,
 ) -> Result<(), EventStoreError> {
     let mut event_ids = HashSet::with_capacity(history.len());
     let mut seen_commits = HashSet::new();
@@ -1090,6 +1184,7 @@ fn validate_history(
         }
         let expected_position = u64::try_from(index)
             .ok()
+            .and_then(|value| value.checked_add(base_version.value()))
             .and_then(|value| value.checked_add(1))
             .map(StreamVersion::new)
             .ok_or_else(|| corrupt("loaded history exceeds the supported version range"))?;
