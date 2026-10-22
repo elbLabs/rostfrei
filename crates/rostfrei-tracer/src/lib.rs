@@ -4,6 +4,7 @@ mod catalog;
 mod command_bus;
 mod correlation;
 mod handler_simulation;
+mod historical;
 mod input;
 mod message_series;
 mod observation;
@@ -50,6 +51,11 @@ pub use handler_simulation::{
     HandlerDecision, HandlerSimulationError, HandlerSimulationKind, HandlerSimulationResult,
     ProposedDomainEvent,
 };
+pub use historical::{
+    CatalogHistorical, HistoricalAggregate, HistoricalAggregateQuery, HistoricalError,
+    HistoricalMessage, HistoricalOrder, HistoricalPage, HistoricalQuery, HistoricalReader,
+    HistoricalSnapshot,
+};
 pub use input::{CommandInputDocument, CommandInputField, CommandInputOption, CommandInputOptions};
 pub use message_series::{
     ExpectedCommandFields, ExpectedMessageKind, ExpectedMessageNode, MessageGraphDefinition,
@@ -77,7 +83,8 @@ pub use quarantine::{
 };
 pub use rostfrei_fixtures::{
     Fixture, FixtureAggregate, FixtureApplyError, FixtureApplyReport,
-    FixtureCodecRegistrationError, FixtureDomainEvent, FixtureValidationError, MessageSeriesEngine,
+    FixtureCodecRegistrationError, FixtureDomainEvent, FixtureSnapshot, FixtureValidationError,
+    MessageSeriesEngine,
 };
 pub use runtime::RuntimeRegistrationError;
 pub use service::{

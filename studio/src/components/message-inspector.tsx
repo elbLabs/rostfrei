@@ -6,6 +6,7 @@ import { kindLabels, messageState } from "@/lib/message-presentation"
 import type { FlowView, MessageGraphNode } from "@/lib/types"
 
 interface MessageInspectorProps {
+  onInspectCorrelation?: (id: string) => void
   node?: MessageGraphNode
   parent?: MessageGraphNode
   view: FlowView
@@ -21,6 +22,7 @@ export function MessageInspector({
   hidden,
   closable,
   onBack,
+  onInspectCorrelation,
 }: MessageInspectorProps) {
   return (
     <aside
@@ -78,20 +80,28 @@ export function MessageInspector({
                 ? `Given domain event${node.streamVersion === undefined ? "" : ` · stream version ${node.streamVersion}`}. This is setup state for the test.`
                 : node.edgeRelationship === "context"
                   ? "Root command. Evaluates the fixture state; the fixture is not its cause."
-                  : parent && node.edgeFidelity === "exact"
-                    ? `${view === "expected" ? "Expected after" : view === "predicted" ? "Predicted after" : "Caused by"} ${parent.name}.`
-                    : node.kind === "command" &&
-                        node.subject !== false &&
-                        !node.causationId
-                      ? "Root command for this execution."
-                      : view === "expected"
-                        ? "No parent specified in the expectation."
-                        : "Associated with this flow. No resolved causal parent is available."}
+                  : parent && node.edgeRelationship === "stream-order"
+                    ? `Follows ${parent.name} in the aggregate stream. Stream order is not causation.`
+                    : parent && node.edgeFidelity === "exact"
+                      ? `${view === "expected" ? "Expected after" : view === "predicted" ? "Predicted after" : "Caused by"} ${parent.name}.`
+                      : node.kind === "command" &&
+                          node.subject !== false &&
+                          !node.causationId
+                        ? "Root command for this execution."
+                        : view === "expected"
+                          ? "No parent specified in the expectation."
+                          : "Associated with this flow. No resolved causal parent is available."}
             </p>
           </section>
 
           <section className="inspector-section">
             <h3>{node.kind === "command" ? "Request" : "Payload"}</h3>
+            {node.evidence === "command-response" && (
+              <p className="payload-unavailable">
+                Command identity and outcome come from a retained response. The
+                original request and its ancestry are unavailable.
+              </p>
+            )}
             <PayloadList payload={node.payload} />
           </section>
 
@@ -115,9 +125,11 @@ export function MessageInspector({
                 )
               ) : node.response === undefined ? (
                 <p>
-                  {node.status === "running"
-                    ? "Waiting for the command response…"
-                    : "Response redacted or unavailable."}
+                  {view === "historical"
+                    ? "No outcome recorded at this point in the loaded history."
+                    : node.status === "running"
+                      ? "Waiting for the command response…"
+                      : "Response redacted or unavailable."}
                 </p>
               ) : (
                 <PayloadList
@@ -133,9 +145,20 @@ export function MessageInspector({
             <dl className="payload-list">
               <Metadata
                 label="Schema version"
-                value={String(node.schemaVersion)}
+                value={
+                  node.schemaVersion === undefined
+                    ? undefined
+                    : String(node.schemaVersion)
+                }
               />
               <Metadata label="Context" value={node.boundedContext} />
+              <Metadata label="Evidence" value={node.evidence} />
+              <Metadata label="Stored at" value={node.storedAt} />
+              <Metadata
+                label="Response stored at"
+                value={node.responseStoredAt}
+              />
+              <Metadata label="Correlation ID" value={node.correlationId} />
               <Metadata label="Aggregate type" value={node.aggregateType} />
               <Metadata label="Aggregate ID" value={node.aggregateId} />
               <Metadata
@@ -147,6 +170,16 @@ export function MessageInspector({
                 }
               />
             </dl>
+            {node.correlationId && onInspectCorrelation && (
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="View historical flow"
+                onClick={() => onInspectCorrelation(node.correlationId!)}
+              >
+                View historical flow
+              </Button>
+            )}
             {(node.messageId || node.causationId) && (
               <div className="identity-controls">
                 {node.messageId && (

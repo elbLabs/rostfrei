@@ -1,8 +1,9 @@
 use rostfrei::{Entity, EntityDefinition};
+use serde::{Deserialize, Serialize};
 
 use super::{Bicycle, FleetId, RentalFleetAggregate};
 
-#[derive(Entity, Debug)]
+#[derive(Entity, Debug, Deserialize, Serialize)]
 #[domain(id = "rental-fleet-root", label = "Rental fleet")]
 pub struct RentalFleet {
     pub(super) fleet_id: FleetId,

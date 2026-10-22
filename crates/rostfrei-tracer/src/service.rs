@@ -179,6 +179,9 @@ pub enum TestDefinitionValidationError {
 }
 
 pub trait TracePayloadPolicy: Send + Sync {
+    fn aggregate_state(&self, state: Value) -> Option<Value> {
+        self.observed_event_payload(state)
+    }
     fn domain_event(&self, event: PredictedDomainEvent) -> PredictedDomainEvent;
 
     fn rejection(&self, rejection: Value) -> Value;
@@ -309,9 +312,14 @@ pub enum CommandInputError {
 /// Legacy envelope name. Operation-shaped Preview submission is retired.
 pub type SimulationRequest = CommandRequest;
 
+// Resolve once per handler computation, after entering the Test reset gate.
+// A pinned handle keeps checkpoint authority and replay on the same incarnation.
+type HistoryProvider = Arc<dyn Fn() -> Arc<dyn EventHistory> + Send + Sync>;
+
 pub struct TracerBuilder {
+    historical: BTreeMap<crate::ObservationScope, Arc<dyn crate::HistoricalReader>>,
     event_codecs: Arc<rostfrei_core::AggregateCodecs>,
-    history: Arc<dyn EventHistory>,
+    history: HistoryProvider,
     observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
     test_event_store: Option<Arc<dyn EventStore>>,
     test_transport: Option<Arc<dyn CommandTransport>>,
@@ -340,8 +348,9 @@ impl TracerBuilder {
 
     pub fn new(history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
         Self {
+            historical: BTreeMap::new(),
             event_codecs: Arc::new(rostfrei_core::AggregateCodecs::default()),
-            history,
+            history: Arc::new(move || history.clone()),
             observation: BTreeMap::new(),
             test_event_store: None,
             test_transport: None,
@@ -370,6 +379,12 @@ impl TracerBuilder {
     }
 
     #[must_use]
+    pub fn with_historical_reader(mut self, reader: Arc<dyn crate::HistoricalReader>) -> Self {
+        self.historical.insert(reader.catalog().scope, reader);
+        self
+    }
+
+    #[must_use]
     pub fn with_domain_model(mut self, domain_model: Value) -> Self {
         self.domain_model = Some(domain_model);
         self
@@ -387,12 +402,23 @@ impl TracerBuilder {
         self
     }
 
+    /// Resolve the host's current backend only after diagnostic reset admission.
+    #[cfg(feature = "nats-host")]
+    pub(crate) fn with_history_provider(
+        mut self,
+        provider: impl Fn() -> Arc<dyn EventHistory> + Send + Sync + 'static,
+    ) -> Self {
+        self.history = Arc::new(provider);
+        self
+    }
+
     #[must_use]
     pub fn with_test_event_store<Store>(mut self, store: Arc<Store>) -> Self
     where
         Store: EventStore + 'static,
     {
-        self.history = store.clone();
+        let history: Arc<dyn EventHistory> = store.clone();
+        self.history = Arc::new(move || history.clone());
         self.test_event_store = Some(store);
         self
     }
@@ -558,6 +584,10 @@ impl TracerBuilder {
         Ok(())
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "validate and compose the capability-scoped runtime together"
+    )]
     pub fn build(self) -> Result<Tracer, RuntimeRegistrationError> {
         self.bindings.validate()?;
         self.validate_quarantine_readers()?;
@@ -620,8 +650,15 @@ impl TracerBuilder {
             .values()
             .map(|feed| feed.catalog())
             .collect();
+        catalog.historical = self
+            .historical
+            .values()
+            .map(|reader| reader.catalog())
+            .collect();
         Ok(Tracer {
             inner: Arc::new(TracerInner {
+                historical: self.historical,
+                historical_permits: Semaphore::new(8),
                 event_codecs: self.event_codecs,
                 history: self.history,
                 handler_permits: Arc::new(Semaphore::new(maximum_concurrent_operations)),
@@ -778,8 +815,10 @@ fn test_transport_payload_limit(transport: Option<&dyn CommandTransport>) -> usi
 }
 
 struct TracerInner {
+    historical: BTreeMap<crate::ObservationScope, Arc<dyn crate::HistoricalReader>>,
+    historical_permits: Semaphore,
     event_codecs: Arc<rostfrei_core::AggregateCodecs>,
-    history: Arc<dyn EventHistory>,
+    history: HistoryProvider,
     handler_permits: Arc<Semaphore>,
     handler_sequence: AtomicU64,
     observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
@@ -971,6 +1010,74 @@ struct OperationSubmission {
 }
 
 impl Tracer {
+    pub async fn historical_aggregate(
+        &self,
+        scope: crate::ObservationScope,
+        query: crate::HistoricalAggregateQuery,
+    ) -> Result<crate::HistoricalAggregate, crate::HistoricalError> {
+        let reader = self
+            .inner
+            .historical
+            .get(&scope)
+            .ok_or(crate::HistoricalError::NotConfigured)?;
+        let _permit = self
+            .inner
+            .historical_permits
+            .try_acquire()
+            .map_err(|_| crate::HistoricalError::Capacity)?;
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            reader.aggregate(query, self.inner.trace_payload_policy.as_ref()),
+        )
+        .await
+        .map_err(|_| crate::HistoricalError::Timeout)?
+    }
+
+    pub async fn historical_snapshot_fixture(
+        &self,
+        scope: crate::ObservationScope,
+        query: crate::HistoricalAggregateQuery,
+    ) -> Result<Fixture, crate::HistoricalError> {
+        let reader = self
+            .inner
+            .historical
+            .get(&scope)
+            .ok_or(crate::HistoricalError::NotConfigured)?;
+        let _permit = self
+            .inner
+            .historical_permits
+            .try_acquire()
+            .map_err(|_| crate::HistoricalError::Capacity)?;
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            reader.snapshot_fixture(query, self.inner.trace_payload_policy.as_ref()),
+        )
+        .await
+        .map_err(|_| crate::HistoricalError::Timeout)?
+    }
+    pub async fn historical_messages(
+        &self,
+        scope: crate::ObservationScope,
+        query: crate::HistoricalQuery,
+    ) -> Result<crate::HistoricalPage, crate::HistoricalError> {
+        let reader = self
+            .inner
+            .historical
+            .get(&scope)
+            .ok_or(crate::HistoricalError::NotConfigured)?;
+        let _permit = self
+            .inner
+            .historical_permits
+            .try_acquire()
+            .map_err(|_| crate::HistoricalError::Capacity)?;
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            reader.read(query, self.inner.trace_payload_policy.as_ref()),
+        )
+        .await
+        .map_err(|_| crate::HistoricalError::Timeout)?
+    }
+
     pub async fn quarantine_messages(
         &self,
         scope: QuarantineScope,
@@ -1656,9 +1763,10 @@ impl Tracer {
             if !inner.test_scenario_healthy.load(Ordering::Acquire) {
                 return Err(SubmissionError::TestScenarioUnavailable.into());
             }
+            let history = (inner.history)();
             let mut result = binding
                 .simulate_handler(
-                    inner.history.clone(),
+                    history,
                     inner.event_codecs.clone(),
                     metadata,
                     request.payload,

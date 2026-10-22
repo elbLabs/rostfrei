@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { PanelLeft, Radio, Send } from "lucide-react"
+import { History, PanelLeft, Play, Radio, Send } from "lucide-react"
 import { Brand } from "@rostfrei/ui/brand"
 import { ThemeToggle } from "@rostfrei/ui/theme"
 
@@ -13,6 +13,7 @@ import {
   type CommandView,
 } from "@/components/command-execution-header"
 import { ExecutionHeader } from "@/components/execution-header"
+import { HistoricalPanel } from "@/components/historical-panel"
 import { MessageGraph } from "@/components/message-graph"
 import {
   ObservationPanel,
@@ -55,7 +56,11 @@ const MAXIMUM_STORED_RUNS = 16
 const STORED_LAYOUT_KEY = "rostfrei-tracer-studio-layout-v1"
 
 function App() {
-  const [observationActive, setObservationActive] = useState(false)
+  const [mode, setMode] = useState<"executions" | "observe" | "historical">(
+    "executions"
+  )
+  const observationActive = mode === "observe"
+  const historicalActive = mode === "historical"
   const [observedFlow, setObservedFlow] = useState<ObservedFlow>()
   const [observationExpired, setObservationExpired] = useState(false)
   const [observationConnection, setObservationConnection] =
@@ -233,7 +238,7 @@ function App() {
 
   const selectTest = async (test: TestDefinitionSummary) => {
     if (running || loading || source !== "live") return
-    setObservationActive(false)
+    setMode("executions")
     setLoading(true)
     setActiveCommand(undefined)
     setCommandResult(undefined)
@@ -260,7 +265,7 @@ function App() {
   const executeSelectedTest = async () => {
     const selected = tests.find((test) => test.id === selectedTestId)
     if (!selected || running || loading || source !== "live") return
-    setObservationActive(false)
+    setMode("executions")
     setRunning(true)
     setActiveCommand(undefined)
     setCommandResult(undefined)
@@ -333,7 +338,7 @@ function App() {
 
   const selectRun = (run: StoredRun) => {
     if (running || loading) return
-    setObservationActive(false)
+    setMode("executions")
     setSelectedRunId(run.runId)
     setActiveCommand(undefined)
     setCommandResult(undefined)
@@ -351,7 +356,7 @@ function App() {
     request: CommandExecutionRequest
   ): Promise<boolean> => {
     if (running || loading || source !== "live") return false
-    setObservationActive(false)
+    setMode("executions")
     setRunning(true)
     setError(undefined)
     setCommandError(undefined)
@@ -444,6 +449,7 @@ function App() {
           "studio-shell",
           `studio-layout-${layout}`,
           observationActive && "observation-active",
+          historicalActive && "historical-active",
           sidebarOpen && "sidebar-is-open"
         )}
       >
@@ -456,9 +462,11 @@ function App() {
             aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
             aria-expanded={sidebarOpen}
             aria-controls={
-              observationActive
-                ? "studio-observation-panel"
-                : "studio-navigation"
+              historicalActive
+                ? "studio-historical-panel"
+                : observationActive
+                  ? "studio-observation-panel"
+                  : "studio-navigation"
             }
           >
             <PanelLeft />
@@ -484,26 +492,38 @@ function App() {
             <Send />
             <span>Command</span>
           </Button>
-          <Button
-            className="observation-panel-trigger"
-            variant="ghost"
-            size="sm"
-            disabled={running || loading}
-            aria-label={
-              observationActive
-                ? "Return to executions"
-                : "Open observation panel"
-            }
-            aria-pressed={observationActive}
-            onClick={() => {
-              setObservationActive(!observationActive)
-              setSidebarOpen(true)
-              setCommandOpen(false)
-            }}
+          <div
+            className="studio-mode-switch"
+            role="group"
+            aria-label="Studio mode"
           >
-            <Radio />
-            <span>{observationActive ? "Executions" : "Observe"}</span>
-          </Button>
+            {(
+              [
+                ["executions", "Executions", Play, "Return to executions"],
+                ["observe", "Observe", Radio, "Open observation panel"],
+                ["historical", "Historical", History, "Open historical panel"],
+              ] as const
+            ).map(([value, label, Icon, accessibleLabel]) => (
+              <Button
+                key={value}
+                variant="ghost"
+                size="sm"
+                data-studio-mode={value}
+                disabled={running || loading}
+                aria-label={accessibleLabel}
+                title={label}
+                aria-pressed={mode === value}
+                onClick={() => {
+                  setMode(value)
+                  setSidebarOpen(true)
+                  setCommandOpen(false)
+                }}
+              >
+                <Icon />
+                <span>{label}</span>
+              </Button>
+            ))}
+          </div>
           <div
             className="layout-switch"
             role="group"
@@ -541,15 +561,17 @@ function App() {
           >
             <span className="connection-dot" />
             <span className="connection-label">
-              {observationActive
-                ? `Observation · ${observationConnection}`
-                : source === "connecting"
-                  ? "Connecting"
-                  : source === "live"
-                    ? "Isolated Test"
-                    : "Disconnected"}
+              {historicalActive
+                ? "Historical · read-only"
+                : observationActive
+                  ? `Observation · ${observationConnection}`
+                  : source === "connecting"
+                    ? "Connecting"
+                    : source === "live"
+                      ? "Isolated Test"
+                      : "Disconnected"}
             </span>
-            {!observationActive && selectedRun && (
+            {mode === "executions" && selectedRun && (
               <span className="connection-detail">Saved run</span>
             )}
           </div>
@@ -557,7 +579,7 @@ function App() {
         </header>
 
         <StudioSidebar
-          open={sidebarOpen && !observationActive}
+          open={sidebarOpen && mode === "executions"}
           tests={tests}
           selectedTestId={selectedTestId}
           selectedRunId={selectedRunId}
@@ -583,6 +605,13 @@ function App() {
           onFlow={setObservedFlow}
           onExpired={setObservationExpired}
           onStatus={setObservationConnection}
+        />
+        <HistoricalPanel
+          active={historicalActive}
+          open={sidebarOpen && historicalActive}
+          catalog={catalog}
+          layout={layout}
+          onClose={() => setSidebarOpen(false)}
         />
         <CommandPanel
           open={commandOpen}
@@ -613,105 +642,110 @@ function App() {
           />
         )}
 
-        <main className="studio-main">
-          <div className="studio-heading">
-            {!observationActive &&
-              (source !== "live" || testDiscoveryError) && (
-                <ConnectionNotice
-                  connecting={source === "connecting"}
-                  testsOnly={source === "live"}
-                  error={testDiscoveryError ?? connectionError}
-                  onRetry={retryConnection}
-                />
-              )}
-            {observationActive ? (
-              <section className="observation-heading" aria-live="polite">
-                <div>
-                  <h1>{observedFlow?.name ?? "Observe application traffic"}</h1>
-                  <p>
+        {!historicalActive && (
+          <main className="studio-main">
+            <div className="studio-heading">
+              {!observationActive &&
+                (source !== "live" || testDiscoveryError) && (
+                  <ConnectionNotice
+                    connecting={source === "connecting"}
+                    testsOnly={source === "live"}
+                    error={testDiscoveryError ?? connectionError}
+                    onRetry={retryConnection}
+                  />
+                )}
+              {observationActive ? (
+                <section className="observation-heading" aria-live="polite">
+                  <div>
+                    <h1>
+                      {observedFlow?.name ?? "Observe application traffic"}
+                    </h1>
+                    <p>
+                      {observedFlow
+                        ? `${observedFlow.application} · ${observedFlow.scope} · ${observedFlow.correlationId}`
+                        : "Choose a flow from the observation sidebar."}
+                    </p>
+                  </div>
+                  <p className="observation-evidence">
                     {observedFlow
-                      ? `${observedFlow.application} · ${observedFlow.scope} · ${observedFlow.correlationId}`
-                      : "Choose a flow from the observation sidebar."}
+                      ? `${observedFlow.fidelity} observation · partial${observationExpired ? " · retained snapshot" : ""}${observedFlow.truncated ? " · truncated" : ""}${observedFlow.conflicted ? " · conflicting evidence" : ""}`
+                      : observationConnection}
+                    <span>
+                      {observationExpired
+                        ? "This graph was evicted or reset; select another flow for live updates."
+                        : "Rolling window; silence does not establish completion."}
+                    </span>
                   </p>
-                </div>
-                <p className="observation-evidence">
-                  {observedFlow
-                    ? `${observedFlow.fidelity} observation · partial${observationExpired ? " · retained snapshot" : ""}${observedFlow.truncated ? " · truncated" : ""}${observedFlow.conflicted ? " · conflicting evidence" : ""}`
-                    : observationConnection}
-                  <span>
-                    {observationExpired
-                      ? "This graph was evicted or reset; select another flow for live updates."
-                      : "Rolling window; silence does not establish completion."}
-                  </span>
-                </p>
-              </section>
-            ) : activeCommand ? (
-              <CommandExecutionHeader
-                execution={activeCommand}
-                root={
-                  nodes.find((node) => node.subject) ??
-                  nodes.find(
-                    (node) => node.kind === "command" && node.subject !== false
-                  )
-                }
-                running={running}
-                onEdit={() => setCommandOpen(true)}
-              />
-            ) : (
-              (source === "live" || selectedRun) && (
-                <ExecutionHeader
-                  layout={layout}
-                  name={selectedRun?.testName ?? selectedTest?.name}
-                  definition={definition}
-                  run={selectedRun}
-                  nodes={nodes}
-                  view={view}
-                  loading={loading}
-                  connected={source === "live"}
-                  canRun={
-                    source === "live" &&
-                    Boolean(selectedTest) &&
-                    !loading &&
-                    !running &&
-                    (Boolean(definition) || Boolean(selectedRun))
+                </section>
+              ) : activeCommand ? (
+                <CommandExecutionHeader
+                  execution={activeCommand}
+                  root={
+                    nodes.find((node) => node.subject) ??
+                    nodes.find(
+                      (node) =>
+                        node.kind === "command" && node.subject !== false
+                    )
                   }
-                  error={error}
-                  onRun={() => void executeSelectedTest()}
+                  running={running}
+                  onEdit={() => setCommandOpen(true)}
                 />
-              )
-            )}
-          </div>
-          <MessageGraph
-            key={
-              observationActive
-                ? `observation-${observedFlow?.scope ?? "empty"}-${observedFlow?.id ?? "empty"}`
-                : activeCommand
-                  ? "command-execution"
-                  : (selectedRunId ?? selectedTestId ?? "empty")
-            }
-            layoutMode={layout}
-            nodes={displayNodes}
-            view={view}
-            capture={
-              observationActive
-                ? observedFlow
-                  ? {
-                      fidelity: observedFlow.fidelity,
-                      settled: false,
-                      settledFor: "0ms",
+              ) : (
+                (source === "live" || selectedRun) && (
+                  <ExecutionHeader
+                    layout={layout}
+                    name={selectedRun?.testName ?? selectedTest?.name}
+                    definition={definition}
+                    run={selectedRun}
+                    nodes={nodes}
+                    view={view}
+                    loading={loading}
+                    connected={source === "live"}
+                    canRun={
+                      source === "live" &&
+                      Boolean(selectedTest) &&
+                      !loading &&
+                      !running &&
+                      (Boolean(definition) || Boolean(selectedRun))
                     }
-                  : undefined
-                : activeCommand?.result?.series?.capture
-            }
-            emptyMessage={
-              observationActive
-                ? "Select an observed flow. Only real captured messages will appear here."
-                : source !== "live"
-                  ? "Connect to Tracer to load tests and message flows."
-                  : undefined
-            }
-          />
-        </main>
+                    error={error}
+                    onRun={() => void executeSelectedTest()}
+                  />
+                )
+              )}
+            </div>
+            <MessageGraph
+              key={
+                observationActive
+                  ? `observation-${observedFlow?.scope ?? "empty"}-${observedFlow?.id ?? "empty"}`
+                  : activeCommand
+                    ? "command-execution"
+                    : (selectedRunId ?? selectedTestId ?? "empty")
+              }
+              layoutMode={layout}
+              nodes={displayNodes}
+              view={view}
+              capture={
+                observationActive
+                  ? observedFlow
+                    ? {
+                        fidelity: observedFlow.fidelity,
+                        settled: false,
+                        settledFor: "0ms",
+                      }
+                    : undefined
+                  : activeCommand?.result?.series?.capture
+              }
+              emptyMessage={
+                observationActive
+                  ? "Select an observed flow. Only real captured messages will appear here."
+                  : source !== "live"
+                    ? "Connect to Tracer to load tests and message flows."
+                    : undefined
+              }
+            />
+          </main>
+        )}
       </div>
     </TooltipProvider>
   )

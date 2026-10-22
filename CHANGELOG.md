@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file.
 - Opt-in aggregate snapshots with NATS KV storage, version-selected replay,
   verification, rebuild diagnostics and snapshot-backed fixtures. Original events
   remain authoritative and retained.
+- Tracer Historical inspection with chronological playback, snapshot-assisted state
+  reconstruction, fixture export and reset-fenced Test/Production reads.
 
 ## [0.1.1] - 2026-10-19
 
