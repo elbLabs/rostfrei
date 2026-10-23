@@ -14,8 +14,8 @@ use rostfrei_messaging_core::{
 };
 use rostfrei_nats::{NatsConnectionConfig, connect};
 use rostfrei_tracer::{
-    ExposeTracePayloadsForLocalDevelopment, NatsApplication, NatsRuntime, NatsRuntimeConfig,
-    ObservationFeed, ObservationScope, TracerConfig, http::HttpConfig,
+    ExposeTracePayloadsForLocalDevelopment, NatsApplication, NatsHostError, NatsRuntime,
+    NatsRuntimeConfig, ObservationFeed, ObservationScope, TracerConfig, http::HttpConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::{error::Error, sync::Arc, time::Duration};
@@ -310,5 +310,65 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
     .await??;
     host.shutdown().await?;
     connection.drain().await?;
+    Ok(())
+}
+
+// A second wire version of the same producer contract shares its address.
+#[derive(Deserialize, Serialize)]
+struct ProducerChangedV2 {
+    note: String,
+}
+impl IntegrationEvent for ProducerChangedV2 {
+    const EVENT_NAME: &'static str = ProducerChanged::EVENT_NAME;
+    const SCHEMA_VERSION: u32 = 2;
+    const BOUNDED_CONTEXT: Option<&'static str> = ProducerChanged::BOUNDED_CONTEXT;
+}
+
+// An explicitly declared own context aliases the undeclared fallback address.
+#[derive(Deserialize, Serialize)]
+struct OwnRentalStarted;
+impl IntegrationEvent for OwnRentalStarted {
+    const EVENT_NAME: &'static str = bike_rental::BICYCLE_RENTAL_STARTED_EVENT_NAME;
+    const SCHEMA_VERSION: u32 = 2;
+    const BOUNDED_CONTEXT: Option<&'static str> = Some("bike-rental");
+}
+
+#[test]
+fn handlers_competing_for_one_integration_address_are_rejected_before_provisioning()
+-> Result<(), Box<dyn Error + Send + Sync>> {
+    let context = ApplicationName::new("ambiguous-subscription")?.bounded_context("bike-rental")?;
+    let (sender, _received) = tokio::sync::mpsc::unbounded_channel();
+    let mut versions = tracer::bindings()?;
+    versions.register_integration_command::<ProducerChanged, _>(RentAfterChange);
+    versions
+        .register_integration_handler::<ProducerChangedV2, _>(RecordIntegration(sender.clone()));
+    let mut aliased = tracer::bindings()?;
+    aliased.register_integration_handler::<OwnRentalStarted, _>(RecordIntegration(sender.clone()));
+    let mut repeated = tracer::bindings()?;
+    repeated.register_integration_command::<ProducerChanged, _>(RentAfterChange);
+    repeated.register_integration_command::<ProducerChanged, _>(RentAfterChange);
+    for (case, bindings, name) in [
+        ("versions", versions, ProducerChanged::EVENT_NAME),
+        (
+            "aliased",
+            aliased,
+            bike_rental::BICYCLE_RENTAL_STARTED_EVENT_NAME,
+        ),
+        ("repeated", repeated, ProducerChanged::EVENT_NAME),
+    ] {
+        let error = NatsRuntimeConfig::new(context.clone(), &bindings, 1)
+            .err()
+            .ok_or_else(|| {
+                format!("{case}: one durable would split deliveries between handlers")
+            })?;
+        assert!(
+            matches!(&error, NatsHostError::Configuration(message) if message.contains(name)),
+            "{case}: {error}"
+        );
+    }
+    let mut distinct = tracer::bindings()?;
+    distinct.register_integration_command::<ProducerChanged, _>(RentAfterChange);
+    distinct.register_integration_handler::<OtherProducerChanged, _>(RecordIntegration(sender));
+    NatsRuntimeConfig::new(context, &distinct, 1)?;
     Ok(())
 }
