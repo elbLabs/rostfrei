@@ -247,6 +247,11 @@ Application, bounded context, read-model name, and traffic scope each isolate a
 bucket. Names are validated lowercase kebab-case scope segments. Use
 `bounded_context_in_scope(TrafficScope::Test, "commercial-access")` for Test.
 
+Framework-owned models shared by all bounded contexts use
+`NatsReadModelConfig::application_scoped(&application, scope, name)`, which omits
+the context segment (`FAST_INBOX__CORRELATION_INDEX_READ_MODEL`). Its `context()`
+is `None`. The [correlation index](correlation-index.md) is the only such model.
+
 Defaults: 64 MiB bucket capacity, 256 KiB encoded value limit, file storage, one
 replica, one history entry per key, no TTL. Builders configure capacity/value
 limits, storage, 1–5 replicas, 1–64 history entries, and optional positive TTL.

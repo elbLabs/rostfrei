@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Framework-owned **correlation index** ([ADR 0045](docs/adr/0045-correlation-index-and-anchored-views.md)):
+  one application-scoped KV read model maps each correlation to references of
+  its committed domain events and published integration events across all
+  bounded contexts. It reads metadata only, never payloads.
+  `NatsCorrelationIndexProjector` indexes one bounded context;
+  `NatsCorrelationIndexReader` returns ordered chains and per-context `lag`
+  computed against the source streams. A correlation keeps 2048 references and
+  then reports `truncated`. The bucket has no TTL and rejects writes when full;
+  deleting and provisioning it again rebuilds the index from the event stores.
+- `NatsReadModelConfig::application_scoped` derives a bucket without the bounded
+  context segment and keeps the traffic scope.
+
+### Changed
+
+- **Breaking (read-model policy):** `NatsReadModelConfig::context()` returns
+  `Option<&BoundedContext>`, `None` for application-scoped models. `application()`
+  and `traffic_scope()` return the scope of every model.
+
 ### Fixed
 
 - The NATS application host rejects several integration handlers for one address,

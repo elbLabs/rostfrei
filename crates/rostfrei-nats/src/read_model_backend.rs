@@ -52,7 +52,7 @@ impl ReadModelBackend for NatsReadModelBackend {
             .get(M::NAME)
             .cloned()
             .map_or_else(|| NatsReadModelConfig::for_model::<M>(context), Ok)?;
-        if config.context() != context {
+        if config.context() != Some(context) {
             return Err(mismatch("read-model policy belongs to another scope"));
         }
         let version = NonZeroU32::new(M::SCHEMA_VERSION)

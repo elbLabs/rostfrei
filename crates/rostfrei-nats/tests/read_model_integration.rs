@@ -206,7 +206,7 @@ async fn policy_is_explicit_verified_and_race_safe() -> TestResult {
 #[tokio::test]
 async fn resources_are_isolated_by_every_scope_dimension() -> TestResult {
     let (context, config) = fixture().await?;
-    let application = config.context().application();
+    let application = config.application();
     let configs = [
         config.clone(),
         NatsReadModelConfig::new(
@@ -214,7 +214,9 @@ async fn resources_are_isolated_by_every_scope_dimension() -> TestResult {
             "entitlement",
         )?,
         NatsReadModelConfig::new(&application.bounded_context("membership")?, "entitlement")?,
-        NatsReadModelConfig::new(config.context(), "summary")?,
+        NatsReadModelConfig::new(config.context().ok_or("context-scoped model")?, "summary")?,
+        NatsReadModelConfig::application_scoped(application, TrafficScope::Normal, "entitlement")?,
+        NatsReadModelConfig::application_scoped(application, TrafficScope::Test, "entitlement")?,
         NatsReadModelConfig::new(
             &ApplicationName::new(format!("{}-other", application.as_str()))?
                 .bounded_context("access")?,
@@ -340,6 +342,19 @@ fn rejects_invalid_policy_and_names() -> TestResult {
     assert_eq!(
         config.bucket_name(),
         "ACME__ACCESS__ENTITLEMENTS_READ_MODEL"
+    );
+    let application = ApplicationName::new("acme")?;
+    let shared =
+        NatsReadModelConfig::application_scoped(&application, TrafficScope::Normal, "index")?;
+    assert_eq!(shared.bucket_name(), "ACME__INDEX_READ_MODEL");
+    assert_eq!(shared.context(), None);
+    assert_eq!(
+        NatsReadModelConfig::application_scoped(&application, TrafficScope::Test, "index")?
+            .bucket_name(),
+        "ACME__TEST__INDEX_READ_MODEL"
+    );
+    assert!(
+        NatsReadModelConfig::application_scoped(&application, TrafficScope::Normal, "Bad").is_err()
     );
     assert!(config.clone().with_history(65).is_err());
     assert!(config.clone().with_history(0).is_err());
