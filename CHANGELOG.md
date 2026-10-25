@@ -17,6 +17,8 @@ All notable changes to this project are documented in this file.
   deleting and provisioning it again rebuilds the index from the event stores.
 - `NatsReadModelConfig::application_scoped` derives a bucket without the bounded
   context segment and keeps the traffic scope.
+- `AggregateDefinition::ANCHOR` declares an aggregate as an anchor. The compiled
+  domain model projects it as `"anchor": true`.
 
 ### Changed
 
