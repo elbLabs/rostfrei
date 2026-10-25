@@ -27,10 +27,12 @@ use rostfrei_messaging_core::{
     MessageConsumerFactory, MessageHandler, RetryDelay, TrafficScope,
 };
 use rostfrei_nats::{
-    ApplicationMessagingConfig, NatsConnection, NatsCorrelationObserver, NatsDomainEventConsumer,
-    NatsDomainEventConsumerConfig, NatsEventStore, NatsEventStoreConfig, NatsMessagingAdapter,
-    provision_application_messaging, provision_domain_event_consumer, provision_durable_consumer,
-    provision_event_store,
+    ApplicationMessagingConfig, CORRELATION_INDEX_NAME, NatsConnection,
+    NatsCorrelationIndexProjector, NatsCorrelationIndexReader, NatsCorrelationObserver,
+    NatsDomainEventConsumer, NatsDomainEventConsumerConfig, NatsEventStore, NatsEventStoreConfig,
+    NatsMessagingAdapter, NatsReadModelConfig, provision_application_messaging,
+    provision_domain_event_consumer, provision_durable_consumer, provision_event_store,
+    provision_read_model,
 };
 use std::{
     sync::{
@@ -70,6 +72,8 @@ pub enum NatsHostError {
     #[error(transparent)]
     Observation(#[from] crate::ObservationError),
     #[error(transparent)]
+    ReadModel(#[from] rostfrei::ReadModelError),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Configuration(String),
@@ -90,6 +94,8 @@ pub struct NatsRuntimeConfig {
     /// Retry policy for typed integration-event-to-command handlers.
     pub integration_retry_delay: RetryDelay,
     pub domain_events: NatsDomainEventConsumerConfig,
+    /// Application-scoped correlation index this runtime projects into.
+    pub correlation_index: Option<NatsReadModelConfig>,
     domain_events_required: bool,
 }
 
@@ -104,9 +110,30 @@ impl NatsRuntimeConfig {
         Ok(self)
     }
 
+    /// Project this context's committed events and published integration events
+    /// into the application's correlation index (ADR 0045). The bucket is
+    /// provisioned with the runtime's other resources.
+    pub fn with_correlation_index(mut self) -> Result<Self, NatsHostError> {
+        self.correlation_index = Some(NatsReadModelConfig::correlation_index(
+            self.context.application(),
+            self.context.traffic_scope(),
+        )?);
+        Ok(self)
+    }
+
     fn validate(&self) -> Result<(), NatsHostError> {
         let scope = self.context.traffic_scope();
         let application = self.context.application();
+        if self.correlation_index.as_ref().is_some_and(|index| {
+            index.application() != application
+                || index.traffic_scope() != scope
+                || index.context().is_some()
+                || index.name() != CORRELATION_INDEX_NAME
+        }) {
+            return Err(NatsHostError::Configuration(
+                "the correlation index must be the application-scoped index of this runtime".into(),
+            ));
+        }
         if self.messaging.topology().application() != application
             || self.messaging.topology().traffic_scope() != scope
             || self.event_store.application() != application
@@ -212,6 +239,7 @@ impl NatsRuntimeConfig {
             integrations,
             integration_retry_delay: RetryDelay::new(Duration::from_secs(1))?,
             domain_events,
+            correlation_index: None,
             domain_events_required: !bindings.integration_mappings.is_empty(),
         })
     }
@@ -220,6 +248,9 @@ impl NatsRuntimeConfig {
         self.validate()?;
         provision_application_messaging(connection.jetstream(), &self.messaging).await?;
         provision_event_store(connection.jetstream(), &self.event_store).await?;
+        if let Some(index) = &self.correlation_index {
+            provision_read_model(connection.jetstream(), index).await?;
+        }
         if self.domain_events_required {
             provision_domain_event_consumer(
                 connection.jetstream(),
@@ -387,6 +418,18 @@ impl NatsRuntime {
             self.config.messaging.topology().clone(),
         ))
     }
+    /// Reader for this runtime's correlation index, when enabled.
+    pub async fn correlation_index_reader(
+        &self,
+    ) -> Result<Option<NatsCorrelationIndexReader>, NatsHostError> {
+        let Some(index) = &self.config.correlation_index else {
+            return Ok(None);
+        };
+        Ok(Some(
+            NatsCorrelationIndexReader::connect(self.connection.jetstream().clone(), index).await?,
+        ))
+    }
+
     pub async fn has_correlation_observer(&self) -> bool {
         self.available.load(Ordering::Acquire) && self.observer.lock().await.is_some()
     }
@@ -498,6 +541,18 @@ impl NatsRuntime {
         } else {
             None
         };
+        let correlation_index = match &self.config.correlation_index {
+            Some(index) => Some(
+                NatsCorrelationIndexProjector::connect(
+                    self.connection.jetstream().clone(),
+                    index,
+                    self.config.event_store.clone(),
+                    self.config.messaging.topology(),
+                )
+                .await?,
+            ),
+            None => None,
+        };
         let observer = self.observer.lock().await.clone();
         let observation = match observer {
             Some(observer) => Some(self.prepare_observation(observer).await?),
@@ -518,6 +573,15 @@ impl NatsRuntime {
             workers.push(tokio::spawn(async move {
                 let (_keepalive, shutdown) = watch::channel(false);
                 consumer
+                    .run_until_shutdown(shutdown)
+                    .await
+                    .map_err(Into::into)
+            }));
+        }
+        if let Some(projector) = correlation_index {
+            workers.push(tokio::spawn(async move {
+                let (_keepalive, shutdown) = watch::channel(false);
+                projector
                     .run_until_shutdown(shutdown)
                     .await
                     .map_err(Into::into)
@@ -667,6 +731,11 @@ impl NatsRuntime {
         ] {
             self.connection.delete_stream_if_exists(stream).await?;
         }
+        if let Some(index) = &self.config.correlation_index {
+            self.connection
+                .delete_stream_if_exists(&index.stream_name())
+                .await?;
+        }
         self.config.provision(&self.connection).await?;
         let store = NatsEventStore::connect(
             self.connection.jetstream().clone(),
@@ -712,6 +781,7 @@ pub struct TracerConfig {
     payload_policy: Arc<dyn TracePayloadPolicy>,
     dispatch: Option<Arc<NatsRuntime>>,
     observation: std::collections::BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
+    histories: std::collections::BTreeMap<String, Arc<dyn rostfrei::EventHistory>>,
 }
 impl TracerConfig {
     pub fn new(listener: tokio::net::TcpListener, http: HttpConfig) -> Self {
@@ -722,7 +792,20 @@ impl TracerConfig {
             payload_policy: Arc::new(crate::RedactTracePayloads),
             dispatch: None,
             observation: std::collections::BTreeMap::new(),
+            histories: std::collections::BTreeMap::new(),
         }
+    }
+    /// Normal-scope history of another bounded context, so anchored views can
+    /// load its anchors and, with `include`, its payloads. The dispatch
+    /// runtime's own context is registered automatically.
+    #[must_use]
+    pub fn with_production_history(
+        mut self,
+        context: impl Into<String>,
+        history: Arc<dyn rostfrei::EventHistory>,
+    ) -> Self {
+        self.histories.insert(context.into(), history);
+        self
     }
     #[must_use]
     pub fn with_test_repository(mut self, repository: Arc<dyn TestRepository>) -> Self {
@@ -819,6 +902,11 @@ impl NatsApplicationBuilder {
         self.tracer = config;
         self
     }
+    /// Run the correlation-index projector for this host's runtime (ADR 0045).
+    pub fn with_correlation_index(mut self) -> Result<Self, NatsHostError> {
+        self.config = self.config.with_correlation_index()?;
+        Ok(self)
+    }
 
     pub async fn provision_and_start(self) -> Result<NatsApplication, NatsHostError> {
         Box::pin(self.start(true)).await
@@ -889,6 +977,18 @@ impl NatsApplicationBuilder {
                     builder = builder
                         .with_dispatch_transport(dispatch.transport())
                         .with_production_quarantine_reader(dispatch.quarantine_reader());
+                    let index = dispatch.correlation_index_reader().await?;
+                    if let Some(index) = index {
+                        builder = builder
+                            .with_correlation_index(Arc::new(index))
+                            .with_production_history(
+                                dispatch.config.context.name().as_str(),
+                                Arc::new(dispatch.store()),
+                            );
+                    }
+                }
+                for (context, history) in config.histories {
+                    builder = builder.with_production_history(context, history);
                 }
                 let tracer = builder.build()?;
                 runtime

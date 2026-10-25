@@ -61,7 +61,19 @@ or duplicate binding registrations. The compatibility `start_correlation_observe
 entry point uses the same source handling; its returned task is caller-supervised.
 
 See [continuous observation](continuous-observation.md) for retention, payload
-policy, HTTP/SSE and Studio semantics. These observers capture externally initiated
+policy, HTTP/SSE and Studio semantics.
+
+### Durable correlation index
+
+`NatsRuntimeConfig::with_correlation_index()` (or
+`NatsApplicationBuilder::with_correlation_index()`) adds the application-scoped
+index bucket to the provisioning plan and runs a supervised projector for the
+runtime's bounded context. A Test reset recreates the Test index. When the
+attached Normal dispatch runtime has an index, Tracer serves
+`/aggregates/{type}/{id}/correlations` and indexed `/correlations/{id}/events`
+to the inspection capability. Register other contexts' histories with
+`TracerConfig::with_production_history`. See
+[correlation index and anchored views](correlation-index.md). These observers capture externally initiated
 domain/integration events as well as evidence for Tracer-created operations.
 
 ### Typed cross-context integration commands

@@ -19,6 +19,12 @@ All notable changes to this project are documented in this file.
   context segment and keeps the traffic scope.
 - `AggregateDefinition::ANCHOR` declares an aggregate as an anchor. The compiled
   domain model projects it as `"anchor": true`.
+- `NatsRuntimeConfig::with_correlation_index` and
+  `NatsApplicationBuilder::with_correlation_index` provision the index and run
+  its projector as a supervised worker. Tracer serves
+  `GET /aggregates/{type}/{id}/correlations` and indexed
+  `GET /correlations/{id}/events` to the production inspection capability and
+  lists anchor types in the catalog. See [correlation index and anchored views](docs/correlation-index.md).
 
 ### Changed
 

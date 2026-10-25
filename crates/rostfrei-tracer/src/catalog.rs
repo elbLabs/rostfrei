@@ -21,6 +21,24 @@ pub struct TracerCatalog {
     pub quarantine: Option<CatalogQuarantine>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub observation: Vec<crate::CatalogObservation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlations: Option<CatalogCorrelations>,
+}
+
+/// Production correlation inspection over the durable correlation index.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogCorrelations {
+    pub events_href_template: String,
+    pub anchors: Vec<CatalogAnchor>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogAnchor {
+    pub aggregate_type: String,
+    pub label: String,
+    pub correlations_href_template: String,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -95,6 +113,8 @@ pub struct CatalogAggregate {
     pub label: String,
     pub aggregate_type: String,
     pub test_instances_href: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub anchor: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -143,6 +163,7 @@ struct ContextBuilder {
 struct AggregateBuilder {
     label: String,
     aggregate_type: String,
+    anchor: bool,
 }
 
 #[derive(Default)]
@@ -238,6 +259,10 @@ pub fn build_catalog<'a>(
                 label: model_aggregate_label(domain_model, context_id, aggregate_id)
                     .unwrap_or_else(|| aggregate_id.to_owned()),
                 aggregate_type: aggregate_type.to_owned(),
+                anchor: model_aggregate(domain_model, context_id, aggregate_id)
+                    .and_then(|aggregate| aggregate.get("anchor"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             });
     }
 
@@ -245,6 +270,7 @@ pub fn build_catalog<'a>(
         catalog_version: CATALOG_VERSION,
         quarantine: None,
         observation: Vec::new(),
+        correlations: None,
         contexts: contexts
             .into_iter()
             .map(|(id, context)| CatalogContext {
@@ -279,6 +305,7 @@ pub fn build_catalog<'a>(
                             id,
                             label: aggregate.label,
                             aggregate_type: aggregate.aggregate_type,
+                            anchor: aggregate.anchor,
                         }
                     })
                     .collect(),
@@ -333,17 +360,42 @@ fn model_context_label(model: Option<&Value>, context: &str) -> Option<String> {
 }
 
 fn model_aggregate_label(model: Option<&Value>, context: &str, aggregate: &str) -> Option<String> {
-    model?
-        .get("aggregates")?
-        .as_array()?
-        .iter()
-        .find(|item| {
-            item.pointer("/id/context").and_then(Value::as_str) == Some(context)
-                && item.pointer("/id/local").and_then(Value::as_str) == Some(aggregate)
-        })?
+    model_aggregate(model, context, aggregate)?
         .get("label")?
         .as_str()
         .map(str::to_owned)
+}
+
+fn model_aggregate<'a>(
+    model: Option<&'a Value>,
+    context: &str,
+    aggregate: &str,
+) -> Option<&'a Value> {
+    model?.get("aggregates")?.as_array()?.iter().find(|item| {
+        item.pointer("/id/context").and_then(Value::as_str) == Some(context)
+            && item.pointer("/id/local").and_then(Value::as_str) == Some(aggregate)
+    })
+}
+
+/// Lists declared anchors with resource templates for production inspection.
+pub fn correlation_catalog(catalog: &TracerCatalog) -> CatalogCorrelations {
+    CatalogCorrelations {
+        events_href_template: "/correlations/{correlationId}/events".to_owned(),
+        anchors: catalog
+            .contexts
+            .iter()
+            .flat_map(|context| &context.aggregates)
+            .filter(|aggregate| aggregate.anchor)
+            .map(|aggregate| CatalogAnchor {
+                aggregate_type: aggregate.aggregate_type.clone(),
+                label: aggregate.label.clone(),
+                correlations_href_template: format!(
+                    "/aggregates/{}/{{aggregateId}}/correlations",
+                    encode_path_segment(&aggregate.aggregate_type)
+                ),
+            })
+            .collect(),
+    }
 }
 
 fn command_fields(descriptors: &[domain::FieldDescriptor]) -> Vec<Value> {

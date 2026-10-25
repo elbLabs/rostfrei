@@ -99,6 +99,9 @@ Tracer exposes two real command actions:
 
 Tracer retains operation status and traces in bounded memory. See the
 [example guide](examples/bike-rental/README.md#tracer) for setup and behavior.
+An opt-in [correlation index](docs/correlation-index.md) keeps every correlation's
+message references durably across bounded contexts and restarts, and lists the
+correlations of aggregates declared as anchors.
 It also supports [continuous observation](docs/continuous-observation.md) of
 externally triggered flows and [quarantine inspection](docs/quarantine-inspection.md).
 
