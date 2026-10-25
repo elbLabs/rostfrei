@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `AggregateDefinition::ANCHOR` declares an aggregate as an anchor. The compiled
+  domain model projects it as `"anchor": true`.
+
 ## [0.1.3] - 2026-10-29
 
 ### Added
