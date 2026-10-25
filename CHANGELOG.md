@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- `AggregateDefinition::ANCHOR` declares an aggregate as an anchor. The compiled
+  domain model projects it as `"anchor": true`.
 - Typed private-event codec composition and `#[event_codec(aggregate = ...)]`
   declarations with ordinary `#[upcast]` methods, including fallible conversions.
   Explicit application-owned encoders support compatibility releases that read
