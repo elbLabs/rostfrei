@@ -181,6 +181,12 @@ impl BikeRentalNatsConfig {
         Ok(self)
     }
 
+    /// Index this runtime's correlations into the application-scoped bucket.
+    pub fn with_correlation_index(mut self) -> Result<Self, BikeRentalNatsError> {
+        self.runtime = self.runtime.with_correlation_index()?;
+        Ok(self)
+    }
+
     pub fn new(application: &str) -> Result<Self, BikeRentalNatsError> {
         Self::new_with_resource_limits(application, BikeRentalNatsResourceLimits::default())
     }

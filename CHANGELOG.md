@@ -25,6 +25,7 @@ All notable changes to this project are documented in this file.
   `GET /aggregates/{type}/{id}/correlations` and indexed
   `GET /correlations/{id}/events` to the production inspection capability and
   lists anchor types in the catalog. See [correlation index and anchored views](docs/correlation-index.md).
+- Bike-rental indexes its Normal runtime and declares the rental fleet an anchor.
 
 ### Changed
 

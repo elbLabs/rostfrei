@@ -165,6 +165,13 @@ Studio's Observe panel follows externally triggered domain and integration
 events. See [continuous observation](../../docs/continuous-observation.md) for
 backend wiring, scope isolation, and retention.
 
+The Normal runtime projects its events into the durable correlation index, and
+`RentalFleetAggregate` is declared an anchor. With the inspection token,
+`GET /aggregates/bike-rental%2Frental-fleet/city-fleet/correlations` lists every
+correlation that touched the fleet, and `GET /correlations/{id}/events` returns
+an indexed chain after a restart. `bike-rental-provision` creates the index
+bucket. See [correlation index and anchored views](../../docs/correlation-index.md).
+
 ### Test state and reset
 
 The application has two traffic scopes:

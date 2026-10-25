@@ -11,4 +11,5 @@ impl AggregateDefinition for RentalFleetAggregate {
     type Context = BikeRental;
     type Root = RentalFleet;
     type Event = RentalFleetEvent;
+    const ANCHOR: bool = true;
 }
