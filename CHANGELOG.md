@@ -50,6 +50,13 @@ All notable changes to this project are documented in this file.
   turns the Tracer views into `503`. Messages a Limits stream removed before
   they were indexed are reported per source as `skipped`; projection continues.
   Stored source records with a `generation` field remain readable.
+- Tracer Studio **Correlations** view: pick an advertised anchor and aggregate
+  ID to list its correlations with event counts, contexts and first/last seen,
+  or open a correlation ID directly. A selected chain renders indexed domain
+  and integration events with their causation, bounded context and per-context
+  index freshness; unknown lag is shown as unknown, never as current. It uses
+  `VITE_TRACER_INSPECTION_TOKEN` and explains unknown anchor streams, empty
+  anchors and correlations that are not indexed yet.
 
 ### Changed
 
