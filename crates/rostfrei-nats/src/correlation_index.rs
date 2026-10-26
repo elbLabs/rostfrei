@@ -8,7 +8,7 @@ use std::{
 use async_nats::jetstream::{
     self,
     consumer::{self, AckPolicy, DeliverPolicy},
-    stream::{LastRawMessageErrorKind, RawMessageErrorKind},
+    stream::{LastRawMessageErrorKind, RawMessageErrorKind, RetentionPolicy},
 };
 use async_trait::async_trait;
 use futures_util::StreamExt as _;
@@ -346,34 +346,73 @@ pub struct NatsCorrelationIndexProjector {
     context: jetstream::Context,
     stores: Arc<IndexStores>,
     event_store: NatsEventStoreConfig,
-    integration_stream: String,
+    integration_stream: Option<String>,
 }
 
 impl NatsCorrelationIndexProjector {
     /// Verifies the bucket and both source streams; never provisions them.
+    ///
+    /// Fails with `ConfigurationMismatch` when a source stream uses work-queue
+    /// or interest retention, or limits its consumers: the projector's
+    /// unacknowledged consumer would remove messages from the former and could
+    /// exhaust the latter.
     pub async fn connect(
         context: jetstream::Context,
         index: &NatsReadModelConfig,
         event_store: NatsEventStoreConfig,
         topology: &MessagingTopology,
     ) -> Result<Self, ReadModelError> {
-        if index.application() != event_store.application()
-            || index.traffic_scope() != event_store.traffic_scope()
-            || topology.application() != event_store.application()
+        if topology.application() != event_store.application()
             || topology.traffic_scope() != event_store.traffic_scope()
         {
+            return Err(foreign_source());
+        }
+        let integration_stream = topology.integration_event_stream().as_str().to_owned();
+        Self::connect_sources(context, index, event_store, Some(integration_stream)).await
+    }
+
+    /// Projects only the domain events of a context that publishes no
+    /// integration events, for example one without an integration stream.
+    ///
+    /// Fails with `ConfigurationMismatch` when the index already holds the
+    /// context's integration source: that source would stay registered without
+    /// a projector. Delete and rebuild the index to drop it.
+    pub async fn connect_domain_only(
+        context: jetstream::Context,
+        index: &NatsReadModelConfig,
+        event_store: NatsEventStoreConfig,
+    ) -> Result<Self, ReadModelError> {
+        let projector = Self::connect_sources(context, index, event_store, None).await?;
+        let integration = source_key(
+            CorrelationSourceKind::Integration,
+            projector.event_store.bounded_context().as_str(),
+        )?;
+        if projector.stores.source(&integration).await?.is_some() {
             return Err(ReadModelError::new(
                 ReadModelErrorKind::ConfigurationMismatch,
-                "correlation index sources must belong to its application and traffic scope",
+                "the correlation index already projects this context's integration events; \
+                 delete and rebuild the index to project its domain events only",
             ));
         }
+        Ok(projector)
+    }
+
+    async fn connect_sources(
+        context: jetstream::Context,
+        index: &NatsReadModelConfig,
+        event_store: NatsEventStoreConfig,
+        integration_stream: Option<String>,
+    ) -> Result<Self, ReadModelError> {
+        if index.application() != event_store.application()
+            || index.traffic_scope() != event_store.traffic_scope()
+        {
+            return Err(foreign_source());
+        }
         let stores = IndexStores::connect(&context, index).await?;
-        let integration_stream = topology.integration_event_stream().as_str().to_owned();
-        for stream in [event_store.stream_name(), integration_stream.as_str()] {
-            context
-                .get_stream(stream)
-                .await
-                .map_err(|_| unavailable("correlation index source stream is unavailable"))?;
+        for stream in
+            std::iter::once(event_store.stream_name()).chain(integration_stream.as_deref())
+        {
+            verify_source_stream(&context, stream).await?;
         }
         Ok(Self {
             context,
@@ -407,10 +446,13 @@ impl NatsCorrelationIndexProjector {
             stream: self.event_store.stream_name().to_owned(),
             filter_subject: self.event_store.aggregate_subject_filter(),
         };
+        let Some(integration_stream) = self.integration_stream.clone() else {
+            return Box::pin(domain.run(&self, shutdown)).await;
+        };
         let integration = SourceLoop {
             kind: CorrelationSourceKind::Integration,
             context_name,
-            stream: self.integration_stream.clone(),
+            stream: integration_stream,
             filter_subject: integration_filter,
         };
         tokio::try_join!(
@@ -653,6 +695,43 @@ fn projector_consumer_name(kind: CorrelationSourceKind, context: &str) -> String
 fn is_projector_consumer(name: &str, kind: CorrelationSourceKind, context: &str) -> bool {
     name.strip_prefix(&projector_consumer_prefix(kind, context))
         .is_some_and(|id| Uuid::try_parse(id).is_ok())
+}
+
+/// Ordered consumers acknowledge nothing. On a work-queue or interest stream
+/// their deliveries would remove messages; a consumer limit could be exhausted
+/// by the projector and the reader's lag cursors.
+async fn verify_source_stream(
+    context: &jetstream::Context,
+    name: &str,
+) -> Result<(), ReadModelError> {
+    let stream = context
+        .get_stream(name)
+        .await
+        .map_err(|_| unavailable("correlation index source stream is unavailable"))?;
+    let config = &stream.cached_info().config;
+    if matches!(
+        config.retention,
+        RetentionPolicy::WorkQueue | RetentionPolicy::Interest
+    ) {
+        return Err(ReadModelError::new(
+            ReadModelErrorKind::ConfigurationMismatch,
+            format!(
+                "correlation index source stream `{name}` must use limits retention; \
+                 work-queue and interest streams lose messages to the index consumer"
+            ),
+        ));
+    }
+    if config.max_consumers > 0 {
+        return Err(ReadModelError::new(
+            ReadModelErrorKind::ConfigurationMismatch,
+            format!(
+                "correlation index source stream `{name}` limits its consumers to {}; \
+                 the index needs unlimited ephemeral consumers",
+                config.max_consumers
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn delivered(
@@ -979,6 +1058,13 @@ fn timestamp(nanos: i128) -> Result<MessageTimestamp, ReadModelError> {
         .and_then(|millis| u64::try_from(millis).ok())
         .and_then(|millis| MessageTimestamp::from_unix_milliseconds(millis).ok())
         .ok_or_else(|| invalid_data("stored event time is out of range"))
+}
+
+fn foreign_source() -> ReadModelError {
+    ReadModelError::new(
+        ReadModelErrorKind::ConfigurationMismatch,
+        "correlation index sources must belong to its application and traffic scope",
+    )
 }
 
 fn unavailable(message: &str) -> ReadModelError {

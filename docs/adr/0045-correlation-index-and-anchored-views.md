@@ -135,6 +135,14 @@ key is written to the bucket. `GET /correlations/{id}/events` returns `404`
 only when the chain is empty and every registered source is active with
 nothing behind; with no registered source it returns `200`.
 
+Source streams must be safe to read with unacknowledged ordered consumers.
+`connect` rejects with `ConfigurationMismatch` a source stream with work-queue
+or interest retention, whose messages those deliveries would remove, and one
+with `max_consumers > 0`. A context without integration events uses
+`connect_domain_only`; it refuses a context whose integration source is already
+registered, because that source would stay inactive and keep its lag `null`
+until the index is rebuilt.
+
 Not part of this decision, optional and later: `EventHistory::load_event` for
 per-event foreign payloads (next), an explicit framework event linking a chain
 to an anchor it never writes to, and rejected commands as a third reference kind

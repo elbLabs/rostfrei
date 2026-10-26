@@ -47,6 +47,28 @@ let chain = reader.chain(&CorrelationId::new("R1")?).await?;
 let freshness = reader.freshness().await?;
 ```
 
+### Source streams
+
+`connect` rejects with `ConfigurationMismatch` a source stream that uses
+work-queue or interest retention, or sets `max_consumers`. The projector's
+consumers acknowledge nothing: on a work-queue or interest stream their
+deliveries would remove messages, and a consumer limit could be exhausted by
+the projector and the readers' lag cursors. Rostfrei provisions both sources
+with limits retention and unlimited consumers.
+
+A bounded context that publishes no integration events, for example one without
+an integration stream, projects its domain events only:
+
+```rust,ignore
+let projector = NatsCorrelationIndexProjector::connect_domain_only(
+    connection.jetstream().clone(), &index, event_store_config,
+).await?;
+```
+
+It refuses with `ConfigurationMismatch` when the index already holds the
+context's integration source, which would otherwise stay registered and
+inactive. [Rebuild](#rebuild) the index to drop it.
+
 ## What is indexed
 
 | Source | Reference fields |

@@ -38,6 +38,12 @@ All notable changes to this project are documented in this file.
   `correlation-index--<kind>--<context>--<uuid v7>` and deletes them on shutdown,
   failure and abort. Readers additionally need `CONSUMER.NAMES` on the source
   streams.
+- `NatsCorrelationIndexProjector::connect_domain_only` indexes a context
+  without integration events. It refuses a context whose integration source is
+  already registered; rebuild the index to drop it.
+- The correlation index projector rejects source streams with work-queue or
+  interest retention or a consumer limit at startup (`ConfigurationMismatch`).
+  Its unacknowledged consumers would remove their messages or exhaust the limit.
 
 ### Changed
 

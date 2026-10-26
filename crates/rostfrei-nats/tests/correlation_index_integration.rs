@@ -8,7 +8,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use async_nats::jetstream;
+use async_nats::jetstream::{self, stream::RetentionPolicy};
 use futures_util::TryStreamExt as _;
 use rostfrei::{
     ApplicationName, BoundedContext, CorrelationChain, CorrelationIndexFreshness,
@@ -108,6 +108,19 @@ impl Fixture {
             .integration_event_stream()
             .as_str()
             .to_owned()
+    }
+
+    /// Recreates a stream with a changed policy; NATS rejects most in-place edits.
+    async fn recreate_stream(
+        &self,
+        name: &str,
+        change: impl FnOnce(&mut jetstream::stream::Config),
+    ) -> TestResult {
+        let mut config = self.js.get_stream(name).await?.cached_info().config.clone();
+        self.js.delete_stream(name).await?;
+        change(&mut config);
+        self.js.create_stream(config).await?;
+        Ok(())
     }
 
     async fn projector_consumers(&self, stream: &str) -> TestResult<Vec<String>> {
@@ -688,5 +701,93 @@ async fn a_source_is_active_only_while_its_projector_consumer_exists() -> TestRe
     })
     .await?;
     assert!(fixture.projector_consumers(&events).await?.is_empty());
+    fixture.cleanup().await
+}
+
+#[tokio::test]
+async fn source_streams_that_could_lose_or_limit_consumers_are_rejected() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let integration = fixture.integration_stream();
+    fixture
+        .recreate_stream(&integration, |config| {
+            config.retention = RetentionPolicy::WorkQueue;
+        })
+        .await?;
+    let error = NatsCorrelationIndexProjector::connect(
+        fixture.js.clone(),
+        &fixture.index,
+        fixture.ordering.events.clone(),
+        fixture.messaging.topology(),
+    )
+    .await
+    .err()
+    .ok_or("work-queue integration stream accepted")?;
+    assert_eq!(error.kind(), ReadModelErrorKind::ConfigurationMismatch);
+    assert!(error.to_string().contains(&integration), "{error}");
+
+    fixture
+        .recreate_stream(fixture.billing.events.stream_name(), |config| {
+            config.max_consumers = 8;
+        })
+        .await?;
+    let error = NatsCorrelationIndexProjector::connect_domain_only(
+        fixture.js.clone(),
+        &fixture.index,
+        fixture.billing.events.clone(),
+    )
+    .await
+    .err()
+    .ok_or("consumer-limited event store accepted")?;
+    assert_eq!(error.kind(), ReadModelErrorKind::ConfigurationMismatch);
+    fixture.cleanup().await
+}
+
+#[tokio::test]
+async fn a_domain_only_projector_refuses_a_context_indexed_with_integration_events() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let reader = fixture.reader().await?;
+    let projector = fixture.start(&fixture.ordering).await?;
+    freshness_where(&reader, |freshness| {
+        states(freshness, "ordering").len() == 2
+    })
+    .await?;
+    projector.stop().await?;
+    let error = NatsCorrelationIndexProjector::connect_domain_only(
+        fixture.js.clone(),
+        &fixture.index,
+        fixture.ordering.events.clone(),
+    )
+    .await
+    .err()
+    .ok_or("domain-only projector accepted an integration-indexed context")?;
+    assert_eq!(error.kind(), ReadModelErrorKind::ConfigurationMismatch);
+    assert!(error.to_string().contains("rebuild"), "{error}");
+
+    fixture
+        .billing
+        .append("billing/invoice", "I1", "R1", None, 1)
+        .await?;
+    let billing = Running::spawn(
+        NatsCorrelationIndexProjector::connect_domain_only(
+            fixture.js.clone(),
+            &fixture.index,
+            fixture.billing.events.clone(),
+        )
+        .await?,
+    );
+    chain_with(&reader, "R1", 1).await?;
+    let freshness = freshness_where(&reader, |freshness| {
+        freshness.lag.get("billing") == Some(&Some(0))
+    })
+    .await?;
+    assert_eq!(
+        states(&freshness, "billing"),
+        [(
+            CorrelationSourceKind::Domain,
+            CorrelationSourceState::Active,
+            0
+        )]
+    );
+    billing.stop().await?;
     fixture.cleanup().await
 }
