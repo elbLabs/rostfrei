@@ -627,7 +627,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
     )
     .await?;
 
-    let result: TestResult = async {
+    let result: TestResult = Box::pin(async {
         let runtime = Arc::new(
             BikeRentalNatsRuntime::provision_config(connection.clone(), config.clone()).await?,
         );
@@ -839,7 +839,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
         reaction_task.abort();
         let _ = reaction_task.await;
         Ok(())
-    }
+    })
     .await;
     let cleanup_result = cleanup(&connection, [&config]).await;
     let drain_result = connection.drain().await;

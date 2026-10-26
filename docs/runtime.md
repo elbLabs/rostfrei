@@ -98,3 +98,5 @@ versioned codecs, and explicitly provisioned Normal/Test-scoped buckets.
 [Continuous observation](continuous-observation.md) and
 [quarantine inspection](quarantine-inspection.md) expose application evidence
 through Tracer. Production observation uses the read-only inspection capability.
+The [correlation index](correlation-index.md) keeps every correlation's message
+references durably and serves aggregate-anchored views to the same capability.

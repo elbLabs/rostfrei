@@ -1,9 +1,9 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
     extract::{
-        DefaultBodyLimit, Path, Query, Request, State,
+        DefaultBodyLimit, Path, Query, RawQuery, Request, State,
         rejection::{JsonRejection, QueryRejection},
     },
     http::{HeaderMap, HeaderValue, StatusCode, header},
@@ -13,19 +13,20 @@ use axum::{
 };
 use futures_util::stream;
 use rostfrei_messaging_core::{
-    DEFAULT_QUARANTINE_PAGE_SIZE, QuarantineFilter, QuarantineMessageKind, QuarantineQuery,
-    QuarantineReadError,
+    BoundedContextName, DEFAULT_QUARANTINE_PAGE_SIZE, QuarantineFilter, QuarantineMessageKind,
+    QuarantineQuery, QuarantineReadError,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    CommandInputError, CommandRequest, CorrelationError, DiscoveryError, MAX_COMMAND_PAYLOAD_LEN,
-    MessageSeriesCaptureError, OperationMode, OperationSnapshot, QuarantineInspectionError,
-    QuarantineScope, SubmissionError, TestDefinition, TestDefinitionError,
-    TestDefinitionValidationError, TestRepositoryError, TestRunError, TestScenarioResetError,
-    TestTimeout, Tracer, behavioral_test_schema,
+    CommandInputError, CommandRequest, CorrelationError, CorrelationInspectionError,
+    DiscoveryError, MAX_COMMAND_PAYLOAD_LEN, MAX_INCLUDED_CONTEXTS, MessageSeriesCaptureError,
+    OperationMode, OperationSnapshot, PayloadMatch, QuarantineInspectionError, QuarantineScope,
+    SubmissionError, TestDefinition, TestDefinitionError, TestDefinitionValidationError,
+    TestRepositoryError, TestRunError, TestScenarioResetError, TestTimeout, Tracer,
+    behavioral_test_schema,
 };
 
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
@@ -201,6 +202,10 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
             "/quarantine/production/{record_id}",
             get(get_production_quarantine_record),
         )
+        .route(
+            "/aggregates/{aggregate_type}/{aggregate_id}/correlations",
+            get(get_anchor_correlations),
+        )
         .route_layer(middleware::from_fn_with_state(
             config.clone(),
             authorize_inspection_request,
@@ -226,6 +231,7 @@ async fn get_catalog(State(state): State<HttpState>, headers: HeaderMap) -> Resp
     let mut catalog = state.tracer.catalog().clone();
     match capability(&state.config, &headers) {
         Some(Capability::Control) => {
+            catalog.correlations = None;
             catalog
                 .observation
                 .retain(|entry| entry.scope == crate::ObservationScope::Test);
@@ -899,6 +905,86 @@ async fn operation_events(
     response
 }
 
+async fn get_anchor_correlations(
+    State(state): State<HttpState>,
+    Path((aggregate_type, aggregate_id)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
+) -> Response {
+    let (include, matches) = match anchor_query(query.as_deref()) {
+        Ok(query) => query,
+        Err(response) => return *response,
+    };
+    match state
+        .tracer
+        .anchor_correlations(&aggregate_type, &aggregate_id, &include, &matches)
+        .await
+    {
+        Ok(correlations) => private_no_store(Json(correlations).into_response()),
+        Err(error) => correlation_inspection_error_response(&error),
+    }
+}
+
+/// Accepts repeated or comma-separated `include=context:<name>` parameters and
+/// repeated form-URL-encoded `match=<context>/<event-type>.<field>=<value>`
+/// parameters.
+fn anchor_query(
+    query: Option<&str>,
+) -> Result<(BTreeSet<String>, Vec<PayloadMatch>), Box<Response>> {
+    let mut contexts = BTreeSet::new();
+    let mut matches = Vec::new();
+    for parameter in query
+        .unwrap_or_default()
+        .split('&')
+        .filter(|p| !p.is_empty())
+    {
+        match parameter.split_once('=') {
+            Some(("include", value)) => {
+                for item in value.replace("%3A", ":").replace("%3a", ":").split(',') {
+                    let context = item
+                        .strip_prefix("context:")
+                        .and_then(|name| BoundedContextName::new(name).ok())
+                        .ok_or_else(|| {
+                            Box::new(bad_request(&format!(
+                                "invalid include `{item}`; use `context:<name>`"
+                            )))
+                        })?;
+                    contexts.insert(context.as_str().to_owned());
+                }
+            }
+            Some(("match", value)) => {
+                let expression = percent_encoding::percent_decode_str(&value.replace('+', " "))
+                    .decode_utf8()
+                    .map_err(|_| {
+                        CorrelationInspectionError::InvalidMatch(
+                            "the value is not UTF-8 after URL decoding".to_owned(),
+                        )
+                    })
+                    .and_then(|expression| PayloadMatch::parse(&expression))
+                    .map_err(|error| Box::new(correlation_inspection_error_response(&error)))?;
+                matches.push(expression);
+            }
+            _ => {
+                return Err(Box::new(bad_request(
+                    "only `include=context:<name>` and `match=<context>/<event-type>.<field>=<value>` query parameters are supported",
+                )));
+            }
+        }
+    }
+    if contexts.len() > MAX_INCLUDED_CONTEXTS {
+        return Err(Box::new(bad_request(&format!(
+            "at most {MAX_INCLUDED_CONTEXTS} contexts can be included"
+        ))));
+    }
+    Ok((contexts, matches))
+}
+
+async fn indexed_correlation(state: &HttpState, correlation_id: &str) -> Response {
+    match state.tracer.indexed_correlation(correlation_id).await {
+        Ok(correlation) => private_no_store(Json(correlation).into_response()),
+        Err(error) => correlation_inspection_error_response(&error),
+    }
+}
+
 async fn correlation_events(
     State(state): State<HttpState>,
     Path(correlation_id): Path<String>,
@@ -907,6 +993,9 @@ async fn correlation_events(
     let Some(capability) = capability(&state.config, &headers) else {
         return unauthorized();
     };
+    if capability == Capability::ProductionInspection {
+        return indexed_correlation(&state, &correlation_id).await;
+    }
     let after = match optional_header(&headers, LAST_EVENT_ID) {
         Ok(Some(value)) => match value.parse::<u64>() {
             Ok(value) => value,
@@ -917,6 +1006,9 @@ async fn correlation_events(
     };
     let mode = match state.tracer.correlation_mode(&correlation_id) {
         Ok(mode) => mode,
+        Err(CorrelationError::NotFound) if state.tracer.has_correlation_index() => {
+            return forbidden();
+        }
         Err(error) => return correlation_error_response(&error),
     };
     if let Err(response) = authorize_mode(capability, mode) {
@@ -1205,6 +1297,45 @@ fn correlation_error_response(error: &CorrelationError) -> Response {
         CorrelationError::EventTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "payload-too-large"),
         CorrelationError::FutureCursor { .. } => (StatusCode::BAD_REQUEST, "future-cursor"),
         CorrelationError::ExpiredCursor { .. } => (StatusCode::GONE, "expired-cursor"),
+    };
+    (
+        status,
+        Json(ErrorBody {
+            code,
+            message: error.to_string(),
+        }),
+    )
+        .into_response()
+}
+
+fn correlation_inspection_error_response(error: &CorrelationInspectionError) -> Response {
+    let (status, code) = match error {
+        CorrelationInspectionError::Unavailable => {
+            (StatusCode::NOT_IMPLEMENTED, "correlation-index-unavailable")
+        }
+        CorrelationInspectionError::UnknownAnchor(_) => (StatusCode::NOT_FOUND, "unknown-anchor"),
+        CorrelationInspectionError::UnknownAnchorStream { .. } => {
+            (StatusCode::NOT_FOUND, "unknown-anchor-stream")
+        }
+        CorrelationInspectionError::NotFound(_) => (StatusCode::NOT_FOUND, "not-found"),
+        CorrelationInspectionError::InvalidId(_) => (StatusCode::BAD_REQUEST, "invalid-identifier"),
+        CorrelationInspectionError::IncludeTooBroad { .. } => {
+            (StatusCode::BAD_REQUEST, "include-too-broad")
+        }
+        CorrelationInspectionError::InvalidMatch(_) => (StatusCode::BAD_REQUEST, "invalid-match"),
+        CorrelationInspectionError::MatchRequiresInclude(_) => {
+            (StatusCode::BAD_REQUEST, "match-requires-include")
+        }
+        CorrelationInspectionError::HistoryUnavailable(_) => {
+            (StatusCode::NOT_IMPLEMENTED, "history-unavailable")
+        }
+        CorrelationInspectionError::Index(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "correlation-index-read-failed",
+        ),
+        CorrelationInspectionError::History(_) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "history-read-failed")
+        }
     };
     (
         status,

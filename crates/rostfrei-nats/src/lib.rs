@@ -3,6 +3,7 @@
 mod command_response;
 mod connection;
 mod consumer;
+mod correlation_index;
 mod correlation_observer;
 mod domain_event_consumer;
 mod error;
@@ -28,6 +29,10 @@ pub use command_response::{
 };
 pub use connection::{ConnectionHealth, NatsConnection, connect};
 pub use consumer::{MAX_QUARANTINE_RECORD_BYTES, NatsConsumerFactory, QuarantineRecord};
+pub use correlation_index::{
+    CORRELATION_INDEX_NAME, DEFAULT_CORRELATION_INDEX_MAX_BYTES, NatsCorrelationIndexProjector,
+    NatsCorrelationIndexReader,
+};
 pub use correlation_observer::{
     CorrelatedMessage, CorrelatedMessageFamily, CorrelatedMessageHandler, NatsCorrelationObserver,
     NatsCorrelationSubscription,

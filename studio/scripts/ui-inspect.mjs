@@ -123,6 +123,9 @@ async function main() {
           "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api"),
           "import.meta.env.VITE_TRACER_TOKEN":
             JSON.stringify("visual-inspection"),
+          "import.meta.env.VITE_TRACER_INSPECTION_TOKEN": JSON.stringify(
+            "visual-inspection-readonly"
+          ),
         },
       })
       server = started.server

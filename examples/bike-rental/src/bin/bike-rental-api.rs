@@ -27,7 +27,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         rostfrei::TrafficScope::Normal,
         limits,
         &bindings,
-    )?;
+    )?
+    .with_correlation_index()?;
     let epoch = env::var("ROSTFREI_COMPLETED_OUTCOME_EPOCH").ok();
     if let Some(epoch) = &epoch {
         normal = normal.with_fresh_completed_outcome_epoch(epoch)?;

@@ -4,6 +4,76 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Framework-owned **correlation index** ([ADR 0045](docs/adr/0045-correlation-index-and-anchored-views.md)):
+  one application-scoped KV read model maps each correlation to references of
+  its committed domain events and published integration events across all
+  bounded contexts. It reads metadata only, never payloads.
+  `NatsCorrelationIndexProjector` indexes one bounded context;
+  `NatsCorrelationIndexReader` returns ordered chains and per-context `lag`
+  computed against the source streams. A correlation keeps 2048 references and
+  then reports `truncated`. The bucket has no TTL and rejects writes when full;
+  deleting and provisioning it again rebuilds the index from the event stores.
+- `NatsReadModelConfig::application_scoped` derives a bucket without the bounded
+  context segment and keeps the traffic scope.
+- `AggregateDefinition::ANCHOR` declares an aggregate as an anchor. The compiled
+  domain model projects it as `"anchor": true`.
+- `NatsRuntimeConfig::with_correlation_index` and
+  `NatsApplicationBuilder::with_correlation_index` provision the index and run
+  its projector as a supervised worker. Tracer serves
+  `GET /aggregates/{type}/{id}/correlations` and indexed
+  `GET /correlations/{id}/events` to the production inspection capability and
+  lists anchor types in the catalog. See [correlation index and anchored views](docs/correlation-index.md).
+- An anchored view of an ID without a stored event returns
+  `404 unknown-anchor-stream`; `unknown-anchor` is reserved for types that are
+  not anchors.
+- Bike-rental indexes its Normal runtime and declares the rental fleet an anchor.
+- `CorrelationIndexReader::freshness` replaces `lag`. It reports every source
+  with its stream, `active`/`inactive` state and `behind` count; `lag[context]`
+  is `null` while any source of the context has no running projector. Tracer
+  index views add `sources`, and `GET /correlations/{id}/events` returns `404`
+  only when every source is active and caught up.
+- The projector names its ordered consumers
+  `correlation-index--<kind>--<context>--<uuid v7>` and deletes them on shutdown,
+  failure and abort. Readers additionally need `CONSUMER.NAMES` on the source
+  streams.
+- `NatsCorrelationIndexProjector::connect_domain_only` indexes a context
+  without integration events. It refuses a context whose integration source is
+  already registered; rebuild the index to drop it.
+- The correlation index projector rejects source streams with work-queue or
+  interest retention or a consumer limit at startup (`ConfigurationMismatch`).
+  Its unacknowledged consumers would remove their messages or exhaust the limit.
+- Correlation index sources detect a recreated stream by sequence regression
+  instead of the stream's `created` time, which JetStream changes after a server
+  restart for an updated stream. That drift no longer fails freshness reads or
+  turns the Tracer views into `503`. Messages a Limits stream removed before
+  they were indexed are reported per source as `skipped`; projection continues.
+  Stored source records with a `generation` field remain readable.
+- Anchored correlation views accept repeated
+  `match=<context>/<event-type>.<field>=<value>` filters that keep only
+  correlations whose loaded payloads carry the value, AND-ed across filters,
+  and echo them as `matched`. A filter on a context that is neither the
+  anchor's nor included returns `400 match-requires-include`; a malformed one
+  `400 invalid-match`. No index change.
+- Tracer Studio **Correlations** view: pick an advertised anchor and aggregate
+  ID to list its correlations with event counts, contexts and first/last seen,
+  or open a correlation ID directly. A selected chain renders indexed domain
+  and integration events with their causation, bounded context and per-context
+  index freshness; unknown lag is shown as unknown, never as current. It uses
+  `VITE_TRACER_INSPECTION_TOKEN` and explains unknown anchor streams, empty
+  anchors and correlations that are not indexed yet. **Match payload field**
+  rows (or a raw expression) send `match` filters, tick the include a foreign
+  context needs, show the `matched` echo as removable chips and are remembered
+  per anchor. The freshness footer lists each source's state, `behind` and
+  `skipped`.
+
+### Changed
+
+- **Breaking (read-model policy):** `NatsReadModelConfig::context()` returns
+  `Option<&BoundedContext>`, `None` for application-scoped models. `application()`
+  and `traffic_scope()` return the scope of every model.
+
 ### Fixed
 
 - The NATS application host rejects several integration handlers for one address,

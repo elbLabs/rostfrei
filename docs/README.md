@@ -23,6 +23,7 @@
   ([offline HTML guide](subjects.html))
 - [Event-driven read models](read-model-runtime.md) and [typed storage](read-models.md)
 - [Continuous observation](continuous-observation.md)
+- [Correlation index and anchored views](correlation-index.md)
 - [Quarantine inspection](quarantine-inspection.md) and [example walkthrough](../examples/bike-rental/QUARANTINE.md)
 - [Domain-event worker pool](design/domain-event-worker-pool.md)
 - [Aggregate-loading benchmarks](benchmarks/aggregate-loading.md) and [read-model benchmarks](read-model-benchmark.md)

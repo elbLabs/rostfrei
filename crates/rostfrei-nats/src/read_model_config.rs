@@ -5,7 +5,7 @@ use async_nats::jetstream::{
     stream::{Config, DiscardPolicy, StorageType},
 };
 use rostfrei_core::{ReadModelError, ReadModelErrorKind};
-use rostfrei_messaging_core::{BoundedContext, BoundedContextName, TrafficScope};
+use rostfrei_messaging_core::{ApplicationName, BoundedContext, BoundedContextName, TrafficScope};
 
 use crate::{
     StreamStorage,
@@ -14,12 +14,16 @@ use crate::{
 };
 
 const HEADER_ALLOWANCE: i32 = 1024;
+const DEFAULT_MAX_BYTES: i64 = 64 * 1024 * 1024;
+const DEFAULT_MAX_VALUE_BYTES: i32 = 256 * 1024;
 
 /// Operator-owned bucket policy. Construction and adapter connection never
 /// provision resources. TTL is retention, not an application freshness deadline.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NatsReadModelConfig {
-    context: BoundedContext,
+    application: ApplicationName,
+    traffic_scope: TrafficScope,
+    context: Option<BoundedContext>,
     name: BoundedContextName,
     bucket: String,
     max_bytes: i64,
@@ -38,29 +42,77 @@ impl NatsReadModelConfig {
     }
 
     pub fn new(context: &BoundedContext, name: impl Into<String>) -> Result<Self, ReadModelError> {
-        let name = BoundedContextName::new(name)
-            .map_err(|_| invalid("read-model name must be a lowercase kebab-case scope name"))?;
+        let name = model_name(name)?;
         let bucket = format!(
             "{}__{}__{}_READ_MODEL",
             traffic_stream_prefix(context.application().as_str(), context.traffic_scope()),
             traffic_stream_prefix(context.name().as_str(), TrafficScope::Normal),
             traffic_stream_prefix(name.as_str(), TrafficScope::Normal)
         );
-        Ok(Self {
-            context: context.clone(),
+        Ok(Self::with_bucket(
+            context.application().clone(),
+            context.traffic_scope(),
+            Some(context.clone()),
             name,
             bucket,
-            max_bytes: 64 * 1024 * 1024,
-            max_value_bytes: 256 * 1024,
+        ))
+    }
+
+    /// A framework-owned model shared by every bounded context of an application.
+    /// The bucket name omits the context segment and keeps the traffic scope.
+    pub fn application_scoped(
+        application: &ApplicationName,
+        traffic_scope: TrafficScope,
+        name: impl Into<String>,
+    ) -> Result<Self, ReadModelError> {
+        let name = model_name(name)?;
+        let bucket = format!(
+            "{}__{}_READ_MODEL",
+            traffic_stream_prefix(application.as_str(), traffic_scope),
+            traffic_stream_prefix(name.as_str(), TrafficScope::Normal)
+        );
+        Ok(Self::with_bucket(
+            application.clone(),
+            traffic_scope,
+            None,
+            name,
+            bucket,
+        ))
+    }
+
+    const fn with_bucket(
+        application: ApplicationName,
+        traffic_scope: TrafficScope,
+        context: Option<BoundedContext>,
+        name: BoundedContextName,
+        bucket: String,
+    ) -> Self {
+        Self {
+            application,
+            traffic_scope,
+            context,
+            name,
+            bucket,
+            max_bytes: DEFAULT_MAX_BYTES,
+            max_value_bytes: DEFAULT_MAX_VALUE_BYTES,
             storage: StreamStorage::File,
             replicas: 1,
             history: 1,
             ttl: Duration::ZERO,
-        })
+        }
     }
 
-    pub const fn context(&self) -> &BoundedContext {
-        &self.context
+    pub const fn application(&self) -> &ApplicationName {
+        &self.application
+    }
+
+    pub const fn traffic_scope(&self) -> TrafficScope {
+        self.traffic_scope
+    }
+
+    /// The owning bounded context, or `None` for an application-scoped model.
+    pub const fn context(&self) -> Option<&BoundedContext> {
+        self.context.as_ref()
     }
 
     pub fn name(&self) -> &str {
@@ -253,6 +305,11 @@ fn verify_expected(expected: &Config, actual: &Config) -> Result<(), ReadModelEr
             ),
         ))
     }
+}
+
+fn model_name(name: impl Into<String>) -> Result<BoundedContextName, ReadModelError> {
+    BoundedContextName::new(name)
+        .map_err(|_| invalid("read-model name must be a lowercase kebab-case scope name"))
 }
 
 fn invalid(message: &str) -> ReadModelError {

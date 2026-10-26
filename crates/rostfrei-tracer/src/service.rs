@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -9,8 +9,8 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    AggregateType, CommandHandler, ContentFingerprint, EventHistory, EventStore, OperationId,
-    StreamDirectory,
+    AggregateType, CommandHandler, ContentFingerprint, CorrelationIndexReader, EventHistory,
+    EventStore, OperationId, StreamDirectory,
 };
 use rostfrei_fixtures::Fixture;
 use rostfrei_messaging_core::{
@@ -40,6 +40,10 @@ use crate::{
     },
     command_execution_fingerprint,
     correlation::{CorrelationEvidenceSnapshot, CorrelationEvidenceSubscription, CorrelationHub},
+    correlation_view::{
+        AnchorCorrelations, CorrelationInspection, CorrelationInspectionError, IndexedCorrelation,
+        PayloadMatch,
+    },
     input::{CommandInputDocument, CommandInputOptions},
     message_series::{
         MessageGraphDefinition, MessageSeriesComparison, MessageSeriesComparisonContext,
@@ -330,6 +334,8 @@ pub struct TracerBuilder {
     test_quarantine_reader: Option<Arc<dyn QuarantineReader>>,
     production_quarantine_reader: Option<Arc<dyn QuarantineReader>>,
     quarantine_payload_policy: Arc<dyn QuarantinePayloadPolicy>,
+    correlation_index: Option<Arc<dyn CorrelationIndexReader>>,
+    production_histories: BTreeMap<String, Arc<dyn EventHistory>>,
 }
 
 impl TracerBuilder {
@@ -360,7 +366,29 @@ impl TracerBuilder {
             test_quarantine_reader: None,
             production_quarantine_reader: None,
             quarantine_payload_policy: Arc::new(DefaultQuarantinePayloadPolicy),
+            correlation_index: None,
+            production_histories: BTreeMap::new(),
         }
+    }
+
+    /// Serves production correlation views from the durable index. Requires the
+    /// read-only inspection capability over HTTP.
+    #[must_use]
+    pub fn with_correlation_index(mut self, index: Arc<dyn CorrelationIndexReader>) -> Self {
+        self.correlation_index = Some(index);
+        self
+    }
+
+    /// Normal-scope history of one bounded context, used to load anchor events
+    /// and, on explicit request, payloads of that context's touched streams.
+    #[must_use]
+    pub fn with_production_history(
+        mut self,
+        context: impl Into<String>,
+        history: Arc<dyn EventHistory>,
+    ) -> Self {
+        self.production_histories.insert(context.into(), history);
+        self
     }
 
     #[must_use]
@@ -558,6 +586,10 @@ impl TracerBuilder {
         Ok(())
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "validation and catalog assembly precede one immutable Tracer"
+    )]
     pub fn build(self) -> Result<Tracer, RuntimeRegistrationError> {
         self.bindings.validate()?;
         self.validate_quarantine_readers()?;
@@ -620,6 +652,11 @@ impl TracerBuilder {
             .values()
             .map(|feed| feed.catalog())
             .collect();
+        let correlation_inspection = correlation_inspection(
+            &mut catalog,
+            self.correlation_index,
+            self.production_histories,
+        );
         Ok(Tracer {
             inner: Arc::new(TracerInner {
                 event_codecs: self.event_codecs,
@@ -655,9 +692,26 @@ impl TracerBuilder {
                 quarantine_payload_policy: self.quarantine_payload_policy,
                 test_quarantine_permits: Semaphore::new(8),
                 production_quarantine_permits: Semaphore::new(8),
+                correlation_inspection,
             }),
         })
     }
+}
+
+fn correlation_inspection(
+    catalog: &mut TracerCatalog,
+    index: Option<Arc<dyn CorrelationIndexReader>>,
+    histories: BTreeMap<String, Arc<dyn EventHistory>>,
+) -> Option<CorrelationInspection> {
+    let index = index?;
+    let correlations = crate::catalog::correlation_catalog(catalog);
+    let anchors: BTreeSet<_> = correlations
+        .anchors
+        .iter()
+        .map(|anchor| anchor.aggregate_type.clone())
+        .collect();
+    catalog.correlations = Some(correlations);
+    Some(CorrelationInspection::new(index, histories, anchors))
 }
 
 fn validate_test_repository(
@@ -811,6 +865,7 @@ struct TracerInner {
     quarantine_payload_policy: Arc<dyn QuarantinePayloadPolicy>,
     test_quarantine_permits: Semaphore,
     production_quarantine_permits: Semaphore,
+    correlation_inspection: Option<CorrelationInspection>,
 }
 
 impl TracerInner {
@@ -971,6 +1026,46 @@ struct OperationSubmission {
 }
 
 impl Tracer {
+    pub fn has_correlation_index(&self) -> bool {
+        self.inner.correlation_inspection.is_some()
+    }
+
+    /// Hop 1 loads the anchor stream; hop 2 expands each of its correlations
+    /// from the index. Payloads of other streams are loaded only for `include`.
+    /// `matches` keeps only correlations whose loaded payloads satisfy every filter.
+    pub async fn anchor_correlations(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: &str,
+        include: &BTreeSet<String>,
+        matches: &[PayloadMatch],
+    ) -> Result<AnchorCorrelations, CorrelationInspectionError> {
+        self.inner
+            .correlation_inspection
+            .as_ref()
+            .ok_or(CorrelationInspectionError::Unavailable)?
+            .anchor(
+                aggregate_type,
+                aggregate_id,
+                include,
+                matches,
+                self.inner.trace_payload_policy.as_ref(),
+            )
+            .await
+    }
+
+    pub async fn indexed_correlation(
+        &self,
+        correlation_id: &str,
+    ) -> Result<IndexedCorrelation, CorrelationInspectionError> {
+        self.inner
+            .correlation_inspection
+            .as_ref()
+            .ok_or(CorrelationInspectionError::Unavailable)?
+            .correlation(correlation_id)
+            .await
+    }
+
     pub async fn quarantine_messages(
         &self,
         scope: QuarantineScope,

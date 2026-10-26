@@ -72,7 +72,7 @@ impl DomainModelBuilder {
         descriptor: AggregateDescriptor,
     ) -> Result<(), DomainModelError> {
         self.validate_aggregate_id(descriptor.id)?;
-        self.insert_aggregate(descriptor);
+        self.insert_aggregate(descriptor, false);
         Ok(())
     }
 
@@ -83,15 +83,16 @@ impl DomainModelBuilder {
         Ok(())
     }
 
-    fn insert_aggregate(&mut self, descriptor: AggregateDescriptor) {
-        self.aggregates.push((
-            descriptor.id,
-            json!({
-                "id": aggregate_id(descriptor.id),
-                "label": descriptor.label,
-                "root": entity_id(descriptor.root),
-            }),
-        ));
+    fn insert_aggregate(&mut self, descriptor: AggregateDescriptor, anchor: bool) {
+        let mut aggregate = json!({
+            "id": aggregate_id(descriptor.id),
+            "label": descriptor.label,
+            "root": entity_id(descriptor.root),
+        });
+        if anchor && let Some(fields) = aggregate.as_object_mut() {
+            fields.insert("anchor".to_owned(), Value::Bool(true));
+        }
+        self.aggregates.push((descriptor.id, aggregate));
     }
 
     pub fn add_aggregate_type<A: AggregateDefinition>(&mut self) -> Result<(), DomainModelError> {
@@ -100,7 +101,7 @@ impl DomainModelBuilder {
         self.validate_aggregate_id(descriptor.id)?;
         self.validate_domain_event_batch(events)?;
 
-        self.insert_aggregate(descriptor);
+        self.insert_aggregate(descriptor, A::ANCHOR);
         for event in events {
             self.insert_domain_event(*event);
         }

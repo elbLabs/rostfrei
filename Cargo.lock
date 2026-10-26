@@ -1723,6 +1723,7 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1777,6 +1778,7 @@ dependencies = [
  "base64",
  "futures-util",
  "http-body-util",
+ "percent-encoding",
  "rostfrei",
  "rostfrei-core",
  "rostfrei-domain",
