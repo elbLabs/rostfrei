@@ -44,6 +44,12 @@ All notable changes to this project are documented in this file.
 - The correlation index projector rejects source streams with work-queue or
   interest retention or a consumer limit at startup (`ConfigurationMismatch`).
   Its unacknowledged consumers would remove their messages or exhaust the limit.
+- Correlation index sources detect a recreated stream by sequence regression
+  instead of the stream's `created` time, which JetStream changes after a server
+  restart for an updated stream. That drift no longer fails freshness reads or
+  turns the Tracer views into `503`. Messages a Limits stream removed before
+  they were indexed are reported per source as `skipped`; projection continues.
+  Stored source records with a `generation` field remain readable.
 
 ### Changed
 

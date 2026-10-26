@@ -73,8 +73,67 @@ struct IndexSource {
     kind: CorrelationSourceKind,
     stream: String,
     filter_subject: String,
-    generation: String,
+    /// Stream `created` time written by earlier versions. `JetStream` rewrites it
+    /// on server restart after a stream update, so it is read and ignored.
+    #[serde(default, skip_serializing)]
+    generation: Option<String>,
     checkpoint: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    skipped: u64,
+}
+
+/// Retained range of a source stream, from its stream state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StreamRange {
+    first_sequence: u64,
+    last_sequence: u64,
+}
+
+/// Where a source's checkpoint lies relative to the retained stream range.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SourcePosition {
+    Consistent,
+    /// The stream no longer retains this many sequences after the checkpoint.
+    Gap(u64),
+    /// The stream's last sequence lies before the checkpoint: sequences never
+    /// regress, so the stream was deleted and created again.
+    Recreated,
+}
+
+impl SourcePosition {
+    /// A Limits stream that removed messages after the checkpoint, by age, size
+    /// or purge, keeps its last sequence and is a gap, not a recreation. A
+    /// stream recreated with at least as many messages as the checkpoint is not
+    /// detectable from sequences.
+    const fn classify(checkpoint: u64, range: StreamRange) -> Self {
+        if range.last_sequence < checkpoint {
+            Self::Recreated
+        } else if checkpoint > 0 && range.first_sequence > checkpoint.saturating_add(1) {
+            Self::Gap(
+                range
+                    .first_sequence
+                    .saturating_sub(checkpoint)
+                    .saturating_sub(1),
+            )
+        } else {
+            Self::Consistent
+        }
+    }
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde passes skipped fields by reference"
+)]
+const fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+fn recreated() -> ReadModelError {
+    ReadModelError::new(
+        ReadModelErrorKind::ConfigurationMismatch,
+        "source stream was recreated; delete and rebuild the correlation index",
+    )
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -206,24 +265,40 @@ impl IndexStores {
         Ok(self.sources.read(key).await?.map(|entry| entry.value))
     }
 
-    async fn register(&self, source: &IndexSource) -> Result<u64, ReadModelError> {
+    /// Registers the source or resumes it. A gap after the checkpoint is
+    /// recorded as `skipped` and the checkpoint moves to the first retained
+    /// sequence; a recreated stream is refused.
+    async fn register(
+        &self,
+        source: &IndexSource,
+        range: StreamRange,
+    ) -> Result<u64, ReadModelError> {
         let key = source_key(source.kind, &source.context)?;
-        let checkpoint = cas(&self.sources, &key, |stored| match stored {
-            Some(stored) if stored.generation != source.generation => Err(ReadModelError::new(
-                ReadModelErrorKind::ConfigurationMismatch,
-                "source stream was recreated; delete and rebuild the correlation index",
-            )),
-            Some(stored)
-                if stored.stream != source.stream
-                    || stored.filter_subject != source.filter_subject =>
-            {
-                Err(ReadModelError::new(
+        let checkpoint = cas(&self.sources, &key, |stored| {
+            let Some(stored) = stored else {
+                return Ok(Some(source.clone()));
+            };
+            if stored.stream != source.stream || stored.filter_subject != source.filter_subject {
+                return Err(ReadModelError::new(
                     ReadModelErrorKind::ConfigurationMismatch,
                     "source stream policy changed; delete and rebuild the correlation index",
-                ))
+                ));
             }
-            Some(_) => Ok(None),
-            None => Ok(Some(source.clone())),
+            match SourcePosition::classify(stored.checkpoint, range) {
+                SourcePosition::Recreated => Err(recreated()),
+                SourcePosition::Gap(skipped) => {
+                    tracing::warn!(stream = %stored.stream, context = %stored.context,
+                        checkpoint = stored.checkpoint, skipped,
+                        "correlation index source lost messages before they were indexed");
+                    Ok(Some(IndexSource {
+                        checkpoint: range.first_sequence.saturating_sub(1),
+                        skipped: stored.skipped.saturating_add(skipped),
+                        generation: None,
+                        ..stored.clone()
+                    }))
+                }
+                SourcePosition::Consistent => Ok(None),
+            }
         })
         .await?
         .checkpoint;
@@ -461,19 +536,13 @@ impl NatsCorrelationIndexProjector {
         )
         .map(|_| ())
     }
+}
 
-    async fn generation(&self, stream: &str) -> Result<String, ReadModelError> {
-        self.context
-            .get_stream(stream)
-            .await
-            .map(|stream| {
-                stream
-                    .cached_info()
-                    .created
-                    .unix_timestamp_nanos()
-                    .to_string()
-            })
-            .map_err(|_| unavailable("correlation index source stream is unavailable"))
+fn stream_range(stream: &jetstream::stream::Stream) -> StreamRange {
+    let state = &stream.cached_info().state;
+    StreamRange {
+        first_sequence: state.first_sequence,
+        last_sequence: state.last_sequence,
     }
 }
 
@@ -519,26 +588,29 @@ impl SourceLoop {
         projector: &NatsCorrelationIndexProjector,
         shutdown: &mut watch::Receiver<bool>,
     ) -> Result<(), ReadModelError> {
-        let generation = projector.generation(&self.stream).await?;
-        let checkpoint = projector
-            .stores
-            .register(&IndexSource {
-                context: self.context_name.clone(),
-                kind: self.kind,
-                stream: self.stream.clone(),
-                filter_subject: self.filter_subject.clone(),
-                generation,
-                checkpoint: 0,
-            })
-            .await?;
-        let start_sequence = checkpoint
-            .checked_add(1)
-            .ok_or_else(|| invalid_data("source checkpoint overflowed"))?;
         let stream = projector
             .context
             .get_stream(&self.stream)
             .await
             .map_err(|_| unavailable("correlation index source stream is unavailable"))?;
+        let checkpoint = projector
+            .stores
+            .register(
+                &IndexSource {
+                    context: self.context_name.clone(),
+                    kind: self.kind,
+                    stream: self.stream.clone(),
+                    filter_subject: self.filter_subject.clone(),
+                    generation: None,
+                    checkpoint: 0,
+                    skipped: 0,
+                },
+                stream_range(&stream),
+            )
+            .await?;
+        let start_sequence = checkpoint
+            .checked_add(1)
+            .ok_or_else(|| invalid_data("source checkpoint overflowed"))?;
         let name = projector_consumer_name(self.kind, &self.context_name);
         let lease = ConsumerLease {
             context: projector.context.clone(),
@@ -844,34 +916,31 @@ impl NatsCorrelationIndexReader {
         names.into_iter().collect()
     }
 
-    async fn pending(&self, source: &IndexSource) -> Result<u64, ReadModelError> {
+    /// Unindexed matching messages and sequences the stream dropped after the
+    /// checkpoint before a projector reached them.
+    async fn pending(&self, source: &IndexSource) -> Result<(u64, u64), ReadModelError> {
         let stream = self
             .context
             .get_stream(&source.stream)
             .await
             .map_err(|_| unavailable("correlation index source stream is unavailable"))?;
-        if stream
-            .cached_info()
-            .created
-            .unix_timestamp_nanos()
-            .to_string()
-            != source.generation
-        {
-            return Err(ReadModelError::new(
-                ReadModelErrorKind::ConfigurationMismatch,
-                "source stream was recreated; delete and rebuild the correlation index",
-            ));
-        }
+        let gap = match SourcePosition::classify(source.checkpoint, stream_range(&stream)) {
+            SourcePosition::Recreated => return Err(recreated()),
+            SourcePosition::Gap(skipped) => skipped,
+            SourcePosition::Consistent => 0,
+        };
         let last = match stream
             .get_last_raw_message_by_subject(&source.filter_subject)
             .await
         {
             Ok(message) => message.sequence,
-            Err(error) if error.kind() == LastRawMessageErrorKind::NoMessageFound => return Ok(0),
+            Err(error) if error.kind() == LastRawMessageErrorKind::NoMessageFound => {
+                return Ok((0, gap));
+            }
             Err(_) => return Err(unavailable("failed to read source stream position")),
         };
         if last <= source.checkpoint {
-            return Ok(0);
+            return Ok((0, gap));
         }
         let start_sequence = source
             .checkpoint
@@ -904,7 +973,7 @@ impl NatsCorrelationIndexReader {
             tracing::warn!(stream = %source.stream, consumer = %name,
                 "lag cursor cleanup failed; the server removes it after inactivity");
         }
-        pending
+        pending.map(|pending| (pending, gap))
     }
 }
 
@@ -941,7 +1010,7 @@ impl CorrelationIndexReader for NatsCorrelationIndexReader {
                     .iter()
                     .any(|name| is_projector_consumer(name, source.kind, &source.context))
             });
-            let behind = self.pending(&source).await?;
+            let (behind, gap) = self.pending(&source).await?;
             sources.push(CorrelationSourceFreshness {
                 context: source.context,
                 kind: source.kind,
@@ -952,6 +1021,7 @@ impl CorrelationIndexReader for NatsCorrelationIndexReader {
                     CorrelationSourceState::Inactive
                 },
                 behind,
+                skipped: source.skipped.saturating_add(gap),
             });
         }
         Ok(CorrelationIndexFreshness::from_sources(sources))
@@ -1132,6 +1202,50 @@ mod tests {
             CorrelationSourceKind::Domain,
             "ordering"
         ));
+    }
+
+    fn range(first_sequence: u64, last_sequence: u64) -> StreamRange {
+        StreamRange {
+            first_sequence,
+            last_sequence,
+        }
+    }
+
+    #[test]
+    fn sequence_regression_is_a_recreation_and_lost_retention_a_gap() {
+        use SourcePosition::{Consistent, Gap, Recreated};
+        for (checkpoint, first, last, expected) in [
+            (0, 0, 0, Consistent),
+            (0, 5, 9, Consistent),
+            (3, 1, 9, Consistent),
+            (3, 4, 9, Consistent),
+            (9, 10, 9, Consistent),
+            (3, 7, 9, Gap(3)),
+            (3, 10, 9, Gap(6)),
+            (3, 0, 0, Recreated),
+            (5, 1, 2, Recreated),
+        ] {
+            assert_eq!(
+                SourcePosition::classify(checkpoint, range(first, last)),
+                expected,
+                "checkpoint {checkpoint}, retained {first}..={last}"
+            );
+        }
+    }
+
+    #[test]
+    fn source_records_with_a_created_time_generation_still_decode() {
+        let stored: IndexSource = serde_json::from_value(serde_json::json!({
+            "context": "ordering", "kind": "integration", "stream": "SHOP_INTEGRATION_EVENTS",
+            "filter_subject": "shop.integration.ordering.>",
+            "generation": "1792956416874289669", "checkpoint": 7,
+        }))
+        .unwrap();
+        assert_eq!(stored.checkpoint, 7);
+        assert_eq!(stored.skipped, 0);
+        let encoded = serde_json::to_value(&stored).unwrap();
+        assert!(encoded.get("generation").is_none());
+        assert!(encoded.get("skipped").is_none());
     }
 
     #[test]

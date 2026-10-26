@@ -45,7 +45,7 @@ correlation: a business object that several chains touch over time.
   application host (ADR 0014 `NatsApplication`/`NatsRuntime`) and enabled with
   `with_correlation_index()`. It consumes that context's aggregate subjects and
   the integration subjects the context publishes. Each source keeps its stream,
-  filter, stream generation and checkpoint inside the index bucket; the bucket
+  filter and checkpoint inside the index bucket; the bucket
   also lists its sources. Readers discover contexts from the bucket and need no
   configuration when a context is added. Concurrent appends to one key are
   resolved by bounded CAS retries; duplicate deliveries resolve to the same
@@ -62,8 +62,8 @@ correlation: a business object that several chains touch over time.
   Further references set `truncated`, are logged, and never stall the projector.
 - **Rebuild** is deleting the bucket, provisioning it again and restarting the
   projector. Checkpoints live in the bucket, so every source replays from its
-  first message. A recreated source stream (different generation) stops the
-  projector and requires the same rebuild.
+  first message. A recreated source stream stops the projector and requires
+  the same rebuild (see the addendum on recreation).
 - **Freshness is computed by the server.** The reader and every index view
   return `lag: { context → events_behind }`: the source's matching messages after its
   checkpoint, counted by JetStream. Domain and integration lag of one context are
@@ -142,6 +142,28 @@ with `max_consumers > 0`. A context without integration events uses
 `connect_domain_only`; it refuses a context whose integration source is already
 registered, because that source would stay inactive and keep its lag `null`
 until the index is rebuilt.
+
+### Addendum: recreation is detected by sequence
+
+The first implementation stored the source stream's `created` time as its
+generation and treated any change as a recreation. JetStream does not keep that
+time stable: after a server restart, a stream whose configuration had been
+updated (Rostfrei updates the event store config on every boot) reported a new
+`created` value with all messages and sequences intact. Every freshness read
+then failed with `ConfigurationMismatch` and the Tracer views answered `503`
+until a needless rebuild.
+
+A source is now classified from its checkpoint and the stream state:
+`last_sequence < checkpoint` is a recreation, since sequences never regress;
+`first_sequence > checkpoint + 1` with a checkpoint above zero is a gap, since a
+Limits stream may remove messages by age, size or purge while no projector runs.
+A recreation still stops the projector and asks for a rebuild. A gap is
+recorded as `skipped` on the source, the checkpoint moves to the first retained
+sequence and projection continues. Records written with a `generation` field
+are still read; the field is ignored and dropped on the next write, so an
+existing bucket needs no migration. Recreating a stream with at least as many
+messages as the checkpoint is not detected; deleting a source stream therefore
+remains an operator step that includes the index rebuild.
 
 Not part of this decision, optional and later: `EventHistory::load_event` for
 per-event foreign payloads (next), an explicit framework event linking a chain

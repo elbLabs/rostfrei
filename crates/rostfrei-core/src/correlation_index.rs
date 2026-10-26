@@ -160,6 +160,11 @@ pub struct CorrelationSourceFreshness {
     pub state: CorrelationSourceState,
     /// Matching source messages after the source's checkpoint.
     pub behind: u64,
+    /// Stream sequences after a checkpoint that the stream no longer retained
+    /// when they were due for indexing, for example messages aged out while no
+    /// projector ran. Their references are missing; not every skipped sequence
+    /// needs to match the source. Cumulative until the index is rebuilt.
+    pub skipped: u64,
 }
 
 /// Freshness of the correlation index as of one read: per-context `lag` and the
@@ -267,6 +272,7 @@ mod tests {
             stream: format!("{context}-{}", kind.as_str()),
             state,
             behind,
+            skipped: 0,
         }
     }
 
@@ -289,7 +295,8 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&freshness.sources[0]).unwrap(),
             serde_json::json!({ "context": "billing", "kind": "domain",
-                "stream": "billing-domain", "state": "inactive", "behind": 0 })
+                "stream": "billing-domain", "state": "inactive", "behind": 0,
+                "skipped": 0 })
         );
         assert!(!freshness.is_complete());
     }

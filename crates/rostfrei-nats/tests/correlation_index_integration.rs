@@ -4,6 +4,7 @@ mod native_connection_support;
 
 use std::{
     future::Future,
+    num::NonZeroU32,
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -13,7 +14,8 @@ use futures_util::TryStreamExt as _;
 use rostfrei::{
     ApplicationName, BoundedContext, CorrelationChain, CorrelationIndexFreshness,
     CorrelationIndexReader, CorrelationRef, CorrelationSourceKind, CorrelationSourceState,
-    MAX_CORRELATION_REFS, ReadModelError, ReadModelErrorKind, TrafficScope,
+    JsonReadModelCodec, MAX_CORRELATION_REFS, ReadModelError, ReadModelErrorKind, ReadModelKey,
+    ReadModelStore, TrafficScope,
 };
 use rostfrei_core::{
     AggregateId, AggregateType, ContentFingerprint, EventBatch, EventStore, ExpectedVersion,
@@ -26,7 +28,7 @@ use rostfrei_messaging_core::{
 };
 use rostfrei_nats::{
     ApplicationMessagingConfig, NatsCorrelationIndexProjector, NatsCorrelationIndexReader,
-    NatsEventStore, NatsEventStoreConfig, NatsPublisher, NatsReadModelConfig,
+    NatsEventStore, NatsEventStoreConfig, NatsPublisher, NatsReadModelConfig, NatsReadModelStore,
     provision_application_messaging, provision_event_store, provision_read_model,
 };
 use tokio::{sync::watch, task::JoinHandle};
@@ -120,6 +122,26 @@ impl Fixture {
         self.js.delete_stream(name).await?;
         change(&mut config);
         self.js.create_stream(config).await?;
+        Ok(())
+    }
+
+    /// Rewrites a stored source record as an earlier version would have left it
+    /// after the server reported a new stream `created` time.
+    async fn stale_generation(&self, key: &str) -> TestResult {
+        let store = NatsReadModelStore::connect(
+            self.js.clone(),
+            self.index.clone(),
+            JsonReadModelCodec::<serde_json::Value>::new(NonZeroU32::MIN),
+        )
+        .await?;
+        let key = ReadModelKey::new(key)?;
+        let entry = store.read(&key).await?.ok_or("missing source record")?;
+        let mut value = entry.value;
+        value
+            .as_object_mut()
+            .ok_or("source record is not an object")?
+            .insert("generation".to_owned(), serde_json::json!("1"));
+        store.update(&key, &entry.revision, &value).await?;
         Ok(())
     }
 
@@ -789,5 +811,142 @@ async fn a_domain_only_projector_refuses_a_context_indexed_with_integration_even
         )]
     );
     billing.stop().await?;
+    fixture.cleanup().await
+}
+
+#[tokio::test]
+async fn an_updated_source_stream_keeps_its_checkpoint_and_stays_readable() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let integration = fixture.integration_stream();
+    let placed = fixture
+        .ordering
+        .append("ordering/order", "O1", "R1", None, 1)
+        .await?;
+    let placed = placed.first().ok_or("missing event")?;
+    fixture
+        .publish(&fixture.ordering, "order-placed", "R1", placed)
+        .await?;
+    let projector = fixture.start(&fixture.ordering).await?;
+    let reader = fixture.reader().await?;
+    chain_with(&reader, "R1", 2).await?;
+    caught_up(&reader, &["ordering"]).await?;
+    projector.stop().await?;
+
+    let probe = format!("{}-update-probe.>", fixture.index.application().as_str());
+    let mut config = fixture
+        .js
+        .get_stream(&integration)
+        .await?
+        .cached_info()
+        .config
+        .clone();
+    config.subjects.push(probe);
+    fixture.js.update_stream(config).await?;
+    for key in ["source.domain.ordering", "source.integration.ordering"] {
+        fixture.stale_generation(key).await?;
+    }
+    let freshness = reader.freshness().await?;
+    assert!(freshness.sources.iter().all(|source| source.skipped == 0));
+
+    let projector = fixture.start(&fixture.ordering).await?;
+    let shipped = fixture
+        .ordering
+        .append("ordering/order", "O1", "R1", None, 1)
+        .await?;
+    fixture
+        .publish(
+            &fixture.ordering,
+            "order-shipped",
+            "R1",
+            shipped.first().ok_or("missing event")?,
+        )
+        .await?;
+    chain_with(&reader, "R1", 4).await?;
+    caught_up(&reader, &["ordering"]).await?;
+    assert!(!projector.task.is_finished());
+    projector.stop().await?;
+    fixture.cleanup().await
+}
+
+#[tokio::test]
+async fn a_recreated_source_stream_stops_the_projector_and_fails_freshness() -> TestResult {
+    let fixture = Fixture::new().await?;
+    fixture
+        .ordering
+        .append("ordering/order", "O1", "R1", None, 3)
+        .await?;
+    let projector = fixture.start(&fixture.ordering).await?;
+    let reader = fixture.reader().await?;
+    chain_with(&reader, "R1", 3).await?;
+    caught_up(&reader, &["ordering"]).await?;
+    projector.stop().await?;
+
+    fixture
+        .js
+        .delete_stream(fixture.ordering.events.stream_name())
+        .await?;
+    let recreated = Context::new(&fixture.js, fixture.ordering.scope.clone()).await?;
+    recreated
+        .append("ordering/order", "O2", "R2", None, 1)
+        .await?;
+    let error = reader
+        .freshness()
+        .await
+        .err()
+        .ok_or("recreated stream reported as fresh")?;
+    assert_eq!(error.kind(), ReadModelErrorKind::ConfigurationMismatch);
+    assert!(error.to_string().contains("recreated"), "{error}");
+    let projector = fixture.start(&recreated).await?;
+    let error = tokio::time::timeout(WAIT, projector.task)
+        .await??
+        .expect_err("a recreated stream must stop the projector");
+    assert_eq!(error.kind(), ReadModelErrorKind::ConfigurationMismatch);
+    assert!(error.to_string().contains("recreated"), "{error}");
+    fixture.cleanup().await
+}
+
+#[tokio::test]
+async fn messages_removed_before_indexing_are_reported_as_skipped() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let placed = fixture
+        .ordering
+        .append("ordering/order", "O1", "R1", None, 1)
+        .await?;
+    let placed = placed.first().ok_or("missing event")?;
+    fixture
+        .publish(&fixture.ordering, "order-placed", "R1", placed)
+        .await?;
+    let projector = fixture.start(&fixture.ordering).await?;
+    let reader = fixture.reader().await?;
+    chain_with(&reader, "R1", 2).await?;
+    caught_up(&reader, &["ordering"]).await?;
+    projector.stop().await?;
+
+    for name in ["order-amended", "order-shipped"] {
+        fixture
+            .publish(&fixture.ordering, name, "R1", placed)
+            .await?;
+    }
+    fixture
+        .js
+        .get_stream(fixture.integration_stream())
+        .await?
+        .purge()
+        .await?;
+    let skipped = |freshness: &CorrelationIndexFreshness| {
+        freshness
+            .sources
+            .iter()
+            .find(|source| source.kind == CorrelationSourceKind::Integration)
+            .map(|source| (source.behind, source.skipped))
+    };
+    assert_eq!(skipped(&reader.freshness().await?), Some((0, 2)));
+
+    let projector = fixture.start(&fixture.ordering).await?;
+    caught_up(&reader, &["ordering"]).await?;
+    assert_eq!(skipped(&reader.freshness().await?), Some((0, 2)));
+    assert_eq!(chain_with(&reader, "R1", 2).await?.refs.len(), 2);
+    assert!(!projector.task.is_finished());
+    projector.stop().await?;
     fixture.cleanup().await
 }

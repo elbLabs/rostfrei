@@ -139,6 +139,7 @@ impl FakeIndex {
             stream: format!("SHOP__{}_DOMAIN_EVENTS", context.to_uppercase()),
             state,
             behind,
+            skipped: 0,
         };
         let mut sources = self.sources.lock().unwrap();
         sources.retain(|source| source.context != context);
@@ -364,7 +365,7 @@ async fn anchor_view_returns_anchor_payloads_without_loading_foreign_streams() {
     assert_eq!(
         body["sources"][1],
         json!({"context": "ordering", "kind": "domain", "stream": "SHOP__ORDERING_DOMAIN_EVENTS",
-            "state": "active", "behind": 0})
+            "state": "active", "behind": 0, "skipped": 0})
     );
     assert!(body.get("truncated").is_none());
     let correlations = body["correlations"].as_array().unwrap();

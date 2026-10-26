@@ -127,9 +127,31 @@ The projector stores its source checkpoints in the bucket. To rebuild:
 4. Start the runtimes. Each source replays from its first retained message.
 
 Integration messages that already expired cannot be indexed again; their
-references are lost by a rebuild. A recreated event store stream stops the
-projector with `ConfigurationMismatch` until the index is rebuilt. An isolated
-Test reset deletes and recreates the Test index with the other Test streams.
+references are lost by a rebuild. An isolated Test reset deletes and recreates
+the Test index with the other Test streams.
+
+### Recreated sources and gaps
+
+Each source compares its checkpoint with the stream's retained range
+(`first_sequence`, `last_sequence`) when the projector starts and on every
+freshness read. Stream sequences never decrease, and updating a stream's
+configuration does not change them.
+
+- **Recreated:** the stream's last sequence lies before the checkpoint. The
+  stream was deleted and created again. The projector stops and every read
+  fails with `ConfigurationMismatch` ("source stream was recreated; delete and
+  rebuild the correlation index") until the index is rebuilt. A stream
+  recreated with at least as many messages as the checkpoint cannot be told
+  apart by sequence; rebuild the index whenever you delete a source stream.
+- **Gap:** the first retained sequence lies more than one past the checkpoint,
+  for example because a Limits stream aged out, discarded or purged messages
+  while no projector ran. The source reports the missing sequences as
+  `skipped`. On restart the projector records them, continues from the first
+  retained message and keeps running. `skipped` counts stream sequences; on
+  the shared integration stream some belong to other contexts.
+
+The stream's `created` time is not used: JetStream reports a new value after a
+server restart for a stream whose configuration was updated.
 
 ### Permissions
 
@@ -150,16 +172,19 @@ and a per-context `lag`, computed by the server against the source streams:
   "lag": { "billing": null, "ordering": 0 },
   "sources": [
     { "context": "billing", "kind": "domain", "stream": "SHOP__BILLING_DOMAIN_EVENTS",
-      "state": "inactive", "behind": 2 },
+      "state": "inactive", "behind": 2, "skipped": 0 },
     { "context": "billing", "kind": "integration", "stream": "SHOP_INTEGRATION_EVENTS",
-      "state": "inactive", "behind": 0 },
+      "state": "inactive", "behind": 0, "skipped": 0 },
     { "context": "ordering", "kind": "domain", "stream": "SHOP__ORDERING_DOMAIN_EVENTS",
-      "state": "active", "behind": 0 }
+      "state": "active", "behind": 0, "skipped": 0 }
   ]
 }
 ```
 
 - `behind` counts the source's matching messages after its checkpoint.
+- `skipped` counts stream sequences the source lost before they were indexed
+  (see [gaps](#recreated-sources-and-gaps)). It does not affect `lag` or the
+  `404` rule; it stays until the index is rebuilt.
 - `state` is `active` while a projector consumer for that source exists on its
   stream, `inactive` otherwise.
 - `lag[context]` sums `behind` over the context's sources. It is `null` when any
