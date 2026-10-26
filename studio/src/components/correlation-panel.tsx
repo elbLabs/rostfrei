@@ -2,6 +2,14 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { LoaderCircle, RefreshCw, Unplug, Waypoints, X } from "lucide-react"
 import { Input } from "@rostfrei/ui/components/input"
 import { NativeSelect } from "@rostfrei/ui/components/native-select"
+import { MatchBuilder, MatchedChips } from "@/components/correlation-match"
+import {
+  matchRows,
+  readStoredMatches,
+  rowMatches,
+  storeMatches,
+  type MatchRow,
+} from "@/lib/correlation-match"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -11,7 +19,9 @@ import {
   discoverCorrelations,
   getAnchorCorrelations,
   getCorrelationChain,
+  formatPayloadMatch,
   inspectionConfigured,
+  payloadMatchProblem,
   type CorrelationFailure,
 } from "@/lib/correlation-api"
 import type {
@@ -21,6 +31,7 @@ import type {
   CorrelationFreshness,
   CorrelationRef,
   IndexedCorrelationChain,
+  PayloadMatch,
 } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -75,6 +86,8 @@ export function CorrelationPanel({
   const [viewProblem, setViewProblem] = useState<CorrelationProblem>()
   const [selectedId, setSelectedId] = useState<string>()
   const [included, setIncluded] = useState<string[]>([])
+  const [rows, setRows] = useState<MatchRow[]>([])
+  const [includeNote, setIncludeNote] = useState<string>()
   const controller = useRef<AbortController | undefined>(undefined)
   const chainController = useRef<AbortController | undefined>(undefined)
   const configured = inspectionConfigured()
@@ -97,13 +110,15 @@ export function CorrelationPanel({
         if (discoveryController.signal.aborted) return
         setCapability(discovered)
         setDiscoveryError(undefined)
-        setAnchorType(
-          (current) =>
+        setAnchorType((current) => {
+          const next =
             discovered?.anchors.find((entry) => entry.aggregateType === current)
               ?.aggregateType ??
             discovered?.anchors[0]?.aggregateType ??
             CUSTOM_ANCHOR
-        )
+          if (next !== current) setRows(matchRows(readStoredMatches(next)))
+          return next
+        })
         const status = discovered ? "live" : "unavailable"
         setDiscovery(status)
         onStatus(status)
@@ -172,9 +187,14 @@ export function CorrelationPanel({
     [eventsTemplate, onSelection]
   )
 
+  const anchorContext = aggregateType.split("/")[0]
+  const matches = rowMatches(rows)
+  const matchesValid = matches.every((match) => !payloadMatchProblem(match))
+
   const loadAnchor = async (
     reloadSelection: boolean,
-    includedContexts = reloadSelection ? included : []
+    includedContexts = included,
+    appliedMatches = matches
   ) => {
     const id = aggregateId.trim()
     if (!aggregateType || !id) return
@@ -195,7 +215,8 @@ export function CorrelationPanel({
           aggregateType,
           id,
           anchor?.correlationsHrefTemplate,
-          includedContexts
+          includedContexts,
+          appliedMatches
         ),
         anchorRequest.signal
       )
@@ -222,7 +243,31 @@ export function CorrelationPanel({
 
   const submitAnchor = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    void loadAnchor(false)
+    if (!matchesValid) return
+    const missing = [
+      ...new Set(
+        matches
+          .map((match) => match.context)
+          .filter(
+            (context) =>
+              context !== anchorContext && !included.includes(context)
+          )
+      ),
+    ]
+    setIncludeNote(
+      missing.length
+        ? `Included ${missing.join(", ")} so ${missing.length === 1 ? "its" : "their"} payloads can be matched.`
+        : undefined
+    )
+    storeMatches(aggregateType, matches)
+    void loadAnchor(false, [...included, ...missing].sort(), matches)
+  }
+
+  const applyMatches = (next: PayloadMatch[]) => {
+    setRows(matchRows(next))
+    setIncludeNote(undefined)
+    storeMatches(aggregateType, next)
+    void loadAnchor(true, included, next)
   }
 
   const submitCorrelation = (event: FormEvent<HTMLFormElement>) => {
@@ -273,7 +318,12 @@ export function CorrelationPanel({
               aria-label="Anchor aggregate type"
               value={anchorType}
               disabled={!ready}
-              onChange={(event) => setAnchorType(event.target.value)}
+              onChange={(event) => {
+                setAnchorType(event.target.value)
+                setRows(matchRows(readStoredMatches(event.target.value)))
+                setIncluded([])
+                setIncludeNote(undefined)
+              }}
             >
               {anchors.map((entry) => (
                 <option key={entry.aggregateType} value={entry.aggregateType}>
@@ -312,10 +362,27 @@ export function CorrelationPanel({
             onChange={(event) => setAggregateId(event.target.value)}
           />
         </label>
+        <MatchBuilder
+          rows={rows}
+          contexts={matchContexts(anchorContext, view, included)}
+          eventTypes={domainEventTypes(view)}
+          disabled={!ready}
+          note={includeNote}
+          onChange={(next) => {
+            setRows(next)
+            setIncludeNote(undefined)
+          }}
+        />
         <Button
           type="submit"
           size="sm"
-          disabled={!ready || busy || !aggregateType || !aggregateId.trim()}
+          disabled={
+            !ready ||
+            busy ||
+            !aggregateType ||
+            !aggregateId.trim() ||
+            !matchesValid
+          }
         >
           {busy ? <LoaderCircle className="animate-spin" /> : <Waypoints />}
           Show correlations
@@ -360,30 +427,54 @@ export function CorrelationPanel({
             </Button>
           </div>
         )}
-        {view && foreignContexts(view).length > 0 && (
+        {includeCandidates(view, included, anchorContext, matches).length >
+          0 && (
           <fieldset className="correlation-include" disabled={busy}>
             <legend>Load payloads from</legend>
-            {foreignContexts(view).map((context) => (
-              <label key={context}>
-                <input
-                  type="checkbox"
-                  checked={included.includes(context)}
-                  onChange={(event) =>
-                    void loadAnchor(
-                      true,
-                      event.target.checked
-                        ? [...included, context].sort()
-                        : included.filter((entry) => entry !== context)
-                    )
-                  }
-                />
-                {context}
-              </label>
-            ))}
+            {includeCandidates(view, included, anchorContext, matches).map(
+              (context) => (
+                <label key={context}>
+                  <input
+                    type="checkbox"
+                    checked={included.includes(context)}
+                    onChange={(event) =>
+                      void loadAnchor(
+                        true,
+                        event.target.checked
+                          ? [...included, context].sort()
+                          : included.filter((entry) => entry !== context)
+                      )
+                    }
+                  />
+                  {context}
+                </label>
+              )
+            )}
             <small>Replays each touched stream of that context.</small>
           </fieldset>
         )}
-        {view && view.correlations.length === 0 && (
+        {view?.matched && view.matched.length > 0 && (
+          <MatchedChips
+            matched={view.matched}
+            disabled={busy}
+            onRemove={(removed) =>
+              applyMatches(
+                matches.filter(
+                  (match) =>
+                    formatPayloadMatch(match) !== formatPayloadMatch(removed)
+                )
+              )
+            }
+            onClear={() => applyMatches([])}
+          />
+        )}
+        {view?.matched?.length && view.correlations.length === 0 ? (
+          <p className="observation-empty" role="status">
+            No correlation matches these filters. Matching sees payloads after
+            the Tracer payload policy; a redacting policy hides every field.
+          </p>
+        ) : null}
+        {view && !view.matched?.length && view.correlations.length === 0 && (
           <p className="observation-empty" role="status">
             No correlations for this anchor. Its events carry none, as with
             fixture or import appends, or the Tracer predates
@@ -452,7 +543,7 @@ export function CorrelationPanel({
       </div>
       <footer className="observation-footer correlation-footer">
         {view ? (
-          <FreshnessList freshness={view.freshness} />
+          <FreshnessList freshness={view.freshness} detailed />
         ) : (
           <span>Index freshness appears with the first result.</span>
         )}
@@ -587,74 +678,166 @@ function CorrelationDiscoveryNotice({
   )
 }
 
-function FreshnessList({ freshness }: { freshness: CorrelationFreshness }) {
+function FreshnessList({
+  freshness,
+  detailed = false,
+}: {
+  freshness: CorrelationFreshness
+  detailed?: boolean
+}) {
   if (!freshness.contexts.length)
     return (
       <span data-freshness="unknown">
         Index freshness unknown: no projector has reported a source yet.
       </span>
     )
+  const skipped = (entry: CorrelationFreshness["contexts"][number]) =>
+    entry.sources.reduce((total, source) => total + (source.skipped ?? 0), 0)
   const current = freshness.contexts
-    .filter((entry) => entry.behind === 0)
+    .filter((entry) => entry.behind === 0 && skipped(entry) === 0)
     .map((entry) => entry.context)
   const grouped = freshness.contexts.length > 3 && current.length > 1
+  const sources = freshness.contexts.flatMap((entry) => entry.sources)
   return (
-    <ul className="freshness-list" aria-label="Correlation index freshness">
-      {grouped && (
-        <li
-          data-freshness="current"
-          data-freshness-group={current.join(" ")}
-          title={current.join(", ")}
-        >
-          <span>
-            {current.length === freshness.contexts.length
-              ? `All ${current.length} contexts`
-              : `${current.length} other contexts`}
-          </span>
-          <Badge variant="success">lag 0</Badge>
-        </li>
-      )}
-      {freshness.contexts.map((entry) => {
-        const state =
-          entry.behind === null
-            ? "unknown"
-            : entry.behind === 0
-              ? "current"
-              : "behind"
-        if (grouped && state === "current") return null
-        return (
+    <>
+      <ul className="freshness-list" aria-label="Correlation index freshness">
+        {grouped && (
           <li
-            key={entry.context}
-            data-freshness-context={entry.context}
-            data-freshness={state}
+            data-freshness="current"
+            data-freshness-group={current.join(" ")}
+            title={current.join(", ")}
           >
-            <span>{entry.context}</span>
-            <Badge
-              variant={
-                state === "current"
-                  ? "success"
-                  : state === "behind"
-                    ? "warning"
-                    : "neutral"
-              }
-            >
-              {state === "current"
-                ? "lag 0"
-                : state === "behind"
-                  ? `${entry.behind} behind`
-                  : "unknown"}
-            </Badge>
-            {state === "unknown" && (
-              <small>
-                {entry.sources.some((source) => source.state === "inactive")
-                  ? "Projector inactive"
-                  : "Lag unknown; projector may be inactive"}
-              </small>
-            )}
+            <span>
+              {current.length === freshness.contexts.length
+                ? `All ${current.length} contexts`
+                : `${current.length} other contexts`}
+            </span>
+            <Badge variant="success">lag 0</Badge>
           </li>
-        )
-      })}
-    </ul>
+        )}
+        {freshness.contexts.map((entry) => {
+          const state =
+            entry.behind === null
+              ? "unknown"
+              : entry.behind === 0
+                ? "current"
+                : "behind"
+          if (grouped && current.includes(entry.context)) return null
+          const lost = skipped(entry)
+          return (
+            <li
+              key={entry.context}
+              data-freshness-context={entry.context}
+              data-freshness={state}
+            >
+              <span>{entry.context}</span>
+              <Badge
+                variant={
+                  state === "current"
+                    ? "success"
+                    : state === "behind"
+                      ? "warning"
+                      : "neutral"
+                }
+              >
+                {state === "current"
+                  ? "lag 0"
+                  : state === "behind"
+                    ? `${entry.behind} behind`
+                    : "unknown"}
+              </Badge>
+              {state === "unknown" && (
+                <small>
+                  {entry.sources.some((source) => source.state === "inactive")
+                    ? "Projector inactive"
+                    : "Lag unknown; projector may be inactive"}
+                </small>
+              )}
+              {lost > 0 && (
+                <small className="freshness-gap" data-freshness-skipped={lost}>
+                  {lost} {lost === 1 ? "message" : "messages"} skipped before
+                  indexing; rebuild the index to recover them.
+                </small>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+      {detailed && sources.length > 0 && (
+        <details className="freshness-sources">
+          <summary>
+            {sources.length} {sources.length === 1 ? "source" : "sources"}
+          </summary>
+          <ul aria-label="Correlation index sources">
+            {sources.map((source) => (
+              <li
+                key={`${source.context}-${source.kind}-${source.stream}`}
+                data-source-state={source.state}
+                title={source.stream}
+              >
+                <span>
+                  {source.context}
+                  {source.kind ? ` · ${source.kind}` : ""}
+                </span>
+                <small>
+                  {source.state ?? "unknown"} · {source.behind ?? "?"} behind ·{" "}
+                  {source.skipped ?? 0} skipped
+                </small>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </>
+  )
+}
+
+function includeCandidates(
+  view: AnchorCorrelationView | undefined,
+  included: string[],
+  anchorContext: string,
+  matches: PayloadMatch[]
+): string[] {
+  return [
+    ...new Set([
+      ...(view ? foreignContexts(view) : []),
+      ...included,
+      ...matches.map((match) => match.context),
+    ]),
+  ]
+    .filter((context) => context && context !== anchorContext)
+    .sort()
+}
+
+function matchContexts(
+  anchorContext: string,
+  view: AnchorCorrelationView | undefined,
+  included: string[]
+): string[] {
+  return [
+    ...new Set(
+      [
+        anchorContext,
+        ...included,
+        ...(view ? foreignContexts(view) : []),
+        ...(view?.freshness.contexts.map((entry) => entry.context) ?? []),
+      ].filter(Boolean)
+    ),
+  ]
+}
+
+function domainEventTypes(
+  view: AnchorCorrelationView | undefined
+): Map<string, string[]> {
+  const types = new Map<string, Set<string>>()
+  for (const reference of view?.correlations.flatMap((item) => item.refs) ?? [])
+    if (reference.kind === "domain")
+      types.set(
+        reference.context,
+        (types.get(reference.context) ?? new Set()).add(reference.eventType)
+      )
+  return new Map(
+    [...types].map(([context, names]) => [context, [...names].sort()])
   )
 }
 
@@ -754,6 +937,10 @@ function failureTitle(failure: CorrelationFailure): string {
       return "Correlation index unavailable"
     case "invalid-identifier":
       return "Invalid identifier"
+    case "match-requires-include":
+      return "Match needs the context's payloads"
+    case "invalid-match":
+      return "Invalid match expression"
     case "request-failed":
       return "Correlation request failed"
   }
@@ -779,6 +966,10 @@ function failureDetail({
       return "Tracer could not read the correlation index or event history. Check the projector and production history configuration."
     case "invalid-identifier":
       return "Tracer rejected the identifier. Check its spelling."
+    case "match-requires-include":
+      return "Tracer loads payloads for the anchor stream and included contexts only. Tick the context under Load payloads from and search again."
+    case "invalid-match":
+      return "Use <context>/<event-type>.<field>[.<field>…]=<value>, at most 8 matches and 8 field segments."
     case "request-failed":
       return "The request did not complete. Check the Tracer connection and retry."
   }

@@ -503,6 +503,66 @@
 .correlation-include label { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); overflow-wrap: anywhere; }
 .correlation-include input { accent-color: var(--primary); }
 .correlation-include small { color: var(--muted-foreground); font-size: 11px; }
+.studio-correlation-panel { overflow-y: auto; }
+.studio-correlation-panel > form { flex-shrink: 0; }
+.studio-correlation-panel .correlation-list { flex: 1 0 auto; overflow: visible; }
+.studio-correlation-panel .correlation-footer { flex-shrink: 0; }
+.correlation-match {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.correlation-match legend { margin-bottom: 6px; padding: 0; }
+.correlation-match > button { justify-self: start; }
+.match-row {
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+}
+.match-row > span,
+.match-raw > span { display: flex; align-items: center; gap: 4px; }
+.match-row input { min-width: 0; font-family: var(--font-mono); font-size: 12px; }
+.match-row i { color: var(--muted-foreground); font-style: normal; font-family: var(--font-mono); }
+.match-row small,
+.match-raw small { color: var(--warning); font-size: 11px; }
+.match-raw summary { cursor: pointer; font-size: 12px; }
+.match-raw > span { margin-top: 6px; }
+.match-note { color: var(--info); font-size: 12px; }
+.matched-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 2px 0;
+}
+.match-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 2px 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent);
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.match-chip > span,
+.match-chip > b { overflow-wrap: anywhere; font-weight: 400; }
+.match-chip > b { color: var(--foreground); }
+.match-chip button { display: inline-flex; padding: 2px; border: 0; background: transparent; color: inherit; }
+.freshness-gap { color: var(--warning) !important; }
+.freshness-sources summary { cursor: pointer; }
+.freshness-sources ul { display: grid; gap: 4px; margin: 4px 0 0; padding: 0; list-style: none; }
+.freshness-sources li { display: grid; font-family: var(--font-mono); font-size: 11px; color: var(--foreground); overflow-wrap: anywhere; }
+.freshness-sources small { color: var(--muted-foreground); font-size: 10px; }
+.freshness-sources li[data-source-state="inactive"] small { color: var(--warning); }
 .correlation-direct {
   margin-top: 14px;
   padding: 12px 2px 0;

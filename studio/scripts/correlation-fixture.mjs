@@ -144,6 +144,41 @@ export function correlationChains() {
   ]
 }
 
+export const freshnessSources = [
+  {
+    context: "bike-rental",
+    kind: "domain",
+    stream: "BIKE_RENTAL__BIKE_RENTAL_DOMAIN_EVENTS",
+    state: "active",
+    behind: 0,
+    skipped: 0,
+  },
+  {
+    context: "bike-rental",
+    kind: "integration",
+    stream: "BIKE_RENTAL_INTEGRATION_EVENTS",
+    state: "active",
+    behind: 0,
+    skipped: 0,
+  },
+  {
+    context: "billing",
+    kind: "domain",
+    stream: "BIKE_RENTAL__BILLING_DOMAIN_EVENTS",
+    state: "inactive",
+    behind: 2,
+    skipped: 0,
+  },
+  {
+    context: "billing",
+    kind: "integration",
+    stream: "BIKE_RENTAL_INTEGRATION_EVENTS",
+    state: "inactive",
+    behind: 0,
+    skipped: 3,
+  },
+]
+
 export function anchorView(lag = { "bike-rental": 0, billing: null }) {
   return {
     anchor: {
@@ -151,8 +186,102 @@ export function anchorView(lag = { "bike-rental": 0, billing: null }) {
       aggregate_id: "city-fleet",
     },
     lag,
+    ...(lag["bike-rental"] === 0 ? { sources: freshnessSources } : {}),
     correlations: correlationChains(),
   }
+}
+
+const included = {
+  billing: {
+    "event:invoice-opened": {
+      invoice_id: "invoice-42",
+      amount: 12,
+      paid: false,
+    },
+  },
+}
+
+function fieldValue(payload, path) {
+  return path
+    .split(".")
+    .reduce(
+      (value, segment) =>
+        value === null || typeof value !== "object"
+          ? undefined
+          : value[segment],
+      payload
+    )
+}
+
+function equals(actual, expected) {
+  if (typeof actual === "string") return actual === expected
+  if (typeof actual === "number")
+    return expected.trim() !== "" && Number(expected) === actual
+  if (typeof actual === "boolean") return String(actual) === expected
+  return false
+}
+
+// Mirrors the anchored view's include/match contract for fixture sessions.
+export function anchorResponse(search, lag) {
+  const params = new URLSearchParams(search)
+  const contexts = params
+    .getAll("include")
+    .map((value) => value.replace(/^context:/, ""))
+  const matches = []
+  for (const expression of params.getAll("match")) {
+    const slash = expression.indexOf("/")
+    const equalsAt = expression.indexOf("=", slash + 1)
+    const target = expression.slice(slash + 1, equalsAt)
+    const dot = target.indexOf(".")
+    if (slash <= 0 || equalsAt < 0 || dot <= 0)
+      return {
+        status: 400,
+        body: {
+          code: "invalid-match",
+          message: `invalid match \`${expression}\``,
+        },
+      }
+    const match = {
+      context: expression.slice(0, slash),
+      event_type: target.slice(0, dot),
+      field: target.slice(dot + 1),
+      value: expression.slice(equalsAt + 1),
+    }
+    if (match.context !== "bike-rental" && !contexts.includes(match.context))
+      return {
+        status: 400,
+        body: {
+          code: "match-requires-include",
+          message: `payloads of context \`${match.context}\` are not loaded; add include=context:${match.context}`,
+        },
+      }
+    matches.push(match)
+  }
+  const view = anchorView(lag)
+  view.correlations = view.correlations.map((correlation) => ({
+    ...correlation,
+    refs: correlation.refs.map((reference) => {
+      const payload = contexts.includes(reference.context)
+        ? included[reference.context]?.[reference.event_id]
+        : undefined
+      return payload ? { ...reference, payload } : reference
+    }),
+  }))
+  if (!matches.length) return { status: 200, body: view }
+  view.matched = matches
+  view.correlations = view.correlations.filter((correlation) =>
+    matches.every((match) =>
+      correlation.refs.some(
+        (reference) =>
+          reference.kind === "domain" &&
+          reference.context === match.context &&
+          reference.event_type === match.event_type &&
+          reference.payload !== undefined &&
+          equals(fieldValue(reference.payload, match.field), match.value)
+      )
+    )
+  )
+  return { status: 200, body: view }
 }
 
 export function chainView(
@@ -166,6 +295,7 @@ export function chainView(
   return {
     ...chain,
     lag,
+    ...(lag["bike-rental"] === 0 ? { sources: freshnessSources } : {}),
     refs: chain.refs.map((reference) => {
       const indexed = { ...reference }
       delete indexed.payload

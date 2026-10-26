@@ -58,8 +58,17 @@ or open a correlation ID directly. Its indexed domain and integration events
 appear with causation edges and their bounded context. Payloads are shown for
 the anchor's own events; **Load payloads from** adds other contexts
 (`?include=context:<name>`, which replays each touched stream). Causes outside
-the index, such as commands, are named in the inspector instead of drawn. Per-context freshness shows `lag 0`, the events still behind, or
-`unknown` when a projector is inactive or has not reported. Lag 0 means indexed
+the index, such as commands, are named in the inspector instead of drawn.
+**Match payload field** narrows the list to one business entity: each row is
+`context / event-type . field = value` (or a raw
+`context/event-type.field=value` expression), rows are AND-ed and sent as
+`match` parameters. A row on another context ticks its include automatically
+and says so; applied filters appear as chips from Tracer's `matched` echo, with
+Clear all. The last rows are remembered per anchor in this browser. Matching
+sees payloads after the Tracer payload policy, so a redacting policy matches
+nothing. Per-context freshness shows `lag 0`, the events still behind, or
+`unknown` when a projector is inactive or has not reported; the sidebar lists
+each source with its state, `behind` and `skipped` count. Lag 0 means indexed
 as of the request, not that the chain has finished. Correlation requests
 use the read-only inspection token (`VITE_TRACER_INSPECTION_TOKEN`); the control
 token (`VITE_TRACER_TOKEN`) keeps serving commands and tests and receives `403`

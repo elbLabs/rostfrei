@@ -10,6 +10,7 @@ import {
 } from "./browser.mjs"
 import {
   anchorPath,
+  anchorResponse,
   anchorView,
   chainView,
   correlationCapability,
@@ -52,7 +53,10 @@ function correlationBackend() {
             code: "forbidden",
             message: "Correlation views require inspection",
           })
-        if (url === anchorPath) return json(200, anchorView(lag))
+        if (url === anchorPath) {
+          const { status, body } = anchorResponse(query, lag)
+          return json(status, body)
+        }
         if (url === missingAnchorPath)
           return json(404, correlationErrors.unknownAnchorStream)
         if (
@@ -160,7 +164,7 @@ export async function checkCorrelations() {
     )
     assert.match(
       await text(page, ".correlation-heading"),
-      /billing.*unknown.*projector may be inactive/s
+      /billing.*unknown.*Projector inactive/s
     )
     await page.click('[data-message-id="event:bicycle-rented"]')
     await page.waitForFunction(() =>
@@ -223,6 +227,8 @@ export async function checkCorrelations() {
     assert.match(await text(page, ".correlation-heading"), /3 behind/)
     assert.match(await text(page, ".correlation-heading"), /Projector inactive/)
     backend.setLag({ "bike-rental": 0, billing: null })
+
+    await checkMatches(page, backend)
 
     await loadAnchor(page, "empty-fleet")
     await page.waitForFunction(() =>
@@ -358,7 +364,7 @@ export async function checkCorrelations() {
     )
     assert.deepEqual(errors, [])
     console.log(
-      "Correlations: anchor discovery, first-seen list, two-context chain, anchor payloads, freshness shapes, unknown anchor stream, empty and unindexed correlations, and inspection-only requests passed"
+      "Correlations: anchor discovery, first-seen list, two-context chain, anchor payloads, freshness shapes, unknown anchor stream, empty and unindexed correlations, payload matches (rows, auto-include, 400, chips, clear, persistence), index sources and inspection-only requests passed"
     )
   } catch (error) {
     if (page && !page.isClosed()) {
@@ -375,6 +381,148 @@ export async function checkCorrelations() {
     await closeStudioBrowser(browser)
     await server.close()
   }
+}
+
+async function checkMatches(page, backend) {
+  await loadAnchor(page, "city-fleet")
+  await page.waitForSelector('[data-correlation-id="visual-rent-bike-42"]')
+  if (await page.$eval(".correlation-include input", (input) => input.checked))
+    await page.click(".correlation-include input")
+  await page.waitForFunction(
+    () =>
+      !document.querySelector(".correlation-include input").checked &&
+      !document.querySelector(".correlation-include").disabled
+  )
+  assert.match(
+    await text(page, ".correlation-footer"),
+    /billing.*3 messages skipped.*4 sources/s
+  )
+  await page.click(".correlation-footer details summary")
+  assert.deepEqual(
+    await page.$$eval(".freshness-sources li", (rows) =>
+      rows.map((row) => row.dataset.sourceState)
+    ),
+    ["active", "active", "inactive", "inactive"]
+  )
+  const before = backend.requests.length
+  await page.click("::-p-text(Add match)")
+  await setValue(page, '[aria-label="Match 1 context"]', "billing")
+  await setValue(page, '[aria-label="Match 1 event type"]', "invoice-opened")
+  await setValue(page, '[aria-label="Match 1 field"]', "amount..x")
+  await page.waitForSelector('[data-match-row="1"] small[role="alert"]')
+  assert.ok(
+    await page.$eval(
+      '#studio-correlation-panel button[type="submit"]',
+      (button) => button.disabled
+    ),
+    "an invalid match row blocks the search"
+  )
+  await setValue(page, '[aria-label="Match 1 field"]', "amount")
+  await setValue(page, '[aria-label="Match 1 value"]', "12")
+  await page.click('#studio-correlation-panel button[type="submit"]')
+  await page.waitForSelector(
+    '[data-matched="billing/invoice-opened.amount=12"]'
+  )
+  assert.deepEqual(
+    backend.requests
+      .slice(before)
+      .filter((request) => request.path === anchorPath)
+      .at(-1).query,
+    "include=context:billing&match=billing%2Finvoice-opened.amount%3D12",
+    "match rows become include and form-encoded match parameters"
+  )
+  assert.match(
+    await text(page, ".match-note"),
+    /Included billing so its payloads can be matched/
+  )
+  assert.ok(
+    await page.$eval(".correlation-include input", (input) => input.checked)
+  )
+  assert.deepEqual(
+    await page.$$eval("[data-correlation-id]", (rows) =>
+      rows.map((row) => row.dataset.correlationId)
+    ),
+    ["visual-rent-bike-42"]
+  )
+
+  await page.reload({ waitUntil: "networkidle0" })
+  await page.click('[aria-label="Open correlations panel"]')
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Match 1 context"]')?.value ===
+      "billing"
+  )
+  assert.equal(
+    await page.$eval('[aria-label="Match 1 value"]', (input) => input.value),
+    "12",
+    "the last match rows are restored for the anchor"
+  )
+  await page.click(".match-raw summary")
+  await setValue(page, '[aria-label="Raw match expression"]', "bike-rental")
+  await page.click(".match-raw button")
+  await page.waitForSelector('.match-raw small[role="alert"]')
+  await setValue(
+    page,
+    '[aria-label="Raw match expression"]',
+    "bike-rental/bicycle-rented.bicycle_id=bike-42"
+  )
+  await page.click(".match-raw button")
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Match 2 field"]')?.value ===
+      "bicycle_id"
+  )
+  await loadAnchor(page, "city-fleet")
+  await page.waitForSelector(
+    '[data-matched="bike-rental/bicycle-rented.bicycle_id=bike-42"]'
+  )
+  assert.equal(await page.$$eval("[data-matched]", (chips) => chips.length), 2)
+  await page.click(
+    '[aria-label="Remove match bike-rental/bicycle-rented.bicycle_id=bike-42"]'
+  )
+  await page.waitForFunction(
+    () => document.querySelectorAll("[data-matched]").length === 1
+  )
+
+  await page.click(".correlation-include input")
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#studio-correlation-panel [role='alert']")
+      ?.textContent.includes("Match needs the context's payloads")
+  )
+  assert.match(
+    await text(page, "#studio-correlation-panel [role='alert']"),
+    /400.*include=context:billing/s
+  )
+  await page.click(".correlation-include input")
+  await page.waitForSelector(
+    '[data-matched="billing/invoice-opened.amount=12"]'
+  )
+  await page.click("::-p-text(Clear all)")
+  await page.waitForFunction(
+    () =>
+      !document.querySelector("[data-matched]") &&
+      document.querySelectorAll("[data-correlation-id]").length === 3
+  )
+  assert.equal(await page.$('[aria-label="Match 1 context"]'), null)
+  assert.equal(
+    await page.evaluate(() =>
+      localStorage.getItem("rostfrei-tracer-studio-correlation-matches-v1")
+    ),
+    "{}"
+  )
+}
+
+async function setValue(page, selector, value) {
+  await page.$eval(selector, (input) => {
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value"
+    ).set
+    setter.call(input, "")
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  await page.type(selector, value)
 }
 
 async function loadAnchor(page, aggregateId) {

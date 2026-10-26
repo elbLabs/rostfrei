@@ -8,6 +8,7 @@ import type {
   CorrelationFreshnessSource,
   CorrelationRef,
   IndexedCorrelationChain,
+  PayloadMatch,
   TracerCatalog,
 } from "@/lib/types"
 
@@ -22,7 +23,11 @@ export type CorrelationFailure =
   | "not-indexed"
   | "index-unavailable"
   | "invalid-identifier"
+  | "match-requires-include"
+  | "invalid-match"
   | "request-failed"
+
+export const MAX_PAYLOAD_MATCHES = 8
 
 export function inspectionConfigured(): boolean {
   return Boolean(import.meta.env.VITE_TRACER_INSPECTION_TOKEN)
@@ -66,11 +71,17 @@ export function anchorHref(
   aggregateType: string,
   aggregateId: string,
   template?: string,
-  includedContexts: string[] = []
+  includedContexts: string[] = [],
+  matches: PayloadMatch[] = []
 ): string {
-  const query = includedContexts
-    .map((context) => `include=context:${encodeURIComponent(context)}`)
-    .join("&")
+  const query = [
+    ...includedContexts.map(
+      (context) => `include=context:${encodeURIComponent(context)}`
+    ),
+    ...matches.map(
+      (match) => `match=${encodeURIComponent(formatPayloadMatch(match))}`
+    ),
+  ].join("&")
   return advertisedHref(
     (
       template ??
@@ -97,7 +108,55 @@ export async function getAnchorCorrelations(
       return correlation ? [correlation] : []
     }),
     truncated: body.truncated === true,
+    matched: Array.isArray(body.matched)
+      ? body.matched.flatMap((item) => {
+          const match = record(item)
+          const context = text(match?.context)
+          const eventType = text(match?.event_type)
+          const field = text(match?.field)
+          return match && context && eventType && field
+            ? [{ context, eventType, field, value: String(match.value ?? "") }]
+            : []
+        })
+      : undefined,
   }
+}
+
+export function formatPayloadMatch(match: PayloadMatch): string {
+  return `${match.context}/${match.eventType}.${match.field}=${match.value}`
+}
+
+// The raw grammar: <context>/<event-type>.<field>[.<field>…]=<value>.
+export function parsePayloadMatch(
+  expression: string
+): PayloadMatch | undefined {
+  const slash = expression.indexOf("/")
+  const equals = expression.indexOf("=", slash + 1)
+  if (slash <= 0 || equals < 0) return undefined
+  const target = expression.slice(slash + 1, equals)
+  const dot = target.indexOf(".")
+  if (dot <= 0) return undefined
+  const match = {
+    context: expression.slice(0, slash).trim(),
+    eventType: target.slice(0, dot).trim(),
+    field: target.slice(dot + 1).trim(),
+    value: expression.slice(equals + 1),
+  }
+  return payloadMatchProblem(match) ? undefined : match
+}
+
+export function payloadMatchProblem(match: PayloadMatch): string | undefined {
+  if (!match.context || !match.eventType || !match.field)
+    return "Context, event type and field are required"
+  if (/[\s/]/.test(match.context) || /[\s.=]/.test(match.eventType))
+    return "Context and event type cannot contain spaces, dots or slashes"
+  const segments = match.field.split(".")
+  if (segments.some((segment) => !segment) || /[=\s]/.test(match.field))
+    return "Use a dot path such as customer.id"
+  if (segments.length > 8) return "At most 8 field segments"
+  if (new TextEncoder().encode(match.value).length > 256)
+    return "Values are limited to 256 bytes"
+  return undefined
 }
 
 export async function getCorrelationChain(
@@ -133,6 +192,10 @@ export function correlationFailure(error: unknown): CorrelationFailure {
     case "invalid-identifier":
     case "include-too-broad":
       return "invalid-identifier"
+    case "match-requires-include":
+      return "match-requires-include"
+    case "invalid-match":
+      return "invalid-match"
     case "correlation-index-unavailable":
     case "history-unavailable":
     case "correlation-index-read-failed":
@@ -143,8 +206,8 @@ export function correlationFailure(error: unknown): CorrelationFailure {
 }
 
 // Freshness is read in one place so a change of its wire shape stays local.
-// Accepts the current `lag: { context: behind }` map, `lag` values of null, and
-// a `freshness` (or object-valued `lag`) with `lag` and `sources`.
+// Accepts top-level `lag` (numbers or null) with `sources`, the older lag-only
+// map, and a nested `freshness` (or object-valued `lag`) with both.
 export function parseFreshness(
   body: Record<string, unknown>
 ): CorrelationFreshness {
@@ -158,7 +221,11 @@ export function parseFreshness(
         ? record(body.lag)
         : undefined) ?? {}
   const sources: CorrelationFreshnessSource[] = (
-    nested && Array.isArray(container.sources) ? container.sources : []
+    nested && Array.isArray(container.sources)
+      ? container.sources
+      : Array.isArray(body.sources)
+        ? body.sources
+        : []
   ).flatMap((item) => {
     const source = record(item)
     const context = text(source?.context)
@@ -170,6 +237,7 @@ export function parseFreshness(
         stream: text(source.stream),
         state: text(source.state),
         behind: count(source.behind),
+        skipped: count(source.skipped) ?? undefined,
       },
     ]
   })

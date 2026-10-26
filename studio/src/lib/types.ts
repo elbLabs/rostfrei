@@ -90,6 +90,7 @@ export interface CorrelationFreshnessSource {
   stream?: string
   state?: string
   behind: number | null
+  skipped?: number
 }
 
 export interface CorrelationFreshness {
@@ -110,12 +111,20 @@ export interface IndexedCorrelationChain extends CorrelationChain {
   freshness: CorrelationFreshness
 }
 
+export interface PayloadMatch {
+  context: string
+  eventType: string
+  field: string
+  value: string
+}
+
 export interface AnchorCorrelationView {
   aggregateType: string
   aggregateId: string
   freshness: CorrelationFreshness
   correlations: CorrelationChain[]
   truncated: boolean
+  matched?: PayloadMatch[]
 }
 
 export interface ObservationCapability {
