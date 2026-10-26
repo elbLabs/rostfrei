@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { PanelLeft, Radio, Send } from "lucide-react"
+import { PanelLeft, Radio, Send, Waypoints } from "lucide-react"
 import { Brand } from "@rostfrei/ui/brand"
 import { ThemeToggle } from "@rostfrei/ui/theme"
 
@@ -12,6 +12,12 @@ import {
   CommandExecutionHeader,
   type CommandView,
 } from "@/components/command-execution-header"
+import {
+  CorrelationHeading,
+  CorrelationPanel,
+  type CorrelationConnection,
+  type CorrelationSelection,
+} from "@/components/correlation-panel"
 import { ExecutionHeader } from "@/components/execution-header"
 import { MessageGraph } from "@/components/message-graph"
 import {
@@ -31,6 +37,7 @@ import {
   submitCommand,
 } from "@/lib/api"
 import {
+  correlationGraph,
   expectedGraph,
   observedGraph,
   operationGraph,
@@ -54,8 +61,16 @@ const STORED_RUNS_KEY = "rostfrei-tracer-studio-runs-v1"
 const MAXIMUM_STORED_RUNS = 16
 const STORED_LAYOUT_KEY = "rostfrei-tracer-studio-layout-v1"
 
+type Workspace = "executions" | "observation" | "correlations"
+
 function App() {
-  const [observationActive, setObservationActive] = useState(false)
+  const [workspace, setWorkspace] = useState<Workspace>("executions")
+  const observationActive = workspace === "observation"
+  const correlationsActive = workspace === "correlations"
+  const [correlationSelection, setCorrelationSelection] =
+    useState<CorrelationSelection>({ loading: false })
+  const [correlationConnection, setCorrelationConnection] =
+    useState<CorrelationConnection>("connecting")
   const [observedFlow, setObservedFlow] = useState<ObservedFlow>()
   const [observationExpired, setObservationExpired] = useState(false)
   const [observationConnection, setObservationConnection] =
@@ -233,7 +248,7 @@ function App() {
 
   const selectTest = async (test: TestDefinitionSummary) => {
     if (running || loading || source !== "live") return
-    setObservationActive(false)
+    setWorkspace("executions")
     setLoading(true)
     setActiveCommand(undefined)
     setCommandResult(undefined)
@@ -260,7 +275,7 @@ function App() {
   const executeSelectedTest = async () => {
     const selected = tests.find((test) => test.id === selectedTestId)
     if (!selected || running || loading || source !== "live") return
-    setObservationActive(false)
+    setWorkspace("executions")
     setRunning(true)
     setActiveCommand(undefined)
     setCommandResult(undefined)
@@ -333,7 +348,7 @@ function App() {
 
   const selectRun = (run: StoredRun) => {
     if (running || loading) return
-    setObservationActive(false)
+    setWorkspace("executions")
     setSelectedRunId(run.runId)
     setActiveCommand(undefined)
     setCommandResult(undefined)
@@ -351,7 +366,7 @@ function App() {
     request: CommandExecutionRequest
   ): Promise<boolean> => {
     if (running || loading || source !== "live") return false
-    setObservationActive(false)
+    setWorkspace("executions")
     setRunning(true)
     setError(undefined)
     setCommandError(undefined)
@@ -420,22 +435,28 @@ function App() {
 
   const selectedRun = runs.find((run) => run.runId === selectedRunId)
   const selectedTest = tests.find((test) => test.id === selectedTestId)
-  const view = observationActive
-    ? "observed"
-    : running
-      ? "running"
-      : resultUnavailable || activeCommand?.error
-        ? "unavailable"
-        : activeCommand
-          ? "observed"
-          : selectedRun
+  const view = correlationsActive
+    ? "indexed"
+    : observationActive
+      ? "observed"
+      : running
+        ? "running"
+        : resultUnavailable || activeCommand?.error
+          ? "unavailable"
+          : activeCommand
             ? "observed"
-            : "expected"
-  const displayNodes = observationActive
-    ? observedFlow
-      ? observedGraph(observedFlow.messageSeries)
+            : selectedRun
+              ? "observed"
+              : "expected"
+  const displayNodes = correlationsActive
+    ? correlationSelection.chain
+      ? correlationGraph(correlationSelection.chain.refs)
       : []
-    : nodes
+    : observationActive
+      ? observedFlow
+        ? observedGraph(observedFlow.messageSeries)
+        : []
+      : nodes
 
   return (
     <TooltipProvider>
@@ -443,7 +464,7 @@ function App() {
         className={cn(
           "studio-shell",
           `studio-layout-${layout}`,
-          observationActive && "observation-active",
+          workspace !== "executions" && "observation-active",
           sidebarOpen && "sidebar-is-open"
         )}
       >
@@ -458,7 +479,9 @@ function App() {
             aria-controls={
               observationActive
                 ? "studio-observation-panel"
-                : "studio-navigation"
+                : correlationsActive
+                  ? "studio-correlation-panel"
+                  : "studio-navigation"
             }
           >
             <PanelLeft />
@@ -496,13 +519,33 @@ function App() {
             }
             aria-pressed={observationActive}
             onClick={() => {
-              setObservationActive(!observationActive)
+              setWorkspace(observationActive ? "executions" : "observation")
               setSidebarOpen(true)
               setCommandOpen(false)
             }}
           >
             <Radio />
             <span>{observationActive ? "Executions" : "Observe"}</span>
+          </Button>
+          <Button
+            className="correlation-panel-trigger"
+            variant="ghost"
+            size="sm"
+            disabled={running || loading}
+            aria-label={
+              correlationsActive
+                ? "Return to executions"
+                : "Open correlations panel"
+            }
+            aria-pressed={correlationsActive}
+            onClick={() => {
+              setWorkspace(correlationsActive ? "executions" : "correlations")
+              setSidebarOpen(true)
+              setCommandOpen(false)
+            }}
+          >
+            <Waypoints />
+            <span>{correlationsActive ? "Executions" : "Correlations"}</span>
           </Button>
           <div
             className="layout-switch"
@@ -536,20 +579,28 @@ function App() {
           </div>
           <div
             className="connection-status"
-            data-source={observationActive ? observationConnection : source}
+            data-source={
+              observationActive
+                ? observationConnection
+                : correlationsActive
+                  ? correlationConnection
+                  : source
+            }
             data-tracer-source={source}
           >
             <span className="connection-dot" />
             <span className="connection-label">
               {observationActive
                 ? `Observation · ${observationConnection}`
-                : source === "connecting"
-                  ? "Connecting"
-                  : source === "live"
-                    ? "Isolated Test"
-                    : "Disconnected"}
+                : correlationsActive
+                  ? `Correlations · ${correlationConnection}`
+                  : source === "connecting"
+                    ? "Connecting"
+                    : source === "live"
+                      ? "Isolated Test"
+                      : "Disconnected"}
             </span>
-            {!observationActive && selectedRun && (
+            {workspace === "executions" && selectedRun && (
               <span className="connection-detail">Saved run</span>
             )}
           </div>
@@ -557,7 +608,7 @@ function App() {
         </header>
 
         <StudioSidebar
-          open={sidebarOpen && !observationActive}
+          open={sidebarOpen && workspace === "executions"}
           tests={tests}
           selectedTestId={selectedTestId}
           selectedRunId={selectedRunId}
@@ -583,6 +634,20 @@ function App() {
           onFlow={setObservedFlow}
           onExpired={setObservationExpired}
           onStatus={setObservationConnection}
+        />
+        <CorrelationPanel
+          open={sidebarOpen && correlationsActive}
+          active={correlationsActive}
+          onClose={() => setSidebarOpen(false)}
+          onSelect={() => {
+            if (
+              layout === "canvas" ||
+              window.matchMedia("(max-width: 1399px)").matches
+            )
+              setSidebarOpen(false)
+          }}
+          onSelection={setCorrelationSelection}
+          onStatus={setCorrelationConnection}
         />
         <CommandPanel
           open={commandOpen}
@@ -615,7 +680,7 @@ function App() {
 
         <main className="studio-main">
           <div className="studio-heading">
-            {!observationActive &&
+            {workspace === "executions" &&
               (source !== "live" || testDiscoveryError) && (
                 <ConnectionNotice
                   connecting={source === "connecting"}
@@ -624,7 +689,12 @@ function App() {
                   onRetry={retryConnection}
                 />
               )}
-            {observationActive ? (
+            {correlationsActive ? (
+              <CorrelationHeading
+                selection={correlationSelection}
+                status={correlationConnection}
+              />
+            ) : observationActive ? (
               <section className="observation-heading" aria-live="polite">
                 <div>
                   <h1>{observedFlow?.name ?? "Observe application traffic"}</h1>
@@ -683,32 +753,42 @@ function App() {
           </div>
           <MessageGraph
             key={
-              observationActive
-                ? `observation-${observedFlow?.scope ?? "empty"}-${observedFlow?.id ?? "empty"}`
-                : activeCommand
-                  ? "command-execution"
-                  : (selectedRunId ?? selectedTestId ?? "empty")
+              correlationsActive
+                ? `correlation-${correlationSelection.chain?.correlationId ?? "empty"}`
+                : observationActive
+                  ? `observation-${observedFlow?.scope ?? "empty"}-${observedFlow?.id ?? "empty"}`
+                  : activeCommand
+                    ? "command-execution"
+                    : (selectedRunId ?? selectedTestId ?? "empty")
             }
             layoutMode={layout}
             nodes={displayNodes}
             view={view}
             capture={
-              observationActive
-                ? observedFlow
-                  ? {
-                      fidelity: observedFlow.fidelity,
-                      settled: false,
-                      settledFor: "0ms",
-                    }
-                  : undefined
-                : activeCommand?.result?.series?.capture
+              correlationsActive
+                ? undefined
+                : observationActive
+                  ? observedFlow
+                    ? {
+                        fidelity: observedFlow.fidelity,
+                        settled: false,
+                        settledFor: "0ms",
+                      }
+                    : undefined
+                  : activeCommand?.result?.series?.capture
             }
             emptyMessage={
-              observationActive
-                ? "Select an observed flow. Only real captured messages will appear here."
-                : source !== "live"
-                  ? "Connect to Tracer to load tests and message flows."
-                  : undefined
+              correlationsActive
+                ? correlationSelection.loading
+                  ? "Loading the indexed chain…"
+                  : correlationSelection.chain
+                    ? "No events of this correlation are indexed yet."
+                    : "Select a correlation to see its indexed events. Only real indexed events appear here."
+                : observationActive
+                  ? "Select an observed flow. Only real captured messages will appear here."
+                  : source !== "live"
+                    ? "Connect to Tracer to load tests and message flows."
+                    : undefined
             }
           />
         </main>

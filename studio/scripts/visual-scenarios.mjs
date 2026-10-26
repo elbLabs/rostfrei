@@ -2,6 +2,14 @@ import assert from "node:assert/strict"
 
 import { settlePage } from "./browser.mjs"
 import {
+  anchorPath,
+  anchorView,
+  chainView,
+  correlationCapability,
+  correlationErrors,
+  missingAnchorPath,
+} from "./correlation-fixture.mjs"
+import {
   observationCapability,
   observationFlow,
   observationSnapshot,
@@ -21,6 +29,9 @@ export const scenarios = {
   "long-payload": "Nested, long payload values in the message inspector",
   narrow: "Accepted command details at 390 × 844",
   observation: "Externally initiated flow in the continuous Observe panel",
+  correlations: "Anchor correlations and a two-context indexed chain",
+  "correlations-missing":
+    "Unknown anchor stream and a correlation that is not indexed yet",
 }
 
 const commandPath = "/contexts/bike-rental/commands/rent-bicycle"
@@ -86,6 +97,16 @@ export async function installScenario(page, scene, samples, diagnostics) {
       }
     }, observationSnapshot())
   }
+  if (scene === "correlations-missing") {
+    diagnostics.expectedHttpErrors.push(
+      { method: "GET", path: `/api${missingAnchorPath}`, status: 404 },
+      {
+        method: "GET",
+        path: "/api/correlations/visual-not-indexed/events",
+        status: 404,
+      }
+    )
+  }
   if (scene === "indeterminate") {
     diagnostics.expectedHttpErrors.push({
       method: "POST",
@@ -133,11 +154,39 @@ export async function installScenario(page, scene, samples, diagnostics) {
     let body
     let status = 200
     let headers = {}
+    const correlationScene = scene.startsWith("correlations")
     if (method === "GET" && pathname === "/catalog")
       body =
         scene === "observation"
           ? { ...catalog, observation: [observationCapability] }
-          : catalog
+          : correlationScene
+            ? { ...catalog, correlations: correlationCapability }
+            : catalog
+    else if (correlationScene && method === "GET" && pathname === anchorPath)
+      body = anchorView()
+    else if (
+      correlationScene &&
+      method === "GET" &&
+      pathname === missingAnchorPath
+    ) {
+      status = 404
+      body = correlationErrors.unknownAnchorStream
+    } else if (
+      correlationScene &&
+      method === "GET" &&
+      pathname === "/correlations/visual-not-indexed/events"
+    ) {
+      status = 404
+      body = correlationErrors.notIndexed
+    } else if (
+      correlationScene &&
+      method === "GET" &&
+      pathname.startsWith("/correlations/") &&
+      pathname.endsWith("/events")
+    )
+      body = chainView(
+        decodeURIComponent(pathname.slice(14, -"/events".length))
+      )
     else if (
       scene === "observation" &&
       pathname === observationFlow().detailHref
@@ -274,6 +323,10 @@ export async function prepareScenario(page, scene) {
     await settlePage(page)
     return
   }
+  if (scene.startsWith("correlations")) {
+    await prepareCorrelations(page, scene)
+    return
+  }
   if (scene === "observation") {
     if (page.viewport().width >= 768)
       await page.click('[data-layout="workbench"]')
@@ -387,6 +440,49 @@ export async function prepareScenario(page, scene) {
       popup.bottom <= popup.viewportHeight,
     `The ${scene} inspector must remain within the viewport and allow scrolling: ${JSON.stringify(popup)}`
   )
+}
+
+async function prepareCorrelations(page, scene) {
+  const wide = page.viewport().width >= 1400
+  if (page.viewport().width >= 768)
+    await page.click('[data-layout="workbench"]')
+  await page.click('[aria-label="Open correlations panel"]')
+  await page.waitForSelector(
+    '[aria-label="Anchor aggregate type"] option[value="bike-rental/rental-fleet"]'
+  )
+  await page.type(
+    '[aria-label="Anchor aggregate ID"]',
+    scene === "correlations" ? "city-fleet" : "bike-42"
+  )
+  await page.click('#studio-correlation-panel button[type="submit"]')
+  if (scene === "correlations-missing") {
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#studio-correlation-panel [role='alert']")
+        ?.textContent?.includes("No stream for this anchor ID")
+    )
+    await page.type('[aria-label="Correlation ID"]', "visual-not-indexed")
+    await page.click('[aria-label="Open a correlation by ID"] button')
+    await page.waitForSelector('[data-correlation-failure="not-indexed"]')
+    if (!wide) await page.click('[aria-label="Expand sidebar"]')
+    await settlePage(page)
+    return
+  }
+  await page.waitForSelector('[data-correlation-id="visual-rent-bike-42"]')
+  await page.click('[data-correlation-id="visual-rent-bike-42"]')
+  await page.waitForSelector('[data-freshness-context="billing"]')
+  if (!wide && page.viewport().width >= 768)
+    await page.click('[aria-label="Expand sidebar"]')
+  if (page.viewport().width >= 1100) {
+    await page.waitForSelector(
+      '[data-graph-node][data-bounded-context="billing"]'
+    )
+    await page.waitForSelector(
+      '[data-graph-edge][data-source-id="event:invoice-opened"][data-target-id="message:invoice-issued"]'
+    )
+    await page.click('[data-message-id="message:bicycle-rental-started"]')
+  }
+  await settlePage(page)
 }
 
 async function setPanel(page, name, open) {
