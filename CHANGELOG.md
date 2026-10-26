@@ -62,7 +62,11 @@ All notable changes to this project are documented in this file.
   and integration events with their causation, bounded context and per-context
   index freshness; unknown lag is shown as unknown, never as current. It uses
   `VITE_TRACER_INSPECTION_TOKEN` and explains unknown anchor streams, empty
-  anchors and correlations that are not indexed yet.
+  anchors and correlations that are not indexed yet. **Match payload field**
+  rows (or a raw expression) send `match` filters, tick the include a foreign
+  context needs, show the `matched` echo as removable chips and are remembered
+  per anchor. The freshness footer lists each source's state, `behind` and
+  `skipped`.
 
 ### Changed
 
