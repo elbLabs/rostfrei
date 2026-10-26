@@ -8,6 +8,9 @@ All notable changes to this project are documented in this file.
 
 - `AggregateDefinition::ANCHOR` declares an aggregate as an anchor. The compiled
   domain model projects it as `"anchor": true`.
+- Tracer Studio **Correlations** view: select an anchor aggregate or correlation
+  ID and inspect domain and integration events with recorded causation and
+  bounded-context labels, using the read-only inspection capability.
 - Typed private-event codec composition and `#[event_codec(aggregate = ...)]`
   declarations with ordinary `#[upcast]` methods, including fallible conversions.
   Explicit application-owned encoders support compatibility releases that read
