@@ -6,7 +6,17 @@ export const kindLabels: Record<MessageKind, string> = {
   "integration-event": "Integration event",
 }
 
-export function messageFacts(node: MessageGraphNode): Array<[string, string]> {
+export function messageFacts(
+  node: MessageGraphNode,
+  view?: FlowView
+): Array<[string, string]> {
+  if (node.payload === undefined && view === "indexed")
+    return node.aggregateId
+      ? [
+          ["aggregate", node.aggregateId],
+          ["version", String(node.streamVersion ?? "")],
+        ]
+      : [["schema", String(node.schemaVersion ?? "")]]
   if (node.payload === undefined)
     return [["Payload", "Redacted or unavailable"]]
   if (
@@ -47,6 +57,8 @@ export function messageState(node: MessageGraphNode, view: FlowView): string {
         : "Expect rejection"
     return "Expected message"
   }
+  if (view === "indexed")
+    return node.retained === false ? "Indexed · expired" : "Indexed"
   if (node.kind !== "command")
     return view === "running"
       ? "Received"
