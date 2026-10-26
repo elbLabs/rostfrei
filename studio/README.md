@@ -50,6 +50,21 @@ It uses the same Canvas/Workbench message cards and inspector as command and
 test execution. **Executions** returns to the previous execution view; closing
 the observation sidebar does not stop capture.
 
+The **Correlations** panel follows every chain that touched one business
+object, from the durable [correlation index](../docs/correlation-index.md).
+Choose an anchor the Tracer advertises (or **Other aggregate type…** to type
+`context/aggregate`), enter the anchor's aggregate ID and select a correlation,
+or open a correlation ID directly. Its indexed domain and integration events
+appear with causation edges and their bounded context. Payloads are shown for
+the anchor's own events; **Load payloads from** adds other contexts
+(`?include=context:<name>`, which replays each touched stream). Causes outside
+the index, such as commands, are named in the inspector instead of drawn. Per-context freshness shows `lag 0`, the events still behind, or
+`unknown` when a projector is inactive or has not reported. Lag 0 means indexed
+as of the request, not that the chain has finished. Correlation requests
+use the read-only inspection token (`VITE_TRACER_INSPECTION_TOKEN`); the control
+token (`VITE_TRACER_TOKEN`) keeps serving commands and tests and receives `403`
+on these routes. Only Normal traffic is indexed, not isolated Test runs.
+
 ## Run locally
 
 From the repository root:
@@ -94,7 +109,8 @@ The inspector starts Vite on an available port and launches a fresh Chrome
 session. Named scenarios intercept every API request and label their synthetic
 responses as visual fixtures. They cover the workbench overview, command form,
 accepted/rejected Test, pending and indeterminate results, a 25-message
-branching graph, long payloads, continuous observation, and the narrow-screen inspector. Unknown API
+branching graph, long payloads, continuous observation, anchored correlations
+with their error states, and the narrow-screen inspector. Unknown API
 requests fail rather than reaching a backend.
 
 Each capture writes `screenshot.png`, `state.json`, `accessibility.json`, and
