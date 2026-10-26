@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { settlePage } from "./browser.mjs"
 import {
   anchorPath,
-  anchorView,
+  anchorResponse,
   chainView,
   correlationCapability,
   correlationErrors,
@@ -30,6 +30,8 @@ export const scenarios = {
   narrow: "Accepted command details at 390 × 844",
   observation: "Externally initiated flow in the continuous Observe panel",
   correlations: "Anchor correlations and a two-context indexed chain",
+  "correlations-match":
+    "Payload match with automatic include, applied chips and index sources",
   "correlations-missing":
     "Unknown anchor stream and a correlation that is not indexed yet",
 }
@@ -162,9 +164,11 @@ export async function installScenario(page, scene, samples, diagnostics) {
           : correlationScene
             ? { ...catalog, correlations: correlationCapability }
             : catalog
-    else if (correlationScene && method === "GET" && pathname === anchorPath)
-      body = anchorView()
-    else if (
+    else if (correlationScene && method === "GET" && pathname === anchorPath) {
+      const response = anchorResponse(new URL(request.url()).search)
+      status = response.status
+      body = response.body
+    } else if (
       correlationScene &&
       method === "GET" &&
       pathname === missingAnchorPath
@@ -452,7 +456,7 @@ async function prepareCorrelations(page, scene) {
   )
   await page.type(
     '[aria-label="Anchor aggregate ID"]',
-    scene === "correlations" ? "city-fleet" : "bike-42"
+    scene === "correlations-missing" ? "bike-42" : "city-fleet"
   )
   await page.click('#studio-correlation-panel button[type="submit"]')
   if (scene === "correlations-missing") {
@@ -467,6 +471,24 @@ async function prepareCorrelations(page, scene) {
     if (!wide) await page.click('[aria-label="Expand sidebar"]')
     await settlePage(page)
     return
+  }
+  if (scene === "correlations-match") {
+    await page.waitForSelector('[data-correlation-id="visual-rent-bike-42"]')
+    await page.click("::-p-text(Add match)")
+    for (const [field, value] of [
+      ["context", "billing"],
+      ["event type", "invoice-opened"],
+      ["field", "amount"],
+      ["value", "12"],
+    ]) {
+      const selector = `[aria-label="Match 1 ${field}"]`
+      await page.click(selector, { count: 3 })
+      await page.keyboard.press("Backspace")
+      await page.type(selector, value)
+    }
+    await page.click('#studio-correlation-panel button[type="submit"]')
+    await page.waitForSelector("[data-matched]")
+    await page.click(".correlation-footer details summary")
   }
   await page.waitForSelector('[data-correlation-id="visual-rent-bike-42"]')
   await page.click('[data-correlation-id="visual-rent-bike-42"]')

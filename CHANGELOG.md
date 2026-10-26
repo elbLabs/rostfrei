@@ -11,6 +11,8 @@ All notable changes to this project are documented in this file.
 - Tracer Studio **Correlations** view: select an anchor aggregate or correlation
   ID and inspect domain and integration events with recorded causation and
   bounded-context labels, using the read-only inspection capability.
+- Payload-field match rows filter anchored correlations, request additional
+  context payloads explicitly, and show applied filters as removable chips.
 
 ## [0.1.3] - 2026-10-29
 
