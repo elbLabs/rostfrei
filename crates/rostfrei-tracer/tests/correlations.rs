@@ -437,6 +437,55 @@ async fn anchor_view_returns_anchor_payloads_without_loading_foreign_streams() {
 }
 
 #[tokio::test]
+async fn an_anchor_id_without_a_stream_is_not_found_and_an_uncorrelated_stream_is_empty() {
+    let scenario = scenario().await;
+    let app = router(tracer(&scenario, true));
+
+    let (status, body) = get(
+        &app,
+        "/aggregates/ordering%2Forder/I1/correlations",
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"], "unknown-anchor-stream");
+
+    let legacy = StreamId::new(
+        AggregateType::new("ordering/order").unwrap(),
+        AggregateId::new("O0").unwrap(),
+    );
+    let operation = OperationId::new("legacy-import").unwrap();
+    let commit = derive_commit_id(&legacy, &operation);
+    scenario
+        .ordering
+        .store
+        .append(
+            &legacy,
+            ExpectedVersion::NoStream,
+            EventBatch::new(
+                commit.clone(),
+                operation,
+                ContentFingerprint::digest("legacy"),
+                vec![
+                    NewEvent::new(derive_event_id(&commit, 0), "imported", 1, b"{}".to_vec())
+                        .unwrap(),
+                ],
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = get(
+        &app,
+        "/aggregates/ordering%2Forder/O0/correlations",
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["correlations"], json!([]));
+}
+
+#[tokio::test]
 async fn payloads_follow_the_trace_payload_policy() {
     let scenario = scenario().await;
     let app = router(tracer(&scenario, false));

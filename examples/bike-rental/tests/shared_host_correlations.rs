@@ -251,6 +251,11 @@ async fn production_correlations_are_indexed_and_viewed_from_their_anchors() -> 
         .ok_or("missing included source fleet ref")?;
     assert_eq!(source["payload"]["bicycle_id"], "bike-7");
 
+    let (status, unknown) =
+        get(&app, &format!("{FLEET}/bike-42/correlations"), "inspection").await?;
+    assert_eq!(status, 404, "a bicycle ID is not a fleet stream: {unknown}");
+    assert_eq!(unknown["code"], "unknown-anchor-stream");
+
     for token in ["control", "dispatch"] {
         for path in [
             format!("{FLEET}/city-fleet/correlations"),

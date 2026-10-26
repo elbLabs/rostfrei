@@ -171,6 +171,13 @@ returned, the most recently started; `"truncated": true` at the top level marks
 omitted older ones. A non-anchor type returns `404 unknown-anchor`; a context
 without configured history returns `501 history-unavailable`.
 
+The ID must be the anchor's aggregate ID, the identity of its event stream, not
+the ID of an entity inside it or of a related object. An ID without a stored
+event returns `404 unknown-anchor-stream`. A stream whose events carry no
+correlation, for example events appended directly by a fixture or an import,
+returns `200` with an empty `correlations` list; commands executed by Rostfrei
+always record one.
+
 `GET /correlations/{id}/events` with the inspection capability returns
 `{ correlation_id, truncated, lag, refs }` from the index, without payloads. It
 returns `404` only when the index has no reference and no source lags. With the

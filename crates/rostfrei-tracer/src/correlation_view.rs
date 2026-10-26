@@ -26,6 +26,11 @@ pub enum CorrelationInspectionError {
     Unavailable,
     #[error("`{0}` is not a declared anchor aggregate type")]
     UnknownAnchor(String),
+    #[error("`{aggregate_type}` has no stream `{aggregate_id}`; anchor IDs are aggregate IDs")]
+    UnknownAnchorStream {
+        aggregate_type: String,
+        aggregate_id: String,
+    },
     #[error("invalid identifier: {0}")]
     InvalidId(String),
     #[error("correlation `{0}` is not indexed")]
@@ -166,6 +171,12 @@ impl CorrelationInspection {
             .load(&stream)
             .await
             .map_err(|error| CorrelationInspectionError::History(error.to_string()))?;
+        if events.is_empty() {
+            return Err(CorrelationInspectionError::UnknownAnchorStream {
+                aggregate_type: aggregate_type.to_owned(),
+                aggregate_id: aggregate_id.to_owned(),
+            });
+        }
         let mut payloads = Payloads::new();
         let mut correlations: Vec<CorrelationId> = Vec::new();
         for event in &events {

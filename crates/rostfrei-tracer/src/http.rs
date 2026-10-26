@@ -1286,6 +1286,9 @@ fn correlation_inspection_error_response(error: &CorrelationInspectionError) -> 
             (StatusCode::NOT_IMPLEMENTED, "correlation-index-unavailable")
         }
         CorrelationInspectionError::UnknownAnchor(_) => (StatusCode::NOT_FOUND, "unknown-anchor"),
+        CorrelationInspectionError::UnknownAnchorStream { .. } => {
+            (StatusCode::NOT_FOUND, "unknown-anchor-stream")
+        }
         CorrelationInspectionError::NotFound(_) => (StatusCode::NOT_FOUND, "not-found"),
         CorrelationInspectionError::InvalidId(_) => (StatusCode::BAD_REQUEST, "invalid-identifier"),
         CorrelationInspectionError::IncludeTooBroad { .. } => {

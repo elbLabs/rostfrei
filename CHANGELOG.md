@@ -25,6 +25,9 @@ All notable changes to this project are documented in this file.
   `GET /aggregates/{type}/{id}/correlations` and indexed
   `GET /correlations/{id}/events` to the production inspection capability and
   lists anchor types in the catalog. See [correlation index and anchored views](docs/correlation-index.md).
+- An anchored view of an ID without a stored event returns
+  `404 unknown-anchor-stream`; `unknown-anchor` is reserved for types that are
+  not anchors.
 - Bike-rental indexes its Normal runtime and declares the rental fleet an anchor.
 
 ### Changed

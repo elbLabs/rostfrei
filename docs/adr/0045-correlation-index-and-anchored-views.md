@@ -111,7 +111,12 @@ references also store their stream sequence, used to check retention; the HTTP
 views do not expose it.
 
 An anchor view returns at most 256 correlations, the most recently started, and
-loads at most 64 included streams. A Normal bounded context named `test` with a
+loads at most 64 included streams. An anchor ID without stored events is
+`404 unknown-anchor-stream`, distinct from `unknown-anchor` for a type that is
+not an anchor: a caller that passes an entity ID instead of the aggregate ID gets
+an error, not an empty view. An empty list remains for a stream whose events
+carry no correlation, which only direct appends such as fixtures produce; the
+executor always records one. A Normal bounded context named `test` with a
 read model named `correlation-index` would alias the Test index bucket; do not
 use that combination.
 
