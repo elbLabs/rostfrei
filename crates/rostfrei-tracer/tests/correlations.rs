@@ -459,6 +459,281 @@ async fn anchor_view_returns_anchor_payloads_without_loading_foreign_streams() {
     );
 }
 
+fn correlation_ids(view: &Value) -> Vec<&str> {
+    view["correlations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|correlation| correlation["correlation_id"].as_str().unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn match_keeps_correlations_whose_loaded_payloads_carry_the_value() {
+    let scenario = scenario().await;
+    let noted = scenario
+        .ordering
+        .append(
+            "ordering/order",
+            "O1",
+            "R4",
+            None,
+            json!({"customer": {"id": "C7", "tags": ["vip"]}, "lines": 2}),
+        )
+        .await;
+    let invoiced = scenario
+        .billing
+        .append("billing/invoice", "I3", "R4", None, json!({"amount": 10}))
+        .await;
+    scenario.index.push("R4", domain("ordering", &noted, 9));
+    scenario.index.push("R4", domain("billing", &invoiced, 10));
+    let app = router(tracer(&scenario, true));
+    let view = |query: &str| format!("{ORDER}?{query}");
+
+    let (status, body) = get(&app, ORDER, Some(INSPECTION)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.get("matched").is_none());
+    assert_eq!(correlation_ids(&body), ["R1", "R2", "R3", "R4"]);
+
+    let (status, body) = get(
+        &app,
+        &view("include=context:billing&match=billing/changed.amount=10"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(correlation_ids(&body), ["R1", "R4"]);
+    assert_eq!(
+        body["matched"],
+        json!([{"context": "billing", "event_type": "changed", "field": "amount", "value": "10"}])
+    );
+    assert_eq!(body["lag"], json!({"billing": 0, "ordering": 0}));
+    assert_eq!(body["correlations"][0]["refs"].as_array().unwrap().len(), 4);
+
+    let (_, body) = get(
+        &app,
+        &view("include=context:billing&match=billing/changed.amount=12.0"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(correlation_ids(&body), ["R2"]);
+    let (_, body) = get(
+        &app,
+        &view("include=context:billing&match=billing/changed.amount=1e1"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(correlation_ids(&body), ["R1", "R4"]);
+
+    let (_, body) = get(
+        &app,
+        &view("match=ordering/changed.customer.id=C7"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(correlation_ids(&body), ["R4"], "nested path on the anchor");
+    let (_, body) = get(
+        &app,
+        &view("match=ordering/changed.customer.tags.0=vip"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(correlation_ids(&body), ["R4"], "array index");
+
+    let (_, body) = get(
+        &app,
+        &view(
+            "include=context:billing&match=billing/changed.amount=10&match=ordering/changed.placed=true",
+        ),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(correlation_ids(&body), ["R1"], "AND across refs");
+    assert_eq!(body["matched"].as_array().unwrap().len(), 2);
+    let (_, body) = get(
+        &app,
+        &view("include=context:billing&match=billing/changed.amount=12&match=ordering/changed.placed=true"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(correlation_ids(&body), Vec::<&str>::new());
+    assert_eq!(body["correlations"], json!([]));
+
+    let (_, body) = get(
+        &app,
+        &view("match=ordering/changed.vip=true"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(
+        correlation_ids(&body),
+        Vec::<&str>::new(),
+        "other streams of the anchor context are not loaded"
+    );
+    let (_, body) = get(
+        &app,
+        &view("include=context:ordering&match=ordering/changed.vip=true"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(correlation_ids(&body), ["R3"]);
+
+    let (_, body) = get(
+        &app,
+        &view("match=ordering/changed.lines=2"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(correlation_ids(&body), ["R4"]);
+    let (_, body) = get(
+        &app,
+        &view("match=ordering/changed.lines=two"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(correlation_ids(&body), Vec::<&str>::new());
+    let (_, body) = get(
+        &app,
+        &view("match=ordering/changed.customer=C7"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(
+        correlation_ids(&body),
+        Vec::<&str>::new(),
+        "objects never match"
+    );
+    let (_, body) = get(
+        &app,
+        &view("match=ordering/noted.placed=true"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(
+        correlation_ids(&body),
+        Vec::<&str>::new(),
+        "event type must match"
+    );
+}
+
+#[tokio::test]
+async fn match_values_are_url_decoded_and_compared_as_strings() {
+    let scenario = scenario().await;
+    let noted = scenario
+        .ordering
+        .append(
+            "ordering/order",
+            "O1",
+            "R4",
+            None,
+            json!({"reference": "a=b c+d", "code": "10"}),
+        )
+        .await;
+    scenario.index.push("R4", domain("ordering", &noted, 9));
+    let app = router(tracer(&scenario, true));
+    let (status, body) = get(
+        &app,
+        &format!("{ORDER}?match=ordering%2Fchanged.reference%3Da%3Db+c%2Bd"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(correlation_ids(&body), ["R4"]);
+    assert_eq!(body["matched"][0]["value"], "a=b c+d");
+    let (_, body) = get(
+        &app,
+        &format!("{ORDER}?match=ordering/changed.code=10"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(correlation_ids(&body), ["R4"]);
+    let (_, body) = get(
+        &app,
+        &format!("{ORDER}?match=ordering/changed.code=10.0"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(correlation_ids(&body), Vec::<&str>::new());
+}
+
+#[tokio::test]
+async fn match_requires_loaded_payloads_and_a_valid_expression() {
+    let scenario = scenario().await;
+    let app = router(tracer(&scenario, true));
+
+    let (status, body) = get(
+        &app,
+        &format!("{ORDER}?match=billing/changed.amount=10"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "match-requires-include");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("include=context:billing"),
+        "{body}"
+    );
+    let (status, body) = get(
+        &app,
+        &format!("{ORDER}?match=shipping/changed.id=1"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "match-requires-include");
+    assert!(
+        scenario.ordering.loads().is_empty(),
+        "rejected before loading"
+    );
+
+    let deep = format!("ordering/changed.{}=1", ["a"; 9].join("."));
+    let long = format!("ordering/changed.id={}", "x".repeat(257));
+    let many = ["match=ordering/changed.id=1"; 9].join("&");
+    for query in [
+        "match=ordering".to_owned(),
+        "match=ordering/changed".to_owned(),
+        "match=ordering/changed=1".to_owned(),
+        "match=ordering/changed.amount".to_owned(),
+        "match=ordering/.amount=1".to_owned(),
+        "match=ordering/changed..amount=1".to_owned(),
+        "match=ordering/changed.amount.=1".to_owned(),
+        "match=Ordering%20Context/changed.amount=1".to_owned(),
+        "match=/changed.amount=1".to_owned(),
+        "match=ordering/changed.id=%FF".to_owned(),
+        format!("match={deep}"),
+        format!("match={long}"),
+        many,
+    ] {
+        let (status, body) = get(&app, &format!("{ORDER}?{query}"), Some(INSPECTION)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {body}");
+        assert_eq!(body["code"], "invalid-match", "{query}");
+    }
+    let deepest = format!("ordering/changed.{}=1", ["a"; 8].join("."));
+    let longest = format!("ordering/changed.id={}", "x".repeat(256));
+    let most = ["match=ordering/changed.id=1"; 8].join("&");
+    for query in [format!("match={deepest}"), format!("match={longest}"), most] {
+        let (status, body) = get(&app, &format!("{ORDER}?{query}"), Some(INSPECTION)).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {body}");
+        assert_eq!(body["correlations"], json!([]));
+    }
+
+    for token in [CONTROL, DISPATCH] {
+        assert_eq!(
+            get(
+                &app,
+                &format!("{ORDER}?match=ordering/changed.placed=true"),
+                Some(token)
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+}
+
 #[tokio::test]
 async fn an_anchor_id_without_a_stream_is_not_found_and_an_uncorrelated_stream_is_empty() {
     let scenario = scenario().await;
@@ -524,6 +799,18 @@ async fn payloads_follow_the_trace_payload_policy() {
             assert!(reference.get("payload").is_none(), "{reference}");
         }
     }
+    let (status, body) = get(
+        &app,
+        &format!("{ORDER}?match=ordering/changed.placed=true"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["correlations"],
+        json!([]),
+        "hidden payloads never match"
+    );
 }
 
 #[tokio::test]

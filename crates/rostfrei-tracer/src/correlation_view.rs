@@ -7,7 +7,7 @@ use rostfrei_core::{
     AggregateId, AggregateType, CorrelationChain, CorrelationIndexFreshness,
     CorrelationIndexReader, CorrelationRef, EventHistory, ReadModelError, StreamId,
 };
-use rostfrei_messaging_core::{CorrelationId, MessageTimestamp};
+use rostfrei_messaging_core::{BoundedContextName, CorrelationId, MessageTimestamp};
 use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
@@ -19,6 +19,12 @@ pub const MAX_ANCHOR_CORRELATIONS: usize = 256;
 pub const MAX_INCLUDED_CONTEXTS: usize = 16;
 /// Foreign streams loaded for `include`; each load replays a whole stream.
 pub const MAX_INCLUDED_STREAMS: usize = 64;
+/// `match` filters accepted by one anchored view; all of them must hold.
+pub const MAX_PAYLOAD_MATCHES: usize = 8;
+/// Longest `match` value, in bytes after URL decoding.
+pub const MAX_PAYLOAD_MATCH_VALUE_BYTES: usize = 256;
+/// Deepest `match` field path, in dot-separated segments.
+pub const MAX_PAYLOAD_MATCH_FIELD_SEGMENTS: usize = 8;
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum CorrelationInspectionError {
@@ -42,6 +48,12 @@ pub enum CorrelationInspectionError {
         subject: &'static str,
         maximum: usize,
     },
+    #[error("invalid match: {0}")]
+    InvalidMatch(String),
+    #[error(
+        "payloads of context `{0}` are not loaded for this view; add `include=context:{0}` to match them"
+    )]
+    MatchRequiresInclude(String),
     #[error("correlation index read failed: {0}")]
     Index(ReadModelError),
     #[error("event history read failed: {0}")]
@@ -58,6 +70,9 @@ pub struct AnchorIdentity {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AnchorCorrelations {
     pub anchor: AnchorIdentity,
+    /// The applied `match` filters; omitted when the view is unfiltered.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub matched: Vec<PayloadMatch>,
     /// Serialized as top-level `lag` and `sources`.
     #[serde(flatten)]
     pub freshness: CorrelationIndexFreshness,
@@ -118,6 +133,120 @@ pub struct IntegrationRefView {
     pub available: bool,
 }
 
+/// A read-time filter on an anchored view: keeps a correlation when one of its
+/// domain references of `context` and `event_type` has a loaded payload whose
+/// value at the dot path `field` equals `value`.
+///
+/// The value is compared with the payload field's JSON type: as text for a
+/// string, numerically for a number and as `true`/`false` for a boolean. Null,
+/// objects, arrays, missing fields and integration references never match.
+/// Payloads are matched as the [`TracePayloadPolicy`] returns them, so a hidden
+/// payload or field never matches.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PayloadMatch {
+    pub context: String,
+    pub event_type: String,
+    pub field: String,
+    pub value: String,
+}
+
+impl PayloadMatch {
+    /// Parses `<context>/<event-type>.<field>[.<field>…]=<value>`. The value is
+    /// everything after the first `=` and may itself contain `=`. A numeric
+    /// segment indexes into an array.
+    pub fn parse(expression: &str) -> Result<Self, CorrelationInspectionError> {
+        let invalid = |reason: &str| {
+            CorrelationInspectionError::InvalidMatch(format!(
+                "`{expression}`: {reason}; use `<context>/<event-type>.<field>=<value>`"
+            ))
+        };
+        let (path, value) = expression
+            .split_once('=')
+            .ok_or_else(|| invalid("missing `=<value>`"))?;
+        let (context, event) = path
+            .split_once('/')
+            .ok_or_else(|| invalid("missing `<context>/`"))?;
+        let context =
+            BoundedContextName::new(context).map_err(|_| invalid("invalid context name"))?;
+        let (event_type, field) = event
+            .split_once('.')
+            .ok_or_else(|| invalid("missing `.<field>`"))?;
+        if event_type.is_empty() || event_type.contains('/') {
+            return Err(invalid("invalid event type"));
+        }
+        if field.split('.').any(str::is_empty) {
+            return Err(invalid("empty field path segment"));
+        }
+        if field.split('.').count() > MAX_PAYLOAD_MATCH_FIELD_SEGMENTS {
+            return Err(invalid(&format!(
+                "field paths have at most {MAX_PAYLOAD_MATCH_FIELD_SEGMENTS} segments"
+            )));
+        }
+        if value.len() > MAX_PAYLOAD_MATCH_VALUE_BYTES {
+            return Err(invalid(&format!(
+                "values have at most {MAX_PAYLOAD_MATCH_VALUE_BYTES} bytes"
+            )));
+        }
+        Ok(Self {
+            context: context.as_str().to_owned(),
+            event_type: event_type.to_owned(),
+            field: field.to_owned(),
+            value: value.to_owned(),
+        })
+    }
+
+    fn holds_for(&self, chain: &CorrelationChain, payloads: &Payloads) -> bool {
+        chain.refs.iter().any(|reference| {
+            let CorrelationRef::Domain(reference) = reference else {
+                return false;
+            };
+            reference.context == self.context
+                && reference.event_type == self.event_type
+                && payloads
+                    .get(&(reference.context.clone(), reference.event_id.clone()))
+                    .and_then(|payload| self.field_of(payload))
+                    .is_some_and(|field| self.equals(field))
+        })
+    }
+
+    fn field_of<'a>(&self, payload: &'a Value) -> Option<&'a Value> {
+        self.field
+            .split('.')
+            .try_fold(payload, |value, segment| match value {
+                Value::Object(fields) => fields.get(segment),
+                Value::Array(items) => segment
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|index| items.get(index)),
+                _ => None,
+            })
+    }
+
+    fn equals(&self, field: &Value) -> bool {
+        match field {
+            Value::String(text) => *text == self.value,
+            Value::Bool(flag) => self.value.parse::<bool>().is_ok_and(|value| value == *flag),
+            Value::Number(number) => self
+                .value
+                .parse::<serde_json::Number>()
+                .is_ok_and(|value| numbers_equal(number, &value)),
+            Value::Null | Value::Array(_) | Value::Object(_) => false,
+        }
+    }
+}
+
+fn numbers_equal(left: &serde_json::Number, right: &serde_json::Number) -> bool {
+    if let (Some(left), Some(right)) = (left.as_i64(), right.as_i64()) {
+        return left == right;
+    }
+    if let (Some(left), Some(right)) = (left.as_u64(), right.as_u64()) {
+        return left == right;
+    }
+    left.as_f64()
+        .zip(right.as_f64())
+        .is_some_and(|(left, right)| left.total_cmp(&right).is_eq())
+}
+
 /// Production correlation inspection over the durable index (ADR 0045).
 pub struct CorrelationInspection {
     index: Arc<dyn CorrelationIndexReader>,
@@ -145,6 +274,7 @@ impl CorrelationInspection {
         aggregate_type: &str,
         aggregate_id: &str,
         include: &BTreeSet<String>,
+        matches: &[PayloadMatch],
         policy: &dyn TracePayloadPolicy,
     ) -> Result<AnchorCorrelations, CorrelationInspectionError> {
         if !self.anchors.contains(aggregate_type) {
@@ -152,15 +282,10 @@ impl CorrelationInspection {
                 aggregate_type.to_owned(),
             ));
         }
-        if include.len() > MAX_INCLUDED_CONTEXTS {
-            return Err(CorrelationInspectionError::IncludeTooBroad {
-                subject: "contexts",
-                maximum: MAX_INCLUDED_CONTEXTS,
-            });
-        }
         let context = aggregate_type
             .split_once('/')
             .map_or(aggregate_type, |(context, _)| context);
+        check_view_request(context, include, matches)?;
         let history = self.history(context)?;
         for included in include {
             self.history(included)?;
@@ -215,6 +340,12 @@ impl CorrelationInspection {
             .await?;
         let mut anchored = Vec::new();
         for (correlation_id, chain) in chains {
+            if !matches
+                .iter()
+                .all(|filter| filter.holds_for(&chain, &payloads))
+            {
+                continue;
+            }
             anchored.push(AnchoredCorrelation {
                 correlation_id: correlation_id.as_str().to_owned(),
                 truncated: chain.truncated,
@@ -226,6 +357,7 @@ impl CorrelationInspection {
                 aggregate_type: aggregate_type.to_owned(),
                 aggregate_id: aggregate_id.to_owned(),
             },
+            matched: matches.to_vec(),
             freshness,
             correlations: anchored,
             truncated: skipped > 0,
@@ -365,6 +497,34 @@ impl CorrelationInspection {
         }
         Ok(views)
     }
+}
+
+/// Rejects a request whose `match` filters name a context whose payloads the
+/// view does not load; it would otherwise filter out every correlation.
+fn check_view_request(
+    anchor_context: &str,
+    include: &BTreeSet<String>,
+    matches: &[PayloadMatch],
+) -> Result<(), CorrelationInspectionError> {
+    if include.len() > MAX_INCLUDED_CONTEXTS {
+        return Err(CorrelationInspectionError::IncludeTooBroad {
+            subject: "contexts",
+            maximum: MAX_INCLUDED_CONTEXTS,
+        });
+    }
+    if matches.len() > MAX_PAYLOAD_MATCHES {
+        return Err(CorrelationInspectionError::InvalidMatch(format!(
+            "at most {MAX_PAYLOAD_MATCHES} match parameters are accepted"
+        )));
+    }
+    matches
+        .iter()
+        .find(|filter| filter.context != anchor_context && !include.contains(&filter.context))
+        .map_or(Ok(()), |unloaded| {
+            Err(CorrelationInspectionError::MatchRequiresInclude(
+                unloaded.context.clone(),
+            ))
+        })
 }
 
 fn decoded_payload(payload: &[u8], policy: &dyn TracePayloadPolicy) -> Option<Value> {

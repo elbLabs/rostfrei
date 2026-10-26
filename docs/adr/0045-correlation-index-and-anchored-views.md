@@ -165,6 +165,27 @@ existing bucket needs no migration. Recreating a stream with at least as many
 messages as the checkpoint is not detected; deleting a source stream therefore
 remains an operator step that includes the index rebuild.
 
+### Addendum: read-time entity match, precursor of entity anchors
+
+An anchor is an aggregate stream, but readers often need the correlations of
+one business entity inside it, such as one inquiry of a conversation. Rather
+than indexing entities, the anchored view accepts repeated
+`match=<context>/<event-type>.<field>=<value>` filters. A correlation is kept
+when every filter is satisfied by some domain reference with that context and
+event type whose loaded payload holds the value at the dot path. The filter
+runs on the payloads the view already loads, after `TracePayloadPolicy`, and
+over the same 256-correlation window; index, projector and stored format do
+not change, and the response echoes the applied filters as `matched`.
+
+A filter on a context whose payloads the request does not load is rejected
+with `400 match-requires-include` instead of silently matching nothing, and
+the context is not loaded implicitly: `include` stays the one, explicit knob
+that decides how many foreign streams a request replays. Malformed filters
+return `400 invalid-match`; at most 8 filters, 256-byte values and 8-segment
+paths are accepted. References lost to a truncated correlation cannot match.
+The filter is the stepping stone towards entity-level anchors, which would
+index the entity identity and lift the window and payload-policy limits.
+
 Not part of this decision, optional and later: `EventHistory::load_event` for
 per-event foreign payloads (next), an explicit framework event linking a chain
 to an anchor it never writes to, and rejected commands as a third reference kind

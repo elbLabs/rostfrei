@@ -50,6 +50,12 @@ All notable changes to this project are documented in this file.
   turns the Tracer views into `503`. Messages a Limits stream removed before
   they were indexed are reported per source as `skipped`; projection continues.
   Stored source records with a `generation` field remain readable.
+- Anchored correlation views accept repeated
+  `match=<context>/<event-type>.<field>=<value>` filters that keep only
+  correlations whose loaded payloads carry the value, AND-ed across filters,
+  and echo them as `matched`. A filter on a context that is neither the
+  anchor's nor included returns `400 match-requires-include`; a malformed one
+  `400 invalid-match`. No index change.
 - Tracer Studio **Correlations** view: pick an advertised anchor and aggregate
   ID to list its correlations with event counts, contexts and first/last seen,
   or open a correlation ID directly. A selected chain renders indexed domain

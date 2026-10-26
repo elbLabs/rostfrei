@@ -267,3 +267,65 @@ operations from memory over SSE.
 Register the history of other bounded contexts with
 `TracerConfig::with_production_history` (or `TracerBuilder::with_production_history`)
 to anchor their aggregates and include their payloads.
+
+### Match by payload field
+
+`match` keeps only the anchored correlations that belong to one business
+entity, for example one inquiry inside a conversation anchor:
+
+```text
+GET /aggregates/customer-conversation%2Fconversation/c-17/correlations
+    ?match=customer-conversation/assistant-turn-completed.inquiry_id=05767a95-…
+GET /aggregates/bike-rental%2Frental-fleet/city-fleet/correlations
+    ?match=bike-rental/bicycle-added.bicycle_id=bike-7
+    &match=bike-rental/bicycle-added.condition=serviceable
+```
+
+The grammar is `match=<context>/<event-type>.<field>[.<field>…]=<value>`. The
+parameter value is form-URL-decoded (`%XX`, `+` as space); the value is
+everything after the first `=` that follows the field path and may contain
+`=`. The field path is a dot path into the JSON payload; a numeric segment
+indexes an array.
+
+- A correlation is kept when at least one of its domain references has the
+  given context and event type and a loaded payload whose field equals the
+  value. Repeated `match` parameters are AND-ed; each may be satisfied by a
+  different reference of the same correlation.
+- The value is compared with the field's JSON type: as text for a string,
+  numerically for a number (`10`, `10.0` and `1e1` are equal), as
+  `true`/`false` for a boolean. `"10"` in a string field does not equal
+  `10.0`. Null, objects, arrays, missing fields and integration references
+  never match.
+- Matching sees payloads as returned after `TracePayloadPolicy`. A hidden
+  payload or field never matches, so the default policy returns no
+  correlations.
+- Payloads are loaded for the anchor stream and for contexts named in
+  `include`. A `match` on another context returns
+  `400 match-requires-include`, naming the context to include. A `match` on
+  the anchor's own context sees only the anchor stream; add
+  `include=context:<anchor context>` to match events of its other aggregates.
+- A malformed expression returns `400 invalid-match`. At most 8 `match`
+  parameters, values of at most 256 bytes after decoding and field paths of at
+  most 8 segments are accepted.
+- The filter runs over the 256 most recently started correlations the view
+  would return; top-level `truncated` still marks omitted older ones, which
+  were not checked. A correlation with `"truncated": true` lost references
+  beyond 2048, and a match that only those references would satisfy drops it.
+
+The response keeps its shape and adds the applied filters, omitted when there
+are none:
+
+```json
+{
+  "anchor": { "aggregate_type": "bike-rental/rental-fleet", "aggregate_id": "city-fleet" },
+  "matched": [ { "context": "bike-rental", "event_type": "bicycle-added",
+                 "field": "bicycle_id", "value": "bike-7" } ],
+  "lag": { "bike-rental": 0 },
+  "sources": [ … ],
+  "correlations": [ … ]
+}
+```
+
+`match` is a read-time filter. It adds no index and no stored field, and it
+needs the same production inspection capability as the view. It is the
+precursor of entity-level anchors (ADR 0045).

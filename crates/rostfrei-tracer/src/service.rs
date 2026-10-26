@@ -42,6 +42,7 @@ use crate::{
     correlation::{CorrelationEvidenceSnapshot, CorrelationEvidenceSubscription, CorrelationHub},
     correlation_view::{
         AnchorCorrelations, CorrelationInspection, CorrelationInspectionError, IndexedCorrelation,
+        PayloadMatch,
     },
     input::{CommandInputDocument, CommandInputOptions},
     message_series::{
@@ -1031,11 +1032,13 @@ impl Tracer {
 
     /// Hop 1 loads the anchor stream; hop 2 expands each of its correlations
     /// from the index. Payloads of other streams are loaded only for `include`.
+    /// `matches` keeps only correlations whose loaded payloads satisfy every filter.
     pub async fn anchor_correlations(
         &self,
         aggregate_type: &str,
         aggregate_id: &str,
         include: &BTreeSet<String>,
+        matches: &[PayloadMatch],
     ) -> Result<AnchorCorrelations, CorrelationInspectionError> {
         self.inner
             .correlation_inspection
@@ -1045,6 +1048,7 @@ impl Tracer {
                 aggregate_type,
                 aggregate_id,
                 include,
+                matches,
                 self.inner.trace_payload_policy.as_ref(),
             )
             .await

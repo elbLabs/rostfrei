@@ -23,9 +23,10 @@ use thiserror::Error;
 use crate::{
     CommandInputError, CommandRequest, CorrelationError, CorrelationInspectionError,
     DiscoveryError, MAX_COMMAND_PAYLOAD_LEN, MAX_INCLUDED_CONTEXTS, MessageSeriesCaptureError,
-    OperationMode, OperationSnapshot, QuarantineInspectionError, QuarantineScope, SubmissionError,
-    TestDefinition, TestDefinitionError, TestDefinitionValidationError, TestRepositoryError,
-    TestRunError, TestScenarioResetError, TestTimeout, Tracer, behavioral_test_schema,
+    OperationMode, OperationSnapshot, PayloadMatch, QuarantineInspectionError, QuarantineScope,
+    SubmissionError, TestDefinition, TestDefinitionError, TestDefinitionValidationError,
+    TestRepositoryError, TestRunError, TestScenarioResetError, TestTimeout, Tracer,
+    behavioral_test_schema,
 };
 
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
@@ -909,13 +910,13 @@ async fn get_anchor_correlations(
     Path((aggregate_type, aggregate_id)): Path<(String, String)>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let include = match included_contexts(query.as_deref()) {
-        Ok(include) => include,
-        Err(message) => return bad_request(&message),
+    let (include, matches) = match anchor_query(query.as_deref()) {
+        Ok(query) => query,
+        Err(response) => return *response,
     };
     match state
         .tracer
-        .anchor_correlations(&aggregate_type, &aggregate_id, &include)
+        .anchor_correlations(&aggregate_type, &aggregate_id, &include, &matches)
         .await
     {
         Ok(correlations) => private_no_store(Json(correlations).into_response()),
@@ -923,31 +924,58 @@ async fn get_anchor_correlations(
     }
 }
 
-/// Accepts repeated or comma-separated `include=context:<name>` parameters.
-fn included_contexts(query: Option<&str>) -> Result<BTreeSet<String>, String> {
+/// Accepts repeated or comma-separated `include=context:<name>` parameters and
+/// repeated form-URL-encoded `match=<context>/<event-type>.<field>=<value>`
+/// parameters.
+fn anchor_query(
+    query: Option<&str>,
+) -> Result<(BTreeSet<String>, Vec<PayloadMatch>), Box<Response>> {
     let mut contexts = BTreeSet::new();
+    let mut matches = Vec::new();
     for parameter in query
         .unwrap_or_default()
         .split('&')
         .filter(|p| !p.is_empty())
     {
-        let Some(("include", value)) = parameter.split_once('=') else {
-            return Err("only `include=context:<name>` query parameters are supported".to_owned());
-        };
-        for item in value.replace("%3A", ":").replace("%3a", ":").split(',') {
-            let context = item
-                .strip_prefix("context:")
-                .and_then(|name| BoundedContextName::new(name).ok())
-                .ok_or_else(|| format!("invalid include `{item}`; use `context:<name>`"))?;
-            contexts.insert(context.as_str().to_owned());
+        match parameter.split_once('=') {
+            Some(("include", value)) => {
+                for item in value.replace("%3A", ":").replace("%3a", ":").split(',') {
+                    let context = item
+                        .strip_prefix("context:")
+                        .and_then(|name| BoundedContextName::new(name).ok())
+                        .ok_or_else(|| {
+                            Box::new(bad_request(&format!(
+                                "invalid include `{item}`; use `context:<name>`"
+                            )))
+                        })?;
+                    contexts.insert(context.as_str().to_owned());
+                }
+            }
+            Some(("match", value)) => {
+                let expression = percent_encoding::percent_decode_str(&value.replace('+', " "))
+                    .decode_utf8()
+                    .map_err(|_| {
+                        CorrelationInspectionError::InvalidMatch(
+                            "the value is not UTF-8 after URL decoding".to_owned(),
+                        )
+                    })
+                    .and_then(|expression| PayloadMatch::parse(&expression))
+                    .map_err(|error| Box::new(correlation_inspection_error_response(&error)))?;
+                matches.push(expression);
+            }
+            _ => {
+                return Err(Box::new(bad_request(
+                    "only `include=context:<name>` and `match=<context>/<event-type>.<field>=<value>` query parameters are supported",
+                )));
+            }
         }
     }
     if contexts.len() > MAX_INCLUDED_CONTEXTS {
-        return Err(format!(
+        return Err(Box::new(bad_request(&format!(
             "at most {MAX_INCLUDED_CONTEXTS} contexts can be included"
-        ));
+        ))));
     }
-    Ok(contexts)
+    Ok((contexts, matches))
 }
 
 async fn indexed_correlation(state: &HttpState, correlation_id: &str) -> Response {
@@ -1293,6 +1321,10 @@ fn correlation_inspection_error_response(error: &CorrelationInspectionError) -> 
         CorrelationInspectionError::InvalidId(_) => (StatusCode::BAD_REQUEST, "invalid-identifier"),
         CorrelationInspectionError::IncludeTooBroad { .. } => {
             (StatusCode::BAD_REQUEST, "include-too-broad")
+        }
+        CorrelationInspectionError::InvalidMatch(_) => (StatusCode::BAD_REQUEST, "invalid-match"),
+        CorrelationInspectionError::MatchRequiresInclude(_) => {
+            (StatusCode::BAD_REQUEST, "match-requires-include")
         }
         CorrelationInspectionError::HistoryUnavailable(_) => {
             (StatusCode::NOT_IMPLEMENTED, "history-unavailable")

@@ -253,6 +253,22 @@ async fn production_correlations_are_indexed_and_viewed_from_their_anchors() -> 
         .ok_or("missing included source fleet ref")?;
     assert_eq!(source["payload"]["bicycle_id"], "bike-7");
 
+    let (status, matched) = get(
+        &app,
+        &format!(
+            "{FLEET}/city-fleet/correlations?match=bike-rental/bicycle-added.bicycle_id=bike-7"
+        ),
+        "inspection",
+    )
+    .await?;
+    assert_eq!(status, 200, "{matched}");
+    assert_eq!(correlation_ids(&matched), ["city-bike-7"]);
+    assert_eq!(
+        matched["matched"],
+        json!([{"context": "bike-rental", "event_type": "bicycle-added",
+            "field": "bicycle_id", "value": "bike-7"}])
+    );
+
     let (status, unknown) =
         get(&app, &format!("{FLEET}/bike-42/correlations"), "inspection").await?;
     assert_eq!(status, 404, "a bicycle ID is not a fleet stream: {unknown}");
