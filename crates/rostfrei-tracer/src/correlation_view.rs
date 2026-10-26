@@ -4,8 +4,8 @@ use std::{
 };
 
 use rostfrei_core::{
-    AggregateId, AggregateType, CorrelationChain, CorrelationIndexLag, CorrelationIndexReader,
-    CorrelationRef, EventHistory, ReadModelError, StreamId,
+    AggregateId, AggregateType, CorrelationChain, CorrelationIndexFreshness,
+    CorrelationIndexReader, CorrelationRef, EventHistory, ReadModelError, StreamId,
 };
 use rostfrei_messaging_core::{CorrelationId, MessageTimestamp};
 use serde::Serialize;
@@ -58,7 +58,9 @@ pub struct AnchorIdentity {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AnchorCorrelations {
     pub anchor: AnchorIdentity,
-    pub lag: CorrelationIndexLag,
+    /// Serialized as top-level `lag` and `sources`.
+    #[serde(flatten)]
+    pub freshness: CorrelationIndexFreshness,
     pub correlations: Vec<AnchoredCorrelation>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
@@ -75,7 +77,9 @@ pub struct AnchoredCorrelation {
 pub struct IndexedCorrelation {
     pub correlation_id: String,
     pub truncated: bool,
-    pub lag: CorrelationIndexLag,
+    /// Serialized as top-level `lag` and `sources`.
+    #[serde(flatten)]
+    pub freshness: CorrelationIndexFreshness,
     pub refs: Vec<CorrelationRefView>,
 }
 
@@ -193,9 +197,9 @@ impl CorrelationInspection {
             }
         }
         let skipped = correlations.len().saturating_sub(MAX_ANCHOR_CORRELATIONS);
-        let lag = self
+        let freshness = self
             .index
-            .lag()
+            .freshness()
             .await
             .map_err(CorrelationInspectionError::Index)?;
         let mut chains = Vec::new();
@@ -222,21 +226,24 @@ impl CorrelationInspection {
                 aggregate_type: aggregate_type.to_owned(),
                 aggregate_id: aggregate_id.to_owned(),
             },
-            lag,
+            freshness,
             correlations: anchored,
             truncated: skipped > 0,
         })
     }
 
+    /// `NotFound` only when the index holds no reference and is complete: every
+    /// registered source has a running projector and none is behind. Otherwise
+    /// an empty chain is returned with its freshness.
     pub async fn correlation(
         &self,
         correlation_id: &str,
     ) -> Result<IndexedCorrelation, CorrelationInspectionError> {
         let correlation = CorrelationId::new(correlation_id)
             .map_err(|error| CorrelationInspectionError::InvalidId(error.to_string()))?;
-        let lag = self
+        let freshness = self
             .index
-            .lag()
+            .freshness()
             .await
             .map_err(CorrelationInspectionError::Index)?;
         let chain = self
@@ -244,7 +251,7 @@ impl CorrelationInspection {
             .chain(&correlation)
             .await
             .map_err(CorrelationInspectionError::Index)?;
-        if chain.refs.is_empty() && lag.values().all(|behind| *behind == 0) {
+        if chain.refs.is_empty() && freshness.is_complete() {
             return Err(CorrelationInspectionError::NotFound(
                 correlation_id.to_owned(),
             ));
@@ -252,7 +259,7 @@ impl CorrelationInspection {
         Ok(IndexedCorrelation {
             correlation_id: correlation_id.to_owned(),
             truncated: chain.truncated,
-            lag,
+            freshness,
             refs: self.views(chain, &Payloads::new()).await?,
         })
     }

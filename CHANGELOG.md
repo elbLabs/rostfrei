@@ -29,6 +29,15 @@ All notable changes to this project are documented in this file.
   `404 unknown-anchor-stream`; `unknown-anchor` is reserved for types that are
   not anchors.
 - Bike-rental indexes its Normal runtime and declares the rental fleet an anchor.
+- `CorrelationIndexReader::freshness` replaces `lag`. It reports every source
+  with its stream, `active`/`inactive` state and `behind` count; `lag[context]`
+  is `null` while any source of the context has no running projector. Tracer
+  index views add `sources`, and `GET /correlations/{id}/events` returns `404`
+  only when every source is active and caught up.
+- The projector names its ordered consumers
+  `correlation-index--<kind>--<context>--<uuid v7>` and deletes them on shutdown,
+  failure and abort. Readers additionally need `CONSUMER.NAMES` on the source
+  streams.
 
 ### Changed
 

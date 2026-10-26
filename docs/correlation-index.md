@@ -28,6 +28,11 @@ let host = NatsApplication::builder(context, connection, bindings)?
 stops with the runtime's other workers, and a stopped projector stops the host.
 A Tracer host attaches the index of its Normal dispatch runtime automatically.
 
+The projector reads each source through an ordered consumer named
+`correlation-index--<domain|integration>--<context>--<uuid v7>`. It deletes the
+consumer when it stops, fails or is aborted. A consumer left behind by a lost
+process is removed by the server after 30 seconds of inactivity.
+
 Without the host, run the projector and reader directly:
 
 ```rust,ignore
@@ -39,7 +44,7 @@ let projector = NatsCorrelationIndexProjector::connect(
 tokio::spawn(projector.run_until_shutdown(shutdown));
 let reader = NatsCorrelationIndexReader::connect(connection.jetstream().clone(), &index).await?;
 let chain = reader.chain(&CorrelationId::new("R1")?).await?;
-let lag = reader.lag().await?;
+let freshness = reader.freshness().await?;
 ```
 
 ## What is indexed
@@ -107,18 +112,41 @@ Test reset deletes and recreates the Test index with the other Test streams.
 ### Permissions
 
 Projector credentials need the [read-model KV permissions](read-models.md#resource-policy-and-permissions)
-for the bucket, plus ephemeral consumer create, pull and delete on the
+for the bucket, plus named ephemeral consumer create, pull and delete on the
 bounded context's event store stream and the application's integration-event
-stream. Readers additionally need `STREAM.INFO`, `STREAM.MSG.GET` and ephemeral
-consumer create/delete on those streams to compute lag and availability.
+stream. Readers additionally need `STREAM.INFO`, `STREAM.MSG.GET`,
+`CONSUMER.NAMES` and ephemeral consumer create/delete on those streams to
+compute freshness and availability.
 
 ## Freshness
 
-Every read returns `lag`, a map from bounded context to events not yet indexed,
-computed by the server against each source stream. `0` everywhere means the
-index was complete when the request was answered. It never means that a chain
-has finished: later events of the same correlation can still be written. A
-context appears in `lag` after its projector first started.
+`freshness()` and every index view report the state of each registered source
+and a per-context `lag`, computed by the server against the source streams:
+
+```json
+{
+  "lag": { "billing": null, "ordering": 0 },
+  "sources": [
+    { "context": "billing", "kind": "domain", "stream": "SHOP__BILLING_DOMAIN_EVENTS",
+      "state": "inactive", "behind": 2 },
+    { "context": "billing", "kind": "integration", "stream": "SHOP_INTEGRATION_EVENTS",
+      "state": "inactive", "behind": 0 },
+    { "context": "ordering", "kind": "domain", "stream": "SHOP__ORDERING_DOMAIN_EVENTS",
+      "state": "active", "behind": 0 }
+  ]
+}
+```
+
+- `behind` counts the source's matching messages after its checkpoint.
+- `state` is `active` while a projector consumer for that source exists on its
+  stream, `inactive` otherwise.
+- `lag[context]` sums `behind` over the context's sources. It is `null` when any
+  source of the context is inactive: nothing will index the missing events until
+  a projector starts, and a stopped projector must not read as "no events".
+
+`0` everywhere means the index was complete when the request was answered. It
+never means that a chain has finished: later events of the same correlation can
+still be written. A context appears after its projector first started.
 
 ## Tracer views
 
@@ -150,6 +178,8 @@ appears under both.
 {
   "anchor": { "aggregate_type": "bike-rental/rental-fleet", "aggregate_id": "city-fleet" },
   "lag": { "bike-rental": 0 },
+  "sources": [ { "context": "bike-rental", "kind": "domain", "stream": "…",
+                 "state": "active", "behind": 0 }, … ],
   "correlations": [
     { "correlation_id": "R1", "truncated": false,
       "refs": [
@@ -179,8 +209,11 @@ returns `200` with an empty `correlations` list; commands executed by Rostfrei
 always record one.
 
 `GET /correlations/{id}/events` with the inspection capability returns
-`{ correlation_id, truncated, lag, refs }` from the index, without payloads. It
-returns `404` only when the index has no reference and no source lags. With the
+`{ correlation_id, truncated, lag, sources, refs }` from the index, without
+payloads. It returns `404 not-found` only when the index has no reference and
+is complete: at least one source is registered, every source is `active` and
+none is behind. Otherwise an unknown correlation returns `200` with empty
+`refs`, and `lag`/`sources` say why the answer may still change. With the
 Control or Dispatch capability, the route keeps streaming Tracer-submitted
 operations from memory over SSE.
 

@@ -23,6 +23,7 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 rostfrei.workspace = true
 rostfrei-core.workspace = true
 rostfrei-fixtures.workspace = true

@@ -32,7 +32,8 @@ pub use completed_outcome::{
 pub use conflict_retry::*;
 pub use correlation_index::{
     CORRELATION_INDEX_SCHEMA_VERSION, CORRELATION_REFS_PER_PAGE, CorrelationChain,
-    CorrelationIndexEntry, CorrelationIndexLag, CorrelationIndexReader, CorrelationRef,
+    CorrelationIndexEntry, CorrelationIndexFreshness, CorrelationIndexLag, CorrelationIndexReader,
+    CorrelationRef, CorrelationSourceFreshness, CorrelationSourceKind, CorrelationSourceState,
     DomainEventRef, IntegrationEventRef, MAX_CORRELATION_PAGES, MAX_CORRELATION_REFS,
 };
 pub use domain_event::{

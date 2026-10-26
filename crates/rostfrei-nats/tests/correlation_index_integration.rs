@@ -9,8 +9,10 @@ use std::{
 };
 
 use async_nats::jetstream;
+use futures_util::TryStreamExt as _;
 use rostfrei::{
-    ApplicationName, BoundedContext, CorrelationChain, CorrelationIndexReader, CorrelationRef,
+    ApplicationName, BoundedContext, CorrelationChain, CorrelationIndexFreshness,
+    CorrelationIndexReader, CorrelationRef, CorrelationSourceKind, CorrelationSourceState,
     MAX_CORRELATION_REFS, ReadModelError, ReadModelErrorKind, TrafficScope,
 };
 use rostfrei_core::{
@@ -97,13 +99,43 @@ impl Fixture {
             self.messaging.topology(),
         )
         .await?;
-        let (shutdown, receiver) = watch::channel(false);
-        Ok(Running {
-            shutdown,
-            task: tokio::spawn(projector.run_until_shutdown(receiver)),
-        })
+        Ok(Running::spawn(projector))
     }
 
+    fn integration_stream(&self) -> String {
+        self.messaging
+            .topology()
+            .integration_event_stream()
+            .as_str()
+            .to_owned()
+    }
+
+    async fn projector_consumers(&self, stream: &str) -> TestResult<Vec<String>> {
+        let names: Vec<String> = self
+            .js
+            .get_stream(stream)
+            .await?
+            .consumer_names()
+            .try_collect()
+            .await?;
+        Ok(names
+            .into_iter()
+            .filter(|name| name.starts_with("correlation-index--"))
+            .collect())
+    }
+}
+
+impl Running {
+    fn spawn(projector: NatsCorrelationIndexProjector) -> Self {
+        let (shutdown, receiver) = watch::channel(false);
+        Self {
+            shutdown,
+            task: tokio::spawn(projector.run_until_shutdown(receiver)),
+        }
+    }
+}
+
+impl Fixture {
     async fn reader(&self) -> TestResult<NatsCorrelationIndexReader> {
         Ok(NatsCorrelationIndexReader::connect(self.js.clone(), &self.index).await?)
     }
@@ -245,12 +277,37 @@ async fn chain_with(
 
 async fn caught_up(reader: &NatsCorrelationIndexReader, contexts: &[&str]) -> TestResult {
     eventually(|| async {
-        let lag = reader.lag().await?;
+        let lag = reader.freshness().await?.lag;
         Ok((lag.len() == contexts.len()
-            && contexts.iter().all(|context| lag.get(*context) == Some(&0)))
+            && contexts
+                .iter()
+                .all(|context| lag.get(*context) == Some(&Some(0))))
         .then_some(()))
     })
     .await
+}
+
+async fn freshness_where(
+    reader: &NatsCorrelationIndexReader,
+    accept: impl Fn(&CorrelationIndexFreshness) -> bool + Send + Sync,
+) -> TestResult<CorrelationIndexFreshness> {
+    eventually(|| async {
+        let freshness = reader.freshness().await?;
+        Ok(accept(&freshness).then_some(freshness))
+    })
+    .await
+}
+
+fn states(
+    freshness: &CorrelationIndexFreshness,
+    context: &str,
+) -> Vec<(CorrelationSourceKind, CorrelationSourceState, u64)> {
+    freshness
+        .sources
+        .iter()
+        .filter(|source| source.context == context)
+        .map(|source| (source.kind, source.state, source.behind))
+        .collect()
 }
 
 fn domain_event_ids(chain: &CorrelationChain) -> Vec<String> {
@@ -422,8 +479,15 @@ async fn a_full_bucket_rejects_the_write_and_stops_the_projector_without_evictio
         .expect_err("a full bucket must stop the projector");
     assert_eq!(error.kind(), ReadModelErrorKind::CapacityExhausted);
     assert_eq!(reader.chain(&CorrelationId::new("first")?).await?, first);
-    let lag = reader.lag().await?;
-    assert!(lag.get("ordering").is_some_and(|behind| *behind > 0));
+    let freshness = reader.freshness().await?;
+    assert_eq!(freshness.lag.get("ordering"), Some(&None));
+    let domain = freshness
+        .sources
+        .iter()
+        .find(|source| source.kind == CorrelationSourceKind::Domain)
+        .ok_or("missing domain source")?;
+    assert_eq!(domain.state, CorrelationSourceState::Inactive);
+    assert!(domain.behind > 0);
     fixture.cleanup().await
 }
 
@@ -451,12 +515,26 @@ async fn lag_is_reported_for_the_context_that_has_not_caught_up() -> TestResult 
         )
         .await?;
     chain_with(&reader, "R1", 1).await?;
-    let lag = eventually(|| async {
-        let lag = reader.lag().await?;
-        Ok((lag.get("ordering") == Some(&0)).then_some(lag))
+    let freshness = freshness_where(&reader, |freshness| {
+        freshness.lag.get("ordering") == Some(&Some(0))
     })
     .await?;
-    assert_eq!(lag.get("billing"), Some(&2));
+    assert_eq!(freshness.lag.get("billing"), Some(&None));
+    assert_eq!(
+        states(&freshness, "billing"),
+        [
+            (
+                CorrelationSourceKind::Domain,
+                CorrelationSourceState::Inactive,
+                2
+            ),
+            (
+                CorrelationSourceKind::Integration,
+                CorrelationSourceState::Inactive,
+                0
+            ),
+        ]
+    );
 
     let billing = fixture.start(&fixture.billing).await?;
     chain_with(&reader, "R1", 3).await?;
@@ -555,5 +633,60 @@ async fn context_scoped_policies_and_misrouted_sources_are_rejected() -> TestRes
     .err()
     .ok_or("Test source accepted by a Normal index")?;
     assert_eq!(error.kind(), ReadModelErrorKind::ConfigurationMismatch);
+    fixture.cleanup().await
+}
+
+#[tokio::test]
+async fn a_source_is_active_only_while_its_projector_consumer_exists() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let events = fixture.ordering.events.stream_name().to_owned();
+    let integration = fixture.integration_stream();
+    let projector = fixture.start(&fixture.ordering).await?;
+    let reader = fixture.reader().await?;
+    let active = (CorrelationSourceState::Active, 0);
+    let freshness = freshness_where(&reader, |freshness| {
+        states(freshness, "ordering")
+            .iter()
+            .filter(|(_, state, behind)| (*state, *behind) == active)
+            .count()
+            == 2
+    })
+    .await?;
+    assert_eq!(freshness.lag.get("ordering"), Some(&Some(0)));
+    assert!(freshness.is_complete());
+    let [domain] = fixture
+        .projector_consumers(&events)
+        .await?
+        .try_into()
+        .map_err(|names| format!("expected one domain consumer, got {names:?}"))?;
+    assert!(domain.starts_with("correlation-index--domain--ordering--"));
+    let [published] = fixture
+        .projector_consumers(&integration)
+        .await?
+        .try_into()
+        .map_err(|names| format!("expected one integration consumer, got {names:?}"))?;
+    assert!(published.starts_with("correlation-index--integration--ordering--"));
+
+    projector.stop().await?;
+    assert!(fixture.projector_consumers(&events).await?.is_empty());
+    assert!(fixture.projector_consumers(&integration).await?.is_empty());
+    let freshness = reader.freshness().await?;
+    assert_eq!(freshness.lag.get("ordering"), Some(&None));
+    assert!(
+        freshness
+            .sources
+            .iter()
+            .all(|source| source.state == CorrelationSourceState::Inactive)
+    );
+    assert!(!freshness.is_complete());
+
+    let projector = fixture.start(&fixture.ordering).await?;
+    caught_up(&reader, &["ordering"]).await?;
+    projector.task.abort();
+    freshness_where(&reader, |freshness| {
+        freshness.lag.get("ordering") == Some(&None)
+    })
+    .await?;
+    assert!(fixture.projector_consumers(&events).await?.is_empty());
     fixture.cleanup().await
 }

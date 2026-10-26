@@ -68,7 +68,7 @@ correlation: a business object that several chains touch over time.
   return `lag: { context → events_behind }`: the source's matching messages after its
   checkpoint, counted by JetStream. Domain and integration lag of one context are
   summed. `0` everywhere means complete as of the request, never that a chain has
-  finished.
+  finished. See the addendum for source liveness.
 - **Anchor** is a role on the aggregate definition (ADR 0020),
   `const ANCHOR: bool = true` on `AggregateDefinition`, projected as
   `"anchor": true` into the compiled domain model (ADR 0013). It is not a new
@@ -119,6 +119,21 @@ carry no correlation, which only direct appends such as fixtures produce; the
 executor always records one. A Normal bounded context named `test` with a
 read model named `correlation-index` would alias the Test index bucket; do not
 use that combination.
+
+### Addendum: freshness and source liveness
+
+A bare lag of `0` could not distinguish a caught-up source from one whose
+projector had stopped: nobody advanced the checkpoint, and the server counted
+nothing new against an empty stream. Readers therefore return `freshness`: per
+source its context, kind, stream, `state` (`active`/`inactive`) and `behind`,
+plus `lag: { context → events_behind | null }`. A context's lag is `null` when
+any of its sources is inactive. Liveness is the existence of the projector's
+named ordered consumer, `correlation-index--<kind>--<context>--<uuid v7>`, on
+the source stream; the projector deletes it on shutdown, failure and abort, and
+the server's 30-second inactivity threshold covers a lost process. No heartbeat
+key is written to the bucket. `GET /correlations/{id}/events` returns `404`
+only when the chain is empty and every registered source is active with
+nothing behind; with no registered source it returns `200`.
 
 Not part of this decision, optional and later: `EventHistory::load_event` for
 per-event foreign payloads (next), an explicit framework event linking a chain

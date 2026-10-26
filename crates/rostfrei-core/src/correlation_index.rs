@@ -116,9 +116,94 @@ pub struct CorrelationChain {
     pub truncated: bool,
 }
 
-/// Events not yet indexed, per bounded context. Zero everywhere means the index
-/// was complete for every registered source when the lag was computed.
-pub type CorrelationIndexLag = BTreeMap<String, u64>;
+/// Events not yet indexed, per bounded context.
+///
+/// `None` means at least one source of the context has no running projector,
+/// so its count cannot shrink on its own. Zero everywhere means the index was
+/// complete for every registered source when the lag was computed.
+pub type CorrelationIndexLag = BTreeMap<String, Option<u64>>;
+
+/// Stream a correlation index source projects from.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrelationSourceKind {
+    /// The bounded context's event store.
+    Domain,
+    /// The integration events the bounded context publishes.
+    Integration,
+}
+
+impl CorrelationSourceKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Domain => "domain",
+            Self::Integration => "integration",
+        }
+    }
+}
+
+/// Whether a projector is currently consuming a source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrelationSourceState {
+    Active,
+    /// No projector consumes the source; unindexed events stay unindexed.
+    Inactive,
+}
+
+/// Progress of one registered source of the correlation index.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CorrelationSourceFreshness {
+    pub context: String,
+    pub kind: CorrelationSourceKind,
+    pub stream: String,
+    pub state: CorrelationSourceState,
+    /// Matching source messages after the source's checkpoint.
+    pub behind: u64,
+}
+
+/// Freshness of the correlation index as of one read: per-context `lag` and the
+/// state of every registered source.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CorrelationIndexFreshness {
+    pub lag: CorrelationIndexLag,
+    pub sources: Vec<CorrelationSourceFreshness>,
+}
+
+impl CorrelationIndexFreshness {
+    /// Orders sources by context and kind and derives `lag` from them. A
+    /// context's lag is the sum of its sources, or `None` if any is inactive.
+    pub fn from_sources(mut sources: Vec<CorrelationSourceFreshness>) -> Self {
+        sources.sort_by(|left, right| {
+            (&left.context, left.kind, &left.stream).cmp(&(
+                &right.context,
+                right.kind,
+                &right.stream,
+            ))
+        });
+        let mut lag = CorrelationIndexLag::new();
+        for source in &sources {
+            let total = lag.entry(source.context.clone()).or_insert(Some(0));
+            *total = match (source.state, *total) {
+                (CorrelationSourceState::Active, Some(total)) => {
+                    Some(total.saturating_add(source.behind))
+                }
+                _ => None,
+            };
+        }
+        Self { lag, sources }
+    }
+
+    /// At least one source is registered, every source has a running projector
+    /// and none is behind. Only then does a missing correlation prove absence.
+    pub fn is_complete(&self) -> bool {
+        !self.sources.is_empty()
+            && self
+                .sources
+                .iter()
+                .all(|source| source.state == CorrelationSourceState::Active && source.behind == 0)
+    }
+}
 
 /// Read side of the correlation index. Freshness is computed by the
 /// implementation against its sources, never by comparing positions in clients.
@@ -129,7 +214,8 @@ pub trait CorrelationIndexReader: Send + Sync {
         correlation_id: &CorrelationId,
     ) -> Result<CorrelationChain, ReadModelError>;
 
-    async fn lag(&self) -> Result<CorrelationIndexLag, ReadModelError>;
+    /// Per-source state and lag, computed against each source stream.
+    async fn freshness(&self) -> Result<CorrelationIndexFreshness, ReadModelError>;
 
     /// Whether the referenced message is still retained by its stream.
     async fn integration_available(
@@ -167,6 +253,64 @@ mod tests {
             reference
         );
         assert_eq!(reference.identity(), ("domain", "ordering", "event:1"));
+    }
+
+    fn source(
+        context: &str,
+        kind: CorrelationSourceKind,
+        state: CorrelationSourceState,
+        behind: u64,
+    ) -> CorrelationSourceFreshness {
+        CorrelationSourceFreshness {
+            context: context.to_owned(),
+            kind,
+            stream: format!("{context}-{}", kind.as_str()),
+            state,
+            behind,
+        }
+    }
+
+    #[test]
+    fn an_inactive_source_hides_the_lag_of_its_context() {
+        use CorrelationSourceKind::{Domain, Integration};
+        use CorrelationSourceState::{Active, Inactive};
+        let freshness = CorrelationIndexFreshness::from_sources(vec![
+            source("ordering", Integration, Active, 1),
+            source("billing", Domain, Inactive, 0),
+            source("ordering", Domain, Active, 2),
+            source("billing", Integration, Active, 4),
+        ]);
+        assert_eq!(
+            serde_json::to_value(&freshness.lag).unwrap(),
+            serde_json::json!({ "billing": null, "ordering": 3 })
+        );
+        assert_eq!(freshness.sources[0].context, "billing");
+        assert_eq!(freshness.sources[0].kind, Domain);
+        assert_eq!(
+            serde_json::to_value(&freshness.sources[0]).unwrap(),
+            serde_json::json!({ "context": "billing", "kind": "domain",
+                "stream": "billing-domain", "state": "inactive", "behind": 0 })
+        );
+        assert!(!freshness.is_complete());
+    }
+
+    #[test]
+    fn only_registered_active_sources_without_lag_are_complete() {
+        use CorrelationSourceKind::Domain;
+        use CorrelationSourceState::{Active, Inactive};
+        assert!(!CorrelationIndexFreshness::default().is_complete());
+        assert!(
+            CorrelationIndexFreshness::from_sources(vec![source("ordering", Domain, Active, 0)])
+                .is_complete()
+        );
+        assert!(
+            !CorrelationIndexFreshness::from_sources(vec![source("ordering", Domain, Active, 1)])
+                .is_complete()
+        );
+        assert!(
+            !CorrelationIndexFreshness::from_sources(vec![source("ordering", Domain, Inactive, 0)])
+                .is_complete()
+        );
     }
 
     #[test]

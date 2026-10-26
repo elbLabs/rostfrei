@@ -13,10 +13,11 @@ use async_nats::jetstream::{
 use async_trait::async_trait;
 use futures_util::StreamExt as _;
 use rostfrei_core::{
-    CORRELATION_REFS_PER_PAGE, CorrelationChain, CorrelationIndexEntry, CorrelationIndexLag,
-    CorrelationIndexReader, CorrelationRef, DomainEventRef, IntegrationEventRef,
-    JsonReadModelCodec, MAX_CORRELATION_PAGES, ReadModelEntry, ReadModelError, ReadModelErrorKind,
-    ReadModelKey, ReadModelRevision, ReadModelStore,
+    CORRELATION_REFS_PER_PAGE, CorrelationChain, CorrelationIndexEntry, CorrelationIndexFreshness,
+    CorrelationIndexReader, CorrelationRef, CorrelationSourceFreshness, CorrelationSourceKind,
+    CorrelationSourceState, DomainEventRef, IntegrationEventRef, JsonReadModelCodec,
+    MAX_CORRELATION_PAGES, ReadModelEntry, ReadModelError, ReadModelErrorKind, ReadModelKey,
+    ReadModelRevision, ReadModelStore,
 };
 use rostfrei_messaging_core::{
     ApplicationName, CausationId, CorrelationId, IntegrationEventAddress, MessageId,
@@ -25,6 +26,7 @@ use rostfrei_messaging_core::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::watch;
+use uuid::Uuid;
 
 use crate::{
     MessagingTopology, NatsEventStoreConfig, NatsReadModelConfig, NatsReadModelStore,
@@ -41,6 +43,9 @@ const MAX_WRITE_ATTEMPTS: usize = 8;
 const RETRY_DELAY: Duration = Duration::from_millis(500);
 const LAG_CURSOR_INACTIVE_THRESHOLD: Duration = Duration::from_secs(30);
 const SOURCES_KEY: &str = "sources";
+/// Projector consumers are named `correlation-index--<kind>--<context>--<uuid>`;
+/// readers treat a source as active while such a consumer exists.
+const PROJECTOR_CONSUMER_PREFIX: &str = "correlation-index";
 const LITERAL_KEY_PREFIX: &str = "correlation.";
 const DIGEST_KEY_PREFIX: &str = "correlation-digest.";
 const MAX_LITERAL_KEY_BYTES: usize = 240;
@@ -59,29 +64,13 @@ impl NatsReadModelConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum SourceKind {
-    Domain,
-    Integration,
-}
-
-impl SourceKind {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Domain => "domain",
-            Self::Integration => "integration",
-        }
-    }
-}
-
 /// Projection progress for one source stream, stored in the index bucket so
 /// that deleting the bucket also resets every checkpoint.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct IndexSource {
     context: String,
-    kind: SourceKind,
+    kind: CorrelationSourceKind,
     stream: String,
     filter_subject: String,
     generation: String,
@@ -262,7 +251,7 @@ impl IndexStores {
 
     async fn advance(
         &self,
-        kind: SourceKind,
+        kind: CorrelationSourceKind,
         context: &str,
         checkpoint: u64,
     ) -> Result<(), ReadModelError> {
@@ -348,6 +337,11 @@ fn page_writes(
 /// Only envelope metadata is read; payloads are never decoded. Progress is
 /// stored in the index bucket, so a deleted and re-provisioned bucket is rebuilt
 /// from the start of each source stream on the next run.
+///
+/// Each source is read through an ordered consumer named
+/// `correlation-index--<kind>--<context>--<uuid v7>`. The consumer is deleted when
+/// the projector stops, fails or is aborted; readers report a source without
+/// such a consumer as inactive.
 pub struct NatsCorrelationIndexProjector {
     context: jetstream::Context,
     stores: Arc<IndexStores>,
@@ -408,20 +402,20 @@ impl NatsCorrelationIndexProjector {
             )
         );
         let domain = SourceLoop {
-            kind: SourceKind::Domain,
+            kind: CorrelationSourceKind::Domain,
             context_name: context_name.clone(),
             stream: self.event_store.stream_name().to_owned(),
             filter_subject: self.event_store.aggregate_subject_filter(),
         };
         let integration = SourceLoop {
-            kind: SourceKind::Integration,
+            kind: CorrelationSourceKind::Integration,
             context_name,
             stream: self.integration_stream.clone(),
             filter_subject: integration_filter,
         };
         tokio::try_join!(
-            domain.run(&self, shutdown.clone()),
-            integration.run(&self, shutdown),
+            Box::pin(domain.run(&self, shutdown.clone())),
+            Box::pin(integration.run(&self, shutdown)),
         )
         .map(|_| ())
     }
@@ -442,7 +436,7 @@ impl NatsCorrelationIndexProjector {
 }
 
 struct SourceLoop {
-    kind: SourceKind,
+    kind: CorrelationSourceKind,
     context_name: String,
     stream: String,
     filter_subject: String,
@@ -503,8 +497,30 @@ impl SourceLoop {
             .get_stream(&self.stream)
             .await
             .map_err(|_| unavailable("correlation index source stream is unavailable"))?;
+        let name = projector_consumer_name(self.kind, &self.context_name);
+        let lease = ConsumerLease {
+            context: projector.context.clone(),
+            stream: self.stream.clone(),
+            name: Some(name.clone()),
+        };
+        let result = self
+            .consume(projector, &stream, &name, start_sequence, shutdown)
+            .await;
+        lease.release().await;
+        result
+    }
+
+    async fn consume(
+        &self,
+        projector: &NatsCorrelationIndexProjector,
+        stream: &jetstream::stream::Stream,
+        name: &str,
+        start_sequence: u64,
+        shutdown: &mut watch::Receiver<bool>,
+    ) -> Result<(), ReadModelError> {
         let consumer: consumer::OrderedPullConsumer = stream
             .create_consumer(consumer::pull::OrderedConfig {
+                name: Some(name.to_owned()),
                 description: Some("rostfrei correlation index".to_owned()),
                 filter_subject: self.filter_subject.clone(),
                 deliver_policy: DeliverPolicy::ByStartSequence { start_sequence },
@@ -549,11 +565,11 @@ impl SourceLoop {
                 .map_err(|_| unavailable("delivery metadata is unavailable"))?;
             checkpoint = checkpoint.max(info.stream_sequence);
             let indexed = match self.kind {
-                SourceKind::Domain => {
+                CorrelationSourceKind::Domain => {
                     let occurred_at = timestamp(info.published.unix_timestamp_nanos())?;
                     domain_reference(projector, message, &self.context_name, occurred_at)?
                 }
-                SourceKind::Integration => {
+                CorrelationSourceKind::Integration => {
                     integration_reference(message, &self.context_name, info.stream_sequence)
                 }
             };
@@ -573,6 +589,70 @@ impl SourceLoop {
             .advance(self.kind, &self.context_name, checkpoint)
             .await
     }
+}
+
+/// Deletes a projector consumer when its source loop ends. An aborted loop drops
+/// the lease without awaiting; the deletion is then spawned, and the server
+/// removes a consumer left behind by a lost process after 30 s of inactivity.
+struct ConsumerLease {
+    context: jetstream::Context,
+    stream: String,
+    name: Option<String>,
+}
+
+impl ConsumerLease {
+    async fn release(mut self) {
+        if let Some(name) = self.name.take() {
+            delete_projector_consumer(&self.context, &self.stream, &name).await;
+        }
+    }
+}
+
+impl Drop for ConsumerLease {
+    fn drop(&mut self) {
+        let Some(name) = self.name.take() else {
+            return;
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let context = self.context.clone();
+            let stream = std::mem::take(&mut self.stream);
+            runtime.spawn(async move {
+                delete_projector_consumer(&context, &stream, &name).await;
+            });
+        }
+    }
+}
+
+async fn delete_projector_consumer(context: &jetstream::Context, stream: &str, name: &str) {
+    if let Err(error) = context.delete_consumer_from_stream(name, stream).await {
+        let missing = matches!(error.kind(),
+            jetstream::stream::ConsumerErrorKind::JetStream(error)
+                if error.error_code() == jetstream::ErrorCode::CONSUMER_NOT_FOUND);
+        if !missing {
+            tracing::warn!(%stream, consumer = %name, %error,
+                "correlation index consumer cleanup failed; the server removes it after inactivity");
+        }
+    }
+}
+
+fn projector_consumer_prefix(kind: CorrelationSourceKind, context: &str) -> String {
+    format!(
+        "{PROJECTOR_CONSUMER_PREFIX}--{}--{context}--",
+        kind.as_str()
+    )
+}
+
+fn projector_consumer_name(kind: CorrelationSourceKind, context: &str) -> String {
+    format!(
+        "{}{}",
+        projector_consumer_prefix(kind, context),
+        Uuid::now_v7()
+    )
+}
+
+fn is_projector_consumer(name: &str, kind: CorrelationSourceKind, context: &str) -> bool {
+    name.strip_prefix(&projector_consumer_prefix(kind, context))
+        .is_some_and(|id| Uuid::try_parse(id).is_ok())
 }
 
 fn delivered(
@@ -664,6 +744,27 @@ impl NatsCorrelationIndexReader {
         })
     }
 
+    async fn projector_consumers(&self, stream: &str) -> Result<Vec<String>, ReadModelError> {
+        let names = self
+            .context
+            .get_stream_no_info(stream)
+            .await
+            .map_err(|_| unavailable("correlation index source stream is unavailable"))?
+            .consumer_names()
+            .filter_map(|name| async move {
+                match name {
+                    Ok(name) if name.starts_with(PROJECTOR_CONSUMER_PREFIX) => Some(Ok(name)),
+                    Ok(_) => None,
+                    Err(_) => Some(Err(unavailable(
+                        "failed to list correlation index consumers",
+                    ))),
+                }
+            })
+            .collect::<Vec<_>>()
+            .await;
+        names.into_iter().collect()
+    }
+
     async fn pending(&self, source: &IndexSource) -> Result<u64, ReadModelError> {
         let stream = self
             .context
@@ -737,32 +838,51 @@ impl CorrelationIndexReader for NatsCorrelationIndexReader {
         self.stores.chain(correlation_id).await
     }
 
-    async fn lag(&self) -> Result<CorrelationIndexLag, ReadModelError> {
-        let mut lag = CorrelationIndexLag::new();
+    async fn freshness(&self) -> Result<CorrelationIndexFreshness, ReadModelError> {
         let Some(directory) = self
             .stores
             .directory
             .read(&ReadModelKey::new(SOURCES_KEY)?)
             .await?
         else {
-            return Ok(lag);
+            return Ok(CorrelationIndexFreshness::default());
         };
+        let mut consumers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut sources = Vec::new();
         for key in directory.value.sources {
             let Some(source) = self.stores.source(&ReadModelKey::new(key)?).await? else {
                 continue;
             };
-            let pending = self.pending(&source).await?;
-            let total = lag.entry(source.context).or_default();
-            *total = total.saturating_add(pending);
+            if !consumers.contains_key(&source.stream) {
+                let names = self.projector_consumers(&source.stream).await?;
+                consumers.insert(source.stream.clone(), names);
+            }
+            let active = consumers.get(&source.stream).is_some_and(|names| {
+                names
+                    .iter()
+                    .any(|name| is_projector_consumer(name, source.kind, &source.context))
+            });
+            let behind = self.pending(&source).await?;
+            sources.push(CorrelationSourceFreshness {
+                context: source.context,
+                kind: source.kind,
+                stream: source.stream,
+                state: if active {
+                    CorrelationSourceState::Active
+                } else {
+                    CorrelationSourceState::Inactive
+                },
+                behind,
+            });
         }
-        Ok(lag)
+        Ok(CorrelationIndexFreshness::from_sources(sources))
     }
 
     async fn integration_available(
         &self,
         reference: &IntegrationEventRef,
     ) -> Result<bool, ReadModelError> {
-        let key = source_key(SourceKind::Integration, &reference.context)?;
+        let key = source_key(CorrelationSourceKind::Integration, &reference.context)?;
         let Some(source) = self.stores.source(&key).await? else {
             return Ok(false);
         };
@@ -849,7 +969,7 @@ fn page_key(base: &str, page: usize) -> Result<ReadModelKey, ReadModelError> {
     }
 }
 
-fn source_key(kind: SourceKind, context: &str) -> Result<ReadModelKey, ReadModelError> {
+fn source_key(kind: CorrelationSourceKind, context: &str) -> Result<ReadModelKey, ReadModelError> {
     ReadModelKey::new(format!("source.{}.{context}", kind.as_str()))
 }
 
@@ -894,6 +1014,38 @@ mod tests {
         }
         let longest = correlation_key(&correlation(&"x".repeat(MAX_LITERAL_KEY_BYTES)));
         page_key(&longest, MAX_CORRELATION_PAGES - 1).unwrap();
+    }
+
+    #[test]
+    fn projector_consumers_are_recognized_per_kind_and_context() {
+        let name = projector_consumer_name(CorrelationSourceKind::Domain, "ordering");
+        assert!(name.starts_with("correlation-index--domain--ordering--"));
+        assert!(is_projector_consumer(
+            &name,
+            CorrelationSourceKind::Domain,
+            "ordering"
+        ));
+        assert!(!is_projector_consumer(
+            &name,
+            CorrelationSourceKind::Integration,
+            "ordering"
+        ));
+        assert!(!is_projector_consumer(
+            &name,
+            CorrelationSourceKind::Domain,
+            "order"
+        ));
+        let nested = projector_consumer_name(CorrelationSourceKind::Domain, "ordering--eu");
+        assert!(!is_projector_consumer(
+            &nested,
+            CorrelationSourceKind::Domain,
+            "ordering"
+        ));
+        assert!(!is_projector_consumer(
+            "correlation-index--domain--ordering--durable",
+            CorrelationSourceKind::Domain,
+            "ordering"
+        ));
     }
 
     #[test]

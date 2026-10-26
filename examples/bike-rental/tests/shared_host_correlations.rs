@@ -10,7 +10,9 @@ use async_trait::async_trait;
 use axum::{body::Body, http::Request};
 use bike_rental::{demo::demo_fixture, tracer};
 use http_body_util::BodyExt as _;
-use rostfrei::{ApplicationName, CorrelationId, CorrelationIndexReader, OperationId};
+use rostfrei::{
+    ApplicationName, CorrelationId, CorrelationIndexReader, CorrelationSourceState, OperationId,
+};
 use rostfrei_nats::{NatsConnectionConfig, connect};
 use rostfrei_tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
@@ -272,7 +274,21 @@ async fn production_correlations_are_indexed_and_viewed_from_their_anchors() -> 
         .ok_or("missing correlation index")?;
     let chain = reader.chain(&CorrelationId::new("external-rent")?).await?;
     assert_eq!(chain.refs.len(), 2);
-    assert_eq!(reader.lag().await?.get("bike-rental"), Some(&0));
+    let freshness = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let freshness = reader.freshness().await?;
+            if freshness.lag.get("bike-rental") == Some(&None) {
+                return TestResult::Ok(freshness);
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await??;
+    assert_eq!(freshness.sources.len(), 2);
+    for source in &freshness.sources {
+        assert_eq!(source.state, CorrelationSourceState::Inactive, "{source:?}");
+        assert_eq!(source.behind, 0, "{source:?}");
+    }
     connection.drain().await?;
     Ok(())
 }

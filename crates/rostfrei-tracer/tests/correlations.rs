@@ -15,10 +15,11 @@ use axum::{
 use http_body_util::BodyExt as _;
 use rostfrei_core::{
     Aggregate, AggregateId, AggregateType, ContentFingerprint, CorrelationChain,
-    CorrelationIndexLag, CorrelationIndexReader, CorrelationRef, DomainEventRef, EventBatch,
-    EventHistory, EventStore, EventStoreError, ExpectedVersion, InMemoryEventStore,
-    IntegrationEventRef, NewEvent, OperationId, ReadModelError, RecordedEvent, StreamId,
-    derive_commit_id, derive_event_id,
+    CorrelationIndexFreshness, CorrelationIndexReader, CorrelationRef, CorrelationSourceFreshness,
+    CorrelationSourceKind, CorrelationSourceState, DomainEventRef, EventBatch, EventHistory,
+    EventStore, EventStoreError, ExpectedVersion, InMemoryEventStore, IntegrationEventRef,
+    NewEvent, OperationId, ReadModelError, RecordedEvent, StreamId, derive_commit_id,
+    derive_event_id,
 };
 use rostfrei_messaging_core::{CausationId, CorrelationId, MessageTimestamp};
 use rostfrei_registry::DomainRegistry;
@@ -126,11 +127,25 @@ impl EventHistory for CountingHistory {
 #[derive(Default)]
 struct FakeIndex {
     chains: Mutex<HashMap<String, CorrelationChain>>,
-    lag: Mutex<CorrelationIndexLag>,
+    sources: Mutex<Vec<CorrelationSourceFreshness>>,
     expired: Mutex<Vec<String>>,
 }
 
 impl FakeIndex {
+    fn set_source(&self, context: &str, state: CorrelationSourceState, behind: u64) {
+        let source = CorrelationSourceFreshness {
+            context: context.to_owned(),
+            kind: CorrelationSourceKind::Domain,
+            stream: format!("SHOP__{}_DOMAIN_EVENTS", context.to_uppercase()),
+            state,
+            behind,
+        };
+        let mut sources = self.sources.lock().unwrap();
+        sources.retain(|source| source.context != context);
+        sources.push(source);
+        drop(sources);
+    }
+
     fn push(&self, correlation: &str, reference: CorrelationRef) {
         self.chains
             .lock()
@@ -157,8 +172,10 @@ impl CorrelationIndexReader for FakeIndex {
             .unwrap_or_default())
     }
 
-    async fn lag(&self) -> Result<CorrelationIndexLag, ReadModelError> {
-        Ok(self.lag.lock().unwrap().clone())
+    async fn freshness(&self) -> Result<CorrelationIndexFreshness, ReadModelError> {
+        Ok(CorrelationIndexFreshness::from_sources(
+            self.sources.lock().unwrap().clone(),
+        ))
     }
 
     async fn integration_available(
@@ -245,8 +262,8 @@ async fn scenario() -> Scenario {
     index.push("R2", domain("billing", &reinvoiced, 6));
     index.push("R3", domain("ordering", &updated, 7));
     index.push("R3", domain("ordering", &noted, 8));
-    *index.lag.lock().unwrap() =
-        BTreeMap::from([("billing".to_owned(), 0), ("ordering".to_owned(), 0)]);
+    index.set_source("billing", CorrelationSourceState::Active, 0);
+    index.set_source("ordering", CorrelationSourceState::Active, 0);
     events.insert("placed", placed);
     events.insert("invoiced", invoiced);
     events.insert("amended", amended);
@@ -344,6 +361,11 @@ async fn anchor_view_returns_anchor_payloads_without_loading_foreign_streams() {
         json!({"aggregate_type": "ordering/order", "aggregate_id": "O1"})
     );
     assert_eq!(body["lag"], json!({"billing": 0, "ordering": 0}));
+    assert_eq!(
+        body["sources"][1],
+        json!({"context": "ordering", "kind": "domain", "stream": "SHOP__ORDERING_DOMAIN_EVENTS",
+            "state": "active", "behind": 0})
+    );
     assert!(body.get("truncated").is_none());
     let correlations = body["correlations"].as_array().unwrap();
     assert_eq!(
@@ -572,10 +594,7 @@ async fn correlation_routes_require_the_production_inspection_capability() {
     assert_eq!(body["code"], "not-found");
     scenario
         .index
-        .lag
-        .lock()
-        .unwrap()
-        .insert("billing".to_owned(), 3);
+        .set_source("billing", CorrelationSourceState::Active, 3);
     let (status, body) = get(&app, "/correlations/unknown/events", Some(INSPECTION)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["refs"], json!([]));
@@ -590,6 +609,34 @@ async fn correlation_routes_require_the_production_inspection_capability() {
     assert_eq!(body["code"], "history-unavailable");
     let (status, _) = get(&app, &format!("{ORDER}?expand=all"), Some(INSPECTION)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_stopped_projector_is_reported_instead_of_an_unknown_correlation() {
+    let scenario = scenario().await;
+    let app = router(tracer(&scenario, true));
+    scenario
+        .index
+        .set_source("billing", CorrelationSourceState::Inactive, 0);
+    let (status, body) = get(&app, "/correlations/unknown/events", Some(INSPECTION)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["refs"], json!([]));
+    assert_eq!(body["lag"], json!({"billing": null, "ordering": 0}));
+    assert_eq!(body["sources"][0]["state"], "inactive");
+    assert_eq!(body["sources"][0]["behind"], 0);
+    let (status, body) = get(&app, ORDER, Some(INSPECTION)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["lag"]["billing"], Value::Null);
+
+    scenario.index.sources.lock().unwrap().clear();
+    let (status, body) = get(&app, "/correlations/unknown/events", Some(INSPECTION)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "no registered source proves nothing"
+    );
+    assert_eq!(body["lag"], json!({}));
+    assert_eq!(body["sources"], json!([]));
 }
 
 #[tokio::test]
