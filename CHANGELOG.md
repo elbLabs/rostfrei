@@ -4,11 +4,23 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-28
+
 ### Fixed
 
+- Recover aggregate history reads from transient clustered NATS failures before
+  and after delivery through native ordered consumers, preserving snapshot cutoffs,
+  integrity validation and five-second next-message deadlines.
 - The NATS application host rejects several integration handlers for one address,
   for example typed v1 and v2 handlers of the same contract. They previously
   shared one durable and quarantined each other's deliveries.
+
+### Changed
+
+- Use native 500-message history pulls with prefetching. The previous 8 MiB batch
+  cap is removed; late consumer creation after timeout or cancellation is cleaned
+  up by NATS's 30-second inactivity policy.
+- Clarify deliberate schema-version migration in the development skills.
 
 ## [0.1.1] - 2026-10-19
 
