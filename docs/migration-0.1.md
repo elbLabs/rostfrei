@@ -66,8 +66,7 @@ Generic rejection-capable execution requires an explicit rejection codec. Preser
 readers for stored codec versions. Share one configured `AggregateCodecs` registry
 across processing, fixtures, private-event dispatch and diagnostics; configure
 replacements before sharing rather than applying local overrides afterward.
-See the [core contracts](design/modular-command-core.md) and
-[processing-service boundary](design/modular-command-service.md).
+See the [command runtime](command-runtime.md).
 
 ## Native authority and deployment
 
@@ -85,7 +84,7 @@ their original authority with their original envelopes and IDs.
 
 The [cutover runbook](completed-outcome-cutover.md) covers fresh namespaces,
 legacy replay/import and rollback-reader boundaries; the
-[native protocol](design/modular-command-native.md) is the current split-storage
+[native authority](command-runtime.md#native-authority) is the current split-storage
 contract. Retained response caches are never completed-result authority.
 
 ## Authorization and actor attribution
@@ -101,7 +100,7 @@ host's `TrustedCompatibility` profile remain explicitly trusted infrastructure.
 and authorization scope. Adding, removing or changing it on an existing operation
 changes immutable command identity. Upgrade the entire attributed route before
 emitting actor-bearing formats; older integration consumers may drop the metadata.
-See [actor formats and deployment](design/actor-attribution.md).
+See [actor formats and deployment](actor-attribution.md).
 
 ## Host, Test and diagnostics
 
@@ -124,7 +123,7 @@ v1; command payload schema versions are independent. Rediscover advertised links
 
 Tracer-mediated reset gates handler diagnostics. The existing limitation around a
 direct failed `NatsRuntime::reset` and Tracer's separate diagnostic-health flag is
-documented in [diagnostic limits](tracer-preview-retirement.md).
+documented in [diagnostic limits](handler-simulation.md).
 
 ## Timeouts, capacity and recovery
 
@@ -148,8 +147,4 @@ documented in [diagnostic limits](tracer-preview-retirement.md).
 - Quarantine provides inspection and evidence. Redrive is explicit and preserves
   original identity; integration-event redrive UX remains deferred. Read-model
   generations, checkpoints and query cutover remain application-owned; follow the
-  [read-model guide](read-model-runtime.md) when adopting those runtimes.
-
-Aggregate snapshots and whole-history completed-result replay optimization remain
-deferred. Local broker acceptance establishes the tested contracts, not replicated
-failover, Kubernetes lifecycle, restore readiness or a numerical performance SLA.
+  [read-model guide](read-models/index.mdx) when adopting those runtimes.

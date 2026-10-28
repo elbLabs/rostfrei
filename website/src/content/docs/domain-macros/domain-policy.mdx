@@ -1,9 +1,0 @@
-# `domain_policy`
-
-Adds metadata to a trait for a reusable, pure interpretation of domain facts. A policy returns an outcome without changing state or recording events. Use [`PolicyOutcome`](/docs/domain-macros/policy-outcome) when the outcomes need a named, exhaustive vocabulary.
-
-Implement the trait for an aggregate, entity, value object, or domain service. The structure checker validates placement and ownership; it does not prove that an implementation is pure.
-
-**Placement:** [Aggregate policy](/docs/project-structure/aggregate-policy), [Entity policy](/docs/project-structure/entity-policy), [value-object policy](/docs/project-structure/value-object-policy), or a focused capability below a [Domain service](/docs/project-structure/domain-service) — `policy.rs`.
-
-<MacroExample name="domain_policy" />

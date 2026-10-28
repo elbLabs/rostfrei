@@ -1,0 +1,22 @@
+# `domain_query`
+
+Adds metadata to a read-only trait implemented on the aggregate root. Inputs and outputs are ordinary Rust types. The structure checker checks the implementation in `execute.rs` against the root selected by `AggregateDefinition`.
+
+This domain query does not register an HTTP endpoint. See
+[application query registration and HTTP](../runtime.md#application-queries-and-http)
+for `QueryDefinition`, metadata, handler bindings, and transport setup.
+
+**Placement:** [Query](../project-structure/query.mdx) — `query.rs`.
+
+```rust
+#[domain_query(
+    id = "bicycle-availability",
+    label = "Bicycle availability"
+)]
+pub trait BicycleAvailabilityQuery {
+    fn bicycle_availability(
+        &self,
+        input: &BicycleId,
+    ) -> Option<BicycleAvailability>;
+}
+```

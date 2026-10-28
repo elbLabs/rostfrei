@@ -4,7 +4,7 @@ import { ExternalLink } from "lucide-react"
 import type { MDXComponents } from "mdx/types"
 
 import { LazyDomainFlow } from "@/components/docs/LazyDomainFlow"
-import { LazyMacroCodeExample } from "@/components/docs/LazyMacroCodeExample"
+import { SubjectExplorer } from "@/components/docs/SubjectExplorer"
 import { LazyProjectStructureExample } from "@/components/docs/LazyProjectStructureExample"
 import { MdxCodeBlock } from "@/components/docs/MdxCodeBlock"
 import { cn } from "@/lib/utils"
@@ -19,6 +19,7 @@ function mdxLink({
     "font-medium text-link underline decoration-link/35 underline-offset-4 transition-colors hover:decoration-link",
     className
   )
+  const [path, hash] = href.split("#", 2)
 
   if (href === "/") {
     return (
@@ -28,20 +29,21 @@ function mdxLink({
     )
   }
 
-  if (href === "/docs" || href === "/docs/") {
+  if (path === "/docs" || path === "/docs/") {
     return (
-      <Link {...props} className={linkClassName} to="/docs">
+      <Link {...props} className={linkClassName} hash={hash} to="/docs">
         {children}
       </Link>
     )
   }
 
-  if (href.startsWith("/docs/")) {
+  if (path.startsWith("/docs/")) {
     return (
       <Link
         {...props}
         className={linkClassName}
-        params={{ _splat: href.slice("/docs/".length) }}
+        hash={hash}
+        params={{ _splat: path.slice("/docs/".length) }}
         to="/docs/$"
       >
         {children}
@@ -86,7 +88,7 @@ function mdxTable({ className, ...props }: ComponentPropsWithoutRef<"table">) {
 
 export const mdxComponents = {
   DomainFlow: LazyDomainFlow,
-  MacroExample: LazyMacroCodeExample,
+  SubjectExplorer,
   ProjectStructureExample: LazyProjectStructureExample,
   a: mdxLink,
   blockquote: ({ className, ...props }) => (

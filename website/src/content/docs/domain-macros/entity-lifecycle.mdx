@@ -1,9 +1,0 @@
-# `EntityLifecycle`
-
-Declares lifecycle states on a fieldless enum used by an aggregate root or nested entity. Each state has an ID and label. One explicit initial state and the generated `LifecycleState` implementation support typed transition evaluation.
-
-**Placement:** [Lifecycle](/docs/project-structure/entity-lifecycle) — `lifecycle.rs` in a lifecycle directory directly beneath the owning aggregate or nested entity.
-
-<MacroExample name="EntityLifecycle" />
-
-Pair it with [`StateTransition`](/docs/domain-macros/state-transition). Business guards and side effects remain in ordinary actions, policies, and event handling.

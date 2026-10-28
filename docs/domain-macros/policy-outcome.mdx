@@ -1,0 +1,20 @@
+# `PolicyOutcome`
+
+Assigns a local ID and label to each variant of a non-empty outcome enum. Variants may carry ordinary Rust payloads. Rust's exhaustive matching lets callers handle every declared outcome.
+
+**Placement:** [Aggregate policy](../project-structure/aggregate-policy.mdx), [Entity policy](../project-structure/entity-policy.mdx), or [value-object policy](../project-structure/value-object-policy.mdx) — `outcome.rs`.
+
+```rust
+#[derive(PolicyOutcome, Clone, Copy, Debug)]
+pub enum RentalEligibilityOutcome {
+    #[outcome(id = "eligible", label = "Eligible")]
+    Eligible,
+    #[outcome(id = "unavailable-status", label = "Unavailable status")]
+    UnavailableStatus,
+    #[outcome(
+        id = "maintenance-required",
+        label = "Maintenance required"
+    )]
+    MaintenanceRequired,
+}
+```

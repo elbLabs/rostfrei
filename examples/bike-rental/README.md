@@ -21,7 +21,7 @@ reinterpret old retries or migrate histories implicitly; each belongs to its
 original authority. The pair is verified by configuration and incarnation.
 Old retries stay in their original namespace; a repaired business attempt uses a
 new operation ID. See the [cutover runbook](../../docs/completed-outcome-cutover.md).
-The [native modular protocol](../../docs/design/modular-command-native.md) describes
+The [native authority contract](../../docs/command-runtime.md#native-authority) describes
 explicit detail expiry, legacy scope mapping and authorized sender/worker APIs.
 
 ## Run locally
@@ -94,7 +94,7 @@ public `BicycleRentalStarted` integration event. `IntegrationEventBus` publishes
 it, and a separate durable consumer handles it.
 
 For the routing details, see [subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
-or the [offline HTML guide](../../docs/subjects.html).
+or the [same guide in this checkout](../../docs/messaging/subjects.mdx).
 
 This development entry point explicitly provisions its NATS topology. The shared
 host also offers a verify/connect-only startup for operator-provisioned resources.
@@ -120,7 +120,7 @@ workers, and retire their durable before provisioning its replacement. A new
 durable cannot replay commands already removed by acknowledgement. Stable names
 preserve progress but do not make incompatible payloads readable: register
 compatibility handlers for supported schemas. This example registers only its
-current schemas. See [durable consumer versions](../../docs/adr/0014-application-scoped-nats-conventions.md#durable-consumer-versions).
+current schemas. See [durable consumer versions](../../docs/messaging-upgrades.md#durable-consumer-versions).
 
 ## Quarantine walkthrough
 
@@ -214,7 +214,7 @@ For explicit rule diagnostics, follow `simulateHandlerHrefTemplate` and POST the
 same command envelope. **Simulate handler** returns decision, starting versions
 and proposed/uncommitted domain events using the registered handler over Test
 history. It returns no operation or observed trace, and injected dependencies
-are not automatically sandboxed. See [the exact interface](../../docs/tracer-preview-retirement.md).
+are not automatically sandboxed. See [the interface](../../docs/handler-simulation.md).
 An unsettled capture may be partial. Exact causal edges require a message's
 `causationId` to match another message's `messageId`; timestamps and array order
 do not establish causality. `grouped` fidelity means the capture cannot establish

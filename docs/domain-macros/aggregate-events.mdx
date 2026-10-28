@@ -1,0 +1,17 @@
+# `AggregateEvents`
+
+Declares the domain events an aggregate can record. List each event type as a tuple variant. The derive generates conversions, JSON encoding and decoding, and dispatch to the event's `Apply` implementation.
+
+Raising an event outside this set fails to compile.
+
+**Placement:** [Aggregate](../project-structure/aggregate.mdx) — `event_set.rs`.
+
+```rust
+#[derive(AggregateEvents)]
+pub enum RentalFleetEvent {
+    BicycleAdded(BicycleAdded),
+    BicycleRented(BicycleRented),
+    BicycleReturned(BicycleReturned),
+    BicycleRetired(BicycleRetired),
+}
+```

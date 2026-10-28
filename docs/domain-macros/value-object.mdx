@@ -1,0 +1,14 @@
+# `ValueObject`
+
+Assigns a semantic ID and label to a struct or enum representing a domain value. Its representation and behavior remain ordinary Rust; the derive does not generate a transport schema.
+
+**Placement:** [Simple value object](../project-structure/simple-value-object.mdx) or [behaviorful value object](../project-structure/behaviorful-value-object.mdx) — `value.rs`.
+
+```rust
+#[derive(ValueObject, Clone, Copy, Debug)]
+#[domain(id = "bicycle-condition", label = "Bicycle condition")]
+pub enum BicycleCondition {
+    Serviceable,
+    MaintenanceRequired,
+}
+```

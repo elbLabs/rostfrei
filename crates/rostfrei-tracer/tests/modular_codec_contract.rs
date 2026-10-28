@@ -1,5 +1,5 @@
 //! One registry shared by fixtures, executor/processor, diagnostics and private-event dispatch.
-//! Future-API target; see docs/testing/modular-runtime-tdd.md.
+//! Shared codec configuration: docs/command-runtime.md.
 #![allow(
     clippy::panic_in_result_fn,
     clippy::unwrap_used,

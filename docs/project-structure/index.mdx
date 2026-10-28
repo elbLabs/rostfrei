@@ -1,0 +1,30 @@
+# Project structure
+
+Rostfrei uses predictable directories to connect each domain declaration with its owner and implementation. Choose the page that matches the concept or capability you are adding.
+
+Run `cargo rostfrei check --workspace` to validate configured packages. The checker verifies file roles and implementation targets, then runs each package's compiled-model check. Business rules still require tests.
+
+**New to the model?** Follow the [bike-rental walkthrough](../getting-started.mdx) first. For the declarations inside these files, see [Domain macros](../domain-macros/index.mdx).
+
+## Domain building blocks
+
+- [Domain root](domain-root.mdx)
+- [Bounded context](bounded-context.mdx)
+- [Aggregate](aggregate.mdx)
+- [Entity](entity.mdx)
+- [Simple value object](simple-value-object.mdx)
+- [Behaviorful value object](behaviorful-value-object.mdx)
+- [Domain service](domain-service.mdx)
+
+## Capabilities
+
+- [Aggregate action](aggregate-action.mdx)
+- [Entity action](entity-action.mdx)
+- [Value-object action](value-object-action.mdx)
+- [Query](query.mdx)
+- [Aggregate policy](aggregate-policy.mdx)
+- [Entity policy](entity-policy.mdx)
+- [Value-object policy](value-object-policy.mdx)
+- [Aggregate invariant](aggregate-invariant.mdx)
+- [Value-object invariant](value-object-invariant.mdx)
+- [Lifecycle](entity-lifecycle.mdx)

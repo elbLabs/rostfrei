@@ -1,5 +1,5 @@
 //! Runnable protocol prototype for overlapping domain-event workers.
-//! See docs/design/pinned-domain-event-handoff.md for scope and open questions.
+//! Experimental pinned-consumer protocol; production uses the ordered worker pool.
 
 mod fixture;
 mod protocol;
