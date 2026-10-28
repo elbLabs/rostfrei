@@ -4,8 +4,8 @@
 
 Issue [#97](https://github.com/elbLabs/rostfrei/issues/97) replaces the initial
 per-event raw-message loop with bounded, exact-subject ephemeral JetStream replay.
-See [ADR 0042](adr/0042-batched-aggregate-history-replay.md) for read cutoffs,
-validation, cleanup, permissions and retained operational trade-offs.
+See the [runtime reference](runtime.md#event-history-and-accepted-commands)
+for replay behavior and permissions.
 The implementation is rebased onto PR #89: trusted reads remain the default,
 and strict handles/explicit historical audits keep their existing evidence checks.
 
