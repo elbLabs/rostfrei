@@ -287,7 +287,7 @@ async fn history_reads_preserve_commits_across_sparse_ranges() -> TestResult<()>
     Ok(())
 }
 
-async fn seed_history(
+pub async fn seed_history(
     store: &NatsEventStore,
     aggregate: &StreamId,
 ) -> TestResult<Vec<RecordedEvent>> {
@@ -436,30 +436,32 @@ async fn compare_history_windows() -> TestResult<()> {
 }
 
 #[tokio::test]
-async fn history_replay_crosses_byte_limited_pages() -> TestResult<()> {
-    let (context, store) = directory_fixture("history-byte-pages").await?;
-    let aggregate = stream("large-events")?;
-    let payload = vec![42_u8; 80_000];
-    let payloads = [payload.as_slice(); 9];
-    let mut expected = Vec::new();
-    for index in 0..10 {
-        let operation = format!("large-{index}");
-        let outcome = store
-            .append(
-                &aggregate,
-                if index == 0 {
-                    ExpectedVersion::NoStream
-                } else {
-                    ExpectedVersion::Exact(StreamVersion::new(u64::try_from(expected.len())?))
-                },
-                batch(&aggregate, &operation, &operation, &payloads)?,
-            )
-            .await?;
-        expected.extend_from_slice(outcome.events());
+async fn history_replay_loads_large_events_across_batches() -> TestResult<()> {
+    for (payload_bytes, events_per_commit, commits) in [(80_000, 9, 10), (16_000, 40, 13)] {
+        let (context, store) = directory_fixture("history-large-events").await?;
+        let aggregate = stream("large-events")?;
+        let payload = vec![42_u8; payload_bytes];
+        let payloads = vec![payload.as_slice(); events_per_commit];
+        let mut expected = Vec::new();
+        for index in 0..commits {
+            let operation = format!("large-{index}");
+            let outcome = store
+                .append(
+                    &aggregate,
+                    if index == 0 {
+                        ExpectedVersion::NoStream
+                    } else {
+                        ExpectedVersion::Exact(StreamVersion::new(u64::try_from(expected.len())?))
+                    },
+                    batch(&aggregate, &operation, &operation, &payloads)?,
+                )
+                .await?;
+            expected.extend_from_slice(outcome.events());
+        }
+        assert_eq!(store.load(&aggregate).await?, expected);
+        assert_eq!(consumer_count(&context, &store).await?, 0);
+        context.delete_stream(store.config().stream_name()).await?;
     }
-    assert_eq!(store.load(&aggregate).await?, expected);
-    assert_eq!(consumer_count(&context, &store).await?, 0);
-    context.delete_stream(store.config().stream_name()).await?;
     Ok(())
 }
 

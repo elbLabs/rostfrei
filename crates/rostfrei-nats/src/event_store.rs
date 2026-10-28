@@ -577,7 +577,7 @@ impl NatsEventStore {
         if last_sequence == 0 {
             return Ok(History::default());
         }
-        let mut reader = HistoryReader::new(&self.context, &stream, &subject).await?;
+        let mut reader = Box::pin(HistoryReader::new(&self.context, &stream, &subject)).await?;
         #[cfg(test)]
         if let Some(hook) = &self.history_snapshot_hook {
             let _ = hook.reached.wait().await;
@@ -613,12 +613,7 @@ impl NatsEventStore {
         let empty_headers = HeaderMap::default();
 
         while next_stream_sequence <= last_sequence {
-            let received = reader.next().await?;
-            let message = match received {
-                Some(message) => message,
-                None if truncated_at_snapshot => break,
-                None => return Err(corrupt("aggregate history disappeared while loading")),
-            };
+            let message = reader.next().await?;
             let sequence = message
                 .info()
                 .map_err(|error| corrupt(format!("invalid history delivery metadata: {error}")))?
