@@ -9,6 +9,7 @@ use std::{
     sync::Mutex,
     time::Duration,
 };
+use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
 
 struct Cluster {
@@ -137,6 +138,7 @@ enum Fault {
     Always,
     AfterDelivery,
     AlwaysAfterDelivery,
+    DelayedRecreation,
 }
 
 #[derive(Debug)]
@@ -152,6 +154,9 @@ struct FetchRelay {
     task: tokio::task::JoinHandle<TestResult<()>>,
     fetches: Arc<Mutex<Vec<Fetch>>>,
     context: jetstream::Context,
+    delayed_create: oneshot::Receiver<(String, async_nats::Message)>,
+    missing_delete: oneshot::Receiver<()>,
+    deletes: Arc<AtomicU64>,
 }
 
 impl FetchRelay {
@@ -164,59 +169,59 @@ impl FetchRelay {
         let context = context.clone();
         let fetches = Arc::new(Mutex::new(Vec::<Fetch>::new()));
         let recorded = Arc::clone(&fetches);
+        let (delayed_tx, delayed_create) = oneshot::channel();
+        let (missing_tx, missing_delete) = oneshot::channel();
+        let deletes = Arc::new(AtomicU64::new(0));
+        let recorded_deletes = Arc::clone(&deletes);
         let task = tokio::spawn(async move {
+            let mut delayed_tx = Some(delayed_tx);
+            let mut missing_tx = Some(missing_tx);
+            let mut creates = 0_usize;
             while let Some(request) = requests.next().await {
                 let suffix = request
                     .subject
                     .strip_prefix(&prefix)
                     .ok_or("wrong API prefix")?;
                 let mut destination = format!("$JS.API{suffix}");
-                if let Some(cursor) = suffix.strip_prefix(".CONSUMER.MSG.NEXT.") {
-                    let (stream, consumer) =
-                        cursor.split_once('.').ok_or("invalid fetch subject")?;
-                    let consumer: jetstream::consumer::PullConsumer =
-                        context.get_consumer_from_stream(consumer, stream).await?;
-                    let info = consumer.cached_info();
-                    let leader = info
-                        .cluster
-                        .as_ref()
-                        .ok_or("consumer is not clustered")?
-                        .leader
-                        .as_deref()
-                        .ok_or("consumer has no leader")?;
-                    assert_ne!(leader, client.server_info().server_name);
-                    assert!(info.config.durable_name.is_none());
-                    assert_eq!(info.config.name.as_deref(), Some(info.name.as_str()));
-                    let delivered = info.delivered.consumer_sequence;
-                    let payload: serde_json::Value = serde_json::from_slice(&request.payload)?;
-                    let batch = payload
-                        .get("batch")
-                        .and_then(serde_json::Value::as_u64)
-                        .ok_or("missing fetch batch")?;
-                    let failed = {
-                        let mut fetches = recorded.lock().expect("fetch log");
-                        let failed = match fault {
-                            Fault::Initial(count) => fetches.len() < count,
-                            Fault::Always => true,
-                            Fault::AfterDelivery => {
-                                delivered > 0 && !fetches.iter().any(|fetch| fetch.failed)
-                            }
-                            Fault::AlwaysAfterDelivery => {
-                                delivered > 0 || fetches.iter().any(|fetch| fetch.failed)
-                            }
-                        };
-                        fetches.push(Fetch {
-                            consumer: info.name.clone(),
-                            created: info.created.to_string(),
-                            delivered,
-                            batch,
-                            failed,
-                        });
-                        failed
-                    };
-                    if failed {
-                        destination = format!("unrouted{prefix}");
+                if suffix.starts_with(".CONSUMER.DELETE.") {
+                    recorded_deletes.fetch_add(1, Ordering::Relaxed);
+                }
+                if matches!(fault, Fault::DelayedRecreation) {
+                    if suffix.starts_with(".CONSUMER.CREATE.") {
+                        creates = creates.checked_add(1).ok_or("create count overflow")?;
+                        if creates == 2 {
+                            delayed_tx
+                                .take()
+                                .ok_or("recreation already held")?
+                                .send((destination, request))
+                                .map_err(|_| "delayed creation receiver dropped")?;
+                            continue;
+                        }
                     }
+                    if suffix.starts_with(".CONSUMER.DELETE.") {
+                        let response = client.request(destination, request.payload).await?;
+                        let body: serde_json::Value = serde_json::from_slice(&response.payload)?;
+                        let missing = body
+                            .get("error")
+                            .and_then(|error| error.get("err_code"))
+                            .and_then(serde_json::Value::as_u64)
+                            == Some(10014);
+                        client
+                            .publish(
+                                request.reply.ok_or("delete has no reply")?,
+                                response.payload,
+                            )
+                            .await?;
+                        if missing && let Some(sender) = missing_tx.take() {
+                            sender.send(()).map_err(|()| "delete receiver dropped")?;
+                        }
+                        continue;
+                    }
+                }
+                if let Some(cursor) = suffix.strip_prefix(".CONSUMER.MSG.NEXT.")
+                    && fail_fetch(&context, cursor, &request, fault, &recorded).await?
+                {
+                    destination = format!("unrouted{prefix}");
                 }
                 client
                     .publish_with_reply(
@@ -232,6 +237,9 @@ impl FetchRelay {
             task,
             fetches,
             context: relay_context,
+            delayed_create,
+            missing_delete,
+            deletes,
         })
     }
 
@@ -259,6 +267,51 @@ impl FetchRelay {
     }
 }
 
+async fn fail_fetch(
+    context: &jetstream::Context,
+    cursor: &str,
+    request: &async_nats::Message,
+    fault: Fault,
+    recorded: &Mutex<Vec<Fetch>>,
+) -> TestResult<bool> {
+    let (stream, consumer) = cursor.split_once('.').ok_or("invalid fetch subject")?;
+    let consumer: jetstream::consumer::PullConsumer =
+        context.get_consumer_from_stream(consumer, stream).await?;
+    let info = consumer.cached_info();
+    let leader = info
+        .cluster
+        .as_ref()
+        .ok_or("consumer is not clustered")?
+        .leader
+        .as_deref()
+        .ok_or("consumer has no leader")?;
+    assert_ne!(leader, context.client().server_info().server_name);
+    assert!(info.config.durable_name.is_none());
+    assert_eq!(info.config.name.as_deref(), Some(info.name.as_str()));
+    let delivered = info.delivered.consumer_sequence;
+    let payload: serde_json::Value = serde_json::from_slice(&request.payload)?;
+    let batch = payload
+        .get("batch")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("missing fetch batch")?;
+    let mut fetches = recorded.lock().expect("fetch log");
+    let failed = match fault {
+        Fault::Initial(count) => fetches.len() < count,
+        Fault::Always | Fault::DelayedRecreation => true,
+        Fault::AfterDelivery => delivered > 0 && !fetches.iter().any(|fetch| fetch.failed),
+        Fault::AlwaysAfterDelivery => delivered > 0 || fetches.iter().any(|fetch| fetch.failed),
+    };
+    fetches.push(Fetch {
+        consumer: info.name.clone(),
+        created: info.created.to_string(),
+        delivered,
+        batch,
+        failed,
+    });
+    drop(fetches);
+    Ok(failed)
+}
+
 impl Drop for FetchRelay {
     fn drop(&mut self) {
         self.task.abort();
@@ -268,6 +321,26 @@ impl Drop for FetchRelay {
 async fn assert_clean(context: &jetstream::Context, store: &NatsEventStore) -> TestResult<()> {
     let stream = context.get_stream(store.config().stream_name()).await?;
     assert_eq!(stream.cached_info().state.consumer_count, 0);
+    Ok(())
+}
+
+async fn assert_eventually_clean(
+    context: &jetstream::Context,
+    store: &NatsEventStore,
+) -> TestResult<()> {
+    let started = Instant::now();
+    timeout(Duration::from_secs(45), async {
+        loop {
+            let stream = context.get_stream(store.config().stream_name()).await?;
+            if stream.cached_info().state.consumer_count == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+    })
+    .await??;
+    eprintln!("replay cleanup observed after {:?}", started.elapsed());
     Ok(())
 }
 
@@ -328,7 +401,7 @@ async fn initial_no_responders_stops_at_read_deadline() -> TestResult<()> {
     relay.assert_recreated_cursor();
     let count = relay.fetches.lock().expect("fetch log").len();
     assert!(count > 1, "native recovery must retry: {count}");
-    assert_clean(&context, &store).await?;
+    assert_eventually_clean(&context, &store).await?;
     Ok(())
 }
 
@@ -384,20 +457,22 @@ async fn persistent_no_responders_after_delivery_stops_at_read_deadline() -> Tes
     let elapsed = started.elapsed();
     eprintln!("persistent failure after delivery returned after {elapsed:?}");
     relay.assert_recreated_cursor();
-    assert_clean(&context, &store).await?;
     assert!(matches!(result, Err(error) if error.kind() == EventStoreErrorKind::Unavailable));
     assert!(
         elapsed >= Duration::from_secs(5),
         "persistent 503 after progress stopped recovery before the read deadline: {elapsed:?}"
     );
-    let fetches = relay.fetches.lock().expect("fetch log");
-    assert!(
-        fetches
-            .iter()
-            .any(|fetch| fetch.failed && fetch.delivered > 0)
-    );
-    assert!(fetches.iter().filter(|fetch| fetch.failed).count() > 1);
-    drop(fetches);
+    {
+        let fetches = relay.fetches.lock().expect("fetch log");
+        assert!(
+            fetches
+                .iter()
+                .any(|fetch| fetch.failed && fetch.delivered > 0)
+        );
+        assert!(fetches.iter().filter(|fetch| fetch.failed).count() > 1);
+        drop(fetches);
+    }
+    assert_eventually_clean(&context, &store).await?;
     Ok(())
 }
 
@@ -424,17 +499,95 @@ async fn cancelled_recovery_cleans_up_the_recreated_cursor() -> TestResult<()> {
     relay.assert_recreated_cursor();
     task.abort();
     assert!(task.await.expect_err("cancelled replay").is_cancelled());
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let stream = context.get_stream(store.config().stream_name()).await?;
-            if stream.cached_info().state.consumer_count == 0 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
-    })
-    .await??;
+    assert_eventually_clean(&context, &store).await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires native nats-server; owns a three-broker cluster"]
+async fn timed_out_read_cleans_up_late_native_recreation() -> TestResult<()> {
+    late_native_recreation(false).await
+}
+
+#[tokio::test]
+#[ignore = "requires native nats-server; owns a three-broker cluster"]
+async fn cancelled_read_cleans_up_late_native_recreation() -> TestResult<()> {
+    late_native_recreation(true).await
+}
+
+async fn late_native_recreation(cancel: bool) -> TestResult<()> {
+    let cluster = Cluster::start()?;
+    let (context, store) = cluster.fixture().await?;
+    let aggregate = stream("late-native-recreation")?;
+    store
+        .append(
+            &aggregate,
+            ExpectedVersion::NoStream,
+            batch(&aggregate, "seed", "seed", &[b"one"])?,
+        )
+        .await?;
+    let mut relay = FetchRelay::start(&context, Fault::DelayedRecreation).await?;
+    let reader = NatsEventStore::connect(relay.context.clone(), store.config().clone()).await?;
+    let started = Instant::now();
+    let task = tokio::spawn(async move { reader.load(&aggregate).await });
+    let (destination, request) =
+        timeout(Duration::from_secs(5), &mut relay.delayed_create).await??;
+    if cancel {
+        task.abort();
+        assert!(task.await.expect_err("cancelled replay").is_cancelled());
+    } else {
+        let result = timeout(Duration::from_secs(7), task).await??;
+        assert!(matches!(result, Err(error) if error.kind() == EventStoreErrorKind::Unavailable));
+        assert!(started.elapsed() >= Duration::from_secs(5));
+    }
+    timeout(Duration::from_secs(5), &mut relay.missing_delete).await??;
+    assert_clean(&context, &store).await?;
+    let deletes = relay.deletes.load(Ordering::Relaxed);
+    let response = context
+        .client()
+        .request(destination, request.payload)
+        .await?;
+    let created: jetstream::consumer::Info = serde_json::from_slice(&response.payload)?;
+    context
+        .client()
+        .publish(
+            request.reply.ok_or("held create has no reply")?,
+            response.payload,
+        )
+        .await?;
+    let consumer: jetstream::consumer::PullConsumer = context
+        .get_consumer_from_stream(&created.name, store.config().stream_name())
+        .await?;
+    assert_eq!(consumer.cached_info().name, created.name);
+    {
+        let fetches = relay.fetches.lock().expect("fetch log");
+        let initial = fetches.first().expect("initial failed fetch");
+        assert_eq!(created.name, initial.consumer);
+        assert_ne!(created.created.to_string(), initial.created);
+        drop(fetches);
+    }
+    assert_eq!(
+        consumer.cached_info().config.inactive_threshold,
+        Duration::from_secs(30)
+    );
+    assert!(consumer.cached_info().config.durable_name.is_none());
+    let stream = context.get_stream(store.config().stream_name()).await?;
+    assert_eq!(stream.cached_info().state.consumer_count, 1);
+    assert!(!relay.task.is_finished(), "fetch relay failed");
+    eprintln!(
+        "late native CREATE acknowledged after read completion (cancel={cancel}); cleanup DELETE returned 404, consumer INFO succeeds, stream consumer count is 1"
+    );
+    assert_eventually_clean(&context, &store).await?;
+    assert!(matches!(
+        consumer.get_info().await,
+        Err(error) if error.kind() == jetstream::context::ConsumerInfoErrorKind::NotFound
+    ));
+    assert_eq!(
+        relay.deletes.load(Ordering::Relaxed),
+        deletes,
+        "native inactivity must remove the late consumer without another DELETE"
+    );
+    assert!(!relay.task.is_finished(), "fetch relay failed");
     Ok(())
 }
 
