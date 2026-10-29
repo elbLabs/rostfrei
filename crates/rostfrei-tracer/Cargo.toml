@@ -34,7 +34,6 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-rostfrei.workspace = true
 axum.workspace = true
 futures-util.workspace = true
 http-body-util = "0.1"

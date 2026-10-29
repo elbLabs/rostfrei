@@ -9,9 +9,6 @@ use application::{
     BillingChanged, DemoChanged, Entitlement, Entitlements, ExampleResult, GetEntitlement,
     MemberJoined, OrganizationEvent, rebuild,
 };
-use rostfrei::{
-    ApplicationName, JsonReadModelCodec, QueryHandler, QueryHandlerRequest, ReadModelStore,
-};
 use rostfrei_core::{
     AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore, ExpectedVersion,
     NewEvent, OperationId, StreamId, derive_commit_id, derive_event_id,
@@ -22,6 +19,9 @@ use rostfrei_messaging_core::{
 use rostfrei_nats::{
     NatsConnectionConfig, NatsEventStore, NatsEventStoreConfig, NatsReadModelConfig,
     NatsReadModelStore, connect, provision_event_store, provision_read_model,
+};
+use rostfrei_runtime::{
+    ApplicationName, JsonReadModelCodec, QueryHandler, QueryHandlerRequest, ReadModelStore,
 };
 
 #[tokio::main]

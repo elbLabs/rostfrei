@@ -18,7 +18,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-rostfrei.workspace = true
 rostfrei-core.workspace = true
 async-trait.workspace = true
 http-body-util = "0.1"

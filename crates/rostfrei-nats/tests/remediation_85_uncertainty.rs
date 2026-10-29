@@ -3,7 +3,7 @@
 mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{CommandBusErrorKind, ExecutionFailure, StoreFailureKind};
+use rostfrei_runtime::{CommandBusErrorKind, ExecutionFailure, StoreFailureKind};
 
 struct PostCommitFault {
     inner: Arc<NatsEventStore>,
@@ -185,7 +185,7 @@ async fn postcommit_technical_diagnostic_reconciles_same_identity_without_second
     Ok(())
 }
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 #[tokio::test]
 async fn response_sink_outage_exhausts_small_budget_into_durable_quarantine_without_response()

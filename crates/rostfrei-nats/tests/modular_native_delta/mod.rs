@@ -8,7 +8,7 @@ use async_nats::jetstream::{
     },
 };
 use modular_state_fault_support::StateProxy;
-use rostfrei::{CommandBusErrorKind, EncodedCommand};
+use rostfrei_runtime::{CommandBusErrorKind, EncodedCommand};
 use serde::{Deserialize, Serialize};
 
 pub(super) fn assert_state_config(config: &Config) {
@@ -396,7 +396,7 @@ async fn active_winner_does_not_admit_wrong_identity_or_wrong_decision_raw_respo
         let candidate = if wrong_identity {
             let other = self::command(&fixture, "different-operation")?;
             CommandResponse::accepted(
-                rostfrei::command_response_message_id(other.message_id())?,
+                rostfrei_runtime::command_response_message_id(other.message_id())?,
                 other.message_id().clone(),
                 other.address().clone(),
                 other.operation_id().clone(),

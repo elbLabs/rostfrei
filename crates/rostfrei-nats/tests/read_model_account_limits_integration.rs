@@ -5,12 +5,12 @@
 use std::{error::Error as _, num::NonZeroU32, process::Command, time::Duration};
 
 use async_nats::jetstream::{self, stream::StorageType};
-use rostfrei::{
-    ApplicationName, JsonReadModelCodec, ReadModelErrorKind, ReadModelKey, ReadModelStore,
-};
 use rostfrei_nats::{
     NatsConnectionConfig, NatsReadModelConfig, NatsReadModelStore, StreamStorage, connect,
     provision_read_model,
+};
+use rostfrei_runtime::{
+    ApplicationName, JsonReadModelCodec, ReadModelErrorKind, ReadModelKey, ReadModelStore,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;

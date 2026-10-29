@@ -1,7 +1,7 @@
 //! Independent lossless typed technical-error bridge control, not production changes.
 #![allow(clippy::panic_in_result_fn)]
 use async_trait::async_trait;
-use rostfrei::{
+use rostfrei_runtime::{
     CodecFailureKind, CommandBus, CommandBusError, CommandBusObserver, CommandBusReceipt,
     CommandMessageAdapter, EncodedCommand, ExecutionFailure, ProcessorFailureKind,
     StoreFailureKind,
@@ -24,7 +24,7 @@ impl CommandMessageAdapter for TechnicalAdapter {
         observer: Arc<dyn CommandBusObserver>,
     ) -> Result<CommandBusReceipt, CommandBusError> {
         observer
-            .published(rostfrei::CommandPublication::new(
+            .published(rostfrei_runtime::CommandPublication::new(
                 command.message_id().clone(),
                 false,
             ))

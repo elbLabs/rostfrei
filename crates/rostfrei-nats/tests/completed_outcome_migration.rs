@@ -2,14 +2,14 @@
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
 mod release_contract_support;
 use release_contract_support::*;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 async fn legacy(
     label: &str,
 ) -> TestResult<(
     Fixture,
     Arc<NatsEventStore>,
-    rostfrei::EncodedCommand,
+    rostfrei_runtime::EncodedCommand,
     CommandResponse,
 )> {
     let fixture = Fixture::new(label).await?;
@@ -21,7 +21,7 @@ async fn legacy(
         .encode(request("legacy-rejected", "target", "add")?)?;
     // Exact baseline schema-1 business response, with no shared acceptance/rejection.
     let response = CommandResponse::rejected(
-        rostfrei::command_response_message_id(command.message_id())?,
+        rostfrei_runtime::command_response_message_id(command.message_id())?,
         command.message_id().clone(),
         command.address().clone(),
         command.operation_id().clone(),

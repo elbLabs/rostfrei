@@ -11,7 +11,7 @@ use tokio::{
 
 use super::*;
 
-impl rostfrei::IntegrationEvent for TestEvent {
+impl rostfrei_runtime::IntegrationEvent for TestEvent {
     const EVENT_NAME: &'static str = "published-test-event";
     const SCHEMA_VERSION: u32 = 1;
 }
@@ -454,7 +454,7 @@ async fn explicit_offline_migration_preserves_confirmed_progress() -> TestResult
 }
 
 struct PublishingHandler {
-    bus: rostfrei::IntegrationEventBus,
+    bus: rostfrei_runtime::IntegrationEventBus,
     receipts: mpsc::UnboundedSender<(String, bool)>,
     pause: bool,
     published: Notify,
@@ -467,7 +467,7 @@ impl DomainEventHandler<TestEvent> for PublishingHandler {
         event: &CommittedDomainEvent<'_, TestEvent>,
     ) -> Result<(), DomainEventHandlerError> {
         let committed =
-            rostfrei::CommittedEventContext::new(event.recorded()).map_err(|error| {
+            rostfrei_runtime::CommittedEventContext::new(event.recorded()).map_err(|error| {
                 DomainEventHandlerError::new(
                     DomainEventHandlerErrorKind::InvalidCommittedEvent,
                     error.to_string(),
@@ -520,7 +520,7 @@ async fn publishing_handler(
         .application()
         .bounded_context(fixture.event_store.bounded_context().as_str())?;
     Ok(Arc::new(PublishingHandler {
-        bus: rostfrei::IntegrationEventBus::new(scope, Arc::new(adapter)),
+        bus: rostfrei_runtime::IntegrationEventBus::new(scope, Arc::new(adapter)),
         receipts,
         pause,
         published: Notify::new(),

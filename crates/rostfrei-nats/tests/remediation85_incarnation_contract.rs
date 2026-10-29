@@ -2,7 +2,7 @@
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
 mod release_contract_support;
 use release_contract_support::*;
-use rostfrei::EncodedCommand;
+use rostfrei_runtime::EncodedCommand;
 use std::io::Write;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -249,7 +249,7 @@ async fn fresh_real_puback_cannot_establish_usable_durability_after_its_record_w
     let c = command(&f, "target")?;
     let failure = ExecutionFailure::Store(StoreFailureKind::Unavailable);
     let response = CommandResponse::execution_failed(
-        rostfrei::command_technical_response_message_id(c.message_id(), failure)?,
+        rostfrei_runtime::command_technical_response_message_id(c.message_id(), failure)?,
         c.message_id().clone(),
         c.address().clone(),
         c.operation_id().clone(),
@@ -315,4 +315,4 @@ async fn fresh_real_puback_cannot_establish_usable_durability_after_its_record_w
     Ok(())
 }
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

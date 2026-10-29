@@ -3,7 +3,7 @@
 mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     CommandBusError, CommandBusObserver, CommandBusReceipt, CommandMessageAdapter, EncodedCommand,
 };
 use std::{
@@ -64,13 +64,13 @@ async fn http_config(
             first: first.clone(),
         }),
     );
-    let query = rostfrei::QueryBus::new(
+    let query = rostfrei_runtime::QueryBus::new(
         fixture.context.clone(),
-        Arc::new(rostfrei::InMemoryQueryAdapter::new(Arc::new(
-            rostfrei::QueryProcessor::new(),
+        Arc::new(rostfrei_runtime::InMemoryQueryAdapter::new(Arc::new(
+            rostfrei_runtime::QueryProcessor::new(),
         ))),
     );
-    let mut registry = rostfrei::DomainRegistry::new();
+    let mut registry = rostfrei_runtime::DomainRegistry::new();
     registry.register_command::<Act, Handler>()?;
     let router = rostfrei_http::router(Arc::new(registry), bus, query, config);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -393,7 +393,7 @@ async fn http_rejection_replays_through_nats_with_identical_canonical_evidence()
         .await
         .clone()
         .ok_or("HTTP did not reach the real local command adapter")?;
-    let envelope: CommandEnvelope<rostfrei::RoutedCommand> =
+    let envelope: CommandEnvelope<rostfrei_runtime::RoutedCommand> =
         serde_json::from_slice(original.payload())?;
     let mut same = CommandRequest::new(
         OperationId::new(original.operation_id().as_str())?,
@@ -448,4 +448,4 @@ async fn http_rejection_replays_through_nats_with_identical_canonical_evidence()
     assert_eq!(store.load(&stream("target")?).await?.len(), 2);
     Ok(())
 }
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

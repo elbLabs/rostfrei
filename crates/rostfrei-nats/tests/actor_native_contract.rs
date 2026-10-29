@@ -29,13 +29,13 @@ mod event_store {
 }
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     ActorRef, AllowAllCommands, AuthorizationError, CommandAccess, CommandAuthorizer,
     CommandProcessingService, CompletionOrigin, PrincipalId, TrustedCommandContext,
     ValidatedCommand,
 };
 use std::sync::Mutex;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 fn actor(id: &str) -> ActorRef {
     ActorRef::new("people", id).unwrap()
@@ -119,7 +119,7 @@ async fn actor_native_resolver_keeps_authenticated_principal_distinct_on_replay(
         bus.encode(request("actor-worker", "one", "create")?.with_actor(actor("alice")))?;
     let forged =
         bus.encode(request("actor-forged", "two", "create")?.with_actor(actor("admin")))?;
-    let delivery = |command: &rostfrei::EncodedCommand,
+    let delivery = |command: &rostfrei_runtime::EncodedCommand,
                     proof: bool|
      -> TestResult<MessageDelivery<CommandAddress>> {
         let mut metadata = CallerMetadata::try_from_entries([("principal", "admin")])?;
@@ -377,7 +377,7 @@ async fn restart_phase(mode: &str) -> TestResult {
                         .into_result()
                         .unwrap_err()
                         .kind(),
-                    rostfrei::CommandProcessorErrorKind::IdentityConflict
+                    rostfrei_runtime::CommandProcessorErrorKind::IdentityConflict
                 );
                 let history = store.load(&stream(&id)?).await?;
                 assert_eq!(history.len(), usize::from(action == "create"));

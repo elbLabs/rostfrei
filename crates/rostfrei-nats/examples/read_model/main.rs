@@ -6,7 +6,6 @@ mod source;
 use std::time::Duration;
 
 use application::{GetAccess, OrganizationAccess};
-use rostfrei::{ApplicationName, QueryHandler, QueryHandlerRequest, ReadModelKey, ReadModels};
 use rostfrei_core::{
     AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore, ExpectedVersion,
     NewEvent, OperationId, StreamId, derive_commit_id, derive_event_id,
@@ -21,9 +20,12 @@ use rostfrei_nats::{
     connect, provision_application_messaging, provision_event_store, provision_read_model,
     provision_read_model_consumers,
 };
+use rostfrei_runtime::{
+    ApplicationName, QueryHandler, QueryHandlerRequest, ReadModelKey, ReadModels,
+};
 use source::{BillingChanged, DemoChanged, MemberJoined, OrganizationEvent, OrganizationRenamed};
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 type ExampleResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 fn envelope(id: &str) -> ExampleResult<EnvelopeContext> {

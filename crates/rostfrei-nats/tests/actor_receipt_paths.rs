@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::panic_in_result_fn)]
 mod release_contract_support;
 use release_contract_support::*;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 async fn append(
     store: &NatsEventStore,

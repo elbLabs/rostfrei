@@ -154,6 +154,10 @@ bike-rental packages are explicitly `publish = false`. Freeze one
 clean commit for the Git tag, Skills kit, CLI and registry packages; dependency-aware
 Skills setup checks the published package's `.cargo_vcs_info.json` revision.
 
+Adapters use `rostfrei-runtime`, including in their tests and package examples.
+A dev-dependency on the `rostfrei` facade would create a publication cycle; facade
+integration coverage lives in bike-rental and the standalone host consumer.
+
 With the repository's pinned Cargo version, qualify the complete package graph:
 
 ```sh

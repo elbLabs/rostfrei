@@ -8,7 +8,10 @@
 )]
 
 use async_trait::async_trait;
-use rostfrei::{
+use rostfrei_core::{ConflictRetry, ConflictRetryDecision, ConflictRetryPolicy, EventStore};
+use rostfrei_messaging_core::{CommandAddress, MessageDelivery};
+use rostfrei_nats::{NatsConnection, NatsConnectionConfig, TrustedCommandContextResolver, connect};
+use rostfrei_runtime::{
     Aggregate, AggregateCodecs, ApplicationName, AuditPhase, AuditTerminal, AuthorizationError,
     CommandAccess, CommandAuthorizer, CommandDecision, CommandExecution, CommandHandler,
     CommandHandlingResult, CommittedDomainEvent, ContentFingerprint, EventBatch, EventCodec,
@@ -17,9 +20,6 @@ use rostfrei::{
     OutcomeReader, RecordedEvent, StreamAggregateId, StreamAggregateType, StreamId,
     TrustedCommandContext, ValidatedCommand,
 };
-use rostfrei_core::{ConflictRetry, ConflictRetryDecision, ConflictRetryPolicy, EventStore};
-use rostfrei_messaging_core::{CommandAddress, MessageDelivery};
-use rostfrei_nats::{NatsConnection, NatsConnectionConfig, TrustedCommandContextResolver, connect};
 use rostfrei_tracer::{
     ApplicationBindings, CommandRequest, ExposeTracePayloadsForLocalDevelopment, Fixture,
     HandlerSimulationError, NatsApplication, NatsExecutionProfile, NatsRuntime, NatsRuntimeConfig,
@@ -38,14 +38,14 @@ use std::{
 };
 use tokio::sync::Notify;
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
-#[derive(rostfrei::BoundedContext)]
+#[derive(rostfrei_runtime::BoundedContext)]
 #[domain(id = "boundary", label = "Boundary acceptance")]
 struct Boundary;
 
-#[derive(rostfrei::Command)]
+#[derive(rostfrei_runtime::Command)]
 #[domain(context = Boundary, id = "adjust", label = "Adjust")]
 struct Adjust {
     delta: i64,
@@ -54,13 +54,13 @@ struct Adjust {
     pause: bool,
 }
 
-#[derive(Serialize, Deserialize, rostfrei::DomainEvent)]
+#[derive(Serialize, Deserialize, rostfrei_runtime::DomainEvent)]
 #[domain(id = "changed", label = "Changed")]
 struct Changed {
     value: i64,
 }
 
-#[derive(rostfrei::AggregateEvents)]
+#[derive(rostfrei_runtime::AggregateEvents)]
 enum Changes {
     Changed(Changed),
 }
@@ -110,7 +110,7 @@ fn codec_error(message: impl Into<String>) -> EventCodecError {
     EventCodecError::new(EventCodecErrorKind::MalformedPayload, message)
 }
 
-#[derive(rostfrei::DomainError)]
+#[derive(rostfrei_runtime::DomainError)]
 #[domain(
     id = "refused",
     label = "Refused",
@@ -225,8 +225,8 @@ impl TrustedCommandContextResolver for WorkerIdentity {
 }
 fn caller(principal: &str) -> TrustedCommandContext {
     TrustedCommandContext::new(
-        rostfrei::PrincipalId::new(principal).unwrap(),
-        rostfrei::SecurityScope::new("acceptance").unwrap(),
+        rostfrei_runtime::PrincipalId::new(principal).unwrap(),
+        rostfrei_runtime::SecurityScope::new("acceptance").unwrap(),
     )
 }
 #[derive(Default)]
@@ -260,8 +260,8 @@ fn bindings(witnesses: &Witnesses) -> TestResult<Arc<ApplicationBindings>> {
             evaluations: witnesses.evaluations.clone(),
             pause: witnesses.pause.clone(),
         },
-        rostfrei::JsonDomainRejectionMapper::new(
-            rostfrei::CommandRejectionClassification::Conflict,
+        rostfrei_runtime::JsonDomainRejectionMapper::new(
+            rostfrei_runtime::CommandRejectionClassification::Conflict,
         ),
     )?;
     bindings.register_integration_event::<Ledger, Changed, _>(PublishBalance(
@@ -291,7 +291,7 @@ fn request(reject: bool, no_event: bool, pause: bool) -> CommandRequest {
     }
 }
 fn configuration(
-    context: rostfrei::BoundedContext,
+    context: rostfrei_runtime::BoundedContext,
     bindings: &ApplicationBindings,
     witnesses: &Witnesses,
     audit: Arc<InMemoryCommandAuditSink>,
@@ -437,7 +437,7 @@ async fn assert_rejection_codec(
         .ok_or("missing encoded rejection")?;
     assert_eq!(rejection.codec_id, "boundary.refusal");
     assert_eq!(rejection.codec_version, 73);
-    let decoded: rostfrei::CommandRejection = serde_json::from_slice(&rejection.bytes)?;
+    let decoded: rostfrei_runtime::CommandRejection = serde_json::from_slice(&rejection.bytes)?;
     assert_eq!(
         decoded.details().ok_or("missing rejection details")?["balance"],
         balance
@@ -783,7 +783,7 @@ async fn configured_retry_reloads_a_real_native_conflict_before_and_after_reset(
             .store()
             .append(
                 &stream()?,
-                ExpectedVersion::Exact(rostfrei::StreamVersion::new(1)),
+                ExpectedVersion::Exact(rostfrei_runtime::StreamVersion::new(1)),
                 EventBatch::new(
                     commit.clone(),
                     competing_operation,

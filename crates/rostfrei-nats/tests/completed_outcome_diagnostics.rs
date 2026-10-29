@@ -2,7 +2,7 @@
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
 mod release_contract_support;
 use release_contract_support::*;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 fn response_stream_name(fixture: &Fixture) -> &str {
     fixture

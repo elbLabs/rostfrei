@@ -7,7 +7,7 @@ use std::{
     path::PathBuf,
     process::{Child, Command},
 };
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 struct Broker {
     child: Child,

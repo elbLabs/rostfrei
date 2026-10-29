@@ -14,12 +14,12 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use modular_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     AuthorizationError, CommandAccess, CommandAuthorizer, CommandProcessingService, PrincipalId,
     SecurityScope, TrustedCommandContext, ValidatedCommand,
 };
 use tower::ServiceExt;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 struct Policy {
     deny: AtomicBool,
@@ -168,7 +168,7 @@ async fn unavailable_missing_and_forbidden_completed_details_are_typed_http_erro
         let store = InMemoryEventStore::new();
         let calls = Arc::new(AtomicUsize::new(0));
         let mut processor = CommandProcessor::builder(context()?, Arc::new(store.clone()))
-            .authorizer(Arc::new(rostfrei::AllowAllCommands))
+            .authorizer(Arc::new(rostfrei_runtime::AllowAllCommands))
             .build()?;
         processor.register::<Change, _>(ChangeHandler(calls.clone()), map_rejection)?;
         let caller =
@@ -183,7 +183,7 @@ async fn unavailable_missing_and_forbidden_completed_details_are_typed_http_erro
             .into_result()?;
         let resolver = store.with_detail_readers(Arc::new(DetailFault(fault)), None);
         let service = CommandProcessor::builder(context()?, Arc::new(resolver))
-            .authorizer(Arc::new(rostfrei::AllowAllCommands))
+            .authorizer(Arc::new(rostfrei_runtime::AllowAllCommands))
             .build()?;
         let router = rostfrei_http::context_command_router(
             context()?,
