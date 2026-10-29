@@ -215,6 +215,13 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
     rent(host.runtime(), "external-after-reset").await?;
     flow(&test_feed, "external-after-reset").await?;
     host.shutdown().await?;
+    assert!(
+        normal
+            .attach_observer(tracer.correlation_observer(OperationMode::Dispatch))
+            .await
+            .is_err(),
+        "shutdown must permanently close observer attachment"
+    );
     assert_eq!(test_feed.snapshot().status, ObservationStatus::Unavailable);
     assert_eq!(
         production_feed.snapshot().status,
@@ -308,6 +315,13 @@ async fn runtime_observation_reports_interruption_and_failed_reset_then_recovers
     );
     assert_eq!(feed.snapshot().status, ObservationStatus::Unavailable);
     assert!(runtime.start_workers().await.is_err());
+    assert!(
+        runtime
+            .attach_observer(tracer.correlation_observer(OperationMode::Test))
+            .await
+            .is_err(),
+        "a failed reset must keep observer attachment closed"
+    );
     tracer.reset_test_scenario().await?;
     assert_eq!(feed.snapshot().status, ObservationStatus::Live);
     runtime.stop_workers().await;
@@ -332,6 +346,86 @@ async fn runtime_observation_reports_interruption_and_failed_reset_then_recovers
     config.provision(&connection).await?;
     runtime.start_workers().await?;
     assert_eq!(feed.snapshot().status, ObservationStatus::Live);
+    runtime.stop_workers().await;
+    connection.drain().await?;
+    Ok(())
+}
+
+struct FailingObservationPolicy;
+
+impl rostfrei::tracer::TracePayloadPolicy for FailingObservationPolicy {
+    fn domain_event(
+        &self,
+        event: rostfrei::tracer::PredictedDomainEvent,
+    ) -> rostfrei::tracer::PredictedDomainEvent {
+        event
+    }
+
+    fn rejection(&self, rejection: Value) -> Value {
+        rejection
+    }
+
+    fn failure_message(&self, message: String) -> String {
+        message
+    }
+
+    #[allow(
+        clippy::panic,
+        reason = "inject an application-supplied observation callback failure"
+    )]
+    fn observed_event_payload(&self, _: Value) -> Option<Value> {
+        panic!("observation callback failed");
+    }
+}
+
+#[tokio::test]
+async fn observation_worker_failure_is_supervised_and_closes_runtime_admission() -> TestResult {
+    let connection = connect(&NatsConnectionConfig::new(
+        "observation-supervision",
+        rostfrei::testing::integration::nats_url()?,
+    ))
+    .await?;
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let application = ApplicationName::new(format!("observation-supervision-{suffix}"))?;
+    let bindings = Arc::new(tracer::bindings()?);
+    let config = NatsRuntimeConfig::new(
+        application.test_bounded_context("bike-rental")?,
+        &bindings,
+        1,
+    )?
+    .with_fresh_completed_outcome_epoch("observation-supervision")?;
+    let runtime = NatsRuntime::provision(connection.clone(), config, bindings).await?;
+    runtime.apply_fixture(&demo_fixture()?).await?;
+    let feed = ObservationFeed::new(application, ObservationScope::Test);
+    let tracer = runtime
+        .tracer_builder()
+        .with_continuous_observation(feed.clone())
+        .with_trace_payload_policy(Arc::new(FailingObservationPolicy))
+        .build()?;
+    runtime
+        .attach_observer(tracer.correlation_observer(OperationMode::Test))
+        .await?;
+    rent(&runtime, "observer-failure").await?;
+    let error =
+        tokio::time::timeout(Duration::from_secs(5), runtime.wait_for_worker_exit()).await?;
+    assert!(
+        matches!(&error, rostfrei::tracer::NatsHostError::Worker(message)
+        if message.contains("observation callback failed")),
+        "{error}"
+    );
+    assert!(!runtime.has_correlation_observer().await);
+    assert_eq!(feed.snapshot().status, ObservationStatus::Unavailable);
+    assert!(rent(&runtime, "after-observer-failure").await.is_err());
+    assert!(runtime.start_workers().await.is_err());
+    assert!(
+        runtime
+            .attach_observer(tracer.correlation_observer(OperationMode::Test))
+            .await
+            .is_err(),
+        "observer replacement must not hide a supervised worker failure"
+    );
     runtime.stop_workers().await;
     connection.drain().await?;
     Ok(())

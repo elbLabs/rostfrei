@@ -21,6 +21,10 @@ mod history_reads;
 mod native_connection_support;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
+#[path = "event_store/subject_correlations.rs"]
+mod subject_correlations;
+#[path = "../src/subject_tokens.rs"]
+mod subject_tokens;
 
 use std::sync::{
     Arc,
@@ -432,7 +436,7 @@ async fn ordinary_reads_trust_recorded_transactions_and_explicit_audits_check_re
 }
 
 #[tokio::test]
-async fn directory_and_load_reject_incompatible_aggregate_sequence_expectations() {
+async fn directory_and_load_reject_wrong_aggregate_expectation_subjects() {
     for schema_version in [3, 4] {
         for base_version in [0, 2] {
             let (context, store) = directory_fixture("directory-sequence-expectation")
@@ -482,7 +486,7 @@ async fn directory_and_load_reject_incompatible_aggregate_sequence_expectations(
             assert_eq!(load_error.kind(), EventStoreErrorKind::CorruptHistory);
             assert_eq!(
                 load_error.message(),
-                "stored commit has an incompatible aggregate sequence expectation"
+                "stored commit has an incompatible aggregate subject expectation"
             );
             let directory_error = store
                 .list_streams(aggregate.aggregate_type())
@@ -521,9 +525,11 @@ async fn publish_commit_with_wrong_sequence_expectation(
     let operation = "wrong-predecessor";
     let event_batch = batch(aggregate, operation, operation, &[b"must-not-load"])?;
     let mut messages = vec![RawAtomicMessage {
-        subject: config.aggregate_subject(
+        subject: config.event_subject(
             aggregate.aggregate_type().as_str(),
             aggregate.aggregate_id().as_str(),
+            None,
+            None,
         ),
         payload: forged_event_payload_at(
             config,
@@ -583,9 +589,11 @@ async fn directory_rejects_version_gaps_and_incomplete_commits() {
             label,
             vec![
                 RawAtomicMessage {
-                    subject: config.aggregate_subject(
+                    subject: config.event_subject(
                         aggregate.aggregate_type().as_str(),
                         aggregate.aggregate_id().as_str(),
+                        None,
+                        None,
                     ),
                     payload: forged_transaction_event_payload_at(
                         config,
@@ -596,7 +604,10 @@ async fn directory_rejects_version_gaps_and_incomplete_commits() {
                     )
                     .expect("corrupt coordinates"),
                     expected_last_subject_sequence: Some(0),
-                    expectation_subject: None,
+                    expectation_subject: Some(config.aggregate_history_subject_filter(
+                        aggregate.aggregate_type().as_str(),
+                        aggregate.aggregate_id().as_str(),
+                    )),
                 },
                 RawAtomicMessage {
                     subject: config.transaction_guard_subject(label, 0),
@@ -696,9 +707,11 @@ async fn directory_snapshot_excludes_later_malformed_participant_history() {
             let _ = reached.wait().await;
             context
                 .publish(
-                    store.config().aggregate_subject(
+                    store.config().event_subject(
                         participant.aggregate_type().as_str(),
                         participant.aggregate_id().as_str(),
+                        None,
+                        None,
                     ),
                     b"malformed post-snapshot event".to_vec().into(),
                 )
@@ -953,7 +966,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         messages_after, expected_messages_after,
         "each domain event must use one JetStream message"
     );
-    let atomic_subject = config.aggregate_subject(
+    let atomic_subject = config.aggregate_history_subject_filter(
         atomic_stream.aggregate_type().as_str(),
         atomic_stream.aggregate_id().as_str(),
     );
@@ -1080,9 +1093,11 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     );
 
     let incompatible_stream = stream("incompatible-wire").expect("incompatible stream id");
-    let incompatible_subject = config.aggregate_subject(
+    let incompatible_subject = config.event_subject(
         incompatible_stream.aggregate_type().as_str(),
         incompatible_stream.aggregate_id().as_str(),
+        None,
+        None,
     );
     context
         .send_publish(
@@ -1204,7 +1219,7 @@ async fn legacy_history_remains_readable_after_lower_limit_provisioning(
             )?,
         )
         .await?;
-    let aggregate_subject = current.aggregate_subject(
+    let aggregate_subject = current.aggregate_history_subject_filter(
         aggregate.aggregate_type().as_str(),
         aggregate.aggregate_id().as_str(),
     );
@@ -1314,7 +1329,7 @@ async fn transaction_history_remains_readable_after_lower_limit_provisioning(
 
     let mut stream_info = context.get_stream(current.stream_name()).await?;
     let event = stream_info
-        .get_last_raw_message_by_subject(&current.aggregate_subject(
+        .get_last_raw_message_by_subject(&current.aggregate_history_subject_filter(
             primary.aggregate_type().as_str(),
             primary.aggregate_id().as_str(),
         ))
@@ -1418,13 +1433,18 @@ async fn primary_scoped_transaction_history_remains_readable(
         "legacy-primary-subject-batch",
         vec![
             RawAtomicMessage {
-                subject: config.aggregate_subject(
+                subject: config.event_subject(
                     legacy_primary.aggregate_type().as_str(),
                     legacy_primary.aggregate_id().as_str(),
+                    None,
+                    None,
                 ),
                 payload: forged_transaction_event_payload(&config, &legacy_primary, &legacy_batch)?,
                 expected_last_subject_sequence: Some(0),
-                expectation_subject: None,
+                expectation_subject: Some(config.aggregate_history_subject_filter(
+                    legacy_primary.aggregate_type().as_str(),
+                    legacy_primary.aggregate_id().as_str(),
+                )),
             },
             RawAtomicMessage {
                 subject: config.legacy_primary_transaction_guard_subject(
@@ -1434,7 +1454,7 @@ async fn primary_scoped_transaction_history_remains_readable(
                 ),
                 payload: legacy_guard,
                 expected_last_subject_sequence: Some(0),
-                expectation_subject: Some(config.aggregate_subject(
+                expectation_subject: Some(config.aggregate_history_subject_filter(
                     legacy_observed.aggregate_type().as_str(),
                     legacy_observed.aggregate_id().as_str(),
                 )),
@@ -1514,9 +1534,11 @@ async fn primary_scoped_transaction_history_remains_readable(
         "legacy-layout-mismatch-batch",
         vec![
             RawAtomicMessage {
-                subject: config.aggregate_subject(
+                subject: config.event_subject(
                     mismatched_primary.aggregate_type().as_str(),
                     mismatched_primary.aggregate_id().as_str(),
+                    None,
+                    None,
                 ),
                 payload: forged_transaction_event_payload(
                     &config,
@@ -1524,7 +1546,10 @@ async fn primary_scoped_transaction_history_remains_readable(
                     &mismatched_batch,
                 )?,
                 expected_last_subject_sequence: Some(0),
-                expectation_subject: None,
+                expectation_subject: Some(config.aggregate_history_subject_filter(
+                    mismatched_primary.aggregate_type().as_str(),
+                    mismatched_primary.aggregate_id().as_str(),
+                )),
             },
             RawAtomicMessage {
                 subject: config.transaction_guard_subject(mismatched_operation, 0),
@@ -1536,7 +1561,7 @@ async fn primary_scoped_transaction_history_remains_readable(
                     }
                 }))?,
                 expected_last_subject_sequence: Some(0),
-                expectation_subject: Some(config.aggregate_subject(
+                expectation_subject: Some(config.aggregate_history_subject_filter(
                     mismatched_observed.aggregate_type().as_str(),
                     mismatched_observed.aggregate_id().as_str(),
                 )),
@@ -1731,11 +1756,11 @@ async fn transaction_contract_and_wire_policy(
     )?;
 
     let mut stream_info = context.get_stream(config.stream_name()).await?;
-    let primary_subject = config.aggregate_subject(
+    let primary_subject = config.aggregate_history_subject_filter(
         primary.aggregate_type().as_str(),
         primary.aggregate_id().as_str(),
     );
-    let secondary_subject = config.aggregate_subject(
+    let secondary_subject = config.aggregate_history_subject_filter(
         secondary.aggregate_type().as_str(),
         secondary.aggregate_id().as_str(),
     );
@@ -1817,7 +1842,7 @@ async fn transaction_contract_and_wire_policy(
         }
     }
 
-    let observed_subject = config.aggregate_subject(
+    let observed_subject = config.aggregate_history_subject_filter(
         observed.aggregate_type().as_str(),
         observed.aggregate_id().as_str(),
     );
@@ -2699,13 +2724,18 @@ async fn publish_schema_four_event_without_receipt(
         "schema-four-event-with-filler-batch",
         vec![
             RawAtomicMessage {
-                subject: config.aggregate_subject(
+                subject: config.event_subject(
                     aggregate.aggregate_type().as_str(),
                     aggregate.aggregate_id().as_str(),
+                    None,
+                    None,
                 ),
                 payload: forged_transaction_event_payload(config, &aggregate, &event_batch)?,
                 expected_last_subject_sequence: Some(0),
-                expectation_subject: None,
+                expectation_subject: Some(config.aggregate_history_subject_filter(
+                    aggregate.aggregate_type().as_str(),
+                    aggregate.aggregate_id().as_str(),
+                )),
             },
             RawAtomicMessage {
                 subject: config.transaction_guard_subject("unrelated-filler", 0),
@@ -2734,9 +2764,11 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
         &[b"event"],
     )?;
     let reused_batch_id = "reused-atomic-batch-id";
-    let reused_event_subject = config.aggregate_subject(
+    let reused_event_subject = config.event_subject(
         reused_primary.aggregate_type().as_str(),
         reused_primary.aggregate_id().as_str(),
+        None,
+        None,
     );
     publish_raw_atomic_batch(
         context,
@@ -2747,7 +2779,10 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
                 subject: reused_event_subject,
                 payload: forged_transaction_event_payload(config, &reused_primary, &reused_batch)?,
                 expected_last_subject_sequence: Some(0),
-                expectation_subject: None,
+                expectation_subject: Some(config.aggregate_history_subject_filter(
+                    reused_primary.aggregate_type().as_str(),
+                    reused_primary.aggregate_id().as_str(),
+                )),
             },
             RawAtomicMessage {
                 subject: config.transaction_guard_subject(reused_operation, 99),
@@ -2817,7 +2852,7 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
         &[b"event"],
     )?;
     let guard_batch_id = "filler-guard-atomic-batch";
-    let guarded_subject = config.aggregate_subject(
+    let guarded_subject = config.aggregate_history_subject_filter(
         guarded.aggregate_type().as_str(),
         guarded.aggregate_id().as_str(),
     );
@@ -2856,13 +2891,18 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
         guard_batch_id,
         vec![
             RawAtomicMessage {
-                subject: config.aggregate_subject(
+                subject: config.event_subject(
                     guard_primary.aggregate_type().as_str(),
                     guard_primary.aggregate_id().as_str(),
+                    None,
+                    None,
                 ),
                 payload: forged_transaction_event_payload(config, &guard_primary, &guard_batch)?,
                 expected_last_subject_sequence: Some(0),
-                expectation_subject: None,
+                expectation_subject: Some(config.aggregate_history_subject_filter(
+                    guard_primary.aggregate_type().as_str(),
+                    guard_primary.aggregate_id().as_str(),
+                )),
             },
             RawAtomicMessage {
                 subject: config.transaction_guard_subject(guard_operation, 0),

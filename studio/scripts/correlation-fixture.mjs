@@ -41,7 +41,7 @@ function domain(
   }
 }
 
-function integration(context, event, cause, offset, available = true) {
+function integration(context, event, cause, offset) {
   return {
     kind: "integration",
     context,
@@ -51,12 +51,11 @@ function integration(context, event, cause, offset, available = true) {
     schema_version: 1,
     causation_id: cause,
     occurred_at: start + offset,
-    available,
   }
 }
 
 // Two bounded contexts: the rental starts in bike-rental, billing consumes its
-// integration event through a command that is not indexed.
+// integration event through a command that is outside retained event history.
 export function correlationChains() {
   return [
     {
@@ -144,54 +143,49 @@ export function correlationChains() {
   ]
 }
 
-export const freshnessSources = [
+export const snapshotSources = [
   {
     context: "bike-rental",
     kind: "domain",
     stream: "BIKE_RENTAL__BIKE_RENTAL_DOMAIN_EVENTS",
-    state: "active",
-    behind: 0,
-    skipped: 0,
-  },
-  {
-    context: "bike-rental",
-    kind: "integration",
-    stream: "BIKE_RENTAL_INTEGRATION_EVENTS",
-    state: "active",
-    behind: 0,
-    skipped: 0,
+    cutoff_sequence: "9007199254740993",
   },
   {
     context: "billing",
     kind: "domain",
     stream: "BIKE_RENTAL__BILLING_DOMAIN_EVENTS",
-    state: "inactive",
-    behind: 2,
-    skipped: 0,
+    cutoff_sequence: "18446744073709551615",
   },
   {
-    context: "billing",
     kind: "integration",
     stream: "BIKE_RENTAL_INTEGRATION_EVENTS",
-    state: "inactive",
-    behind: 0,
-    skipped: 3,
+    cutoff_sequence: "42",
   },
 ]
 
-export function anchorView(lag = { "bike-rental": 0, billing: null }) {
+export function correlationSnapshot() {
+  return { sources: structuredClone(snapshotSources) }
+}
+
+export function anchorView(snapshot = correlationSnapshot()) {
   return {
     anchor: {
       aggregate_type: "bike-rental/rental-fleet",
       aggregate_id: "city-fleet",
     },
-    lag,
-    ...(lag["bike-rental"] === 0 ? { sources: freshnessSources } : {}),
+    snapshot,
+    truncated: false,
     correlations: correlationChains(),
   }
 }
 
 const included = {
+  "bike-rental": {
+    "event:bicycle-transferred-in": {
+      fleet_id: "harbor-fleet",
+      bicycle_id: "bike-7",
+    },
+  },
   billing: {
     "event:invoice-opened": {
       invoice_id: "invoice-42",
@@ -222,7 +216,7 @@ function equals(actual, expected) {
 }
 
 // Mirrors the anchored view's include/match contract for fixture sessions.
-export function anchorResponse(search, lag) {
+export function anchorResponse(search, snapshot) {
   const params = new URLSearchParams(search)
   const contexts = params
     .getAll("include")
@@ -257,7 +251,7 @@ export function anchorResponse(search, lag) {
       }
     matches.push(match)
   }
-  const view = anchorView(lag)
+  const view = anchorView(snapshot)
   view.correlations = view.correlations.map((correlation) => ({
     ...correlation,
     refs: correlation.refs.map((reference) => {
@@ -284,34 +278,76 @@ export function anchorResponse(search, lag) {
   return { status: 200, body: view }
 }
 
-export function chainView(
-  correlationId,
-  lag = { "bike-rental": 0, billing: null }
-) {
+export function chainView(correlationId, snapshot = correlationSnapshot()) {
+  if (correlationId === "visual-expired-parent")
+    return {
+      correlation_id: correlationId,
+      snapshot,
+      truncated: false,
+      // The parent integration message has expired. There is no retained ref
+      // from which a client could infer its type, payload or expiration reason.
+      refs: [
+        domain(
+          "billing",
+          "billing/invoice",
+          "old-invoice",
+          2,
+          "invoice-settled",
+          "message:expired-payment",
+          180_000
+        ),
+      ],
+    }
+  if (correlationId === "visual-truncated-empty")
+    return {
+      correlation_id: correlationId,
+      snapshot,
+      truncated: true,
+      refs: [],
+    }
+  if (correlationId === "visual-truncated")
+    return {
+      ...correlationChains()[1],
+      correlation_id: correlationId,
+      snapshot,
+      truncated: true,
+      refs: chainView("visual-rent-bike-42", snapshot).refs.slice(0, 2),
+    }
   const chain = correlationChains().find(
     (item) => item.correlation_id === correlationId
   )
   if (!chain) return undefined
   return {
     ...chain,
-    lag,
-    ...(lag["bike-rental"] === 0 ? { sources: freshnessSources } : {}),
+    snapshot,
     refs: chain.refs.map((reference) => {
-      const indexed = { ...reference }
-      delete indexed.payload
-      return indexed
+      const retained = { ...reference }
+      delete retained.payload
+      return retained
     }),
   }
 }
 
 export const correlationErrors = {
+  unknownAnchor: {
+    code: "unknown-anchor",
+    message: "`billing/not-an-anchor` is not a declared anchor type",
+  },
   unknownAnchorStream: {
     code: "unknown-anchor-stream",
     message:
       "`bike-rental/rental-fleet` has no stream `bike-42`; anchor IDs are aggregate IDs",
   },
-  notIndexed: {
+  notFound: {
     code: "not-found",
-    message: "correlation `visual-not-indexed` is not indexed",
+    message: "no retained events found for correlation `visual-not-retained`",
+  },
+  unavailable: {
+    code: "correlation-history-unavailable",
+    message: "retained correlation history is unavailable",
+  },
+  readFailed: {
+    code: "correlation-read-failed",
+    message: "could not read retained correlation events from BILLING",
   },
 }

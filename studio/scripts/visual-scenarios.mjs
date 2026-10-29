@@ -29,11 +29,18 @@ export const scenarios = {
   "long-payload": "Nested, long payload values in the message inspector",
   narrow: "Accepted command details at 390 × 844",
   observation: "Externally initiated flow in the continuous Observe panel",
-  correlations: "Anchor correlations and a two-context indexed chain",
+  correlations: "Anchor correlations and retained events across two contexts",
   "correlations-match":
-    "Payload match with automatic include, applied chips and index sources",
+    "Payload match with automatic include, applied chips and source cutoffs",
   "correlations-missing":
-    "Unknown anchor stream and a correlation that is not indexed yet",
+    "Unknown anchor stream and no retained events for a correlation",
+  "correlations-retention":
+    "Retained child with an absent parent and neutral payload details",
+  "correlations-truncated":
+    "Successful empty but truncated retained-event read",
+  "correlations-unavailable":
+    "Correlation history unavailable (501), not empty",
+  "correlations-read-failed": "Native source read failed (503), not empty",
 }
 
 const commandPath = "/contexts/bike-rental/commands/rent-bicycle"
@@ -104,10 +111,20 @@ export async function installScenario(page, scene, samples, diagnostics) {
       { method: "GET", path: `/api${missingAnchorPath}`, status: 404 },
       {
         method: "GET",
-        path: "/api/correlations/visual-not-indexed/events",
+        path: "/api/correlations/visual-not-retained/events",
         status: 404,
       }
     )
+  }
+  if (
+    scene === "correlations-unavailable" ||
+    scene === "correlations-read-failed"
+  ) {
+    diagnostics.expectedHttpErrors.push({
+      method: "GET",
+      path: `/api/correlations/${scene === "correlations-unavailable" ? "visual-history-unavailable" : "visual-read-failed"}/events`,
+      status: scene === "correlations-unavailable" ? 501 : 503,
+    })
   }
   if (scene === "indeterminate") {
     diagnostics.expectedHttpErrors.push({
@@ -178,10 +195,24 @@ export async function installScenario(page, scene, samples, diagnostics) {
     } else if (
       correlationScene &&
       method === "GET" &&
-      pathname === "/correlations/visual-not-indexed/events"
+      pathname === "/correlations/visual-not-retained/events"
     ) {
       status = 404
-      body = correlationErrors.notIndexed
+      body = correlationErrors.notFound
+    } else if (
+      correlationScene &&
+      method === "GET" &&
+      pathname === "/correlations/visual-history-unavailable/events"
+    ) {
+      status = 501
+      body = correlationErrors.unavailable
+    } else if (
+      correlationScene &&
+      method === "GET" &&
+      pathname === "/correlations/visual-read-failed/events"
+    ) {
+      status = 503
+      body = correlationErrors.readFailed
     } else if (
       correlationScene &&
       method === "GET" &&
@@ -465,10 +496,59 @@ async function prepareCorrelations(page, scene) {
         .querySelector("#studio-correlation-panel [role='alert']")
         ?.textContent?.includes("No stream for this anchor ID")
     )
-    await page.type('[aria-label="Correlation ID"]', "visual-not-indexed")
+    await page.type('[aria-label="Correlation ID"]', "visual-not-retained")
     await page.click('[aria-label="Open a correlation by ID"] button')
-    await page.waitForSelector('[data-correlation-failure="not-indexed"]')
+    await page.waitForSelector('[data-correlation-failure="not-found"]')
     if (!wide) await page.click('[aria-label="Expand sidebar"]')
+    await settlePage(page)
+    return
+  }
+  const direct = {
+    "correlations-retention": "visual-expired-parent",
+    "correlations-truncated": "visual-truncated-empty",
+    "correlations-unavailable": "visual-history-unavailable",
+    "correlations-read-failed": "visual-read-failed",
+  }[scene]
+  if (direct) {
+    await page.waitForSelector('[data-correlation-id="visual-rent-bike-42"]')
+    await page.type('[aria-label="Correlation ID"]', direct)
+    await page.click('[aria-label="Open a correlation by ID"] button')
+    if (
+      scene === "correlations-unavailable" ||
+      scene === "correlations-read-failed"
+    ) {
+      await page.waitForSelector("[data-correlation-failure]")
+      assert.match(
+        await page.$eval(
+          "[data-correlation-failure] h1",
+          (element) => element.textContent
+        ),
+        scene === "correlations-unavailable"
+          ? /Correlation history unavailable/
+          : /Correlation read failed/
+      )
+    } else {
+      await page.waitForSelector('.correlation-heading[aria-busy="false"]')
+      assert.match(
+        await page.$eval(
+          ".correlation-heading",
+          (element) => element.textContent
+        ),
+        /source|cutoff/i
+      )
+      if (scene === "correlations-retention") {
+        await page.waitForSelector('[data-message-id="event:invoice-settled"]')
+        await page.click('[data-message-id="event:invoice-settled"]')
+      } else {
+        assert.match(
+          await page.$eval(
+            ".correlation-heading",
+            (element) => element.textContent
+          ),
+          /truncat|incomplete/i
+        )
+      }
+    }
     await settlePage(page)
     return
   }
@@ -492,7 +572,11 @@ async function prepareCorrelations(page, scene) {
   }
   await page.waitForSelector('[data-correlation-id="visual-rent-bike-42"]')
   await page.click('[data-correlation-id="visual-rent-bike-42"]')
-  await page.waitForSelector('[data-freshness-context="billing"]')
+  await page.waitForFunction(() =>
+    document
+      .querySelector(".correlation-heading")
+      ?.textContent.includes("9007199254740993")
+  )
   if (!wide && page.viewport().width >= 768)
     await page.click('[aria-label="Expand sidebar"]')
   if (page.viewport().width >= 1100) {

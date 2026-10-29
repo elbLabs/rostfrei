@@ -6,6 +6,12 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Native NATS correlation and causation filtering: domain subjects contain
+  readable aggregate type/ID and control-ID tokens; integration subjects append
+  control IDs while preserving logical addresses and durable identities.
+- On-demand retained correlation inspection with source cutoff snapshots, anchor
+  payload includes and matches, and inspection-only host wiring. No correlation
+  KV index or projector is required; integration retention remains unchanged.
 - `AggregateDefinition::ANCHOR` declares an aggregate as an anchor. The compiled
   domain model projects it as `"anchor": true`.
 - Tracer Studio **Correlations** view: select an anchor aggregate or correlation
@@ -37,6 +43,19 @@ All notable changes to this project are documented in this file.
   in technical responses. Upgrade response readers before enabling fallible
   conversions; older readers reject the new kind. Exhaustive Rust matches need
   the new variant too.
+
+### Changed
+
+- The event-subject format requires fresh namespaces. Existing subject layouts
+  are rejected; historical migration is not included. See
+  [subjects and deployment compatibility](docs/messaging/subjects.mdx#fresh-deployments).
+- Low-level integration publication requires a valid envelope and derives its
+  correlation/causation subject tokens, rejecting inconsistent transport metadata.
+
+### Fixed
+
+- Attaching or replacing a runtime observer preserves application workers and
+  in-flight deliveries instead of stranding them until the acknowledgement timeout.
 
 ## [0.1.3] - 2026-10-29
 

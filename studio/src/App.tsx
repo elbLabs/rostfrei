@@ -436,7 +436,7 @@ function App() {
   const selectedRun = runs.find((run) => run.runId === selectedRunId)
   const selectedTest = tests.find((test) => test.id === selectedTestId)
   const view = correlationsActive
-    ? "indexed"
+    ? "retained"
     : observationActive
       ? "observed"
       : running
@@ -754,7 +754,7 @@ function App() {
           <MessageGraph
             key={
               correlationsActive
-                ? `correlation-${correlationSelection.chain?.correlationId ?? "empty"}`
+                ? `correlation-${correlationSelection.correlationId ?? "empty"}`
                 : observationActive
                   ? `observation-${observedFlow?.scope ?? "empty"}-${observedFlow?.id ?? "empty"}`
                   : activeCommand
@@ -780,10 +780,10 @@ function App() {
             emptyMessage={
               correlationsActive
                 ? correlationSelection.loading
-                  ? "Loading the indexed chain…"
+                  ? "Reading retained events…"
                   : correlationSelection.chain
-                    ? "No events of this correlation are indexed yet."
-                    : "Select a correlation to see its indexed events. Only real indexed events appear here."
+                    ? "No events returned in this retained-history read."
+                    : "Select a correlation to see its retained events."
                 : observationActive
                   ? "Select an observed flow. Only real captured messages will appear here."
                   : source !== "live"

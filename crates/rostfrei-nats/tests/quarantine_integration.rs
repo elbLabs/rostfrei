@@ -412,3 +412,56 @@ async fn inspection_includes_unknown_subjects_and_preserves_consumer_progress() 
     assert_eq!(after.num_ack_pending, before.num_ack_pending);
     fixture.cleanup().await;
 }
+
+#[tokio::test]
+async fn integration_inspection_uses_logical_routes_and_retains_physical_and_legacy_addresses() {
+    let Some(fixture) = Fixture::new().await else {
+        return;
+    };
+    let logical = format!(
+        "{}.test.integration.orders.place",
+        fixture.test.application()
+    );
+    let physical_addresses = [
+        logical.clone(),
+        format!("{logical}.flow.cause"),
+        format!("{logical}.flow%ZZ.cause.extra"),
+    ];
+    for address in &physical_addresses {
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&fixture.record(b"payload")).unwrap();
+        record["address"] = json!(address);
+        record["source_stream"] =
+            json!(fixture.test.topology().integration_event_stream().as_str());
+        fixture
+            .connection
+            .jetstream()
+            .publish(
+                fixture.subject(TrafficScope::Test, "integration", "place"),
+                serde_json::to_vec(&record).unwrap().into(),
+            )
+            .await
+            .unwrap()
+            .await
+            .unwrap();
+    }
+    let reader = fixture.reader(fixture.test.topology());
+    let page = reader
+        .list(QuarantineQuery {
+            filter: QuarantineFilter {
+                kind: Some(QuarantineMessageKind::IntegrationEvent),
+                context: Some("orders".to_owned()),
+                name: Some("place".to_owned()),
+            },
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), physical_addresses.len());
+    for (entry, expected) in page.items.iter().zip(physical_addresses) {
+        assert!(entry.diagnostics.is_empty(), "{:?}", entry.diagnostics);
+        assert_eq!(entry.message.as_ref().unwrap().address, expected);
+        assert_eq!(reader.get(&entry.id).await.unwrap(), *entry);
+    }
+    fixture.cleanup().await;
+}

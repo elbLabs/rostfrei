@@ -4,10 +4,9 @@ import type {
   CorrelationAnchor,
   CorrelationCapability,
   CorrelationChain,
-  CorrelationFreshness,
-  CorrelationFreshnessSource,
+  CorrelationSnapshot,
   CorrelationRef,
-  IndexedCorrelationChain,
+  RetainedCorrelationChain,
   PayloadMatch,
   TracerCatalog,
 } from "@/lib/types"
@@ -20,8 +19,9 @@ export type CorrelationFailure =
   | "forbidden"
   | "unknown-anchor"
   | "unknown-anchor-stream"
-  | "not-indexed"
-  | "index-unavailable"
+  | "not-found"
+  | "history-unavailable"
+  | "read-failed"
   | "invalid-identifier"
   | "match-requires-include"
   | "invalid-match"
@@ -102,7 +102,7 @@ export async function getAnchorCorrelations(
   return {
     aggregateType: text(anchor?.aggregate_type) ?? "",
     aggregateId: text(anchor?.aggregate_id) ?? "",
-    freshness: parseFreshness(body),
+    snapshot: parseSnapshot(body),
     correlations: body.correlations.flatMap((item) => {
       const correlation = parseChain(record(item))
       return correlation ? [correlation] : []
@@ -163,7 +163,7 @@ export async function getCorrelationChain(
   correlationId: string,
   signal: AbortSignal,
   template = DEFAULT_CORRELATION_EVENTS_TEMPLATE
-): Promise<IndexedCorrelationChain> {
+): Promise<RetainedCorrelationChain> {
   const body = await inspect(
     advertisedHref(
       template.replace("{correlationId}", encodeURIComponent(correlationId))
@@ -171,8 +171,9 @@ export async function getCorrelationChain(
     signal
   )
   const chain = parseChain(body)
-  if (!chain) throw new Error("Tracer did not return an indexed correlation")
-  return { ...chain, freshness: parseFreshness(body) }
+  if (!chain)
+    throw new Error("Tracer did not return retained correlation events")
+  return { ...chain, snapshot: parseSnapshot(body) }
 }
 
 export function correlationFailure(error: unknown): CorrelationFailure {
@@ -188,7 +189,7 @@ export function correlationFailure(error: unknown): CorrelationFailure {
     case "unknown-anchor-stream":
       return "unknown-anchor-stream"
     case "not-found":
-      return "not-indexed"
+      return "not-found"
     case "invalid-identifier":
     case "include-too-broad":
       return "invalid-identifier"
@@ -196,70 +197,40 @@ export function correlationFailure(error: unknown): CorrelationFailure {
       return "match-requires-include"
     case "invalid-match":
       return "invalid-match"
-    case "correlation-index-unavailable":
-    case "history-unavailable":
-    case "correlation-index-read-failed":
-    case "history-read-failed":
-      return "index-unavailable"
+    case "correlation-history-unavailable":
+      return "history-unavailable"
+    case "correlation-read-failed":
+      return "read-failed"
   }
-  return error.status === 404 ? "not-indexed" : "request-failed"
+  return error.status === 404 ? "not-found" : "request-failed"
 }
 
-// Freshness is read in one place so a change of its wire shape stays local.
-// Accepts top-level `lag` (numbers or null) with `sources`, the older lag-only
-// map, and a nested `freshness` (or object-valued `lag`) with both.
-export function parseFreshness(
-  body: Record<string, unknown>
-): CorrelationFreshness {
-  const container = record(body.freshness) ?? record(body.lag)
-  const nested =
-    container && ("sources" in container || isLagMap(container.lag))
-  const lag =
-    (nested && isLagMap(container.lag)
-      ? record(container.lag)
-      : isLagMap(body.lag)
-        ? record(body.lag)
-        : undefined) ?? {}
-  const sources: CorrelationFreshnessSource[] = (
-    nested && Array.isArray(container.sources)
-      ? container.sources
-      : Array.isArray(body.sources)
-        ? body.sources
-        : []
-  ).flatMap((item) => {
-    const source = record(item)
-    const context = text(source?.context)
-    if (!source || !context) return []
-    return [
-      {
-        context,
-        kind: text(source.kind),
-        stream: text(source.stream),
-        state: text(source.state),
-        behind: count(source.behind),
-        skipped: count(source.skipped) ?? undefined,
-      },
-    ]
-  })
-  const names = new Set([
-    ...Object.keys(lag),
-    ...sources.map((source) => source.context),
-  ])
+// Source cutoffs are independent and stay decimal strings throughout the UI.
+function parseSnapshot(body: Record<string, unknown>): CorrelationSnapshot {
+  const snapshot = record(body.snapshot)
+  if (!Array.isArray(snapshot?.sources))
+    throw new Error("Tracer did not return correlation source cutoffs")
   return {
-    contexts: [...names].sort().map((context) => {
-      const own = sources.filter((source) => source.context === context)
-      const behind =
-        context in lag
-          ? count(lag[context])
-          : own.length && own.every((source) => source.behind !== null)
-            ? own.reduce((total, source) => total + (source.behind ?? 0), 0)
-            : null
+    sources: snapshot.sources.map((item) => {
+      const source = record(item)
+      const stream = text(source?.stream)
+      const cutoffSequence = text(source?.cutoff_sequence)
+      if (
+        !source ||
+        (source.kind !== "domain" && source.kind !== "integration") ||
+        !stream ||
+        !cutoffSequence ||
+        !/^\d+$/.test(cutoffSequence) ||
+        (source.context !== undefined && !text(source.context))
+      )
+        throw new Error("Tracer returned invalid correlation source cutoffs")
       return {
-        context,
-        behind: own.some((source) => source.state === "inactive")
-          ? null
-          : behind,
-        sources: own,
+        ...(source.context === undefined
+          ? {}
+          : { context: String(source.context) }),
+        kind: source.kind,
+        stream,
+        cutoffSequence,
       }
     }),
   }
@@ -347,20 +318,9 @@ function parseRef(
       schemaVersion: count(value.schema_version) ?? 0,
       causationId,
       occurredAt,
-      available: value.available !== false,
     }
   }
   return undefined
-}
-
-function isLagMap(value: unknown): boolean {
-  const map = record(value)
-  return Boolean(
-    map &&
-    Object.values(map).every(
-      (behind) => behind === null || typeof behind === "number"
-    )
-  )
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {

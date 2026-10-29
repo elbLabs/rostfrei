@@ -50,15 +50,16 @@ It uses the same Canvas/Workbench message cards and inspector as command and
 test execution. **Executions** returns to the previous execution view; closing
 the observation sidebar does not stop capture.
 
-The **Correlations** panel follows every chain that touched one business
-object, from the durable [correlation index](../docs/correlation-index.md).
+The **Correlations** panel reads [retained correlation events](../docs/continuous-observation.md#retained-correlation-inspection)
+that touched one business object.
 Choose an anchor the Tracer advertises (or **Other aggregate type…** to type
 `context/aggregate`), enter the anchor's aggregate ID and select a correlation,
-or open a correlation ID directly. Its indexed domain and integration events
-appear with causation edges and their bounded context. Payloads are shown for
-the anchor's own events; **Load payloads from** adds other contexts
-(`?include=context:<name>`, which replays each touched stream). Causes outside
-the index, such as commands, are named in the inspector instead of drawn.
+or open a correlation ID directly. Its retained domain and integration events
+appear with causation edges and their bounded context. Payloads for the anchor's
+own events follow Tracer's payload policy; **Load payloads from** adds contexts,
+including other aggregates in the anchor's context (`?include=context:<name>`,
+which replays each touched stream). Only returned causes get graph edges; absent parents'
+types and reasons for absence are unknown.
 **Match payload field** narrows the list to one business entity: each row is
 `context / event-type . field = value` (or a raw
 `context/event-type.field=value` expression), rows are AND-ed and sent as
@@ -66,13 +67,14 @@ the index, such as commands, are named in the inspector instead of drawn.
 and says so; applied filters appear as chips from Tracer's `matched` echo, with
 Clear all. The last rows are remembered per anchor in this browser. Matching
 sees payloads after the Tracer payload policy, so a redacting policy matches
-nothing. Per-context freshness shows `lag 0`, the events still behind, or
-`unknown` when a projector is inactive or has not reported; the sidebar lists
-each source with its state, `behind` and `skipped` count. Lag 0 means indexed
-as of the request, not that the chain has finished. Correlation requests
+nothing. Source cutoffs show exact sequence strings for each domain source
+and the shared integration source. They are captured independently, not as an
+atomic snapshot or proof of completion. Expired events are absent; truncated
+reads may omit retained matches. Selecting an anchor chain uses that response's
+events, payloads and cutoffs together. Refresh is manual. Correlation requests
 use the read-only inspection token (`VITE_TRACER_INSPECTION_TOKEN`); the control
 token (`VITE_TRACER_TOKEN`) keeps serving commands and tests and receives `403`
-on these routes. Only Normal traffic is indexed, not isolated Test runs.
+on these routes. These reads inspect Normal traffic, not isolated Test runs.
 
 ## Run locally
 

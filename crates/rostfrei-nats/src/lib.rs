@@ -3,12 +3,14 @@
 mod command_response;
 mod connection;
 mod consumer;
+mod correlation_history;
 mod correlation_observer;
 mod domain_event_consumer;
 mod error;
 mod event_store;
 mod event_store_config;
 mod hex;
+mod integration_subject;
 mod messaging_adapter;
 mod messaging_config;
 mod provisioning;
@@ -21,6 +23,7 @@ mod read_model_config;
 mod read_model_integration_consumer;
 mod read_model_worker;
 mod stream_policy;
+mod subject_tokens;
 
 pub use command_response::{
     DEFAULT_COMMAND_RESPONSE_POLL_INTERVAL, MAX_COMMAND_RESPONSE_POLL_INTERVAL,
@@ -28,6 +31,7 @@ pub use command_response::{
 };
 pub use connection::{ConnectionHealth, NatsConnection, connect};
 pub use consumer::{MAX_QUARANTINE_RECORD_BYTES, NatsConsumerFactory, QuarantineRecord};
+pub use correlation_history::NatsCorrelationHistory;
 pub use correlation_observer::{
     CorrelatedMessage, CorrelatedMessageFamily, CorrelatedMessageHandler, NatsCorrelationObserver,
     NatsCorrelationSubscription,
@@ -42,6 +46,7 @@ pub use event_store_config::{
     DEFAULT_EVENT_STORE_MAX_EVENT_BYTES, DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
     DEFAULT_EVENT_STORE_PUBACK_TIMEOUT, DEFAULT_EVENT_STORE_REPLICAS, NatsEventStoreConfig,
 };
+pub use integration_subject::IntegrationEventSubject;
 pub use messaging_adapter::{
     DEFAULT_COMMAND_RESPONSE_TIMEOUT, NatsCommandHandler, NatsMessagingAdapter,
     ServicePrincipalContext, TrustedCommandContextResolver,

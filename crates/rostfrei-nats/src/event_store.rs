@@ -532,7 +532,7 @@ impl NatsEventStore {
         stream_id: &StreamId,
         maximum_stream_sequence: Option<u64>,
     ) -> Result<History, EventStoreError> {
-        let subject = self.config.aggregate_subject(
+        let subject = self.config.aggregate_history_subject_filter(
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
         );
@@ -543,7 +543,7 @@ impl NatsEventStore {
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
         let last_subject_sequence = match stream.get_last_raw_message_by_subject(&subject).await {
             Ok(message) => {
-                if message.subject.as_str() != subject {
+                if !matches_history_subject(message.subject.as_str(), &subject) {
                     return Err(corrupt("aggregate lookup returned the wrong subject"));
                 }
                 message.sequence
@@ -623,7 +623,7 @@ impl NatsEventStore {
                 // including an empty read-guard history with only later events.
                 break;
             }
-            if message.subject.as_str() != subject {
+            if !matches_history_subject(message.subject.as_str(), subject) {
                 return Err(corrupt("aggregate history contains the wrong subject"));
             }
             if sequence < next_stream_sequence || sequence > last_sequence {
@@ -634,7 +634,7 @@ impl NatsEventStore {
 
             let decoded = decode_event(
                 &self.config,
-                subject,
+                message.subject.as_str(),
                 stream_id,
                 Some(last_commit_stream_sequence),
                 sequence,
@@ -985,7 +985,7 @@ impl NatsEventStore {
         batch_id: &str,
         event_count: usize,
     ) -> Result<Arc<History>, EventStoreError> {
-        let subject = self.config.aggregate_subject(
+        let subject = self.config.aggregate_history_subject_filter(
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
         );
@@ -1009,7 +1009,7 @@ impl NatsEventStore {
                     }
                     _ => unavailable(format!("failed to verify published event: {error}")),
                 })?;
-            if message.subject.as_str() != subject
+            if !matches_history_subject(message.subject.as_str(), &subject)
                 || message.sequence < next_sequence
                 || message.sequence > last_sequence
             {
@@ -1019,7 +1019,7 @@ impl NatsEventStore {
             }
             let decoded = decode_event(
                 &self.config,
-                &subject,
+                message.subject.as_str(),
                 stream_id,
                 Some(previous.last_subject_stream_sequence),
                 message.sequence,
@@ -1732,9 +1732,11 @@ impl NatsEventStore {
         }
 
         let recorded = record_batch(stream_id, current_version, &batch)?;
-        let subject = self.config.aggregate_subject(
+        let subject = self.config.event_subject(
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
+            batch.correlation_id().map(CorrelationId::as_str),
+            batch.causation_id().map(CausationId::as_str),
         );
         let payloads = encode_events(&self.config, stream_id, &batch, recorded.events())?;
         for payload in &payloads {
@@ -1763,6 +1765,10 @@ impl NatsEventStore {
             &self.context,
             &self.config,
             &subject,
+            &self.config.aggregate_history_subject_filter(
+                stream_id.aggregate_type().as_str(),
+                stream_id.aggregate_id().as_str(),
+            ),
             history.last_subject_stream_sequence,
             &batch_id,
             batch.correlation_id().map(CorrelationId::as_str),
@@ -1890,9 +1896,11 @@ impl NatsEventStore {
             let Some(batch) = &participant.batch else {
                 continue;
             };
-            let subject = self.config.aggregate_subject(
+            let subject = self.config.event_subject(
                 participant.stream_id.aggregate_type().as_str(),
                 participant.stream_id.aggregate_id().as_str(),
+                batch.correlation_id().map(CorrelationId::as_str),
+                batch.causation_id().map(CausationId::as_str),
             );
             let payloads = encode_transaction_events(
                 &self.config,
@@ -1920,7 +1928,12 @@ impl NatsEventStore {
                     payload,
                     expected_last_subject_sequence: (index == 0)
                         .then_some(participant.last_subject_stream_sequence),
-                    expectation_subject: None,
+                    expectation_subject: (index == 0).then(|| {
+                        self.config.aggregate_history_subject_filter(
+                            participant.stream_id.aggregate_type().as_str(),
+                            participant.stream_id.aggregate_id().as_str(),
+                        )
+                    }),
                 });
             }
             transaction_offset = transaction_offset
@@ -1936,7 +1949,7 @@ impl NatsEventStore {
             .filter(|participant| participant.batch.is_none())
             .enumerate()
         {
-            let guarded_subject = self.config.aggregate_subject(
+            let guarded_subject = self.config.aggregate_history_subject_filter(
                 participant.stream_id.aggregate_type().as_str(),
                 participant.stream_id.aggregate_id().as_str(),
             );
@@ -2112,8 +2125,8 @@ impl NatsEventStore {
 /// Creates an absent event store or verifies an existing store without changing it.
 ///
 /// Policy mismatches return `ConfigurationMismatch`. Use [`update_event_store`]
-/// for deliberate capacity changes or legacy subject-policy migrations. Normal
-/// application startup should use [`NatsEventStore::connect`] to verify only.
+/// for deliberate capacity changes. Subject-layout changes require a fresh namespace.
+/// Normal application startup should use [`NatsEventStore::connect`] to verify only.
 pub async fn provision_event_store(
     context: &jetstream::Context,
     config: &NatsEventStoreConfig,
@@ -2156,9 +2169,9 @@ pub async fn provision_event_store(
 /// Explicitly updates an existing event-store policy, including total stream capacity.
 ///
 /// The stream must already exist and belong to the configured application and
-/// bounded context. Legacy aggregate-only subjects are upgraded to include
-/// transaction subjects. Larger existing message-size limits remain compatible
-/// and are preserved; the adapter still enforces its configured event write limit.
+/// bounded context and use the current subject layout. Larger existing message-size
+/// limits remain compatible and are preserved; the adapter still enforces its
+/// configured event write limit.
 /// Capacity reductions and other server-supported policy changes are operator-owned.
 pub async fn update_event_store(
     context: &jetstream::Context,
@@ -2175,6 +2188,7 @@ pub async fn update_event_store(
             ))
         })?;
     let actual = &existing.cached_info().config;
+    reject_opaque_subject_layout(&config.stream_config(), actual)?;
     if config.split_outcomes() {
         verify_stream_config(&config.stream_config(), actual)?;
         outcomes::connect_split(context, config, &existing).await?;
@@ -2747,9 +2761,11 @@ fn decode_event_inner(
             "stored event belongs to a different aggregate stream",
         ));
     }
-    if config.aggregate_subject(
+    if config.event_subject(
         stream_id.aggregate_type().as_str(),
         stream_id.aggregate_id().as_str(),
+        wire.event.correlation_id.as_deref(),
+        wire.event.causation_id.as_deref(),
     ) != subject
     {
         return Err(corrupt("stored event is on the wrong aggregate subject"));
@@ -2841,7 +2857,8 @@ fn decode_event_inner(
         recorded = recorded.with_actor(actor);
     }
     let batch_id = validate_atomic_headers(
-        config.stream_name(),
+        config,
+        recorded.stream_id(),
         headers,
         wire.schema_version,
         event_ordinal,
@@ -3135,10 +3152,12 @@ enum AtomicBatchPublishError {
     Store(EventStoreError),
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn publish_atomic_batch(
     context: &jetstream::Context,
     config: &NatsEventStoreConfig,
     subject: &str,
+    history_subject: &str,
     expected_last_subject_sequence: u64,
     batch_id: &str,
     correlation_id: Option<&str>,
@@ -3152,7 +3171,7 @@ async fn publish_atomic_batch(
             message_id: Some(message_id),
             payload,
             expected_last_subject_sequence: (index == 0).then_some(expected_last_subject_sequence),
-            expectation_subject: None,
+            expectation_subject: (index == 0).then(|| history_subject.to_owned()),
         })
         .collect();
     publish_atomic_messages(context, config, batch_id, correlation_id, messages).await
@@ -3324,8 +3343,10 @@ fn new_transaction_batch_id(client: &async_nats::Client, operation_id: &Operatio
     encode_lower_hex(hasher.finalize())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_atomic_headers(
-    stream_name: &str,
+    config: &NatsEventStoreConfig,
+    stream_id: &StreamId,
     headers: &HeaderMap,
     schema_version: u16,
     commit_event_ordinal: usize,
@@ -3353,15 +3374,29 @@ fn validate_atomic_headers(
     }
     let expected_stream = optional_single_header(headers, "Nats-Expected-Stream")?;
     let expected_sequence = optional_single_header(headers, "Nats-Expected-Last-Subject-Sequence")?;
+    let expectation_subject =
+        optional_single_header(headers, NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT)?;
     if commit_event_ordinal == 0 {
-        if transaction_event_ordinal == 0 && expected_stream != Some(stream_name) {
+        if transaction_event_ordinal == 0 && expected_stream != Some(config.stream_name()) {
             return Err(corrupt("stored commit has an incompatible expected stream"));
         }
         if transaction_event_ordinal != 0 && expected_stream.is_some() {
             return Err(corrupt("stored transaction repeats its expected stream"));
         }
+        let history_subject = config.aggregate_history_subject_filter(
+            stream_id.aggregate_type().as_str(),
+            stream_id.aggregate_id().as_str(),
+        );
+        if expectation_subject != Some(history_subject.as_str()) {
+            return Err(corrupt(
+                "stored commit has an incompatible aggregate subject expectation",
+            ));
+        }
         validate_aggregate_sequence_expectation(expected_sequence, expected_last_subject_sequence)?;
-    } else if expected_stream.is_some() || expected_sequence.is_some() {
+    } else if expected_stream.is_some()
+        || expected_sequence.is_some()
+        || expectation_subject.is_some()
+    {
         return Err(corrupt(
             "stored commit repeats its aggregate sequence expectation",
         ));
@@ -3843,7 +3878,7 @@ async fn verify_transaction_guard(
             "stored transaction read guard has the wrong batch sequence",
         ));
     }
-    let guarded_subject = config.aggregate_subject(
+    let guarded_subject = config.aggregate_history_subject_filter(
         guarded_stream_id.aggregate_type().as_str(),
         guarded_stream_id.aggregate_id().as_str(),
     );
@@ -4208,6 +4243,7 @@ fn event_checksum(
 }
 
 fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventStoreError> {
+    reject_opaque_subject_layout(expected, actual)?;
     if expected
         .metadata
         .iter()
@@ -4244,6 +4280,32 @@ fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventS
             ),
         ))
     }
+}
+
+fn reject_opaque_subject_layout(expected: &Config, actual: &Config) -> Result<(), EventStoreError> {
+    let old_layout = expected
+        .subjects
+        .iter()
+        .filter_map(|subject| subject.strip_suffix(".aggregate.*.*.*.*"))
+        .any(|prefix| actual.subjects.contains(&format!("{prefix}.aggregate.*")));
+    if old_layout {
+        return Err(EventStoreError::new(
+            EventStoreErrorKind::ConfigurationMismatch,
+            "event-store uses the retired opaque aggregate subject layout; provision a fresh namespace (new application or split outcome epoch); existing storage is not migrated",
+        ));
+    }
+    Ok(())
+}
+
+// Broker filters select history; this only validates the returned address before
+// decoding its exact concrete subject and aggregate identity.
+fn matches_history_subject(subject: &str, filter: &str) -> bool {
+    let mut tokens = subject.split('.');
+    filter.split('.').all(|expected| {
+        tokens
+            .next()
+            .is_some_and(|actual| expected == actual || expected == "*")
+    }) && tokens.next().is_none()
 }
 
 fn invalid(message: impl Into<String>) -> EventStoreError {
@@ -4319,8 +4381,130 @@ mod tests {
         headers.insert(NATS_BATCH_SEQUENCE, "1");
         headers.insert(NATS_EXPECTED_STREAM, stream_name);
         headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
+        headers.insert(
+            NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT,
+            config().aggregate_history_subject_filter("Test", "one"),
+        );
         headers.insert(NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL);
         headers
+    }
+
+    #[test]
+    fn consumed_events_bind_the_concrete_subject_to_envelope_identity_and_metadata() {
+        let config = config();
+        let stream = stream_id();
+        let operation = OperationId::new("subject-validation").unwrap();
+        let commit = derive_commit_id(&stream, &operation);
+        let batch = EventBatch::new(
+            commit.clone(),
+            operation,
+            ContentFingerprint::digest("subject-validation"),
+            vec![NewEvent::new(derive_event_id(&commit, 0), "Created", 1, b"{}".to_vec()).unwrap()],
+        )
+        .unwrap()
+        .with_correlation_id(CorrelationId::new("flow.*").unwrap())
+        .with_causation_id(CausationId::new("~").unwrap());
+        let recorded = record_batch(&stream, StreamVersion::ZERO, &batch).unwrap();
+        let payload = encode_events(&config, &stream, &batch, recorded.events())
+            .unwrap()
+            .remove(0);
+        let headers = atomic_headers(config.stream_name());
+        let subject = config.event_subject("Test", "one", Some("flow.*"), Some("~"));
+        assert_eq!(
+            decode_consumed_event(&config, &subject, &headers, &payload)
+                .unwrap()
+                .recorded,
+            recorded.events()[0]
+        );
+        for wrong in [
+            config.event_subject("Other", "one", Some("flow.*"), Some("~")),
+            config.event_subject("Test", "other", Some("flow.*"), Some("~")),
+            config.event_subject("Test", "one", Some("other"), Some("~")),
+            config.event_subject("Test", "one", Some("flow.*"), None),
+            config.aggregate_history_subject_filter("Test", "one"),
+            subject.replace("%2A", "%2a"),
+            format!("{subject}.extra"),
+        ] {
+            let error = decode_consumed_event(&config, &wrong, &headers, &payload)
+                .err()
+                .unwrap();
+            assert_eq!(error.kind(), EventStoreErrorKind::CorruptHistory);
+            assert_eq!(
+                error.message(),
+                "stored event is on the wrong aggregate subject"
+            );
+        }
+    }
+
+    #[test]
+    fn stored_atomic_headers_require_exact_aggregate_filter_only_on_commit_heads() {
+        let config = config();
+        let stream = stream_id();
+        let filter = config.aggregate_history_subject_filter("Test", "one");
+        for transactional in [false, true] {
+            for ordinal in [0_usize, 1] {
+                let mut headers = HeaderMap::new();
+                headers.insert("Content-Type", "application/json");
+                headers.insert(NATS_BATCH_ID, "override-validation");
+                headers.insert(
+                    NATS_BATCH_SEQUENCE,
+                    ordinal.checked_add(1_usize).unwrap().to_string(),
+                );
+                if ordinal == 0 {
+                    headers.insert(NATS_EXPECTED_STREAM, config.stream_name());
+                    headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
+                } else if !transactional {
+                    headers.insert(NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL);
+                }
+                let without_override = headers.clone();
+                if ordinal == 0 {
+                    headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT, filter.clone());
+                }
+                let schema = if transactional {
+                    TRANSACTION_EVENT_SCHEMA_VERSION
+                } else {
+                    EVENT_SCHEMA_VERSION
+                };
+                let validate = |headers: &HeaderMap| {
+                    validate_atomic_headers(
+                        &config,
+                        &stream,
+                        headers,
+                        schema,
+                        ordinal,
+                        2,
+                        ordinal,
+                        Some(0),
+                    )
+                };
+                validate(&headers).expect("canonical atomic headers");
+                if ordinal == 0 {
+                    for replacement in [
+                        None,
+                        Some(config.event_subject("Test", "one", None, None)),
+                        Some(config.aggregate_history_subject_filter("Test", "other")),
+                        Some(config.aggregate_subject_filter()),
+                    ] {
+                        let mut invalid = without_override.clone();
+                        if let Some(replacement) = replacement {
+                            invalid
+                                .insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT, replacement);
+                        }
+                        assert_eq!(
+                            validate(&invalid).unwrap_err().kind(),
+                            EventStoreErrorKind::CorruptHistory
+                        );
+                    }
+                    headers.append(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT, filter.clone());
+                } else {
+                    headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT, filter.clone());
+                }
+                assert_eq!(
+                    validate(&headers).unwrap_err().kind(),
+                    EventStoreErrorKind::CorruptHistory
+                );
+            }
+        }
     }
 
     #[test]
@@ -4495,9 +4679,11 @@ mod tests {
 
         let config = config();
         let stream_id = stream_id();
-        let subject = config.aggregate_subject(
+        let subject = config.event_subject(
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
+            Some("correlation-1"),
+            Some("causation-1"),
         );
         let decoded = decode_event(
             &config,
@@ -4561,9 +4747,11 @@ mod tests {
         let payload = encode_events(&config, &stream_id, &batch, recorded.events())
             .unwrap()
             .remove(0);
-        let subject = config.aggregate_subject(
+        let subject = config.event_subject(
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
+            None,
+            None,
         );
         let headers = atomic_headers(config.stream_name());
         decode_event(
@@ -4632,9 +4820,15 @@ mod tests {
         headers.insert(NATS_BATCH_SEQUENCE, "1");
         headers.insert(NATS_EXPECTED_STREAM, config.stream_name());
         headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
-        let subject = config.aggregate_subject(
+        headers.insert(
+            NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT,
+            config.aggregate_history_subject_filter("Test", "one"),
+        );
+        let subject = config.event_subject(
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
+            None,
+            None,
         );
         let decoded = decode_event(
             &config,
@@ -5046,9 +5240,11 @@ mod tests {
         .unwrap();
         let batch = EventBatch::new(commit_id, operation_id, fingerprint, vec![event]).unwrap();
         let recorded = record_batch(&stream_id, StreamVersion::ZERO, &batch).unwrap();
-        let subject = config.aggregate_subject(
+        let subject = config.event_subject(
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
+            None,
+            None,
         );
 
         let mut legacy_payload = encode_events(&config, &stream_id, &batch, recorded.events())
@@ -5079,6 +5275,10 @@ mod tests {
         transaction_headers.insert(NATS_BATCH_SEQUENCE, "1");
         transaction_headers.insert(NATS_EXPECTED_STREAM, config.stream_name());
         transaction_headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
+        transaction_headers.insert(
+            NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT,
+            config.aggregate_history_subject_filter("Test", "one"),
+        );
         decode_event(
             &config,
             &subject,

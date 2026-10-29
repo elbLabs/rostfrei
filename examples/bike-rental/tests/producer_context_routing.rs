@@ -8,13 +8,15 @@ use bike_rental::{
     demo::{demo_fixture, demo_stream},
     tracer,
 };
+use futures_util::{StreamExt as _, TryStreamExt as _};
 use rostfrei::messaging::{
     DeliveryDisposition, IntegrationEventAddress, MessageDelivery, MessageHandler,
 };
 use rostfrei::nats::{NatsConnectionConfig, connect};
 use rostfrei::tracer::{
     ExposeTracePayloadsForLocalDevelopment, NatsApplication, NatsHostError, NatsRuntime,
-    NatsRuntimeConfig, ObservationFeed, ObservationScope, TracerConfig, http::HttpConfig,
+    NatsRuntimeConfig, ObservationFeed, ObservationScope, ObservationStatus, OperationMode,
+    TracerConfig, http::HttpConfig,
 };
 use rostfrei::{ApplicationName, CommittedEventContext, IntegrationEvent, IntegrationEventBus};
 use serde::{Deserialize, Serialize};
@@ -61,6 +63,68 @@ impl MessageHandler<IntegrationEventAddress> for RecordIntegration {
         let _ = self.0.send(delivery.address().clone());
         DeliveryDisposition::Acknowledge
     }
+}
+
+async fn broker_evidence(
+    connection: &rostfrei::nats::NatsConnection,
+    runtime: &NatsRuntime,
+) -> Result<serde_json::Value, Box<dyn Error + Send + Sync>> {
+    let topology = runtime.config().messaging.topology();
+    let mut streams = Vec::new();
+    for name in [
+        runtime.config().event_store.stream_name(),
+        topology.integration_event_stream().as_str(),
+        topology.quarantine_stream().as_str(),
+    ] {
+        let stream = connection.jetstream().get_stream(name).await?;
+        let info = stream.cached_info();
+        let consumers: Vec<_> = stream.consumers().take(16).try_collect().await?;
+        let consumers: Vec<_> = consumers
+            .iter()
+            .map(|consumer| {
+                serde_json::json!({
+                    "name": consumer.name,
+                    "filter": consumer.config.filter_subject,
+                    "delivered": consumer.delivered.stream_sequence,
+                    "ack_floor": consumer.ack_floor.stream_sequence,
+                    "pending": consumer.num_pending,
+                    "ack_pending": consumer.num_ack_pending,
+                    "redelivered": consumer.num_redelivered,
+                    "ack_wait_ms": consumer.config.ack_wait.as_millis(),
+                    "waiting": consumer.num_waiting,
+                })
+            })
+            .collect();
+        let mut messages = Vec::new();
+        for sequence in (info.state.first_sequence..=info.state.last_sequence).take(16) {
+            if sequence == 0 {
+                continue;
+            }
+            let stored = stream.get_raw_message(sequence).await?;
+            let payload: serde_json::Value = serde_json::from_slice(&stored.payload)?;
+            let identity = payload.get("event").unwrap_or(&payload);
+            messages.push(serde_json::json!({
+                "sequence": sequence,
+                "subject": stored.subject.as_str(),
+                "id": identity.get("eventId").or_else(|| identity.get("message_id")),
+                "event_type": identity.get("eventType"),
+                "correlation": identity.get("correlationId").or_else(|| identity.get("correlation_id")),
+                "causation": identity.get("causationId").or_else(|| identity.get("causation_id")),
+                "quarantine_reason": payload.get("reason"),
+            }));
+        }
+        streams.push(serde_json::json!({
+            "name": name,
+            "subjects": info.config.subjects,
+            "state": {"messages": info.state.messages, "last_sequence": info.state.last_sequence},
+            "consumers": consumers,
+            "messages": messages,
+        }));
+    }
+    Ok(serde_json::json!({
+        "scope": format!("{:?}", runtime.config().context.traffic_scope()),
+        "streams": streams,
+    }))
 }
 
 #[tokio::test]
@@ -215,7 +279,13 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
-        .await??;
+        .await
+        .map_err(|_| {
+            format!(
+                "mapped domain event timed out in {:?}",
+                runtime.config().context.traffic_scope()
+            )
+        })??;
         let rented = history.last().ok_or("mapped command event")?;
         assert_eq!(rented.event_type(), "bicycle-rented");
         assert_eq!(rented.correlation_id(), source.correlation_id());
@@ -241,7 +311,13 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
-        .await??;
+        .await
+        .map_err(|_| {
+            format!(
+                "mapped command response timed out in {:?}",
+                runtime.config().context.traffic_scope()
+            )
+        })??;
         let response = responses.get_raw_message(sequence).await?;
         let response: rostfrei::messaging::CommandResponse =
             serde_json::from_slice(&response.payload)?;
@@ -286,7 +362,7 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
         tokio::time::timeout(Duration::from_secs(5), other_received.recv()).await?,
         Some(other.integration_event_address(OtherProducerChanged::EVENT_NAME)?)
     );
-    tokio::time::timeout(Duration::from_secs(10), async {
+    let observed = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let snapshot = feed.snapshot();
             if let Some(summary) = snapshot.items.iter().find(|flow| flow.message_count == 4) {
@@ -307,9 +383,138 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
-    .await??;
+    .await;
+    if observed.is_err() {
+        let snapshot = feed.snapshot();
+        let test_evidence = broker_evidence(&connection, host.runtime()).await?;
+        let normal_evidence = broker_evidence(&connection, &normal).await?;
+        host.shutdown().await?;
+        connection.drain().await?;
+        return Err(format!(
+            "producer observation timed out: {snapshot:?}; Test broker: {test_evidence}; Normal broker: {normal_evidence}"
+        ).into());
+    }
+    observed??;
     host.shutdown().await?;
     connection.drain().await?;
+    Ok(())
+}
+
+struct PausedIntegration {
+    entered: tokio::sync::mpsc::UnboundedSender<()>,
+    release: Arc<tokio::sync::Notify>,
+    completed: tokio::sync::mpsc::UnboundedSender<()>,
+}
+
+#[async_trait]
+impl MessageHandler<IntegrationEventAddress> for PausedIntegration {
+    async fn handle(&self, _: MessageDelivery<IntegrationEventAddress>) -> DeliveryDisposition {
+        let _ = self.entered.send(());
+        self.release.notified().await;
+        let _ = self.completed.send(());
+        DeliveryDisposition::Acknowledge
+    }
+}
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "attachment, replacement and failure share one paused delivery"
+)]
+async fn attaching_observation_preserves_an_in_flight_integration_handler()
+-> Result<(), Box<dyn Error + Send + Sync>> {
+    let connection = connect(&NatsConnectionConfig::new(
+        "producer-attach-observer",
+        rostfrei::testing::integration::nats_url()?,
+    ))
+    .await?;
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let application = ApplicationName::new(format!("producer-observer-{suffix}"))?;
+    let (entered, mut started) = tokio::sync::mpsc::unbounded_channel();
+    let (completed, mut finished) = tokio::sync::mpsc::unbounded_channel();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut bindings = tracer::bindings()?;
+    bindings.register_integration_handler::<ProducerChanged, _>(PausedIntegration {
+        entered,
+        release: release.clone(),
+        completed,
+    });
+    let host = NatsApplication::builder(
+        application.test_bounded_context("bike-rental")?,
+        connection.clone(),
+        Arc::new(bindings),
+    )?
+    .with_fresh_completed_outcome_epoch("observer-attachment")?
+    .with_default_test_fixture(demo_fixture()?)
+    .provision_and_start()
+    .await?;
+    let history = host.runtime().store().load(&demo_stream()).await?;
+    let source = history.first().ok_or("source fixture event")?;
+    IntegrationEventBus::new(
+        application.test_bounded_context("producer")?,
+        Arc::new(
+            connection.messaging_adapter(host.runtime().config().messaging.topology().clone()),
+        ),
+    )
+    .publish(CommittedEventContext::new(source)?, ProducerChanged)
+    .await?;
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), started.recv()).await?,
+        Some(())
+    );
+    let feed = ObservationFeed::new(application.clone(), ObservationScope::Test);
+    let tracer = host
+        .runtime()
+        .tracer_builder()
+        .with_continuous_observation(feed.clone())
+        .build()?;
+    // Both first attachment and replacement of the same named source must leave
+    // the application handler alive, while waiting for the old source to release.
+    for _ in 0..2 {
+        host.runtime()
+            .attach_observer(tracer.correlation_observer(OperationMode::Test))
+            .await?;
+        assert!(host.runtime().has_correlation_observer().await);
+        assert_eq!(feed.snapshot().status, ObservationStatus::Live);
+    }
+    // A source-registration failure exercises attachment rollback without
+    // interrupting the broker resources needed by the paused application handler.
+    let unavailable_feed = ObservationFeed::new(application, ObservationScope::Test);
+    let occupied = unavailable_feed.source("bike-rental")?;
+    let invalid_tracer = host
+        .runtime()
+        .tracer_builder()
+        .with_continuous_observation(unavailable_feed)
+        .build()?;
+    let failed = host
+        .runtime()
+        .attach_observer(invalid_tracer.correlation_observer(OperationMode::Test))
+        .await;
+    assert!(matches!(failed, Err(NatsHostError::Observation(_))));
+    assert!(!host.runtime().has_correlation_observer().await);
+    assert_eq!(feed.snapshot().status, ObservationStatus::Unavailable);
+    drop(occupied);
+    host.runtime()
+        .attach_observer(tracer.correlation_observer(OperationMode::Test))
+        .await?;
+    assert!(host.runtime().has_correlation_observer().await);
+    assert_eq!(feed.snapshot().status, ObservationStatus::Live);
+    release.notify_one();
+    let completed = tokio::time::timeout(Duration::from_secs(2), finished.recv()).await;
+    let evidence = if completed.is_err() {
+        Some(broker_evidence(&connection, host.runtime()).await?)
+    } else {
+        None
+    };
+    host.shutdown().await?;
+    assert_eq!(feed.snapshot().status, ObservationStatus::Unavailable);
+    connection.drain().await?;
+    assert!(
+        matches!(completed, Ok(Some(()))),
+        "observer attachment cancelled the running handler: {completed:?}; broker: {evidence:?}",
+    );
     Ok(())
 }
 
