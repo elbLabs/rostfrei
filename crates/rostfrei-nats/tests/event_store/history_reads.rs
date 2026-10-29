@@ -481,9 +481,11 @@ async fn history_replay_ignores_concurrent_appends_after_its_cutoff() -> TestRes
         // Even malformed bytes beyond the captured cutoff must not affect this read.
         context
             .publish(
-                store.config().aggregate_subject(
+                store.config().event_subject(
                     aggregate.aggregate_type().as_str(),
                     aggregate.aggregate_id().as_str(),
+                    None,
+                    None,
                 ),
                 b"later malformed event".to_vec().into(),
             )
@@ -552,7 +554,7 @@ async fn history_replay_does_not_touch_durable_progress() -> TestResult<()> {
     let consumer = broker_stream
         .create_consumer(async_nats::jetstream::consumer::pull::Config {
             durable_name: Some("application-progress".to_owned()),
-            filter_subject: store.config().aggregate_subject(
+            filter_subject: store.config().aggregate_history_subject_filter(
                 aggregate.aggregate_type().as_str(),
                 aggregate.aggregate_id().as_str(),
             ),

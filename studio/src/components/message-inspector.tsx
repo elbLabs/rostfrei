@@ -82,12 +82,12 @@ export function MessageInspector({
                   ? "Root command. Evaluates the fixture state; the fixture is not its cause."
                   : parent && node.edgeFidelity === "exact"
                     ? `${view === "expected" ? "Expected after" : view === "predicted" ? "Predicted after" : "Caused by"} ${parent.name}.`
-                    : view === "indexed" &&
+                    : view === "retained" &&
                         node.causationId &&
                         node.causationId === node.messageId
                       ? "Origin of this correlation. The message names itself as its cause."
-                      : view === "indexed" && node.causationId
-                        ? `Caused by a message outside the index, such as the command that raised it; commands are not indexed.${siblings ? ` ${siblings} other ${siblings === 1 ? "event shares" : "events share"} this cause.` : ""}`
+                      : view === "retained" && node.causationId
+                        ? `Cause not returned in these retained events. Its type and reason for absence are unknown.${siblings ? ` ${siblings} other ${siblings === 1 ? "event shares" : "events share"} this cause.` : ""}`
                         : node.kind === "command" &&
                             node.subject !== false &&
                             !node.causationId
@@ -103,8 +103,10 @@ export function MessageInspector({
             <PayloadList
               payload={node.payload}
               unavailable={
-                view === "indexed"
-                  ? "Not loaded. The correlation index stores metadata only; Tracer adds payloads for the anchor's own events."
+                view === "retained"
+                  ? node.kind === "integration-event"
+                    ? "Not loaded in this response. Integration references contain metadata only."
+                    : "Not loaded in this response. Domain payloads depend on the selected anchor, included contexts and Tracer's payload policy."
                   : undefined
               }
             />
@@ -171,16 +173,6 @@ export function MessageInspector({
                   node.occurredAt === undefined
                     ? undefined
                     : new Date(node.occurredAt).toISOString()
-                }
-              />
-              <Metadata
-                label="Stream retention"
-                value={
-                  node.retained === undefined
-                    ? undefined
-                    : node.retained
-                      ? "Retained"
-                      : "Expired; metadata only"
                 }
               />
             </dl>

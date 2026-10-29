@@ -599,9 +599,11 @@ async fn recovered_replay_still_rejects_corrupt_history() -> TestResult<()> {
     let aggregate = stream("corrupt-history")?;
     context
         .publish(
-            store.config().aggregate_subject(
+            store.config().event_subject(
                 aggregate.aggregate_type().as_str(),
                 aggregate.aggregate_id().as_str(),
+                None,
+                None,
             ),
             b"malformed event".to_vec().into(),
         )

@@ -5,6 +5,10 @@ creating an operation or submitting a command. Studio's **Observe** panel discov
 these flows and follows a selected flow as later events arrive. An action can start
 in an application UI, an HTTP handler, a bot, or a background worker.
 
+For earlier evidence still stored in NATS, use
+[retained correlation inspection](#retained-correlation-inspection). It reads
+history on demand, independently of this rolling observation window.
+
 The current adapter captures **domain and integration events**. It does not consume
 the application's command work queue, fabricate missing commands, or establish
 that an external side effect completed. Correlation metadata must be propagated by
@@ -34,8 +38,9 @@ let host = NatsApplication::builder(test_context, connection, bindings)?
     .provision_and_start().await?;
 ```
 
-The feed application must match its runtime; Production requires the separately
-attached Normal runtime. See [host configuration](nats-application-host.md).
+The feed application must match its runtime; Production continuous observation
+requires the separately attached Normal runtime. Retained inspection can also use
+read-only event-store registrations. See [host configuration](nats-application-host.md).
 
 For custom adapters built directly with `TracerBuilder`, its existing
 `with_continuous_observation` accepts the same feeds. Connect the normal NATS event observer to
@@ -165,3 +170,150 @@ traffic. Browser failures and failed detail reads are displayed explicitly.
   reset. A failed or cancelled reset reports unavailable until a successful reset.
   Production observation is unaffected. Broker replay after recreation can include
   fixture domain events; those retain their actual fixture correlation identities.
+
+## Retained correlation inspection
+
+Retained inspection reads domain and integration events by correlation directly
+from configured bounded-context event stores and the shared application integration
+stream. The transport-neutral `CorrelationHistory` contract is implemented by
+`NatsCorrelationHistory`. There is no correlation KV bucket, projection worker,
+or backfill. An attached Normal dispatch runtime automatically registers its
+domain store and the shared integration source. Additional domain sources or an
+inspection-only host use `TracerConfig::with_production_event_store`; no projector
+opt-in is needed. See [host registration](nats-application-host.md#retained-correlation-inspection).
+
+This reader requires the [fresh event-subject format](messaging/subjects.mdx#fresh-deployments).
+It uses native ordered ephemeral consumers with the official `async-nats` batching
+and recovery APIs. The pinned `async-nats` 0.50 client has no `batchDirectGet` API,
+although the server supports batch direct get, so the adapter uses those native
+consumers instead. Reads capture a finite cutoff per source, clean up their
+consumers, and never advance application durables. Reader credentials need scoped
+stream INFO, replay-consumer CREATE/INFO/MSG.NEXT/DELETE, and inbox permissions; no
+application publication permission is required.
+
+A request accepts at most **256 correlation IDs** across **32 sources**, including
+the shared integration stream. Defaults bound the entire request to **2048
+references** and **32 MiB of examined data**; `with_limits` can tighten these.
+Reaching either bound marks every requested chain truncated, including unresolved
+empty chains. Each shared reader handle admits four active requests, each querying
+up to four sources concurrently. The overall deadline is 15 seconds, with
+five-second API/stall timeouts; timeouts fail the read.
+
+The examined-data budget excludes the client's native 500-message prefetch
+buffers: `async-nats` 0.50 exposes no ordered-consumer batch-byte tuning. Successful
+reads await consumer deletion. Cancellation schedules cleanup even when creation
+is still pending; native 30-second inactivity expiry provides a fallback.
+
+### Discovery and access
+
+Fetch `/catalog` with the **production inspection capability**. A configured reader
+advertises `correlations.eventsHrefTemplate` and `correlations.anchors`; each anchor
+has `aggregateType`, `label`, and `correlationsHrefTemplate`. Follow these templates
+and URL-encode identifiers, including `/` in a full aggregate type.
+
+An aggregate opts into anchor discovery with `const ANCHOR: bool = true` in its
+[`AggregateDefinition`](domain-macros/aggregate.mdx). The model/catalog's `anchor`
+flag identifies a viewpoint for inspection, not an ownership or causation rule.
+The anchor ID is an aggregate ID, not an entity ID inside the aggregate. A
+correlation touching multiple anchors can appear under each.
+
+| Request with inspection credentials | Result |
+| --- | --- |
+| `GET /aggregates/{type}/{id}/correlations` | Correlations recorded on the anchor, with retained references from configured sources |
+| `GET /correlations/{id}/events` | JSON containing metadata-only retained references for one correlation |
+
+The existing Control/Dispatch `/correlations/{id}/events` SSE contract continues to
+serve its operation captures. It does not grant retained production-history access.
+An inspection-only host can serve retained JSON reads without command execution.
+Responses use `Cache-Control: private, no-store`.
+
+### Payloads and matching
+
+Direct correlation inspection returns metadata only. Anchored inspection loads the
+anchor's own domain payloads through `TracePayloadPolicy`, whose default omits
+payloads. Other aggregate streams require an explicit `include=context:<name>`,
+including other aggregates in the anchor's own context. Repeat `include` for more
+contexts. Integration references remain metadata-only.
+
+Filter an anchored view with repeated `match=<context>/<event>.<field>=<value>`
+parameters, for example:
+
+```text
+GET /aggregates/ordering%2Forder/O1/correlations?include=context:billing&match=billing/invoiced.amount=10&match=ordering/placed.customer.id=C7
+```
+
+Matches are ANDed: each must find a matching domain event among the loaded,
+policy-filtered payloads in that correlation. Different matches may match different
+events. Field paths address nested fields; numeric segments select array elements.
+Strings, numbers, and booleans can match; missing or redacted fields, nulls,
+objects, arrays, and integration references cannot. Matching another context
+requires its `include`; including a context never bypasses payload policy. All
+references for a matching correlation remain in the result.
+
+If the retained read includes newer anchor events than the initial history load,
+Tracer reloads that history once and applies the same payload policy, keeping
+the original references and source cutoffs. A referenced event still missing
+after reload fails the request.
+
+One anchored request selects at most **256 correlations**, retaining the most
+recently first-seen correlations in the anchor's history. It accepts at most **16
+included contexts**, **64 additional aggregate streams**, and **8 match parameters**.
+An over-broad expansion is rejected rather than silently returning some payloads.
+Anchor selection or any incomplete chain sets top-level `truncated`, even when
+payload matches remove that chain. Each correlation also reports whether its
+native read was truncated. An older correlation omitted by anchor
+selection can still be inspected directly while its evidence is retained.
+
+### Source cutoffs and retained evidence
+
+Both JSON responses carry a `snapshot` describing the sources queried:
+
+```json
+{
+  "snapshot": {
+    "sources": [
+      {
+        "context": "ordering",
+        "kind": "domain",
+        "stream": "SHOP__ORDERING_DOMAIN_EVENTS__SPLIT_<epoch-digest>",
+        "cutoff_sequence": "42"
+      },
+      {
+        "kind": "integration",
+        "stream": "SHOP_INTEGRATION_EVENTS",
+        "cutoff_sequence": "105"
+      }
+    ]
+  }
+}
+```
+
+`cutoff_sequence` is an inclusive broker sequence encoded as a decimal string.
+Domain sources identify their context; the shared integration source has no
+`context`. Cutoffs are captured independently, not as a global atomic snapshot.
+They describe this read, not live source health, projection lag, or business
+completion. Retained responses have no index-lag or source-liveness fields; clients
+must not synthesize zero lag from a successful read.
+
+Evidence follows [source retention](messaging/subjects.mdx#retention). In particular,
+integration retention remains 30 days by default. Expired integration nodes are
+absent, even when surviving domain events still name them as causes. They are not
+reconstructed from domain history. Expiry is different from read truncation:
+`truncated: false` does not promise a complete historical flow. Only explicit
+causation establishes an edge; correlation, timestamps, and an exhausted read do
+not establish business completion. Concurrent expiry can remove records below a
+captured cutoff.
+
+| Condition | HTTP status and code |
+| --- | --- |
+| Complete direct read has no retained references | `404 not-found` |
+| A retained correlation source cannot be read or validated | `503 correlation-read-failed` |
+| Anchor or included aggregate history cannot be read | `503 history-read-failed` |
+| An anchor/include context has no configured history | `501 history-unavailable` |
+| Retained history reader is not configured | `501 correlation-history-unavailable` |
+
+A source failure fails the request rather than returning a healthy empty or partial
+result. A truncated direct read may return an empty `refs` array with
+`truncated: true`; it cannot establish absence. An existing anchor with no
+correlations returns an empty list, while an unknown anchor type or stream returns
+404. See the [HTTP contract tests](../crates/rostfrei-tracer/tests/correlations.rs).

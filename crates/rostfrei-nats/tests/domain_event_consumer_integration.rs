@@ -429,7 +429,7 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         .expect("cross-stream transaction");
     assert_eq!(transaction_outcome.receipt().events().len(), 2);
     let transaction_final_sequence = event_stream
-        .get_last_raw_message_by_subject(&event_store_config.aggregate_subject(
+        .get_last_raw_message_by_subject(&event_store_config.aggregate_history_subject_filter(
             transaction_destination.aggregate_type().as_str(),
             transaction_destination.aggregate_id().as_str(),
         ))
@@ -862,9 +862,11 @@ async fn stage_uncommitted_batch(
     config: &NatsEventStoreConfig,
 ) -> TestResult<Vec<u8>> {
     let staged_stream = stream("staged")?;
-    let subject = config.aggregate_subject(
+    let subject = config.event_subject(
         staged_stream.aggregate_type().as_str(),
         staged_stream.aggregate_id().as_str(),
+        None,
+        None,
     );
     let mut headers = HeaderMap::new();
     headers.insert("Content-Type", "application/json");
@@ -980,9 +982,11 @@ async fn commit_schema_four_event_without_receipt(
         event: &content,
     })?;
     let batch_id = "schema-four-with-unrelated-filler";
-    let subject = config.aggregate_subject(
+    let subject = config.event_subject(
         stream_id.aggregate_type().as_str(),
         stream_id.aggregate_id().as_str(),
+        None,
+        None,
     );
     let mut event_headers = HeaderMap::new();
     event_headers.insert("Content-Type", "application/json");
@@ -991,6 +995,13 @@ async fn commit_schema_four_event_without_receipt(
     event_headers.insert(NATS_BATCH_SEQUENCE, "1");
     event_headers.insert(NATS_EXPECTED_STREAM, config.stream_name());
     event_headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
+    event_headers.insert(
+        "Nats-Expected-Last-Subject-Sequence-Subject",
+        config.aggregate_history_subject_filter(
+            stream_id.aggregate_type().as_str(),
+            stream_id.aggregate_id().as_str(),
+        ),
+    );
     let staged = client
         .send_request(
             subject,

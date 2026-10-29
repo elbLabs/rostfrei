@@ -50,10 +50,16 @@ async fn observer_reads_new_persisted_messages_without_advancing_worker_consumer
     let application = ApplicationName::new(format!("correlation-{suffix}"))?;
     let domain_stream = format!("CORRELATION_{suffix}_DOMAIN").to_ascii_uppercase();
     let integration_stream = format!("CORRELATION_{suffix}_INTEGRATION").to_ascii_uppercase();
-    let domain_subject = format!("{}.domain.test.aggregate.one", application.as_str());
+    let domain_subject = format!(
+        "{}.domain.test.aggregate.Test.one.flow.cause",
+        application.as_str()
+    );
     let transaction_subject = format!("{}.domain.test.transaction.receipt", application.as_str());
-    let domain_subject_filter = format!("{}.domain.test.aggregate.*", application.as_str());
-    let integration_subject = format!("{}.integration.test-event", application.as_str());
+    let domain_subject_filter = format!("{}.domain.test.aggregate.*.*.*.*", application.as_str());
+    let integration_subject = format!(
+        "{}.integration.test.test-event.flow.cause",
+        application.as_str()
+    );
     let client = native_connection_support::client(nats_url).await?;
     let context = jetstream::new(client.clone());
     let domain_config = stream_config(

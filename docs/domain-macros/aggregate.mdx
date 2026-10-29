@@ -15,3 +15,9 @@ impl AggregateDefinition for RentalFleetAggregate {
     type Event = RentalFleetEvent;
 }
 ```
+
+Set `const ANCHOR: bool = true` in `AggregateDefinition` to advertise this aggregate
+as an inspection anchor (the default is `false`). The domain model and Tracer
+catalog expose the `anchor` flag. It selects a viewpoint for
+[retained correlation inspection](../continuous-observation.md#retained-correlation-inspection);
+it does not change aggregate ownership or event storage.

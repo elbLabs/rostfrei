@@ -9,7 +9,7 @@ use futures_util::future::try_join_all;
 
 use super::{
     EventStoreError, History, HistoryBuilder, NatsEventStoreConfig, StreamId, corrupt,
-    decode_event, unavailable,
+    decode_event, matches_history_subject, unavailable,
 };
 
 const MAX_HISTORY_READ_RANGES: u64 = 8;
@@ -120,7 +120,7 @@ async fn load_prefix_with_parallelism(
     let Some(first) = stream.next(subject, 1).await? else {
         return fold.finish(last_sequence, truncated_at_snapshot);
     };
-    if first.subject.as_str() != subject || first.sequence == 0 {
+    if !matches_history_subject(first.subject.as_str(), subject) || first.sequence == 0 {
         return Err(corrupt(
             "aggregate history returned an invalid first message",
         ));
@@ -159,7 +159,7 @@ async fn load_prefix_with_parallelism(
             window_end = *range.end();
             loop {
                 for message in chunk.messages {
-                    fold.push(config, stream_id, subject, &message)?;
+                    fold.push(config, stream_id, &message)?;
                     wave_events = wave_events.saturating_add(1);
                 }
                 match chunk.progress {
@@ -251,7 +251,7 @@ async fn read_chunk(
         let Some(message) = response else {
             break Progress::Exhausted;
         };
-        if message.subject.as_str() != subject {
+        if !matches_history_subject(message.subject.as_str(), subject) {
             return Err(corrupt("aggregate history contains the wrong subject"));
         }
         if message.sequence < cursor {
@@ -310,7 +310,6 @@ impl HistoryFold {
         &mut self,
         config: &NatsEventStoreConfig,
         stream_id: &StreamId,
-        subject: &str,
         message: &StreamMessage,
     ) -> Result<(), EventStoreError> {
         if message.sequence <= self.last_seen_sequence {
@@ -320,7 +319,7 @@ impl HistoryFold {
         }
         let decoded = decode_event(
             config,
-            subject,
+            message.subject.as_str(),
             stream_id,
             Some(self.last_commit_sequence),
             message.sequence,
@@ -665,8 +664,12 @@ mod tests {
             .unwrap()
             .pop()
             .unwrap();
-        let subject =
-            config.aggregate_subject(id.aggregate_type().as_str(), id.aggregate_id().as_str());
+        let subject = config.event_subject(
+            id.aggregate_type().as_str(),
+            id.aggregate_id().as_str(),
+            None,
+            None,
+        );
         for sequence in [1, 1000, 1_000_000_000, u64::MAX] {
             let mut event = message(&subject, sequence);
             event.payload = payload.clone().into();
@@ -680,6 +683,13 @@ mod tests {
             ] {
                 event.headers.insert(name, value);
             }
+            event.headers.insert(
+                "Nats-Expected-Last-Subject-Sequence-Subject",
+                config.aggregate_history_subject_filter(
+                    id.aggregate_type().as_str(),
+                    id.aggregate_id().as_str(),
+                ),
+            );
             let reader = SparseReader {
                 event,
                 calls: AtomicUsize::new(0),
@@ -741,8 +751,12 @@ mod tests {
         )
         .unwrap();
         let recorded = record_batch(id, StreamVersion::new(base_version), &batch).unwrap();
-        let subject =
-            config.aggregate_subject(id.aggregate_type().as_str(), id.aggregate_id().as_str());
+        let subject = config.event_subject(
+            id.aggregate_type().as_str(),
+            id.aggregate_id().as_str(),
+            None,
+            None,
+        );
         encode_events(config, id, &batch, recorded.events())
             .unwrap()
             .into_iter()
@@ -760,6 +774,13 @@ mod tests {
                     offset.checked_add(1).unwrap().to_string(),
                 );
                 if index == 0 {
+                    event.headers.insert(
+                        "Nats-Expected-Last-Subject-Sequence-Subject",
+                        config.aggregate_history_subject_filter(
+                            id.aggregate_type().as_str(),
+                            id.aggregate_id().as_str(),
+                        ),
+                    );
                     event
                         .headers
                         .insert("Nats-Expected-Stream", config.stream_name());
@@ -779,8 +800,10 @@ mod tests {
     #[tokio::test]
     async fn wave_boundaries_preserve_pending_commits_and_reject_omissions() {
         let (config, id) = fixture();
-        let subject =
-            config.aggregate_subject(id.aggregate_type().as_str(), id.aggregate_id().as_str());
+        let subject = config.aggregate_history_subject_filter(
+            id.aggregate_type().as_str(),
+            id.aggregate_id().as_str(),
+        );
         let mut messages = Vec::new();
         for commit in 0_u64..12 {
             let base = commit.checked_mul(100).unwrap();
@@ -841,8 +864,10 @@ mod tests {
     #[tokio::test]
     async fn byte_limited_final_window_carries_lookahead_and_preserves_commit_order() {
         let (config, id) = fixture();
-        let subject =
-            config.aggregate_subject(id.aggregate_type().as_str(), id.aggregate_id().as_str());
+        let subject = config.aggregate_history_subject_filter(
+            id.aggregate_type().as_str(),
+            id.aggregate_id().as_str(),
+        );
         // Three records in the final window, each larger than the byte budget.
         let mut messages = commit_messages(&config, &id, 0, 1, 0, 1, 2);
         messages.extend(commit_messages(&config, &id, 1, 897, 1, 3, 300 * 1024));
@@ -878,8 +903,10 @@ mod tests {
     #[tokio::test]
     async fn sparse_event_spacing_does_not_multiply_every_lookup_by_lane_count() {
         let (config, id) = fixture();
-        let subject =
-            config.aggregate_subject(id.aggregate_type().as_str(), id.aggregate_id().as_str());
+        let subject = config.aggregate_history_subject_filter(
+            id.aggregate_type().as_str(),
+            id.aggregate_id().as_str(),
+        );
         let mut messages = Vec::new();
         let mut previous = 0;
         for version in 0_u64..100 {

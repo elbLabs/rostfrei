@@ -108,7 +108,7 @@ export function MessageGraph({
   const layout = useMemo(() => layoutMessageGraph(nodes), [nodes])
   const contextTones = useMemo(() => {
     const tones = new Map<string, number>()
-    if (view === "indexed")
+    if (view === "retained")
       for (const node of nodes)
         if (node.boundedContext && !tones.has(node.boundedContext))
           tones.set(node.boundedContext, tones.size % 4)
@@ -131,9 +131,9 @@ export function MessageGraph({
           : null
       setSelectedId(id)
       setDetailsOpen(true)
-      if (canvas) setCanvasInspectorOpen(true)
+      if (canvas || view === "retained") setCanvasInspectorOpen(true)
     },
-    [canvas]
+    [canvas, view]
   )
   const flowNodes = useMemo<MessageFlowNode[]>(
     () =>
@@ -227,8 +227,8 @@ export function MessageGraph({
           ? "Incomplete execution"
           : view === "predicted"
             ? "Historical simulation (uncommitted)"
-            : view === "indexed"
-              ? "Indexed correlation chain"
+            : view === "retained"
+              ? "Retained correlation events"
               : "Observed flow"
   const dismissInspector = () => {
     setDetailsOpen(false)
@@ -306,8 +306,8 @@ export function MessageGraph({
                             ? "Root command"
                             : parent && node.edgeFidelity === "exact"
                               ? `${view === "expected" ? "Expected after" : "Caused by"} ${parent.name}`
-                              : view === "indexed"
-                                ? `${node.boundedContext ?? "Unknown context"} · ${node.causationId && node.causationId === node.messageId ? "origin" : "cause not indexed"}`
+                              : view === "retained"
+                                ? `${node.boundedContext ?? "Unknown context"} · ${node.causationId && node.causationId === node.messageId ? "origin" : "cause not returned"}`
                                 : "Associated message · no resolved cause"}
                     </p>
                     <MessageCard
@@ -362,8 +362,8 @@ export function MessageGraph({
               ? "Expected causation"
               : view === "predicted"
                 ? "Predicted causation"
-                : view === "indexed"
-                  ? "Indexed causation"
+                : view === "retained"
+                  ? "Recorded causation"
                   : "Causal link"}
           </span>
           <span>
@@ -372,8 +372,8 @@ export function MessageGraph({
           </span>
           {uncertain && (
             <span className="uncertain-note">
-              {view === "indexed"
-                ? "Some causes are outside the index (commands are not indexed)"
+              {view === "retained"
+                ? "Some causes are not in these retained events"
                 : "Some messages have no resolved cause"}
             </span>
           )}
@@ -475,7 +475,7 @@ function MessageCard({
         <Icon size={13} />
         {kindLabels[node.kind]}
         {node.context && <span className="fixture-tag">Fixture</span>}
-        {!node.context && view === "indexed" && node.boundedContext && (
+        {!node.context && view === "retained" && node.boundedContext && (
           <span
             className="context-tag"
             data-context-tone={contextTone}

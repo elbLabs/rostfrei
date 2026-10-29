@@ -60,10 +60,57 @@ only the Test window and suppresses collection during replay; a failed reset kee
 Test unavailable until recovery. Applications supply feeds, not observer handlers
 or duplicate binding registrations. The compatibility `start_correlation_observer`
 entry point uses the same source handling; its returned task is caller-supervised.
+Attaching or replacing observation preserves running application workers and their
+in-flight deliveries. Reset and shutdown still stop the owned observer and workers.
 
 See [continuous observation](continuous-observation.md) for retention, payload
 policy, HTTP/SSE and Studio semantics. These observers capture externally initiated
 domain/integration events as well as evidence for Tracer-created operations.
+
+### Retained correlation inspection
+
+Attaching a Normal runtime with `TracerConfig::with_dispatch_runtime` automatically
+registers its domain store and the application's shared Normal integration stream
+for on-demand correlation reads. There is no projector flag or background index.
+Add other contexts with their existing `NatsEventStoreConfig`:
+
+```rust,ignore
+// billing_events describes the already-provisioned Normal billing event store.
+let tracer = TracerConfig::new(listener, http)
+    .with_dispatch_runtime(normal_runtime)
+    .with_production_event_store(billing_events);
+```
+
+An inspection-only host can register histories without a dispatch runtime:
+
+```rust,ignore
+let tracer = TracerConfig::new(
+    listener,
+    HttpConfig::inspection_only(inspection_token)?,
+)
+.with_production_event_store(ordering_events)
+.with_production_event_store(billing_events);
+```
+
+Each config must match the host application and Normal traffic scope, including
+the deployed authority epoch. Conflicting configs for the same context are
+rejected. These registrations connect read-only to existing resources; they do
+not provision resources or start application workers for those configs. The
+shared integration topology uses the attached Normal runtime's configuration,
+or the host application's Normal defaults for inspection-only registration.
+Source credentials need the [retained reader's permissions](continuous-observation.md#retained-correlation-inspection).
+
+For manual composition, use
+`TracerBuilder::with_correlation_history(Arc<dyn CorrelationHistory>)` and
+`with_production_history(context, Arc<dyn EventHistory>)`. The latter supplies
+aggregate history for anchor and explicitly included payload reads.
+
+Retained inspection uses the production inspection HTTP capability and follows
+[source retention](messaging/subjects.mdx#retention). See
+[retained correlation inspection](continuous-observation.md#retained-correlation-inspection)
+for catalog discovery, payload policy, cutoffs, and errors. Its
+[fresh-namespace requirement](messaging/subjects.mdx#fresh-deployments) is separate
+from outcome-epoch selection.
 
 ### Typed cross-context integration commands
 
@@ -129,9 +176,11 @@ HTTP and correlation-observer workers are absent and HTTP tokens are unnecessary
 Writable startup requires explicit fresh split authority selection through
 `with_fresh_completed_outcome_epoch`. Bike rental reads
 `ROSTFREI_COMPLETED_OUTCOME_EPOCH` for both isolated Test and Normal configurations.
-Use an owned disposable application/broker for qualification. Existing histories
-remain legacy/read-only unless the operator performs an explicit fenced cutover;
-an application name alone is not authority selection.
+Use an owned disposable application/broker for qualification. Existing legacy
+authorities remain read-only unless the operator performs an explicit fenced
+cutover; an application name alone is not authority selection. Older event-subject
+formats additionally require their compatible readers; the current format supports
+[fresh namespaces](messaging/subjects.mdx#fresh-deployments) only.
 
 ### Effective codecs and execution profile
 
@@ -199,9 +248,10 @@ uses it automatically. History reads do not themselves verify authority health.
   delivery headers and envelopes. Integration events use the registered typed
   codecs, including provenance-derived identity checks. Evidence uses actual
   committed events; retired simulation requests return 404 without publication.
-- Production Dispatch/inspection is attached only with an explicitly supplied
-  Normal `NatsRuntime` through `TracerConfig::with_dispatch_runtime`. The host
-  supervises that runtime too. Test reset cannot select Normal resources.
+- Production Dispatch uses an explicitly supplied Normal `NatsRuntime` through
+  `TracerConfig::with_dispatch_runtime`; the host supervises that runtime too.
+  Retained inspection also accepts read-only `with_production_event_store`
+  registrations without Dispatch. Test reset cannot select Normal resources.
 - Shutdown retains broker data. Reset is the explicit destructive operation.
 
 Handler simulation remains diagnostic-only: no operation, durable outcome, command

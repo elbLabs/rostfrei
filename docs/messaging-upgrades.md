@@ -52,6 +52,20 @@ not merely accepting a payload. Test with genuine historical records, then execu
 current commands and reload the mixed history. Historical decoders do not require
 parallel historical business implementations.
 
+## Stored event-subject deployment
+
+The current [event-subject format](messaging/subjects.mdx#stored-event-subjects)
+adds encoded correlation and causation to domain and integration subjects, with
+separate aggregate type and ID tokens for domain history. This is a physical
+storage/subscription change, independent of payload schema versions, logical
+integration addresses, deterministic identities, and durable names.
+
+Deploy it only in a [fresh namespace](messaging/subjects.mdx#fresh-deployments).
+Existing resource mismatches are rejected; neither a schema bump nor a new outcome
+epoch migrates old subjects. Update external subscribers and NATS ACLs to match the
+new suffix filters. The supported integration publisher requires a canonical
+envelope, derives its control identities, and checks transport metadata consistency.
+
 ## Durable consumer versions
 
 Names follow `<application>[--test]--<context>--<purpose>--v<major>`. The suffix

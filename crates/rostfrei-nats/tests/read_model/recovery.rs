@@ -282,7 +282,15 @@ impl Recovery {
         );
         assert_eq!(record.source_sequence(), original.sequence());
         assert_eq!(record.message_id(), envelope.message_id().as_str());
-        assert_eq!(record.address(), self.consumer.address().as_str());
+        assert_eq!(
+            record.address(),
+            rostfrei_nats::IntegrationEventSubject::new(
+                self.consumer.address().clone(),
+                envelope.correlation_id().clone(),
+                envelope.causation_id().cloned(),
+            )?
+            .as_str(),
+        );
         assert!(!record.payload_truncated());
         if expected_kind == QuarantineFailureKind::HandlerFailure {
             assert!(record.reason().contains("snapshot not materialized"));

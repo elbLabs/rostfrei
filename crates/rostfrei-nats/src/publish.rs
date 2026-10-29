@@ -19,6 +19,7 @@ use tokio::time::timeout;
 
 use crate::{
     error::NatsError,
+    integration_subject::{IntegrationEventSubject, outbound_envelope},
     messaging_config::{MessagingTopology, StreamName},
 };
 
@@ -92,9 +93,26 @@ impl NatsPublisher {
         message: OutboundMessage<IntegrationEventAddress>,
         publish_timeout: Duration,
     ) -> Result<NatsPublishAck, NatsError> {
-        self.publish_with_ack(
-            message,
+        if message.address().application() != self.topology.application().as_str()
+            || message.address().traffic_scope() != self.topology.traffic_scope()
+        {
+            return Err(NatsError::InvalidMessage);
+        }
+        let envelope = outbound_envelope(&message)?;
+        let subject = IntegrationEventSubject::new(
+            message.address().clone(),
+            envelope.correlation_id().clone(),
+            envelope.causation_id().cloned(),
+        )?;
+        let mut headers = safe_headers(message.metadata(), message.trace_context());
+        headers.insert(CORRELATION_ID_HEADER, envelope.correlation_id().as_str());
+        publish_confirmed(
+            &self.context,
+            subject.as_str(),
+            message.payload(),
+            message.message_id().as_str(),
             self.topology.integration_event_stream(),
+            headers,
             publish_timeout,
         )
         .await

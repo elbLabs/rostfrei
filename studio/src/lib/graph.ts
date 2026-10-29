@@ -379,7 +379,6 @@ export function correlationGraph(refs: CorrelationRef[]): MessageGraphNode[] {
           kind: "integration-event",
           schemaVersion: reference.schemaVersion,
           messageId: reference.messageId,
-          retained: reference.available,
         }
   })
 }

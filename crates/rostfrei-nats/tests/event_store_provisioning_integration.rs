@@ -29,6 +29,101 @@ async fn fixture() -> TestResult<(jetstream::Context, NatsEventStoreConfig)> {
 }
 
 #[tokio::test]
+async fn opaque_subject_layout_requires_a_fresh_namespace_without_mutating_storage() {
+    for split in [false, true] {
+        for populated in [false, true] {
+            let (context, mut config) = fixture().await.expect("layout fixture");
+            if split {
+                config = config
+                    .with_fresh_split_outcome_epoch("layout-fixture")
+                    .expect("split configuration");
+            }
+            let mut old_policy = config.stream_config();
+            old_policy.subjects = vec![
+                format!("{}.aggregate.*", config.subject_prefix()),
+                config.transaction_subject_filter(),
+            ];
+            context
+                .create_stream(old_policy)
+                .await
+                .expect("old subject layout");
+            if populated {
+                context
+                    .publish(
+                        format!("{}.aggregate.opaque-digest", config.subject_prefix()),
+                        b"retained old history".to_vec().into(),
+                    )
+                    .await
+                    .expect("publish old fact")
+                    .await
+                    .expect("old fact acknowledgement");
+            }
+            let before = context
+                .get_stream(config.stream_name())
+                .await
+                .expect("old journal")
+                .cached_info()
+                .clone();
+            let connected = NatsEventStore::connect(context.clone(), config.clone())
+                .await
+                .err()
+                .expect("old layout must not connect");
+            for error in [
+                connected,
+                provision_event_store(&context, &config)
+                    .await
+                    .expect_err("old layout must not reprovision"),
+                update_event_store(&context, &config)
+                    .await
+                    .expect_err("old layout must not be upgraded in place"),
+            ] {
+                assert_eq!(error.kind(), EventStoreErrorKind::ConfigurationMismatch);
+                assert!(
+                    error.message().contains("opaque aggregate subject layout"),
+                    "{error}"
+                );
+                assert!(error.message().contains("fresh namespace"), "{error}");
+            }
+            let after = context
+                .get_stream(config.stream_name())
+                .await
+                .expect("preserved old journal");
+            assert_eq!(after.cached_info().created, before.created);
+            assert_eq!(after.cached_info().config, before.config);
+            assert_eq!(after.cached_info().state.messages, before.state.messages);
+            assert_eq!(
+                after.cached_info().state.last_sequence,
+                before.state.last_sequence
+            );
+            if populated {
+                assert_eq!(
+                    after
+                        .get_raw_message(1)
+                        .await
+                        .expect("retained old fact")
+                        .payload
+                        .as_ref(),
+                    b"retained old history"
+                );
+            }
+            if split {
+                assert!(
+                    context
+                        .get_stream(config.outcome_state_stream_name())
+                        .await
+                        .is_err(),
+                    "rejected provisioning created an outcome state stream"
+                );
+            }
+            context
+                .delete_stream(config.stream_name())
+                .await
+                .expect("cleanup old journal");
+        }
+    }
+}
+
+#[tokio::test]
 async fn provisioning_requires_explicit_policy_changes_and_preserves_history() {
     let (context, config) = fixture().await.expect("policy fixture");
     let missing = NatsEventStore::connect(context.clone(), config.clone()).await;

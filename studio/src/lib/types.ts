@@ -1,7 +1,7 @@
 export type MessageKind = "command" | "domain-event" | "integration-event"
 export type StudioLayout = "canvas" | "workbench"
 export type FlowView =
-  "expected" | "running" | "observed" | "predicted" | "indexed" | "unavailable"
+  "expected" | "running" | "observed" | "predicted" | "retained" | "unavailable"
 
 export type MessageStatus =
   "idle" | "running" | "accepted" | "rejected" | "failed" | "indeterminate"
@@ -29,7 +29,6 @@ export interface MessageGraphNode {
   aggregateId?: string
   streamVersion?: number
   occurredAt?: number
-  retained?: boolean
   status?: MessageStatus
   expectedOutcome?: ExpectedOutcome
 }
@@ -81,24 +80,17 @@ export type CorrelationRef =
       schemaVersion: number
       causationId?: string
       occurredAt: number
-      available: boolean
     }
 
-export interface CorrelationFreshnessSource {
-  context: string
-  kind?: string
-  stream?: string
-  state?: string
-  behind: number | null
-  skipped?: number
+export interface CorrelationSourceSnapshot {
+  context?: string
+  kind: "domain" | "integration"
+  stream: string
+  cutoffSequence: string
 }
 
-export interface CorrelationFreshness {
-  contexts: Array<{
-    context: string
-    behind: number | null
-    sources: CorrelationFreshnessSource[]
-  }>
+export interface CorrelationSnapshot {
+  sources: CorrelationSourceSnapshot[]
 }
 
 export interface CorrelationChain {
@@ -107,8 +99,8 @@ export interface CorrelationChain {
   refs: CorrelationRef[]
 }
 
-export interface IndexedCorrelationChain extends CorrelationChain {
-  freshness: CorrelationFreshness
+export interface RetainedCorrelationChain extends CorrelationChain {
+  snapshot: CorrelationSnapshot
 }
 
 export interface PayloadMatch {
@@ -121,7 +113,7 @@ export interface PayloadMatch {
 export interface AnchorCorrelationView {
   aggregateType: string
   aggregateId: string
-  freshness: CorrelationFreshness
+  snapshot: CorrelationSnapshot
   correlations: CorrelationChain[]
   truncated: boolean
   matched?: PayloadMatch[]

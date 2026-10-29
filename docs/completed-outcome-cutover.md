@@ -5,6 +5,14 @@ and [migration guide](migration-0.1.md). Do not enable new mutable workers
 on a legacy authority merely because its response cache is empty. An expired legacy
 rejection may be invisible forever.
 
+This runbook concerns outcome authority. The current
+[event-subject format](messaging/subjects.mdx#fresh-deployments) independently
+requires fresh namespaces and has no old-history reader fallback or subject
+migration tool. Changing an epoch or importing a rejected decision does not convert
+old aggregate or integration subjects. Preserve older-format evidence with its
+compatible readers; any history-preserving subject migration must be separately
+planned and fenced.
+
 ## New isolated authority
 
 1. Upgrade all response/store readers first: current inline/split receipts and
@@ -62,7 +70,8 @@ the identity/namespace block. Unknown IDs and unaudited legacy acceptances remai
 blocked; import is **not** a switch enabling all legacy IDs. This conservative initial
 API has no in-place mutable activation, cache deletion shortcut, bulk acceptance
 audit or inference from hashes. New work goes to the fresh isolated namespace above.
-Raw acceptance-history readers remain available for audit, not mutable rollback.
+Compatible acceptance-history readers serve audit, not mutable rollback; the
+current event reader requires the current subject format.
 
 See the [authenticated fencing test](../crates/rostfrei-nats/tests/completed_outcome_fencing.rs)
 for an executable ACL example. Restrict reader grants to the intended streams and

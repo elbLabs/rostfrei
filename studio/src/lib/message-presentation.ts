@@ -10,7 +10,7 @@ export function messageFacts(
   node: MessageGraphNode,
   view?: FlowView
 ): Array<[string, string]> {
-  if (node.payload === undefined && view === "indexed")
+  if (node.payload === undefined && view === "retained")
     return node.aggregateId
       ? [
           ["aggregate", node.aggregateId],
@@ -57,8 +57,7 @@ export function messageState(node: MessageGraphNode, view: FlowView): string {
         : "Expect rejection"
     return "Expected message"
   }
-  if (view === "indexed")
-    return node.retained === false ? "Indexed · expired" : "Indexed"
+  if (view === "retained") return "Retained"
   if (node.kind !== "command")
     return view === "running"
       ? "Received"

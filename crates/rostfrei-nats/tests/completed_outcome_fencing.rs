@@ -171,7 +171,7 @@ async fn native_acl_excludes_old_mutable_writer_and_rollback_but_allows_read_onl
         &mut stream_info,
         &errors,
         vec![
-            config.aggregate_subject("target", "missing"),
+            config.event_subject("target", "missing", None, None),
             config.transaction_subject("rollback-acceptance"),
             command.address().as_str().to_owned(),
             command.response_address()?.as_str().to_owned(),

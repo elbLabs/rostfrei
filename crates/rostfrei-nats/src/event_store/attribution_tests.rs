@@ -42,6 +42,10 @@ fn headers(config: &NatsEventStoreConfig, ordinal: usize) -> HeaderMap {
     if ordinal == 0 {
         headers.insert(NATS_EXPECTED_STREAM, config.stream_name());
         headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
+        headers.insert(
+            NATS_EXPECTED_LAST_SUBJECT_SEQUENCE_SUBJECT,
+            config.aggregate_history_subject_filter("Test", "one"),
+        );
     }
     headers
 }
@@ -53,9 +57,11 @@ fn reconstruction_refuses_internally_checksummed_actor_disagreement() {
     let recorded = record_batch(&stream, StreamVersion::ZERO, &batch).unwrap();
     let bytes =
         encode_transaction_events(&config, &stream, &batch, recorded.events(), 0, 2).unwrap();
-    let subject = config.aggregate_subject(
+    let subject = config.event_subject(
         stream.aggregate_type().as_str(),
         stream.aggregate_id().as_str(),
+        None,
+        None,
     );
     for changed in [false, true] {
         let mut builder = HistoryBuilder::default();
@@ -163,9 +169,11 @@ fn event_discriminators_reject_actor_in_legacy_and_absence_in_new_even_with_new_
     let encoded =
         encode_transaction_events(&config, &stream, &batch, recorded.events(), 0, 2).unwrap();
     let template: StoredEventWire = serde_json::from_slice(encoded.first().unwrap()).unwrap();
-    let subject = config.aggregate_subject(
+    let subject = config.event_subject(
         stream.aggregate_type().as_str(),
         stream.aggregate_id().as_str(),
+        None,
+        None,
     );
     for version in 1..=6 {
         let mut base = template.clone();

@@ -6,6 +6,7 @@ use rostfrei_messaging_core::{ApplicationName, BoundedContext, BoundedContextNam
 use sha2::{Digest, Sha256};
 
 use crate::hex::encode_lower_hex;
+use crate::subject_tokens;
 
 const MAX_STREAM_NAME_LEN: usize = 255;
 pub const MAX_SUPPORTED_EVENT_BYTES: usize = 64 * 1024 * 1024;
@@ -290,13 +291,57 @@ impl NatsEventStoreConfig {
         self.aggregate_subject_filter()
     }
 
-    pub fn aggregate_subject(&self, aggregate_type: &str, aggregate_id: &str) -> String {
-        let digest = digest_parts(&[aggregate_type.as_bytes(), aggregate_id.as_bytes()]);
-        format!("{}.aggregate.{digest}", self.subject_prefix)
+    /// Concrete address of an event, including its independent causal identities.
+    pub fn event_subject(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: &str,
+        correlation: Option<&str>,
+        causation: Option<&str>,
+    ) -> String {
+        format!(
+            "{}.aggregate.{}.{}.{}.{}",
+            self.subject_prefix,
+            subject_tokens::encode(aggregate_type),
+            subject_tokens::encode(aggregate_id),
+            subject_tokens::optional(correlation),
+            subject_tokens::optional(causation),
+        )
+    }
+
+    /// All events of one aggregate, across correlation and causation changes.
+    /// Also used by native aggregate-wide optimistic concurrency preconditions.
+    pub fn aggregate_history_subject_filter(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: &str,
+    ) -> String {
+        format!(
+            "{}.aggregate.{}.{}.*.*",
+            self.subject_prefix,
+            subject_tokens::encode(aggregate_type),
+            subject_tokens::encode(aggregate_id),
+        )
+    }
+
+    pub fn correlation_subject_filter(&self, correlation: &str) -> String {
+        format!(
+            "{}.aggregate.*.*.{}.*",
+            self.subject_prefix,
+            subject_tokens::encode(correlation)
+        )
+    }
+
+    pub fn causation_subject_filter(&self, causation: &str) -> String {
+        format!(
+            "{}.aggregate.*.*.*.{}",
+            self.subject_prefix,
+            subject_tokens::encode(causation)
+        )
     }
 
     pub fn aggregate_subject_filter(&self) -> String {
-        format!("{}.aggregate.*", self.subject_prefix)
+        format!("{}.aggregate.*.*.*.*", self.subject_prefix)
     }
 
     pub fn transaction_subject(&self, operation_id: &str) -> String {
@@ -487,13 +532,13 @@ mod tests {
         );
         assert_eq!(
             config.subject_filter(),
-            "fast-inbox.domain.commercial-access.aggregate.*"
+            "fast-inbox.domain.commercial-access.aggregate.*.*.*.*"
         );
         assert_eq!(config.subject_filter(), config.aggregate_subject_filter());
         assert_eq!(
             config.stream_config().subjects,
             vec![
-                "fast-inbox.domain.commercial-access.aggregate.*",
+                "fast-inbox.domain.commercial-access.aggregate.*.*.*.*",
                 "fast-inbox.domain.commercial-access.transaction.>",
             ]
         );
@@ -518,7 +563,7 @@ mod tests {
         );
         assert_eq!(
             config.aggregate_subject_filter(),
-            "fast-inbox.test.domain.commercial-access.aggregate.*"
+            "fast-inbox.test.domain.commercial-access.aggregate.*.*.*.*"
         );
     }
 
@@ -627,18 +672,30 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_subject_is_deterministic_and_opaque() {
+    fn event_subject_and_filters_preserve_separate_readable_identity_tokens() {
         let config =
             NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST").expect("valid config");
-        let subject = config.aggregate_subject("Account", "account-123");
-        assert_eq!(subject, config.aggregate_subject("Account", "account-123"));
+        let subject = config.event_subject("Account", "account-123", Some("flow.1"), None);
         assert_eq!(
             subject,
-            "fast-inbox.domain.commercial-access.aggregate.c747047da35490fdcc850f47802f98b07d5095ea8296688da589d8bf883b4246"
+            config.event_subject("Account", "account-123", Some("flow.1"), None)
         );
-        assert!(!subject.contains("Account"));
-        assert!(!subject.contains("account-123"));
-        assert_ne!(subject, config.aggregate_subject("Account", "account-124"));
+        assert_eq!(
+            subject,
+            "fast-inbox.domain.commercial-access.aggregate.Account.account-123.flow%2E1.~"
+        );
+        assert_eq!(
+            config.aggregate_history_subject_filter("Account", "account-123"),
+            "fast-inbox.domain.commercial-access.aggregate.Account.account-123.*.*"
+        );
+        assert_eq!(
+            config.correlation_subject_filter("flow.1"),
+            "fast-inbox.domain.commercial-access.aggregate.*.*.flow%2E1.*"
+        );
+        assert_eq!(
+            config.causation_subject_filter("cause.*"),
+            "fast-inbox.domain.commercial-access.aggregate.*.*.*.cause%2E%2A"
+        );
     }
 
     #[test]

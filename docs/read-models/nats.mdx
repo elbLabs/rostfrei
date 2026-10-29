@@ -84,8 +84,15 @@ checkpoints handle redelivery after an uncertain in-flight write.
 
 Each model has its own domain durable when it registers domain handlers, and one
 ordered integration durable when it registers integration handlers. That integration
-consumer filters exactly the registered subjects with one outstanding delivery.
-Multiple read models can consume the same events with independent progress.
+consumer filters each registered logical address with `.>` appended, validating the correlation
+and causation, with one outstanding delivery. Domain consumers use the configured
+`aggregate.*.*.*.*` filter. Multiple read models can consume the same events with
+independent progress. See [subject filters](../messaging/subjects.mdx#filters-and-internal-storage-subjects).
+
+The event-subject format requires [fresh namespaces](../messaging/subjects.mdx#fresh-deployments).
+Startup rejects mismatched stream or consumer configuration; changing a model
+generation does not migrate old event subjects. Rebuilds can only use retained
+evidence, including integration events' [30-day default retention](../messaging/subjects.mdx#retention).
 
 ## Scope and bucket policy
 
@@ -162,3 +169,5 @@ verification does not continuously reconcile operator policy changes.
 For custom persistence orchestration, see the
 [low-level storage example](https://github.com/elbLabs/rostfrei/tree/main/crates/rostfrei-nats/examples/read_model_storage).
 For normal event-driven use, continue with [ordering and recovery](ordering.mdx).
+Tracer's [retained correlation inspection](../continuous-observation.md#retained-correlation-inspection)
+reads native event subjects directly and requires no read-model bucket or worker.
