@@ -32,27 +32,27 @@ use bike_rental::{
     tracer,
 };
 use http_body_util::BodyExt as _;
-use rostfrei::{
-    Aggregate, Command, CommandBus, CommandMessageAdapter, DomainEvent, EventHistory,
-    IntegrationCommandMapper, IntegrationEventCommandHandler, OperationId, RecordedEvent,
-    command_message_id, command_response_message_id, integration_message_id,
-};
-use rostfrei_messaging_core::{
+use rostfrei::messaging::{
     CausationId, CommandResponse, CommandResponseOutcome, ConsumerConfig, CorrelationId,
     IntegrationEventEnvelope, MessageId, OperationId as MessagingOperationId, RetryDelay,
     SchemaVersion,
 };
-use rostfrei_nats::{
+use rostfrei::nats::{
     CORRELATION_ID_HEADER, NatsConnection, NatsConnectionConfig, ServerVersion, StreamRetention,
     connect, provision_durable_consumer,
 };
-use rostfrei_testing::integration::nats_url as required_nats_url;
-use rostfrei_tracer::{
+use rostfrei::testing::integration::nats_url as required_nats_url;
+use rostfrei::tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
     ExpectedMessageKind, ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository,
     ObservedMessageSeries, OperationMode, TestRepository, TestScenarioReset,
     command_execution_fingerprint,
     http::{self, HttpConfig},
+};
+use rostfrei::{
+    Aggregate, Command, CommandBus, CommandMessageAdapter, DomainEvent, EventHistory,
+    IntegrationCommandMapper, IntegrationEventCommandHandler, OperationId, RecordedEvent,
+    command_message_id, command_response_message_id, integration_message_id,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -336,12 +336,12 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             let mut observation_orders = observed
                 .messages()
                 .iter()
-                .map(rostfrei_tracer::ObservedMessageNode::observation_order)
+                .map(rostfrei::tracer::ObservedMessageNode::observation_order)
                 .chain(
                     observed
                         .command_outcomes()
                         .iter()
-                        .map(rostfrei_tracer::ObservedCommandOutcome::observation_order),
+                        .map(rostfrei::tracer::ObservedCommandOutcome::observation_order),
                 )
                 .collect::<Vec<_>>();
             observation_orders.sort_unstable();
@@ -648,10 +648,8 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
         provision_durable_consumer(connection.jetstream(), &topology, &reaction_config).await?;
         let factory = connection.consumer_factory(topology.clone());
         factory.verify_consumer(&reaction_config).await?;
-        let reaction_consumer = rostfrei_messaging_core::MessageConsumerFactory::create(
-            &factory,
-            reaction_config.clone(),
-        )?;
+        let reaction_consumer =
+            rostfrei::messaging::MessageConsumerFactory::create(&factory, reaction_config.clone())?;
         let messaging = Arc::new(connection.messaging_adapter(topology.clone()));
         let command_adapter: Arc<dyn CommandMessageAdapter> = messaging;
         let command_bus = CommandBus::new(context.clone(), command_adapter);
@@ -670,11 +668,11 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
         // Observe the normal application bus without submitting or registering
         // an operation through Tracer. The independent consumer must be ready
         // before the external command below can publish its first event.
-        let feed = rostfrei_tracer::ObservationFeed::new(
-            rostfrei_messaging_core::ApplicationName::new(&application)?,
-            rostfrei_tracer::ObservationScope::Production,
+        let feed = rostfrei::tracer::ObservationFeed::new(
+            rostfrei::messaging::ApplicationName::new(&application)?,
+            rostfrei::tracer::ObservationScope::Production,
         );
-        let tracer = rostfrei_tracer::TracerBuilder::new(
+        let tracer = rostfrei::tracer::TracerBuilder::new(
             Arc::new(runtime.store()),
             rostfrei::DomainRegistry::new(),
         )
@@ -685,7 +683,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
             .start_correlation_observer(tracer.correlation_observer(OperationMode::Dispatch))
             .await?;
         ensure(
-            feed.snapshot().status == rostfrei_tracer::ObservationStatus::Live,
+            feed.snapshot().status == rostfrei::tracer::ObservationStatus::Live,
             "observer was not ready before external publication",
         )?;
         let observation_app = http::router(
@@ -823,7 +821,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
         observation_task.abort();
         let _ = observation_task.await;
         ensure(
-            feed.snapshot().status == rostfrei_tracer::ObservationStatus::Unavailable,
+            feed.snapshot().status == rostfrei::tracer::ObservationStatus::Unavailable,
             "stopped observer still appears live",
         )?;
         let mut quarantine_stream = connection
@@ -869,7 +867,7 @@ fn required_json_str<'a>(value: &'a Value, pointer: &str) -> TestResult<&'a str>
 fn observed_message(
     observed: &ObservedMessageSeries,
     kind: ExpectedMessageKind,
-) -> TestResult<&rostfrei_tracer::ObservedMessageNode> {
+) -> TestResult<&rostfrei::tracer::ObservedMessageNode> {
     observed
         .messages()
         .iter()
@@ -1261,7 +1259,7 @@ async fn wait_for_integration_chain(
                     raw_correlation_id
                         == source_event
                             .correlation_id()
-                            .map(rostfrei_messaging_core::CorrelationId::as_str),
+                            .map(rostfrei::messaging::CorrelationId::as_str),
                     "wrong integration transport correlation identity",
                 )?;
                 ensure(

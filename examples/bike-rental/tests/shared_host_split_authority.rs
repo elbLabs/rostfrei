@@ -3,9 +3,9 @@
 use std::{error::Error, sync::Arc};
 
 use bike_rental::{demo::demo_fixture, tracer};
+use rostfrei::nats::{NatsConnectionConfig, connect};
+use rostfrei::tracer::{NatsApplication, NatsRuntime, NatsRuntimeConfig, TestScenarioReset};
 use rostfrei::{ApplicationName, OperationId, OutcomeKey, OutcomeReader, StreamId};
-use rostfrei_nats::{NatsConnectionConfig, connect};
-use rostfrei_tracer::{NatsApplication, NatsRuntime, NatsRuntimeConfig, TestScenarioReset};
 
 type TestResult = Result<(), Box<dyn Error + Send + Sync>>;
 
@@ -14,7 +14,7 @@ async fn paired_reset_reconnects_authority_preserves_normal_and_cannot_bypass_fa
 {
     let connection = connect(&NatsConnectionConfig::new(
         "split-host",
-        rostfrei_testing::integration::nats_url()?,
+        rostfrei::testing::integration::nats_url()?,
     ))
     .await?;
     let application = ApplicationName::new(format!(

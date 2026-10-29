@@ -129,7 +129,7 @@ python3 scripts/versions.py check
 To prepare a version:
 
 ```sh
-python3 scripts/versions.py bump 0.1.2
+python3 scripts/versions.py bump 0.1.3
 ```
 
 The script updates the root manifest and both Cargo lockfiles, including the
@@ -142,15 +142,15 @@ The **Prepare GitHub release** workflow runs from `main` with a tag matching the
 shared version, including the `v` prefix. Validate it locally with:
 
 ```sh
-python3 scripts/versions.py check --tag v0.1.2
+python3 scripts/versions.py check --tag v0.1.3
 ```
 
 The workflow creates a draft GitHub release; it does not publish crates.
 
 ### crates.io publication
 
-From 0.1.1, all 14 public library/tooling packages have registry metadata. The
-benchmark and bike-rental packages are explicitly `publish = false`. Freeze one
+All 15 public library/tooling packages have registry metadata. The benchmark and
+bike-rental packages are explicitly `publish = false`. Freeze one
 clean commit for the Git tag, Skills kit, CLI and registry packages; dependency-aware
 Skills setup checks the published package's `.cargo_vcs_info.json` revision.
 
@@ -178,9 +178,9 @@ failed upload means the server rejected it. After publication, check every versi
 and checksum and build an external application using registry-only dependencies.
 Install the registry CLI and qualify its dependency-aware Skills setup as well.
 
-Registry consumers use `rostfrei = "0.1.2"` and matching adapters, and install the
-CLI with `cargo install --locked --version 0.1.2 rostfrei-structure`. The GitHub
-workflow remains a separate publication step for the matching kit and checksum.
+Registry consumers use [`rostfrei` with adapter features](getting-started.mdx#one-framework-dependency)
+and install the CLI with `cargo install --locked --version 0.1.3 rostfrei-structure`.
+The GitHub workflow is a separate publication step for the matching kit and checksum.
 
 ## Starter dependency contract
 

@@ -5,10 +5,10 @@ use async_nats::jetstream::{
     consumer::{self, PullConsumer},
 };
 use futures_util::TryStreamExt as _;
-use rostfrei::{ReadModel, ReadModelRuntime};
 use rostfrei_messaging_core::{
     ConsumeError, ConsumeErrorKind, ConsumerConfig, IntegrationEventAddress, MessageHandler,
 };
+use rostfrei_runtime::{ReadModel, ReadModelRuntime};
 
 use crate::{
     MessagingTopology, NatsError, NatsReadModelConsumerOptions, ReadModelWorkerError,

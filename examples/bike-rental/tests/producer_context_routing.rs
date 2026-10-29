@@ -8,15 +8,15 @@ use bike_rental::{
     demo::{demo_fixture, demo_stream},
     tracer,
 };
-use rostfrei::{ApplicationName, CommittedEventContext, IntegrationEvent, IntegrationEventBus};
-use rostfrei_messaging_core::{
+use rostfrei::messaging::{
     DeliveryDisposition, IntegrationEventAddress, MessageDelivery, MessageHandler,
 };
-use rostfrei_nats::{NatsConnectionConfig, connect};
-use rostfrei_tracer::{
+use rostfrei::nats::{NatsConnectionConfig, connect};
+use rostfrei::tracer::{
     ExposeTracePayloadsForLocalDevelopment, NatsApplication, NatsHostError, NatsRuntime,
     NatsRuntimeConfig, ObservationFeed, ObservationScope, TracerConfig, http::HttpConfig,
 };
+use rostfrei::{ApplicationName, CommittedEventContext, IntegrationEvent, IntegrationEventBus};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, sync::Arc, time::Duration};
 
@@ -68,7 +68,7 @@ async fn typed_handler_subscribes_to_declared_producer() -> Result<(), Box<dyn E
 {
     let connection = connect(&NatsConnectionConfig::new(
         "producer-routing",
-        rostfrei_testing::integration::nats_url()?,
+        rostfrei::testing::integration::nats_url()?,
     ))
     .await?;
     let suffix = std::time::SystemTime::now()
@@ -126,7 +126,7 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
 -> Result<(), Box<dyn Error + Send + Sync>> {
     let connection = connect(&NatsConnectionConfig::new(
         "producer-mapper",
-        rostfrei_testing::integration::nats_url()?,
+        rostfrei::testing::integration::nats_url()?,
     ))
     .await?;
     let suffix = std::time::SystemTime::now()
@@ -243,7 +243,7 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
         })
         .await??;
         let response = responses.get_raw_message(sequence).await?;
-        let response: rostfrei_messaging_core::CommandResponse =
+        let response: rostfrei::messaging::CommandResponse =
             serde_json::from_slice(&response.payload)?;
         assert_eq!(
             rented.causation_id().map(rostfrei::CausationId::as_str),
@@ -251,7 +251,7 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
         );
         assert!(matches!(
             response.outcome(),
-            rostfrei_messaging_core::CommandResponseOutcome::Accepted
+            rostfrei::messaging::CommandResponseOutcome::Accepted
         ));
         let duplicate = bus.publish(committed, ProducerChanged).await?;
         assert_eq!(duplicate.message_id(), publication.message_id());

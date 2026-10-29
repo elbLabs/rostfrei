@@ -49,3 +49,4 @@ impl Apply<Event> for Root {
 
 fn main() {}
 rostfrei::install_macro_support!();
+use rostfrei_runtime as rostfrei;

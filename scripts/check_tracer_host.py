@@ -72,10 +72,9 @@ def main():
         shutil.copytree(ROOT / "crates/rostfrei-tracer/tests/consumer", consumer, ignore=shutil.ignore_patterns("target"))
         manifest = consumer / "Cargo.toml"
         text = manifest.read_text()
-        for relative, package in [("../../../rostfrei", "rostfrei"), ("../../../rostfrei-nats", "rostfrei-nats"), ("../..", "rostfrei-tracer")]:
-            dependency = (f'path = "{ROOT / "crates" / package}"' if args.working_tree
-                          else f'git = "{ROOT.as_uri()}", rev = "{revision}"')
-            text = text.replace(f'path = "{relative}"', dependency)
+        dependency = (f'path = "{ROOT / "crates/rostfrei"}"' if args.working_tree
+                      else f'git = "{ROOT.as_uri()}", rev = "{revision}"')
+        text = text.replace('path = "../../../rostfrei"', dependency)
         manifest.write_text(text)
         subprocess.run(["cargo", "test", "--", "--nocapture"], cwd=consumer, env=environment, check=True)
         check_entrypoint(consumer, environment)

@@ -26,20 +26,20 @@ use bike_rental::{
     tracer,
 };
 use http_body_util::BodyExt as _;
-use rostfrei::{
-    AppendOutcome, Command, CommandExecutionError, CommandExecutionMetadata, CommandExecutor,
-    ContentFingerprint, DomainError, EventBatch, EventHistory, EventStore, EventStoreError,
-    EventTransaction, ExpectedVersion, InMemoryEventStore, JsonCommandPayload, JsonErrorPayload,
-    OperationId, StreamAggregateType, StreamId, TransactionAppendOutcome, TransactionReceipt,
-};
-use rostfrei_core::{StreamDirectory, StreamSummary};
-use rostfrei_messaging_core::CorrelationId;
-use rostfrei_tracer::{
+use rostfrei::core::{StreamDirectory, StreamSummary};
+use rostfrei::messaging::CorrelationId;
+use rostfrei::tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandReceipt, CommandRejection,
     CommandTransport, CommandTransportError, CommandTransportErrorKind, CommandTransportObserver,
     ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, Fixture, TestRepository,
     TestScenarioReset, TestScenarioResetError, Tracer,
     http::{self, HttpConfig},
+};
+use rostfrei::{
+    AppendOutcome, Command, CommandExecutionError, CommandExecutionMetadata, CommandExecutor,
+    ContentFingerprint, DomainError, EventBatch, EventHistory, EventStore, EventStoreError,
+    EventTransaction, ExpectedVersion, InMemoryEventStore, JsonCommandPayload, JsonErrorPayload,
+    OperationId, StreamAggregateType, StreamId, TransactionAppendOutcome, TransactionReceipt,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt as _;

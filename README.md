@@ -13,9 +13,18 @@ framework. See the [0.1 migration guide](docs/migration-0.1.md) when upgrading.
 
 ## Start here
 
-For the 0.1.2 registry release, add `rostfrei = "0.1.2"` and matching adapters to
-your application's dependencies. Install the development CLI separately with
-`cargo install --locked --version 0.1.2 rostfrei-structure`; see
+Use **`rostfrei` as your framework dependency**, enabling the adapters you need:
+
+```toml
+[dependencies]
+rostfrei = { version = "0.1.3", features = ["nats", "tracer"] }
+```
+
+See [Getting Started](docs/getting-started.mdx#one-framework-dependency) for
+features, imports, and test dependencies.
+
+Install the development CLI separately with
+`cargo install --locked --version 0.1.3 rostfrei-structure`; see
 [Agent Skills setup](docs/agent-skills-install.md) for dependency-aware installation.
 
 - [Getting started](https://elblabs.github.io/rostfrei/docs/getting-started):
@@ -89,7 +98,7 @@ reads and audits, command correlation, and worker delivery.
 
 ## HTTP API
 
-Applications explicitly mount the routes provided by `rostfrei-http`:
+Applications explicitly mount the routes provided by `rostfrei::http` (feature `http`):
 
 ```text
 POST /contexts/{context}/commands/{command}/schemas/{schema_version}

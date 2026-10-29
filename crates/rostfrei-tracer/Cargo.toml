@@ -26,7 +26,7 @@ rostfrei-fixtures.workspace = true
 rostfrei-messaging-core.workspace = true
 rostfrei-nats = { workspace = true, optional = true }
 rostfrei-registry.workspace = true
-rostfrei.workspace = true
+rostfrei-runtime.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -34,6 +34,7 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+rostfrei.workspace = true
 axum.workspace = true
 futures-util.workspace = true
 http-body-util = "0.1"

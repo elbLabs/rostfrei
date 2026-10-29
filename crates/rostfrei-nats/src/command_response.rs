@@ -60,7 +60,7 @@ impl NatsCommandResponseReader {
     /// no atomic administrative fence. Redrive requires application-coordinated quiescence.
     pub async fn remove_blocked_diagnostic_for_redrive(
         &self,
-        command: &rostfrei::EncodedCommand,
+        command: &rostfrei_runtime::EncodedCommand,
         read_timeout: Duration,
     ) -> Result<bool, CommandResponseReadError> {
         command

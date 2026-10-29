@@ -270,7 +270,7 @@ validation and the namespace. These are the same derivation APIs used by the
 example's configuration:
 
 ```rust
-use rostfrei_messaging_core::ApplicationName;
+use rostfrei::ApplicationName;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let application = ApplicationName::new("bike-rental")?;

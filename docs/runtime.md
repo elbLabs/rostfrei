@@ -37,7 +37,7 @@ history read does not itself verify writable authority.
 including reconnects and failover:
 
 ```rust
-use rostfrei_nats::{NatsConnectionConfig, connect};
+use rostfrei::nats::{NatsConnectionConfig, connect}; // feature: nats
 
 let config = NatsConnectionConfig::from_server_pool(
     "my-application",

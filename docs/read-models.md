@@ -23,7 +23,7 @@ storage contract, with each source retaining its own authority.
 ```rust
 use std::{num::NonZeroU32, sync::Arc};
 use rostfrei::{ApplicationName, JsonReadModelCodec, ReadModelStore};
-use rostfrei_nats::{NatsReadModelConfig, NatsReadModelStore, provision_read_model};
+use rostfrei::nats::{NatsReadModelConfig, NatsReadModelStore, provision_read_model};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Entitlement {

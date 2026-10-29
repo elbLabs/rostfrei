@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Use `rostfrei` as the application's single framework dependency, with optional
+  `nats`, `http`, `tracer`, `fixtures`, and `testing` features. Adapters are exposed
+  as modules; `nats` plus `tracer` includes the managed application host. Lower-level
+  contracts are available through `core`, `messaging`, and `registry`.
+- Extract `rostfrei-runtime` so adapters share the transport-independent runtime
+  without a facade dependency cycle. Existing root APIs and macro support remain
+  available through `rostfrei`.
+
+### Changed
+
+- Bike-rental and the standalone host consumer use only `rostfrei` for framework
+  dependencies. Isolated feature checks cover renamed dependencies and macro expansion.
+
 ## [0.1.2] - 2026-10-28
 
 ### Fixed

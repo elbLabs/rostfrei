@@ -118,7 +118,15 @@ def prepare_bike_rental(source, destination, revision):
                 dependency.pop("path", None)
                 dependency["git"] = source.as_uri()
                 dependency["rev"] = revision
-            text = re.sub(rf'^{re.escape(name)}\s*=.*$', f"{name} = {toml_value(dependency)}", text, flags=re.MULTILINE)
+            # The same dependency can have different features in normal and dev
+            # sections. Replace only the declaration in its owning section.
+            text = re.sub(
+                rf'(?ms)(^\[{re.escape(section)}\]\n)(.*?)(?=^\[|\Z)',
+                lambda match: match[1] + re.sub(
+                    rf'^{re.escape(name)}\s*=.*$', f"{name} = {toml_value(dependency)}",
+                    match[2], flags=re.MULTILINE),
+                text,
+            )
     text = text.replace("[lints]\nworkspace = true", "\n".join(
         f'[lints.{kind}]\n' + "\n".join(f'{name} = {toml_value(value)}' for name, value in entries.items())
         for kind, entries in workspace["lints"].items()))

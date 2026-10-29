@@ -12,7 +12,7 @@ help: the trait `EventVariant<support::ForeignEvent>` is not implemented for `Ev
   |          ^^^^^^^^^^^^^^^^^^^^^^^^^
   = help: for that trait implementation, expected `Changed`, found `support::ForeignEvent`
 note: required by a bound in `ReadModelBuilder::<M, B, A>::on_domain_event`
- --> src/read_model/builder.rs
+ --> $WORKSPACE/crates/rostfrei-runtime/src/read_model/builder.rs
   |
   |     pub fn on_domain_event<E>(
   |            --------------- required by a bound in this associated function

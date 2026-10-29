@@ -13,15 +13,15 @@ use bike_rental::{
     tracer,
 };
 use http_body_util::BodyExt as _;
-use rostfrei::{ApplicationName, Command, OperationId};
-use rostfrei_nats::{NatsConnectionConfig, connect};
-use rostfrei_tracer::{
+use rostfrei::nats::{NatsConnectionConfig, connect};
+use rostfrei::tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
     NatsApplication, NatsRuntime, NatsRuntimeConfig, ObservationFeed, ObservationScope,
     ObservationStatus, OperationMode, TestScenarioReset, TracerConfig,
     command_execution_fingerprint,
     http::{self, HttpConfig},
 };
+use rostfrei::{ApplicationName, Command, OperationId};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -62,7 +62,7 @@ async fn rent(runtime: &NatsRuntime, correlation: &str) -> TestResult {
 async fn flow(
     feed: &ObservationFeed,
     correlation: &str,
-) -> TestResult<rostfrei_tracer::ObservedFlow> {
+) -> TestResult<rostfrei::tracer::ObservedFlow> {
     Ok(tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if let Some(summary) = feed
@@ -100,7 +100,7 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
 -> TestResult {
     let connection = connect(&NatsConnectionConfig::new(
         "shared-observation",
-        rostfrei_testing::integration::nats_url()?,
+        rostfrei::testing::integration::nats_url()?,
     ))
     .await?;
     let suffix = std::time::SystemTime::now()
@@ -233,7 +233,7 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
 async fn runtime_observation_reports_interruption_and_failed_reset_then_recovers() -> TestResult {
     let connection = connect(&NatsConnectionConfig::new(
         "observation-health",
-        rostfrei_testing::integration::nats_url()?,
+        rostfrei::testing::integration::nats_url()?,
     ))
     .await?;
     let suffix = std::time::SystemTime::now()
@@ -341,7 +341,7 @@ async fn runtime_observation_reports_interruption_and_failed_reset_then_recovers
 async fn host_rejects_observation_without_a_matching_application_runtime() -> TestResult {
     let connection = connect(&NatsConnectionConfig::new(
         "observation-config",
-        rostfrei_testing::integration::nats_url()?,
+        rostfrei::testing::integration::nats_url()?,
     ))
     .await?;
     let suffix = std::time::SystemTime::now()
@@ -371,7 +371,7 @@ async fn host_rejects_observation_without_a_matching_application_runtime() -> Te
                 .await;
         assert!(matches!(
             result,
-            Err(rostfrei_tracer::NatsHostError::Configuration(_))
+            Err(rostfrei::tracer::NatsHostError::Configuration(_))
         ));
         assert!(
             connection

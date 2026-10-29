@@ -7,6 +7,10 @@ for a walkthrough. Run the commands below from the repository root. Requirements
 the pinned Rust toolchain and NATS Server 2.12.1 or newer (the supplied Docker
 Compose configuration provides NATS).
 
+The application's only direct Rostfrei dependency is `rostfrei`, with `nats` and
+`tracer` features plus `testing` for development. All framework imports use
+`rostfrei::…`; see [dependency setup](../../docs/getting-started.mdx#one-framework-dependency).
+
 ## Completed-outcome cutover
 
 NATS now defaults to a fail-closed legacy/read-only outcome namespace. For a **new

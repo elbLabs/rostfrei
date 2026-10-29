@@ -126,6 +126,6 @@ See [technical failure recovery](command-failures.md) for delivery failures.
 
 ## Source entry points
 
-- [Service](../crates/rostfrei/src/command_service.rs) and [processor](../crates/rostfrei/src/command_bus/processing.rs)
+- [Service](../crates/rostfrei-runtime/src/command_service.rs) and [processor](../crates/rostfrei-runtime/src/command_bus/processing.rs)
 - [Executor](../crates/rostfrei-core/src/executor.rs) and [storage ports](../crates/rostfrei-core/src/execution_store.rs)
 - [Native outcomes](../crates/rostfrei-nats/src/event_store/outcomes.rs) and [transport](../crates/rostfrei-nats/src/messaging_adapter.rs)

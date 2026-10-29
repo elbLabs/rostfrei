@@ -212,7 +212,7 @@ impl NatsEventStore {
     /// for unknown identities (including expired/invisible rejections); no activation shortcut.
     pub async fn import_legacy_rejected_outcome(
         &self,
-        command: &rostfrei::EncodedCommand,
+        command: &rostfrei_runtime::EncodedCommand,
         response: &rostfrei_messaging_core::CommandResponse,
         topology: &crate::MessagingTopology,
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {

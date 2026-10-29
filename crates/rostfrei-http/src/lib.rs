@@ -9,7 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use rostfrei::{
+use rostfrei_runtime::{
     CommandBus, CommandBusError, CommandBusErrorKind, CommandRejection,
     CommandRejectionClassification, CommandResponseOutcome, DomainRegistry, DynamicCommandRequest,
     DynamicQueryRequest, EncodedCommand, OperationId, QueryBus, QueryBusError, QueryBusErrorKind,
@@ -311,17 +311,17 @@ async fn submit_command_envelope(
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
-    let envelope: rostfrei::CommandEnvelope<RoutedCommand> = match serde_json::from_slice(&payload)
-    {
-        Ok(envelope) => envelope,
-        Err(error) => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                "rostfrei.http.invalid-command-envelope",
-                error.to_string(),
-            );
-        }
-    };
+    let envelope: rostfrei_runtime::CommandEnvelope<RoutedCommand> =
+        match serde_json::from_slice(&payload) {
+            Ok(envelope) => envelope,
+            Err(error) => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    "rostfrei.http.invalid-command-envelope",
+                    error.to_string(),
+                );
+            }
+        };
     if envelope.operation_id().as_str() != operation.as_str()
         || envelope.payload().command() != command
         || envelope.payload().schema_version() != schema_version
@@ -438,7 +438,7 @@ fn optional_single_header<'a>(
 }
 
 fn command_response(
-    response: rostfrei::CommandResponse,
+    response: rostfrei_runtime::CommandResponse,
     authentication_challenge: Option<&HeaderValue>,
 ) -> Response {
     let operation_id = response.operation_id().as_str().to_owned();

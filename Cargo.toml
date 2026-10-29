@@ -14,6 +14,7 @@ members = [
     "crates/rostfrei-messaging-core",
     "crates/rostfrei-nats",
     "crates/rostfrei-registry",
+    "crates/rostfrei-runtime",
     "crates/rostfrei-structure",
     "crates/rostfrei-testing",
     "examples/bike-rental",
@@ -41,6 +42,7 @@ rostfrei-macros = { path = "crates/rostfrei-macros", version = "0.1.2" }
 rostfrei-messaging-core = { path = "crates/rostfrei-messaging-core", version = "0.1.2" }
 rostfrei-nats = { path = "crates/rostfrei-nats", version = "0.1.2" }
 rostfrei-registry = { path = "crates/rostfrei-registry", version = "0.1.2" }
+rostfrei-runtime = { path = "crates/rostfrei-runtime", version = "0.1.2" }
 rostfrei-testing = { path = "crates/rostfrei-testing", version = "0.1.2" }
 rostfrei-tracer = { path = "crates/rostfrei-tracer", version = "0.1.2" }
 zs-registry = { package = "rostfrei-registry", path = "crates/rostfrei-registry", version = "0.1.2" }

@@ -5,18 +5,18 @@ use std::{
 };
 
 use async_trait::async_trait;
-use rostfrei::{
-    AuthorizationError, CommandBusError, CommandBusErrorKind, CommandBusObserver,
-    CommandBusReceipt, CommandMessageAdapter, CommandProcessingService, CommandProcessor,
-    CommandProcessorError, CommandPublication, CompletionOrigin, EncodedCommand,
-    EncodedIntegrationMessage, IntegrationEventBusError, IntegrationEventBusErrorKind,
-    IntegrationMessageAdapter, OutcomeLookup, ProcessedCommand, TrustedCommandContext,
-};
 use rostfrei_messaging_core::{
     CommandAddress, CommandPublisher, CommandResponse, CommandResponseOutcome,
     CommandResponsePublisher, CommandResponseReadErrorKind, CommandResponseReader,
     DeliveryDisposition, IntegrationEventPublisher, MessageDelivery, MessageHandler,
     OutboundMessage, PublishError, PublishErrorKind, PublishReceipt, QuarantineReason, RetryDelay,
+};
+use rostfrei_runtime::{
+    AuthorizationError, CommandBusError, CommandBusErrorKind, CommandBusObserver,
+    CommandBusReceipt, CommandMessageAdapter, CommandProcessingService, CommandProcessor,
+    CommandProcessorError, CommandPublication, CompletionOrigin, EncodedCommand,
+    EncodedIntegrationMessage, IntegrationEventBusError, IntegrationEventBusErrorKind,
+    IntegrationMessageAdapter, OutcomeLookup, ProcessedCommand, TrustedCommandContext,
 };
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
@@ -715,13 +715,13 @@ mod tests {
     };
 
     use async_trait::async_trait;
-    use rostfrei::{
-        CommandBus, DynamicCommandRequest, ExecutionStore, InMemoryEventStore,
-        InMemoryMessagingAdapter, OperationId,
-    };
     use rostfrei_messaging_core::{
         ApplicationName, CallerMetadata, CommandResponseAddress, CommandResponseReadError,
         CorrelationId, DeliveryInfo, IntegrationEventAddress, MessageId,
+    };
+    use rostfrei_runtime::{
+        CommandBus, DynamicCommandRequest, ExecutionStore, InMemoryEventStore,
+        InMemoryMessagingAdapter, OperationId,
     };
     use tokio::sync::{Notify, OnceCell, Semaphore};
 
@@ -771,7 +771,7 @@ mod tests {
                 ));
             }
             CommandResponse::accepted(
-                rostfrei::command_response_message_id(command_message_id)
+                rostfrei_runtime::command_response_message_id(command_message_id)
                     .map_err(|_| invalid_response())?,
                 command_message_id.clone(),
                 self.command_address.clone(),
@@ -1156,7 +1156,7 @@ mod tests {
 
         assert!(matches!(
             receipt.response().outcome(),
-            rostfrei::CommandResponseOutcome::Accepted
+            rostfrei_runtime::CommandResponseOutcome::Accepted
         ));
         Ok(())
     }
