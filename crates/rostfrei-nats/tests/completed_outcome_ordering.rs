@@ -3,6 +3,7 @@
 mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
+use rostfrei_runtime::MappedCommandRejectionCodec;
 rostfrei_runtime::install_macro_support!();
 
 struct GatedRejection {
@@ -63,8 +64,7 @@ async fn recreated_session_winner(accepted: bool) -> TestResult {
             action: "add".to_owned(),
             item: "I".to_owned(),
         };
-        let codec =
-            rostfrei_runtime::MappedCommandRejectionCodec::new(map_rejection, decode_rejection);
+        let codec = MappedCommandRejectionCodec::new(map_rejection, decode_rejection);
         executor
             .execute_with_rejection_codec(&handler, metadata, &command, &codec)
             .await
