@@ -109,8 +109,8 @@ let query_bus = QueryBus::new(
 let mut registry = DomainRegistry::new();
 registry.register_query::<FindProduct>()?;
 // command_bus is the application's bus for the same bounded context.
-let router = rostfrei_http::router(
-    Arc::new(registry), command_bus, query_bus, rostfrei_http::HttpApiConfig::default(),
+let router = rostfrei::http::router(
+    Arc::new(registry), command_bus, query_bus, rostfrei::http::HttpApiConfig::default(),
 );
 ```
 

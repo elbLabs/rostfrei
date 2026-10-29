@@ -2,8 +2,8 @@
 
 Enable `rostfrei`'s `nats` and `tracer` features and import the host from
 `rostfrei::tracer` (see [dependency setup](getting-started.mdx#one-framework-dependency)).
-`ApplicationBindings` is the executable composition: register aggregate fixture codecs, command instances and
-rejection mappers once. Those same registrations supply catalog metadata,
+`ApplicationBindings` is the executable composition: register aggregate fixture
+codecs, command instances and rejection mappers once. Those same registrations supply catalog metadata,
 payload decoding and `CommandProcessor` execution. Dependencies stay in your
 handlers. Integration mappings and handlers remain application-owned; the host
 supplies their buses, durable consumers and fixture-event suppression.

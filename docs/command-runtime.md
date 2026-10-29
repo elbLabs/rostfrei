@@ -114,7 +114,7 @@ expiry may finish; lifecycle checks are observations, not administrative locks.
 
 `InMemoryMessagingAdapter::with_service` calls the service for every invocation;
 `dispatch_as` supplies trusted caller context. It does not cache completion bodies.
-`rostfrei_http::context_command_router` accepts original envelope bytes when
+`rostfrei::http::context_command_router` (feature `http`) accepts original envelope bytes when
 `with_trusted_command_envelope_ingress` is enabled. Middleware supplies
 `Extension<TrustedCommandContext>`; route/schema and any supplied idempotency key
 must match. Recovery needs no current command binding.
