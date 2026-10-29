@@ -814,13 +814,12 @@ async fn expiry_after_native_pending_count_before_first_delivery_finishes_with_b
     let integration_name = fixture.topology.integration_event_stream().as_str();
     let mut integration = fixture.js().get_stream(integration_name).await?;
     let mut config = integration.cached_info().config.clone();
-    config.max_age = Duration::from_secs(2);
+    // Allow broker setup under workspace load; the expiry clock starts only
+    // after the reader and creation barrier are ready below.
+    config.max_age = Duration::from_secs(8);
     config.duplicate_window = Duration::from_millis(100);
     fixture.js().update_stream(config).await?;
     append_domain(&fixture.sales, "retained", "flow", "root", 1).await?;
-    fixture
-        .publish("sales", "expires-in-flight", "flow", None)
-        .await?;
     let reader = fixture.reader().await?;
     let mut creates = fixture
         .connection
@@ -828,11 +827,17 @@ async fn expiry_after_native_pending_count_before_first_delivery_finishes_with_b
         .subscribe(format!("$JS.API.CONSUMER.CREATE.{integration_name}.>"))
         .await?;
     fixture.connection.client().flush().await?;
+    fixture
+        .publish("sales", "expires-in-flight", "flow", None)
+        .await?;
     let ids = [CorrelationId::new("flow")?];
     let read = reader.load_correlations(&ids);
     tokio::pin!(read);
     let request = tokio::time::timeout(READ_TIMEOUT, async {
         tokio::select! {
+            biased;
+            // Observe creation before polling the read again: otherwise a ready
+            // response can start native prefetch before this expiry barrier.
             request = creates.next() => TestResult::Ok(request.ok_or("no native replay creation")?),
             result = &mut read => Err(format!("read finished before expiry barrier: {result:?}").into()),
         }
@@ -842,7 +847,7 @@ async fn expiry_after_native_pending_count_before_first_delivery_finishes_with_b
         .pointer("/config/name")
         .and_then(Value::as_str)
         .ok_or("consumer name")?;
-    let pending = tokio::time::timeout(Duration::from_secs(1), async {
+    let pending = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if let Ok(info) = integration.consumer_info(name).await {
                 return info.num_pending;
@@ -855,7 +860,7 @@ async fn expiry_after_native_pending_count_before_first_delivery_finishes_with_b
         pending, 1,
         "the consumer's initial finite selection must include the expiring record"
     );
-    tokio::time::timeout(Duration::from_secs(4), async {
+    tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if integration.info().await?.state.messages == 0 {
                 return TestResult::Ok(());
