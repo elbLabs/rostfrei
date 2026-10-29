@@ -1,0 +1,24 @@
+# `Entity`
+
+Adds metadata to a named-field struct. Implement `EntityDefinition` to select the owning aggregate, declare the identity type, and provide `identity()`. Custom field types remain opaque in the compiled model.
+
+**Placement:** [Entity](../project-structure/entity.mdx) — `entity.rs`.
+
+```rust
+#[derive(Entity)]
+#[domain(id = "bicycle", label = "Bicycle")]
+pub struct Bicycle {
+    bicycle_id: BicycleId,
+    status: BicycleStatus,
+    condition: BicycleCondition,
+}
+
+impl EntityDefinition for Bicycle {
+    type Owner = RentalFleetAggregate;
+    type Identity = BicycleId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.bicycle_id
+    }
+}
+```

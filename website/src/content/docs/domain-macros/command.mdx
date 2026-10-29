@@ -1,9 +1,0 @@
-# `Command`
-
-Declares a bounded-context command and generates its JSON payload codec. Set `context` to the owning bounded context and include every required aggregate ID in the payload. The schema version defaults to 1; the rental example explicitly uses version 2.
-
-The registered handler loads the participating aggregates and declares the command's rejection type.
-
-**Placement:** `command.rs` beside its handler, in an [aggregate action](/docs/project-structure/aggregate-action) or [domain service](/docs/project-structure/domain-service) module.
-
-<MacroExample name="Command" />

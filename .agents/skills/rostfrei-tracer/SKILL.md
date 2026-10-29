@@ -99,13 +99,12 @@ version numbers describe different contracts. Optional capabilities must be
 discovered on this host, not assumed from a version number.
 Command-payload schema versions are independent of those protocol versions too.
 
-Command and integration-event schema versions support deliberate contract
-migrations. Multiple advertised versions describe supported contracts, not a
-recommendation to create another version for each feature or refactor. Use the
-agreed registered contract; do not bump versions to work around a payload error.
-An actual migration needs a concrete compatibility obligation, a rollout order
-and a retirement condition for old support. Adding payload-schema support does
-not require a new durable consumer identity, which can replay processed messages.
+Use the agreed registered contract; do not bump versions to work around a payload
+error or infer a migration requirement from multiple advertised versions. For an
+actual contract change, follow the shared
+[schema and subscription guide](https://elblabs.github.io/rostfrei/docs/source/messaging-upgrades.md):
+identify the compatibility obligation, rollout order, and retirement condition.
+Payload-schema support alone does not require a new durable identity.
 
 Use these advertised relations:
 

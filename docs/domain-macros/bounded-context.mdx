@@ -1,0 +1,11 @@
+# `BoundedContext`
+
+Declares a bounded context's ID and display label on a non-generic unit struct. Commands, aggregates, and domain services refer to this type to declare their context.
+
+**Placement:** [Bounded context](../project-structure/bounded-context.mdx) — `context.rs`.
+
+```rust
+#[derive(BoundedContext)]
+#[domain(id = "bike-rental", label = "Bike Rental")]
+pub struct BikeRental;
+```

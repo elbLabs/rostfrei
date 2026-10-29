@@ -1,15 +1,14 @@
 # Completed-outcome deployment and cutover
 
-For 0.1, use the [split-storage native contract](design/modular-command-native.md)
-and [migration guide](migration-0.1.md). [ADR 0044](adr/0044-completed-outcomes-and-envelope-ingress.md)
-records the earlier inline/fail-closed foundation. Do not enable new mutable workers
+Use the [native authority contract](command-runtime.md#native-authority)
+and [migration guide](migration-0.1.md). Do not enable new mutable workers
 on a legacy authority merely because its response cache is empty. An expired legacy
 rejection may be invisible forever.
 
 ## New isolated authority
 
 1. Upgrade all response/store readers first: current inline/split receipts and
-   technical response schema 2, plus [actor-bearing formats](design/actor-attribution.md)
+   technical response schema 2, plus [actor-bearing formats](actor-attribution.md)
    wherever attribution is enabled. Retain immutable history, command envelopes,
    responses and quarantine.
 2. Provision a **new application namespace**, never reuse the legacy application/
@@ -65,18 +64,9 @@ API has no in-place mutable activation, cache deletion shortcut, bulk acceptance
 audit or inference from hashes. New work goes to the fresh isolated namespace above.
 Raw acceptance-history readers remain available for audit, not mutable rollback.
 
-## ACL mechanism and executable proof
-
-`crates/rostfrei-nats/tests/completed_outcome_fencing.rs` starts its own authenticated
-NATS 2.12.15, retains configuration/storage/logs and waits its exact owned PID. A new
-writer creates a shared rejection. Old/rollback credentials permit only stream info,
-raw reads, ephemeral history-consumer APIs and inbox subscriptions. They cannot
-publish aggregate events, operation receipts, commands, responses or stream updates.
-The test sends raw requests (so no new ledger-aware code is needed to reject an old
-writer), observes broker errors/no successful PubAck and unchanged stream state,
-then proves an upgraded read-only reader can replay but cannot evaluate/write.
-Do not copy the fixture's disposable passwords into deployments. Restrict the
-history-consumer API grants to the intended streams in production.
+See the [authenticated fencing test](../crates/rostfrei-nats/tests/completed_outcome_fencing.rs)
+for an executable ACL example. Restrict reader grants to the intended streams and
+ephemeral history-consumer APIs; exclude publication and stream administration.
 
 ## Public API migration
 
@@ -99,7 +89,7 @@ that identity, so use stable explicit evidence for long-lived application protoc
 `commit_outcome` refuses missing decision/command evidence; legacy acceptance uses
 its separate `append_transaction` API and old receipt representation.
 Update exhaustive execution/simulation error matches for rejection-mapping and
-rejected-persistence errors; technical failures still expose the #85 typed source.
+rejected-persistence errors; see [typed technical failures](command-failures.md).
 
 Do not purge completed outcomes when transport TTL/dedup expires. Provision capacity
 for decisions/guards and result state as well as events. Back up the paired journal

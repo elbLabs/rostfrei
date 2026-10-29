@@ -92,4 +92,4 @@ feedback only when received.
 Stop the owned host/broker and remove credentials; retain non-secret evidence.
 
 **Release:** Publish the qualified version/revision with verified artifacts; the published
-starter's skills capability has a separate [post-publication follow-up](starter-skills-followup.md).
+starter pin is updated through the [starter release procedure](development.md#starter-dependency-contract).

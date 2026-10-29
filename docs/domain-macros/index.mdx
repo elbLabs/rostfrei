@@ -1,0 +1,26 @@
+# Domain macros
+
+Domain macros describe types, behavior contracts, and model composition. Some also generate runtime adapters or JSON codecs. Each page shows the declaration and its expected location.
+
+Your types and trait implementations carry the business rules. The macros describe their roles and relationships so the compiled model, runtime, and developer tools can work with the same contracts.
+
+**New to Rostfrei?** Start with the [bike-rental walkthrough](../getting-started.mdx) to see these declarations in a working application. Use this reference when you are ready to read or write a specific contract, and [Project structure](../project-structure/index.mdx) to find its home.
+
+## Declarations
+
+- [`install_macro_support!`](install-macro-support.mdx)
+- [`BoundedContext`](bounded-context.mdx)
+- [`Aggregate`](aggregate.mdx) and [`AggregateEvents`](aggregate-events.mdx)
+- [`Entity`](entity.mdx) and [`DomainIdentity`](domain-identity.mdx)
+- [`ValueObject`](value-object.mdx) and [`DomainService`](domain-service.mdx)
+- [`Command`](command.mdx), [`DomainEvent`](domain-event.mdx), and [`DomainError`](domain-error.mdx)
+- [`PolicyOutcome`](policy-outcome.mdx), [`EntityLifecycle`](entity-lifecycle.mdx), and [`StateTransition`](state-transition.mdx)
+- [`domain_model!`](domain-model.mdx)
+
+## Behavior
+
+- [`domain_action`](domain-action.mdx)
+- [`domain_query`](domain-query.mdx)
+- [`domain_policy`](domain-policy.mdx)
+- [`domain_invariant`](domain-invariant.mdx)
+- [`domain_*_test`](domain-tests.mdx)

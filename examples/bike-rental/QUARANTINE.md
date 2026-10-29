@@ -111,7 +111,7 @@ is not a complete recovery payload.
   walkthrough.
 - **Domain-event consumers have a separate failure policy.** They stop on an
   incomplete projection/publication instead of automatically quarantining and
-  continuing. See [ADR 0012](../../docs/adr/0012-domain-event-handlers.md).
+  continuing. See [domain-event workers](../../docs/domain-event-workers.md).
 
 ## Automated check
 

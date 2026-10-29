@@ -34,8 +34,17 @@ pnpm install --frozen-lockfile
 pnpm --dir website dev
 ```
 
-Routes live in `src/routes`. Documentation navigation and lazy MDX imports live
-in `src/docs`, while authored documents live in `src/content/docs`.
+Routes live in `src/routes`. All documentation is authored in the repository's
+[`docs/`](../docs/README.md), shared by humans and agents. `src/docs/navigation.ts`
+maps sources to URLs; `registry.ts` loads them directly. Add new pages to that
+navigation and the shared index. Keep essential prose and examples in the source
+files; MDX components may enhance their presentation.
+
+Use relative file links in documentation. `docs-plugin.ts` resolves them to website
+routes (preserving anchors), and sends repository-code links to GitHub. A production
+build also emits `llms.txt` and raw sources under `docs/source/`, from the same files.
+The macro explorer reads its authored examples from the documentation's Rust code
+blocks, and the subject explorer reads its reference table from the shared Markdown.
 
 After changing route files, regenerate the typed route tree from `website/`:
 
@@ -52,6 +61,10 @@ pnpm typecheck
 pnpm lint
 pnpm build
 ```
+
+After the build, run `pnpm test:docs` from the repository root. Set `VITE_BASE_PATH`
+to the build's base path. This checks source coverage, published raw pages,
+the machine index, and relative-link routing.
 
 GitHub Pages deployment is configured in
 `.github/workflows/deploy-website.yml` at the repository root.
@@ -87,5 +100,5 @@ Open `/design-study/` on the development server to compare website and Tracer
 Studio design concepts in light and dark mode. Reference ’15 is the selected default;
 Workshop ’12 and Reference ’15 explore 2010s developer-web aesthetics. The static
 preview also runs with `python3 -m http.server 4178 --directory website/public` from the
-repository root. Research, palettes, and the proposed rework are in
-[`docs/design/identity-studies.md`](../docs/design/identity-studies.md).
+repository root. The current visual contract is documented in
+[`packages/ui/README.md`](../packages/ui/README.md).

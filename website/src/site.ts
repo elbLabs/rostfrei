@@ -63,7 +63,7 @@ const introductions: Record<
   "read-models/benchmarks": {
     title: "Read-model query benchmarks · Rostfrei docs",
     description:
-      "Compare KV queries with replaying two connected aggregates. Explore recorded latency, broker request counts, timing boundaries, and reproduction commands.",
+        "Compare KV queries with replaying two connected aggregates using reproducible workloads and explicit timing boundaries.",
   },
 }
 
@@ -74,14 +74,17 @@ function pagesForEntries(
     if ("items" in entry) return pagesForEntries(entry.items)
 
     const isMacro = entry.slug.startsWith("domain-macros/")
+    const isStructure = entry.slug.startsWith("project-structure/")
     return [
       {
         path: entry.slug ? `/docs/${entry.slug}` : "/docs",
         ...(introductions[entry.slug] ?? {
-          title: `${entry.title} ${isMacro ? "macro" : "structure"} · Rostfrei docs`,
+          title: `${entry.title}${isMacro ? " macro" : isStructure ? " structure" : ""} · Rostfrei docs`,
           description: isMacro
             ? `Learn how ${entry.title} describes a Rust domain contract in Rostfrei, with authored code and a simplified view of the generated implementation.`
-            : `Learn where ${entry.title.toLowerCase()} declarations and implementations belong in a Rostfrei project, with checked ownership conventions and examples.`,
+            : isStructure
+              ? `Learn where ${entry.title.toLowerCase()} declarations and implementations belong in a Rostfrei project, with checked ownership conventions and examples.`
+              : `${entry.title}: official Rostfrei documentation for developers and coding agents.`,
         }),
       },
     ]
